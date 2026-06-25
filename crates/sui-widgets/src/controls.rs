@@ -4,6 +4,7 @@ use crate::{
     WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
+    selection::{SelectionChange, SelectionOwnerId, SelectionScope},
     text_align::{
         HorizontalTextAlignmentMode, aligned_text_rect_for_layout,
         aligned_text_rect_for_layout_with_mode, aligned_text_rect_for_text, paint_aligned_text,
@@ -24,7 +25,9 @@ use sui_runtime::{
     SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{ImageSource, LayerCompositionMode, LayerProperties, StrokeStyle};
-use sui_text::{FontFeature, PersistentTextLayout, TextMeasurement, TextStyle};
+use sui_text::{
+    FontFeature, PersistentTextLayout, TextCursor, TextMeasurement, TextSelection, TextStyle,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconGlyph {
@@ -860,6 +863,10 @@ pub struct Label {
     style: TextStyle,
     color_reader: Option<Box<dyn Fn() -> Color>>,
     measurement: Option<TextMeasurement>,
+    layout: Option<PersistentTextLayout>,
+    selection_scope: Option<SelectionScope>,
+    selection: TextSelection,
+    dragging_selection: Option<u64>,
 }
 
 impl Label {
@@ -871,6 +878,10 @@ impl Label {
             style: DefaultTheme::default().body_text_style(),
             color_reader: None,
             measurement: None,
+            layout: None,
+            selection_scope: None,
+            selection: TextSelection::new(TextCursor::new(0), TextCursor::new(0)),
+            dragging_selection: None,
         }
     }
 
@@ -892,6 +903,15 @@ impl Label {
     pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
         self.semantic_name = Some(name.into());
         self
+    }
+
+    pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
+        self
+    }
+
+    pub fn selection_scope(&self) -> Option<&SelectionScope> {
+        self.selection_scope.as_ref()
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -951,9 +971,162 @@ impl Label {
         }
         style
     }
+
+    fn owner_id(widget_id: WidgetId) -> SelectionOwnerId {
+        SelectionOwnerId::from(widget_id)
+    }
+
+    fn selected_range(&self, text_len: usize) -> std::ops::Range<usize> {
+        selection_range(&self.selection, text_len)
+    }
+
+    fn active_selection_range(
+        &self,
+        widget_id: WidgetId,
+        text_len: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        let owner = Self::owner_id(widget_id);
+        let range = self.selected_range(text_len);
+        self.selection_scope
+            .as_ref()
+            .is_some_and(|scope| scope.has_owner_selection(owner))
+            .then_some(range)
+            .filter(|range| !range.is_empty())
+    }
+
+    fn sync_selection_scope(&self, ctx: &mut EventCtx, text: &str) {
+        let Some(scope) = &self.selection_scope else {
+            return;
+        };
+        let owner = Self::owner_id(ctx.widget_id());
+        let range = self.selected_range(text.len());
+        let selected = text.get(range.clone()).unwrap_or("").to_string();
+        let change = scope.replace_text(owner, owner, range, text.len(), selected);
+        request_selection_change(ctx, change);
+    }
+
+    fn label_layout_origin_for_event(&self, bounds: Rect, layout: &PersistentTextLayout) -> Point {
+        let measurement = layout.measurement();
+        let height = self
+            .resolved_style()
+            .line_height
+            .max(measurement.height)
+            .min(bounds.height());
+        Point::new(
+            bounds.x() - measurement.bounds.x(),
+            bounds.y() + ((bounds.height() - height).max(0.0) * 0.5),
+        )
+    }
+
+    fn hit_test_offset(&self, bounds: Rect, position: Point, text_len: usize) -> usize {
+        self.layout
+            .as_ref()
+            .map(|layout| {
+                let origin = self.label_layout_origin_for_event(bounds, layout);
+                layout
+                    .hit_test_point(Point::new(position.x - origin.x, position.y - origin.y))
+                    .utf8_offset
+                    .min(text_len)
+            })
+            .unwrap_or(text_len)
+    }
+
+    fn set_selection(&mut self, anchor: usize, focus: usize, text_len: usize) {
+        self.selection = TextSelection::new(
+            TextCursor::new(anchor.min(text_len)),
+            TextCursor::new(focus.min(text_len)),
+        );
+    }
 }
 
 impl Widget for Label {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.selection_scope.is_none() {
+            return;
+        }
+
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && ctx.phase() != sui_runtime::EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                let text = self.current_text();
+                let offset = self.hit_test_offset(ctx.bounds(), pointer.position, text.len());
+                let anchor = if pointer.modifiers.shift {
+                    self.selection.anchor.utf8_offset
+                } else {
+                    offset
+                };
+                self.set_selection(anchor, offset, text.len());
+                self.dragging_selection = Some(pointer.pointer_id);
+                self.sync_selection_scope(ctx, &text);
+                ctx.request_focus();
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Move
+                    && self.dragging_selection == Some(pointer.pointer_id)
+                    && pointer.buttons.contains(PointerButton::Primary) =>
+            {
+                let text = self.current_text();
+                let anchor = self.selection.anchor.utf8_offset;
+                let focus = self.hit_test_offset(ctx.bounds(), pointer.position, text.len());
+                self.set_selection(anchor, focus, text.len());
+                self.sync_selection_scope(ctx, &text);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && self.dragging_selection == Some(pointer.pointer_id) =>
+            {
+                self.dragging_selection = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Cancel
+                    && self.dragging_selection == Some(pointer.pointer_id) =>
+            {
+                self.dragging_selection = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && (key.modifiers.control || key.modifiers.meta)
+                    && matches!(key.key.as_str(), "a" | "A") =>
+            {
+                let text = self.current_text();
+                self.set_selection(0, text.len(), text.len());
+                self.sync_selection_scope(ctx, &text);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Escape" =>
+            {
+                if let Some(scope) = &self.selection_scope {
+                    let change = scope.clear_owner(Self::owner_id(ctx.widget_id()));
+                    request_selection_change(ctx, change);
+                }
+                self.set_selection(0, 0, 0);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text = self.current_text();
         let style = self.resolved_style();
@@ -964,7 +1137,7 @@ impl Widget for Label {
             let wrapped_measurement = ctx
                 .layout()
                 .shape_text(
-                    text,
+                    text.clone(),
                     Size::new(constraints.max.width.max(1.0), f32::INFINITY),
                     style.clone(),
                 )
@@ -974,6 +1147,22 @@ impl Widget for Label {
         } else {
             (natural_measurement.width, natural_measurement)
         };
+        if self.selection_scope.is_some() {
+            self.layout = ctx
+                .layout()
+                .shape_text_persistent(
+                    self.layout.as_ref().map(|layout| layout.handle()),
+                    text,
+                    Size::new(
+                        measured_width.max(1.0),
+                        measurement.height.max(style.line_height),
+                    ),
+                    style.clone(),
+                )
+                .ok();
+        } else {
+            self.layout = None;
+        }
         self.measurement = Some(measurement);
         constraints.clamp(Size::new(
             measured_width,
@@ -984,7 +1173,27 @@ impl Widget for Label {
     fn paint(&self, ctx: &mut PaintCtx) {
         let text = self.current_text();
         let style = self.resolved_style();
-        paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+        if let Some(layout) = &self.layout {
+            let layout_bounds = layout.measurement().bounds;
+            let layout_rect = aligned_text_rect_for_layout_with_mode(
+                ctx,
+                ctx.bounds(),
+                layout.layout(),
+                style.line_height,
+                0.0,
+                HorizontalTextAlignmentMode::Optical,
+            );
+            let origin = Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y());
+            if let Some(range) = self.active_selection_range(ctx.widget_id(), text.len()) {
+                let theme = DefaultTheme::default();
+                for rect in layout.selection_rects(range) {
+                    ctx.fill_rect(rect.translate(origin.to_vector()), theme.palette.selection);
+                }
+            }
+            ctx.draw_persistent_text_layout(origin, layout);
+        } else {
+            paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -994,7 +1203,20 @@ impl Widget for Label {
         if self.semantic_name.is_some() {
             node.value = Some(SemanticsValue::Text(text));
         }
+        if self.selection_scope.is_some() {
+            node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
+            node.state.focused = ctx.is_focused();
+        }
         ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.selection_scope.is_some()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, _focused: bool) {
+        ctx.request_paint();
+        ctx.request_semantics();
     }
 }
 
@@ -4726,6 +4948,7 @@ pub struct TextArea {
     caret_visible: bool,
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
+    selection_scope: Option<SelectionScope>,
     on_change: Option<Box<dyn FnMut(String)>>,
     on_submit: Option<Box<dyn FnMut(&str)>>,
 }
@@ -4753,6 +4976,7 @@ impl TextArea {
             caret_visible: true,
             display_layout: None,
             input_layout: None,
+            selection_scope: None,
             on_change: None,
             on_submit: None,
         }
@@ -4799,6 +5023,16 @@ impl TextArea {
 
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
+        self
+    }
+
+    pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
+        self
+    }
+
+    pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
         self
     }
 
@@ -4897,6 +5131,7 @@ impl TextArea {
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
+        let copied_to_local_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
             self.clipboard = text;
         }
@@ -4910,13 +5145,16 @@ impl TextArea {
             ctx.request_paint();
         }
         if result.text_changed || result.selection_changed || result.composition_changed {
+            sync_editor_selection_scope(ctx, self.selection_scope.as_ref(), &self.editor);
             ctx.request_semantics();
         }
         if result.handled {
             if self.focused {
                 self.reset_caret_blink(ctx);
             }
-            ctx.set_handled();
+            if !(copied_to_local_clipboard && self.selection_scope.is_some()) {
+                ctx.set_handled();
+            }
         }
     }
 
@@ -6433,6 +6671,7 @@ pub struct TextInput {
     input_measurement: Option<TextMeasurement>,
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
+    selection_scope: Option<SelectionScope>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -6461,6 +6700,7 @@ impl TextInput {
             input_measurement: None,
             display_layout: None,
             input_layout: None,
+            selection_scope: None,
             on_change: None,
         }
     }
@@ -6510,6 +6750,16 @@ impl TextInput {
 
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
+        self
+    }
+
+    pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
+        self
+    }
+
+    pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
         self
     }
 
@@ -6570,6 +6820,7 @@ impl TextInput {
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
+        let copied_to_local_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
             self.clipboard = text;
         }
@@ -6583,13 +6834,16 @@ impl TextInput {
             ctx.request_paint();
         }
         if result.text_changed || result.selection_changed || result.composition_changed {
+            sync_editor_selection_scope(ctx, self.selection_scope.as_ref(), &self.editor);
             ctx.request_semantics();
         }
         if result.handled {
             if self.focused {
                 self.reset_caret_blink(ctx);
             }
-            ctx.set_handled();
+            if !(copied_to_local_clipboard && self.selection_scope.is_some()) {
+                ctx.set_handled();
+            }
         }
     }
 
@@ -7468,6 +7722,35 @@ fn rect_is_finite(rect: Rect) -> bool {
         && rect.height().is_finite()
 }
 
+fn request_selection_change(ctx: &mut EventCtx, change: SelectionChange) {
+    for owner in change.affected_owners() {
+        let widget_id = WidgetId::new(owner.get());
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            InvalidationKind::Paint,
+        ));
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            InvalidationKind::Semantics,
+        ));
+    }
+}
+
+fn sync_editor_selection_scope(
+    ctx: &mut EventCtx,
+    selection_scope: Option<&SelectionScope>,
+    editor: &EditorState,
+) {
+    let Some(scope) = selection_scope else {
+        return;
+    };
+    let owner = SelectionOwnerId::from(ctx.widget_id());
+    let range = editor.selection_range();
+    let selected = editor.selected_text().to_string();
+    let change = scope.replace_text(owner, owner, range, editor.document().len(), selected);
+    request_selection_change(ctx, change);
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
@@ -7477,8 +7760,11 @@ mod tests {
         Link, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea,
         TextInput, rect_is_finite,
     };
-    use crate::containers::SizedBox;
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
+    use crate::{
+        containers::{SizedBox, Stack},
+        selection::SelectionScope,
+    };
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
@@ -7970,6 +8256,87 @@ mod tests {
         ));
         assert_eq!(output.semantics[0].role, SemanticsRole::Text);
         assert_eq!(output.semantics[0].name.as_deref(), Some("Hello SUI"));
+    }
+
+    #[test]
+    fn selectable_label_syncs_selected_text_to_scope() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) =
+            build_runtime(Label::new("Hello SUI").selectable(selection.clone()));
+        let output = runtime.render(window_id)?;
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Hello SUI")
+            })
+            .expect("selectable label semantics should exist");
+        let center = Point::new(
+            label.bounds.x() + 4.0,
+            label.bounds.y() + label.bounds.height() * 0.5,
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, center, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, center, false),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+
+        assert_eq!(selection.selected_text().as_deref(), Some("Hello SUI"));
+        Ok(())
+    }
+
+    #[test]
+    fn selectable_labels_sharing_scope_replace_previous_selection() -> Result<()> {
+        let selection = SelectionScope::new();
+        let root = Stack::vertical()
+            .spacing(4.0)
+            .with_child(Label::new("First").selectable(selection.clone()))
+            .with_child(Label::new("Second").selectable(selection.clone()));
+        let (mut runtime, window_id) = build_runtime(root);
+        let output = runtime.render(window_id)?;
+        let first = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some("First"))
+            .expect("first label semantics should exist")
+            .bounds;
+        let second = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some("Second"))
+            .expect("second label semantics should exist")
+            .bounds;
+
+        let first_center = Point::new(first.x() + 2.0, first.y() + first.height() * 0.5);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, first_center, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, first_center, false),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        assert_eq!(selection.selected_text().as_deref(), Some("First"));
+
+        let second_center = Point::new(second.x() + 2.0, second.y() + second.height() * 0.5);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, second_center, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, second_center, false),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+
+        assert_eq!(selection.selected_text().as_deref(), Some("Second"));
+        Ok(())
     }
 
     #[test]
@@ -9352,6 +9719,49 @@ mod tests {
             .count();
         assert!(blinked.ime_composition_rect.is_some());
         assert_eq!(blinked_caret_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_selection_scope_tracks_keyboard_selection() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada Lovelace")
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+
+        assert_eq!(selection.selected_text().as_deref(), Some("Ada Lovelace"));
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_selection_scope_tracks_keyboard_selection() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Notes")
+                .value("first line\nsecond line")
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+
+        assert_eq!(
+            selection.selected_text().as_deref(),
+            Some("first line\nsecond line")
+        );
         Ok(())
     }
 

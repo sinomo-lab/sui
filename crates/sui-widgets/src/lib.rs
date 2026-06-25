@@ -10,6 +10,7 @@ mod editor;
 pub mod hdr_theme;
 pub mod media;
 pub mod panes;
+pub mod selection;
 mod text_align;
 pub mod text_surface;
 pub mod theme;
@@ -64,6 +65,10 @@ pub use media::{
 pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
     FloatingWorkspaceState, ResizablePane, SplitView,
+};
+pub use selection::{
+    SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
+    SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
 };
 pub use text_surface::{
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,

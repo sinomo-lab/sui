@@ -1,9 +1,10 @@
 use std::ops::Range;
 
 use sui_core::{
-    Color, EditableTextSemantics, Event, ImeEvent, KeyState, KeyboardEvent, Path, Point,
-    PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector, WakeEvent, WindowEvent,
+    Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, KeyState, KeyboardEvent, Path, Point, PointerButton, PointerEventKind,
+    Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsTextRange,
+    SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -22,6 +23,7 @@ use crate::{
         EditorCommand, EditorCommandResult, EditorState, clamp_to_grapheme_boundary,
         selection_range,
     },
+    selection::{SelectionChange, SelectionOwnerId, SelectionScope},
     text_align::paint_aligned_text,
 };
 
@@ -88,6 +90,7 @@ pub struct TextSurface {
     line_layout_style: Option<TextStyle>,
     line_layout_revision: u64,
     line_layout_style_revision: u64,
+    selection_scope: Option<SelectionScope>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -121,6 +124,7 @@ impl TextSurface {
             line_layout_style: None,
             line_layout_revision: u64::MAX,
             line_layout_style_revision: u64::MAX,
+            selection_scope: None,
             on_change: None,
         }
     }
@@ -205,6 +209,16 @@ impl TextSurface {
 
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
+        self
+    }
+
+    pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
+        self
+    }
+
+    pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
+        self.selection_scope = Some(selection_scope);
         self
     }
 
@@ -340,6 +354,7 @@ impl TextSurface {
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
+        let copied_to_local_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
             self.clipboard = text;
         }
@@ -353,10 +368,13 @@ impl TextSurface {
             self.request_after_overlay_change(ctx);
         }
         if result.text_changed || result.selection_changed || result.composition_changed {
+            sync_editor_selection_scope(ctx, self.selection_scope.as_ref(), &self.editor);
             ctx.request_semantics();
         }
         if result.handled {
-            ctx.set_handled();
+            if !(copied_to_local_clipboard && self.selection_scope.is_some()) {
+                ctx.set_handled();
+            }
         }
     }
 
@@ -1748,6 +1766,35 @@ fn ranges_intersect(left: &Range<usize>, right: &Range<usize>) -> bool {
     left.start < right.end && right.start < left.end
 }
 
+fn request_selection_change(ctx: &mut EventCtx, change: SelectionChange) {
+    for owner in change.affected_owners() {
+        let widget_id = WidgetId::new(owner.get());
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            InvalidationKind::Paint,
+        ));
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            InvalidationKind::Semantics,
+        ));
+    }
+}
+
+fn sync_editor_selection_scope(
+    ctx: &mut EventCtx,
+    selection_scope: Option<&SelectionScope>,
+    editor: &EditorState,
+) {
+    let Some(scope) = selection_scope else {
+        return;
+    };
+    let owner = SelectionOwnerId::from(ctx.widget_id());
+    let range = editor.selection_range();
+    let selected = editor.selected_text().to_string();
+    let change = scope.replace_text(owner, owner, range, editor.document().len(), selected);
+    request_selection_change(ctx, change);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2205,6 +2252,31 @@ mod tests {
                 .and_then(|node| node.value.clone()),
             Some(SemanticsValue::Text("hello".to_string()))
         );
+    }
+
+    #[test]
+    fn text_surface_selection_scope_tracks_keyboard_selection() {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextSurface::new("Editor")
+                .value("alpha\nbeta")
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("a"))
+            .expect("select all should succeed");
+
+        assert_eq!(selection.selected_text().as_deref(), Some("alpha\nbeta"));
     }
 
     #[test]
