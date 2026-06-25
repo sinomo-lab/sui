@@ -19,6 +19,9 @@ use sui_widget_book::{
     register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 
+#[cfg(test)]
+use crate::layout_demo::LAYOUT_DEMO_SCROLL_NAME;
+use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
 use crate::vector_demo::{
@@ -1786,6 +1789,13 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             child: WidgetPod::new(build_color_validation_surface()),
         },
         DevDemo {
+            title: LAYOUT_TAB_LABEL,
+            description: "Stack, Align, and Flex layout patterns for app composition.",
+            icon: IconGlyph::Maximize,
+            accent: Color::rgba(0.08, 0.58, 0.42, 1.0),
+            child: WidgetPod::new(build_layout_demo_with_theme(Rc::clone(&theme_reader))),
+        },
+        DevDemo {
             title: PAINT_TAB_LABEL,
             description: "Pixel canvas painting workspace with editor-style panels.",
             icon: IconGlyph::Brush,
@@ -1812,6 +1822,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
         "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
+        "layout" | "layouts" | "flex" => Some(LAYOUT_TAB_LABEL),
         "paint" | "sui-paint" => Some(PAINT_TAB_LABEL),
         "vector-editor" | "vector" => Some(VECTOR_EDITOR_TAB_LABEL),
         _ => None,
@@ -3660,6 +3671,7 @@ mod tests {
             THEMES_TAB_LABEL,
             BUTTON_GRID_TAB_LABEL,
             HDR_VALIDATION_TAB_LABEL,
+            LAYOUT_TAB_LABEL,
             PAINT_TAB_LABEL,
             VECTOR_EDITOR_TAB_LABEL,
         ] {
@@ -7002,6 +7014,24 @@ final_max_luminance={final_max_luminance}
             .expect()
             .to_be_visible()?;
         open_dev_shell_demo(&window, RETAINED_TEXT_TAB_LABEL)?;
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_registers_layout_demo() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(LAYOUT_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        open_dev_shell_demo(&window, LAYOUT_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(LAYOUT_DEMO_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
         Ok(())
     }
 

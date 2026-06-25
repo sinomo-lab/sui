@@ -119,9 +119,14 @@ let columns = Flex::horizontal()
 let cards = Flex::horizontal()
     .wrap(FlexWrap::Wrap)
     .gap(12.0)
-    .with_item(card_a(), FlexItem::new().basis_fraction(0.5))
-    .with_item(card_b(), FlexItem::new().basis_fraction(0.5));
+    .with_item(card_a(), FlexItem::new().basis_gap_aware_fraction(0.5))
+    .with_item(card_b(), FlexItem::new().basis_gap_aware_fraction(0.5));
 ```
+
+Use `basis_gap_aware_fraction` when fractional items should add up to a full
+row while accounting for the container gap. For example, two `0.5` items with a
+12px gap each measure as `(width * 0.5) - 6px`, so the two items plus the gap
+fit exactly.
 
 `App::build()` returns a `Runtime` for tests, headless rendering, embedding, or
 custom platform integration. `App::run()` is the default desktop/web entry

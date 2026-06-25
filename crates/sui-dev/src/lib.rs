@@ -1,4 +1,5 @@
 mod app;
+mod layout_demo;
 mod paint_demo;
 mod vector_demo;
 
@@ -3605,10 +3606,11 @@ mod tests {
             "Widget book",
             "64 buttons",
             "HDR validation",
+            "Layout",
             "Paint",
             "Vector editor",
             "Open demo",
-            "Dark theme",
+            "Theme mode",
             "Settings",
         ] {
             assert!(frame.contains(label), "missing generated TUI label {label}");

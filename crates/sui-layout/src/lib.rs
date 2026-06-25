@@ -9,6 +9,8 @@ use sui_text::{
     TextLayoutRequest, TextMeasurement, TextStyle, TextSystem,
 };
 
+const FLEX_EPSILON: f32 = 0.001;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
     Horizontal,
@@ -55,6 +57,7 @@ pub enum FlexBasis {
     Auto,
     Points(f32),
     Fraction(f32),
+    GapAwareFraction(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -196,6 +199,11 @@ impl FlexItem {
 
     pub fn basis_fraction(mut self, fraction: f32) -> Self {
         self.basis = FlexBasis::Fraction(finite_non_negative(fraction));
+        self
+    }
+
+    pub fn basis_gap_aware_fraction(mut self, fraction: f32) -> Self {
+        self.basis = FlexBasis::GapAwareFraction(finite_non_negative(fraction));
         self
     }
 
@@ -542,7 +550,7 @@ fn resolve_flex_lines(
         .enumerate()
         .map(|(index, item)| {
             let measured = measured_sizes.get(index).copied().unwrap_or(Size::ZERO);
-            resolve_flex_item(style.axis, *item, constraints, measured)
+            resolve_flex_item(style.axis, style.main_gap, *item, constraints, measured)
         })
         .collect::<Vec<_>>();
 
@@ -558,7 +566,7 @@ fn resolve_flex_lines(
 
         if style.wrap == FlexWrap::Wrap
             && index > start
-            && main + spacing_before + item_main > wrap_limit
+            && main + spacing_before + item_main > wrap_limit + FLEX_EPSILON
         {
             lines.push(FlexLine {
                 start,
@@ -587,6 +595,7 @@ fn resolve_flex_lines(
 
 fn resolve_flex_item(
     axis: Axis,
+    main_gap: f32,
     item: FlexItem,
     constraints: Constraints,
     measured_size: Size,
@@ -597,8 +606,8 @@ fn resolve_flex_item(
     let min_cross = item_min_cross(axis, item);
     let max_cross = item_max_cross(axis, item);
 
-    let base_main =
-        basis_main_size(axis, item.basis, constraints, measured_size).clamp(min_main, max_main);
+    let base_main = basis_main_size(axis, main_gap, item.basis, constraints, measured_size)
+        .clamp(min_main, max_main);
     let base_cross = axis_cross(axis, measured_size).clamp(min_cross, max_cross);
 
     ResolvedFlexItem {
@@ -775,8 +784,6 @@ fn distribute_grow_space(
     line_items: &[ResolvedFlexItem],
     available_for_items: f32,
 ) -> Vec<f32> {
-    const EPSILON: f32 = 0.001;
-
     let mut sizes = line_items
         .iter()
         .map(|item| axis_main(axis, item.base_size))
@@ -785,7 +792,7 @@ fn distribute_grow_space(
 
     loop {
         let remaining = available_for_items - sizes.iter().sum::<f32>();
-        if remaining <= EPSILON {
+        if remaining <= FLEX_EPSILON {
             break;
         }
 
@@ -795,7 +802,7 @@ fn distribute_grow_space(
             .filter(|(_, frozen)| !**frozen)
             .map(|(item, _)| finite_non_negative(item.grow))
             .sum::<f32>();
-        if total_grow <= EPSILON {
+        if total_grow <= FLEX_EPSILON {
             break;
         }
 
@@ -813,7 +820,7 @@ fn distribute_grow_space(
 
             let proposed = sizes[index] + (remaining * grow / total_grow);
             let max = item_max_main(axis, items[index]);
-            if proposed >= max - EPSILON {
+            if proposed >= max - FLEX_EPSILON {
                 sizes[index] = max;
                 frozen[index] = true;
                 clamped = true;
@@ -839,14 +846,17 @@ fn flex_child_constraints(
     let max_main = match item.basis {
         FlexBasis::Auto => axis_main(style.axis, constraints.max),
         FlexBasis::Points(points) => finite_non_negative(points),
-        FlexBasis::Fraction(fraction) => {
-            let available = axis_main(style.axis, constraints.max);
-            if available.is_finite() {
-                available.max(0.0) * finite_non_negative(fraction)
-            } else {
-                available
-            }
-        }
+        FlexBasis::Fraction(fraction) => flex_fraction_constraint_main_size(
+            style.axis,
+            constraints,
+            finite_non_negative(fraction),
+        ),
+        FlexBasis::GapAwareFraction(fraction) => flex_gap_aware_fraction_constraint_main_size(
+            style.axis,
+            constraints,
+            style.main_gap,
+            finite_non_negative(fraction),
+        ),
     }
     .min(item_max_main(style.axis, item))
     .max(min_main);
@@ -881,6 +891,7 @@ fn arranged_cross_size(
 
 fn basis_main_size(
     axis: Axis,
+    main_gap: f32,
     basis: FlexBasis,
     constraints: Constraints,
     measured_size: Size,
@@ -896,7 +907,47 @@ fn basis_main_size(
                 axis_main(axis, measured_size)
             }
         }
+        FlexBasis::GapAwareFraction(fraction) => {
+            let available = axis_main(axis, constraints.max);
+            if available.is_finite() {
+                gap_aware_fraction_basis(
+                    available.max(0.0),
+                    main_gap,
+                    finite_non_negative(fraction),
+                )
+            } else {
+                axis_main(axis, measured_size)
+            }
+        }
     }
+}
+
+fn flex_fraction_constraint_main_size(axis: Axis, constraints: Constraints, fraction: f32) -> f32 {
+    let available = axis_main(axis, constraints.max);
+    if available.is_finite() {
+        available.max(0.0) * fraction
+    } else {
+        available
+    }
+}
+
+fn flex_gap_aware_fraction_constraint_main_size(
+    axis: Axis,
+    constraints: Constraints,
+    main_gap: f32,
+    fraction: f32,
+) -> f32 {
+    let available = axis_main(axis, constraints.max);
+    if available.is_finite() {
+        gap_aware_fraction_basis(available.max(0.0), main_gap, fraction)
+    } else {
+        available
+    }
+}
+
+fn gap_aware_fraction_basis(available: f32, gap: f32, fraction: f32) -> f32 {
+    let gap_share = (1.0 - fraction).max(0.0);
+    (available * fraction - finite_non_negative(gap) * gap_share).max(0.0)
 }
 
 fn cross_distribution(
@@ -1167,6 +1218,50 @@ mod tests {
 
         assert_rect_approx_eq(layout.items[0].rect, Rect::new(0.0, 0.0, 50.0, 10.0));
         assert_rect_approx_eq(layout.items[1].rect, Rect::new(50.0, 0.0, 150.0, 10.0));
+    }
+
+    #[test]
+    fn flex_layout_supports_gap_aware_fraction_basis() {
+        let items = [
+            FlexItem::new().basis_gap_aware_fraction(1.0 / 3.0),
+            FlexItem::new().basis_gap_aware_fraction(1.0 / 3.0),
+            FlexItem::new().basis_gap_aware_fraction(1.0 / 3.0),
+        ];
+        let layout = flex_layout(
+            FlexStyle::horizontal().gap(10.0),
+            &items,
+            Constraints::tight(Size::new(320.0, 12.0)),
+            |_, _| Size::new(10.0, 10.0),
+        );
+
+        assert_rect_approx_eq(layout.items[0].rect, Rect::new(0.0, 0.0, 100.0, 10.0));
+        assert_rect_approx_eq(layout.items[1].rect, Rect::new(110.0, 0.0, 100.0, 10.0));
+        assert_rect_approx_eq(layout.items[2].rect, Rect::new(220.0, 0.0, 100.0, 10.0));
+    }
+
+    #[test]
+    fn flex_layout_wraps_gap_aware_fraction_lines_after_full_rows() {
+        let items = [
+            FlexItem::new().basis_gap_aware_fraction(1.0 / 3.0),
+            FlexItem::new().basis_gap_aware_fraction(1.0 / 3.0),
+            FlexItem::new().basis_gap_aware_fraction(1.0 / 3.0),
+            FlexItem::new().basis_gap_aware_fraction(0.5),
+            FlexItem::new().basis_gap_aware_fraction(0.5),
+        ];
+        let layout = flex_layout(
+            FlexStyle::horizontal().wrap(FlexWrap::Wrap).gap(10.0),
+            &items,
+            Constraints::tight(Size::new(320.0, 100.0)),
+            |_, _| Size::new(10.0, 10.0),
+        );
+
+        assert_eq!(layout.lines.len(), 2);
+        assert_eq!(layout.items[0].line, 0);
+        assert_eq!(layout.items[2].line, 0);
+        assert_eq!(layout.items[3].line, 1);
+        assert_eq!(layout.items[4].line, 1);
+        assert_rect_approx_eq(layout.items[3].rect, Rect::new(0.0, 20.0, 155.0, 10.0));
+        assert_rect_approx_eq(layout.items[4].rect, Rect::new(165.0, 20.0, 155.0, 10.0));
     }
 
     #[test]
