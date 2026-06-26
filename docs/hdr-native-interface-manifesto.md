@@ -9,7 +9,7 @@
 - [Testing Guide](./testing.md)
 - [HDR Theme And Token Schema Proposal](./hdr-theme-token-schema-proposal.md)
 
-This document describes the intended product and visual-language direction for HDR-native user interfaces in SUI. It is still primarily a vision document, but it now sits beside a first working milestone in code. Today that milestone is intentionally narrow: the HDR token schema exists, `Button`, `Switch`, and `Popover` are the first built-in widgets consuming it, and `sui-widget-book` / `sui-dev` expose validation surfaces for the initial rollout.
+This document describes the intended product and visual-language direction for HDR-native user interfaces in SUI. It is still primarily a vision document, but it now sits beside a first working milestone in code. Today that milestone is intentionally narrow: the HDR token schema exists, `Button`, `Switch`, and `Popover` are the first built-in widgets consuming it, and `sui-demo` exposes validation surfaces for the initial rollout.
 
 ## Current milestone reality
 

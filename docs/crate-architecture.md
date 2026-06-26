@@ -10,7 +10,7 @@ crates/
   sui-animation/
   sui-core/
   sui-debug/
-  sui-dev/
+  sui-demo/
   sui-layout/
   sui-platform/
   sui-render-wgpu/
@@ -18,7 +18,6 @@ crates/
   sui-scene/
   sui-testing/
   sui-text/
-  sui-widget-book/
   sui-widgets/
 ```
 
@@ -53,8 +52,7 @@ The codebase is easiest to understand as three stacked layers plus tooling.
 ### Development and test tooling
 
 - `sui-testing`
-- `sui-widget-book`
-- `sui-dev`
+- `sui-demo`
 
 ## Crate Responsibilities
 
@@ -197,20 +195,14 @@ This crate owns `TestApp`, `TestWindow`, locators, expectations, snapshots,
 artifact helpers, and high-level actions. It relies on the real runtime and
 platform contracts instead of a fake widget model.
 
-### `sui-widget-book`
+### `sui-demo`
 
-The gallery and screenshot-oriented validation crate.
-
-This crate owns the built-in widget gallery, benchmark and stress targets,
-animation demos, diagnostics surfaces, performance overlays, and visual artifact
-generation.
-
-### `sui-dev`
-
-The main development host.
+The main development host, widget gallery, and visual validation package.
 
 This crate launches the desktop app used for manual runtime, widget, and
-renderer validation.
+renderer validation. Its `widget_book` module owns the built-in widget gallery,
+benchmark and stress targets, animation demos, diagnostics surfaces,
+performance overlays, and visual artifact generation.
 
 ## Directional Rules
 
@@ -235,7 +227,7 @@ renderer validation.
 - Change text shaping or measurement: `sui-text`, then validate runtime and renderer callers.
 - Change platform event handling or IME behavior: `sui-platform`, preserving `WindowId + Event` delivery.
 - Add locator behavior or test actions: `sui-testing`.
-- Add gallery stories, screenshots, or performance panels: `sui-widget-book`.
+- Add gallery stories, screenshots, or performance panels: `sui-demo`.
 
 ## Common Mistakes To Avoid
 

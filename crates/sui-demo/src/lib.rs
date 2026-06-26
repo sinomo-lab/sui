@@ -3,6 +3,7 @@ mod drag_drop_demo;
 mod layout_demo;
 mod paint_demo;
 mod vector_demo;
+pub mod widget_book;
 
 #[cfg(not(target_arch = "wasm32"))]
 use app::{DesktopAutomationMode, build_dev_application_with_automation};
@@ -17,6 +18,14 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::widget_book::GALLERY_SCROLL_NAME;
+use crate::widget_book::{
+    build_button_grid_benchmark_application, build_color_validation_application,
+    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+    build_text_rendering_comparison_application, build_widget_book_application,
+    default_widget_book_state,
+};
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use crossterm::{
     event::{
@@ -58,19 +67,11 @@ use sui::{
 use sui_testing::TestWindow;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use sui_tui::{TuiLayoutMode, TuiRenderOptions, render_snapshot};
-#[cfg(not(target_arch = "wasm32"))]
-use sui_widget_book::GALLERY_SCROLL_NAME;
-use sui_widget_book::{
-    build_button_grid_benchmark_application, build_color_validation_application,
-    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-    build_text_rendering_comparison_application, build_widget_book_application,
-    default_widget_book_state,
-};
 
 #[cfg(not(target_arch = "wasm32"))]
-const DESKTOP_NO_VSYNC_ENV: &str = "SUI_DEV_NO_VSYNC";
+const DESKTOP_NO_VSYNC_ENV: &str = "SUI_DEMO_NO_VSYNC";
 #[cfg(not(target_arch = "wasm32"))]
-const DESKTOP_AUTOMATION_ENV: &str = "SUI_DEV_AUTOMATION";
+const DESKTOP_AUTOMATION_ENV: &str = "SUI_DEMO_AUTOMATION";
 // WebGPU HDR canvas output treats 1.0 as ordinary browser white and allows
 // values above 1.0 for HDR highlights, so the web default keeps SDR UI at 1.0.
 const DEFAULT_WEB_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 80.0;
@@ -141,7 +142,7 @@ fn parse_desktop_automation(
         Some("button-grid-resize") => Ok(Some(DesktopLaunchAutomation::ButtonGridResize)),
         Some("widget-book-scroll") => Ok(Some(DesktopLaunchAutomation::WidgetBookScroll)),
         Some(other) => Err(sui::Error::new(format!(
-            "unsupported sui-dev automation `{other}`; supported values: button-grid-resize, widget-book-scroll"
+            "unsupported sui-demo automation `{other}`; supported values: button-grid-resize, widget-book-scroll"
         ))),
     }
 }
@@ -152,7 +153,7 @@ fn parse_tui_layout(raw_value: &str) -> sui::Result<TuiLayoutMode> {
         "structured" => Ok(TuiLayoutMode::Structured),
         "spatial" => Ok(TuiLayoutMode::Spatial),
         other => Err(sui::Error::new(format!(
-            "unsupported sui-dev TUI layout `{other}`; supported values: structured, spatial"
+            "unsupported sui-demo TUI layout `{other}`; supported values: structured, spatial"
         ))),
     }
 }
@@ -266,7 +267,7 @@ where
             "" => {}
             other => {
                 return Err(sui::Error::new(format!(
-                    "unsupported sui-dev argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<button-grid-resize|widget-book-scroll>, --tui, --tui-dump-accessibility, --tui-layout=<structured|spatial>, --tui-show-hidden"
+                    "unsupported sui-demo argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<button-grid-resize|widget-book-scroll>, --tui, --tui-dump-accessibility, --tui-layout=<structured|spatial>, --tui-show-hidden"
                 )));
             }
         }
@@ -278,7 +279,7 @@ where
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "tui")))]
 fn tui_feature_disabled_error(flag: &str) -> sui::Error {
     sui::Error::new(format!(
-        "unsupported sui-dev argument `{flag}`; this binary was built without the `tui` feature"
+        "unsupported sui-demo argument `{flag}`; this binary was built without the `tui` feature"
     ))
 }
 
@@ -596,7 +597,7 @@ fn draw_tui(
     .len();
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
-            " sui-dev ",
+            " sui-demo ",
             Style::default()
                 .fg(TerminalColor::Black)
                 .bg(TerminalColor::Cyan),
@@ -3449,22 +3450,22 @@ mod tests {
             "benchmark=color-validation&canvas-format=float16&canvas-color-space=display-p3&canvas-tone-mapping=extended&color-management=prefer-hdr&output-primaries=display-p3&dynamic-range=hdr&tone-mapping=reinhard",
         );
         let probe = WebBrowserProbe {
-            current_path: "/sui-dev".to_string(),
+            current_path: "/sui-demo".to_string(),
             user_agent: "ExampleBrowser/1.0".to_string(),
             language: "en-US".to_string(),
             device_pixel_ratio: 2.0,
             canvas_count: 2,
-            document_title: "SUI Dev Validation".to_string(),
+            document_title: "SUI Demo Validation".to_string(),
         };
         let report = web_browser_probe_report(&mode, &probe);
 
-        assert!(report.contains("path=/sui-dev"));
-        assert!(report.contains("document_title=SUI Dev Validation"));
+        assert!(report.contains("path=/sui-demo"));
+        assert!(report.contains("document_title=SUI Demo Validation"));
         assert!(report.contains("language=en-US"));
         assert!(report.contains("device_pixel_ratio=2"));
         assert!(report.contains("canvas_count=2"));
         assert!(report.contains("user_agent=ExampleBrowser/1.0"));
-        assert!(report.contains("validation_url=/sui-dev?benchmark=color-validation"));
+        assert!(report.contains("validation_url=/sui-demo?benchmark=color-validation"));
         assert!(report.contains("canvas-format=rgba16float"));
     }
 
@@ -3572,7 +3573,11 @@ mod tests {
     #[test]
     fn desktop_launch_mode_rejects_unknown_tui_layout() {
         let error = parse_desktop_launch_mode(["--tui-layout=diagonal"], false, None).unwrap_err();
-        assert!(error.to_string().contains("unsupported sui-dev TUI layout"));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported sui-demo TUI layout")
+        );
     }
 
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "tui")))]
@@ -3644,7 +3649,7 @@ mod tests {
             .nodes
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI dev browser")
+                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI demo browser")
             })
             .expect("dev shell tab semantics present");
         assert_eq!(
@@ -4067,14 +4072,18 @@ mod tests {
     #[test]
     fn desktop_launch_mode_rejects_unknown_flags() {
         let error = parse_desktop_launch_mode(["--bogus"], false, None).unwrap_err();
-        assert!(error.to_string().contains("unsupported sui-dev argument"));
+        assert!(error.to_string().contains("unsupported sui-demo argument"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn desktop_launch_mode_rejects_unknown_automation() {
         let error = parse_desktop_automation(Some("bogus")).unwrap_err();
-        assert!(error.to_string().contains("unsupported sui-dev automation"));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported sui-demo automation")
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

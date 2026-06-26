@@ -2,9 +2,9 @@
 
 Goal: Improve small-text readability and overall text quality in SUI by adding a real LCD/subpixel text path, small-size hinting controls, stem-darkening experiments, and benchmark/visual comparison surfaces without replacing the existing atlas-first renderer architecture.
 
-Architecture: Keep SUI’s current atlas-backed text pipeline as the default rendering path, but split text rendering policy into explicit modes instead of treating all text as grayscale coverage. Add a true subpixel atlas path that preserves per-channel coverage from swash, then layer in optional small-size hinting and stem darkening behind renderer-facing settings and benchmark surfaces in sui-dev. Reserve any Pathfinder-style analytic/vector text work as a later hybrid path for selected cases such as large transformed text.
+Architecture: Keep SUI’s current atlas-backed text pipeline as the default rendering path, but split text rendering policy into explicit modes instead of treating all text as grayscale coverage. Add a true subpixel atlas path that preserves per-channel coverage from swash, then layer in optional small-size hinting and stem darkening behind renderer-facing settings and benchmark surfaces in sui-demo. Reserve any Pathfinder-style analytic/vector text work as a later hybrid path for selected cases such as large transformed text.
 
-Tech Stack: sui-render-wgpu, sui-dev, sui-widget-book, swash, wgpu, Trunk web benchmarks, existing SUI renderer settings hooks.
+Tech Stack: sui-render-wgpu, sui-demo, swash, wgpu, Trunk web benchmarks, existing SUI renderer settings hooks.
 
 ---
 
@@ -23,8 +23,8 @@ Current SUI state relevant to this plan:
 - `crates/sui-render-wgpu/src/scene.rs:2021-2043` immediately averages the RGB subpixel mask into grayscale alpha.
 - `crates/sui-render-wgpu/src/scene.rs:1916-1920` builds the swash scaler with `.hint(false)`.
 - `crates/sui-render-wgpu/src/lib.rs:115-150` already exposes `TextCoveragePolicy` hooks.
-- `crates/sui-dev/src/app.rs:406-520` already exposes renderer controls in the dev workspace.
-- `crates/sui-dev/web/index.html` and `crates/sui-dev/src/lib.rs` now support wasm benchmark modes.
+- `crates/sui-demo/src/app.rs:406-520` already exposes renderer controls in the dev workspace.
+- `crates/sui-demo/web/index.html` and `crates/sui-demo/src/lib.rs` now support wasm benchmark modes.
 
 This means the shortest path is not “replace the renderer with Pathfinder”, but rather “use SUI’s policy hooks to preserve more of the raster signal and expose small-text controls explicitly”.
 
@@ -197,8 +197,8 @@ Run:
 ```bash
 cargo test -p sui-render-wgpu subpixel_mask_preserves_distinct_rgb_channels_in_lcd_mode -- --exact
 cargo check -p sui-render-wgpu
-cargo check -p sui-dev
-cargo check -p sui-dev --target wasm32-unknown-unknown --no-default-features --features web
+cargo check -p sui-demo
+cargo check -p sui-demo --target wasm32-unknown-unknown --no-default-features --features web
 ```
 
 Expected: PASS
@@ -298,7 +298,7 @@ Objective: Make small text more readable by allowing hinting below a tunable ppe
 Files:
 - Modify: `crates/sui-render-wgpu/src/lib.rs`
 - Modify: `crates/sui-render-wgpu/src/scene.rs`
-- Modify: `crates/sui-dev/src/app.rs`
+- Modify: `crates/sui-demo/src/app.rs`
 - Test: `crates/sui-render-wgpu/src/lib.rs`
 - Test: `crates/sui-render-wgpu/src/scene.rs`
 
@@ -353,13 +353,13 @@ Run:
 
 ```bash
 cargo test -p sui-render-wgpu slight_hinting_enables_below_threshold -- --exact
-cargo check -p sui-dev
+cargo check -p sui-demo
 ```
 
 Step 6: Commit
 
 ```bash
-git add crates/sui-render-wgpu/src/lib.rs crates/sui-render-wgpu/src/scene.rs crates/sui-dev/src/app.rs
+git add crates/sui-render-wgpu/src/lib.rs crates/sui-render-wgpu/src/scene.rs crates/sui-demo/src/app.rs
 git commit -m "feat: add small-text slight hinting controls"
 ```
 
@@ -372,7 +372,7 @@ Objective: Improve small dark-on-light UI text by slightly increasing effective 
 Files:
 - Modify: `crates/sui-render-wgpu/src/lib.rs`
 - Modify: `crates/sui-render-wgpu/src/scene.rs`
-- Modify: `crates/sui-dev/src/app.rs`
+- Modify: `crates/sui-demo/src/app.rs`
 - Test: `crates/sui-render-wgpu/src/scene.rs`
 
 Step 1: Write failing tests for the darkening policy
@@ -411,7 +411,7 @@ Possible implementation points:
 - coverage remap during `swash_image_to_rgba`
 - or a tiny dilation/convolution pass before atlas upload
 
-Step 4: Expose controls in sui-dev
+Step 4: Expose controls in sui-demo
 
 Add settings for:
 - on/off
@@ -424,14 +424,14 @@ Run:
 
 ```bash
 cargo test -p sui-render-wgpu stem_darkening_applies_only_below_threshold -- --exact
-cargo check -p sui-dev
-cargo check -p sui-dev --target wasm32-unknown-unknown --no-default-features --features web
+cargo check -p sui-demo
+cargo check -p sui-demo --target wasm32-unknown-unknown --no-default-features --features web
 ```
 
 Step 6: Commit
 
 ```bash
-git add crates/sui-render-wgpu/src/lib.rs crates/sui-render-wgpu/src/scene.rs crates/sui-dev/src/app.rs
+git add crates/sui-render-wgpu/src/lib.rs crates/sui-render-wgpu/src/scene.rs crates/sui-demo/src/app.rs
 git commit -m "feat: add optional small-text stem darkening"
 ```
 
@@ -442,9 +442,9 @@ git commit -m "feat: add optional small-text stem darkening"
 Objective: Make regressions and improvements obvious by rendering the same text samples through multiple modes side by side.
 
 Files:
-- Modify: `crates/sui-widget-book/src/lib.rs`
-- Modify: `crates/sui-dev/src/app.rs`
-- Test: `crates/sui-widget-book/tests/desktop_e2e.rs`
+- Modify: `crates/sui-demo/src/widget_book/mod.rs`
+- Modify: `crates/sui-demo/src/app.rs`
+- Test: `crates/sui-demo/tests/desktop_e2e.rs`
 - Optional docs: `docs/text-system.md`
 
 Step 1: Write a failing test describing the comparison surface
@@ -464,7 +464,7 @@ Step 2: Run to verify failure
 Run:
 
 ```bash
-cargo test -p sui-widget-book text_rendering_comparison_surface_exposes_all_render_modes -- --exact
+cargo test -p sui-demo text_rendering_comparison_surface_exposes_all_render_modes -- --exact
 ```
 
 Expected: FAIL
@@ -491,14 +491,14 @@ Step 4: Verify pass
 Run:
 
 ```bash
-cargo check -p sui-widget-book
-cargo check -p sui-dev
+cargo check -p sui-demo
+cargo check -p sui-demo
 ```
 
 Step 5: Commit
 
 ```bash
-git add crates/sui-widget-book/src/lib.rs crates/sui-dev/src/app.rs
+git add crates/sui-demo/src/widget_book/mod.rs crates/sui-demo/src/app.rs
 # plus tests/docs if added
 git commit -m "feat: add text rendering comparison surface"
 ```
@@ -510,10 +510,10 @@ git commit -m "feat: add text rendering comparison surface"
 Objective: Measure the real-world impact of text improvements on the web build.
 
 Files:
-- Modify: `crates/sui-dev/src/lib.rs`
-- Modify: `crates/sui-dev/web/index.html`
-- Modify: `crates/sui-dev/web/README.md`
-- Optional: `crates/sui-dev/src/app.rs`
+- Modify: `crates/sui-demo/src/lib.rs`
+- Modify: `crates/sui-demo/web/index.html`
+- Modify: `crates/sui-demo/web/README.md`
+- Optional: `crates/sui-demo/src/app.rs`
 
 Step 1: Write failing tests for benchmark mode parsing if needed
 
@@ -532,7 +532,7 @@ Step 2: Run tests to verify failure if the preset does not yet exist
 Run:
 
 ```bash
-cargo test -p sui-dev --lib parses_text_editing_web_benchmark_mode
+cargo test -p sui-demo --lib parses_text_editing_web_benchmark_mode
 ```
 
 Step 3: Implement benchmark presets and docs
@@ -548,14 +548,14 @@ Step 4: Verify pass
 Run:
 
 ```bash
-cargo test -p sui-dev --lib
-trunk build --config crates/sui-dev/web/Trunk.toml
+cargo test -p sui-demo --lib
+trunk build --config crates/sui-demo/web/Trunk.toml
 ```
 
 Step 5: Commit
 
 ```bash
-git add crates/sui-dev/src/lib.rs crates/sui-dev/web/index.html crates/sui-dev/web/README.md
+git add crates/sui-demo/src/lib.rs crates/sui-demo/web/index.html crates/sui-demo/web/README.md
 # plus any supporting files
 git commit -m "feat: add text-focused wasm benchmark presets"
 ```
@@ -584,9 +584,9 @@ Step 2: Verify docs are accurate against commands
 Run:
 
 ```bash
-cargo check -p sui-dev
-cargo check -p sui-dev --target wasm32-unknown-unknown --no-default-features --features web
-trunk build --config crates/sui-dev/web/Trunk.toml
+cargo check -p sui-demo
+cargo check -p sui-demo --target wasm32-unknown-unknown --no-default-features --features web
+trunk build --config crates/sui-demo/web/Trunk.toml
 ```
 
 Step 3: Commit
@@ -621,17 +621,17 @@ Native validation:
 
 ```bash
 cargo check -p sui-render-wgpu
-cargo check -p sui-widget-book
-cargo check -p sui-dev
+cargo check -p sui-demo
+cargo check -p sui-demo
 cargo test -p sui-render-wgpu
-cargo test -p sui-dev --lib
+cargo test -p sui-demo --lib
 ```
 
 Wasm validation:
 
 ```bash
-cargo check -p sui-dev --target wasm32-unknown-unknown --no-default-features --features web
-cd crates/sui-dev/web
+cargo check -p sui-demo --target wasm32-unknown-unknown --no-default-features --features web
+cd crates/sui-demo/web
 trunk build --config Trunk.toml
 trunk serve --config Trunk.toml
 ```

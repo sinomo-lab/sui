@@ -30,7 +30,7 @@ This matters because `sui-testing` is not a fake UI model. It runs against the s
 
 ### 3. Desktop harness and visual tests
 
-`sui-widget-book` includes desktop-oriented tests and visual artifact generation. This layer covers cases that depend on the real desktop event loop, real surface presentation, or visual output reviewed as images.
+`sui-demo` includes the widget-book desktop tests and visual artifact generation. This layer covers cases that depend on the real desktop event loop, real surface presentation, or visual output reviewed as images.
 
 ## Core Testing Model
 
@@ -121,7 +121,7 @@ Widget-book desktop tests fit cases such as:
 - scrolling, clipping, or rendering differs from headless output
 - you need visual artifacts for review
 
-Manual `sui-dev` runs fit cases such as:
+Manual `sui-demo` runs fit cases such as:
 
 - the problem is exploratory
 - you need the performance overlay
@@ -132,11 +132,11 @@ Manual `sui-dev` runs fit cases such as:
 ```bash
 cargo test
 cargo test -p sui-testing
-cargo test -p sui-widget-book -- --nocapture
-cargo run -p sui-dev
+cargo test -p sui-demo -- --nocapture
+cargo run -p sui-demo
 ```
 
-`cargo test -p sui-widget-book -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-widget-book`.
+`cargo test -p sui-demo -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-demo/widget-book`.
 
 Note: AVIF export in the artifact pipeline currently uses a high-quality rav1e still-image encode and is much slower than the accompanying EXR or PNG writes. When iterating on renderer/debug artifacts, expect AVIF generation to dominate wall-clock time.
 
@@ -169,7 +169,7 @@ When a test fails, the useful sources are usually:
 - the latest semantics snapshot
 - widget-book visual artifacts
 - runtime and renderer diagnostics
-- targeted `sui-dev` reproduction in the desktop host
+- targeted `sui-demo` reproduction in the desktop host
 
 If a change affects rendering, also check whether the semantics tree still matches what the image suggests. Many regressions are not purely visual or purely semantic; they often touch both.
 
@@ -182,6 +182,6 @@ If you are changing the test surface itself, start here:
 - `crates/sui-testing/src/locator.rs`
 - `crates/sui-testing/src/expect.rs`
 - `crates/sui-platform/src/headless.rs`
-- `crates/sui-widget-book/tests/desktop_e2e.rs`
+- `crates/sui-demo/tests/desktop_e2e.rs`
 
 Those files show the current expected testing style more accurately than the old proposal docs did.

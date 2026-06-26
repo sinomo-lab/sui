@@ -7,8 +7,8 @@ use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_theme_color, reques
 pub(crate) const DRAG_DROP_TAB_LABEL: &str = "Drag and drop";
 pub(crate) const DRAG_DROP_DEMO_SCROLL_NAME: &str = "Drag and drop demo scroll";
 
-const ASSET_KIND: &str = "sui-dev.asset";
-const SCOPE_TOKEN_KIND: &str = "sui-dev.scope-token";
+const ASSET_KIND: &str = "sui-demo.asset";
+const SCOPE_TOKEN_KIND: &str = "sui-demo.scope-token";
 const REORDER_ITEM_COUNT: usize = 5;
 
 const INITIAL_REORDER_ITEMS: [ReorderItem; REORDER_ITEM_COUNT] = [

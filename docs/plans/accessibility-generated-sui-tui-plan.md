@@ -1,10 +1,10 @@
 # Accessibility-Generated SUI TUI Implementation Plan
 
-Goal: Add a terminal UI path for SUI where usable TUIs are automatically generated from the accessibility tree. The first integration target is `sui-dev --tui`, backed by a new `sui-tui` crate that renders and drives SUI applications through their accessibility snapshots.
+Goal: Add a terminal UI path for SUI where usable TUIs are automatically generated from the accessibility tree. The first integration target is `sui-demo --tui`, backed by a new `sui-tui` crate that renders and drives SUI applications through their accessibility snapshots.
 
 Architecture: Treat the accessibility tree as the source of truth for terminal rendering and interaction. The TUI does not need to duplicate the GUI's exact layout, drawing, animation, or pointer interaction model. Instead, it should preserve the same user-facing functionality for supported widgets by interpreting roles, names, values, state, actions, hierarchy, and bounds from `AccessibilitySnapshot`.
 
-Tech Stack: Rust 2024, existing SUI runtime/platform/testing architecture, `sui-core::SemanticsNode`, `sui-platform::AccessibilitySnapshot`, `sui-testing` style locator/action semantics, a new `sui-tui` crate, and a `sui-dev --tui` launch path.
+Tech Stack: Rust 2024, existing SUI runtime/platform/testing architecture, `sui-core::SemanticsNode`, `sui-platform::AccessibilitySnapshot`, `sui-testing` style locator/action semantics, a new `sui-tui` crate, and a `sui-demo --tui` launch path.
 
 ---
 
@@ -25,7 +25,7 @@ This means:
 - the accessibility tree becomes a parallel functional renderer
 - basic widgets and layouts get terminal support without hand-writing a second UI
 - tests can verify that the accessibility tree is complete enough to drive real interaction
-- `sui-dev --tui` becomes both a developer tool and an accessibility-tree validation surface
+- `sui-demo --tui` becomes both a developer tool and an accessibility-tree validation surface
 
 ---
 
@@ -34,7 +34,7 @@ This means:
 - Do not make the TUI match GUI pixels or exact spatial layout.
 - Do not duplicate widget implementation logic inside the TUI.
 - Do not require every custom widget to provide a custom terminal renderer.
-- Do not treat terminal support as a manually authored second frontend for `sui-dev`.
+- Do not treat terminal support as a manually authored second frontend for `sui-demo`.
 - Do not block the MVP on rich terminal graphics, mouse support, or full desktop live-bridge integration.
 
 ---
@@ -84,7 +84,7 @@ Unsupported roles should degrade gracefully:
 
 ### Validation is a feature
 
-Because the TUI depends on accessibility quality, it should make missing or ambiguous semantics visible. `sui-dev --tui` should help developers notice when the GUI works visually but the accessibility tree is not functional enough.
+Because the TUI depends on accessibility quality, it should make missing or ambiguous semantics visible. `sui-demo --tui` should help developers notice when the GUI works visually but the accessibility tree is not functional enough.
 
 ---
 
@@ -134,17 +134,17 @@ The exact types can evolve, but the important boundary is that snapshot-to-frame
 
 ---
 
-## `sui-dev --tui`
+## `sui-demo --tui`
 
-Extend `sui-dev` launch parsing with:
+Extend `sui-demo` launch parsing with:
 
 ```text
-cargo run -p sui-dev -- --tui
+cargo run -p sui-demo -- --tui
 ```
 
 Behavior:
 
-1. Build the normal `sui-dev` application.
+1. Build the normal `sui-demo` application.
 2. Run it through a headless or terminal-compatible platform loop.
 3. Capture the current `AccessibilitySnapshot`.
 4. Render that snapshot through `sui-tui`.
@@ -235,7 +235,7 @@ The same panel should show validation issues for the whole snapshot and for the 
 
 ## Supported role behavior
 
-Initial role support should focus on the widgets already used throughout `sui-dev` and `sui-widget-book`.
+Initial role support should focus on the widgets already used throughout `sui-demo`, including the widget book.
 
 | Role | TUI representation | Expected actions |
 | --- | --- | --- |
@@ -401,15 +401,15 @@ cargo test -p sui-tui
 
 ---
 
-### Task 4: Integrate `sui-dev --tui`
+### Task 4: Integrate `sui-demo --tui`
 
-Objective: Launch the normal `sui-dev` app through the generated TUI path.
+Objective: Launch the normal `sui-demo` app through the generated TUI path.
 
 Files:
 
-- Modify: `crates/sui-dev/Cargo.toml`
-- Modify: `crates/sui-dev/src/lib.rs`
-- Possibly modify: `crates/sui-dev/src/main.rs`
+- Modify: `crates/sui-demo/Cargo.toml`
+- Modify: `crates/sui-demo/src/lib.rs`
+- Possibly modify: `crates/sui-demo/src/main.rs`
 
 Steps:
 
@@ -420,20 +420,20 @@ Steps:
 5. Verify:
 
 ```powershell
-cargo test -p sui-dev --lib
-cargo run -p sui-dev -- --tui-dump-accessibility
+cargo test -p sui-demo --lib
+cargo run -p sui-demo -- --tui-dump-accessibility
 ```
 
 ---
 
 ### Task 5: Add interactive terminal host
 
-Objective: Make `sui-dev --tui` usable as an interactive terminal app.
+Objective: Make `sui-demo --tui` usable as an interactive terminal app.
 
 Files:
 
 - Modify: `crates/sui-tui/src/interact.rs`
-- Modify: `crates/sui-dev/src/lib.rs`
+- Modify: `crates/sui-demo/src/lib.rs`
 - Possibly add: `crates/sui-tui/src/terminal.rs`
 
 Steps:
@@ -446,7 +446,7 @@ Steps:
 6. Verify manually:
 
 ```powershell
-cargo run -p sui-dev -- --tui
+cargo run -p sui-demo -- --tui
 ```
 
 ---
@@ -475,13 +475,13 @@ cargo test -p sui-testing
 
 ---
 
-### Task 7: Validate `sui-dev` automatic TUI coverage
+### Task 7: Validate `sui-demo` automatic TUI coverage
 
 Objective: Prove that the current dev workspace can be represented usefully without app-specific TUI code.
 
 Files:
 
-- Test: `crates/sui-dev/src/app.rs` or a new integration test
+- Test: `crates/sui-demo/src/app.rs` or a new integration test
 - Possibly modify widget semantics where validation exposes gaps
 
 Steps:
@@ -502,8 +502,8 @@ Steps:
 6. Verify:
 
 ```powershell
-cargo test -p sui-dev --lib
-cargo test -p sui-widget-book
+cargo test -p sui-demo --lib
+cargo test -p sui-demo
 ```
 
 ---
@@ -529,7 +529,7 @@ Document:
 Verify:
 
 ```powershell
-cargo check -p sui-dev
+cargo check -p sui-demo
 cargo test -p sui-tui
 ```
 
@@ -540,9 +540,9 @@ cargo test -p sui-tui
 - `sui-tui` exists as a crate.
 - It can render `AccessibilitySnapshot` values into deterministic terminal output.
 - It validates common accessibility problems that affect automatic TUI generation.
-- `sui-dev --tui-dump-accessibility` or equivalent can render the dev app's current accessibility tree.
-- `sui-dev --tui` can run an interactive terminal host for basic navigation and activation.
-- Basic widgets and layouts used by `sui-dev` produce a usable TUI automatically.
+- `sui-demo --tui-dump-accessibility` or equivalent can render the dev app's current accessibility tree.
+- `sui-demo --tui` can run an interactive terminal host for basic navigation and activation.
+- Basic widgets and layouts used by `sui-demo` produce a usable TUI automatically.
 - The TUI does not rely on GUI-specific layout or widget internals.
 
 ---

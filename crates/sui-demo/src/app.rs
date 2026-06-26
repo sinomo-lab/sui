@@ -1,5 +1,14 @@
 use std::{cell::RefCell, rc::Rc};
 
+#[cfg(test)]
+use crate::widget_book::build_widget_book_gallery;
+use crate::widget_book::{
+    LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
+    build_retained_text_benchmark, build_text_editing_benchmark,
+    build_text_rendering_comparison_surface, build_text_validation_surface,
+    build_theme_demo_surface, build_widget_book_gallery_with_theme, default_widget_book_state,
+    register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
+};
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
@@ -8,15 +17,6 @@ use sui::{
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
     WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
     prelude::*, window_output_diagnostics,
-};
-#[cfg(test)]
-use sui_widget_book::build_widget_book_gallery;
-use sui_widget_book::{
-    LivePerformanceRoot, build_button_grid_benchmark, build_color_validation_surface,
-    build_retained_text_benchmark, build_text_editing_benchmark,
-    build_text_rendering_comparison_surface, build_text_validation_surface,
-    build_theme_demo_surface, build_widget_book_gallery_with_theme, default_widget_book_state,
-    register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 
 #[cfg(test)]
@@ -33,7 +33,7 @@ use crate::vector_demo::{
 };
 use crate::vector_demo::{VECTOR_EDITOR_TAB_LABEL, build_vector_editor_demo_with_theme};
 
-const WINDOW_TITLE: &str = "SUI Dev";
+const WINDOW_TITLE: &str = "SUI Demo";
 const WINDOW_DESCRIPTION: &str =
     "Browser-style development workspace for the widget book and focused performance demos.";
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
@@ -99,7 +99,7 @@ const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
 const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
 const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
-const DEV_SHELL_PICKER_TITLE: &str = "SUI Dev";
+const DEV_SHELL_PICKER_TITLE: &str = "SUI Demo";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
@@ -1016,7 +1016,7 @@ impl Widget for DevBrowserShell {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tabs, ctx.bounds());
-        node.name = Some("SUI dev browser".to_string());
+        node.name = Some("SUI demo browser".to_string());
         node.value = self
             .state
             .active_tab()
@@ -3306,7 +3306,7 @@ mod tests {
                         .alignment(Alignment::Start)
                         .with_child(
                             ColorSwatch::new(
-                                sui_widget_book::COLOR_SWATCH_NAME,
+                                crate::widget_book::COLOR_SWATCH_NAME,
                                 Color::rgba(0.12, 0.55, 0.88, 1.0),
                             )
                             .size(Size::new(64.0, 36.0)),
@@ -3314,7 +3314,7 @@ mod tests {
                         .with_child(
                             SizedBox::new().width(220.0).height(220.0).with_child(
                                 Image::new(WIDGET_BOOK_TEST_IMAGE_HANDLE)
-                                    .label(sui_widget_book::DEMO_IMAGE_LABEL)
+                                    .label(crate::widget_book::DEMO_IMAGE_LABEL)
                                     .fit(ImageFit::Contain)
                                     .background(Color::rgba(0.92, 0.95, 0.98, 1.0))
                                     .corner_radius(12.0),
@@ -3327,7 +3327,7 @@ mod tests {
                         .with_child(Label::new("Color imagery trailing spacer")),
                 ),
         ))
-        .name(sui_widget_book::GALLERY_SCROLL_NAME);
+        .name(crate::widget_book::GALLERY_SCROLL_NAME);
         views.push_view(
             FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
                 .min_size(Size::new(420.0, 320.0)),
@@ -3428,7 +3428,7 @@ mod tests {
             .get_by_role(SemanticsRole::Window)
             .with_name(WIDGET_BOOK_TAB_LABEL)
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+            .with_name(crate::widget_book::GALLERY_SCROLL_NAME);
 
         let before_frame = window.capture_screenshot()?;
         for _ in 0..6 {
@@ -3625,12 +3625,12 @@ mod tests {
         assert_story_exit_does_not_repaint_outside_view(
             &window,
             SemanticsRole::Image,
-            sui_widget_book::DEMO_IMAGE_LABEL,
+            crate::widget_book::DEMO_IMAGE_LABEL,
         )?;
         assert_story_exit_does_not_repaint_outside_view(
             &window,
             SemanticsRole::ColorSwatch,
-            sui_widget_book::COLOR_SWATCH_NAME,
+            crate::widget_book::COLOR_SWATCH_NAME,
         )?;
 
         Ok(())
@@ -3723,7 +3723,7 @@ mod tests {
         open_dev_shell_demo(&window, HDR_VALIDATION_TAB_LABEL)?;
         window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(sui_widget_book::COLOR_VALIDATION_SCROLL_NAME)
+            .with_name(crate::widget_book::COLOR_VALIDATION_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
         Ok(())
@@ -6144,7 +6144,7 @@ mod tests {
 
         assert!(
             semantics.iter().any(|node| {
-                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI dev browser")
+                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI demo browser")
             }),
             "expected the desktop launch builder to use the browser-style dev shell"
         );
@@ -6200,7 +6200,7 @@ mod tests {
                 .iter()
                 .find(|node| {
                     node.role == SemanticsRole::Tabs
-                        && node.name.as_deref() == Some("SUI dev browser")
+                        && node.name.as_deref() == Some("SUI demo browser")
                 })
                 .expect("desktop dev shell tab semantics should exist");
             assert_eq!(shell.value, Some(SemanticsValue::Text(title.to_string())));
@@ -6216,7 +6216,7 @@ mod tests {
             .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
             .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_no_vsync(move || {
-            sui_widget_book::build_color_validation_application()
+            crate::widget_book::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
         let window = app.main_window()?;
@@ -6356,13 +6356,13 @@ final_max_luminance={final_max_luminance}
             .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
             .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_no_vsync(move || {
-            sui_widget_book::build_color_validation_application()
+            crate::widget_book::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
         let window = app.main_window()?;
         let scroll = window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(sui_widget_book::COLOR_VALIDATION_SCROLL_NAME);
+            .with_name(crate::widget_book::COLOR_VALIDATION_SCROLL_NAME);
         scroll.scroll_pixels(Vector::new(0.0, -240.0))?;
 
         let artifact = window.capture_debug_frame(DebugCaptureRequest {
@@ -6542,12 +6542,12 @@ final_max_luminance={final_max_luminance}
         open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
         let gallery = window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+            .with_name(crate::widget_book::GALLERY_SCROLL_NAME);
         scroll_story_until_visible(
             &window,
             &gallery,
             SemanticsRole::Button,
-            sui_widget_book::PRIMARY_BUTTON_LABEL,
+            crate::widget_book::PRIMARY_BUTTON_LABEL,
             240,
         )?;
 
@@ -6555,7 +6555,7 @@ final_max_luminance={final_max_luminance}
         let primary_button = find_named_node(
             &light_snapshot,
             SemanticsRole::Button,
-            sui_widget_book::PRIMARY_BUTTON_LABEL,
+            crate::widget_book::PRIMARY_BUTTON_LABEL,
         );
         let probe = Rect::new(
             primary_button.bounds.x() + 8.0,
@@ -6872,7 +6872,7 @@ final_max_luminance={final_max_luminance}
 
     fn assert_dev_shell_active_tab(window: &TestWindow, title: &str) -> Result<()> {
         let snapshot = window.snapshot()?;
-        let shell = find_named_node(&snapshot, SemanticsRole::Tabs, "SUI dev browser");
+        let shell = find_named_node(&snapshot, SemanticsRole::Tabs, "SUI demo browser");
         assert_eq!(
             shell.value,
             Some(SemanticsValue::Text(title.to_string())),
@@ -7163,7 +7163,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Dev 64-Button Resize Benchmark ===");
+        println!("\n=== SUI Demo 64-Button Resize Benchmark ===");
         println!("frames measured:  {valid_count}");
         println!(
             "avg frame time:   {avg_ms:.3} ms ({:.0} fps)",
@@ -7665,7 +7665,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Dev Visible No-Vsync 64-Button Resize Benchmark ===");
+        println!("\n=== SUI Demo Visible No-Vsync 64-Button Resize Benchmark ===");
         println!("frames measured:   {valid_count}");
         println!(
             "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
@@ -7879,7 +7879,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Dev Visible No-Vsync Widget-Book Drag Benchmark ===");
+        println!("\n=== SUI Demo Visible No-Vsync Widget-Book Drag Benchmark ===");
         println!("frames measured:   {valid_count}");
         println!(
             "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
@@ -7936,7 +7936,7 @@ final_max_luminance={final_max_luminance}
             .saturating_sub(initial.frame_index);
         let fps = frame_delta as f64 / elapsed_s;
 
-        println!("\n=== SUI Dev Visible No-Vsync Idle Benchmark ===");
+        println!("\n=== SUI Demo Visible No-Vsync Idle Benchmark ===");
         println!("sample duration:   {:.3} s", elapsed_s);
         println!("frame delta:       {frame_delta}");
         println!("observed fps:      {fps:.1}");
@@ -7986,7 +7986,7 @@ final_max_luminance={final_max_luminance}
             .get_by_role(SemanticsRole::Window)
             .with_name(WIDGET_BOOK_TAB_LABEL)
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+            .with_name(crate::widget_book::GALLERY_SCROLL_NAME);
 
         let mut previous_frame_index = window.performance_snapshot()?.frame_index;
         let mut frame_samples = Vec::with_capacity(TARGET_FRAMES);
@@ -8003,7 +8003,7 @@ final_max_luminance={final_max_luminance}
             scroll_inputs += 1;
         }
         if frame_samples.len() < TARGET_FRAMES {
-            println!("\n=== SUI Dev Visible No-Vsync Widget-Book Scroll Benchmark ===");
+            println!("\n=== SUI Demo Visible No-Vsync Widget-Book Scroll Benchmark ===");
             println!("scroll inputs:     {scroll_inputs}");
             println!("frames captured:   {}", frame_samples.len());
             println!(
@@ -8164,7 +8164,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Dev Visible No-Vsync Widget-Book Scroll Benchmark ===");
+        println!("\n=== SUI Demo Visible No-Vsync Widget-Book Scroll Benchmark ===");
         println!("frames measured:   {valid_count}");
         println!(
             "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
@@ -8384,7 +8384,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Dev Realtime Visible No-Vsync 64-Button Resize Benchmark ===");
+        println!("\n=== SUI Demo Realtime Visible No-Vsync 64-Button Resize Benchmark ===");
         println!("frames captured:   {valid_count}");
         println!("elapsed:           {:.3} s", benchmark_elapsed_s);
         println!("observed fps:      {observed_fps:.1}");
@@ -8431,7 +8431,7 @@ final_max_luminance={final_max_luminance}
         let gallery = find_named_node(
             &initial_snapshot,
             SemanticsRole::ScrollView,
-            sui_widget_book::GALLERY_SCROLL_NAME,
+            crate::widget_book::GALLERY_SCROLL_NAME,
         );
         let scroll_point = Point::new(
             gallery.bounds.x() + gallery.bounds.width() * 0.5,
@@ -8481,7 +8481,7 @@ final_max_luminance={final_max_luminance}
         let after_gallery = find_named_node(
             &after_snapshot,
             SemanticsRole::ScrollView,
-            sui_widget_book::GALLERY_SCROLL_NAME,
+            crate::widget_book::GALLERY_SCROLL_NAME,
         );
         assert_eq!(
             after_gallery.bounds, gallery.bounds,
@@ -8591,7 +8591,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Dev Realtime Visible No-Vsync Widget-Book Scroll Benchmark ===");
+        println!("\n=== SUI Demo Realtime Visible No-Vsync Widget-Book Scroll Benchmark ===");
         println!("frames captured:   {valid_count}");
         println!("elapsed:           {:.3} s", benchmark_elapsed_s);
         println!("observed fps:      {observed_fps:.1}");
@@ -8648,7 +8648,7 @@ final_max_luminance={final_max_luminance}
             .get_by_role(SemanticsRole::Window)
             .with_name(WIDGET_BOOK_TAB_LABEL)
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(sui_widget_book::GALLERY_SCROLL_NAME);
+            .with_name(crate::widget_book::GALLERY_SCROLL_NAME);
 
         scroll_story_until_visible(window, &gallery, role.clone(), name, 240)?;
         let before_snapshot = window.snapshot()?;
@@ -8744,7 +8744,7 @@ final_max_luminance={final_max_luminance}
             let gallery_bounds = find_named_node(
                 &snapshot,
                 SemanticsRole::ScrollView,
-                sui_widget_book::GALLERY_SCROLL_NAME,
+                crate::widget_book::GALLERY_SCROLL_NAME,
             )
             .bounds;
             last_observation = Some((story.bounds, gallery_bounds));
@@ -8796,7 +8796,7 @@ final_max_luminance={final_max_luminance}
         };
         let Some(gallery) = snapshot.accessibility.nodes.iter().find(|node| {
             node.role == SemanticsRole::ScrollView
-                && node.name.as_deref() == Some(sui_widget_book::GALLERY_SCROLL_NAME)
+                && node.name.as_deref() == Some(crate::widget_book::GALLERY_SCROLL_NAME)
         }) else {
             return false;
         };

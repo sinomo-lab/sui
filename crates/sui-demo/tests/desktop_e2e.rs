@@ -20,14 +20,7 @@ use sui::{
     Switch, Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer,
     Window as SuiWindow, WindowBuilder, WindowEvent, WindowId, window_performance_snapshot,
 };
-use sui_platform::publish_frame_performance;
-use sui_runtime::{
-    PresentationLatencyDiagnostics, RenderOutput, RetainedPacketRebuildDiagnostics,
-    SceneStatisticsDetailMode, WidgetTimingPhase, WindowPerformanceSnapshot,
-    clear_window_performance_snapshots, set_window_scene_statistics_detail_mode,
-    window_scene_statistics_detail_mode,
-};
-use sui_widget_book::{
+use sui_demo_app::widget_book::{
     BUTTON_GRID_BENCHMARK_TITLE, BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS,
     RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,
     TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
@@ -35,6 +28,13 @@ use sui_widget_book::{
     build_retained_text_benchmark_application, build_text_editing_benchmark_application,
     build_widget_book_application, build_widget_book_gallery, default_widget_book_state,
     register_widget_book_images,
+};
+use sui_platform::publish_frame_performance;
+use sui_runtime::{
+    PresentationLatencyDiagnostics, RenderOutput, RetainedPacketRebuildDiagnostics,
+    SceneStatisticsDetailMode, WidgetTimingPhase, WindowPerformanceSnapshot,
+    clear_window_performance_snapshots, set_window_scene_statistics_detail_mode,
+    window_scene_statistics_detail_mode,
 };
 use winit::{
     application::ApplicationHandler,
@@ -1737,7 +1737,7 @@ fn scroll_gallery_until_visible(
     let gallery = find_node(
         &snapshot,
         SemanticsRole::ScrollView,
-        sui_widget_book::GALLERY_SCROLL_NAME,
+        sui_demo_app::widget_book::GALLERY_SCROLL_NAME,
     );
     let gallery_bounds = gallery.bounds;
     let scroll_point = gallery_scroll_point(gallery_bounds);
@@ -1782,7 +1782,7 @@ fn run_widget_book_dialog_repaint_benchmark(
         &harness,
         window_id,
         SemanticsRole::Button,
-        sui_widget_book::DIALOG_TRIGGER_LABEL,
+        sui_demo_app::widget_book::DIALOG_TRIGGER_LABEL,
     )?;
     let mut previous_frame_index = initial_snapshot
         .performance
@@ -1794,7 +1794,7 @@ fn run_widget_book_dialog_repaint_benchmark(
         find_node_optional(
             &initial_snapshot,
             SemanticsRole::Dialog,
-            sui_widget_book::DIALOG_TITLE,
+            sui_demo_app::widget_book::DIALOG_TITLE,
         )
         .is_none(),
         "project settings dialog should start closed",
@@ -1841,7 +1841,7 @@ fn run_widget_book_dialog_repaint_benchmark(
             let dialog_visible = find_node_optional(
                 &after_snapshot,
                 SemanticsRole::Dialog,
-                sui_widget_book::DIALOG_TITLE,
+                sui_demo_app::widget_book::DIALOG_TITLE,
             )
             .is_some();
             assert_eq!(
@@ -2377,13 +2377,14 @@ fn build_widget_book_gallery_application(state: Rc<RefCell<WidgetBookState>>) ->
         })
         .expect("widget-book image resources should be valid")
         .window(
-            SuiWindow::new(sui_widget_book::WINDOW_TITLE).root(build_widget_book_gallery(state)),
+            SuiWindow::new(sui_demo_app::widget_book::WINDOW_TITLE)
+                .root(build_widget_book_gallery(state)),
         )
         .into_application()
 }
 
 fn build_widget_book_application_with_overlay(state: Rc<RefCell<WidgetBookState>>) -> Application {
-    sui_widget_book::set_widget_book_hdr_theme_mode(sui::HdrThemeMode::Disabled);
+    sui_demo_app::widget_book::set_widget_book_hdr_theme_mode(sui::HdrThemeMode::Disabled);
 
     App::new()
         .with_resources(|resources| {
@@ -2392,10 +2393,10 @@ fn build_widget_book_application_with_overlay(state: Rc<RefCell<WidgetBookState>
         })
         .expect("widget-book image resources should be valid")
         .window(
-            SuiWindow::new(sui_widget_book::WINDOW_TITLE).root(
-                sui_widget_book::LivePerformanceRoot::new(
-                    sui_widget_book::WINDOW_TITLE,
-                    sui_widget_book::WINDOW_DESCRIPTION,
+            SuiWindow::new(sui_demo_app::widget_book::WINDOW_TITLE).root(
+                sui_demo_app::widget_book::LivePerformanceRoot::new(
+                    sui_demo_app::widget_book::WINDOW_TITLE,
+                    sui_demo_app::widget_book::WINDOW_DESCRIPTION,
                     build_widget_book_gallery(Rc::clone(&state)),
                 )
                 .show_performance_overlay()
@@ -2423,7 +2424,7 @@ fn run_widget_book_scroll_benchmark(
     let gallery = find_node(
         &initial_snapshot,
         SemanticsRole::ScrollView,
-        sui_widget_book::GALLERY_SCROLL_NAME,
+        sui_demo_app::widget_book::GALLERY_SCROLL_NAME,
     );
     let scroll_point = gallery_scroll_point(gallery.bounds);
     let mut previous_frame_index = initial_snapshot
@@ -2435,7 +2436,7 @@ fn run_widget_book_scroll_benchmark(
         &initial_snapshot,
         gallery.bounds,
         SemanticsRole::Image,
-        sui_widget_book::DEMO_IMAGE_LABEL,
+        sui_demo_app::widget_book::DEMO_IMAGE_LABEL,
         MIN_VISIBLE_AREA_RATIO,
     );
 
@@ -2465,7 +2466,7 @@ fn run_widget_book_scroll_benchmark(
             &snapshot,
             gallery.bounds,
             SemanticsRole::Image,
-            sui_widget_book::DEMO_IMAGE_LABEL,
+            sui_demo_app::widget_book::DEMO_IMAGE_LABEL,
             MIN_VISIBLE_AREA_RATIO,
         );
 
@@ -3676,16 +3677,22 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
 
     let before_frame = harness.capture(window_id)?;
     let before_snapshot = harness.snapshot(window_id)?;
-    assert_eq!(before_snapshot.title, sui_widget_book::WINDOW_TITLE);
     assert_eq!(
-        text_input_value(&before_snapshot, sui_widget_book::NAME_INPUT_LABEL),
+        before_snapshot.title,
+        sui_demo_app::widget_book::WINDOW_TITLE
+    );
+    assert_eq!(
+        text_input_value(
+            &before_snapshot,
+            sui_demo_app::widget_book::NAME_INPUT_LABEL
+        ),
         ""
     );
 
     let input = find_node(
         &before_snapshot,
         SemanticsRole::TextInput,
-        sui_widget_book::NAME_INPUT_LABEL,
+        sui_demo_app::widget_book::NAME_INPUT_LABEL,
     );
 
     click_at(&harness, window_id, node_center(input.bounds))?;
@@ -3700,7 +3707,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let after_snapshot = harness.snapshot(window_id)?;
 
     assert_eq!(
-        text_input_value(&after_snapshot, sui_widget_book::NAME_INPUT_LABEL),
+        text_input_value(&after_snapshot, sui_demo_app::widget_book::NAME_INPUT_LABEL),
         "Ada"
     );
     assert!(
@@ -3724,12 +3731,12 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let gallery = find_node(
         &before_scroll_snapshot,
         SemanticsRole::ScrollView,
-        sui_widget_book::GALLERY_SCROLL_NAME,
+        sui_demo_app::widget_book::GALLERY_SCROLL_NAME,
     );
     let before_button = find_node(
         &before_scroll_snapshot,
         SemanticsRole::Button,
-        sui_widget_book::PRIMARY_BUTTON_LABEL,
+        sui_demo_app::widget_book::PRIMARY_BUTTON_LABEL,
     );
 
     move_cursor(&harness, window_id, node_center(gallery.bounds))?;
@@ -3749,7 +3756,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let after_button = find_node(
         &after_snapshot,
         SemanticsRole::Button,
-        sui_widget_book::PRIMARY_BUTTON_LABEL,
+        sui_demo_app::widget_book::PRIMARY_BUTTON_LABEL,
     );
 
     assert!(
@@ -3784,7 +3791,7 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
     let gallery = find_node(
         &snapshot,
         SemanticsRole::ScrollView,
-        sui_widget_book::GALLERY_SCROLL_NAME,
+        sui_demo_app::widget_book::GALLERY_SCROLL_NAME,
     );
     let scroll_point = gallery_scroll_point(gallery.bounds);
 
@@ -3794,7 +3801,7 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
         &snapshot,
         gallery.bounds,
         SemanticsRole::Splitter,
-        sui_widget_book::SPLIT_VIEW_NAME,
+        sui_demo_app::widget_book::SPLIT_VIEW_NAME,
         MIN_VISIBLE_AREA_RATIO,
     );
 
@@ -3814,7 +3821,7 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
             &snapshot,
             gallery.bounds,
             SemanticsRole::Splitter,
-            sui_widget_book::SPLIT_VIEW_NAME,
+            sui_demo_app::widget_book::SPLIT_VIEW_NAME,
             MIN_VISIBLE_AREA_RATIO,
         );
     }
@@ -3829,7 +3836,7 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
     let before_split = find_node(
         &before_snapshot,
         SemanticsRole::Splitter,
-        sui_widget_book::SPLIT_VIEW_NAME,
+        sui_demo_app::widget_book::SPLIT_VIEW_NAME,
     );
 
     harness.dispatch(
@@ -3844,7 +3851,7 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
     let after_split = find_node(
         &after_snapshot,
         SemanticsRole::Splitter,
-        sui_widget_book::SPLIT_VIEW_NAME,
+        sui_demo_app::widget_book::SPLIT_VIEW_NAME,
     );
 
     assert!(

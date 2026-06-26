@@ -1,4 +1,4 @@
 /target
 /.playwright-cli
-/crates/sui-dev/web/dist
+/crates/sui-demo/web/dist
 /output

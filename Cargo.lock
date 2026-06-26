@@ -2881,20 +2881,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "sui-dev"
+name = "sui-demo"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "crossterm 0.29.0",
+ "png 0.17.16",
  "ratatui",
  "sui",
+ "sui-debug",
+ "sui-platform",
  "sui-render-wgpu",
+ "sui-runtime",
  "sui-scene",
  "sui-testing",
  "sui-tui",
- "sui-widget-book",
  "wasm-bindgen",
  "web-sys",
+ "winit",
 ]
 
 [[package]]
@@ -3019,21 +3023,6 @@ version = "0.1.0"
 dependencies = [
  "sui-core",
  "sui-platform",
-]
-
-[[package]]
-name = "sui-widget-book"
-version = "0.1.0"
-dependencies = [
- "png 0.17.16",
- "sui",
- "sui-debug",
- "sui-platform",
- "sui-render-wgpu",
- "sui-runtime",
- "sui-scene",
- "sui-testing",
- "winit",
 ]
 
 [[package]]

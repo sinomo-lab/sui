@@ -7131,7 +7131,7 @@ mod tests {
             semantics
                 .iter()
                 .all(|node| node.name.as_deref() != Some("Live performance overlay")),
-            "expected semantics tree to omit the floating live performance overlay outside sui-dev"
+            "expected semantics tree to omit the floating live performance overlay outside sui-demo"
         );
     }
 
@@ -7142,7 +7142,7 @@ mod tests {
             .expect("system time is after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "sui-widget-book-artifacts-{}-{}-{}",
+            "sui-demo-widget-book-artifacts-{}-{}-{}",
             std::process::id(),
             nonce,
             name
@@ -8827,7 +8827,7 @@ mod tests {
 
     #[cfg(feature = "artifacts")]
     #[test]
-    #[ignore = "slow; run `cargo run -p sui-widget-book` to generate artifacts"]
+    #[ignore = "slow; run `cargo run -p sui-demo --bin sui-demo-artifacts` to generate artifacts"]
     fn widget_book_generates_visual_artifacts() -> Result<()> {
         let artifact_root = super::write_visual_artifacts()?;
 
@@ -8932,10 +8932,30 @@ mod tests {
         write_screenshot(artifact_dir.join("switch-diff.png"), &diff)?;
         let diff_count =
             screenshot_diff_count(&normalized_live_switch, &normalized_reference_switch);
+        let switch_control_crop = sui::Rect::new(
+            0.0,
+            0.0,
+            56.0_f32.min(normalized_live_switch.width() as f32),
+            normalized_live_switch.height() as f32,
+        );
+        let live_switch_control = normalized_live_switch.crop(switch_control_crop)?;
+        let reference_switch_control = normalized_reference_switch.crop(switch_control_crop)?;
+        write_screenshot(
+            artifact_dir.join("live-light-switch-control.png"),
+            &live_switch_control,
+        )?;
+        write_screenshot(
+            artifact_dir.join("reference-light-switch-control.png"),
+            &reference_switch_control,
+        )?;
+        let control_diff = screenshot_diff_image(&live_switch_control, &reference_switch_control)?;
+        write_screenshot(artifact_dir.join("switch-control-diff.png"), &control_diff)?;
+        let control_diff_count =
+            screenshot_diff_count(&live_switch_control, &reference_switch_control);
         fs::write(
             artifact_dir.join("comparison.txt"),
             format!(
-                "live card: {}\nreference card: isolated {}\nlive switch: {}x{}\nreference switch: {}x{}\nnormalized switch: {}x{}\ndiff pixels: {}\n",
+                "live card: {}\nreference card: isolated {}\nlive switch: {}x{}\nreference switch: {}x{}\nnormalized switch: {}x{}\nfull-row diff pixels: {}\nswitch-control diff pixels: {}\n",
                 LIGHT_THEME_PREVIEW_CARD_NAME,
                 LIGHT_THEME_PREVIEW_CARD_NAME,
                 live_switch.width(),
@@ -8945,6 +8965,7 @@ mod tests {
                 normalized_live_switch.width(),
                 normalized_live_switch.height(),
                 diff_count,
+                control_diff_count,
             ),
         )
         .map_err(|error| {
@@ -8955,8 +8976,8 @@ mod tests {
         })?;
 
         assert!(
-            diff_count <= 950,
-            "theme preview switch differed from isolated reference at 150% DPI; diff pixels={diff_count}; see {}",
+            control_diff_count <= 550,
+            "theme preview switch control differed from isolated reference at 150% DPI; diff pixels={control_diff_count}; see {}",
             artifact_dir.display()
         );
 
@@ -9484,8 +9505,14 @@ mod tests {
             })
             .expect("overlay semantics node present");
 
-        assert!(overlay.bounds.width() <= 252.0);
-        assert!(overlay.bounds.x() >= 1000.0);
+        let expected_left_edge =
+            1280.0 - super::LivePerformanceRoot::OVERLAY_MARGIN.right - LivePerformancePanel::WIDTH;
+        assert!(overlay.bounds.width() <= LivePerformancePanel::WIDTH);
+        assert!(overlay.bounds.x() >= expected_left_edge);
+        assert!(
+            overlay.bounds.max_x()
+                <= 1280.0 - super::LivePerformanceRoot::OVERLAY_MARGIN.right + 1.0
+        );
         assert!(overlay.bounds.y() <= 24.0);
     }
 

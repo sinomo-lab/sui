@@ -339,11 +339,11 @@ The current validation workflow for the text rendering model should cover both n
 Use targeted native checks first:
 
 ```bash
-cargo check -p sui-widget-book
-cargo check -p sui-dev
-cargo test -p sui-widget-book --lib tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
-cargo test -p sui-dev --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
-cargo test -p sui-dev --lib tests::parses_comparison_surface_alias -- --exact
+cargo check -p sui-demo
+cargo check -p sui-demo
+cargo test -p sui-demo --lib tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
+cargo test -p sui-demo --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
+cargo test -p sui-demo --lib tests::parses_comparison_surface_alias -- --exact
 ```
 
 ### Wasm checks
@@ -351,8 +351,8 @@ cargo test -p sui-dev --lib tests::parses_comparison_surface_alias -- --exact
 Use the web target to verify that the benchmark launch path still builds:
 
 ```bash
-cargo check -p sui-dev --target wasm32-unknown-unknown --no-default-features --features web
-trunk build --config crates/sui-dev/web/Trunk.toml
+cargo check -p sui-demo --target wasm32-unknown-unknown --no-default-features --features web
+trunk build --config crates/sui-demo/web/Trunk.toml
 ```
 
 ### Web benchmark URLs

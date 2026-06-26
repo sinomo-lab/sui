@@ -20,7 +20,7 @@ use sui_testing::{
     hdr_luminance_heatmap, write_hdr_avif, write_hdr_exr,
 };
 
-use crate::{
+use super::{
     ANIMATION_DEMO_NAME, ANIMATION_DEMO_POPOVER_TRIGGER_LABEL, ANIMATION_DEMO_TEXT_INPUT_LABEL,
     BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, COLOR_VALIDATION_VIEW_TITLE,
     CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
@@ -807,7 +807,8 @@ pub(crate) fn artifact_root() -> PathBuf {
         .join("..")
         .join("target")
         .join("ui-artifacts")
-        .join("sui-widget-book")
+        .join("sui-demo")
+        .join("widget-book")
 }
 
 fn reset_dir(path: &Path) -> Result<()> {

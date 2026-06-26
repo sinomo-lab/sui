@@ -34,8 +34,6 @@ watch = [
   "../../sui-text/Cargo.toml",
   "../../sui-text/src",
   "../../sui-text/assets",
-  "../../sui-widget-book/Cargo.toml",
-  "../../sui-widget-book/src",
   "../../sui-widgets/Cargo.toml",
   "../../sui-widgets/src",
   "../../../Cargo.lock",

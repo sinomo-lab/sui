@@ -142,7 +142,7 @@ The current live diagnostics also pair renderer metrics with runtime animation c
 
 ## Current Benchmark Snapshot
 
-In this environment, the live desktop benchmark tests need a real display server, so the current-status snapshot below was captured with the headless widget-book diagnostic benchmarks in `crates/sui-widget-book/src/lib.rs`.
+In this environment, the live desktop benchmark tests need a real display server, so the current-status snapshot below was captured with the headless widget-book diagnostic benchmarks in `crates/sui-demo/src/widget_book/mod.rs`.
 
 Current headless scroll snapshot:
 
@@ -210,7 +210,7 @@ The widget book benchmark surfaces and overlay are the preferred way to validate
 
 For renderer work, the usual validation loop is:
 
-1. run `cargo run -p sui-dev`
+1. run `cargo run -p sui-demo`
 2. exercise the widget book and benchmark tabs
 3. check the live performance overlay
 4. run targeted tests, especially widget-book desktop tests when the change affects rendering or scrolling

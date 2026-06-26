@@ -4,7 +4,7 @@
 
 **Architecture:** Introduce a lightweight HDR token layer in `sui-widgets`, keep `ThemeColors` as the semantic identity baseline, and resolve HDR luminance/material/effect behavior into widget-ready values through explicit helper APIs instead of baking HDR behavior directly into every existing palette field. Because built-in widgets currently consume `DefaultTheme` directly rather than reading top-level `ThemeExtensions` from runtime contexts, the first implementation should thread HDR tokens through `DefaultTheme` itself and only then add a top-level `ThemeExtension` bridge for broader ecosystem use.
 
-**Tech Stack:** Rust 2024, current `sui-widgets` theme model in `crates/sui-widgets/src/theme.rs`, top-level `Theme` and `ThemeExtensions` in `crates/sui/src/lib.rs`, built-in widgets in `crates/sui-widgets/src/controls.rs` / `composites.rs` / `text_surface.rs`, and HDR validation/demo coverage in `crates/sui-widget-book/src/lib.rs`.
+**Tech Stack:** Rust 2024, current `sui-widgets` theme model in `crates/sui-widgets/src/theme.rs`, top-level `Theme` and `ThemeExtensions` in `crates/sui/src/lib.rs`, built-in widgets in `crates/sui-widgets/src/controls.rs` / `composites.rs` / `text_surface.rs`, and HDR validation/demo coverage in `crates/sui-demo/src/widget_book/mod.rs`.
 
 ---
 
@@ -344,8 +344,8 @@ git commit -m "feat: apply hdr theme roles to switch and popup states"
 **Objective:** Give the new token schema a visible proving ground and a regression surface.
 
 **Files:**
-- Modify: `crates/sui-widget-book/src/lib.rs`
-- Test: `crates/sui-widget-book/src/lib.rs`
+- Modify: `crates/sui-demo/src/widget_book/mod.rs`
+- Test: `crates/sui-demo/src/widget_book/mod.rs`
 
 **Step 1: Add a new story or panel that compares modes**
 The story should expose at least:
@@ -373,7 +373,7 @@ Add tests covering:
 **Step 3: Run the focused tests**
 Run:
 ```bash
-cargo test -p sui-widget-book --lib tests::hdr_theme_lab_exposes_mode_comparison_sections -- --exact
+cargo test -p sui-demo --lib tests::hdr_theme_lab_exposes_mode_comparison_sections -- --exact
 ```
 Expected: FAIL
 
@@ -383,22 +383,22 @@ Implementation notes:
 - prefer side-by-side named sections with clear semantics labels
 - use the new token schema to construct theme variants rather than hardcoding raw colors directly in the story
 
-**Step 5: Re-run focused tests and `cargo check -p sui-widget-book`**
+**Step 5: Re-run focused tests and `cargo check -p sui-demo`**
 
 **Step 6: Commit**
 ```bash
-git add crates/sui-widget-book/src/lib.rs
+git add crates/sui-demo/src/widget_book/mod.rs
 git commit -m "feat: add widget-book hdr theme lab"
 ```
 
 ---
 
-### Task 8: Add SUI Dev inspection hooks for the schema (optional but recommended)
+### Task 8: Add SUI Demo inspection hooks for the schema (optional but recommended)
 **Objective:** Make experimentation possible in the main development host without depending only on widget-book stories.
 
 **Files:**
-- Modify: `crates/sui-dev/src/app.rs`
-- Test: `crates/sui-dev/src/app.rs`
+- Modify: `crates/sui-demo/src/app.rs`
+- Test: `crates/sui-demo/src/app.rs`
 
 **Step 1: Add a small inspection panel or selector set for HDR theme mode**
 At minimum expose:
@@ -414,11 +414,11 @@ Suggested test:
 
 **Step 4: Implement the minimal inspection UI**
 
-**Step 5: Re-run the test and `cargo check -p sui-dev`**
+**Step 5: Re-run the test and `cargo check -p sui-demo`**
 
 **Step 6: Commit**
 ```bash
-git add crates/sui-dev/src/app.rs
+git add crates/sui-demo/src/app.rs
 git commit -m "feat: expose hdr theme mode controls in sui dev"
 ```
 
@@ -460,16 +460,16 @@ After Tasks 1 through 7, run at least:
 ```bash
 cargo test -p sui-widgets --lib -- --nocapture
 cargo test -p sui --lib -- --nocapture
-cargo test -p sui-widget-book --lib -- --nocapture
+cargo test -p sui-demo --lib -- --nocapture
 cargo check -p sui-widgets
 cargo check -p sui
-cargo check -p sui-widget-book
+cargo check -p sui-demo
 ```
 
 If Task 8 is implemented, also run:
 
 ```bash
-cargo check -p sui-dev
+cargo check -p sui-demo
 ```
 
 ---

@@ -435,11 +435,11 @@ Recommended initial behavior:
 
 ## UI and diagnostics proposal
 
-Add a new “Display output” diagnostics/control surface in `sui-dev`.
+Add a new “Display output” diagnostics/control surface in `sui-demo`.
 
 **Files:**
-- Modify: `crates/sui-dev/src/app.rs`
-- Modify: `crates/sui-widget-book/src/lib.rs`
+- Modify: `crates/sui-demo/src/app.rs`
+- Modify: `crates/sui-demo/src/widget_book/mod.rs`
 
 Show:
 - current monitor identifier
@@ -494,7 +494,7 @@ Tasks:
 1. add output policy enums to runtime diagnostics
 2. add platform capability detection abstraction
 3. thread capability snapshots into renderer surface creation
-4. surface diagnostics in `sui-dev`
+4. surface diagnostics in `sui-demo`
 
 ### Phase 3 — Add HDR intermediate renderer path
 
@@ -634,8 +634,8 @@ Add widget-book/dev surfaces for:
 - Create: `crates/sui-render-wgpu/src/shaders/output_color.wgsl`
 
 ### Dev diagnostics / validation surfaces
-- Modify: `crates/sui-dev/src/app.rs`
-- Modify: `crates/sui-widget-book/src/lib.rs`
+- Modify: `crates/sui-demo/src/app.rs`
+- Modify: `crates/sui-demo/src/widget_book/mod.rs`
 
 ### Documentation
 - Modify: `docs/text-system.md` only if text output interactions need HDR notes

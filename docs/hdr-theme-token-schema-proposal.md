@@ -27,8 +27,8 @@ The first milestone now exists in the codebase:
   - `Button`
   - `Switch`
   - `Popover`
-- `sui-widget-book` includes an HDR theme lab that compares SDR baseline, wide-gamut-only, constrained HDR, and full HDR modes
-- `sui-dev` includes HDR theme mode controls plus inspection text that compares styling mode against current output policy diagnostics
+- `sui-demo` includes an HDR theme lab that compares SDR baseline, wide-gamut-only, constrained HDR, and full HDR modes
+- `sui-demo` includes HDR theme mode controls plus inspection text that compares styling mode against current output policy diagnostics
 
 ### Still aspirational or incomplete
 

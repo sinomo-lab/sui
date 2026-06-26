@@ -172,7 +172,7 @@ The current stack includes:
 - `WindowPerformanceSnapshot` and related phase timings in `sui-runtime`
 - renderer submission stats published by `sui-platform`
 - animation counters for active widgets and frame wakeups
-- the widget book performance overlay in `sui-widget-book`
+- the widget book performance overlay in `sui-demo`
 - inspector widgets in `sui-debug`
 - semantics-first locators and artifact capture in `sui-testing`
 

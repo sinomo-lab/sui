@@ -1,6 +1,6 @@
 # HDR Debugging Pipeline and Windows HDR Bring-Up Implementation Plan
 
-**Goal:** Build a standard HDR debugging pipeline for SUI, use it to diagnose and fix Windows HDR rendering, then clean up SUI Dev HDR-mode visual/performance issues.
+**Goal:** Build a standard HDR debugging pipeline for SUI, use it to diagnose and fix Windows HDR rendering, then clean up SUI Demo HDR-mode visual/performance issues.
 
 **Architecture:** Extend the existing renderer/debug infrastructure with stage-aware capture APIs that can inspect both scene-linear HDR intermediates and final composed SDR/HDR outputs. Ship EXR-first HDR export plus SDR-derived debugging images, surface the interface through standard renderer/platform/testing APIs, then use those artifacts to debug the Windows HDR path on real hardware.
 
@@ -141,25 +141,25 @@ Expected: FAIL
 - Modify: `crates/sui-platform/src/headless.rs`
 - Modify: `crates/sui-platform/src/lib.rs`
 - Modify: `crates/sui-testing/src/harness.rs`
-- Modify: `crates/sui-dev/src/app.rs`
+- Modify: `crates/sui-demo/src/app.rs`
 - Possibly modify: `crates/sui-debug/src/lib.rs`
 
 **Step 1:** Write failing tests proving:
 - platform/testing can request a debug capture by stage
-- SUI Dev exposes enough debug controls/actions to trigger captures
+- SUI Demo exposes enough debug controls/actions to trigger captures
 - diagnostics can describe selected stage/format/visualization
 
 **Step 2:** Implement minimal wiring:
 - renderer-level capture request
 - platform/headless forwarding method
 - testing harness helper for debug captures
-- SUI Dev debug panel/button/hotkey/action for capture
+- SUI Demo debug panel/button/hotkey/action for capture
 
 **Step 3:** Verify with:
 - targeted tests
 - `cargo check -p sui-platform`
 - `cargo check -p sui-testing`
-- `cargo check -p sui-dev`
+- `cargo check -p sui-demo`
 
 **Step 4:** Commit with message like:
 `feat: expose standard hdr debugging interface`
@@ -170,10 +170,10 @@ Expected: FAIL
 **Objective:** Produce artifacts that show why HDR content is not visibly behaving correctly even though the app enters HDR mode.
 
 **Files:**
-- Modify: `crates/sui-dev/src/app.rs` only if extra debug UI is needed
+- Modify: `crates/sui-demo/src/app.rs` only if extra debug UI is needed
 - Create: debug output artifacts under an appropriate artifacts directory if useful
 
-**Step 1:** Run SUI Dev on the Windows PC with HDR enabled and capture at least:
+**Step 1:** Run SUI Demo on the Windows PC with HDR enabled and capture at least:
 - HDR intermediate EXR
 - final composed PNG/debug result
 - luminance/headroom/clip maps
@@ -206,7 +206,7 @@ Expected: FAIL
 - the new regression test
 - existing HDR strategy tests
 - `cargo check -p sui-render-wgpu`
-- `cargo check -p sui-dev`
+- `cargo check -p sui-demo`
 
 **Step 5:** Re-capture artifacts on Windows and confirm the fix.
 
@@ -215,12 +215,12 @@ Expected: FAIL
 
 ---
 
-### Task 8: Clean up SUI Dev HDR-mode visuals and performance issues
+### Task 8: Clean up SUI Demo HDR-mode visuals and performance issues
 **Objective:** Use the same debug tooling to fix user-visible HDR-mode issues beyond the core bug.
 
 **Files:**
-- Modify: `crates/sui-dev/src/app.rs`
-- Modify: `crates/sui-widget-book/src/lib.rs`
+- Modify: `crates/sui-demo/src/app.rs`
+- Modify: `crates/sui-demo/src/widget_book/mod.rs`
 - Possibly modify: renderer/platform files if instrumentation reveals extra issues
 
 **Step 1:** Check visual correctness:
@@ -235,10 +235,10 @@ Expected: FAIL
 
 **Step 3:** Add focused tests where practical.
 
-**Step 4:** Verify targeted checks for `sui-dev` / `sui-widget-book`.
+**Step 4:** Verify targeted checks for `sui-demo`.
 
 **Step 5:** Commit with message like:
-`fix: polish sui-dev hdr mode diagnostics and performance`
+`fix: polish sui-demo hdr mode diagnostics and performance`
 
 ---
 
@@ -248,15 +248,15 @@ cargo test -p sui-render-wgpu --lib tests::debug_capture_stage_helpers_classify_
 cargo check -p sui-render-wgpu
 cargo check -p sui-testing
 cargo check -p sui-platform
-cargo check -p sui-dev
+cargo check -p sui-demo
 ```
 
 ## Definition of done
 - Standard debug capture API exists and is reusable by library users.
 - HDR intermediate capture works and exports EXR.
 - Final composed capture works and exports SDR debug imagery.
-- SUI Dev can trigger/debug captures through standard infrastructure.
+- SUI Demo can trigger/debug captures through standard infrastructure.
 - The new pipeline is used to diagnose the Windows HDR issue.
 - Windows HDR content in the validation view is visibly and artifact-wise correct.
-- SUI Dev HDR-mode visual/performance issues are addressed.
+- SUI Demo HDR-mode visual/performance issues are addressed.
 - Progress is reported hourly in this thread.

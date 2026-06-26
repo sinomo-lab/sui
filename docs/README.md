@@ -36,8 +36,7 @@ The current workspace is organized around a retained widget runtime.
 - `sui-widgets` owns built-in widgets and theme types.
 - `sui-testing` owns deterministic UI automation helpers.
 - `sui-debug` owns reusable debug widgets and inspectors.
-- `sui-widget-book` owns the gallery, story content, and screenshot-oriented tests.
-- `sui-dev` is the main development host application.
+- `sui-demo` owns the main development host, widget book, story content, and screenshot-oriented tests.
 
 One important implementation detail to keep in mind: the runtime is still in the layer-boundary transition. Explicit paint boundaries are the intended retained-compositor and retained-animation boundary, but some diagnostics still report emitted `SceneLayer` counts while that decoupling work finishes.
 
@@ -46,17 +45,17 @@ One important implementation detail to keep in mind: the runtime is still in the
 Common commands:
 
 ```bash
-cargo run -p sui-dev
+cargo run -p sui-demo
 cargo test
 cargo test -p sui-testing
-cargo test -p sui-widget-book -- --nocapture
+cargo test -p sui-demo -- --nocapture
 ```
 
-`cargo run -p sui-dev` launches the desktop development host.
+`cargo run -p sui-demo` launches the desktop development host.
 
-The `sui-dev` host includes the widget book, focused benchmark views, and renderer settings in one floating workspace.
+The `sui-demo` host includes the widget book, focused benchmark views, and renderer settings in one floating workspace.
 
-`cargo test -p sui-widget-book -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-widget-book`.
+`cargo test -p sui-demo -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-demo/widget-book`.
 
 ## Mental Model
 
