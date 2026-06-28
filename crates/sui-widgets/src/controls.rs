@@ -678,7 +678,7 @@ impl Widget for IconButton {
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary) =>
+                    && (pointer.button == Some(PointerButton::Primary) || self.pressed) =>
             {
                 let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
@@ -2083,7 +2083,7 @@ impl Widget for Button {
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary) =>
+                    && (pointer.button == Some(PointerButton::Primary) || self.pressed) =>
             {
                 let theme = self.resolved_theme();
                 let hovered = ctx.bounds().contains(pointer.position);
@@ -8609,6 +8609,29 @@ mod tests {
             .find(|node| node.role == SemanticsRole::Button)
             .unwrap();
         assert_eq!(button.name.as_deref(), Some("Save"));
+        Ok(())
+    }
+
+    #[test]
+    fn button_releases_primary_press_on_unlabelled_pointer_up() -> Result<()> {
+        let activations = Rc::new(RefCell::new(0usize));
+        let on_press = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(Button::new("Save").on_press(move || {
+            *on_press.borrow_mut() += 1;
+        }));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+        )?;
+        let mut up = primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false);
+        if let Event::Pointer(pointer) = &mut up {
+            pointer.button = None;
+        }
+        runtime.handle_event(window_id, up)?;
+
+        assert_eq!(*activations.borrow(), 1);
         Ok(())
     }
 

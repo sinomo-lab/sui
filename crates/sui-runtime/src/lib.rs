@@ -1263,7 +1263,10 @@ impl WindowState {
             if self
                 .current_widget_matches_hit_test_phase(widget_id, HitTestCompositionPhase::Effect)
             {
-                return Some(widget_id);
+                return self
+                    .graph
+                    .hit_test_within(widget_id, point)
+                    .or(Some(widget_id));
             }
         }
 
@@ -1276,8 +1279,13 @@ impl WindowState {
                 HitTestCompositionPhase::Normal,
             )
         };
-        overlay_hit.filter(|widget_id| {
-            self.current_widget_matches_hit_test_phase(*widget_id, HitTestCompositionPhase::Overlay)
+        overlay_hit.and_then(|widget_id| {
+            self.current_widget_matches_hit_test_phase(widget_id, HitTestCompositionPhase::Overlay)
+                .then(|| {
+                    self.graph
+                        .hit_test_within(widget_id, point)
+                        .unwrap_or(widget_id)
+                })
         })
     }
 
@@ -3258,6 +3266,10 @@ impl WidgetGraph {
         self.hit_test_node(self.root, point)
     }
 
+    fn hit_test_within(&self, widget_id: WidgetId, point: Point) -> Option<WidgetId> {
+        self.hit_test_node(widget_id, point)
+    }
+
     fn path_to(&self, target: WidgetId) -> Option<Vec<WidgetId>> {
         let mut path = Vec::new();
         let mut current = Some(target);
@@ -4188,6 +4200,97 @@ mod tests {
 
         fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
             self.children.visit_children_mut(visitor);
+        }
+    }
+
+    struct HitTestOverlaySurface {
+        child: SingleChild,
+    }
+
+    impl HitTestOverlaySurface {
+        fn new(pointer_downs: Rc<RefCell<usize>>) -> Self {
+            Self {
+                child: SingleChild::new(PointerCountingLeaf { pointer_downs }),
+            }
+        }
+    }
+
+    impl Widget for HitTestOverlaySurface {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            constraints.clamp(Size::new(180.0, 90.0))
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 24.0, bounds.y() + 20.0, 120.0, 40.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.9, 0.2, 0.2, 0.35));
+            self.child.paint(ctx);
+        }
+
+        fn layer_options(&self) -> LayerOptions {
+            LayerOptions {
+                paint_boundary: PaintBoundaryMode::Explicit,
+                composition_mode: LayerCompositionMode::Effect,
+            }
+        }
+
+        fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+            Some(StackSurfaceOptions::default())
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    struct HitTestOverlayRoot {
+        child: SingleChild,
+    }
+
+    impl HitTestOverlayRoot {
+        fn new(pointer_downs: Rc<RefCell<usize>>) -> Self {
+            Self {
+                child: SingleChild::new(HitTestOverlaySurface::new(pointer_downs)),
+            }
+        }
+    }
+
+    impl Widget for HitTestOverlayRoot {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(180.0, 90.0)));
+            constraints.clamp(Size::new(320.0, 180.0))
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 20.0, bounds.y() + 20.0, 180.0, 90.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.child.paint(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
         }
     }
 
@@ -5434,6 +5537,40 @@ mod tests {
         assert_eq!(overlay_hit_test, Some(false));
 
         let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 36.0));
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        assert_eq!(*pointer_downs.borrow(), 1);
+    }
+
+    #[test]
+    fn hit_test_stack_surface_targets_deepest_child() {
+        let pointer_downs = Rc::new(RefCell::new(0));
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Overlay child hit")
+                    .root(HitTestOverlayRoot::new(Rc::clone(&pointer_downs))),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let mut runtime = runtime;
+
+        let output = runtime.render(window_id).unwrap();
+        let mut effect_hit_test = None;
+        output.frame.scene.visit_layers(&mut |layer| {
+            if layer.descriptor.composition_mode == LayerCompositionMode::Effect {
+                effect_hit_test = Some(layer.descriptor.hit_test);
+            }
+        });
+        assert_eq!(effect_hit_test, Some(true));
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(80.0, 60.0));
         down.pointer_id = 1;
         down.button = Some(PointerButton::Primary);
         down.buttons = PointerButtons::new(1);
