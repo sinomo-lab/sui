@@ -6688,6 +6688,7 @@ pub struct TextInput {
     editor: EditorState,
     clipboard: String,
     placeholder: String,
+    leading_icon: Option<IconGlyph>,
     read_only: bool,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -6717,6 +6718,7 @@ impl TextInput {
             editor: EditorState::new(),
             clipboard: String::new(),
             placeholder: String::new(),
+            leading_icon: None,
             read_only: false,
             text_style: None,
             padding: None,
@@ -6778,6 +6780,11 @@ impl TextInput {
 
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    pub fn leading_icon(mut self, icon: IconGlyph) -> Self {
+        self.leading_icon = Some(icon);
         self
     }
 
@@ -6886,7 +6893,7 @@ impl TextInput {
     }
 
     fn set_caret_from_position(&mut self, bounds: Rect, position: Point, ctx: &mut EventCtx) {
-        let content = inset_rect(bounds, self.resolved_padding());
+        let content = self.text_content_rect(bounds);
         let offset = self
             .input_layout
             .as_ref()
@@ -6961,6 +6968,25 @@ impl TextInput {
     fn resolved_padding(&self) -> Insets {
         self.padding
             .unwrap_or(self.resolved_theme().metrics.text_input_padding)
+    }
+
+    fn leading_icon_advance(&self) -> f32 {
+        if self.leading_icon.is_some() {
+            24.0
+        } else {
+            0.0
+        }
+    }
+
+    fn text_content_rect(&self, bounds: Rect) -> Rect {
+        let content = inset_rect(bounds, self.resolved_padding());
+        let leading = self.leading_icon_advance();
+        Rect::new(
+            (content.x() + leading).min(content.max_x()),
+            content.y(),
+            (content.width() - leading).max(0.0),
+            content.height(),
+        )
     }
 
     fn resolved_min_size(&self) -> Size {
@@ -7236,7 +7262,11 @@ impl Widget for TextInput {
         self.display_layout = display_layout;
         self.input_layout = input_layout;
 
-        let width = (visible_measurement.width + padding.left + padding.right).max(min_size.width);
+        let width = (visible_measurement.width
+            + self.leading_icon_advance()
+            + padding.left
+            + padding.right)
+            .max(min_size.width);
         let height = (visible_measurement.height.max(display_style.line_height)
             + padding.top
             + padding.bottom)
@@ -7269,7 +7299,8 @@ impl Widget for TextInput {
             palette.border_focus,
             focus_progress,
         );
-        let content_rect = inset_rect(ctx.bounds(), padding);
+        let full_content_rect = inset_rect(ctx.bounds(), padding);
+        let content_rect = self.text_content_rect(ctx.bounds());
         let display_text = self.visible_text();
         let placeholder = self.input_text().is_empty();
 
@@ -7286,6 +7317,21 @@ impl Widget for TextInput {
                     .with_alpha(palette.focus_ring.alpha * focus_progress),
             ),
         );
+        if let Some(icon) = self.leading_icon {
+            let icon_color = if self.read_only || placeholder {
+                palette.text_muted
+            } else {
+                palette.text
+            };
+            let icon_side = 15.0;
+            let icon_rect = Rect::new(
+                full_content_rect.x() + 1.0,
+                full_content_rect.y() + (full_content_rect.height() - icon_side) * 0.5,
+                icon_side,
+                icon_side,
+            );
+            draw_icon_glyph(ctx, icon, icon_rect, icon_color);
+        }
         ctx.push_clip_rect(content_rect);
         if let Some(layout) = &self.display_layout {
             let layout_bounds = layout.measurement().bounds;
@@ -9937,6 +9983,53 @@ mod tests {
 
         assert_eq!(text.style.color, theme.placeholder_text_style().color);
         assert!((text_run_visual_center(&text) - control_center).abs() < 0.75);
+    }
+
+    #[test]
+    fn text_input_leading_icon_offsets_placeholder_and_keeps_editing() -> Result<()> {
+        let icon_handle = IconGlyph::Search.lucide_icon().handle();
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Search")
+                .placeholder("Search conversations")
+                .leading_icon(IconGlyph::Search)
+                .min_width(220.0)
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let output = runtime.render(window_id)?;
+        let icon_rect = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .expect("leading icon should paint as a Lucide image");
+        let placeholder = text_run_for(&output, "Search conversations");
+        assert!(
+            placeholder.rect.x() >= icon_rect.max_x() + 4.0,
+            "placeholder should start after the leading icon"
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 16.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "repo".to_string(),
+            }),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &["repo".to_string()]);
+        Ok(())
     }
 
     #[test]
