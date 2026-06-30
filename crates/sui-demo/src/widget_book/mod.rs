@@ -86,6 +86,8 @@ pub const THEME_DEMO_DESCRIPTION: &str =
     "Dedicated theme previews for SDR, wide-gamut, and HDR UI styling.";
 pub const THEME_DEMO_SCROLL_NAME: &str = "Theme demo gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
+pub const RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME: &str =
+    "Retained text benchmark vertical scroll bar";
 pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
 pub const TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME: &str =
     "Text rendering comparison vertical scroll bar";
@@ -97,6 +99,7 @@ pub const COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME: &str =
     "Color validation horizontal scroll bar";
 pub const TEXT_VALIDATION_SCROLL_NAME: &str = "Text validation scroll";
 pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
+pub const TEXT_EDITING_BENCHMARK_SPLIT_NAME: &str = "Text editing benchmark split";
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
 pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
@@ -838,6 +841,89 @@ impl Widget for MaximumWidth {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
+    }
+}
+
+struct VerticalScrollPane {
+    spacing: f32,
+    content: SingleChild,
+    scroll_bar: SingleChild,
+}
+
+impl VerticalScrollPane {
+    fn new<W, S>(content: W, scroll_bar: S) -> Self
+    where
+        W: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self {
+            spacing: 0.0,
+            content: SingleChild::new(content),
+            scroll_bar: SingleChild::new(scroll_bar),
+        }
+    }
+}
+
+impl Widget for VerticalScrollPane {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let scroll_bar_size = self.scroll_bar.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
+        );
+        let content_constraints = Constraints::new(
+            Size::new(
+                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.min.height,
+            ),
+            Size::new(
+                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.max.height,
+            ),
+        );
+        let content_size = self.content.measure(ctx, content_constraints);
+
+        constraints.clamp(Size::new(
+            content_size.width + scroll_bar_size.width + self.spacing,
+            content_size.height.max(scroll_bar_size.height),
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let scroll_bar_size = self.scroll_bar.child().measured_size();
+        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
+        self.content.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
+        );
+        self.scroll_bar.arrange(
+            ctx,
+            Rect::new(
+                bounds.max_x() - scroll_bar_size.width,
+                bounds.y(),
+                scroll_bar_size.width,
+                bounds.height(),
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+        self.scroll_bar.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+        self.scroll_bar.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+        self.scroll_bar.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+        self.scroll_bar.visit_children_mut(visitor);
     }
 }
 
@@ -4739,6 +4825,7 @@ pub fn build_retained_text_benchmark() -> impl Widget {
     const SECTION_COUNT: usize = 72;
     const PARAGRAPHS_PER_SECTION: usize = 4;
 
+    let scroll_state = ScrollState::new();
     let mut content = Stack::vertical()
         .spacing(18.0)
         .alignment(Alignment::Stretch)
@@ -4812,11 +4899,15 @@ pub fn build_retained_text_benchmark() -> impl Widget {
         ));
     }
 
-    ScrollView::vertical(Padding::all(
-        24.0,
-        SizedBox::new().width(948.0).with_child(content),
-    ))
-    .name(RETAINED_TEXT_BENCHMARK_SCROLL_NAME)
+    VerticalScrollPane::new(
+        ScrollView::vertical(Padding::all(
+            24.0,
+            SizedBox::new().width(948.0).with_child(content),
+        ))
+        .state(scroll_state.clone())
+        .name(RETAINED_TEXT_BENCHMARK_SCROLL_NAME),
+        ScrollBar::vertical(scroll_state).name(RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME),
+    )
 }
 
 pub fn build_retained_text_benchmark_application() -> Application {
@@ -5429,10 +5520,10 @@ pub fn build_text_editing_benchmark() -> impl Widget {
     Padding::all(
         24.0,
         SplitView::horizontal(editor_panel, syntax_panel)
+            .name(TEXT_EDITING_BENCHMARK_SPLIT_NAME)
             .ratio(0.54)
             .min_first(420.0)
-            .min_second(360.0)
-            .divider_thickness(12.0),
+            .min_second(360.0),
     )
 }
 
@@ -6909,24 +7000,25 @@ mod tests {
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformanceFrameSample, LivePerformancePanel, NAME_INPUT_LABEL,
         NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
-        RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME,
-        SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL, TEXT_AREA_LABEL,
-        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
-        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
-        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
-        TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL,
-        WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME,
-        WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL,
-        WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL,
-        WINDOW_TITLE, build_animation_benchmark_application,
-        build_button_grid_benchmark_application, build_color_and_imagery_story,
-        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-        build_text_rendering_comparison_application, build_text_validation_surface,
-        build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, frame_phase_index, register_widget_book_images,
-        text_editing_benchmark_document, text_editing_benchmark_style_overlays,
-        text_editing_benchmark_style_spans, theme_preview_card,
+        RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL,
+        TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
+        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
+        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
+        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
+        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+        WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL, WIDGET_STATES_GALLERY_NAME,
+        WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME, WIDGET_STATES_SELECT_NAME,
+        WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL, WIDGET_STATES_TABS_NAME,
+        WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL, WINDOW_TITLE,
+        build_animation_benchmark_application, build_button_grid_benchmark_application,
+        build_color_and_imagery_story, build_retained_text_benchmark_application,
+        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
+        build_widget_book_gallery, default_widget_book_state, frame_phase_index,
+        register_widget_book_images, text_editing_benchmark_document,
+        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
+        theme_preview_card,
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -7050,6 +7142,77 @@ mod tests {
         );
     }
 
+    #[test]
+    fn retained_text_benchmark_exposes_vertical_scroll_bar() -> Result<()> {
+        let mut runtime = build_retained_text_benchmark_runtime()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+
+        let scroll = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(RETAINED_TEXT_BENCHMARK_SCROLL_NAME)
+            })
+            .expect("retained text scroll view should be present");
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME)
+            })
+            .expect("retained text vertical scroll bar should be present");
+        let max = match scroll_bar.value {
+            Some(SemanticsValue::Range { max, .. }) => max,
+            _ => 0.0,
+        };
+
+        assert!(max > 0.0);
+        assert!(scroll_bar.bounds.x() >= scroll.bounds.max_x());
+        Ok(())
+    }
+
+    #[test]
+    fn text_editing_benchmark_exposes_named_splitter() -> Result<()> {
+        let mut runtime = build_text_editing_benchmark_runtime()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+
+        let splitter = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Splitter
+                    && node.name.as_deref() == Some(TEXT_EDITING_BENCHMARK_SPLIT_NAME)
+            })
+            .expect("text editing splitter should be present");
+        let editor = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(TEXT_EDITING_BENCHMARK_EDITOR_NAME)
+            })
+            .expect("text editing editor should be present");
+        let syntax_preview = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME)
+            })
+            .expect("text editing syntax preview should be present");
+
+        assert!(matches!(
+            splitter.value,
+            Some(SemanticsValue::Number(value)) if (value - 0.54).abs() < 0.01
+        ));
+        assert!(editor.bounds.max_x() <= syntax_preview.bounds.x());
+        Ok(())
+    }
+
     fn build_text_validation_runtime() -> Result<sui::Runtime> {
         Application::new()
             .window(
@@ -7058,6 +7221,34 @@ mod tests {
                         .size(Size::new(460.0, 380.0))
                         .with_child(build_text_validation_surface()),
                 ),
+            )
+            .build()
+    }
+
+    fn build_retained_text_benchmark_runtime() -> Result<sui::Runtime> {
+        Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title(RETAINED_TEXT_BENCHMARK_TITLE)
+                    .root(
+                        SizedBox::new()
+                            .size(Size::new(520.0, 360.0))
+                            .with_child(super::build_retained_text_benchmark()),
+                    ),
+            )
+            .build()
+    }
+
+    fn build_text_editing_benchmark_runtime() -> Result<sui::Runtime> {
+        Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title(TEXT_EDITING_BENCHMARK_TITLE)
+                    .root(
+                        SizedBox::new()
+                            .size(Size::new(900.0, 520.0))
+                            .with_child(super::build_text_editing_benchmark()),
+                    ),
             )
             .build()
     }
