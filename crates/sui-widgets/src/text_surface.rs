@@ -1746,10 +1746,16 @@ fn keyboard_text(event: &KeyboardEvent) -> Option<&str> {
         return None;
     }
 
-    event
+    if let Some(text) = event
         .text
         .as_deref()
         .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+    {
+        return Some(text);
+    }
+
+    let key = event.key.as_str();
+    (key.chars().count() == 1 && !key.chars().any(char::is_control)).then_some(key)
 }
 
 fn layout_content_size(layout: &PersistentTextLayout) -> Size {
@@ -1849,6 +1855,16 @@ mod tests {
         let mut event = KeyboardEvent::new(key, KeyState::Pressed);
         event.modifiers.control = true;
         Event::Keyboard(event)
+    }
+
+    #[test]
+    fn keyboard_text_falls_back_to_printable_key_when_text_payload_is_missing() {
+        let mut event = KeyboardEvent::new("h", KeyState::Pressed);
+        event.text = None;
+        assert_eq!(keyboard_text(&event), Some("h"));
+
+        event.modifiers.control = true;
+        assert_eq!(keyboard_text(&event), None);
     }
 
     fn text_input_node(output: &RenderOutput) -> &SemanticsNode {

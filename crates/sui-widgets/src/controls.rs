@@ -7518,10 +7518,16 @@ fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
         return None;
     }
 
-    event
+    if let Some(text) = event
         .text
         .as_deref()
         .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+    {
+        return Some(text);
+    }
+
+    let key = event.key.as_str();
+    (key.chars().count() == 1 && !key.chars().any(char::is_control)).then_some(key)
 }
 
 fn center_square(bounds: Rect, side: f32) -> Rect {
@@ -8312,6 +8318,12 @@ mod tests {
     fn command_key(key: &str) -> Event {
         let mut event = KeyboardEvent::new(key, KeyState::Pressed);
         event.modifiers.control = true;
+        Event::Keyboard(event)
+    }
+
+    fn key_without_text(key: &str) -> Event {
+        let mut event = KeyboardEvent::new(key, KeyState::Pressed);
+        event.text = None;
         Event::Keyboard(event)
     }
 
@@ -10056,6 +10068,32 @@ mod tests {
     }
 
     #[test]
+    fn text_input_accepts_printable_key_without_text_payload() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name").on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+        runtime.handle_event(window_id, key_without_text("h"))?;
+
+        assert_eq!(changes.borrow().last().map(String::as_str), Some("h"));
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text input semantics present");
+        assert_eq!(input.value, Some(SemanticsValue::Text("h".to_string())));
+        Ok(())
+    }
+
+    #[test]
     fn text_input_read_only_uses_muted_text_and_blocks_mutation() -> Result<()> {
         let theme = DefaultTheme::default();
         let changes = Rc::new(RefCell::new(Vec::new()));
@@ -11695,6 +11733,32 @@ mod tests {
             input.value,
             Some(SemanticsValue::Text("Line 1\nLine 2".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_accepts_printable_key_without_text_payload() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Notes").on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+        runtime.handle_event(window_id, key_without_text("h"))?;
+
+        assert_eq!(changes.borrow().last().map(String::as_str), Some("h"));
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text area semantics present");
+        assert_eq!(input.value, Some(SemanticsValue::Text("h".to_string())));
         Ok(())
     }
 
