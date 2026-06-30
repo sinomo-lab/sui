@@ -6908,25 +6908,25 @@ mod tests {
         DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformanceFrameSample, LivePerformancePanel, NAME_INPUT_LABEL,
-        NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL,
+        NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
         RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME,
-        SLIDER_NAME, SUMMARY_NAME, TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME,
-        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
-        TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
-        TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
-        WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL, WIDGET_STATES_GALLERY_NAME,
-        WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME, WIDGET_STATES_SELECT_NAME,
-        WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL, WIDGET_STATES_TABS_NAME,
-        WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL, WINDOW_TITLE,
-        build_animation_benchmark_application, build_button_grid_benchmark_application,
-        build_color_and_imagery_story, build_retained_text_benchmark_application,
-        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
-        build_widget_book_gallery, default_widget_book_state, frame_phase_index,
-        register_widget_book_images, text_editing_benchmark_document,
-        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
-        theme_preview_card,
+        SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL, TEXT_AREA_LABEL,
+        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+        TEXT_EDITING_BENCHMARK_TITLE, TEXT_RENDERING_COMPARISON_SCROLL_NAME,
+        TEXT_RENDERING_COMPARISON_TITLE, TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME,
+        TEXT_VALIDATION_VIEW_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
+        TOOLTIP_TRIGGER_LABEL, WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL,
+        WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME,
+        WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL,
+        WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL,
+        WINDOW_TITLE, build_animation_benchmark_application,
+        build_button_grid_benchmark_application, build_color_and_imagery_story,
+        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+        build_text_rendering_comparison_application, build_text_validation_surface,
+        build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
+        default_widget_book_state, frame_phase_index, register_widget_book_images,
+        text_editing_benchmark_document, text_editing_benchmark_style_overlays,
+        text_editing_benchmark_style_spans, theme_preview_card,
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -8280,6 +8280,40 @@ mod tests {
             node.role == SemanticsRole::Popover
                 && node.name.as_deref() == Some(WIDGET_STATES_POPOVER_NAME)
         }));
+    }
+
+    #[test]
+    fn widget_book_choices_ranges_and_selects_use_consistent_heights() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+        scroll_to_story_target(&window, StoryCase::Slider, 12)?;
+        let snapshot = window.snapshot()?;
+        let semantics = &snapshot.accessibility.nodes;
+        let theme = DefaultTheme::default();
+        let style = theme.body_text_style();
+        let padding = theme.metrics.text_input_padding;
+        let expected_height =
+            (style.line_height + padding.top + padding.bottom).max(theme.metrics.min_height);
+
+        for (role, name) in [
+            (SemanticsRole::Switch, SWITCH_LABEL),
+            (SemanticsRole::RadioButton, RADIO_BUTTON_LABEL),
+            (SemanticsRole::Slider, SLIDER_NAME),
+            (SemanticsRole::SpinBox, NUMBER_INPUT_NAME),
+            (SemanticsRole::ComboBox, SELECT_NAME),
+        ] {
+            let node = semantics
+                .iter()
+                .find(|node| node.role == role && node.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing {role:?} named {name:?}"));
+            assert!(
+                (node.bounds.height() - expected_height).abs() < 0.01,
+                "expected {role:?} named {name:?} to use the theme control height {expected_height}, got {:?}",
+                node.bounds
+            );
+        }
+
+        Ok(())
     }
 
     #[test]

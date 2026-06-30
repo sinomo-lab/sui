@@ -2528,10 +2528,13 @@ impl Widget for Checkbox {
         self.label_measurement = Some(measurement);
 
         let width = padding.left + indicator_size + gap + measurement.width + padding.right;
-        let height = (indicator_size.max(measurement.height.max(text_style.line_height))
-            + padding.top
-            + padding.bottom)
-            .max(theme.metrics.min_height);
+        let content_height = indicator_size.max(measurement.height.max(text_style.line_height));
+        let height = choice_control_height(
+            content_height,
+            padding,
+            default_form_control_height(&theme),
+            self.padding.is_some(),
+        );
 
         constraints.clamp(Size::new(width, height))
     }
@@ -2563,8 +2566,9 @@ impl Widget for Checkbox {
             palette.border_focus,
             focus_progress,
         );
-        let indicator = indicator_rect(ctx.bounds(), padding, indicator_size);
-        let label_rect = checkbox_label_rect(ctx.bounds(), padding, indicator_size, gap);
+        let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
+        let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
+        let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
 
         draw_control_frame(
             ctx,
@@ -3017,12 +3021,16 @@ impl Widget for Switch {
         let track_width = theme.metrics.switch_track_width;
         let track_height = theme.metrics.switch_track_height;
 
+        let content_height = track_height.max(measurement.height.max(text_style.line_height));
+
         constraints.clamp(Size::new(
             padding.left + track_width + gap + measurement.width + padding.right,
-            (track_height.max(measurement.height.max(text_style.line_height))
-                + padding.top
-                + padding.bottom)
-                .max(theme.metrics.min_height),
+            choice_control_height(
+                content_height,
+                padding,
+                default_form_control_height(&theme),
+                self.padding.is_some(),
+            ),
         ))
     }
 
@@ -3412,12 +3420,17 @@ impl Widget for RadioButton {
         let measurement = measure_text(ctx, &self.label, &text_style);
         self.label_measurement = Some(measurement);
 
+        let theme = self.resolved_theme();
+        let content_height = indicator_size.max(measurement.height.max(text_style.line_height));
+
         constraints.clamp(Size::new(
             padding.left + indicator_size + gap + measurement.width + padding.right,
-            (indicator_size.max(measurement.height.max(text_style.line_height))
-                + padding.top
-                + padding.bottom)
-                .max(self.resolved_theme().metrics.min_height),
+            choice_control_height(
+                content_height,
+                padding,
+                default_form_control_height(&theme),
+                self.padding.is_some(),
+            ),
         ))
     }
 
@@ -3434,8 +3447,9 @@ impl Widget for RadioButton {
         let press_progress = self.press_animation.value * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
-        let indicator = indicator_rect(ctx.bounds(), padding, indicator_size);
-        let label_rect = checkbox_label_rect(ctx.bounds(), padding, indicator_size, gap);
+        let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
+        let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
+        let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
         let frame_background = mix_color(
             mix_color(
                 mix_color(palette.control, palette.control_hover, hover_progress),
@@ -3619,7 +3633,7 @@ impl RadioGroup {
     }
 
     fn row_height(&self) -> f32 {
-        self.resolved_theme().metrics.min_height
+        default_form_control_height(&self.resolved_theme())
     }
 
     fn row_rect(&self, bounds: Rect, index: usize) -> Rect {
@@ -4298,7 +4312,7 @@ impl Widget for Slider {
 
         constraints.clamp(Size::new(
             theme.metrics.slider_min_width,
-            theme.metrics.min_height,
+            default_form_control_height(&theme),
         ))
     }
 
@@ -4768,16 +4782,20 @@ impl Widget for NumberInput {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_external_value();
         let buffer = self.display_buffer();
-        let measurement = measure_text(ctx, &buffer, &self.text_style());
+        let text_style = self.text_style();
+        let measurement = measure_text(ctx, &buffer, &text_style);
         let theme = self.resolved_theme();
         let padding = theme.metrics.text_input_padding;
+        let height =
+            (measurement.height.max(text_style.line_height) + padding.top + padding.bottom)
+                .max(theme.metrics.min_height);
         constraints.clamp(Size::new(
             (measurement.width
                 + padding.left
                 + padding.right
                 + theme.metrics.number_input_stepper_width)
                 .max(theme.metrics.button_min_width + 60.0),
-            theme.metrics.min_height,
+            height,
         ))
     }
 
@@ -5698,7 +5716,7 @@ impl SelectMenuPresentationState {
     }
 
     fn row_height(&self) -> f32 {
-        self.theme.metrics.min_height
+        default_form_control_height(&self.theme)
     }
 
     fn row_rect(&self, index: usize, bounds: Rect) -> Rect {
@@ -6075,7 +6093,7 @@ impl Select {
     }
 
     fn header_height(&self) -> f32 {
-        self.resolved_theme().metrics.min_height
+        default_form_control_height(&self.resolved_theme())
     }
 
     fn current_label(&self) -> String {
@@ -7776,6 +7794,38 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
         (rect.width() - padding.left - padding.right).max(0.0),
         (rect.height() - padding.top - padding.bottom).max(0.0),
     )
+}
+
+fn choice_control_height(
+    content_height: f32,
+    padding: Insets,
+    baseline_height: f32,
+    has_explicit_padding: bool,
+) -> f32 {
+    let padding_height = if has_explicit_padding {
+        padding.top + padding.bottom
+    } else {
+        0.0
+    };
+    (content_height + padding_height).max(baseline_height)
+}
+
+fn default_form_control_height(theme: &DefaultTheme) -> f32 {
+    let style = theme.body_text_style();
+    let padding = theme.metrics.text_input_padding;
+    (style.line_height + padding.top + padding.bottom).max(theme.metrics.min_height)
+}
+
+fn choice_control_layout_padding(padding: Insets, has_explicit_padding: bool) -> Insets {
+    if has_explicit_padding {
+        padding
+    } else {
+        Insets {
+            top: 0.0,
+            bottom: 0.0,
+            ..padding
+        }
+    }
 }
 
 fn indicator_rect(bounds: Rect, padding: Insets, indicator_size: f32) -> Rect {
@@ -11044,7 +11094,8 @@ mod tests {
             .expect("radio group label should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
-        let row_center = DefaultTheme::default().metrics.min_height * 0.5;
+        let theme = DefaultTheme::default();
+        let row_center = super::default_form_control_height(&theme) * 0.5;
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
     }
@@ -11090,20 +11141,35 @@ mod tests {
     }
 
     #[test]
-    fn controls_default_to_touch_safe_heights() {
+    fn controls_default_to_native_form_height() {
         let theme = DefaultTheme::default();
-        assert_eq!(
-            render(Button::new("Go")).frame.viewport.height >= theme.metrics.min_height,
-            true
+        let expected = super::default_form_control_height(&theme);
+
+        macro_rules! assert_default_height {
+            ($widget:expr, $name:literal) => {{
+                let height = render($widget).frame.viewport.height;
+                assert!(
+                    (height - expected).abs() < 0.01,
+                    "expected {} height to match native form height {}, got {}",
+                    $name,
+                    expected,
+                    height
+                );
+            }};
+        }
+
+        assert_default_height!(Button::new("Go"), "button");
+        assert_default_height!(Checkbox::new("Subscribe"), "checkbox");
+        assert_default_height!(Switch::new("Enabled"), "switch");
+        assert_default_height!(RadioButton::new("Manual"), "radio button");
+        assert_default_height!(
+            RadioGroup::new("Choices").options(["Alpha"]),
+            "single-row radio group"
         );
-        assert_eq!(
-            render(Checkbox::new("Subscribe")).frame.viewport.height >= theme.metrics.min_height,
-            true
-        );
-        assert_eq!(
-            render(TextInput::new("Name")).frame.viewport.height >= theme.metrics.min_height,
-            true
-        );
+        assert_default_height!(Slider::new("Opacity"), "slider");
+        assert_default_height!(NumberInput::new("Size"), "number input");
+        assert_default_height!(Select::new("Blend mode").options(["Normal"]), "select");
+        assert_default_height!(TextInput::new("Name"), "text input");
     }
 
     #[test]
