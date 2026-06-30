@@ -1930,12 +1930,7 @@ impl Button {
         let label_color = if enabled {
             apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift)
         } else {
-            apply_hdr_policy_cap(
-                self.resolved_text_style()
-                    .color
-                    .with_alpha(interaction.disabled_content_opacity),
-                label_peak_lift,
-            )
+            apply_hdr_policy_cap(palette.text_muted, label_peak_lift)
         };
 
         if matches!(theme.hdr.mode, HdrThemeMode::Disabled) {
@@ -8773,6 +8768,15 @@ mod tests {
         assert!(button.state.disabled);
         assert!(button.actions.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn disabled_button_label_uses_readable_muted_text() {
+        let theme = DefaultTheme::default();
+        let output = render(Button::new("Save").enabled(false).theme(theme));
+        let text = text_run_for(&output, "Save");
+
+        assert_eq!(text.style.color, theme.palette.text_muted);
     }
 
     #[test]

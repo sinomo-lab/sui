@@ -3676,7 +3676,7 @@ fn draw_aligned_text(
     ctx.pop_clip();
 }
 
-const TWO_LINE_ROW_TEXT_GAP: f32 = 6.0;
+const TWO_LINE_ROW_TEXT_GAP: f32 = 2.0;
 
 fn row_text_rects(
     ctx: &PaintCtx,
@@ -6061,6 +6061,30 @@ mod tests {
         let detail = text_rects_for(&output, "Visible")[0];
 
         assert!(label.max_y() <= detail.y());
+    }
+
+    #[test]
+    fn list_and_tree_detail_text_stays_grouped_with_primary_label() {
+        let list = render(SizedBox::new().width(320.0).height(120.0).with_child(
+            ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
+        ));
+        let tree = render(SizedBox::new().width(320.0).height(120.0).with_child(
+            TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
+        ));
+
+        for (output, label_text, detail_text) in [
+            (&list, "Hero texture", "2048 x 2048 RGBA"),
+            (&tree, "Environment", "Visible"),
+        ] {
+            let label = text_rects_for(output, label_text)[0];
+            let detail = text_rects_for(output, detail_text)[0];
+            let gap = detail.y() - label.max_y();
+
+            assert!(
+                (0.0..=2.5).contains(&gap),
+                "expected {label_text:?} and {detail_text:?} to read as one row; gap was {gap}"
+            );
+        }
     }
 
     #[test]
