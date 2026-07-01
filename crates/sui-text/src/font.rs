@@ -457,10 +457,75 @@ impl TextSystemState {
 
 #[cfg(target_arch = "wasm32")]
 fn load_bundled_fallback_fonts(font_db: &mut fontdb::Database) {
-    font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+    let ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
         include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
     )));
+    let _ = set_sans_serif_family_from_loaded_faces(font_db, &ids);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn load_bundled_fallback_fonts(_font_db: &mut fontdb::Database) {}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn set_sans_serif_family_from_loaded_faces(
+    font_db: &mut fontdb::Database,
+    ids: &[fontdb::ID],
+) -> Option<String> {
+    let mut fallback = None;
+    for id in ids {
+        let Some(face_info) = font_db.face(*id) else {
+            continue;
+        };
+        for (name, _language) in &face_info.families {
+            if name == "Noto Sans" {
+                let name = name.clone();
+                font_db.set_sans_serif_family(name.clone());
+                return Some(name);
+            }
+            fallback.get_or_insert_with(|| name.clone());
+        }
+        if fallback.is_none() && !face_info.post_script_name.is_empty() {
+            fallback = Some(face_info.post_script_name.clone());
+        }
+    }
+
+    if let Some(name) = fallback {
+        font_db.set_sans_serif_family(name.clone());
+        Some(name)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod font_database_tests {
+    use super::*;
+
+    #[test]
+    fn bundled_web_sans_font_becomes_generic_sans_serif() {
+        let mut font_db = fontdb::Database::new();
+        let ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+            include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
+        )));
+
+        let family_name = set_sans_serif_family_from_loaded_faces(&mut font_db, &ids)
+            .expect("bundled sans font should expose a family name");
+
+        assert_eq!(family_name, "Noto Sans");
+        assert_eq!(font_db.family_name(&fontdb::Family::SansSerif), "Noto Sans");
+
+        let families = [fontdb::Family::SansSerif];
+        let font_id = font_db
+            .query(&fontdb::Query {
+                families: &families,
+                weight: fontdb::Weight::NORMAL,
+                stretch: fontdb::Stretch::Normal,
+                style: fontdb::Style::Normal,
+            })
+            .expect("generic sans-serif should resolve to bundled font");
+        let face = font_db
+            .face(font_id)
+            .expect("resolved bundled font face should still be registered");
+        assert!(face.families.iter().any(|(name, _)| name == "Noto Sans"));
+    }
+}

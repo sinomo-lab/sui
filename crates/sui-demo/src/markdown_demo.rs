@@ -546,11 +546,15 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
                         .align_items(Alignment::Stretch)
                         .with_item(
                             markdown_panel("Source", source, Rc::clone(&theme_reader)),
-                            FlexItem::new().basis_fraction(0.44).min_width(320.0),
+                            FlexItem::new()
+                                .basis_gap_aware_fraction(0.44)
+                                .min_width(320.0),
                         )
                         .with_item(
                             markdown_panel("Rendered", rendered, Rc::clone(&theme_reader)),
-                            FlexItem::new().basis_fraction(0.56).min_width(380.0),
+                            FlexItem::new()
+                                .basis_gap_aware_fraction(0.56)
+                                .min_width(380.0),
                         ),
                 ),
         ))

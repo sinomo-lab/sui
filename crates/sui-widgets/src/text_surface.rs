@@ -1195,13 +1195,14 @@ impl Widget for TextSurface {
         } else {
             (min_size.height - padding.top - padding.bottom).max(line_style.line_height)
         };
+        let cache_lines_individually = self.wrap == TextWrap::NoWrap;
         let mut line_layout_failed = false;
 
         if !composition_active {
             let document = self.editor.document();
             let line_count = document.line_count();
 
-            if line_count > 1 {
+            if cache_lines_individually && line_count > 1 {
                 let can_reuse_lines = self.line_layout_revision != u64::MAX
                     && self.line_layout_box_size == Some(line_box_size)
                     && self.line_layout_style.as_ref() == Some(&line_style)
@@ -1283,7 +1284,7 @@ impl Widget for TextSurface {
         } else {
             let display_text = self.display_text();
             let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
-            if line_texts.len() > 1 {
+            if cache_lines_individually && line_texts.len() > 1 {
                 let metadata_matches = self.line_layout_box_size == Some(line_box_size)
                     && self.line_layout_style.as_ref() == Some(&line_style)
                     && self.line_layout_style_revision == self.style_revision
@@ -2040,6 +2041,33 @@ mod tests {
                 .first()
                 .and_then(|text| text.resolve(output.frame.text_layout_registry.as_ref()))
                 .is_some_and(|layout| layout.text() == "line 00")
+        );
+    }
+
+    #[test]
+    fn text_surface_word_wrap_shapes_full_document_layout() {
+        let value = "alpha beta gamma delta epsilon zeta eta theta iota\nsecond wrapped line";
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(120.0, 120.0))
+                .with_child(TextSurface::new("Editor").wrap(TextWrap::Word).value(value)),
+        );
+
+        let output = runtime.render(window_id).expect("render should succeed");
+        let shaped = shaped_text_commands(&output);
+
+        assert_eq!(
+            shaped.len(),
+            1,
+            "wrapped text should be submitted as a document layout, not cached logical lines"
+        );
+        let layout = shaped[0]
+            .resolve(output.frame.text_layout_registry.as_ref())
+            .expect("wrapped text layout should resolve");
+        assert_eq!(layout.text(), value);
+        assert!(
+            layout.lines().len() > value.lines().count(),
+            "word wrapping should produce more visual lines than logical document lines"
         );
     }
 
