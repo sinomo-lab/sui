@@ -3164,6 +3164,11 @@ pub struct Breadcrumb {
     press_motion: IndexedInteractionMotion<usize>,
     focus_animation: AnimatedScalar,
     measured_widths: Vec<f32>,
+    content_width: f32,
+    scroll_x: f32,
+    auto_scroll_to_end: bool,
+    drag_anchor: Option<(Point, f32)>,
+    drag_moved: bool,
     on_activate: Option<Box<dyn FnMut(usize, String)>>,
 }
 
@@ -3182,6 +3187,11 @@ impl Breadcrumb {
             press_motion: IndexedInteractionMotion::new(),
             focus_animation: AnimatedScalar::new(0.0),
             measured_widths: Vec::new(),
+            content_width: 0.0,
+            scroll_x: 0.0,
+            auto_scroll_to_end: true,
+            drag_anchor: None,
+            drag_moved: false,
             on_activate: None,
         }
     }
@@ -3253,6 +3263,43 @@ impl Breadcrumb {
         }
     }
 
+    fn max_scroll_x(&self, bounds: Rect) -> f32 {
+        (self.content_width - bounds.width()).max(0.0)
+    }
+
+    fn content_overflows(&self, bounds: Rect) -> bool {
+        self.max_scroll_x(bounds) > 0.5
+    }
+
+    fn sync_scroll_to_bounds(&mut self, bounds: Rect) {
+        let max_scroll = self.max_scroll_x(bounds);
+        self.scroll_x = if self.auto_scroll_to_end {
+            max_scroll
+        } else {
+            self.scroll_x.clamp(0.0, max_scroll)
+        };
+    }
+
+    fn set_scroll_x(&mut self, bounds: Rect, next_scroll_x: f32) -> bool {
+        let max_scroll = self.max_scroll_x(bounds);
+        let next_scroll_x = next_scroll_x.clamp(0.0, max_scroll);
+        if (self.scroll_x - next_scroll_x).abs() <= 0.5 {
+            return false;
+        }
+
+        self.scroll_x = next_scroll_x;
+        self.auto_scroll_to_end = false;
+        true
+    }
+
+    fn wheel_scroll_delta(delta: Vector) -> f32 {
+        if delta.x.abs() > 0.0 {
+            -delta.x
+        } else {
+            -delta.y
+        }
+    }
+
     fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
         let widths = &self.measured_widths;
         if index >= widths.len() {
@@ -3261,7 +3308,7 @@ impl Breadcrumb {
         let theme = self.resolved_theme();
         let padding = theme.metrics.breadcrumb_item_padding;
         let gap = theme.metrics.breadcrumb_gap;
-        let mut x = bounds.x() + padding.left;
+        let mut x = bounds.x() + padding.left - self.scroll_x;
         for (current, width) in widths.iter().enumerate() {
             let rect = Rect::new(
                 x,
@@ -3278,6 +3325,10 @@ impl Breadcrumb {
     }
 
     fn item_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+        if !bounds.contains(position) {
+            return None;
+        }
+
         (0..self.items.len()).find(|index| {
             self.item_rect(bounds, *index)
                 .is_some_and(|rect| rect.contains(position))
@@ -3326,14 +3377,53 @@ impl Widget for Breadcrumb {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                if pointer.buttons.contains(PointerButton::Primary) {
+                    if let Some((anchor_position, anchor_scroll_x)) = self.drag_anchor {
+                        let bounds = ctx.bounds();
+                        if self.content_overflows(bounds) {
+                            let next_scroll_x =
+                                anchor_scroll_x - (pointer.position.x - anchor_position.x);
+                            if self.set_scroll_x(bounds, next_scroll_x) {
+                                self.drag_moved = true;
+                                self.set_pressed(None, ctx);
+                                ctx.request_paint();
+                                ctx.request_semantics();
+                                ctx.set_handled();
+                            }
+
+                            if (pointer.position.x - anchor_position.x).abs() > 3.0 {
+                                self.drag_moved = true;
+                            }
+                        }
+                    }
+                }
+
                 let hovered = self.item_at(ctx.bounds(), pointer.position);
                 self.set_hovered(hovered, ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Scroll => {
+                let bounds = ctx.bounds();
+                if bounds.contains(pointer.position) && self.content_overflows(bounds) {
+                    let delta = pointer
+                        .scroll_delta
+                        .map(scroll_delta_to_offset)
+                        .unwrap_or(pointer.delta);
+                    if self.set_scroll_x(bounds, self.scroll_x + Self::wheel_scroll_delta(delta)) {
+                        let hovered = self.item_at(bounds, pointer.position);
+                        self.set_hovered(hovered, ctx);
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                        ctx.set_handled();
+                    }
+                }
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 let pressed = self.item_at(ctx.bounds(), pointer.position);
+                self.drag_anchor = Some((pointer.position, self.scroll_x));
+                self.drag_moved = false;
                 self.set_hovered(pressed, ctx);
                 self.set_pressed(pressed, ctx);
                 ctx.request_focus();
@@ -3345,26 +3435,34 @@ impl Widget for Breadcrumb {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 let hovered = self.item_at(ctx.bounds(), pointer.position);
-                if let Some(index) = self
-                    .pressed
-                    .zip(hovered)
-                    .filter(|(pressed, hovered)| pressed == hovered)
-                    .map(|(index, _)| index)
-                {
-                    self.activate(index);
+                if !self.drag_moved {
+                    if let Some(index) = self
+                        .pressed
+                        .zip(hovered)
+                        .filter(|(pressed, hovered)| pressed == hovered)
+                        .map(|(index, _)| index)
+                    {
+                        self.activate(index);
+                    }
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
+                self.drag_anchor = None;
+                self.drag_moved = false;
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                self.set_hovered(None, ctx);
+                if self.drag_anchor.is_none() {
+                    self.set_hovered(None, ctx);
+                }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed.is_some() {
+                if self.pressed.is_some() || self.drag_anchor.is_some() {
                     self.set_pressed(None, ctx);
                     self.set_hovered(None, ctx);
+                    self.drag_anchor = None;
+                    self.drag_moved = false;
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.set_handled();
                 }
@@ -3412,21 +3510,35 @@ impl Widget for Breadcrumb {
             + (self.items.len().saturating_sub(1) as f32 * theme.metrics.breadcrumb_gap)
             + theme.metrics.breadcrumb_item_padding.left
             + theme.metrics.breadcrumb_item_padding.right;
+        if (self.content_width - desired_width).abs() > 0.5 {
+            self.content_width = desired_width;
+            self.auto_scroll_to_end = true;
+        }
         constraints.clamp(Size::new(
             desired_width.max(180.0),
             theme.metrics.breadcrumb_height,
         ))
     }
 
+    fn arrange(&mut self, _ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_scroll_to_bounds(bounds);
+    }
+
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        let bounds = ctx.bounds();
+        draw_surface(ctx, bounds, &theme, self.focus_animation.value);
 
+        ctx.push_clip_rect(bounds);
         for (index, item) in self.items.iter().enumerate() {
-            let Some(rect) = self.item_rect(ctx.bounds(), index) else {
+            let Some(rect) = self.item_rect(bounds, index) else {
                 continue;
             };
+            if rect.max_x() < bounds.x() || rect.x() > bounds.max_x() {
+                continue;
+            }
+
             let current = self.normalized_current() == index;
             let focused = ctx.is_focused() && self.focused_index == index;
             let hover_amount = self.hover_motion.amount_for(&index);
@@ -3474,6 +3586,7 @@ impl Widget for Breadcrumb {
                 );
             }
         }
+        ctx.pop_clip();
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -5004,6 +5117,104 @@ mod tests {
             rect_center(project_label),
             &theme,
         )
+    }
+
+    #[test]
+    fn breadcrumb_overflow_clips_and_defaults_to_trailing_items() {
+        let output = render(SizedBox::new().width(180.0).with_child(
+            Breadcrumb::new("Path").items([
+                BreadcrumbItem::new("SIFS"),
+                BreadcrumbItem::new("sinomo"),
+                BreadcrumbItem::new("nodes"),
+                BreadcrumbItem::new("node 01kvbbd...3fsrx"),
+                BreadcrumbItem::new("attachments"),
+            ]),
+        ));
+
+        assert!(
+            output.frame.scene.commands().iter().any(|command| matches!(
+                command,
+                SceneCommand::PushClip { rect }
+                    if (rect.width() - 180.0).abs() < 0.01
+                        && (rect.height() - output.frame.viewport.height).abs() < 0.01
+            )),
+            "overflowing breadcrumb content should be clipped to the widget bounds"
+        );
+
+        let trailing_label = text_rects_for(&output, "attachments")
+            .into_iter()
+            .next()
+            .expect("trailing breadcrumb item should render");
+        assert!(
+            trailing_label.x() >= -0.01 && trailing_label.max_x() <= 180.01,
+            "default overflow position should keep the last item visible: {trailing_label:?}"
+        );
+    }
+
+    #[test]
+    fn breadcrumb_wheel_scrolls_overflowing_content_leftward() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(SizedBox::new().width(180.0).with_child(
+            Breadcrumb::new("Path").items([
+                BreadcrumbItem::new("SIFS"),
+                BreadcrumbItem::new("sinomo"),
+                BreadcrumbItem::new("nodes"),
+                BreadcrumbItem::new("node 01kvbbd...3fsrx"),
+                BreadcrumbItem::new("attachments"),
+            ]),
+        ));
+
+        let before = runtime.render(window_id)?;
+        let before_x = text_rects_for(&before, "attachments")[0].x();
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(90.0, 18.0), Vector::new(0.0, 24.0)),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let after_x = text_rects_for(&after, "attachments")[0].x();
+        assert!(
+            after_x > before_x,
+            "wheel scrolling upward should reveal earlier breadcrumb items by moving content right"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn breadcrumb_drag_scrolls_overflowing_content_leftward() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(SizedBox::new().width(180.0).with_child(
+            Breadcrumb::new("Path").items([
+                BreadcrumbItem::new("SIFS"),
+                BreadcrumbItem::new("sinomo"),
+                BreadcrumbItem::new("nodes"),
+                BreadcrumbItem::new("node 01kvbbd...3fsrx"),
+                BreadcrumbItem::new("attachments"),
+            ]),
+        ));
+
+        let before = runtime.render(window_id)?;
+        let before_x = text_rects_for(&before, "attachments")[0].x();
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(90.0, 18.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(126.0, 18.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(126.0, 18.0), false),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let after_x = text_rects_for(&after, "attachments")[0].x();
+        assert!(
+            after_x > before_x,
+            "dragging right should reveal earlier breadcrumb items by moving content right"
+        );
+        Ok(())
     }
 
     #[test]
