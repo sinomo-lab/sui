@@ -1,12 +1,17 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use sui::prelude::*;
+use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
+use sui::{
+    Event as SuiEvent, KeyState, TextSurface, WidgetPodMutVisitor, WidgetPodVisitor, prelude::*,
+};
 
-use crate::app::{DevThemeReader, dev_theme_color};
+use crate::app::{DevThemeReader, dev_theme_color, request_window_refresh};
 
 pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Markdown render";
 pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
+pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
+
+const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 1.0;
 
 const SAMPLE_MARKDOWN: &str = r#"# SUI rich text report
 
@@ -180,6 +185,156 @@ struct MarkdownDocumentBuilder {
     lists: Vec<ListState>,
 }
 
+#[derive(Clone)]
+struct MarkdownDemoState {
+    inner: Rc<RefCell<MarkdownDemoStateInner>>,
+}
+
+struct MarkdownDemoStateInner {
+    source: String,
+    rendered_document: TextDocument,
+    edit_revision: u64,
+    render_revision: u64,
+}
+
+impl MarkdownDemoState {
+    fn new(theme: DefaultTheme) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(MarkdownDemoStateInner {
+                source: SAMPLE_MARKDOWN.to_string(),
+                rendered_document: markdown_to_document(SAMPLE_MARKDOWN, theme),
+                edit_revision: 0,
+                render_revision: 0,
+            })),
+        }
+    }
+
+    fn source(&self) -> String {
+        self.inner.borrow().source.clone()
+    }
+
+    fn rendered_document(&self) -> TextDocument {
+        self.inner.borrow().rendered_document.clone()
+    }
+
+    #[cfg(test)]
+    fn edit_revision(&self) -> u64 {
+        self.inner.borrow().edit_revision
+    }
+
+    #[cfg(test)]
+    fn render_revision(&self) -> u64 {
+        self.inner.borrow().render_revision
+    }
+
+    fn set_source(&self, source: String) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.source != source {
+            inner.source = source;
+            inner.edit_revision = inner.edit_revision.saturating_add(1);
+        }
+    }
+
+    fn apply_pending_render(&self, theme: DefaultTheme) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.render_revision == inner.edit_revision {
+            return false;
+        }
+        inner.rendered_document = markdown_to_document(&inner.source, theme);
+        inner.render_revision = inner.edit_revision;
+        true
+    }
+}
+
+struct MarkdownSourceEditor {
+    state: MarkdownDemoState,
+    theme_reader: DevThemeReader,
+    pending_timer: Option<TimerToken>,
+    editor: SingleChild,
+}
+
+impl MarkdownSourceEditor {
+    fn new(state: MarkdownDemoState, theme_reader: DevThemeReader) -> Self {
+        let editor_state = state.clone();
+        let source_style = source_text_style(theme_reader());
+        let editor = TextSurface::new(MARKDOWN_SOURCE_EDITOR_NAME)
+            .value(state.source())
+            .wrap(TextWrap::Word)
+            .text_style(source_style)
+            .padding(Insets::all(12.0))
+            .min_height(360.0)
+            .on_change(move |value| {
+                editor_state.set_source(value);
+            });
+
+        Self {
+            state,
+            theme_reader,
+            pending_timer: None,
+            editor: SingleChild::new(editor),
+        }
+    }
+
+    fn schedule_render(&mut self, ctx: &mut EventCtx) {
+        if let Some(token) = self.pending_timer.take() {
+            ctx.cancel_timer(token);
+        }
+        self.pending_timer = Some(ctx.schedule_timer_after(MARKDOWN_RENDER_COOLDOWN_SECONDS));
+    }
+
+    fn handle_timer(&mut self, ctx: &mut EventCtx, token: TimerToken) {
+        if self.pending_timer != Some(token) {
+            return;
+        }
+        self.pending_timer = None;
+        if self.state.apply_pending_render((self.theme_reader)()) {
+            request_window_refresh(ctx, false);
+        }
+        ctx.set_handled();
+    }
+
+    fn event_may_edit_source(event: &SuiEvent) -> bool {
+        matches!(
+            event,
+            SuiEvent::Keyboard(key) if key.state == KeyState::Pressed
+        ) || matches!(event, SuiEvent::Ime(_))
+    }
+}
+
+impl Widget for MarkdownSourceEditor {
+    fn event(&mut self, ctx: &mut EventCtx, event: &SuiEvent) {
+        match event {
+            SuiEvent::Wake(WakeEvent::Timer { token, .. }) => self.handle_timer(ctx, *token),
+            _ if Self::event_may_edit_source(event) => self.schedule_render(ctx),
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.editor.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.editor.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.editor.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.editor.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.editor.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.editor.visit_children_mut(visitor);
+    }
+}
+
 impl MarkdownDocumentBuilder {
     fn new(theme: DefaultTheme) -> Self {
         Self {
@@ -295,59 +450,59 @@ pub(crate) fn markdown_to_document(markdown: &str, theme: DefaultTheme) -> TextD
 
     for event in Parser::new_ext(markdown, options) {
         match event {
-            Event::Start(Tag::Paragraph) => {
+            MarkdownEvent::Start(Tag::Paragraph) => {
                 if builder.current_kind.is_none() {
                     builder.start_block(BlockKind::Paragraph);
                 }
             }
-            Event::End(TagEnd::Paragraph) => {
+            MarkdownEvent::End(TagEnd::Paragraph) => {
                 if !matches!(builder.current_kind, Some(BlockKind::Item)) {
                     builder.finish_current(true);
                 }
             }
-            Event::Start(Tag::Heading { level, .. }) => {
+            MarkdownEvent::Start(Tag::Heading { level, .. }) => {
                 builder.start_block(BlockKind::Heading(level));
             }
-            Event::End(TagEnd::Heading(_)) => builder.finish_current(true),
-            Event::Start(Tag::List(start)) => builder.lists.push(ListState { next: start }),
-            Event::End(TagEnd::List(_)) => {
+            MarkdownEvent::End(TagEnd::Heading(_)) => builder.finish_current(true),
+            MarkdownEvent::Start(Tag::List(start)) => builder.lists.push(ListState { next: start }),
+            MarkdownEvent::End(TagEnd::List(_)) => {
                 builder.finish_current(true);
                 builder.lists.pop();
             }
-            Event::Start(Tag::Item) => builder.start_item(),
-            Event::End(TagEnd::Item) => builder.finish_current(true),
-            Event::Start(Tag::CodeBlock(_)) => builder.start_block(BlockKind::CodeBlock),
-            Event::End(TagEnd::CodeBlock) => builder.finish_current(true),
-            Event::Start(Tag::Emphasis) => builder.inline.emphasis += 1,
-            Event::End(TagEnd::Emphasis) => {
+            MarkdownEvent::Start(Tag::Item) => builder.start_item(),
+            MarkdownEvent::End(TagEnd::Item) => builder.finish_current(true),
+            MarkdownEvent::Start(Tag::CodeBlock(_)) => builder.start_block(BlockKind::CodeBlock),
+            MarkdownEvent::End(TagEnd::CodeBlock) => builder.finish_current(true),
+            MarkdownEvent::Start(Tag::Emphasis) => builder.inline.emphasis += 1,
+            MarkdownEvent::End(TagEnd::Emphasis) => {
                 builder.inline.emphasis = builder.inline.emphasis.saturating_sub(1);
             }
-            Event::Start(Tag::Strong) => builder.inline.strong += 1,
-            Event::End(TagEnd::Strong) => {
+            MarkdownEvent::Start(Tag::Strong) => builder.inline.strong += 1,
+            MarkdownEvent::End(TagEnd::Strong) => {
                 builder.inline.strong = builder.inline.strong.saturating_sub(1);
             }
-            Event::Start(Tag::Strikethrough) => builder.inline.strikethrough += 1,
-            Event::End(TagEnd::Strikethrough) => {
+            MarkdownEvent::Start(Tag::Strikethrough) => builder.inline.strikethrough += 1,
+            MarkdownEvent::End(TagEnd::Strikethrough) => {
                 builder.inline.strikethrough = builder.inline.strikethrough.saturating_sub(1);
             }
-            Event::Start(Tag::Link { .. }) => builder.inline.link += 1,
-            Event::End(TagEnd::Link) => {
+            MarkdownEvent::Start(Tag::Link { .. }) => builder.inline.link += 1,
+            MarkdownEvent::End(TagEnd::Link) => {
                 builder.inline.link = builder.inline.link.saturating_sub(1);
             }
-            Event::Text(text) => {
+            MarkdownEvent::Text(text) => {
                 if builder.current_kind == Some(BlockKind::CodeBlock) {
                     builder.add_code_block_text(&text);
                 } else {
                     builder.add_text(&text);
                 }
             }
-            Event::Code(code) => {
+            MarkdownEvent::Code(code) => {
                 builder.inline.code += 1;
                 builder.add_text(&code);
                 builder.inline.code = builder.inline.code.saturating_sub(1);
             }
-            Event::SoftBreak | Event::HardBreak => builder.add_text(" "),
-            Event::Rule => {
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => builder.add_text(" "),
+            MarkdownEvent::Rule => {
                 builder.start_block(BlockKind::Paragraph);
                 builder.add_text("-----");
                 builder.finish_current(true);
@@ -360,23 +515,15 @@ pub(crate) fn markdown_to_document(markdown: &str, theme: DefaultTheme) -> TextD
 }
 
 pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
-    let fallback_theme = theme_reader();
-    let rendered_theme_reader = Rc::clone(&theme_reader);
-    let rendered = RichText::dynamic(
-        markdown_to_document(SAMPLE_MARKDOWN, fallback_theme),
-        move || markdown_to_document(SAMPLE_MARKDOWN, rendered_theme_reader()),
-    )
+    let state = MarkdownDemoState::new(theme_reader());
+    let rendered_state = state.clone();
+    let rendered = RichText::dynamic(state.rendered_document(), move || {
+        rendered_state.rendered_document()
+    })
     .semantic_name(MARKDOWN_RENDER_DEMO_NAME)
     .padding(Insets::all(16.0))
     .min_height(360.0);
-
-    let source_theme_reader = Rc::clone(&theme_reader);
-    let source = RichText::dynamic(source_document(theme_reader()), move || {
-        source_document(source_theme_reader())
-    })
-    .semantic_name("Markdown source")
-    .padding(Insets::all(12.0))
-    .min_height(360.0);
+    let source = MarkdownSourceEditor::new(state, Rc::clone(&theme_reader));
 
     Background::new(
         theme_reader().palette.surface,
@@ -451,12 +598,12 @@ fn heading_index(level: HeadingLevel) -> usize {
     }
 }
 
-fn source_document(theme: DefaultTheme) -> TextDocument {
+fn source_text_style(theme: DefaultTheme) -> TextStyle {
     let mut style = theme.body_text_style();
     style.font_size = 13.0;
     style.line_height = 18.0;
     style.color = theme.palette.text_muted;
-    TextDocument::from_plain_text(SAMPLE_MARKDOWN, style)
+    style
 }
 
 #[cfg(test)]
@@ -503,5 +650,26 @@ mod tests {
 
         assert!(text.contains("1. Parse"));
         assert!(text.contains("2. Render"));
+    }
+
+    #[test]
+    fn markdown_state_holds_preview_until_pending_render_applies() {
+        let state = MarkdownDemoState::new(DefaultTheme::default());
+        state.set_source("# First edit".to_string());
+        state.set_source("# Final edit".to_string());
+
+        assert_eq!(state.edit_revision(), 2);
+        assert_eq!(state.render_revision(), 0);
+        assert!(
+            state
+                .rendered_document()
+                .plain_text()
+                .contains("SUI rich text report")
+        );
+
+        assert!(state.apply_pending_render(DefaultTheme::default()));
+        assert_eq!(state.render_revision(), state.edit_revision());
+        assert_eq!(state.rendered_document().paragraphs[0].text(), "Final edit");
+        assert!(!state.apply_pending_render(DefaultTheme::default()));
     }
 }

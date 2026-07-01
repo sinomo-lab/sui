@@ -1,7 +1,7 @@
 mod app;
 mod drag_drop_demo;
 mod layout_demo;
-#[cfg(feature = "markdown-demo")]
+#[cfg(feature = "markdown")]
 mod markdown_demo;
 mod paint_demo;
 mod vector_demo;
@@ -3315,7 +3315,7 @@ mod tests {
         assert_eq!(mode.dev_initial_demo.as_deref(), Some("paint"));
     }
 
-    #[cfg(feature = "markdown-demo")]
+    #[cfg(feature = "markdown")]
     #[test]
     fn parses_dev_workspace_markdown_initial_demo_slug() {
         let mode = parse_web_launch_mode("benchmark=dev&demo=markdown-render");

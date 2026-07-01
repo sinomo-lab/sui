@@ -25,10 +25,12 @@ use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme
 #[cfg(test)]
 use crate::layout_demo::LAYOUT_DEMO_SCROLL_NAME;
 use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
-#[cfg(feature = "markdown-demo")]
+#[cfg(feature = "markdown")]
 use crate::markdown_demo::build_markdown_render_demo_with_theme;
-#[cfg(all(feature = "markdown-demo", test))]
-use crate::markdown_demo::{MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME};
+#[cfg(all(feature = "markdown", test))]
+use crate::markdown_demo::{
+    MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME, MARKDOWN_SOURCE_EDITOR_NAME,
+};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
 use crate::vector_demo::{
@@ -47,7 +49,7 @@ const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
-#[cfg(feature = "markdown-demo")]
+#[cfg(feature = "markdown")]
 const MARKDOWN_RENDER_TAB_LABEL: &str = "Markdown";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
 const SETTINGS_TAB_LABEL: &str = "Settings";
@@ -1790,7 +1792,7 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             accent: Color::rgba(0.35, 0.38, 0.82, 1.0),
             child: WidgetPod::new(build_text_editing_benchmark()),
         },
-        #[cfg(feature = "markdown-demo")]
+        #[cfg(feature = "markdown")]
         DevDemo {
             title: MARKDOWN_RENDER_TAB_LABEL,
             description: "Feature-gated markdown rendering through SUI rich text documents.",
@@ -1847,7 +1849,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
-        #[cfg(feature = "markdown-demo")]
+        #[cfg(feature = "markdown")]
         "markdown" | "markdown-render" | "markdown-renderer" => Some(MARKDOWN_RENDER_TAB_LABEL),
         "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
         "layout" | "layouts" | "flex" => Some(LAYOUT_TAB_LABEL),
@@ -7284,7 +7286,7 @@ final_max_luminance={final_max_luminance}
         Ok(())
     }
 
-    #[cfg(feature = "markdown-demo")]
+    #[cfg(feature = "markdown")]
     #[test]
     fn dev_workspace_registers_markdown_render_demo() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
@@ -7303,6 +7305,11 @@ final_max_luminance={final_max_luminance}
         window
             .get_by_role(SemanticsRole::Text)
             .with_name(MARKDOWN_RENDER_DEMO_NAME)
+            .expect()
+            .to_be_visible()?;
+        window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(MARKDOWN_SOURCE_EDITOR_NAME)
             .expect()
             .to_be_visible()?;
         Ok(())

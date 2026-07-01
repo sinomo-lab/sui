@@ -8,12 +8,12 @@ publish = false
 default-run = "sui-demo"
 
 [features]
-default = ["native", "tui", "artifacts"]
+default = ["native", "tui", "artifacts", "markdown"]
 native = ["sui/desktop", "sui/wgpu"]
 tui = ["dep:crossterm", "dep:ratatui", "dep:sui-tui"]
 web = ["sui/web", "sui/wgpu"]
 artifacts = ["dep:sui-render-wgpu"]
-markdown-demo = ["dep:pulldown-cmark"]
+markdown = ["dep:pulldown-cmark"]
 
 [lib]
 name = "sui_demo_app"
