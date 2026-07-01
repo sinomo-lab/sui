@@ -109,6 +109,9 @@ const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 140.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
 const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 104.0;
+const DEV_SHELL_PICKER_TILE_GAP: f32 = 14.0;
+const DEV_SHELL_PICKER_SCROLL_NAME: &str = "Demo picker";
+const DEV_SHELL_PICKER_SCROLL_BAR_NAME: &str = "Demo picker scroll bar";
 const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
 const DEV_SHELL_SETTINGS_RESIZE_HANDLE: f32 = 18.0;
 const DEV_SHELL_MIN_SETTINGS_WIDTH: f32 = 320.0;
@@ -363,7 +366,7 @@ struct DevDemo {
 struct DevBrowserShell {
     state: DevShellState,
     demos: Vec<DevDemo>,
-    demo_buttons: WidgetChildren,
+    picker: SingleChild,
     main_menu: SingleChild,
     plus_button: SingleChild,
     theme_toggle: SingleChild,
@@ -411,6 +414,13 @@ impl DevBrowserShell {
                     }),
             );
         }
+        let picker_scroll_state = ScrollState::new();
+        let picker = VerticalScrollPane::new(
+            ScrollView::vertical(DevDemoPickerGrid::new(demo_buttons))
+                .state(picker_scroll_state.clone())
+                .name(DEV_SHELL_PICKER_SCROLL_NAME),
+            ScrollBar::vertical(picker_scroll_state).name(DEV_SHELL_PICKER_SCROLL_BAR_NAME),
+        );
 
         let picker_state = state.clone();
         let plus_button = IconButton::new(IconGlyph::Add, "Open demo")
@@ -436,7 +446,7 @@ impl DevBrowserShell {
         Self {
             state: state.clone(),
             demos,
-            demo_buttons,
+            picker: SingleChild::new(picker),
             main_menu: SingleChild::new(main_menu),
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
@@ -747,6 +757,94 @@ impl DevBrowserShell {
     }
 }
 
+struct DevDemoPickerGrid {
+    children: WidgetChildren,
+}
+
+impl DevDemoPickerGrid {
+    fn new(children: WidgetChildren) -> Self {
+        Self { children }
+    }
+
+    fn columns_for_width(width: f32) -> usize {
+        if width >= 840.0 {
+            3
+        } else if width >= 560.0 {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn column_width(width: f32, columns: usize) -> f32 {
+        ((width - (DEV_SHELL_PICKER_TILE_GAP * (columns.saturating_sub(1) as f32)))
+            / columns as f32)
+            .max(160.0)
+    }
+
+    fn content_height(child_count: usize, columns: usize) -> f32 {
+        if child_count == 0 {
+            return 0.0;
+        }
+        let rows = child_count.div_ceil(columns) as f32;
+        (rows * DEV_SHELL_PICKER_TILE_HEIGHT) + ((rows - 1.0).max(0.0) * DEV_SHELL_PICKER_TILE_GAP)
+    }
+}
+
+impl Widget for DevDemoPickerGrid {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width
+        } else {
+            constraints.min.width.max(1120.0)
+        };
+        let columns = Self::columns_for_width(width);
+        let column_width = Self::column_width(width, columns);
+        let child_constraints =
+            Constraints::tight(Size::new(column_width, DEV_SHELL_PICKER_TILE_HEIGHT));
+        for index in 0..self.children.len() {
+            self.children.measure_child(index, ctx, child_constraints);
+        }
+        constraints.clamp(Size::new(
+            width,
+            Self::content_height(self.children.len(), columns),
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let columns = Self::columns_for_width(bounds.width());
+        let column_width = Self::column_width(bounds.width(), columns);
+        for index in 0..self.children.len() {
+            let column = index % columns;
+            let row = index / columns;
+            let rect = Rect::new(
+                bounds.x() + column as f32 * (column_width + DEV_SHELL_PICKER_TILE_GAP),
+                bounds.y()
+                    + row as f32 * (DEV_SHELL_PICKER_TILE_HEIGHT + DEV_SHELL_PICKER_TILE_GAP),
+                column_width,
+                DEV_SHELL_PICKER_TILE_HEIGHT,
+            );
+            self.children.arrange_child(index, ctx, rect);
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.children.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.children.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
 fn dev_shell_tab_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
     const TAG: u64 = 2_u64 << 51;
     const LOW_MASK: u64 = (1_u64 << 51) - 1;
@@ -925,16 +1023,14 @@ impl Widget for DevBrowserShell {
         );
 
         if self.state.picker_visible() {
-            for index in 0..self.demo_buttons.len() {
-                self.demo_buttons.measure_child(
-                    index,
-                    ctx,
-                    Constraints::new(
-                        Size::new(220.0, DEV_SHELL_PICKER_TILE_HEIGHT),
-                        Size::new(360.0, DEV_SHELL_PICKER_TILE_HEIGHT),
-                    ),
-                );
-            }
+            let content = Rect::new(
+                0.0,
+                DEV_SHELL_TOOLBAR_HEIGHT,
+                root_size.width,
+                content_size.height,
+            );
+            let grid = Self::picker_grid_rect(content);
+            self.picker.measure(ctx, Constraints::tight(grid.size));
         } else if let Some(active) = self.state.active_tab() {
             self.demos[active].child.measure(ctx, content_constraints);
         }
@@ -975,32 +1071,9 @@ impl Widget for DevBrowserShell {
 
         if self.state.picker_visible() {
             let grid = Self::picker_grid_rect(self.content_bounds);
-            let columns: usize = if grid.width() >= 840.0 {
-                3
-            } else if grid.width() >= 560.0 {
-                2
-            } else {
-                1
-            };
-            let gap = 14.0;
-            let column_width = ((grid.width() - (gap * (columns.saturating_sub(1) as f32)))
-                / columns as f32)
-                .max(160.0);
-            for index in 0..self.demo_buttons.len() {
-                let column = index % columns;
-                let row = index / columns;
-                let rect = Rect::new(
-                    grid.x() + column as f32 * (column_width + gap),
-                    grid.y() + row as f32 * (DEV_SHELL_PICKER_TILE_HEIGHT + gap),
-                    column_width,
-                    DEV_SHELL_PICKER_TILE_HEIGHT,
-                );
-                self.demo_buttons.arrange_child(index, ctx, rect);
-            }
+            self.picker.arrange(ctx, grid);
         } else {
-            for index in 0..self.demo_buttons.len() {
-                self.demo_buttons.arrange_child(index, ctx, Rect::ZERO);
-            }
+            self.picker.arrange(ctx, Rect::ZERO);
             for (index, demo) in self.demos.iter_mut().enumerate() {
                 if self.state.active_tab() == Some(index) {
                     demo.child.arrange(ctx, self.content_bounds);
@@ -1021,7 +1094,7 @@ impl Widget for DevBrowserShell {
 
         if self.state.picker_visible() {
             self.paint_picker(ctx, &theme);
-            self.demo_buttons.paint(ctx);
+            self.picker.paint(ctx);
         } else if let Some(active) = self.state.active_tab() {
             self.demos[active].child.paint(ctx);
         }
@@ -1069,7 +1142,7 @@ impl Widget for DevBrowserShell {
         self.plus_button.semantics(ctx);
         self.theme_toggle.semantics(ctx);
         if self.state.picker_visible() {
-            self.demo_buttons.semantics(ctx);
+            self.picker.semantics(ctx);
         } else if let Some(active) = self.state.active_tab() {
             self.demos[active].child.semantics(ctx);
         }
@@ -1083,7 +1156,7 @@ impl Widget for DevBrowserShell {
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         if self.state.picker_visible() {
-            self.demo_buttons.visit_children(visitor);
+            self.picker.visit_children(visitor);
         } else if let Some(active) = self.state.active_tab() {
             visitor.visit(&self.demos[active].child);
         }
@@ -1097,7 +1170,7 @@ impl Widget for DevBrowserShell {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         if self.state.picker_visible() {
-            self.demo_buttons.visit_children_mut(visitor);
+            self.picker.visit_children_mut(visitor);
         } else if let Some(active) = self.state.active_tab() {
             visitor.visit(&mut self.demos[active].child);
         }
@@ -2527,13 +2600,13 @@ impl Widget for SdrContentBrightnessStatus {
     }
 }
 
-struct RenderSettingsScrollPane {
+struct VerticalScrollPane {
     spacing: f32,
     content: SingleChild,
     scroll_bar: SingleChild,
 }
 
-impl RenderSettingsScrollPane {
+impl VerticalScrollPane {
     fn new<W, S>(content: W, scroll_bar: S) -> Self
     where
         W: Widget + 'static,
@@ -2547,7 +2620,7 @@ impl RenderSettingsScrollPane {
     }
 }
 
-impl Widget for RenderSettingsScrollPane {
+impl Widget for VerticalScrollPane {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let scroll_bar_size = self.scroll_bar.measure(
             ctx,
@@ -2655,7 +2728,7 @@ impl RenderSettingsTab {
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
         let scroll_state = ScrollState::new();
 
-        let content = RenderSettingsScrollPane::new(
+        let content = VerticalScrollPane::new(
             ScrollView::vertical(Padding::all(
                 28.0,
                 Stack::vertical()
@@ -3878,6 +3951,49 @@ mod tests {
             }),
             "expected the tab zone to expose the demo picker + button"
         );
+    }
+
+    #[test]
+    fn dev_workspace_picker_exposes_scroll_bar_when_height_is_constrained() -> Result<()> {
+        let mut runtime = build_dev_application().build()?;
+        let window_id = runtime.window_ids()[0];
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(760.0, 360.0))),
+        )?;
+
+        let output = runtime.render(window_id)?;
+        let scroll = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(DEV_SHELL_PICKER_SCROLL_NAME)
+            })
+            .expect("demo picker scroll view should be present");
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(DEV_SHELL_PICKER_SCROLL_BAR_NAME)
+            })
+            .expect("demo picker scroll bar should be present");
+
+        let max = match &scroll_bar.value {
+            Some(SemanticsValue::Range { max, .. }) => *max,
+            _ => panic!("demo picker scroll bar should expose range semantics"),
+        };
+        assert!(
+            max > 0.0,
+            "expected constrained demo picker to overflow vertically"
+        );
+        assert!(
+            scroll_bar.bounds.x() >= scroll.bounds.max_x(),
+            "expected picker scroll bar to sit to the right of the scroll view"
+        );
+
+        Ok(())
     }
 
     #[test]
