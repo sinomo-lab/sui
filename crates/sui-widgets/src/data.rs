@@ -1,4 +1,8 @@
-use std::{fmt, rc::Rc};
+use std::{
+    fmt,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
@@ -3136,6 +3140,750 @@ impl Widget for Table {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtualTableSortDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualTableColumn {
+    title: String,
+    width: Option<f32>,
+    min_width: f32,
+    alignment: TableColumnAlignment,
+    sort_direction: Option<VirtualTableSortDirection>,
+}
+
+impl VirtualTableColumn {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            width: None,
+            min_width: 96.0,
+            alignment: TableColumnAlignment::Start,
+            sort_direction: None,
+        }
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width.max(32.0));
+        self
+    }
+
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = min_width.max(32.0);
+        self
+    }
+
+    pub fn alignment(mut self, alignment: TableColumnAlignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
+    pub fn sort_direction(mut self, direction: Option<VirtualTableSortDirection>) -> Self {
+        self.sort_direction = direction;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtualTableRowActivationKind {
+    Single,
+    Double,
+}
+
+pub struct VirtualTableRowContext<'a> {
+    pub row_index: usize,
+    pub row_rect: Rect,
+    pub column_rects: &'a [Rect],
+    pub selected: bool,
+    pub hovered: bool,
+    pub pressed: bool,
+}
+
+type VirtualTableRowPainter = Box<dyn for<'a> Fn(&mut PaintCtx, &VirtualTableRowContext<'a>)>;
+type VirtualTableRowName = Box<dyn Fn(usize) -> String>;
+type VirtualTableRowDescription = Box<dyn Fn(usize) -> String>;
+type VirtualTableCellActivation =
+    Box<dyn FnMut(usize, usize, VirtualTableRowActivationKind) -> bool>;
+
+pub struct VirtualTable {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: String,
+    columns: Vec<VirtualTableColumn>,
+    row_count: usize,
+    selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
+    hovered_row: Option<usize>,
+    pressed_row: Option<usize>,
+    pressed_header: Option<usize>,
+    row_height: Option<f32>,
+    header_height: Option<f32>,
+    scroll_y: f32,
+    column_widths: Vec<f32>,
+    focus_animation: AnimatedScalar,
+    row_painter: Option<VirtualTableRowPainter>,
+    row_name: Option<VirtualTableRowName>,
+    row_description: Option<VirtualTableRowDescription>,
+    on_row_activate: Option<Box<dyn FnMut(usize, VirtualTableRowActivationKind)>>,
+    on_cell_activate: Option<VirtualTableCellActivation>,
+    on_header_activate: Option<Box<dyn FnMut(usize)>>,
+    on_near_end: Option<Box<dyn FnMut()>>,
+    last_click: Option<(usize, Instant)>,
+}
+
+impl VirtualTable {
+    const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
+
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: name.into(),
+            columns: Vec::new(),
+            row_count: 0,
+            selected: None,
+            selected_reader: None,
+            hovered_row: None,
+            pressed_row: None,
+            pressed_header: None,
+            row_height: None,
+            header_height: None,
+            scroll_y: 0.0,
+            column_widths: Vec::new(),
+            focus_animation: AnimatedScalar::new(0.0),
+            row_painter: None,
+            row_name: None,
+            row_description: None,
+            on_row_activate: None,
+            on_cell_activate: None,
+            on_header_activate: None,
+            on_near_end: None,
+            last_click: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn columns<I>(mut self, columns: I) -> Self
+    where
+        I: IntoIterator<Item = VirtualTableColumn>,
+    {
+        self.columns.extend(columns);
+        self
+    }
+
+    pub fn row_count(mut self, row_count: usize) -> Self {
+        self.row_count = row_count;
+        self
+    }
+
+    pub fn row_height(mut self, row_height: f32) -> Self {
+        self.row_height = Some(row_height.max(1.0));
+        self
+    }
+
+    pub fn header_height(mut self, header_height: f32) -> Self {
+        self.header_height = Some(header_height.max(1.0));
+        self
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
+    }
+
+    pub fn row_painter<F>(mut self, painter: F) -> Self
+    where
+        F: for<'a> Fn(&mut PaintCtx, &VirtualTableRowContext<'a>) + 'static,
+    {
+        self.row_painter = Some(Box::new(painter));
+        self
+    }
+
+    pub fn row_name<F>(mut self, name: F) -> Self
+    where
+        F: Fn(usize) -> String + 'static,
+    {
+        self.row_name = Some(Box::new(name));
+        self
+    }
+
+    pub fn row_description<F>(mut self, description: F) -> Self
+    where
+        F: Fn(usize) -> String + 'static,
+    {
+        self.row_description = Some(Box::new(description));
+        self
+    }
+
+    pub fn on_row_activate<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(usize, VirtualTableRowActivationKind) + 'static,
+    {
+        self.on_row_activate = Some(Box::new(on_activate));
+        self
+    }
+
+    pub fn on_cell_activate<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(usize, usize, VirtualTableRowActivationKind) -> bool + 'static,
+    {
+        self.on_cell_activate = Some(Box::new(on_activate));
+        self
+    }
+
+    pub fn on_header_activate<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(usize) + 'static,
+    {
+        self.on_header_activate = Some(Box::new(on_activate));
+        self
+    }
+
+    pub fn on_near_end<F>(mut self, on_near_end: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.on_near_end = Some(Box::new(on_near_end));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn resolved_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .and_then(|selected| selected())
+            .or(self.selected)
+            .filter(|index| *index < self.row_count)
+    }
+
+    fn resolved_row_height(&self) -> f32 {
+        self.row_height
+            .unwrap_or(self.resolved_theme().metrics.table_row_height)
+    }
+
+    fn resolved_header_height(&self) -> f32 {
+        self.header_height
+            .unwrap_or(self.resolved_theme().metrics.table_header_height)
+    }
+
+    fn body_rect(&self, bounds: Rect) -> Rect {
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.data_viewport_padding;
+        let gap = theme.metrics.select_menu_gap;
+        Rect::new(
+            bounds.x() + padding.left,
+            bounds.y() + padding.top + self.resolved_header_height() + gap,
+            (bounds.width() - padding.left - padding.right).max(0.0),
+            (bounds.height() - padding.top - padding.bottom - self.resolved_header_height() - gap)
+                .max(0.0),
+        )
+    }
+
+    fn header_rect(&self, bounds: Rect) -> Rect {
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.data_viewport_padding;
+        Rect::new(
+            bounds.x() + padding.left,
+            bounds.y() + padding.top,
+            (bounds.width() - padding.left - padding.right).max(0.0),
+            self.resolved_header_height(),
+        )
+    }
+
+    fn content_height(&self) -> f32 {
+        self.row_count as f32 * self.resolved_row_height()
+    }
+
+    fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
+        let max_scroll = (self.content_height() - viewport_height).max(0.0);
+        scroll_y.clamp(0.0, max_scroll)
+    }
+
+    fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
+        let body = self.body_rect(bounds);
+        if !body.contains(position) {
+            return None;
+        }
+        let y = position.y - body.y() + self.scroll_y;
+        let index = (y / self.resolved_row_height()).floor() as usize;
+        (index < self.row_count).then_some(index)
+    }
+
+    fn body_column_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
+        let body = self.body_rect(bounds);
+        if !body.contains(position) {
+            return None;
+        }
+        let mut x = body.x();
+        for (index, column) in self.columns.iter().enumerate() {
+            let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
+            if Rect::new(x, body.y(), width, body.height()).contains(position) {
+                return Some(index);
+            }
+            x += width;
+        }
+        None
+    }
+
+    fn header_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
+        let header = self.header_rect(bounds);
+        if !header.contains(position) {
+            return None;
+        }
+        let mut x = header.x();
+        for (index, column) in self.columns.iter().enumerate() {
+            let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
+            let cell = Rect::new(x, header.y(), width, header.height());
+            if cell.contains(position) {
+                return Some(index);
+            }
+            x += width;
+        }
+        None
+    }
+
+    fn resolve_column_widths(&mut self, ctx: &mut MeasureCtx, available_width: f32) {
+        let theme = self.resolved_theme();
+        let header_style = theme.text_style(theme.palette.placeholder);
+        self.column_widths = self
+            .columns
+            .iter()
+            .map(|column| {
+                column.width.unwrap_or(
+                    (measure_text(ctx, &column.title, &header_style).width
+                        + (theme.metrics.table_cell_padding * 2.0))
+                        .max(column.min_width),
+                )
+            })
+            .collect();
+
+        if available_width <= 0.0 || self.column_widths.is_empty() {
+            return;
+        }
+
+        let total = self.column_widths.iter().sum::<f32>();
+        if total < available_width {
+            let extra = (available_width - total) / self.column_widths.len() as f32;
+            for width in &mut self.column_widths {
+                *width += extra;
+            }
+        }
+    }
+
+    fn column_rects(&self, row_rect: Rect) -> Vec<Rect> {
+        let mut x = row_rect.x();
+        self.columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
+                let rect = Rect::new(x, row_rect.y(), width, row_rect.height());
+                x += width;
+                rect
+            })
+            .collect()
+    }
+
+    fn row_activation_kind(&mut self, row_index: usize) -> VirtualTableRowActivationKind {
+        let now = Instant::now();
+        let double_click = self.last_click.take().is_some_and(|(index, instant)| {
+            index == row_index && now.duration_since(instant) <= Self::DOUBLE_CLICK_WINDOW
+        });
+        if double_click {
+            VirtualTableRowActivationKind::Double
+        } else {
+            self.last_click = Some((row_index, now));
+            VirtualTableRowActivationKind::Single
+        }
+    }
+
+    fn activate_row(&mut self, row_index: usize, column_index: Option<usize>) {
+        if row_index >= self.row_count {
+            return;
+        }
+        self.selected = Some(row_index);
+        let kind = self.row_activation_kind(row_index);
+        if let Some(column_index) = column_index {
+            if let Some(on_activate) = &mut self.on_cell_activate {
+                if on_activate(row_index, column_index, kind) {
+                    return;
+                }
+            }
+        }
+        if let Some(on_activate) = &mut self.on_row_activate {
+            on_activate(row_index, kind);
+        }
+    }
+
+    fn maybe_notify_near_end(&mut self, viewport_height: f32) {
+        let remaining = (self.content_height() - viewport_height - self.scroll_y).max(0.0);
+        if remaining <= self.resolved_row_height() * 12.0 {
+            if let Some(on_near_end) = &mut self.on_near_end {
+                on_near_end();
+            }
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
+        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
+        if focus_changed {
+            ctx.request_paint();
+        }
+        if focus_active {
+            ctx.request_animation_frame();
+        }
+    }
+}
+
+impl Widget for VirtualTable {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let bounds = ctx.bounds();
+        let body = self.body_rect(bounds);
+
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = self.row_at_position(bounds, pointer.position);
+                if self.hovered_row != hovered {
+                    self.hovered_row = hovered;
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Scroll && body.contains(pointer.position) =>
+            {
+                let delta = pointer
+                    .scroll_delta
+                    .map(scroll_delta_to_offset)
+                    .unwrap_or(pointer.delta);
+                let next = self.clamp_scroll(body.height(), self.scroll_y - delta.y);
+                if (next - self.scroll_y).abs() > f32::EPSILON {
+                    self.scroll_y = next;
+                    self.maybe_notify_near_end(body.height());
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                if let Some(header) = self.header_at_position(bounds, pointer.position) {
+                    self.pressed_header = Some(header);
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.set_handled();
+                } else if let Some(row) = self.row_at_position(bounds, pointer.position) {
+                    self.pressed_row = Some(row);
+                    self.hovered_row = Some(row);
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let header = self.header_at_position(bounds, pointer.position);
+                if let Some(index) = self
+                    .pressed_header
+                    .zip(header)
+                    .filter(|(pressed, hovered)| pressed == hovered)
+                    .map(|(index, _)| index)
+                {
+                    if let Some(on_activate) = &mut self.on_header_activate {
+                        on_activate(index);
+                    }
+                } else {
+                    let hovered = self.row_at_position(bounds, pointer.position);
+                    if let Some(index) = self
+                        .pressed_row
+                        .zip(hovered)
+                        .filter(|(pressed, hovered)| pressed == hovered)
+                        .map(|(index, _)| index)
+                    {
+                        let column = self.body_column_at_position(bounds, pointer.position);
+                        self.activate_row(index, column);
+                    }
+                    self.hovered_row = hovered;
+                }
+                self.pressed_row = None;
+                self.pressed_header = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                if self.hovered_row.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.pressed_row.take().is_some() || self.pressed_header.take().is_some() {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.set_handled();
+                }
+                if self.hovered_row.take().is_some() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                if self.row_count == 0 {
+                    return;
+                }
+                let current = self.resolved_selected().unwrap_or(0);
+                match key.key.as_str() {
+                    "ArrowUp" => self.activate_row(current.saturating_sub(1), None),
+                    "ArrowDown" => self.activate_row((current + 1).min(self.row_count - 1), None),
+                    "Home" => self.activate_row(0, None),
+                    "End" => self.activate_row(self.row_count - 1, None),
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.advance_animations(*time, ctx);
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let desired_width = if constraints.max.width.is_finite() {
+            constraints.max.width
+        } else {
+            540.0
+        };
+        let desired_height = if constraints.max.height.is_finite() {
+            constraints.max.height
+        } else {
+            let theme = self.resolved_theme();
+            let padding = theme.metrics.data_viewport_padding;
+            (padding.top
+                + self.resolved_header_height()
+                + theme.metrics.select_menu_gap
+                + self.content_height()
+                + padding.bottom)
+                .min(420.0)
+        };
+        let theme = self.resolved_theme();
+        let padding = theme.metrics.data_viewport_padding;
+        self.resolve_column_widths(ctx, (desired_width - padding.left - padding.right).max(0.0));
+        let size = constraints.clamp(Size::new(desired_width, desired_height));
+        self.scroll_y = self.clamp_scroll(
+            self.body_rect(Rect::from_origin_size(Point::ZERO, size))
+                .height(),
+            self.scroll_y,
+        );
+        size
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
+        let header_style = theme.text_style(palette.placeholder);
+        let bounds = ctx.bounds();
+        let body = self.body_rect(bounds);
+        let header = self.header_rect(bounds);
+        let row_height = self.resolved_row_height();
+        let selected = self.resolved_selected();
+
+        draw_surface(ctx, bounds, &theme, self.focus_animation.value);
+        ctx.fill(
+            rounded_rect_path(header, metrics.corner_radius),
+            palette.control,
+        );
+
+        let mut x = header.x();
+        for (index, column) in self.columns.iter().enumerate() {
+            let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
+            let cell = Rect::new(x, header.y(), width, header.height());
+            if index > 0 {
+                let separator_inset = metrics
+                    .table_header_separator_inset
+                    .min(cell.height() * 0.5);
+                ctx.stroke_rect(
+                    Rect::new(
+                        cell.x(),
+                        cell.y() + separator_inset,
+                        metrics.table_separator_width,
+                        (cell.height() - (separator_inset * 2.0)).max(0.0),
+                    ),
+                    palette.border,
+                    sui_scene::StrokeStyle::new(metrics.table_separator_width.max(1.0)),
+                );
+            }
+            let title = match column.sort_direction {
+                Some(VirtualTableSortDirection::Ascending) => format!("{} ^", column.title),
+                Some(VirtualTableSortDirection::Descending) => format!("{} v", column.title),
+                None => column.title.clone(),
+            };
+            draw_aligned_text(
+                ctx,
+                horizontal_inset_rect(cell, metrics.table_cell_padding),
+                &title,
+                &header_style,
+                column.alignment,
+            );
+            x += width;
+        }
+
+        ctx.push_clip_rect(body);
+        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
+        let end = (((self.scroll_y + body.height()) / row_height).ceil() as usize + 1)
+            .min(self.row_count);
+
+        for row_index in start..end {
+            let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
+            let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
+            let row_selected = selected == Some(row_index);
+            let row_hovered = self.hovered_row == Some(row_index);
+            let row_pressed = self.pressed_row == Some(row_index);
+            let background = if row_selected {
+                palette.selection
+            } else if row_pressed {
+                palette.control_active
+            } else if row_hovered {
+                palette.control_hover
+            } else {
+                Color::TRANSPARENT
+            };
+            if background.alpha > 0.0 {
+                ctx.fill(
+                    rounded_rect_path(row_rect, metrics.corner_radius),
+                    background,
+                );
+            }
+            let columns = self.column_rects(row_rect);
+            if let Some(painter) = &self.row_painter {
+                let row = VirtualTableRowContext {
+                    row_index,
+                    row_rect,
+                    column_rects: &columns,
+                    selected: row_selected,
+                    hovered: row_hovered,
+                    pressed: row_pressed,
+                };
+                painter(ctx, &row);
+            }
+        }
+        ctx.pop_clip();
+
+        draw_vertical_scroll_thumb(
+            ctx,
+            &theme,
+            body,
+            self.content_height(),
+            self.scroll_y,
+            palette.placeholder,
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Table, ctx.bounds());
+        node.name = Some(self.name.clone());
+        node.state.focused = ctx.is_focused();
+        node.value = Some(SemanticsValue::Text(format!("{} rows", self.row_count)));
+        let columns = self
+            .columns
+            .iter()
+            .filter_map(|column| {
+                let title = column.title.trim();
+                (!title.is_empty()).then(|| title.to_string())
+            })
+            .collect::<Vec<_>>();
+        if !columns.is_empty() {
+            node.description = Some(format!("Columns: {}", columns.join(", ")));
+        }
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        let body = self.body_rect(ctx.bounds());
+        let row_height = self.resolved_row_height();
+        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
+        let end = (((self.scroll_y + body.height()) / row_height).ceil() as usize + 1)
+            .min(self.row_count);
+        let selected = self.resolved_selected();
+        for row_index in start..end {
+            let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
+            let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
+            let mut row = SemanticsNode::new(
+                WidgetId::new(
+                    ctx.widget_id()
+                        .get()
+                        .wrapping_mul(67)
+                        .wrapping_add(row_index as u64),
+                ),
+                SemanticsRole::ListItem,
+                row_rect,
+            );
+            row.parent = Some(ctx.widget_id());
+            row.name = self.row_name.as_ref().map(|name| name(row_index));
+            row.description = self
+                .row_description
+                .as_ref()
+                .map(|description| description(row_index));
+            row.state.selected = selected == Some(row_index);
+            row.state.hovered = self.hovered_row == Some(row_index);
+            row.actions = vec![SemanticsAction::Activate];
+            ctx.push(row);
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BreadcrumbItem {
     label: String,
@@ -4353,6 +5101,7 @@ mod tests {
     use super::{
         Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, LayerListReorderChange,
         ListItem, ListView, Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
+        VirtualTable, VirtualTableColumn,
     };
     use crate::{Button, Label, ScrollView, SizedBox, Stack, ThemeTextToken};
     use sui_core::{
@@ -5922,6 +6671,50 @@ mod tests {
             .expect("table semantics present");
         assert_eq!(table.value, Some(SemanticsValue::Text("Water".to_string())));
         Ok(())
+    }
+
+    #[test]
+    fn virtual_table_semantics_include_columns_and_visible_rows() {
+        let output = render(
+            SizedBox::new().width(360.0).height(120.0).with_child(
+                VirtualTable::new("Files")
+                    .columns([
+                        VirtualTableColumn::new("Name").min_width(160.0),
+                        VirtualTableColumn::new("Kind").width(80.0),
+                    ])
+                    .row_count(100)
+                    .row_height(20.0)
+                    .header_height(24.0)
+                    .row_name(|index| format!("Row {index}"))
+                    .row_description(|index| format!("File row {index}")),
+            ),
+        );
+
+        let table = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Table)
+            .expect("virtual table semantics present");
+        assert_eq!(table.name.as_deref(), Some("Files"));
+        assert_eq!(
+            table.value,
+            Some(SemanticsValue::Text("100 rows".to_string()))
+        );
+        assert_eq!(table.description.as_deref(), Some("Columns: Name, Kind"));
+
+        let rows = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticsRole::ListItem)
+            .collect::<Vec<_>>();
+        assert!(!rows.is_empty());
+        assert!(
+            rows.len() < 100,
+            "virtual table should expose only visible rows, got {}",
+            rows.len()
+        );
+        assert_eq!(rows[0].name.as_deref(), Some("Row 0"));
+        assert_eq!(rows[0].description.as_deref(), Some("File row 0"));
     }
 
     #[test]

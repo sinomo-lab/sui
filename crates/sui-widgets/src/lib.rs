@@ -53,7 +53,8 @@ pub use controls::{
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, LayerListReorderChange,
     ListItem, ListView, PathBar, Table, TableColumn, TableColumnAlignment, TableRow, TreeItem,
-    TreeView,
+    TreeView, VirtualTable, VirtualTableColumn, VirtualTableRowActivationKind,
+    VirtualTableRowContext, VirtualTableSortDirection,
 };
 pub use drag_drop::{DragDropHost, Draggable, DropTarget};
 pub use hdr_theme::{

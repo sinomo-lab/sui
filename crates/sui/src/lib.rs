@@ -120,9 +120,11 @@ pub use sui_widgets::{
     ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeFontFamilies,
     ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii,
     ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
-    TreeItem, TreeView, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
-    paint_theme_shadow, resolve_effect_role, resolve_luminance_role, resolve_material_role,
-    resolve_semantic_color, resolve_widget_hdr_style,
+    TreeItem, TreeView, VirtualTable, VirtualTableColumn, VirtualTableRowActivationKind,
+    VirtualTableRowContext, VirtualTableSortDirection, WidgetColorRole, WidgetEffectRole,
+    WidgetLuminanceRole, WidgetMaterialRole, paint_theme_shadow, resolve_effect_role,
+    resolve_luminance_role, resolve_material_role, resolve_semantic_color,
+    resolve_widget_hdr_style,
 };
 
 pub trait ThemeExtension: Any + Send + Sync {}
@@ -520,10 +522,11 @@ pub mod prelude {
         ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
         TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette, ToolPaletteItem,
         Toolbar, Tooltip, TooltipPlacement, Track, Transform, Transition, TreeItem, TreeView,
-        VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader, Window,
-        WindowBuilder, WindowRenderOptions, arrange_flex, containers::Padding, flex_layout,
-        invalidation_for_animation_property, register_builtin_icon_resources,
-        set_window_render_options,
+        VirtualScrollView, VirtualTable, VirtualTableColumn, VirtualTableRowActivationKind,
+        VirtualTableRowContext, VirtualTableSortDirection, WakeEvent, Widget, WidgetChildren,
+        WidgetPod, WidgetShader, Window, WindowBuilder, WindowRenderOptions, arrange_flex,
+        containers::Padding, flex_layout, invalidation_for_animation_property,
+        register_builtin_icon_resources, set_window_render_options,
     };
 }
 
