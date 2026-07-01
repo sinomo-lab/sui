@@ -25,6 +25,10 @@ use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme
 #[cfg(test)]
 use crate::layout_demo::LAYOUT_DEMO_SCROLL_NAME;
 use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
+#[cfg(feature = "markdown-demo")]
+use crate::markdown_demo::build_markdown_render_demo_with_theme;
+#[cfg(all(feature = "markdown-demo", test))]
+use crate::markdown_demo::{MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
 use crate::vector_demo::{
@@ -43,6 +47,8 @@ const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
+#[cfg(feature = "markdown-demo")]
+const MARKDOWN_RENDER_TAB_LABEL: &str = "Markdown";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const LIVE_PERFORMANCE_OVERLAY_LABEL: &str = "Show live performance overlay";
@@ -1784,6 +1790,16 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             accent: Color::rgba(0.35, 0.38, 0.82, 1.0),
             child: WidgetPod::new(build_text_editing_benchmark()),
         },
+        #[cfg(feature = "markdown-demo")]
+        DevDemo {
+            title: MARKDOWN_RENDER_TAB_LABEL,
+            description: "Feature-gated markdown rendering through SUI rich text documents.",
+            icon: IconGlyph::File,
+            accent: Color::rgba(0.12, 0.48, 0.70, 1.0),
+            child: WidgetPod::new(build_markdown_render_demo_with_theme(Rc::clone(
+                &theme_reader,
+            ))),
+        },
         DevDemo {
             title: HDR_VALIDATION_TAB_LABEL,
             description: "HDR, color-management, and tone-mapping validation surface.",
@@ -1831,6 +1847,8 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
+        #[cfg(feature = "markdown-demo")]
+        "markdown" | "markdown-render" | "markdown-renderer" => Some(MARKDOWN_RENDER_TAB_LABEL),
         "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
         "layout" | "layouts" | "flex" => Some(LAYOUT_TAB_LABEL),
         "drag-drop" | "drag-and-drop" | "dnd" => Some(DRAG_DROP_TAB_LABEL),
@@ -7261,6 +7279,30 @@ final_max_luminance={final_max_luminance}
         window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(DRAG_DROP_DEMO_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "markdown-demo")]
+    #[test]
+    fn dev_workspace_registers_markdown_render_demo() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(MARKDOWN_RENDER_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        open_dev_shell_demo(&window, MARKDOWN_RENDER_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(MARKDOWN_RENDER_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        window
+            .get_by_role(SemanticsRole::Text)
+            .with_name(MARKDOWN_RENDER_DEMO_NAME)
             .expect()
             .to_be_visible()?;
         Ok(())

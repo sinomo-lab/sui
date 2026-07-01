@@ -112,17 +112,17 @@ pub use sui_widgets::{
     LayerListReorderChange, ListItem, ListView, MaterialToken, PathBar, PixelCanvas,
     PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
     PixelCanvasTool, ReorderableList, ReorderableListChange, ResizablePane, ResolvedEffectStyle,
-    ResolvedHdrStyle, ResolvedMaterialStyle, SelectionChange, SelectionEntry, SelectionIntent,
-    SelectionOrder, SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope,
-    SemanticColorToken, SplitView, SurfacePalette, Table, TableColumn, TableColumnAlignment,
-    TableRow, TextSelectionInfo, TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay,
-    TextSurfaceStyleSpan, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme,
-    ThemeColors, ThemeContainers, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-    ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer,
-    ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, TreeItem, TreeView,
-    WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole, paint_theme_shadow,
-    resolve_effect_role, resolve_luminance_role, resolve_material_role, resolve_semantic_color,
-    resolve_widget_hdr_style,
+    ResolvedHdrStyle, ResolvedMaterialStyle, RichText, SelectionChange, SelectionEntry,
+    SelectionIntent, SelectionOrder, SelectionOwnerId, SelectionPayload, SelectionPoint,
+    SelectionScope, SemanticColorToken, SplitView, SurfacePalette, Table, TableColumn,
+    TableColumnAlignment, TableRow, TextSelectionInfo, TextSurface, TextSurfaceOverlayKind,
+    TextSurfaceStyleOverlay, TextSurfaceStyleSpan, ThemeAspectRatios, ThemeBlurScale,
+    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeFontFamilies,
+    ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii,
+    ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
+    TreeItem, TreeView, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    paint_theme_shadow, resolve_effect_role, resolve_luminance_role, resolve_material_role,
+    resolve_semantic_color, resolve_widget_hdr_style,
 };
 
 pub trait ThemeExtension: Any + Send + Sync {}
@@ -504,24 +504,26 @@ pub mod prelude {
         PixelCanvasTool, PlaybackState, Point, PointerEvent, Popover, PresetStrip, ProgressBar,
         PropertyRow, PropertyRowLayout, Pulse, RadioButton, RadioGroup, Rect, RegisteredFont,
         RegisteredImage, ReorderableList, ReorderableListChange, ResizablePane, ResourceRegistry,
-        Result, SampleBatch, SampleBuffer, SampledAnimationValue, ScrollAxes, ScrollBar,
+        Result, RichText, SampleBatch, SampleBuffer, SampledAnimationValue, ScrollAxes, ScrollBar,
         ScrollState, ScrollView, Select, SelectionChange, SelectionEntry, SelectionIntent,
         SelectionOrder, SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope,
         SemanticsCtx, Separator, ShapedText, SharedCompiledTimeline, SingleChild, Size, SizedBox,
         Slider, SpinBox, Spinner, SplitView, SpringF32, Stack, StatusBar, StatusBarHost,
         StatusBarSegment, StrokeStyle, Style, Surface, SurfaceBorder, SurfaceElevation,
         SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextLayout, TextMeasurement,
-        TextSelectionInfo, TextStyle, Theme, ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints,
-        ThemeColorScheme, ThemeColors, ThemeContainers, ThemeExtension, ThemeExtensions,
-        ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion,
-        ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale,
-        ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink, TimelinePlayer, TimelineSnap,
-        TimelineTick, TimerToken, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement,
-        Track, Transform, Transition, TreeItem, TreeView, VirtualScrollView, WakeEvent, Widget,
-        WidgetChildren, WidgetPod, WidgetShader, Window, WindowBuilder, WindowRenderOptions,
-        arrange_flex, containers::Padding, flex_layout, invalidation_for_animation_property,
-        register_builtin_icon_resources, set_window_render_options,
+        TableColumnAlignment, TableRow, Tabs, TextArea, TextDocument, TextInput, TextLayout,
+        TextMeasurement, TextParagraph, TextParagraphStyle, TextSelectionInfo, TextSpan,
+        TextSpanId, TextStyle, TextWrap, Theme, ThemeAspectRatios, ThemeBlurScale,
+        ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeExtension,
+        ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
+        ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows,
+        ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
+        TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette, ToolPaletteItem,
+        Toolbar, Tooltip, TooltipPlacement, Track, Transform, Transition, TreeItem, TreeView,
+        VirtualScrollView, WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader, Window,
+        WindowBuilder, WindowRenderOptions, arrange_flex, containers::Padding, flex_layout,
+        invalidation_for_animation_property, register_builtin_icon_resources,
+        set_window_render_options,
     };
 }
 
@@ -624,6 +626,20 @@ mod tests {
             }
         );
         assert!(!theme.has_extension::<CustomWidgetTheme>());
+    }
+
+    #[test]
+    fn prelude_exports_rich_text_document_types() {
+        use crate::prelude::*;
+
+        let style = TextStyle::new(Color::WHITE);
+        let document = TextDocument {
+            paragraphs: vec![TextParagraph::from_spans(vec![TextSpan::new(
+                "Hello rich text",
+                style,
+            )])],
+        };
+        let _widget = RichText::new(document);
     }
 
     #[cfg(feature = "wgpu")]

@@ -12,6 +12,7 @@ pub mod hdr_theme;
 pub mod media;
 pub mod panes;
 pub mod reorderable;
+pub mod rich_text;
 pub mod selection;
 mod text_align;
 pub mod text_surface;
@@ -71,6 +72,7 @@ pub use panes::{
     FloatingWorkspaceState, ResizablePane, SplitView,
 };
 pub use reorderable::{ReorderableList, ReorderableListChange};
+pub use rich_text::RichText;
 pub use selection::{
     SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
     SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,

@@ -8,7 +8,7 @@ filehash = false
 minify = "never"
 no_sri = true
 no_default_features = true
-features = ["web"]
+features = ["web", "markdown-demo"]
 
 [watch]
 watch = [

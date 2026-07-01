@@ -13,6 +13,7 @@ native = ["sui/desktop", "sui/wgpu"]
 tui = ["dep:crossterm", "dep:ratatui", "dep:sui-tui"]
 web = ["sui/web", "sui/wgpu"]
 artifacts = ["dep:sui-render-wgpu"]
+markdown-demo = ["dep:pulldown-cmark"]
 
 [lib]
 name = "sui_demo_app"
@@ -34,6 +35,7 @@ sui-debug = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 sui-render-wgpu = { workspace = true, optional = true }
+pulldown-cmark = { version = "0.13", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossterm = { version = "0.29", optional = true }
