@@ -2924,6 +2924,7 @@ dependencies = [
  "sui-runtime",
  "sui-scene",
  "sui-testing",
+ "sui-text",
  "sui-tui",
  "wasm-bindgen",
  "web-sys",

@@ -53,4 +53,5 @@ png = "0.17"
 sui-platform = { workspace = true }
 sui-render-wgpu = { workspace = true }
 sui-scene = { workspace = true }
+sui-text = { workspace = true }
 winit = { workspace = true }

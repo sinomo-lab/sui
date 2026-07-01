@@ -24,6 +24,7 @@ then the `RichText` widget lays out and paints the styled spans.
 - inline **strong**, _emphasis_, and `code` spans
 - links such as [SUI workspace](https://example.invalid/sui) with accent color
 - ordered list markers that become ordinary rich text spans
+- Unicode fallback text: 你好, 日本語, 한국어, 🙂 ✅ 🎨
 
 1. Parse markdown events.
 2. Build paragraphs and spans.

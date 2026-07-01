@@ -42,6 +42,17 @@ use crate::vector_demo::{VECTOR_EDITOR_TAB_LABEL, build_vector_editor_demo_with_
 const WINDOW_TITLE: &str = "SUI Demo";
 const WINDOW_DESCRIPTION: &str =
     "Browser-style development workspace for the widget book and focused performance demos.";
+#[cfg(any(target_arch = "wasm32", test))]
+const DEV_WEB_FALLBACK_FONTS: &[(&str, &[u8])] = &[
+    (
+        "Noto Sans CJK SC",
+        include_bytes!("../assets/NotoSansCJKsc-Regular.otf"),
+    ),
+    (
+        "Noto Color Emoji",
+        include_bytes!("../assets/NotoColorEmoji.ttf"),
+    ),
+];
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
 const THEMES_TAB_LABEL: &str = "Themes";
 const BUTTON_GRID_TAB_LABEL: &str = "64 buttons";
@@ -3080,14 +3091,7 @@ fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
     let mut app = App::new();
     {
         let mut resources = app.resources();
-        register_widget_book_images(&mut resources);
-        resources
-            .image(
-                DEV_SHELL_LOGO_IMAGE_HANDLE,
-                default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
-                    .expect("default SUI logo SVG should rasterize for dev shell"),
-            )
-            .expect("dev shell logo SVG should register exactly once");
+        register_dev_application_resources(&mut resources);
     }
 
     app.window(Window::new(WINDOW_TITLE).root(LivePerformanceRoot::new(
@@ -3105,14 +3109,7 @@ fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
     let mut app = App::new();
     {
         let mut resources = app.resources();
-        register_widget_book_images(&mut resources);
-        resources
-            .image(
-                DEV_SHELL_LOGO_IMAGE_HANDLE,
-                default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
-                    .expect("default SUI logo SVG should rasterize for dev shell"),
-            )
-            .expect("dev shell logo SVG should register exactly once");
+        register_dev_application_resources(&mut resources);
     }
 
     app.window(
@@ -3122,6 +3119,28 @@ fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
         ),
     )
     .into_application()
+}
+
+fn register_dev_application_resources(resources: &mut sui::ResourceRegistry<'_>) {
+    register_widget_book_images(resources);
+    #[cfg(target_arch = "wasm32")]
+    register_dev_web_fallback_fonts(resources);
+    resources
+        .image(
+            DEV_SHELL_LOGO_IMAGE_HANDLE,
+            default_sui_logo_image(DEV_SHELL_LOGO_IMAGE_SIZE)
+                .expect("default SUI logo SVG should rasterize for dev shell"),
+        )
+        .expect("dev shell logo SVG should register exactly once");
+}
+
+#[cfg(target_arch = "wasm32")]
+fn register_dev_web_fallback_fonts(resources: &mut sui::ResourceRegistry<'_>) {
+    for (name, font) in DEV_WEB_FALLBACK_FONTS {
+        resources
+            .font_bytes(font.to_vec())
+            .unwrap_or_else(|error| panic!("{name} fallback font should register: {error}"));
+    }
 }
 
 pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
@@ -3190,6 +3209,53 @@ mod tests {
     };
 
     const FRONTING_TEST_TITLE: &str = "Fronting test";
+
+    #[test]
+    fn dev_web_fallback_fonts_shape_cjk_and_emoji_samples() {
+        let cjk_handle = sui::FontHandle::new(41_001);
+        let emoji_handle = sui::FontHandle::new(41_002);
+        let mut fonts = sui::FontRegistry::new();
+        fonts.insert(
+            cjk_handle,
+            sui::RegisteredFont::from_bytes(DEV_WEB_FALLBACK_FONTS[0].1.to_vec()),
+        );
+        fonts.insert(
+            emoji_handle,
+            sui::RegisteredFont::from_bytes(DEV_WEB_FALLBACK_FONTS[1].1.to_vec()),
+        );
+
+        let text_system = sui_text::TextSystem::new();
+        let cjk_layout = text_system
+            .shape_text(
+                "你好 日本語 한국어",
+                sui::Size::new(360.0, 32.0),
+                sui::TextStyle {
+                    font: Some(cjk_handle),
+                    ..sui::TextStyle::new(sui::Color::BLACK)
+                },
+                &fonts,
+            )
+            .expect("CJK fallback font should shape markdown sample text");
+        let emoji_layout = text_system
+            .shape_text(
+                "🙂 ✅ 🎨",
+                sui::Size::new(180.0, 32.0),
+                sui::TextStyle {
+                    font: Some(emoji_handle),
+                    ..sui::TextStyle::new(sui::Color::BLACK)
+                },
+                &fonts,
+            )
+            .expect("emoji fallback font should shape markdown sample text");
+
+        for glyph in cjk_layout
+            .glyphs()
+            .iter()
+            .chain(emoji_layout.glyphs().iter())
+        {
+            assert_ne!(glyph.glyph_id, 0, "fallback font emitted missing glyph");
+        }
+    }
 
     fn unique_debug_artifact_dir(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
