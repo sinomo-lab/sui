@@ -117,13 +117,13 @@ pub use sui_widgets::{
     SelectionScope, SemanticColorToken, SplitView, SurfacePalette, Table, TableColumn,
     TableColumnAlignment, TableRow, TextSelectionInfo, TextSurface, TextSurfaceOverlayKind,
     TextSurfaceStyleOverlay, TextSurfaceStyleSpan, ThemeAspectRatios, ThemeBlurScale,
-    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeFontFamilies,
-    ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii,
-    ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
-    TreeItem, TreeView, VirtualTable, VirtualTableColumn, VirtualTableRowActivationKind,
-    VirtualTableRowContext, VirtualTableSortDirection, WidgetColorRole, WidgetEffectRole,
-    WidgetLuminanceRole, WidgetMaterialRole, paint_theme_shadow, resolve_effect_role,
-    resolve_luminance_role, resolve_material_role, resolve_semantic_color,
+    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
+    ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion,
+    ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale,
+    ThemeTextToken, ThemeTracking, TreeItem, TreeView, VirtualTable, VirtualTableColumn,
+    VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
+    WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole, paint_theme_shadow,
+    resolve_effect_role, resolve_luminance_role, resolve_material_role, resolve_semantic_color,
     resolve_widget_hdr_style,
 };
 
@@ -516,10 +516,10 @@ pub mod prelude {
         TableColumnAlignment, TableRow, Tabs, TextArea, TextDocument, TextInput, TextLayout,
         TextMeasurement, TextParagraph, TextParagraphStyle, TextSelectionInfo, TextSpan,
         TextSpanId, TextStyle, TextWrap, Theme, ThemeAspectRatios, ThemeBlurScale,
-        ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeExtension,
-        ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading,
-        ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows,
-        ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
+        ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
+        ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
+        ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer,
+        ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
         TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette, ToolPaletteItem,
         Toolbar, Tooltip, TooltipPlacement, Track, Transform, Transition, TreeItem, TreeView,
         VirtualScrollView, VirtualTable, VirtualTableColumn, VirtualTableRowActivationKind,
@@ -643,6 +643,7 @@ mod tests {
             )])],
         };
         let _widget = RichText::new(document);
+        let _theme = DefaultTheme::default().with_density(ThemeDensity::Compact);
     }
 
     #[cfg(feature = "wgpu")]

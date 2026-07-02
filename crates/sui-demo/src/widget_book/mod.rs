@@ -12,10 +12,11 @@ use sui::{
     InvalidationRequest, InvalidationTarget, PointerEventKind, Rect, SceneStatisticsDetailMode,
     SemanticColorToken, SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle,
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap,
-    ThemeColorScheme, Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot,
-    resolve_semantic_color, resolve_widget_hdr_style, set_window_scene_statistics_detail_mode,
-    window_performance_snapshot, window_scene_statistics_detail_mode,
+    ThemeColorScheme, ThemeDensity, Vector, WidgetColorRole, WidgetLuminanceRole,
+    WidgetMaterialRole, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent,
+    WindowPerformanceSnapshot, resolve_semantic_color, resolve_widget_hdr_style,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};
@@ -68,6 +69,13 @@ pub const WIDGET_STATES_SLIDER_NAME: &str = "States slider";
 pub const WIDGET_STATES_TABS_NAME: &str = "States tabs";
 pub const WIDGET_STATES_MENU_NAME: &str = "States menu";
 pub const WIDGET_STATES_POPOVER_NAME: &str = "States popover";
+pub const SIZE_PRESETS_GALLERY_NAME: &str = "Size presets";
+pub const SIZE_PRESET_COMPACT_ACTION_LABEL: &str = "Compact preset action";
+pub const SIZE_PRESET_COMFORTABLE_ACTION_LABEL: &str = "Comfortable preset action";
+pub const SIZE_PRESET_TOUCH_ACTION_LABEL: &str = "Touch preset action";
+pub const SIZE_PRESET_COMPACT_INPUT_LABEL: &str = "Compact preset input";
+pub const SIZE_PRESET_COMFORTABLE_INPUT_LABEL: &str = "Comfortable preset input";
+pub const SIZE_PRESET_TOUCH_INPUT_LABEL: &str = "Touch preset input";
 pub const DIALOG_TITLE: &str = "Project settings";
 pub const DIALOG_TRIGGER_LABEL: &str = "Toggle project settings";
 pub const PROGRESS_NAME: &str = "Export progress";
@@ -166,6 +174,14 @@ fn clone_widget_book_theme_reader(
 ) -> impl Fn() -> DefaultTheme + 'static {
     let theme_reader = Rc::clone(theme_reader);
     move || theme_reader()
+}
+
+fn widget_book_density_theme_reader(
+    theme_reader: &WidgetBookThemeReader,
+    density: ThemeDensity,
+) -> impl Fn() -> DefaultTheme + 'static {
+    let theme_reader = Rc::clone(theme_reader);
+    move || theme_reader().with_density(density)
 }
 
 fn widget_book_theme_color<F>(
@@ -3611,6 +3627,9 @@ pub fn build_widget_book_gallery_with_theme(
             .with_child(build_widget_states_gallery_with_theme(Rc::clone(
                 &theme_reader,
             )))
+            .with_child(build_size_presets_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
                 "Common controls",
@@ -4333,6 +4352,199 @@ pub fn build_widget_book_gallery_with_theme(
         gallery,
         ScrollBar::vertical(scroll_state).name(GALLERY_SCROLL_BAR_NAME),
     )
+}
+
+fn build_size_presets_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    NamedSection::new(
+        SIZE_PRESETS_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            SIZE_PRESETS_GALLERY_NAME,
+            "Density presets resize the same supported widgets for compact inspectors, comfortable desktop controls, and touch-friendly surfaces.",
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(density_preset_column_with_theme(
+                            Rc::clone(&theme_reader),
+                            ThemeDensity::Compact,
+                        ))
+                        .with_child(density_preset_column_with_theme(
+                            Rc::clone(&theme_reader),
+                            ThemeDensity::Comfortable,
+                        ))
+                        .with_child(density_preset_column_with_theme(
+                            Rc::clone(&theme_reader),
+                            ThemeDensity::Touch,
+                        )),
+                )
+                .with_child(MaximumWidth::new(
+                    GALLERY_TEXT_MAX_WIDTH,
+                    Label::new(
+                        "These samples use each widget's theme-aware defaults instead of fixed demo slots, so height, padding, icons, overlays, tabs, and command rows can be compared directly.",
+                    )
+                    .font_size(13.0)
+                    .line_height(18.0)
+                    .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                        theme.palette.text_muted
+                    })),
+                )),
+        ),
+    )
+}
+
+fn density_preset_column_with_theme(
+    theme_reader: WidgetBookThemeReader,
+    density: ThemeDensity,
+) -> impl Widget {
+    let title = density_preset_title(density);
+    let action_label = density_preset_action_label(density);
+    let input_label = density_preset_input_label(density);
+    let switch_label = format!("{title} preset switch");
+    let checkbox_label = format!("{title} preset checkbox");
+    let select_name = format!("{title} preset select");
+    let slider_name = format!("{title} preset slider");
+    let tab_name = format!("{title} preset tabs");
+    let preset_name = format!("{title} preset strip");
+    let toolbar_name = format!("{title} preset toolbar");
+
+    SizedBox::new().width(300.0).with_child(
+        StoryCard::new(
+            Stack::vertical()
+                .spacing(10.0)
+                .alignment(Alignment::Start)
+                .with_child(
+                    Label::new(title)
+                        .font_size(15.0)
+                        .line_height(19.0)
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text
+                        })),
+                )
+                .with_child(MaximumWidth::new(
+                    250.0,
+                    Label::new(density_preset_caption(density))
+                        .font_size(12.0)
+                        .line_height(16.0)
+                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+                            theme.palette.text_muted
+                        })),
+                ))
+                .with_child(
+                    Button::new(action_label)
+                        .icon(IconGlyph::Check)
+                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                )
+                .with_child(
+                    SizedBox::new().width(230.0).with_child(
+                        TextInput::new(input_label)
+                            .value("Layer name")
+                            .leading_icon(IconGlyph::Search)
+                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                    ),
+                )
+                .with_child(
+                    Checkbox::new(checkbox_label)
+                        .checked(true)
+                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                )
+                .with_child(
+                    Switch::new(switch_label)
+                        .on(true)
+                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                )
+                .with_child(
+                    SizedBox::new().width(230.0).with_child(
+                        Slider::new(slider_name)
+                            .range(0.0, 100.0)
+                            .value(64.0)
+                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(230.0).with_child(
+                        Select::new(select_name)
+                            .options(BLEND_MODE_OPTIONS)
+                            .selected(1)
+                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(250.0).with_child(
+                        TabBar::new(tab_name)
+                            .tabs(["Canvas", "Inspect"])
+                            .selected(1)
+                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                    ),
+                )
+                .with_child(
+                    PresetStrip::new(preset_name)
+                        .presets(["8 px", "18 px", "36 px"])
+                        .selected(1)
+                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+                )
+                .with_child(
+                    Toolbar::horizontal()
+                        .name(toolbar_name)
+                        .theme_when(widget_book_density_theme_reader(&theme_reader, density))
+                        .with_child(
+                            IconButton::new(IconGlyph::Undo, format!("{title} preset undo"))
+                                .theme_when(widget_book_density_theme_reader(
+                                    &theme_reader,
+                                    density,
+                                )),
+                        )
+                        .with_child(
+                            IconButton::new(IconGlyph::Redo, format!("{title} preset redo"))
+                                .theme_when(widget_book_density_theme_reader(
+                                    &theme_reader,
+                                    density,
+                                )),
+                        )
+                        .with_child(
+                            Button::new(format!("{title} preset apply")).theme_when(
+                                widget_book_density_theme_reader(&theme_reader, density),
+                            ),
+                        ),
+                ),
+        )
+        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+    )
+}
+
+fn density_preset_title(density: ThemeDensity) -> &'static str {
+    match density {
+        ThemeDensity::Compact => "Compact",
+        ThemeDensity::Comfortable => "Comfortable",
+        ThemeDensity::Touch => "Touch",
+    }
+}
+
+fn density_preset_caption(density: ThemeDensity) -> &'static str {
+    match density {
+        ThemeDensity::Compact => "Dense inspector and toolbar layouts.",
+        ThemeDensity::Comfortable => "Default desktop application sizing.",
+        ThemeDensity::Touch => "Larger targets for pointer and touch input.",
+    }
+}
+
+fn density_preset_action_label(density: ThemeDensity) -> &'static str {
+    match density {
+        ThemeDensity::Compact => SIZE_PRESET_COMPACT_ACTION_LABEL,
+        ThemeDensity::Comfortable => SIZE_PRESET_COMFORTABLE_ACTION_LABEL,
+        ThemeDensity::Touch => SIZE_PRESET_TOUCH_ACTION_LABEL,
+    }
+}
+
+fn density_preset_input_label(density: ThemeDensity) -> &'static str {
+    match density {
+        ThemeDensity::Compact => SIZE_PRESET_COMPACT_INPUT_LABEL,
+        ThemeDensity::Comfortable => SIZE_PRESET_COMFORTABLE_INPUT_LABEL,
+        ThemeDensity::Touch => SIZE_PRESET_TOUCH_INPUT_LABEL,
+    }
 }
 
 fn build_widget_states_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
@@ -8249,6 +8461,55 @@ mod tests {
             node.role == SemanticsRole::Popover
                 && node.name.as_deref() == Some(WIDGET_STATES_POPOVER_NAME)
         }));
+    }
+
+    #[test]
+    fn widget_book_size_presets_section_exposes_density_samples() {
+        let root = SizedBox::new().width(1040.0).height(760.0).with_child(
+            super::build_size_presets_gallery_with_theme(super::default_widget_book_theme_reader()),
+        );
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Size presets").root(root))
+            .build()
+            .expect("size preset section runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("size preset section should render");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("size preset section semantics should exist");
+
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some(super::SIZE_PRESETS_GALLERY_NAME)
+        }));
+
+        let button_height = |name: &str| {
+            semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(name)
+                })
+                .map(|node| node.bounds.height())
+                .unwrap_or_else(|| panic!("missing {name} preset action button"))
+        };
+        let compact_button = button_height(super::SIZE_PRESET_COMPACT_ACTION_LABEL);
+        let comfortable_button = button_height(super::SIZE_PRESET_COMFORTABLE_ACTION_LABEL);
+        let touch_button = button_height(super::SIZE_PRESET_TOUCH_ACTION_LABEL);
+
+        assert!(compact_button < comfortable_button);
+        assert!(comfortable_button < touch_button);
+
+        for name in [
+            super::SIZE_PRESET_COMPACT_INPUT_LABEL,
+            super::SIZE_PRESET_COMFORTABLE_INPUT_LABEL,
+            super::SIZE_PRESET_TOUCH_INPUT_LABEL,
+        ] {
+            assert!(semantics.iter().any(|node| {
+                node.role == SemanticsRole::TextInput && node.name.as_deref() == Some(name)
+            }));
+        }
     }
 
     #[test]
