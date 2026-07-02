@@ -6994,6 +6994,20 @@ mod tests {
         TestApp::new(|| build_widget_book_application(configured_widget_book_state()).build())
     }
 
+    fn combo_box_text_value(window: &TestWindow, name: &str) -> Result<String> {
+        window
+            .snapshot()?
+            .accessibility
+            .nodes
+            .into_iter()
+            .find(|node| node.role == SemanticsRole::ComboBox && node.name.as_deref() == Some(name))
+            .and_then(|node| match node.value {
+                Some(SemanticsValue::Text(value)) => Some(value),
+                _ => None,
+            })
+            .ok_or_else(|| sui::Error::new(format!("missing {name} combo box text value")))
+    }
+
     fn build_widget_book_application_with_overlay(
         state: Rc<RefCell<super::WidgetBookState>>,
     ) -> Application {
@@ -8978,7 +8992,7 @@ mod tests {
         let (
             _default_slider,
             default_number_value,
-            default_select,
+            default_select_value,
             default_summary,
             default_slider_value,
         ) = {
@@ -9018,10 +9032,7 @@ mod tests {
                 })
                 .expect("default number input semantics value present");
             scroll_to_story_target(&default_window, StoryCase::SelectExpanded, 12)?;
-            let default_select = default_window
-                .get_by_role(SemanticsRole::ComboBox)
-                .with_name(SELECT_NAME)
-                .capture_screenshot()?;
+            let default_select_value = combo_box_text_value(&default_window, SELECT_NAME)?;
             scroll_to_story_target(&default_window, StoryCase::Summary, 12)?;
             let default_summary = default_window
                 .get_by_role(SemanticsRole::GenericContainer)
@@ -9030,7 +9041,7 @@ mod tests {
             (
                 default_slider,
                 default_number_value,
-                default_select,
+                default_select_value,
                 default_summary,
                 default_slider_value,
             )
@@ -9039,7 +9050,7 @@ mod tests {
         let (
             _configured_slider,
             configured_number_value,
-            configured_select,
+            configured_select_value,
             configured_summary,
             configured_slider_value,
         ) = {
@@ -9079,10 +9090,7 @@ mod tests {
                 })
                 .expect("configured number input semantics value present");
             scroll_to_story_target(&configured_window, StoryCase::SelectExpanded, 12)?;
-            let configured_select = configured_window
-                .get_by_role(SemanticsRole::ComboBox)
-                .with_name(SELECT_NAME)
-                .capture_screenshot()?;
+            let configured_select_value = combo_box_text_value(&configured_window, SELECT_NAME)?;
             scroll_to_story_target(&configured_window, StoryCase::Summary, 12)?;
             let configured_summary = configured_window
                 .get_by_role(SemanticsRole::GenericContainer)
@@ -9091,7 +9099,7 @@ mod tests {
             (
                 configured_slider,
                 configured_number_value,
-                configured_select,
+                configured_select_value,
                 configured_summary,
                 configured_slider_value,
             )
@@ -9101,11 +9109,9 @@ mod tests {
         assert_eq!(configured_slider_value, 35.0);
         assert_eq!(default_number_value, 12.0);
         assert_eq!(configured_number_value, 24.0);
+        assert_eq!(default_select_value, "Normal");
+        assert_eq!(configured_select_value, "Multiply");
 
-        assert!(
-            configured_select != default_select,
-            "configured select screenshot matched default state"
-        );
         assert!(
             configured_summary != default_summary,
             "configured summary screenshot matched default state"

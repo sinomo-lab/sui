@@ -820,8 +820,9 @@ fn build_paint_color_panel(
                 })
                 .columns(8)
                 .swatch_size(27.0)
-                .on_change(move |_index, _name, color| {
+                .on_change_with_ctx(move |ctx, _index, _name, color| {
                     palette_change_state.set_brush_color(color);
+                    request_window_refresh(ctx, true);
                 }),
         )
 }

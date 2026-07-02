@@ -810,6 +810,13 @@ impl Widget for DevDemoPickerGrid {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+            for index in 0..self.children.len() {
+                self.children.arrange_child(index, ctx, Rect::ZERO);
+            }
+            return;
+        }
+
         let columns = Self::columns_for_width(bounds.width());
         let column_width = Self::column_width(bounds.width(), columns);
         for index in 0..self.children.len() {
@@ -3253,13 +3260,13 @@ mod tests {
     };
 
     use sui::{
-        Brush, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-        RenderOutput, Result, Runtime, SceneCommand, SceneStatisticsDetailMode, ScrollDelta,
-        SemanticsNode, SemanticsRole, StackOrderPolicy, Vector, WidgetId,
-        WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries,
-        WindowPerformanceSnapshot, WindowRenderOptions, WindowToneMappingMode,
-        set_window_scene_statistics_detail_mode, window_performance_snapshot,
-        window_scene_statistics_detail_mode,
+        Brush, Event, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
+        PointerEventKind, Rect, RenderOutput, Result, Runtime, SceneCommand,
+        SceneStatisticsDetailMode, ScrollDelta, SemanticsNode, SemanticsRole, StackOrderPolicy,
+        Vector, WidgetId, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent,
+        WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
+        WindowToneMappingMode, set_window_scene_statistics_detail_mode,
+        window_performance_snapshot, window_scene_statistics_detail_mode,
     };
     use sui_render_wgpu::{
         DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
@@ -5439,25 +5446,8 @@ mod tests {
         runtime.handle_event(window_id, Event::Pointer(up))?;
 
         let _ = runtime.render(window_id)?;
-        let option_position = Point::new(
-            blend.bounds.x() + (blend.bounds.width() * 0.5),
-            blend.bounds.y() + blend.bounds.height() + 6.0 + (blend.bounds.height() * 1.5),
-        );
-
-        let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
-        move_event.pointer_id = 8;
-        runtime.handle_event(window_id, Event::Pointer(move_event))?;
-
-        let mut down = PointerEvent::new(PointerEventKind::Down, option_position);
-        down.pointer_id = 8;
-        down.button = Some(PointerButton::Primary);
-        down.buttons = PointerButtons::new(1);
-        runtime.handle_event(window_id, Event::Pointer(down))?;
-
-        let mut up = PointerEvent::new(PointerEventKind::Up, option_position);
-        up.pointer_id = 8;
-        up.button = Some(PointerButton::Primary);
-        runtime.handle_event(window_id, Event::Pointer(up))?;
+        press_runtime_key(&mut runtime, window_id, "ArrowDown");
+        press_runtime_key(&mut runtime, window_id, "Enter");
 
         let output = runtime.render(window_id)?;
         let blend = output
@@ -5581,6 +5571,23 @@ mod tests {
         .build()
         .expect("paint workspace application should build");
         let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        // At the default test window height, the palette starts under the fixed status bar.
+        let scroll = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(PAINT_SCROLL_NAME)
+            })
+            .expect("paint controls scroll view should exist");
+        let mut scroll_event = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(scroll.bounds.x() + 16.0, scroll.bounds.y() + 16.0),
+        );
+        scroll_event.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -96.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll_event))?;
+
         let output = runtime.render(window_id)?;
         let preset = output
             .semantics
@@ -7015,6 +7022,21 @@ final_max_luminance={final_max_luminance}
         runtime
             .handle_event(window_id, Event::Pointer(up))
             .expect("pointer up should dispatch");
+    }
+
+    fn press_runtime_key(runtime: &mut Runtime, window_id: WindowId, key: &str) {
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new(key, KeyState::Pressed)),
+            )
+            .expect("key press should dispatch");
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new(key, KeyState::Released)),
+            )
+            .expect("key release should dispatch");
     }
 
     fn settle_runtime_animations(runtime: &mut Runtime, window_id: WindowId) {

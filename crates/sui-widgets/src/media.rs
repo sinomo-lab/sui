@@ -575,6 +575,7 @@ pub struct ColorPalette {
     swatch_size: Option<f32>,
     gap: Option<f32>,
     on_change: Option<Box<dyn FnMut(usize, String, Color)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String, Color)>>,
 }
 
 impl ColorPalette {
@@ -597,6 +598,7 @@ impl ColorPalette {
             swatch_size: None,
             gap: None,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -661,6 +663,14 @@ impl ColorPalette {
         F: FnMut(usize, String, Color) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String, Color) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -735,16 +745,21 @@ impl ColorPalette {
         })
     }
 
-    fn activate(&mut self, index: usize) {
+    fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         if self.swatches.is_empty() {
             return;
         }
 
         let index = index.min(self.swatches.len() - 1);
         self.selected = Some(index);
+        let swatch = &self.swatches[index];
+        let name = swatch.name.clone();
+        let color = swatch.color;
         if let Some(on_change) = &mut self.on_change {
-            let swatch = &self.swatches[index];
-            on_change(index, swatch.name.clone(), swatch.color);
+            on_change(index, name.clone(), color);
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, index, name, color);
         }
     }
 
@@ -757,7 +772,7 @@ impl ColorPalette {
         let last = self.swatches.len() as isize - 1;
         let next = (current + delta).clamp(0, last) as usize;
         self.set_hovered(Some(next), ctx);
-        self.activate(next);
+        self.activate(ctx, next);
     }
 
     fn selected_value(&self) -> Option<String> {
@@ -871,7 +886,7 @@ impl Widget for ColorPalette {
                     .filter(|(left, right)| left == right)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(ctx, index);
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
@@ -893,11 +908,13 @@ impl Widget for ColorPalette {
                     "ArrowRight" => self.move_selection(1, ctx),
                     "ArrowUp" => self.move_selection(-columns, ctx),
                     "ArrowDown" => self.move_selection(columns, ctx),
-                    "Home" => self.activate(0),
-                    "End" if !self.swatches.is_empty() => self.activate(self.swatches.len() - 1),
+                    "Home" => self.activate(ctx, 0),
+                    "End" if !self.swatches.is_empty() => {
+                        self.activate(ctx, self.swatches.len() - 1);
+                    }
                     "Enter" | " " => {
                         if let Some(selected) = self.current_selected().or(Some(0)) {
-                            self.activate(selected);
+                            self.activate(ctx, selected);
                         }
                     }
                     _ => return,
