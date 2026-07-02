@@ -1,3 +1,4 @@
+mod animation_demo;
 mod app;
 mod drag_drop_demo;
 mod layout_demo;

@@ -20,6 +20,13 @@ use sui::{
 };
 
 #[cfg(test)]
+use crate::animation_demo::{
+    ANIMATION_DEMO_NAME, ANIMATION_DEMO_SCROLL_NAME, ANIMATION_EDITOR_SURFACE_NAME,
+    ANIMATION_PAINT_INVALIDATION_NAME, ANIMATION_RETAINED_LAYER_NAME,
+    ANIMATION_TIMELINE_PREVIEW_NAME,
+};
+use crate::animation_demo::{ANIMATION_DEMO_TAB_LABEL, build_animation_demo_with_theme};
+#[cfg(test)]
 use crate::drag_drop_demo::DRAG_DROP_DEMO_SCROLL_NAME;
 use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme};
 #[cfg(test)]
@@ -1835,6 +1842,13 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             child: WidgetPod::new(build_theme_demo_surface(default_widget_book_state())),
         },
         DevDemo {
+            title: ANIMATION_DEMO_TAB_LABEL,
+            description: "Timeline playback, retained layer, repaint, editor, and overlay examples.",
+            icon: IconGlyph::Sparkles,
+            accent: Color::rgba(0.18, 0.58, 0.74, 1.0),
+            child: WidgetPod::new(build_animation_demo_with_theme(Rc::clone(&theme_reader))),
+        },
+        DevDemo {
             title: RETAINED_TEXT_TAB_LABEL,
             description: "Retained text layout and redraw benchmark.",
             icon: IconGlyph::Search,
@@ -1914,6 +1928,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
     match slug {
         "widget-book" | "widgets" => Some(WIDGET_BOOK_TAB_LABEL),
         "themes" | "theme" => Some(THEMES_TAB_LABEL),
+        "animation" | "animations" | "animation-demo" => Some(ANIMATION_DEMO_TAB_LABEL),
         "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
@@ -6336,7 +6351,7 @@ mod tests {
     fn dev_shell_tab_semantics_ids_are_javascript_safe_and_distinct() {
         let parent = WidgetId::new(17);
         let mut ids = BTreeSet::new();
-        for demo_index in 0..12 {
+        for demo_index in 0..13 {
             for id in [
                 dev_shell_tab_semantics_id(parent, demo_index).get(),
                 dev_shell_tab_close_semantics_id(parent, demo_index).get(),
@@ -7086,6 +7101,22 @@ final_max_luminance={final_max_luminance}
             .to_be_visible()
     }
 
+    fn semantic_text_value(window: &TestWindow, role: SemanticsRole, name: &str) -> String {
+        let snapshot = window
+            .snapshot()
+            .expect("window snapshot should be available");
+        let node = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == role && node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("expected {role:?} named {name:?}"));
+        match &node.value {
+            Some(SemanticsValue::Text(value)) => value.clone(),
+            other => panic!("expected text value for {name:?}, got {other:?}"),
+        }
+    }
+
     fn percentile_index(count: usize, percentile: f64) -> usize {
         assert!(count > 0, "percentile requires at least one sample");
         let percentile = percentile.clamp(0.0, 1.0);
@@ -7145,6 +7176,86 @@ final_max_luminance={final_max_luminance}
             .with_name(DRAG_DROP_DEMO_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_registers_animation_demo() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(ANIMATION_DEMO_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(ANIMATION_DEMO_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+
+        let snapshot = window.snapshot()?;
+        for name in [
+            ANIMATION_DEMO_NAME,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+            ANIMATION_RETAINED_LAYER_NAME,
+            ANIMATION_PAINT_INVALIDATION_NAME,
+            ANIMATION_EDITOR_SURFACE_NAME,
+        ] {
+            assert!(
+                snapshot
+                    .accessibility
+                    .nodes
+                    .iter()
+                    .any(|node| node.name.as_deref() == Some(name)),
+                "expected animation demo to expose {name:?}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn animation_demo_resumes_playback_after_tab_switch() -> Result<()> {
+        let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
+        app.advance_time(0.18)?;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("Open demo")
+            .click()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(LAYOUT_TAB_LABEL)
+            .click()?;
+        assert_dev_shell_active_tab(&window, LAYOUT_TAB_LABEL)?;
+        app.advance_time(0.18)?;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(ANIMATION_DEMO_TAB_LABEL)
+            .click()?;
+        assert_dev_shell_active_tab(&window, ANIMATION_DEMO_TAB_LABEL)?;
+        let restored_before_advance = semantic_text_value(
+            &window,
+            SemanticsRole::GenericContainer,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+        );
+        app.advance_time(0.18)?;
+        let restored_after_advance = semantic_text_value(
+            &window,
+            SemanticsRole::GenericContainer,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+        );
+
+        assert_ne!(
+            restored_before_advance, restored_after_advance,
+            "animation timeline should resume after switching back to the demo tab"
+        );
+
         Ok(())
     }
 
