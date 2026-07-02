@@ -284,27 +284,27 @@ impl ThemeColors {
 
     pub fn high_contrast() -> Self {
         Self {
-            name: "high-contrast",
+            name: "true-black",
             scheme: ThemeColorScheme::HighContrast,
             base_100: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            base_200: Color::rgba(0.065, 0.070, 0.080, 1.0),
-            base_300: Color::rgba(0.760, 0.800, 0.860, 1.0),
-            base_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
-            primary: Color::rgba(0.250, 0.820, 1.0, 1.0),
+            base_200: Color::rgba(0.0, 0.0, 0.0, 1.0),
+            base_300: Color::rgba(0.125, 0.145, 0.170, 1.0),
+            base_content: Color::rgba(0.930, 0.955, 0.980, 1.0),
+            primary: Color::rgba(0.000, 0.840, 1.0, 1.0),
             primary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            secondary: Color::rgba(0.330, 0.980, 0.720, 1.0),
+            secondary: Color::rgba(0.170, 0.960, 0.580, 1.0),
             secondary_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            accent: Color::rgba(1.0, 0.840, 0.120, 1.0),
+            accent: Color::rgba(1.0, 0.680, 0.180, 1.0),
             accent_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            neutral: Color::rgba(0.120, 0.130, 0.150, 1.0),
-            neutral_content: Color::rgba(1.0, 1.0, 1.0, 1.0),
-            info: Color::rgba(0.250, 0.820, 1.0, 1.0),
+            neutral: Color::rgba(0.055, 0.064, 0.078, 1.0),
+            neutral_content: Color::rgba(0.930, 0.955, 0.980, 1.0),
+            info: Color::rgba(0.000, 0.840, 1.0, 1.0),
             info_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            success: Color::rgba(0.360, 1.0, 0.620, 1.0),
+            success: Color::rgba(0.170, 0.960, 0.580, 1.0),
             success_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            warning: Color::rgba(1.0, 0.840, 0.120, 1.0),
+            warning: Color::rgba(1.0, 0.680, 0.180, 1.0),
             warning_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
-            error: Color::rgba(1.0, 0.360, 0.420, 1.0),
+            error: Color::rgba(1.0, 0.260, 0.380, 1.0),
             error_content: Color::rgba(0.0, 0.0, 0.0, 1.0),
         }
     }
@@ -892,11 +892,7 @@ impl ControlPalette {
         );
         let border_hover = mix(border, colors.primary, if is_dark { 0.28 } else { 0.18 });
         let border_focus = colors.primary;
-        let focus_alpha = if colors.scheme == ThemeColorScheme::HighContrast {
-            0.72
-        } else {
-            0.32
-        };
+        let focus_alpha = 0.32;
         let selection = mix(surface, colors.primary, if is_dark { 0.30 } else { 0.14 });
 
         Self {
@@ -2629,7 +2625,7 @@ impl DefaultTheme {
         let palette = ControlPalette::from_colors(&colors);
         let surfaces = SurfacePalette::from_theme_parts(&colors, &palette);
 
-        let mut theme = Self {
+        let theme = Self {
             fonts: ThemeFontFamilies::default(),
             colors,
             density,
@@ -2653,7 +2649,6 @@ impl DefaultTheme {
             interaction: ControlStateMetrics::for_density(density),
             metrics: ControlMetrics::from_tokens(spacing, radius, density),
         };
-        theme.apply_scheme_overrides();
         theme
     }
 
@@ -2670,15 +2665,6 @@ impl DefaultTheme {
         self.typography = ControlTypography::from_text_scale(&self.text);
         self.interaction = ControlStateMetrics::for_density(self.density);
         self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius, self.density);
-        self.apply_scheme_overrides();
-    }
-
-    fn apply_scheme_overrides(&mut self) {
-        if self.colors.scheme == ThemeColorScheme::HighContrast {
-            self.metrics.border_width = 1.5;
-            self.metrics.focus_ring_width = 2.5;
-            self.metrics.focus_ring_outset = 2.0;
-        }
     }
 
     pub fn text_style(&self, color: Color) -> TextStyle {
@@ -3108,27 +3094,40 @@ mod tests {
     }
 
     #[test]
-    fn high_contrast_theme_uses_dedicated_scheme_and_metrics() {
+    fn high_contrast_scheme_uses_true_black_oled_palette() {
         let theme = DefaultTheme::high_contrast();
 
         assert_eq!(theme.colors.scheme, ThemeColorScheme::HighContrast);
-        assert_eq!(theme.colors.name, "high-contrast");
+        assert_eq!(theme.colors.name, "true-black");
         assert_eq!(theme.palette.surface, theme.colors.base_100);
         assert_eq!(theme.palette.surface, Color::BLACK);
         assert_eq!(theme.surfaces.window, Color::BLACK);
-        assert_ne!(theme.palette.surface_raised, Color::BLACK);
-        assert_ne!(theme.palette.control, Color::BLACK);
+        assert_eq!(theme.palette.surface_raised, Color::BLACK);
+        assert_eq!(theme.palette.control, Color::BLACK);
+        assert_ne!(theme.palette.text, Color::WHITE);
         assert_ne!(theme.palette.control_hover, Color::BLACK);
         assert_ne!(theme.palette.control_active, Color::BLACK);
         assert_ne!(theme.palette.surface_focus, Color::BLACK);
         assert_eq!(theme.palette.text, theme.colors.base_content);
-        assert!(theme.metrics.border_width > DefaultTheme::default().metrics.border_width);
-        assert!(theme.metrics.focus_ring_width > DefaultTheme::default().metrics.focus_ring_width);
+        assert_eq!(
+            theme.metrics.border_width,
+            DefaultTheme::default().metrics.border_width
+        );
+        assert_eq!(
+            theme.metrics.focus_ring_width,
+            DefaultTheme::default().metrics.focus_ring_width
+        );
 
         let touch = DefaultTheme::high_contrast().with_density(ThemeDensity::Touch);
         assert_eq!(touch.density, ThemeDensity::Touch);
         assert!(touch.metrics.min_height > theme.metrics.min_height);
-        assert!(touch.metrics.border_width > DefaultTheme::touch().metrics.border_width);
-        assert!(touch.metrics.focus_ring_width > DefaultTheme::touch().metrics.focus_ring_width);
+        assert_eq!(
+            touch.metrics.border_width,
+            DefaultTheme::touch().metrics.border_width
+        );
+        assert_eq!(
+            touch.metrics.focus_ring_width,
+            DefaultTheme::touch().metrics.focus_ring_width
+        );
     }
 }

@@ -165,7 +165,7 @@ fn dev_theme_scheme_label(scheme: ThemeColorScheme) -> &'static str {
     match scheme {
         ThemeColorScheme::Light => "Light",
         ThemeColorScheme::Dark => "Dark",
-        ThemeColorScheme::HighContrast => "High contrast",
+        ThemeColorScheme::HighContrast => "True black",
     }
 }
 
@@ -173,7 +173,7 @@ fn dev_theme_toggle_label(scheme: ThemeColorScheme) -> &'static str {
     match scheme {
         ThemeColorScheme::Light => "Light",
         ThemeColorScheme::Dark => "Dark",
-        ThemeColorScheme::HighContrast => "High",
+        ThemeColorScheme::HighContrast => "OLED",
     }
 }
 
@@ -1324,7 +1324,7 @@ impl ThemeToggleButton {
         match scheme {
             ThemeColorScheme::Light => Color::rgba(0.98, 0.74, 0.24, 1.0),
             ThemeColorScheme::Dark => Color::rgba(0.33, 0.74, 0.88, 1.0),
-            ThemeColorScheme::HighContrast => Color::rgba(1.0, 1.0, 1.0, 1.0),
+            ThemeColorScheme::HighContrast => Color::rgba(0.0, 0.84, 1.0, 1.0),
         }
     }
 
@@ -1467,19 +1467,6 @@ impl Widget for ThemeToggleButton {
                 transition,
             ),
         );
-        if matches!(scheme, ThemeColorScheme::HighContrast) {
-            ctx.stroke(
-                Path::circle(
-                    Point::new(
-                        knob.x() + knob.width() * 0.5,
-                        knob.y() + knob.height() * 0.5,
-                    ),
-                    14.0,
-                ),
-                Color::rgba(0.0, 0.0, 0.0, 1.0),
-                StrokeStyle::new(1.0),
-            );
-        }
         let label_rect = Self::label_rect(bounds, knob, scheme);
         ctx.draw_text(
             label_rect,
@@ -4010,7 +3997,7 @@ mod tests {
         click_runtime_point(&mut runtime, window_id, center_of(toggle.bounds));
         let output = runtime
             .render(window_id)
-            .expect("dev application should render high contrast theme");
+            .expect("dev application should render true black theme");
         let toggle = assert_theme_toggle_state(
             &output.semantics,
             ThemeColorScheme::HighContrast,

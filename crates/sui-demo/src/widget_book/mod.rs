@@ -12,11 +12,10 @@ use sui::{
     InvalidationRequest, InvalidationTarget, PointerEventKind, Rect, SceneStatisticsDetailMode,
     SemanticColorToken, SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle,
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap,
-    ThemeColorScheme, ThemeDensity, Vector, WidgetColorRole, WidgetLuminanceRole,
-    WidgetMaterialRole, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent,
-    WindowPerformanceSnapshot, resolve_semantic_color, resolve_widget_hdr_style,
-    set_window_scene_statistics_detail_mode, window_performance_snapshot,
-    window_scene_statistics_detail_mode,
+    ThemeDensity, Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot,
+    resolve_semantic_color, resolve_widget_hdr_style, set_window_scene_statistics_detail_mode,
+    window_performance_snapshot, window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};
@@ -117,15 +116,15 @@ pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
 pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare default themes";
 pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
 pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
-pub const HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME: &str = "High contrast theme preview card";
+pub const HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME: &str = "True black theme preview card";
 pub const HDR_THEME_LAB_NAME: &str = "HDR theme mode lab";
 pub const HDR_THEME_LAB_ACTIVE_PREVIEW_NAME: &str = "Current HDR theme mode preview";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
 pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
-pub const HIGH_CONTRAST_PREVIEW_ACTION_LABEL: &str = "High contrast preview action";
+pub const HIGH_CONTRAST_PREVIEW_ACTION_LABEL: &str = "True black preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
 pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
-pub const HIGH_CONTRAST_PREVIEW_INPUT_LABEL: &str = "High contrast preview query";
+pub const HIGH_CONTRAST_PREVIEW_INPUT_LABEL: &str = "True black preview query";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -1357,7 +1356,7 @@ impl ThemePreviewShowcase {
                 HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME,
                 theme_preview_card(
                     DefaultTheme::high_contrast(),
-                    "High contrast",
+                    "True black",
                     HIGH_CONTRAST_PREVIEW_ACTION_LABEL,
                     HIGH_CONTRAST_PREVIEW_INPUT_LABEL,
                 ),
@@ -1549,7 +1548,7 @@ impl Widget for ThemePreviewShowcase {
         );
         node.name = Some(THEME_PREVIEW_NAME.to_string());
         node.description = Some(if comparison_enabled {
-            "Light, dark, and high contrast preview cards are visible.".to_string()
+            "Light, dark, and true black OLED preview cards are visible.".to_string()
         } else {
             "Only the light preview card is visible.".to_string()
         });
@@ -3553,7 +3552,7 @@ pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Wid
         )
         .with_child(panel(
             "Theme preview",
-            "Flip the compare toggle to inspect light, dark, and high contrast themes with the same control composition.",
+            "Flip the compare toggle to inspect light, dark, and true black OLED themes with the same control composition.",
             ThemePreviewShowcase::new(Rc::clone(&state)),
         ))
         .with_child(panel(
@@ -6531,11 +6530,7 @@ impl Widget for ThemePreviewCardFrame {
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
         let border = self.theme.palette.border.with_alpha(0.92);
-        let background = if self.theme.colors.scheme == ThemeColorScheme::HighContrast {
-            self.theme.palette.surface
-        } else {
-            self.theme.palette.surface_raised
-        };
+        let background = self.theme.palette.surface_raised;
         ctx.fill(Path::rounded_rect(bounds, 10.0), background);
         ctx.stroke(
             Path::rounded_rect(bounds, 10.0),
