@@ -23,10 +23,9 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::widget_book::GALLERY_SCROLL_NAME;
 use crate::widget_book::{
-    build_button_grid_benchmark_application, build_color_validation_application,
-    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-    build_text_rendering_comparison_application, build_widget_book_application,
-    default_widget_book_state,
+    build_color_validation_application, build_retained_text_benchmark_application,
+    build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+    build_widget_book_application, default_widget_book_state,
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use crossterm::{
@@ -102,7 +101,6 @@ impl Default for DesktopLaunchMode {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DesktopLaunchAutomation {
-    ButtonGridResize,
     WidgetBookScroll,
 }
 
@@ -141,10 +139,9 @@ fn parse_desktop_automation(
         .filter(|value| !value.is_empty())
     {
         None => Ok(None),
-        Some("button-grid-resize") => Ok(Some(DesktopLaunchAutomation::ButtonGridResize)),
         Some("widget-book-scroll") => Ok(Some(DesktopLaunchAutomation::WidgetBookScroll)),
         Some(other) => Err(sui::Error::new(format!(
-            "unsupported sui-demo automation `{other}`; supported values: button-grid-resize, widget-book-scroll"
+            "unsupported sui-demo automation `{other}`; supported values: widget-book-scroll"
         ))),
     }
 }
@@ -163,9 +160,6 @@ fn parse_tui_layout(raw_value: &str) -> sui::Result<TuiLayoutMode> {
 #[cfg(not(target_arch = "wasm32"))]
 fn app_automation_mode(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopAutomationMode> {
     match mode {
-        Some(DesktopLaunchAutomation::ButtonGridResize) => {
-            Some(DesktopAutomationMode::ButtonGridResize)
-        }
         Some(DesktopLaunchAutomation::WidgetBookScroll) => {
             Some(DesktopAutomationMode::WidgetBookScroll)
         }
@@ -190,7 +184,7 @@ fn platform_automation_config(
             report_interval: std::time::Duration::from_millis(500),
             startup_timeout: std::time::Duration::from_secs(2),
         }),
-        Some(DesktopLaunchAutomation::ButtonGridResize) | None => None,
+        None => None,
     }
 }
 
@@ -269,7 +263,7 @@ where
             "" => {}
             other => {
                 return Err(sui::Error::new(format!(
-                    "unsupported sui-demo argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<button-grid-resize|widget-book-scroll>, --tui, --tui-dump-accessibility, --tui-layout=<structured|spatial>, --tui-show-hidden"
+                    "unsupported sui-demo argument `{other}`; supported flags: --no-vsync, --vsync, --automation=<widget-book-scroll>, --tui, --tui-dump-accessibility, --tui-layout=<structured|spatial>, --tui-show-hidden"
                 )));
             }
         }
@@ -2598,7 +2592,6 @@ fn tui_action_point(node: &SemanticsNode) -> Point {
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WebBenchmarkKind {
-    ButtonGrid,
     RetainedText,
     TextEditing,
     TextComparison,
@@ -2697,7 +2690,6 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
         match key {
             "benchmark" => {
                 mode.benchmark = match value {
-                    "button-grid" => Some(WebBenchmarkKind::ButtonGrid),
                     "retained-text" => Some(WebBenchmarkKind::RetainedText),
                     "text-editing" => Some(WebBenchmarkKind::TextEditing),
                     "text-comparison" | "comparison-surface" => {
@@ -2822,7 +2814,6 @@ struct WebCanvasCapture {
 
 fn web_benchmark_slug(benchmark: Option<WebBenchmarkKind>) -> &'static str {
     match benchmark {
-        Some(WebBenchmarkKind::ButtonGrid) => "button-grid",
         Some(WebBenchmarkKind::RetainedText) => "retained-text",
         Some(WebBenchmarkKind::TextEditing) => "text-editing",
         Some(WebBenchmarkKind::TextComparison) => "text-comparison",
@@ -3032,7 +3023,6 @@ fn web_window_render_options(mode: &WebLaunchMode) -> WindowRenderOptions {
 fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
     let render_options = web_window_render_options(mode);
     let application = match mode.benchmark {
-        Some(WebBenchmarkKind::ButtonGrid) => build_button_grid_benchmark_application(),
         Some(WebBenchmarkKind::RetainedText) => build_retained_text_benchmark_application(),
         Some(WebBenchmarkKind::TextEditing) => build_text_editing_benchmark_application(),
         Some(WebBenchmarkKind::TextComparison) => build_text_rendering_comparison_application(),
@@ -3300,14 +3290,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_button_grid_web_benchmark_mode() {
-        let mode = parse_web_launch_mode("benchmark=button-grid&frames=240&warmup=30");
-        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::ButtonGrid));
-        assert_eq!(mode.frames, 240);
-        assert_eq!(mode.warmup_frames, 30);
-    }
-
-    #[test]
     fn parses_dev_workspace_initial_demo_slug() {
         let mode = parse_web_launch_mode("benchmark=dev&demo=paint");
 
@@ -3530,21 +3512,21 @@ mod tests {
     #[test]
     fn desktop_launch_mode_accepts_automation_sources() {
         let cli_mode =
-            parse_desktop_launch_mode(["--automation=button-grid-resize"], false, None).unwrap();
+            parse_desktop_launch_mode(["--automation=widget-book-scroll"], false, None).unwrap();
         let env_mode = parse_desktop_launch_mode(
             Vec::<&str>::new(),
             false,
-            Some(DesktopLaunchAutomation::ButtonGridResize),
+            Some(DesktopLaunchAutomation::WidgetBookScroll),
         )
         .unwrap();
 
         assert_eq!(
             cli_mode.automation,
-            Some(DesktopLaunchAutomation::ButtonGridResize)
+            Some(DesktopLaunchAutomation::WidgetBookScroll)
         );
         assert_eq!(
             env_mode.automation,
-            Some(DesktopLaunchAutomation::ButtonGridResize)
+            Some(DesktopLaunchAutomation::WidgetBookScroll)
         );
     }
 
@@ -3621,7 +3603,6 @@ mod tests {
 
         for label in [
             "Widget book",
-            "64 buttons",
             "HDR validation",
             "Layout",
             "Drag and drop",
@@ -3633,40 +3614,6 @@ mod tests {
         ] {
             assert!(frame.contains(label), "missing generated TUI label {label}");
         }
-
-        Ok(())
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
-    #[test]
-    fn generated_tui_actions_open_demo_tabs_from_picker() -> sui::Result<()> {
-        let app = sui_testing::TestApp::from_runtime(build_dev_application().build()?)?;
-        let window = app.main_window()?;
-        let snapshot = window.snapshot()?;
-        let button_grid = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button && node.name.as_deref() == Some("64 buttons")
-            })
-            .cloned()
-            .expect("button-grid picker button semantics present");
-
-        activate_tui_node(&window, &button_grid)?;
-        let snapshot = window.snapshot()?;
-        let shell = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Tabs && node.name.as_deref() == Some("SUI demo browser")
-            })
-            .expect("dev shell tab semantics present");
-        assert_eq!(
-            shell.value,
-            Some(SemanticsValue::Text("64 buttons".to_string()))
-        );
 
         Ok(())
     }

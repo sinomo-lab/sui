@@ -29,17 +29,12 @@ pub use visual_artifacts::write_visual_artifacts;
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
-pub const BUTTON_GRID_BENCHMARK_TITLE: &str = "SUI 64 Button Grid Benchmark";
-pub const BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME: &str = "64 button grid vertical scroll bar";
-pub const BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME: &str = "64 button grid horizontal scroll bar";
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const ANIMATION_BENCHMARK_TITLE: &str = "SUI Animation Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
 pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
 pub const TEXT_EDITING_BENCHMARK_TITLE: &str = "SUI Text Editing Benchmark";
-pub const BUTTON_GRID_ROWS: usize = 8;
-pub const BUTTON_GRID_COLUMNS: usize = 8;
 pub const NAME_INPUT_LABEL: &str = "Name";
 pub const TEXT_AREA_LABEL: &str = "Notes";
 pub const SUBSCRIBE_LABEL: &str = "Subscribe to product updates";
@@ -4756,53 +4751,6 @@ fn build_color_and_imagery_story_with_theme(theme_reader: WidgetBookThemeReader)
     )
 }
 
-pub fn build_button_grid_benchmark() -> impl Widget {
-    const BUTTON_GRID_MIN_WIDTH: f32 =
-        (BUTTON_GRID_COLUMNS as f32 * 112.0) + ((BUTTON_GRID_COLUMNS - 1) as f32 * 12.0);
-
-    let scroll_state = ScrollState::new();
-    let mut grid = Stack::vertical()
-        .spacing(12.0)
-        .alignment(Alignment::Stretch);
-
-    for row in 0..BUTTON_GRID_ROWS {
-        let mut line = Stack::horizontal()
-            .spacing(12.0)
-            .alignment(Alignment::Start);
-        for column in 0..BUTTON_GRID_COLUMNS {
-            line = line.with_child(
-                Button::new(format!("Button {row}:{column}"))
-                    .min_width(112.0)
-                    .min_height(24.0),
-            );
-        }
-        grid = grid.with_child(line);
-    }
-
-    TwoAxisScrollPane::new(
-        scroll_state.clone(),
-        ScrollView::both(MinimumWidth::new(BUTTON_GRID_MIN_WIDTH, grid))
-            .state(scroll_state.clone())
-            .overflow_x(Overflow::Auto)
-            .overflow_y(Overflow::Auto)
-            .name(BUTTON_GRID_BENCHMARK_TITLE),
-        ScrollBar::vertical(scroll_state.clone()).name(BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME),
-        ScrollBar::horizontal(scroll_state).name(BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME),
-    )
-}
-
-pub fn build_button_grid_benchmark_application() -> Application {
-    App::new()
-        .window(Window::new(BUTTON_GRID_BENCHMARK_TITLE).root(
-            LivePerformanceRoot::new(
-                BUTTON_GRID_BENCHMARK_TITLE,
-                "Focused benchmark surface for measuring the initial frame cost of a 64-button grid.",
-                build_button_grid_benchmark(),
-            ),
-        ))
-        .into_application()
-}
-
 pub fn build_animation_benchmark() -> impl Widget {
     Padding::all(
         24.0,
@@ -6994,8 +6942,7 @@ mod tests {
     };
     use super::{
         ANIMATION_BENCHMARK_REPAINT_NAME, ANIMATION_BENCHMARK_RETAINED_NAME,
-        ANIMATION_BENCHMARK_SCALE_NAME, ANIMATION_BENCHMARK_TITLE, BUTTON_GRID_BENCHMARK_TITLE,
-        BUTTON_GRID_COLUMNS, BUTTON_GRID_ROWS, COLOR_PICKER_NAME, DIALOG_TITLE,
+        ANIMATION_BENCHMARK_SCALE_NAME, ANIMATION_BENCHMARK_TITLE, COLOR_PICKER_NAME, DIALOG_TITLE,
         DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
         LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
         LivePerformanceDisplay, LivePerformanceFrameSample, LivePerformancePanel, NAME_INPUT_LABEL,
@@ -7011,14 +6958,13 @@ mod tests {
         WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME, WIDGET_STATES_SELECT_NAME,
         WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL, WIDGET_STATES_TABS_NAME,
         WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL, WINDOW_TITLE,
-        build_animation_benchmark_application, build_button_grid_benchmark_application,
-        build_color_and_imagery_story, build_retained_text_benchmark_application,
-        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
-        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
-        build_widget_book_gallery, default_widget_book_state, frame_phase_index,
-        register_widget_book_images, text_editing_benchmark_document,
-        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
-        theme_preview_card,
+        build_animation_benchmark_application, build_color_and_imagery_story,
+        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+        build_text_rendering_comparison_application, build_text_validation_surface,
+        build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
+        default_widget_book_state, frame_phase_index, register_widget_book_images,
+        text_editing_benchmark_document, text_editing_benchmark_style_overlays,
+        text_editing_benchmark_style_spans, theme_preview_card,
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -7266,34 +7212,6 @@ mod tests {
                         SizedBox::new()
                             .size(Size::new(430.0, 320.0))
                             .with_child(super::build_text_rendering_comparison_surface()),
-                    ),
-            )
-            .build()
-    }
-
-    fn build_narrow_button_grid_runtime() -> Result<sui::Runtime> {
-        Application::new()
-            .window(
-                WindowBuilder::new()
-                    .title(BUTTON_GRID_BENCHMARK_TITLE)
-                    .root(
-                        SizedBox::new()
-                            .size(Size::new(300.0, 120.0))
-                            .with_child(super::build_button_grid_benchmark()),
-                    ),
-            )
-            .build()
-    }
-
-    fn build_tall_narrow_button_grid_runtime() -> Result<sui::Runtime> {
-        Application::new()
-            .window(
-                WindowBuilder::new()
-                    .title(BUTTON_GRID_BENCHMARK_TITLE)
-                    .root(
-                        SizedBox::new()
-                            .size(Size::new(300.0, 520.0))
-                            .with_child(super::build_button_grid_benchmark()),
                     ),
             )
             .build()
@@ -7747,45 +7665,6 @@ mod tests {
     }
 
     #[cfg(feature = "artifacts")]
-    fn collect_headless_button_grid_resize_benchmark_samples(
-        window: &TestWindow,
-    ) -> Result<Vec<WindowPerformanceSnapshot>> {
-        const WARMUP_FRAMES: usize = 12;
-        const MEASURED_FRAMES: usize = 120;
-
-        let resize_sequence = [
-            Size::new(1040.0, 520.0),
-            Size::new(1180.0, 620.0),
-            Size::new(1360.0, 760.0),
-            Size::new(1440.0, 900.0),
-            Size::new(1240.0, 680.0),
-            Size::new(1100.0, 560.0),
-        ];
-
-        let mut collected = Vec::with_capacity(MEASURED_FRAMES);
-        let mut previous_frame_index = window.performance_snapshot()?.frame_index;
-
-        for step in 0..(WARMUP_FRAMES + MEASURED_FRAMES) {
-            let target_size = resize_sequence[step % resize_sequence.len()];
-            window
-                .root()
-                .dispatch_event(Event::Window(WindowEvent::Resized(target_size)))?;
-            let snapshot = next_headless_benchmark_frame(
-                window,
-                &mut previous_frame_index,
-                "headless button grid resize benchmark",
-                "resize",
-                step,
-            )?;
-            if step >= WARMUP_FRAMES {
-                collected.push(snapshot);
-            }
-        }
-
-        Ok(collected)
-    }
-
-    #[cfg(feature = "artifacts")]
     fn collect_headless_animation_benchmark_samples(
         window: &TestWindow,
     ) -> Result<Vec<WindowPerformanceSnapshot>> {
@@ -8173,121 +8052,6 @@ mod tests {
             .semantics(window_id)
             .expect("color validation semantics should exist");
         assert_semantics_omit_live_performance_overlay(&semantics);
-    }
-
-    #[test]
-    fn button_grid_benchmark_uses_overflow_scroll_view_when_narrow() -> Result<()> {
-        let mut runtime = build_narrow_button_grid_runtime()?;
-        let window_id = runtime.window_ids()[0];
-        let before = runtime.render(window_id)?;
-        let scroll = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some(BUTTON_GRID_BENCHMARK_TITLE)
-            })
-            .expect("button grid benchmark scroll view should be present");
-        let vertical_scroll_bar = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Slider
-                    && node.name.as_deref() == Some(super::BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME)
-            })
-            .expect("button grid vertical scroll bar should be present");
-        let horizontal_scroll_bar = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Slider
-                    && node.name.as_deref() == Some(super::BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME)
-            })
-            .expect("button grid horizontal scroll bar should be present");
-        let first_button_before = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Button 0:0")
-            })
-            .expect("first button should be present before scroll");
-        let last_button_before = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Button 0:7")
-            })
-            .expect("last button in first row should be present before scroll");
-        let horizontal_max = match horizontal_scroll_bar.value {
-            Some(SemanticsValue::Range { max, .. }) => max,
-            _ => 0.0,
-        };
-        let vertical_max = match vertical_scroll_bar.value {
-            Some(SemanticsValue::Range { max, .. }) => max,
-            _ => 0.0,
-        };
-
-        assert!(horizontal_max > 0.0);
-        assert!(vertical_max > 0.0);
-        assert!((horizontal_scroll_bar.bounds.y() - scroll.bounds.max_y()).abs() <= 0.001);
-        assert!((vertical_scroll_bar.bounds.x() - scroll.bounds.max_x()).abs() <= 0.001);
-        assert!(last_button_before.bounds.max_x() > scroll.bounds.max_x());
-
-        let mut wheel = PointerEvent::new(
-            PointerEventKind::Scroll,
-            Point::new(
-                scroll.bounds.x() + scroll.bounds.width() * 0.5,
-                scroll.bounds.y() + scroll.bounds.height() * 0.5,
-            ),
-        );
-        wheel.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(-96.0, -48.0)));
-        runtime.handle_event(window_id, Event::Pointer(wheel))?;
-        let after = runtime.render(window_id)?;
-        let first_button_after = after
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Button 0:0")
-            })
-            .expect("first button should be present after scroll");
-
-        assert!(first_button_after.bounds.x() < first_button_before.bounds.x());
-        assert!(first_button_after.bounds.y() < first_button_before.bounds.y());
-
-        Ok(())
-    }
-
-    #[test]
-    fn button_grid_benchmark_omits_vertical_scrollbar_when_only_horizontal_overflows() -> Result<()>
-    {
-        let mut runtime = build_tall_narrow_button_grid_runtime()?;
-        let window_id = runtime.window_ids()[0];
-        let output = runtime.render(window_id)?;
-        let scroll = output
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some(BUTTON_GRID_BENCHMARK_TITLE)
-            })
-            .expect("button grid benchmark scroll view should be present");
-        let horizontal_scroll_bar = output
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Slider
-                    && node.name.as_deref() == Some(super::BUTTON_GRID_HORIZONTAL_SCROLL_BAR_NAME)
-            })
-            .expect("button grid horizontal scroll bar should be present");
-
-        assert!(!output.semantics.iter().any(|node| {
-            node.role == SemanticsRole::Slider
-                && node.name.as_deref() == Some(super::BUTTON_GRID_VERTICAL_SCROLL_BAR_NAME)
-        }));
-        assert!((horizontal_scroll_bar.bounds.y() - scroll.bounds.max_y()).abs() <= 0.001);
-        assert!((horizontal_scroll_bar.bounds.width() - scroll.bounds.width()).abs() <= 0.001);
-
-        Ok(())
     }
 
     #[test]
@@ -9653,36 +9417,6 @@ mod tests {
 
         print_widget_book_headless_scroll_benchmark_summary(
             "Text Editing Headless Benchmark",
-            &samples,
-        );
-        Ok(())
-    }
-
-    #[cfg(feature = "artifacts")]
-    #[test]
-    #[ignore = "diagnostic benchmark for current headless button grid resize status"]
-    fn button_grid_headless_resize_current_status_benchmark() -> Result<()> {
-        let _guard = headless_benchmark_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let app = TestApp::from_runtime(build_button_grid_benchmark_application().build()?)?;
-        let window = app.main_window()?;
-        let snapshot = window.snapshot()?;
-        assert_eq!(snapshot.title, BUTTON_GRID_BENCHMARK_TITLE);
-        set_detailed_scene_statistics_mode(&window)?;
-        let samples = collect_headless_button_grid_resize_benchmark_samples(&window)?;
-
-        let final_snapshot = window.snapshot()?;
-        let button_count = final_snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .filter(|node| node.role == SemanticsRole::Button)
-            .count();
-        assert_eq!(button_count, BUTTON_GRID_ROWS * BUTTON_GRID_COLUMNS);
-
-        print_widget_book_headless_scroll_benchmark_summary(
-            "64-Button Headless Resize Benchmark",
             &samples,
         );
         Ok(())

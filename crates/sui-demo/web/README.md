@@ -23,7 +23,6 @@ Benchmark mode
 
 The web build can launch focused benchmark surfaces by query string:
 
-  http://127.0.0.1:8080/?benchmark=button-grid
   http://127.0.0.1:8080/?benchmark=retained-text
   http://127.0.0.1:8080/?benchmark=text-editing
   http://127.0.0.1:8080/?benchmark=text-comparison
@@ -32,7 +31,7 @@ The web build can launch focused benchmark surfaces by query string:
 
 Optional tuning parameters:
 
-  ?benchmark=button-grid&warmup=60&frames=180
+  ?benchmark=retained-text&warmup=60&frames=180
 
 Behavior:
 - the Rust app selects a focused benchmark surface from the query string
