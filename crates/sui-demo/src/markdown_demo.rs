@@ -2,7 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use sui::{
-    Event as SuiEvent, KeyState, TextSurface, WidgetPodMutVisitor, WidgetPodVisitor, prelude::*,
+    Event as SuiEvent, EventPhase, KeyState, TextArea, WidgetPodMutVisitor, WidgetPodVisitor,
+    prelude::*,
 };
 
 use crate::app::{DevThemeReader, dev_theme_color, request_window_refresh};
@@ -11,7 +12,7 @@ pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Markdown render";
 pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
 pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
 
-const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 1.0;
+pub(crate) const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 0.5;
 
 const SAMPLE_MARKDOWN: &str = r#"# SUI rich text report
 
@@ -194,8 +195,9 @@ struct MarkdownDemoState {
 struct MarkdownDemoStateInner {
     source: String,
     rendered_document: TextDocument,
-    edit_revision: u64,
-    render_revision: u64,
+    dirty: bool,
+    cooling_down: bool,
+    cooldown_timer: Option<TimerToken>,
 }
 
 impl MarkdownDemoState {
@@ -204,8 +206,9 @@ impl MarkdownDemoState {
             inner: Rc::new(RefCell::new(MarkdownDemoStateInner {
                 source: SAMPLE_MARKDOWN.to_string(),
                 rendered_document: markdown_to_document(SAMPLE_MARKDOWN, theme),
-                edit_revision: 0,
-                render_revision: 0,
+                dirty: false,
+                cooling_down: false,
+                cooldown_timer: None,
             })),
         }
     }
@@ -219,79 +222,117 @@ impl MarkdownDemoState {
     }
 
     #[cfg(test)]
-    fn edit_revision(&self) -> u64 {
-        self.inner.borrow().edit_revision
+    fn is_dirty(&self) -> bool {
+        self.inner.borrow().dirty
     }
 
     #[cfg(test)]
-    fn render_revision(&self) -> u64 {
-        self.inner.borrow().render_revision
-    }
-
     fn set_source(&self, source: String) {
         let mut inner = self.inner.borrow_mut();
         if inner.source != source {
             inner.source = source;
-            inner.edit_revision = inner.edit_revision.saturating_add(1);
+            inner.dirty = true;
         }
     }
 
+    #[cfg(test)]
     fn apply_pending_render(&self, theme: DefaultTheme) -> bool {
         let mut inner = self.inner.borrow_mut();
-        if inner.render_revision == inner.edit_revision {
+        if !inner.dirty {
             return false;
         }
-        inner.rendered_document = markdown_to_document(&inner.source, theme);
-        inner.render_revision = inner.edit_revision;
+        let source = inner.source.clone();
+        inner.rendered_document = markdown_to_document(&source, theme);
+        inner.dirty = false;
         true
+    }
+
+    fn arm_cooldown_timer(&self, ctx: &mut EventCtx) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.cooldown_timer.is_none() {
+            inner.cooldown_timer = Some(ctx.schedule_timer_after(MARKDOWN_RENDER_COOLDOWN_SECONDS));
+        }
+    }
+
+    fn set_source_throttled(&self, ctx: &mut EventCtx, source: String, theme: DefaultTheme) {
+        let mut should_refresh = false;
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.source == source {
+                return;
+            }
+
+            inner.source = source;
+            if inner.cooling_down {
+                inner.dirty = true;
+            } else {
+                let source = inner.source.clone();
+                inner.rendered_document = markdown_to_document(&source, theme);
+                inner.dirty = false;
+                inner.cooling_down = inner.cooldown_timer.is_some();
+                should_refresh = true;
+            }
+        }
+
+        if should_refresh {
+            request_window_refresh(ctx, false);
+        }
+    }
+
+    fn handle_cooldown_timer(&self, ctx: &mut EventCtx, token: TimerToken, theme: DefaultTheme) {
+        let mut should_refresh = false;
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.cooldown_timer != Some(token) {
+                return;
+            }
+
+            inner.cooldown_timer = None;
+            if inner.dirty {
+                let source = inner.source.clone();
+                inner.rendered_document = markdown_to_document(&source, theme);
+                inner.dirty = false;
+                inner.cooling_down = true;
+                inner.cooldown_timer =
+                    Some(ctx.schedule_timer_after(MARKDOWN_RENDER_COOLDOWN_SECONDS));
+                should_refresh = true;
+            } else {
+                inner.cooling_down = false;
+            }
+        }
+
+        if should_refresh {
+            request_window_refresh(ctx, false);
+        }
+        ctx.set_handled();
     }
 }
 
 struct MarkdownSourceEditor {
     state: MarkdownDemoState,
     theme_reader: DevThemeReader,
-    pending_timer: Option<TimerToken>,
     editor: SingleChild,
 }
 
 impl MarkdownSourceEditor {
     fn new(state: MarkdownDemoState, theme_reader: DevThemeReader) -> Self {
         let editor_state = state.clone();
+        let editor_theme_reader = Rc::clone(&theme_reader);
         let source_style = source_text_style(theme_reader());
-        let editor = TextSurface::new(MARKDOWN_SOURCE_EDITOR_NAME)
+        let editor = TextArea::new(MARKDOWN_SOURCE_EDITOR_NAME)
             .value(state.source())
-            .wrap(TextWrap::Word)
             .text_style(source_style)
             .padding(Insets::all(12.0))
             .min_height(360.0)
-            .on_change(move |value| {
-                editor_state.set_source(value);
+            .on_change_with_ctx(move |ctx, value| {
+                editor_state.set_source_throttled(ctx, value, editor_theme_reader());
             });
 
         Self {
             state,
             theme_reader,
-            pending_timer: None,
             editor: SingleChild::new(editor),
         }
-    }
-
-    fn schedule_render(&mut self, ctx: &mut EventCtx) {
-        if let Some(token) = self.pending_timer.take() {
-            ctx.cancel_timer(token);
-        }
-        self.pending_timer = Some(ctx.schedule_timer_after(MARKDOWN_RENDER_COOLDOWN_SECONDS));
-    }
-
-    fn handle_timer(&mut self, ctx: &mut EventCtx, token: TimerToken) {
-        if self.pending_timer != Some(token) {
-            return;
-        }
-        self.pending_timer = None;
-        if self.state.apply_pending_render((self.theme_reader)()) {
-            request_window_refresh(ctx, false);
-        }
-        ctx.set_handled();
     }
 
     fn event_may_edit_source(event: &SuiEvent) -> bool {
@@ -304,10 +345,11 @@ impl MarkdownSourceEditor {
 
 impl Widget for MarkdownSourceEditor {
     fn event(&mut self, ctx: &mut EventCtx, event: &SuiEvent) {
-        match event {
-            SuiEvent::Wake(WakeEvent::Timer { token, .. }) => self.handle_timer(ctx, *token),
-            _ if Self::event_may_edit_source(event) => self.schedule_render(ctx),
-            _ => {}
+        if let SuiEvent::Wake(WakeEvent::Timer { token, .. }) = event {
+            self.state
+                .handle_cooldown_timer(ctx, *token, (self.theme_reader)());
+        } else if ctx.phase() == EventPhase::Capture && Self::event_may_edit_source(event) {
+            self.state.arm_cooldown_timer(ctx);
         }
     }
 
@@ -658,13 +700,12 @@ mod tests {
     }
 
     #[test]
-    fn markdown_state_holds_preview_until_pending_render_applies() {
+    fn markdown_state_holds_preview_until_dirty_render_applies() {
         let state = MarkdownDemoState::new(DefaultTheme::default());
         state.set_source("# First edit".to_string());
         state.set_source("# Final edit".to_string());
 
-        assert_eq!(state.edit_revision(), 2);
-        assert_eq!(state.render_revision(), 0);
+        assert!(state.is_dirty());
         assert!(
             state
                 .rendered_document()
@@ -673,7 +714,7 @@ mod tests {
         );
 
         assert!(state.apply_pending_render(DefaultTheme::default()));
-        assert_eq!(state.render_revision(), state.edit_revision());
+        assert!(!state.is_dirty());
         assert_eq!(state.rendered_document().paragraphs[0].text(), "Final edit");
         assert!(!state.apply_pending_render(DefaultTheme::default()));
     }

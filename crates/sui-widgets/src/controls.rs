@@ -4996,6 +4996,7 @@ pub struct TextArea {
     input_layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
     on_change: Option<Box<dyn FnMut(String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
     on_submit: Option<Box<dyn FnMut(&str)>>,
 }
 
@@ -5024,6 +5025,7 @@ impl TextArea {
             input_layout: None,
             selection_scope: None,
             on_change: None,
+            on_change_with_ctx: None,
             on_submit: None,
         }
     }
@@ -5103,6 +5105,14 @@ impl TextArea {
         self
     }
 
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     /// Fire `on_submit(current_text)` when the user presses a plain `Enter` (no Shift/Ctrl/Meta
     /// modifier) while focused, *instead* of inserting a newline. `Shift+Enter` (and any modified
     /// Enter) still inserts a newline. When no `on_submit` is set, `Enter` inserts a newline as
@@ -5169,10 +5179,13 @@ impl TextArea {
             .unwrap_or(*self.theme)
     }
 
-    fn commit_text_change(&mut self) {
+    fn commit_text_change(&mut self, ctx: &mut EventCtx) {
         let value = self.current_value().to_string();
         if let Some(on_change) = &mut self.on_change {
-            on_change(value);
+            on_change(value.clone());
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, value);
         }
     }
 
@@ -5182,7 +5195,7 @@ impl TextArea {
             self.clipboard = text;
         }
         if result.text_changed {
-            self.commit_text_change();
+            self.commit_text_change(ctx);
         }
         if result.layout_changed() {
             ctx.request_measure();
@@ -6720,6 +6733,7 @@ pub struct TextInput {
     input_layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
     on_change: Option<Box<dyn FnMut(String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
 }
 
 impl TextInput {
@@ -6750,6 +6764,7 @@ impl TextInput {
             input_layout: None,
             selection_scope: None,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -6837,6 +6852,14 @@ impl TextInput {
         self
     }
 
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     fn input_text(&self) -> String {
         self.editor.display_text()
     }
@@ -6865,10 +6888,13 @@ impl TextInput {
         }
     }
 
-    fn commit_text_change(&mut self) {
+    fn commit_text_change(&mut self, ctx: &mut EventCtx) {
         let value = self.current_value().to_string();
         if let Some(on_change) = &mut self.on_change {
-            on_change(value);
+            on_change(value.clone());
+        }
+        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
+            on_change_with_ctx(ctx, value);
         }
     }
 
@@ -6878,7 +6904,7 @@ impl TextInput {
             self.clipboard = text;
         }
         if result.text_changed {
-            self.commit_text_change();
+            self.commit_text_change(ctx);
         }
         if result.layout_changed() {
             ctx.request_measure();
@@ -10148,6 +10174,26 @@ mod tests {
     }
 
     #[test]
+    fn text_input_on_change_with_ctx_receives_text() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .on_change_with_ctx(move |_, value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+        runtime.handle_event(window_id, key_without_text("h"))?;
+
+        assert_eq!(changes.borrow().as_slice(), &["h".to_string()]);
+        Ok(())
+    }
+
+    #[test]
     fn text_input_read_only_uses_muted_text_and_blocks_mutation() -> Result<()> {
         let theme = DefaultTheme::default();
         let changes = Rc::new(RefCell::new(Vec::new()));
@@ -11829,6 +11875,38 @@ mod tests {
             .find(|node| node.role == SemanticsRole::TextInput)
             .expect("text area semantics present");
         assert_eq!(input.value, Some(SemanticsValue::Text("h".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_on_change_with_ctx_receives_text() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Notes")
+                .on_change_with_ctx(move |_, value| on_change.borrow_mut().push(value)),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Ime(ImeEvent::CompositionCommit {
+                text: "Line 1".to_string(),
+            }),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+        )?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &["Line 1".to_string(), "Line 1\n".to_string()]
+        );
         Ok(())
     }
 

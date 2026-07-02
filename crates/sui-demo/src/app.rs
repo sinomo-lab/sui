@@ -29,7 +29,8 @@ use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
 use crate::markdown_demo::build_markdown_render_demo_with_theme;
 #[cfg(all(feature = "markdown", test))]
 use crate::markdown_demo::{
-    MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME, MARKDOWN_SOURCE_EDITOR_NAME,
+    MARKDOWN_RENDER_COOLDOWN_SECONDS, MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME,
+    MARKDOWN_SOURCE_EDITOR_NAME,
 };
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
@@ -7186,6 +7187,77 @@ final_max_luminance={final_max_luminance}
             .with_name(MARKDOWN_SOURCE_EDITOR_NAME)
             .expect()
             .to_be_visible()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_source_edit_updates_rendered_preview() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, MARKDOWN_RENDER_TAB_LABEL)?;
+
+        let marker = "Live preview marker";
+        window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(MARKDOWN_SOURCE_EDITOR_NAME)
+            .fill(format!("\n\n{marker}"))?;
+        window.run_until_idle()?;
+
+        let snapshot = window.snapshot()?;
+        let rendered = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some(MARKDOWN_RENDER_DEMO_NAME)
+                    && matches!(node.value, Some(SemanticsValue::Text(_)))
+            })
+            .expect("rendered markdown text semantics present");
+        let Some(SemanticsValue::Text(text)) = &rendered.value else {
+            unreachable!("rendered markdown node was filtered by text value");
+        };
+        assert!(
+            text.contains(marker),
+            "rendered markdown preview did not include edited source; text={text:?}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_source_edits_during_cooldown_update_after_timer() -> Result<()> {
+        let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, MARKDOWN_RENDER_TAB_LABEL)?;
+
+        let source = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(MARKDOWN_SOURCE_EDITOR_NAME);
+        source.fill("\n\nFirst marker")?;
+        source.fill("\n\nSecond marker")?;
+        app.advance_time(MARKDOWN_RENDER_COOLDOWN_SECONDS + 0.01)?;
+        window.run_until_idle()?;
+
+        let snapshot = window.snapshot()?;
+        let rendered = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some(MARKDOWN_RENDER_DEMO_NAME)
+                    && matches!(node.value, Some(SemanticsValue::Text(_)))
+            })
+            .expect("rendered markdown text semantics present");
+        let Some(SemanticsValue::Text(text)) = &rendered.value else {
+            unreachable!("rendered markdown node was filtered by text value");
+        };
+        assert!(
+            text.contains("Second marker"),
+            "dirty markdown preview did not flush after cooldown; text={text:?}"
+        );
         Ok(())
     }
 
