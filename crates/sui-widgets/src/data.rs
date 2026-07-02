@@ -3061,17 +3061,21 @@ impl Widget for Table {
             let selected = self.selected == Some(row_index);
             let hover_amount = self.hover_motion.amount_for(&row_index);
             let press_amount = self.press_motion.amount_for(&row_index);
-            let background = if selected
-                || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON
-            {
-                data_row_state_fill(&theme, selected, hover_amount, press_amount)
-            } else if row_index % 2 == 0 {
+            let background = if row_index % 2 == 0 {
                 palette.surface.with_alpha(0.88)
             } else {
                 palette.surface_raised
             };
             ctx.fill_rect(row_rect, background);
+            if selected
+                || hover_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON
+            {
+                ctx.fill_rect(
+                    row_rect,
+                    data_row_state_fill(&theme, selected, hover_amount, press_amount),
+                );
+            }
             ctx.stroke_rect(
                 row_rect,
                 palette.border.with_alpha(metrics.table_row_border_opacity),
@@ -3782,11 +3786,14 @@ impl Widget for VirtualTable {
             let row_hovered = self.hovered_row == Some(row_index);
             let row_pressed = self.pressed_row == Some(row_index);
             let background = if row_selected {
-                palette.selection
-            } else if row_pressed {
-                palette.control_active
-            } else if row_hovered {
-                palette.control_hover
+                data_row_state_fill(&theme, true, 0.0, 0.0)
+            } else if row_pressed || row_hovered {
+                data_row_state_fill(
+                    &theme,
+                    false,
+                    row_hovered as u8 as f32,
+                    row_pressed as u8 as f32,
+                )
             } else {
                 Color::TRANSPARENT
             };
@@ -4858,20 +4865,17 @@ fn data_row_state_fill(
             palette.accent,
             interaction.selected_blend * 0.18,
         )
-    } else if press_amount > AnimatedScalar::EPSILON {
-        mix_color(
-            palette.control,
-            palette.control_active,
-            interaction.pressed_blend * press_amount,
-        )
-    } else if hover_amount > AnimatedScalar::EPSILON {
-        mix_color(
-            palette.control,
-            palette.control_hover,
-            interaction.hover_blend * hover_amount,
-        )
     } else {
-        palette.control
+        let overlay = theme.surfaces.hover;
+        let hover_alpha = overlay.alpha * interaction.hover_blend * hover_amount.clamp(0.0, 1.0);
+        let press_alpha =
+            overlay.alpha * 1.75 * interaction.pressed_blend * press_amount.clamp(0.0, 1.0);
+        let alpha = hover_alpha.max(press_alpha).min(0.18);
+        if alpha > AnimatedScalar::EPSILON {
+            overlay.with_alpha(alpha)
+        } else {
+            Color::TRANSPARENT
+        }
     }
 }
 
@@ -5640,6 +5644,25 @@ mod tests {
     }
 
     #[test]
+    fn data_row_hover_and_press_fills_are_translucent_overlays() {
+        let theme = DefaultTheme::default();
+        let hover = super::data_row_state_fill(&theme, false, 1.0, 0.0);
+        let press = super::data_row_state_fill(&theme, false, 0.0, 1.0);
+
+        assert_eq!(
+            super::data_row_state_fill(&theme, false, 0.0, 0.0),
+            Color::TRANSPARENT
+        );
+        assert!(hover.alpha > 0.0 && hover.alpha < 1.0);
+        assert!(press.alpha > hover.alpha && press.alpha < 1.0);
+        assert_ne!(hover, theme.palette.control);
+        assert_ne!(hover, theme.palette.control_hover);
+
+        let dark_hover = super::data_row_state_fill(&DefaultTheme::dark(), false, 1.0, 0.0);
+        assert!(dark_hover.alpha > 0.0 && dark_hover.alpha < 1.0);
+    }
+
+    #[test]
     fn data_focus_surfaces_keep_chrome_neutral() -> Result<()> {
         assert_focus_surface_keeps_chrome_neutral(
             SizedBox::new().width(260.0).height(120.0).with_child(
@@ -5843,6 +5866,47 @@ mod tests {
 
         let _ = runtime.render(window_id)?;
         assert_pointer_hover_and_press_use_theme_motion(&mut runtime, window_id, position, &theme)
+    }
+
+    #[test]
+    fn table_row_hover_keeps_row_base_under_overlay() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let position = Point::new(
+            theme.metrics.data_viewport_padding.left + 24.0,
+            theme.metrics.data_viewport_padding.top
+                + theme.metrics.table_header_height
+                + theme.metrics.select_menu_gap
+                + theme.metrics.table_row_height * 0.5,
+        );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(180.0).with_child(
+                Table::new("Objects")
+                    .theme(theme)
+                    .columns([TableColumn::new("Name"), TableColumn::new("State")])
+                    .rows([
+                        TableRow::new(["Canvas", "Visible"]),
+                        TableRow::new(["Lighting", "Locked"]),
+                    ]),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, position, false),
+        )?;
+        runtime.tick(theme.motion.hover_duration());
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let hovered = runtime.render(window_id)?;
+        let fills = solid_fill_colors(&hovered);
+
+        assert!(fills.contains(&theme.palette.surface.with_alpha(0.88)));
+        assert!(fills.contains(&super::data_row_state_fill(&theme, false, 1.0, 0.0)));
+        assert!(
+            !fills.contains(&theme.palette.control_hover),
+            "hovered table rows should paint a translucent overlay, not an opaque control fill"
+        );
+        Ok(())
     }
 
     #[test]
