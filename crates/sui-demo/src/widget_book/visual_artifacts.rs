@@ -7,8 +7,8 @@ use std::{
 
 use sui::{
     Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-    Result, ScrollDelta, SemanticsRole, Vector, WindowColorManagementMode, WindowDynamicRangeMode,
-    WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
+    Result, ScrollDelta, SemanticsNode, SemanticsRole, Vector, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
     window_output_diagnostics,
 };
 use sui_render_wgpu::{
@@ -762,13 +762,15 @@ pub(crate) fn scroll_to_story_target(
         return Ok(());
     };
 
-    if story_node_is_visible(window, role.clone(), name)? {
+    if reveal_story_node(window, &role, name)? {
         align_story_target_for_capture(window, story)?;
         return Ok(());
     }
 
     for _ in 0..(max_pages * 4) {
-        scroll_gallery_by(window, SCROLL_STEP)?;
+        if !reveal_story_node(window, &role, name)? {
+            scroll_gallery_by(window, SCROLL_STEP)?;
+        }
         if story_node_is_visible(window, role.clone(), name)? {
             align_story_target_for_capture(window, story)?;
             return Ok(());
@@ -919,9 +921,39 @@ fn gallery_scroll_point(window: &TestWindow) -> Result<Point> {
         .ok_or_else(|| Error::new("story scroll view is missing"))?;
 
     Ok(Point::new(
-        gallery.bounds.x() + 32.0,
-        gallery.bounds.y() + 120.0,
+        gallery.bounds.max_x() - 8.0,
+        gallery.bounds.y() + (gallery.bounds.height() * 0.5),
     ))
+}
+
+fn reveal_story_node(
+    window: &TestWindow,
+    role: &SemanticsRole,
+    name: Option<&str>,
+) -> Result<bool> {
+    let snapshot = window.snapshot()?;
+    let viewport = story_viewport_bounds(&snapshot.accessibility.nodes);
+    let Some(bounds) = snapshot
+        .accessibility
+        .nodes
+        .iter()
+        .find(|node| node.role == *role && node.name.as_deref() == name)
+        .map(|node| node.bounds)
+    else {
+        return Ok(false);
+    };
+
+    if story_bounds_visible_enough(bounds, viewport) {
+        return Ok(true);
+    }
+
+    let delta_y = scroll_delta_to_reveal_bounds(bounds, viewport);
+    if delta_y.abs() > 0.5 {
+        scroll_gallery_by(window, -delta_y)?;
+        return story_node_is_visible(window, role.clone(), name);
+    }
+
+    Ok(false)
 }
 
 fn story_node_is_visible(
@@ -930,35 +962,48 @@ fn story_node_is_visible(
     name: Option<&str>,
 ) -> Result<bool> {
     let snapshot = window.snapshot()?;
-    let viewport = snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .find(|node| {
-            node.role == SemanticsRole::ScrollView && story_scroll_name(node.name.as_deref())
-        })
-        .or_else(|| {
-            snapshot
-                .accessibility
-                .nodes
-                .iter()
-                .find(|node| node.role == SemanticsRole::Window)
-        })
-        .map(|node| node.bounds)
-        .unwrap_or(Rect::ZERO);
+    let viewport = story_viewport_bounds(&snapshot.accessibility.nodes);
     Ok(snapshot.accessibility.nodes.iter().any(|node| {
         if node.role != role || node.name.as_deref() != name {
             return false;
         }
 
-        let Some(visible) = node.bounds.intersection(viewport) else {
-            return false;
-        };
-
-        let node_area = node.bounds.width() * node.bounds.height();
-        let visible_area = visible.width() * visible.height();
-        node_area > 0.0 && (visible_area / node_area) >= 0.85
+        story_bounds_visible_enough(node.bounds, viewport)
     }))
+}
+
+fn story_viewport_bounds(nodes: &[SemanticsNode]) -> Rect {
+    nodes
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::ScrollView && story_scroll_name(node.name.as_deref())
+        })
+        .or_else(|| nodes.iter().find(|node| node.role == SemanticsRole::Window))
+        .map(|node| node.bounds)
+        .unwrap_or(Rect::ZERO)
+}
+
+fn story_bounds_visible_enough(bounds: Rect, viewport: Rect) -> bool {
+    let Some(visible) = bounds.intersection(viewport) else {
+        return false;
+    };
+
+    let required_width = bounds.width().min(viewport.width()) * 0.85;
+    let required_height = bounds.height().min(viewport.height()) * 0.85;
+    required_width > 0.0
+        && required_height > 0.0
+        && visible.width() >= required_width
+        && visible.height() >= required_height
+}
+
+fn scroll_delta_to_reveal_bounds(bounds: Rect, viewport: Rect) -> f32 {
+    if bounds.height() >= viewport.height() || bounds.y() < viewport.y() {
+        bounds.y() - viewport.y()
+    } else if bounds.max_y() > viewport.max_y() {
+        bounds.max_y() - viewport.max_y()
+    } else {
+        0.0
+    }
 }
 
 fn story_scroll_name(name: Option<&str>) -> bool {

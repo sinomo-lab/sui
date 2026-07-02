@@ -86,6 +86,12 @@ pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book scroll bar";
 const GALLERY_TEXT_MAX_WIDTH: f32 = 980.0;
+const ROOT_GALLERY_PADDING: Insets = Insets {
+    left: 24.0,
+    top: 0.0,
+    right: 24.0,
+    bottom: 0.0,
+};
 pub const THEME_DEMO_TITLE: &str = "Themes";
 pub const THEME_DEMO_DESCRIPTION: &str =
     "Dedicated theme previews for SDR, wide-gamut, and HDR UI styling.";
@@ -3524,7 +3530,7 @@ pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Wid
     VirtualScrollView::new()
         .name(THEME_DEMO_SCROLL_NAME)
         .state(scroll_state)
-        .padding(Insets::all(24.0))
+        .padding(ROOT_GALLERY_PADDING)
         .spacing(18.0)
         .with_child(
             Stack::vertical()
@@ -3599,7 +3605,7 @@ pub fn build_widget_book_gallery_with_theme(
     let gallery = VirtualScrollView::new()
         .name(GALLERY_SCROLL_NAME)
         .state(scroll_state.clone())
-        .padding(Insets::all(24.0))
+        .padding(ROOT_GALLERY_PADDING)
         .spacing(18.0)
         .with_child(
             Stack::vertical()
@@ -7152,12 +7158,12 @@ mod tests {
         TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
         TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
-        WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL, WIDGET_STATES_GALLERY_NAME,
-        WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME, WIDGET_STATES_SELECT_NAME,
-        WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL, WIDGET_STATES_TABS_NAME,
-        WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL, WINDOW_TITLE,
-        build_animation_benchmark_application, build_color_and_imagery_story,
+        THEME_DEMO_SCROLL_NAME, THEME_DEMO_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
+        TOOLTIP_TRIGGER_LABEL, WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL,
+        WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME,
+        WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL,
+        WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL,
+        WINDOW_TITLE, build_animation_benchmark_application, build_color_and_imagery_story,
         build_retained_text_benchmark_application, build_text_editing_benchmark_application,
         build_text_rendering_comparison_application, build_text_validation_surface,
         build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
@@ -9093,6 +9099,48 @@ mod tests {
 
         assert!(scroll_bar.bounds.x() >= gallery.bounds.max_x());
         assert!(scroll_bar.bounds.height() >= gallery.bounds.height() - 1.0);
+    }
+
+    #[test]
+    fn widget_book_and_theme_roots_start_at_scroll_view_top() -> Result<()> {
+        fn assert_title_flush_with_scroll(output: &RenderOutput, scroll_name: &str, title: &str) {
+            let scroll = output
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::ScrollView
+                        && node.name.as_deref() == Some(scroll_name)
+                })
+                .expect("root scroll view should be present");
+            let title_node = output
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Text && node.name.as_deref() == Some(title)
+                })
+                .expect("root title text should be present");
+
+            assert!(
+                (title_node.bounds.y() - scroll.bounds.y()).abs() < 0.01,
+                "{title} should start at the scroll viewport top: title={:?}, scroll={:?}",
+                title_node.bounds,
+                scroll.bounds
+            );
+        }
+
+        let mut widget_runtime =
+            build_widget_book_application(default_widget_book_state()).build()?;
+        let widget_window = widget_runtime.window_ids()[0];
+        let widget_output = widget_runtime.render(widget_window)?;
+        assert_title_flush_with_scroll(&widget_output, GALLERY_SCROLL_NAME, WINDOW_TITLE);
+
+        let mut theme_runtime =
+            build_theme_demo_application(default_widget_book_state()).build()?;
+        let theme_window = theme_runtime.window_ids()[0];
+        let theme_output = theme_runtime.render(theme_window)?;
+        assert_title_flush_with_scroll(&theme_output, THEME_DEMO_SCROLL_NAME, THEME_DEMO_TITLE);
+
+        Ok(())
     }
 
     #[test]
