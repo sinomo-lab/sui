@@ -13,6 +13,8 @@ pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
 pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
 
 pub(crate) const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 0.5;
+const MARKDOWN_PANEL_MIN_WIDTH: f32 = 320.0;
+const MARKDOWN_PANEL_GAP: f32 = 16.0;
 
 const SAMPLE_MARKDOWN: &str = r#"# SUI rich text report
 
@@ -581,30 +583,141 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
                         .line_height(28.0)
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                 )
-                .with_child(
-                    Flex::horizontal()
-                        .gap(16.0)
-                        .wrap(FlexWrap::Wrap)
-                        .align_items(Alignment::Stretch)
-                        .with_item(
-                            markdown_panel("Source", source, Rc::clone(&theme_reader)),
-                            FlexItem::new()
-                                .basis_gap_aware_fraction(0.44)
-                                .min_width(320.0),
-                        )
-                        .with_item(
-                            markdown_panel("Rendered", rendered, Rc::clone(&theme_reader)),
-                            FlexItem::new()
-                                .basis_gap_aware_fraction(0.56)
-                                .min_width(380.0),
-                        ),
-                ),
+                .with_child(MarkdownPanelSplit::new(
+                    markdown_panel("Source", source, Rc::clone(&theme_reader)),
+                    markdown_panel("Rendered", rendered, Rc::clone(&theme_reader)),
+                )),
         ))
         .name(MARKDOWN_RENDER_SCROLL_NAME),
     )
     .brush_when(dev_theme_color(&theme_reader, |theme| {
         theme.palette.surface
     }))
+}
+
+struct MarkdownPanelSplit {
+    source: SingleChild,
+    rendered: SingleChild,
+}
+
+impl MarkdownPanelSplit {
+    fn new<Source, Rendered>(source: Source, rendered: Rendered) -> Self
+    where
+        Source: Widget + 'static,
+        Rendered: Widget + 'static,
+    {
+        Self {
+            source: SingleChild::new(source),
+            rendered: SingleChild::new(rendered),
+        }
+    }
+
+    fn available_width(constraints: Constraints) -> f32 {
+        if constraints.max.width.is_finite() {
+            constraints.max.width.max(0.0)
+        } else if constraints.min.width.is_finite() && constraints.min.width > 0.0 {
+            constraints.min.width
+        } else {
+            MARKDOWN_PANEL_MIN_WIDTH * 2.0 + MARKDOWN_PANEL_GAP
+        }
+    }
+
+    fn split_width(total_width: f32) -> f32 {
+        ((total_width - MARKDOWN_PANEL_GAP).max(0.0) * 0.5).max(MARKDOWN_PANEL_MIN_WIDTH)
+    }
+
+    fn wraps(total_width: f32) -> bool {
+        total_width < MARKDOWN_PANEL_MIN_WIDTH * 2.0 + MARKDOWN_PANEL_GAP
+    }
+
+    fn panel_constraints(width: f32, max_height: f32) -> Constraints {
+        Constraints::new(Size::new(width, 0.0), Size::new(width, max_height.max(0.0)))
+    }
+}
+
+impl Widget for MarkdownPanelSplit {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let total_width = Self::available_width(constraints);
+        let max_height = constraints.max.height;
+
+        let size = if Self::wraps(total_width) {
+            let panel_constraints = Self::panel_constraints(total_width, max_height);
+            let source_size = self.source.measure(ctx, panel_constraints);
+            let rendered_size = self.rendered.measure(ctx, panel_constraints);
+            Size::new(
+                total_width,
+                source_size.height + MARKDOWN_PANEL_GAP + rendered_size.height,
+            )
+        } else {
+            let panel_width = Self::split_width(total_width);
+            let panel_constraints = Self::panel_constraints(panel_width, max_height);
+            let source_size = self.source.measure(ctx, panel_constraints);
+            let rendered_size = self.rendered.measure(ctx, panel_constraints);
+            Size::new(total_width, source_size.height.max(rendered_size.height))
+        };
+
+        constraints.clamp(size)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if Self::wraps(bounds.width()) {
+            let source_size = self.source.child().measured_size();
+            let rendered_size = self.rendered.child().measured_size();
+            self.source.arrange(
+                ctx,
+                Rect::new(bounds.x(), bounds.y(), bounds.width(), source_size.height),
+            );
+            self.rendered.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x(),
+                    bounds.y() + source_size.height + MARKDOWN_PANEL_GAP,
+                    bounds.width(),
+                    rendered_size.height,
+                ),
+            );
+        } else {
+            let panel_width = ((bounds.width() - MARKDOWN_PANEL_GAP).max(0.0) * 0.5).max(0.0);
+            let height = self
+                .source
+                .child()
+                .measured_size()
+                .height
+                .max(self.rendered.child().measured_size().height)
+                .min(bounds.height());
+            self.source
+                .arrange(ctx, Rect::new(bounds.x(), bounds.y(), panel_width, height));
+            self.rendered.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x() + panel_width + MARKDOWN_PANEL_GAP,
+                    bounds.y(),
+                    panel_width,
+                    height,
+                ),
+            );
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.source.paint(ctx);
+        self.rendered.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.source.semantics(ctx);
+        self.rendered.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.source.visit_children(visitor);
+        self.rendered.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.source.visit_children_mut(visitor);
+        self.rendered.visit_children_mut(visitor);
+    }
 }
 
 fn markdown_panel<W>(title: &'static str, child: W, theme_reader: DevThemeReader) -> impl Widget
@@ -656,6 +769,80 @@ fn source_text_style(theme: DefaultTheme) -> TextStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui::{RenderOutput, SemanticsRole, SemanticsValue};
+    use sui_scene::SceneCommand;
+
+    fn render_markdown_demo(width: f32) -> RenderOutput {
+        let theme_reader: DevThemeReader = Rc::new(DefaultTheme::default);
+        let root = SizedBox::new()
+            .width(width)
+            .height(900.0)
+            .with_child(build_markdown_render_demo_with_theme(theme_reader));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Markdown layout").root(root))
+            .build()
+            .expect("markdown demo runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("markdown demo should render")
+    }
+
+    fn source_editor_bounds(output: &RenderOutput) -> Rect {
+        output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(MARKDOWN_SOURCE_EDITOR_NAME)
+            })
+            .expect("source editor semantics present")
+            .bounds
+    }
+
+    fn rendered_markdown_bounds(output: &RenderOutput) -> Rect {
+        output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text
+                    && node.name.as_deref() == Some(MARKDOWN_RENDER_DEMO_NAME)
+                    && matches!(node.value, Some(SemanticsValue::Text(_)))
+            })
+            .expect("rendered markdown semantics present")
+            .bounds
+    }
+
+    fn rendered_markdown_text_layout_width(output: &RenderOutput) -> f32 {
+        let rendered = rendered_markdown_bounds(output);
+        let mut width = None;
+
+        output.frame.scene.visit_commands(&mut |command| {
+            if width.is_some() {
+                return;
+            }
+            let SceneCommand::DrawShapedText(text) = command else {
+                return;
+            };
+            if text.origin.x < rendered.x() - 1.0
+                || text.origin.y < rendered.y() - 1.0
+                || text.origin.y > rendered.max_y() + 1.0
+            {
+                return;
+            }
+            let Some(layout) = text.resolve(output.frame.text_layout_registry.as_ref()) else {
+                return;
+            };
+            if layout
+                .text()
+                .contains("The markdown renderer is intentionally small")
+            {
+                width = Some(layout.measurement().width);
+            }
+        });
+
+        width.expect("rendered markdown text layout should be present")
+    }
 
     #[test]
     fn markdown_to_document_styles_headings_and_inline_spans() {
@@ -717,5 +904,54 @@ mod tests {
         assert!(!state.is_dirty());
         assert_eq!(state.rendered_document().paragraphs[0].text(), "Final edit");
         assert!(!state.apply_pending_render(DefaultTheme::default()));
+    }
+
+    #[test]
+    fn markdown_demo_panels_split_evenly_when_side_by_side() {
+        let output = render_markdown_demo(900.0);
+        let source = source_editor_bounds(&output);
+        let rendered = rendered_markdown_bounds(&output);
+
+        assert!(
+            (source.width() - rendered.width()).abs() <= 1.0,
+            "source and rendered panel content should be equal width: source={source:?}, rendered={rendered:?}"
+        );
+        assert!(
+            (source.y() - rendered.y()).abs() <= 1.0,
+            "source and rendered panels should remain on the same row: source={source:?}, rendered={rendered:?}"
+        );
+    }
+
+    #[test]
+    fn markdown_demo_wrapped_panels_fill_available_width() {
+        let output = render_markdown_demo(620.0);
+        let source = source_editor_bounds(&output);
+        let rendered = rendered_markdown_bounds(&output);
+
+        assert!(
+            source.y() < rendered.y(),
+            "rendered panel should wrap below source when space is tight: source={source:?}, rendered={rendered:?}"
+        );
+        assert!(
+            (source.width() - rendered.width()).abs() <= 1.0,
+            "wrapped panels should use the same full row width: source={source:?}, rendered={rendered:?}"
+        );
+        assert!(
+            source.width() > 500.0 && rendered.width() > 500.0,
+            "wrapped panel content should expand beyond the minimum column width: source={source:?}, rendered={rendered:?}"
+        );
+    }
+
+    #[test]
+    fn markdown_rendered_text_wraps_to_render_panel_width() {
+        let output = render_markdown_demo(620.0);
+        let rendered = rendered_markdown_bounds(&output);
+        let layout_width = rendered_markdown_text_layout_width(&output);
+        let content_width = (rendered.width() - 32.0).max(0.0);
+
+        assert!(
+            layout_width <= content_width + 2.0,
+            "rendered markdown text should wrap within the rich text content width: layout_width={layout_width}, content_width={content_width}, rendered={rendered:?}"
+        );
     }
 }
