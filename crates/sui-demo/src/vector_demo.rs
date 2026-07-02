@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    KeyState, PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsValue, WidgetId, prelude::*,
+    KeyState, PointerButton, PointerEventKind, ScrollDelta, SemanticsAction, SemanticsNode,
+    SemanticsRole, SemanticsValue, Vector, WidgetId, prelude::*,
 };
 
 #[cfg(test)]
@@ -21,6 +21,11 @@ const VECTOR_APPEARANCE_NAME: &str = "Appearance";
 const VECTOR_ALIGNMENT_NAME: &str = "Align controls";
 const VECTOR_DOCUMENT_BAR_NAME: &str = "Vector document bar";
 const VECTOR_STATUS_NAME: &str = "Vector editor status";
+pub(crate) const VECTOR_FIT_VIEW_NAME: &str = "Fit view";
+pub(crate) const VECTOR_ACTUAL_SIZE_NAME: &str = "Actual size";
+pub(crate) const VECTOR_ZOOM_OUT_NAME: &str = "Zoom out";
+pub(crate) const VECTOR_ZOOM_READOUT_NAME: &str = "Zoom level";
+pub(crate) const VECTOR_ZOOM_IN_NAME: &str = "Zoom in";
 const VECTOR_CENTER_X_NAME: &str = "Center X";
 const VECTOR_CENTER_Y_NAME: &str = "Center Y";
 pub(crate) const VECTOR_WIDTH_NAME: &str = "Width";
@@ -45,6 +50,106 @@ const VECTOR_OBJECT_COLORS: [Color; 4] = [
     Color::rgba(0.94, 0.58, 0.16, 1.0),
     Color::rgba(0.12, 0.28, 0.84, 1.0),
 ];
+
+#[derive(Clone, Debug)]
+struct VectorCanvasViewportState {
+    inner: Rc<RefCell<VectorCanvasViewportStateInner>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VectorCanvasViewportStateInner {
+    viewport: CanvasViewport,
+    viewport_size: Size,
+    pending_fit_view: u32,
+    pending_actual_size: u32,
+    pending_zoom_delta: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VectorViewportCommand {
+    Fit,
+    ActualSize,
+    ZoomIn,
+    ZoomOut,
+}
+
+impl VectorCanvasViewportState {
+    fn new() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(VectorCanvasViewportStateInner {
+                viewport: vector_canvas_viewport(),
+                viewport_size: Size::ZERO,
+                pending_fit_view: 0,
+                pending_actual_size: 0,
+                pending_zoom_delta: 0,
+            })),
+        }
+    }
+
+    fn viewport(&self) -> CanvasViewport {
+        self.inner.borrow().viewport
+    }
+
+    fn viewport_size(&self) -> Size {
+        self.inner.borrow().viewport_size
+    }
+
+    fn viewport_snapshot(&self) -> (CanvasViewport, Size) {
+        let inner = self.inner.borrow();
+        (inner.viewport, inner.viewport_size)
+    }
+
+    fn request_fit_view(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.pending_fit_view = inner.pending_fit_view.saturating_add(1);
+    }
+
+    fn request_actual_size_view(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.pending_actual_size = inner.pending_actual_size.saturating_add(1);
+    }
+
+    fn request_zoom_in(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.pending_zoom_delta = inner.pending_zoom_delta.saturating_add(1);
+    }
+
+    fn request_zoom_out(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.pending_zoom_delta = inner.pending_zoom_delta.saturating_sub(1);
+    }
+
+    fn take_viewport_command(&self) -> Option<VectorViewportCommand> {
+        let mut inner = self.inner.borrow_mut();
+        if inner.pending_fit_view > 0 {
+            inner.pending_fit_view -= 1;
+            return Some(VectorViewportCommand::Fit);
+        }
+        if inner.pending_actual_size > 0 {
+            inner.pending_actual_size -= 1;
+            return Some(VectorViewportCommand::ActualSize);
+        }
+        if inner.pending_zoom_delta > 0 {
+            inner.pending_zoom_delta -= 1;
+            return Some(VectorViewportCommand::ZoomIn);
+        }
+        if inner.pending_zoom_delta < 0 {
+            inner.pending_zoom_delta += 1;
+            return Some(VectorViewportCommand::ZoomOut);
+        }
+        None
+    }
+
+    fn set_viewport_state(&self, viewport: CanvasViewport, viewport_size: Size) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.viewport == viewport && inner.viewport_size == viewport_size {
+            return false;
+        }
+        inner.viewport = viewport;
+        inner.viewport_size = viewport_size;
+        true
+    }
+}
 
 #[derive(Clone)]
 struct VectorDemoState {
@@ -627,11 +732,16 @@ fn vector_distance_to_segment(point: Point, start: Point, end: Point) -> f32 {
 
 pub(crate) fn build_vector_editor_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
     let state = VectorDemoState::new();
+    let viewport_state = VectorCanvasViewportState::new();
     Background::new(
         Color::rgba(0.925, 0.940, 0.958, 1.0),
         StatusBarHost::new(
             SplitView::horizontal(
-                build_vector_canvas_stage(state.clone(), Rc::clone(&theme_reader)),
+                build_vector_canvas_stage(
+                    state.clone(),
+                    viewport_state.clone(),
+                    Rc::clone(&theme_reader),
+                ),
                 build_vector_properties_panel(state.clone(), Rc::clone(&theme_reader)),
             )
             .name("Vector workspace")
@@ -639,7 +749,7 @@ pub(crate) fn build_vector_editor_demo_with_theme(theme_reader: DevThemeReader) 
             .min_first(520.0)
             .min_second(292.0)
             .divider_thickness(4.0),
-            build_vector_status_bar(state, Rc::clone(&theme_reader)),
+            build_vector_status_bar(state, viewport_state, Rc::clone(&theme_reader)),
         ),
     )
     .brush_when(move || theme_reader().palette.surface)
@@ -661,8 +771,13 @@ fn vector_command_group(name: &'static str, theme_reader: &DevThemeReader) -> Co
         .corner_radius(6.0)
 }
 
-fn build_vector_status_bar(state: VectorDemoState, theme_reader: DevThemeReader) -> impl Widget {
+fn build_vector_status_bar(
+    state: VectorDemoState,
+    viewport_state: VectorCanvasViewportState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
     let object_state = state.clone();
+    let zoom_state = viewport_state;
     let stroke_state = state.clone();
     let opacity_state = state.clone();
     let fill_state = state;
@@ -671,7 +786,10 @@ fn build_vector_status_bar(state: VectorDemoState, theme_reader: DevThemeReader)
         .theme_when(clone_dev_theme_reader(&theme_reader))
         .height(28.0)
         .segment(StatusBarSegment::new("Select / edit").min_width(120.0))
-        .segment(StatusBarSegment::new("Zoom 105%").min_width(92.0))
+        .segment(
+            StatusBarSegment::dynamic("Zoom --", move || vector_zoom_status_text(&zoom_state))
+                .min_width(92.0),
+        )
         .segment(
             StatusBarSegment::dynamic("Object Blue ellipse", move || {
                 format!("Object {}", object_state.selected_object_label())
@@ -698,14 +816,30 @@ fn build_vector_status_bar(state: VectorDemoState, theme_reader: DevThemeReader)
         )
 }
 
-fn build_vector_canvas_stage(state: VectorDemoState, theme_reader: DevThemeReader) -> impl Widget {
-    let viewport = vector_canvas_viewport();
-    let ruler_viewport_size = Size::new(900.0, 560.0);
+fn vector_zoom_status_text(state: &VectorCanvasViewportState) -> String {
+    let viewport_size = state.viewport_size();
+    if viewport_size.width <= 0.0 || viewport_size.height <= 0.0 {
+        "Zoom --".to_string()
+    } else {
+        format!("Zoom {:.0}%", state.viewport().zoom * 100.0)
+    }
+}
+
+fn build_vector_canvas_stage(
+    state: VectorDemoState,
+    viewport_state: VectorCanvasViewportState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
+    let horizontal_ruler_state = viewport_state.clone();
+    let vertical_ruler_state = viewport_state.clone();
     Background::new(
         Color::rgba(0.890, 0.905, 0.925, 1.0),
         Stack::vertical()
             .alignment(Alignment::Stretch)
-            .with_child(build_vector_document_bar(Rc::clone(&theme_reader)))
+            .with_child(build_vector_document_bar(
+                viewport_state.clone(),
+                Rc::clone(&theme_reader),
+            ))
             .with_child(Padding::all(
                 12.0,
                 Stack::vertical()
@@ -720,7 +854,7 @@ fn build_vector_canvas_stage(state: VectorDemoState, theme_reader: DevThemeReade
                                 )
                                 .theme_when(clone_dev_theme_reader(&theme_reader))
                                 .extent(VECTOR_RULER_EXTENT)
-                                .viewport(viewport, ruler_viewport_size),
+                                .viewport_when(move || horizontal_ruler_state.viewport_snapshot()),
                             ),
                     )
                     .with_child(
@@ -733,16 +867,28 @@ fn build_vector_canvas_stage(state: VectorDemoState, theme_reader: DevThemeReade
                                 )
                                 .theme_when(clone_dev_theme_reader(&theme_reader))
                                 .extent(VECTOR_RULER_EXTENT)
-                                .viewport(viewport, ruler_viewport_size),
+                                .viewport_when(move || vertical_ruler_state.viewport_snapshot()),
                             )
-                            .with_child(VectorEditorCanvas::new(state, Rc::clone(&theme_reader))),
+                            .with_child(VectorEditorCanvas::new(
+                                state,
+                                viewport_state,
+                                Rc::clone(&theme_reader),
+                            )),
                     ),
             )),
     )
     .brush_when(move || theme_reader().palette.surface_raised)
 }
 
-fn build_vector_document_bar(theme_reader: DevThemeReader) -> impl Widget {
+fn build_vector_document_bar(
+    viewport_state: VectorCanvasViewportState,
+    theme_reader: DevThemeReader,
+) -> impl Widget {
+    let fit_state = viewport_state.clone();
+    let actual_size_state = viewport_state.clone();
+    let zoom_out_state = viewport_state.clone();
+    let zoom_reader_state = viewport_state.clone();
+    let zoom_in_state = viewport_state;
     Toolbar::horizontal()
         .name(VECTOR_DOCUMENT_BAR_NAME)
         .theme_when(clone_dev_theme_reader(&theme_reader))
@@ -783,6 +929,64 @@ fn build_vector_document_bar(theme_reader: DevThemeReader) -> impl Widget {
                 .color_when(dev_theme_color(&theme_reader, |theme| {
                     theme.palette.text_muted
                 })),
+        )
+        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            vector_command_group("Vector view commands", &theme_reader)
+                .with_child(
+                    IconButton::new(IconGlyph::FitView, VECTOR_FIT_VIEW_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
+                        .size(24.0)
+                        .icon_size(14.0)
+                        .on_press_with_ctx(move |ctx| {
+                            fit_state.request_fit_view();
+                            request_window_refresh(ctx, true);
+                        }),
+                )
+                .with_child(
+                    IconButton::new(IconGlyph::ActualSize, VECTOR_ACTUAL_SIZE_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
+                        .size(24.0)
+                        .icon_size(14.0)
+                        .on_press_with_ctx(move |ctx| {
+                            actual_size_state.request_actual_size_view();
+                            request_window_refresh(ctx, true);
+                        }),
+                ),
+        )
+        .with_child(
+            vector_command_group("Vector zoom controls", &theme_reader)
+                .with_child(
+                    IconButton::new(IconGlyph::Remove, VECTOR_ZOOM_OUT_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
+                        .size(24.0)
+                        .icon_size(12.0)
+                        .on_press_with_ctx(move |ctx| {
+                            zoom_out_state.request_zoom_out();
+                            request_window_refresh(ctx, true);
+                        }),
+                )
+                .with_child(
+                    SizedBox::new().width(78.0).with_child(
+                        Label::dynamic("Zoom --", move || {
+                            vector_zoom_status_text(&zoom_reader_state)
+                        })
+                        .semantic_name(VECTOR_ZOOM_READOUT_NAME)
+                        .font_size(12.0)
+                        .line_height(18.0)
+                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+                    ),
+                )
+                .with_child(
+                    IconButton::new(IconGlyph::Add, VECTOR_ZOOM_IN_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
+                        .size(24.0)
+                        .icon_size(12.0)
+                        .on_press_with_ctx(move |ctx| {
+                            zoom_in_state.request_zoom_in();
+                            request_window_refresh(ctx, true);
+                        }),
+                ),
         )
 }
 
@@ -1266,20 +1470,37 @@ struct VectorCanvasDrag {
     start_angle: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct VectorCanvasPanDrag {
+    pointer_id: u64,
+    last_position: Point,
+}
+
 struct VectorEditorCanvas {
     state: VectorDemoState,
+    viewport_state: VectorCanvasViewportState,
+    viewport: CanvasViewport,
     theme_reader: DevThemeReader,
     drag: Option<VectorCanvasDrag>,
+    pan_drag: Option<VectorCanvasPanDrag>,
     hovered_object: Option<usize>,
     hovered_handle: Option<VectorCanvasDragMode>,
 }
 
 impl VectorEditorCanvas {
-    fn new(state: VectorDemoState, theme_reader: DevThemeReader) -> Self {
+    fn new(
+        state: VectorDemoState,
+        viewport_state: VectorCanvasViewportState,
+        theme_reader: DevThemeReader,
+    ) -> Self {
+        let viewport = viewport_state.viewport();
         Self {
             state,
+            viewport_state,
+            viewport,
             theme_reader,
             drag: None,
+            pan_drag: None,
             hovered_object: None,
             hovered_handle: None,
         }
@@ -1296,20 +1517,127 @@ impl VectorEditorCanvas {
         )
     }
 
+    fn viewport_center(bounds: Rect, viewport: CanvasViewport) -> Point {
+        Self::screen_center(bounds) + viewport.pan
+    }
+
+    #[cfg(test)]
     fn document_to_screen(bounds: Rect, point: Point) -> Point {
-        let center = Self::screen_center(bounds);
+        Self::document_to_screen_with_viewport(bounds, vector_canvas_viewport(), point)
+    }
+
+    fn document_to_screen_with_viewport(
+        bounds: Rect,
+        viewport: CanvasViewport,
+        point: Point,
+    ) -> Point {
+        let center = Self::viewport_center(bounds, viewport);
+        let scaled = Vector::new(point.x * viewport.zoom, point.y * viewport.zoom);
+        let (sin, cos) = viewport.rotation.sin_cos();
+        let rotated = Vector::new(
+            (scaled.x * cos) - (scaled.y * sin),
+            (scaled.x * sin) + (scaled.y * cos),
+        );
+        center + rotated
+    }
+
+    fn screen_to_document_with_viewport(
+        bounds: Rect,
+        viewport: CanvasViewport,
+        point: Point,
+    ) -> Point {
+        let center = Self::viewport_center(bounds, viewport);
+        let relative = point - center;
+        let (sin, cos) = (-viewport.rotation).sin_cos();
+        let rotated = Vector::new(
+            (relative.x * cos) - (relative.y * sin),
+            (relative.x * sin) + (relative.y * cos),
+        );
         Point::new(
-            center.x + point.x * VECTOR_CANVAS_ZOOM,
-            center.y + point.y * VECTOR_CANVAS_ZOOM,
+            rotated.x / viewport.zoom.max(0.01),
+            rotated.y / viewport.zoom.max(0.01),
         )
     }
 
-    fn screen_to_document(bounds: Rect, point: Point) -> Point {
-        let center = Self::screen_center(bounds);
-        Point::new(
-            (point.x - center.x) / VECTOR_CANVAS_ZOOM,
-            (point.y - center.y) / VECTOR_CANVAS_ZOOM,
-        )
+    fn to_screen(&self, bounds: Rect, point: Point) -> Point {
+        Self::document_to_screen_with_viewport(bounds, self.viewport, point)
+    }
+
+    fn from_screen(&self, bounds: Rect, point: Point) -> Point {
+        Self::screen_to_document_with_viewport(bounds, self.viewport, point)
+    }
+
+    fn publish_viewport_state(&self, bounds: Rect) -> bool {
+        self.viewport_state
+            .set_viewport_state(self.viewport, bounds.size)
+    }
+
+    fn fit_view_to_bounds(&mut self, bounds: Rect) -> bool {
+        if bounds.is_empty() {
+            return false;
+        }
+        let padding = self.theme().metrics.pixel_canvas_fit_padding;
+        let (sin, cos) = self.viewport.rotation.sin_cos();
+        let document_size = vector_document_size();
+        let rotated_width = (document_size.width * cos.abs()) + (document_size.height * sin.abs());
+        let rotated_height = (document_size.width * sin.abs()) + (document_size.height * cos.abs());
+        let available_width = (bounds.width() - (padding * 2.0)).max(1.0);
+        let available_height = (bounds.height() - (padding * 2.0)).max(1.0);
+        let next = CanvasViewport {
+            pan: Vector::ZERO,
+            zoom: (available_width / rotated_width.max(1.0))
+                .min(available_height / rotated_height.max(1.0))
+                .max(0.01),
+            rotation: self.viewport.rotation,
+        };
+        if self.viewport == next {
+            return false;
+        }
+        self.viewport = next;
+        true
+    }
+
+    fn set_actual_size_view(&mut self) -> bool {
+        let next = CanvasViewport {
+            pan: Vector::ZERO,
+            zoom: 1.0,
+            rotation: self.viewport.rotation,
+        };
+        if self.viewport == next {
+            return false;
+        }
+        self.viewport = next;
+        true
+    }
+
+    fn zoom_view_around(&mut self, bounds: Rect, anchor: Point, factor: f32) -> bool {
+        if bounds.is_empty() {
+            return false;
+        }
+        let previous = self.viewport;
+        let before = Self::screen_to_document_with_viewport(bounds, self.viewport, anchor);
+        self.viewport.zoom = (self.viewport.zoom * factor.max(0.01)).max(0.01);
+        let after = Self::document_to_screen_with_viewport(bounds, self.viewport, before);
+        self.viewport.pan += anchor - after;
+        self.viewport != previous
+    }
+
+    fn apply_pending_viewport_commands(&mut self, bounds: Rect) -> bool {
+        let mut changed = false;
+        let zoom_step = self.theme().metrics.pixel_canvas_zoom_step;
+        while let Some(command) = self.viewport_state.take_viewport_command() {
+            changed |= match command {
+                VectorViewportCommand::Fit => self.fit_view_to_bounds(bounds),
+                VectorViewportCommand::ActualSize => self.set_actual_size_view(),
+                VectorViewportCommand::ZoomIn => {
+                    self.zoom_view_around(bounds, Self::screen_center(bounds), zoom_step)
+                }
+                VectorViewportCommand::ZoomOut => {
+                    self.zoom_view_around(bounds, Self::screen_center(bounds), 1.0 / zoom_step)
+                }
+            };
+        }
+        changed
     }
 
     fn resize_handle_rect(point: Point) -> Rect {
@@ -1325,7 +1653,7 @@ impl VectorEditorCanvas {
         let object = self.state.selected_object_snapshot();
         let corners = object
             .corners()
-            .map(|corner| Self::document_to_screen(bounds, corner));
+            .map(|corner| self.to_screen(bounds, corner));
         let resize_handles = [
             (VectorResizeHandle::NorthWest, corners[0]),
             (VectorResizeHandle::NorthEast, corners[1]),
@@ -1338,7 +1666,7 @@ impl VectorEditorCanvas {
             }
         }
 
-        let rotate_handle = Self::document_to_screen(bounds, object.rotate_handle());
+        let rotate_handle = self.to_screen(bounds, object.rotate_handle());
         if Path::circle(rotate_handle, VECTOR_HANDLE_SIZE * 0.75)
             .bounds()
             .inflate(VECTOR_HANDLE_SIZE * 0.5, VECTOR_HANDLE_SIZE * 0.5)
@@ -1352,7 +1680,7 @@ impl VectorEditorCanvas {
 
     fn update_hover(&mut self, bounds: Rect, position: Point) {
         let handle = self.selection_handle_at(bounds, position);
-        let document = Self::screen_to_document(bounds, position);
+        let document = self.from_screen(bounds, position);
         let object = self.state.hit_test(document);
         if self.hovered_handle != handle || self.hovered_object != object {
             self.hovered_handle = handle;
@@ -1407,9 +1735,14 @@ impl VectorEditorCanvas {
         request_window_refresh(ctx, true);
     }
 
-    fn paint_grid(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme) {
-        let minor = 24.0 * VECTOR_CANVAS_ZOOM;
-        let center = Self::screen_center(bounds);
+    fn paint_grid(
+        ctx: &mut PaintCtx,
+        bounds: Rect,
+        viewport: CanvasViewport,
+        theme: &DefaultTheme,
+    ) {
+        let minor = (24.0 * viewport.zoom).max(4.0);
+        let center = Self::viewport_center(bounds, viewport);
         let grid_minor = theme.palette.text_muted.with_alpha(0.18);
         let grid_major = theme.palette.text_muted.with_alpha(0.30);
 
@@ -1457,7 +1790,7 @@ impl VectorEditorCanvas {
     fn paint_artboard(&self, ctx: &mut PaintCtx, bounds: Rect, object: VectorObject) {
         let corners = object
             .corners()
-            .map(|corner| Self::document_to_screen(bounds, corner));
+            .map(|corner| self.to_screen(bounds, corner));
         let artboard_bounds = vector_points_bounds(&corners);
         ctx.fill(
             Path::rounded_rect(
@@ -1472,28 +1805,28 @@ impl VectorEditorCanvas {
             Color::rgba(0.04, 0.06, 0.10, 0.14),
         );
         ctx.fill(
-            Path::rounded_rect(artboard_bounds, object.corner_radius * VECTOR_CANVAS_ZOOM),
+            Path::rounded_rect(artboard_bounds, object.corner_radius * self.viewport.zoom),
             object
                 .fill
                 .unwrap_or(Color::WHITE)
                 .with_alpha(object.opacity),
         );
         ctx.stroke(
-            Path::rounded_rect(artboard_bounds, object.corner_radius * VECTOR_CANVAS_ZOOM),
+            Path::rounded_rect(artboard_bounds, object.corner_radius * self.viewport.zoom),
             object.stroke,
-            StrokeStyle::new(object.stroke_width * VECTOR_CANVAS_ZOOM),
+            StrokeStyle::new(object.stroke_width * self.viewport.zoom),
         );
     }
 
     fn paint_ellipse(&self, ctx: &mut PaintCtx, bounds: Rect, object: VectorObject) {
-        let path = vector_ellipse_path(bounds, object);
+        let path = vector_ellipse_path(bounds, self.viewport, object);
         if let Some(fill) = object.fill {
             ctx.fill(path.clone(), fill.with_alpha(object.opacity));
         }
         ctx.stroke(
             path,
             object.stroke.with_alpha(object.opacity.max(0.25)),
-            StrokeStyle::new((object.stroke_width * VECTOR_CANVAS_ZOOM).max(1.0)),
+            StrokeStyle::new((object.stroke_width * self.viewport.zoom).max(1.0)),
         );
     }
 
@@ -1516,16 +1849,15 @@ impl VectorEditorCanvas {
         ));
 
         let mut path = PathBuilder::new();
-        path.move_to(Self::document_to_screen(bounds, start))
-            .cubic_to(
-                Self::document_to_screen(bounds, ctrl1),
-                Self::document_to_screen(bounds, ctrl2),
-                Self::document_to_screen(bounds, end),
-            );
+        path.move_to(self.to_screen(bounds, start)).cubic_to(
+            self.to_screen(bounds, ctrl1),
+            self.to_screen(bounds, ctrl2),
+            self.to_screen(bounds, end),
+        );
         ctx.stroke(
             path.build(),
             object.stroke.with_alpha(object.opacity),
-            StrokeStyle::new((object.stroke_width * VECTOR_CANVAS_ZOOM).max(1.0)),
+            StrokeStyle::new((object.stroke_width * self.viewport.zoom).max(1.0)),
         );
     }
 
@@ -1538,13 +1870,13 @@ impl VectorEditorCanvas {
         let object = self.state.selected_object_snapshot();
         let corners = object
             .corners()
-            .map(|corner| Self::document_to_screen(bounds, corner));
+            .map(|corner| self.to_screen(bounds, corner));
         let selection = vector_closed_polyline_path(&corners);
         let accent = theme.palette.accent_border_focus;
         ctx.stroke(selection, accent, StrokeStyle::new(1.5));
 
-        let top_center = Self::document_to_screen(bounds, object.top_center());
-        let rotate_handle = Self::document_to_screen(bounds, object.rotate_handle());
+        let top_center = self.to_screen(bounds, object.top_center());
+        let rotate_handle = self.to_screen(bounds, object.rotate_handle());
         ctx.stroke(
             vector_line_path(top_center, rotate_handle),
             accent.with_alpha(0.82),
@@ -1577,11 +1909,57 @@ impl VectorEditorCanvas {
 
 impl Widget for VectorEditorCanvas {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.apply_pending_viewport_commands(ctx.bounds()) {
+            self.publish_viewport_state(ctx.bounds());
+            Self::request_edit_update(ctx);
+        }
+
         match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Scroll
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                let delta = vector_scroll_delta_to_offset(pointer.scroll_delta, pointer.delta);
+                if self.zoom_view_around(ctx.bounds(), pointer.position, (delta.y * 0.002).exp()) {
+                    self.publish_viewport_state(ctx.bounds());
+                }
+                Self::request_edit_update(ctx);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && ctx.bounds().contains(pointer.position)
+                    && matches!(
+                        pointer.button,
+                        Some(PointerButton::Middle | PointerButton::Secondary)
+                    ) =>
+            {
+                self.pan_drag = Some(VectorCanvasPanDrag {
+                    pointer_id: pointer.pointer_id,
+                    last_position: pointer.position,
+                });
+                ctx.request_focus();
+                ctx.request_pointer_capture(pointer.pointer_id);
+                Self::request_edit_update(ctx);
+                ctx.set_handled();
+            }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                if let Some(mut pan_drag) = self.pan_drag
+                    && pan_drag.pointer_id == pointer.pointer_id
+                {
+                    let delta = pointer.position - pan_drag.last_position;
+                    self.viewport.pan += delta;
+                    pan_drag.last_position = pointer.position;
+                    self.pan_drag = Some(pan_drag);
+                    self.publish_viewport_state(ctx.bounds());
+                    Self::request_edit_update(ctx);
+                    ctx.set_handled();
+                    return;
+                }
+
                 if let Some(drag) = self.drag {
                     if drag.pointer_id == pointer.pointer_id {
-                        let document = Self::screen_to_document(ctx.bounds(), pointer.position);
+                        let document = self.from_screen(ctx.bounds(), pointer.position);
                         self.apply_drag(drag, document);
                         Self::request_edit_update(ctx);
                         ctx.set_handled();
@@ -1596,7 +1974,7 @@ impl Widget for VectorEditorCanvas {
                 }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.drag.is_none() {
+                if self.drag.is_none() && self.pan_drag.is_none() {
                     self.hovered_object = None;
                     self.hovered_handle = None;
                     ctx.request_paint();
@@ -1608,7 +1986,7 @@ impl Widget for VectorEditorCanvas {
                     && pointer.button == Some(PointerButton::Primary)
                     && ctx.bounds().contains(pointer.position) =>
             {
-                let document = Self::screen_to_document(ctx.bounds(), pointer.position);
+                let document = self.from_screen(ctx.bounds(), pointer.position);
                 let mode = if let Some(handle) =
                     self.selection_handle_at(ctx.bounds(), pointer.position)
                 {
@@ -1646,6 +2024,17 @@ impl Widget for VectorEditorCanvas {
                     || pointer.kind == PointerEventKind::Cancel =>
             {
                 if self
+                    .pan_drag
+                    .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+                {
+                    self.pan_drag = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    Self::request_edit_update(ctx);
+                    ctx.set_handled();
+                    return;
+                }
+
+                if self
                     .drag
                     .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
                 {
@@ -1656,6 +2045,33 @@ impl Widget for VectorEditorCanvas {
                 }
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let zoom_step = self.theme().metrics.pixel_canvas_zoom_step;
+                match key.key.as_str() {
+                    "=" | "+" => {
+                        self.zoom_view_around(
+                            ctx.bounds(),
+                            Self::screen_center(ctx.bounds()),
+                            zoom_step,
+                        );
+                        self.publish_viewport_state(ctx.bounds());
+                        Self::request_edit_update(ctx);
+                        ctx.set_handled();
+                        return;
+                    }
+                    "-" => {
+                        self.zoom_view_around(
+                            ctx.bounds(),
+                            Self::screen_center(ctx.bounds()),
+                            1.0 / zoom_step,
+                        );
+                        self.publish_viewport_state(ctx.bounds());
+                        Self::request_edit_update(ctx);
+                        ctx.set_handled();
+                        return;
+                    }
+                    _ => {}
+                }
+
                 let step = 4.0;
                 let mut center = self.state.selected_object_snapshot().center;
                 match key.key.as_str() {
@@ -1704,13 +2120,22 @@ impl Widget for VectorEditorCanvas {
         ))
     }
 
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let viewport_changed = self.apply_pending_viewport_commands(bounds);
+        let state_changed = self.publish_viewport_state(bounds);
+        if viewport_changed || state_changed {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
         let theme = self.theme();
         ctx.fill_rect(bounds, theme.palette.surface);
         ctx.stroke_bounds(theme.palette.border, StrokeStyle::new(1.0));
         ctx.push_clip_rect(bounds);
-        Self::paint_grid(ctx, bounds, &theme);
+        Self::paint_grid(ctx, bounds, self.viewport, &theme);
         for index in self.state.object_paint_order() {
             if !self.state.object_visible(index) {
                 continue;
@@ -1728,13 +2153,14 @@ impl Widget for VectorEditorCanvas {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Canvas, ctx.bounds());
         node.name = Some(VECTOR_EDITOR_TAB_LABEL.to_string());
         node.value = Some(SemanticsValue::Text(format!(
-            "Selected {}, x {:.0}, y {:.0}, width {:.0}, height {:.0}, rotation {:.0} deg",
+            "Selected {}, x {:.0}, y {:.0}, width {:.0}, height {:.0}, rotation {:.0} deg, zoom {:.0}%",
             self.state.selected_object_label(),
             selected.center.x,
             selected.center.y,
             selected.size.width,
             selected.size.height,
-            selected.rotation_degrees
+            selected.rotation_degrees,
+            self.viewport.zoom * 100.0
         )));
         node.state.focused = ctx.is_focused();
         node.actions = vec![
@@ -1752,7 +2178,7 @@ impl Widget for VectorEditorCanvas {
             };
             let corners = object
                 .corners()
-                .map(|corner| Self::document_to_screen(ctx.bounds(), corner));
+                .map(|corner| self.to_screen(ctx.bounds(), corner));
             let mut object_node = SemanticsNode::new(
                 vector_object_semantics_id(ctx.widget_id(), index),
                 SemanticsRole::Image,
@@ -1839,7 +2265,15 @@ fn vector_points_bounds(points: &[Point]) -> Rect {
     }
 }
 
-fn vector_ellipse_path(bounds: Rect, object: VectorObject) -> Path {
+fn vector_scroll_delta_to_offset(scroll_delta: Option<ScrollDelta>, fallback: Vector) -> Vector {
+    match scroll_delta {
+        Some(ScrollDelta::Pixels(delta)) => delta,
+        Some(ScrollDelta::Lines(delta)) => Vector::new(delta.x * 16.0, delta.y * 16.0),
+        None => fallback,
+    }
+}
+
+fn vector_ellipse_path(bounds: Rect, viewport: CanvasViewport, object: VectorObject) -> Path {
     let mut path = PathBuilder::new();
     let segments = 56;
     for segment in 0..=segments {
@@ -1848,7 +2282,11 @@ fn vector_ellipse_path(bounds: Rect, object: VectorObject) -> Path {
             angle.cos() * object.size.width * 0.5,
             angle.sin() * object.size.height * 0.5,
         );
-        let point = VectorEditorCanvas::document_to_screen(bounds, object.local_to_document(local));
+        let point = VectorEditorCanvas::document_to_screen_with_viewport(
+            bounds,
+            viewport,
+            object.local_to_document(local),
+        );
         if segment == 0 {
             path.move_to(point);
         } else {
@@ -1865,7 +2303,7 @@ mod tests {
 
     use sui::{
         Application, Event, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
-        SemanticsRole, SemanticsValue, Vector, WindowBuilder,
+        ScrollDelta, SemanticsRole, SemanticsValue, Vector, WindowBuilder,
     };
     use sui_testing::{TestApp, TestWindow, WindowSnapshot};
 
@@ -1967,9 +2405,101 @@ mod tests {
         Ok(())
     }
 
-    fn build_vector_canvas_test_application() -> Application {
+    #[test]
+    fn vector_editor_view_controls_update_zoom_readout() -> Result<()> {
+        let app = TestApp::new(|| build_vector_editor_test_application().build())?;
+        let window = app.main_window()?;
+
+        let before = window.snapshot()?;
+        let before_canvas =
+            find_named_node(&before, SemanticsRole::Canvas, VECTOR_EDITOR_TAB_LABEL);
+        let before_text = canvas_value_text(&before_canvas);
+        assert!(before_text.contains("zoom 105%"));
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(VECTOR_ZOOM_IN_NAME)
+            .click()?;
+        let zoomed = window.snapshot()?;
+        let zoomed_canvas =
+            find_named_node(&zoomed, SemanticsRole::Canvas, VECTOR_EDITOR_TAB_LABEL);
+        let zoomed_text = canvas_value_text(&zoomed_canvas);
+        assert!(
+            zoomed_text.contains("zoom 116%"),
+            "expected zoom-in control to update canvas zoom semantics, value={zoomed_text:?}"
+        );
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(VECTOR_ACTUAL_SIZE_NAME)
+            .click()?;
+        let actual = window.snapshot()?;
+        let actual_canvas =
+            find_named_node(&actual, SemanticsRole::Canvas, VECTOR_EDITOR_TAB_LABEL);
+        let actual_text = canvas_value_text(&actual_canvas);
+        assert!(
+            actual_text.contains("zoom 100%"),
+            "expected actual-size control to reset canvas zoom semantics, value={actual_text:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn vector_editor_canvas_wheel_zoom_and_middle_drag_pan_view() -> Result<()> {
+        let app = TestApp::new(|| build_vector_canvas_test_application().build())?;
+        let window = app.main_window()?;
+        let snapshot = window.snapshot()?;
+        let canvas = find_named_node(&snapshot, SemanticsRole::Canvas, VECTOR_EDITOR_TAB_LABEL);
+        let amber_before = find_named_node(&snapshot, SemanticsRole::Image, "Amber ellipse");
+        let canvas_center = Point::new(
+            canvas.bounds.x() + canvas.bounds.width() * 0.5,
+            canvas.bounds.y() + canvas.bounds.height() * 0.5,
+        );
+
+        drag_pointer_with_button(
+            &window,
+            canvas_center,
+            canvas_center + Vector::new(44.0, 28.0),
+            PointerButton::Middle,
+        )?;
+        let panned = window.snapshot()?;
+        let amber_panned = find_named_node(&panned, SemanticsRole::Image, "Amber ellipse");
+        assert!(
+            amber_panned.bounds.x() > amber_before.bounds.x() + 24.0
+                && amber_panned.bounds.y() > amber_before.bounds.y() + 12.0,
+            "expected middle-drag panning to move vector object semantics, before={:?} after={:?}",
+            amber_before.bounds,
+            amber_panned.bounds
+        );
+
+        scroll_pointer(&window, canvas_center, Vector::new(0.0, 120.0))?;
+        let zoomed = window.snapshot()?;
+        let amber_zoomed = find_named_node(&zoomed, SemanticsRole::Image, "Amber ellipse");
+        assert!(
+            amber_zoomed.bounds.width() > amber_panned.bounds.width(),
+            "expected wheel zoom to enlarge object bounds, before={:?} after={:?}",
+            amber_panned.bounds,
+            amber_zoomed.bounds
+        );
+
+        Ok(())
+    }
+
+    fn build_vector_editor_test_application() -> Application {
         Application::new().window(WindowBuilder::new().title(VECTOR_EDITOR_TAB_LABEL).root(
-            VectorEditorCanvas::new(VectorDemoState::new(), default_dev_theme_reader()),
+            build_vector_editor_demo_with_theme(default_dev_theme_reader()),
+        ))
+    }
+
+    fn build_vector_canvas_test_application() -> Application {
+        let viewport_state = VectorCanvasViewportState::new();
+        Application::new().window(WindowBuilder::new().title(VECTOR_EDITOR_TAB_LABEL).root(
+            VectorEditorCanvas::new(
+                VectorDemoState::new(),
+                viewport_state,
+                default_dev_theme_reader(),
+            ),
         ))
     }
 
@@ -2023,6 +2553,45 @@ mod tests {
         let mut up = PointerEvent::new(PointerEventKind::Up, to);
         up.button = Some(PointerButton::Primary);
         root.dispatch_event(Event::Pointer(up)).map(|_| ())
+    }
+
+    fn drag_pointer_with_button(
+        window: &TestWindow,
+        from: Point,
+        to: Point,
+        button: PointerButton,
+    ) -> Result<()> {
+        let root = window.root();
+
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            from,
+        )))?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, from);
+        down.button = Some(button);
+        down.buttons = PointerButtons::new(1);
+        root.dispatch_event(Event::Pointer(down))?;
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, to);
+        moved.buttons = PointerButtons::new(1);
+        moved.delta = to - from;
+        root.dispatch_event(Event::Pointer(moved))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, to);
+        up.button = Some(button);
+        root.dispatch_event(Event::Pointer(up)).map(|_| ())
+    }
+
+    fn scroll_pointer(window: &TestWindow, position: Point, delta: Vector) -> Result<()> {
+        let root = window.root();
+        root.dispatch_event(Event::Pointer(PointerEvent::new(
+            PointerEventKind::Move,
+            position,
+        )))?;
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, position);
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(delta));
+        root.dispatch_event(Event::Pointer(scroll)).map(|_| ())
     }
 
     fn find_named_node(
