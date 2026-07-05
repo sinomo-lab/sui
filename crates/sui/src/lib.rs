@@ -12,7 +12,7 @@ pub mod composites;
 pub mod containers;
 pub mod controls;
 
-#[cfg(any(feature = "desktop", feature = "web"))]
+#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use app::UiHandle;
 pub use app::{App, ResourceRegistry, Window};
 
@@ -48,7 +48,9 @@ pub use sui_layout::{
     FlexJustify, FlexLayout, FlexLineLayout, FlexStyle, FlexWrap, LayoutContext, Padding,
     arrange_flex, flex_layout,
 };
-#[cfg(any(feature = "desktop", feature = "web"))]
+#[cfg(all(target_os = "android", feature = "mobile"))]
+pub use sui_platform::AndroidApp;
+#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
     AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
     HeadlessPlatform, PlatformWindow, Waker, WindowOutputDiagnostics, window_output_diagnostics,
@@ -451,11 +453,38 @@ impl Application {
         Ok(())
     }
 
-    #[cfg(not(any(feature = "desktop", feature = "web")))]
+    #[cfg(all(target_os = "android", feature = "mobile"))]
+    pub fn run_android(self, android_app: AndroidApp) -> Result<()> {
+        self.run_android_with(android_app, |_| {})
+    }
+
+    #[cfg(all(target_os = "android", feature = "mobile"))]
+    pub fn run_android_with(
+        self,
+        android_app: AndroidApp,
+        on_ready: impl FnOnce(Waker),
+    ) -> Result<()> {
+        let feathering_enabled = self.feathering_enabled;
+        let feather_width = self.feather_width;
+        let initial_window_render_options = self.initial_window_render_options;
+        let runtime = self.build()?;
+        let platform = DesktopPlatform::new()
+            .with_feathering_enabled(feathering_enabled)
+            .with_feather_width(feather_width);
+        if let Some(options) = initial_window_render_options {
+            for window_id in runtime.window_ids() {
+                set_window_render_options(window_id, options);
+            }
+        }
+        let _ = platform.run_android_with(runtime, android_app, on_ready)?;
+        Ok(())
+    }
+
+    #[cfg(not(any(feature = "desktop", feature = "web", feature = "mobile")))]
     pub fn run(self) -> Result<()> {
         let _ = self;
         Err(Error::new(
-            "Application::run requires the `desktop` or `web` feature to provide a platform event loop",
+            "Application::run requires the `desktop`, `web`, or `mobile` feature to provide a platform event loop",
         ))
     }
 }

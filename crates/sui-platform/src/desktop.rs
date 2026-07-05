@@ -16,7 +16,10 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
-    event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent as WinitWindowEvent},
+    event::{
+        ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase,
+        WindowEvent as WinitWindowEvent,
+    },
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
     window::{Window, WindowAttributes, WindowId as HostWindowId},
@@ -33,6 +36,11 @@ use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys, Window
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+
+#[cfg(target_os = "android")]
+use winit::platform::android::EventLoopBuilderExtAndroid;
+#[cfg(target_os = "android")]
+pub use winit::platform::android::activity::AndroidApp;
 
 #[cfg(target_arch = "wasm32")]
 const WEB_LEGACY_FAVICON_ID: &str = "sui-window-icon";
@@ -185,6 +193,15 @@ impl DesktopPlatform {
         self.run_with(runtime, |_| {})
     }
 
+    #[cfg(target_os = "android")]
+    pub fn run_android(
+        self,
+        runtime: Runtime,
+        android_app: AndroidApp,
+    ) -> Result<Vec<PlatformWindow>> {
+        self.run_android_with(runtime, android_app, |_| {})
+    }
+
     /// Like [`run`](Self::run) but hands the caller a [`Waker`] (before the loop starts) that
     /// wakes the UI from any thread — used to drive non-blocking startup work.
     pub fn run_with(
@@ -223,6 +240,30 @@ impl DesktopPlatform {
 
             Ok(app.snapshot_windows())
         }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn run_android_with(
+        self,
+        runtime: Runtime,
+        android_app: AndroidApp,
+        on_ready: impl FnOnce(Waker),
+    ) -> Result<Vec<PlatformWindow>> {
+        let mut event_loop_builder = EventLoop::<WakeSignal>::with_user_event();
+        event_loop_builder.with_android_app(android_app);
+        let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
+        on_ready(Waker {
+            proxy: event_loop.create_proxy(),
+        });
+
+        let mut app = DesktopApp::new(runtime, self.renderer, self.automation);
+        event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
+
+        if let Some(error) = app.last_error.take() {
+            return Err(error);
+        }
+
+        Ok(app.snapshot_windows())
     }
 }
 
@@ -492,6 +533,7 @@ impl DesktopApp {
                     last_non_redraw_event_at_ms: None,
                     accessibility: AccessibilityBridge::default(),
                     pointer: PointerState::default(),
+                    touch_points: HashMap::new(),
                     scale_factor,
                     window,
                 },
@@ -1068,6 +1110,61 @@ impl DesktopApp {
                         modifiers: window.pointer.modifiers,
                         pointer_kind: PointerKind::Mouse,
                         is_primary: true,
+                    })
+                } else {
+                    return Ok(());
+                };
+
+                self.process_event(event_loop, window_id, event)
+            }
+            WinitWindowEvent::Touch(touch) => {
+                let event = if let Some(window) = self.windows.get_mut(&window_id) {
+                    let position =
+                        physical_position_to_logical_point(touch.location, window.scale_factor);
+                    let previous = window
+                        .touch_points
+                        .get(&touch.id)
+                        .copied()
+                        .unwrap_or(position);
+                    let kind = match touch.phase {
+                        TouchPhase::Started => PointerEventKind::Down,
+                        TouchPhase::Moved => PointerEventKind::Move,
+                        TouchPhase::Ended => PointerEventKind::Up,
+                        TouchPhase::Cancelled => PointerEventKind::Cancel,
+                    };
+                    let was_primary = window
+                        .touch_points
+                        .keys()
+                        .min()
+                        .copied()
+                        .map(|id| id == touch.id)
+                        .unwrap_or(true);
+                    match touch.phase {
+                        TouchPhase::Started | TouchPhase::Moved => {
+                            window.touch_points.insert(touch.id, position);
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            window.touch_points.remove(&touch.id);
+                        }
+                    }
+                    let buttons = match touch.phase {
+                        TouchPhase::Started | TouchPhase::Moved => PointerButtons::new(1),
+                        TouchPhase::Ended | TouchPhase::Cancelled => PointerButtons::NONE,
+                    };
+                    Event::Pointer(PointerEvent {
+                        pointer_id: touch.id,
+                        kind,
+                        position,
+                        delta: Vector::new(position.x - previous.x, position.y - previous.y),
+                        scroll_delta: None,
+                        button: match touch.phase {
+                            TouchPhase::Started | TouchPhase::Ended => Some(PointerButton::Primary),
+                            TouchPhase::Moved | TouchPhase::Cancelled => None,
+                        },
+                        buttons,
+                        modifiers: window.pointer.modifiers,
+                        pointer_kind: PointerKind::Touch,
+                        is_primary: was_primary,
                     })
                 } else {
                     return Ok(());
@@ -1679,6 +1776,7 @@ struct WindowState {
     last_non_redraw_event_at_ms: Option<f64>,
     accessibility: AccessibilityBridge,
     pointer: PointerState,
+    touch_points: HashMap<u64, Point>,
     scale_factor: f64,
     window: Arc<Window>,
 }

@@ -124,6 +124,7 @@ enum HostInputEvent {
     MouseWheel {
         delta: ScrollDelta,
     },
+    Pointer(PointerEvent),
     Keyboard {
         key: String,
         code: String,
@@ -230,6 +231,21 @@ impl Harness {
             default_timeout: 5.0,
         };
         harness.run_until_idle()?;
+        Ok(harness)
+    }
+
+    pub(crate) fn new_headless_with_frame_budget(
+        runtime: Runtime,
+        initial_frames: usize,
+    ) -> Result<Self> {
+        let mut harness = Self {
+            backend: HarnessBackend::Headless(HeadlessHarness {
+                runtime,
+                platform: HeadlessPlatform::new(),
+            }),
+            default_timeout: 5.0,
+        };
+        harness.pump_frames(initial_frames)?;
         Ok(harness)
     }
 
@@ -350,6 +366,27 @@ impl Harness {
         }
     }
 
+    pub(crate) fn pump_frames(&mut self, frames: usize) -> Result<()> {
+        const FRAME_DELTA: f64 = 1.0 / 60.0;
+
+        match &mut self.backend {
+            HarnessBackend::Headless(harness) => {
+                for _ in 0..frames {
+                    harness.platform.advance_time(FRAME_DELTA);
+                    harness.platform.pump(&mut harness.runtime)?;
+                }
+                Ok(())
+            }
+            HarnessBackend::Live(harness) => {
+                for _ in 0..frames {
+                    thread::sleep(Duration::from_secs_f64(FRAME_DELTA));
+                    harness.flush()?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub(crate) fn run_until<T, F>(&mut self, timeout: f64, mut predicate: F) -> Result<T>
     where
         F: FnMut(&Self) -> Result<Option<T>>,
@@ -384,6 +421,17 @@ impl Harness {
                     .platform
                     .dispatch_event(&harness.runtime, window_id, event)?;
                 self.run_until_idle()
+            }
+            HarnessBackend::Live(harness) => harness.dispatch_event(window_id, event),
+        }
+    }
+
+    pub(crate) fn dispatch_event_now(&mut self, window_id: WindowId, event: Event) -> Result<()> {
+        match &mut self.backend {
+            HarnessBackend::Headless(harness) => {
+                harness
+                    .platform
+                    .dispatch_event(&harness.runtime, window_id, event)
             }
             HarnessBackend::Live(harness) => harness.dispatch_event(window_id, event),
         }
@@ -1259,6 +1307,14 @@ impl LiveHarnessApp {
                     }),
                 )?;
             }
+            HostInputEvent::Pointer(pointer) => {
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.pointer.position = pointer.position;
+                    window.pointer.buttons = pointer.buttons;
+                    window.pointer.modifiers = pointer.modifiers;
+                }
+                self.process_event(event_loop, window_id, Event::Pointer(pointer))?;
+            }
             HostInputEvent::Keyboard {
                 key,
                 code,
@@ -1620,6 +1676,10 @@ fn remove_pointer_button(buttons: PointerButtons, removed: PointerButton) -> Poi
 fn map_runtime_event_to_host_inputs(event: Event) -> Result<Vec<HostInputEvent>> {
     match event {
         Event::Pointer(pointer) => {
+            if pointer.pointer_kind == PointerKind::Touch {
+                return Ok(vec![HostInputEvent::Pointer(pointer)]);
+            }
+
             let mut events = Vec::new();
             match pointer.kind {
                 PointerEventKind::Enter => events.push(HostInputEvent::CursorEntered),

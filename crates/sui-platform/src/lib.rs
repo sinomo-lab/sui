@@ -28,6 +28,8 @@ use sui_runtime::{
 
 pub(crate) use accessibility::AccessibilityBridge;
 pub use accessibility::AccessibilitySnapshot;
+#[cfg(target_os = "android")]
+pub use desktop::AndroidApp;
 pub use desktop::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, WakeSignal, Waker,
 };

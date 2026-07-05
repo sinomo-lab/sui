@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use sui_core::{Result, SemanticsRole, WindowId};
+use sui_core::{Event, Result, SemanticsRole, WindowId};
 use sui_render_wgpu::{DebugCaptureArtifact, DebugCaptureRequest};
 use sui_runtime::WindowPerformanceSnapshot;
 
@@ -33,18 +33,36 @@ impl TestWindow {
         harness.snapshot(self.window_id)
     }
 
+    pub fn snapshot_now(&self) -> Result<WindowSnapshot> {
+        self.harness.borrow().snapshot(self.window_id)
+    }
+
     pub fn run_until_idle(&self) -> Result<()> {
         self.harness.borrow_mut().run_until_idle()
+    }
+
+    pub fn pump_frames(&self, frames: usize) -> Result<()> {
+        self.harness.borrow_mut().pump_frames(frames)
     }
 
     pub fn advance_time(&self, delta: f64) -> Result<()> {
         self.harness.borrow_mut().advance_time(delta)
     }
 
+    pub fn dispatch_event_now(&self, event: Event) -> Result<()> {
+        self.harness
+            .borrow_mut()
+            .dispatch_event_now(self.window_id, event)
+    }
+
     pub fn capture_screenshot(&self) -> Result<Screenshot> {
         let mut harness = self.harness.borrow_mut();
         harness.run_until_idle()?;
         harness.capture_screenshot(self.window_id)
+    }
+
+    pub fn capture_screenshot_now(&self) -> Result<Screenshot> {
+        self.harness.borrow().capture_screenshot(self.window_id)
     }
 
     pub fn capture_artifacts(&self) -> Result<ArtifactBundle> {

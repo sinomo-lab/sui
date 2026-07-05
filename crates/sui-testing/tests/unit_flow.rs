@@ -1,8 +1,12 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
+    Color, Event, ImeEvent, KeyState, PointerEventKind, PointerKind, Result, SemanticsAction,
+    SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
 };
 use sui_layout::Constraints;
 use sui_runtime::{
@@ -43,11 +47,76 @@ fn saves_form_in_a_unit_test() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn touch_tap_delivers_touch_pointer_events() -> Result<()> {
+    let state = Arc::new(Mutex::new(String::new()));
+    let runtime = {
+        let state = Arc::clone(&state);
+        Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Touch Test")
+                    .root(TouchProbe::new(state)),
+            )
+            .build()?
+    };
+    let app = TestApp::from_runtime(runtime)?;
+
+    app.main_window()?
+        .get_by_role(SemanticsRole::Button)
+        .with_name("Touch target")
+        .touch_tap()?;
+
+    assert_eq!(state.lock().expect("touch state").as_str(), "touch-down:1");
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 struct AppState {
     name: String,
     status: String,
     save_timer: Option<TimerToken>,
+}
+
+struct TouchProbe {
+    state: Arc<Mutex<String>>,
+}
+
+impl TouchProbe {
+    fn new(state: Arc<Mutex<String>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for TouchProbe {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+            && pointer.pointer_kind == PointerKind::Touch
+        {
+            *self.state.lock().expect("touch state") = format!("touch-down:{}", pointer.pointer_id);
+            ctx.request_paint();
+            ctx.request_semantics();
+            ctx.set_handled();
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(160.0, 64.0))
+    }
+
+    fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: sui_core::Rect) {}
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::rgba(0.18, 0.25, 0.34, 1.0));
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some("Touch target".to_string());
+        node.actions = vec![SemanticsAction::Activate];
+        ctx.push(node);
+    }
 }
 
 struct FormRoot {

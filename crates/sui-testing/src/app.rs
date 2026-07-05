@@ -103,6 +103,14 @@ impl TestApp {
         Ok(Self { harness })
     }
 
+    pub fn from_runtime_with_frame_budget(runtime: Runtime, initial_frames: usize) -> Result<Self> {
+        let harness = Rc::new(RefCell::new(Harness::new_headless_with_frame_budget(
+            runtime,
+            initial_frames,
+        )?));
+        Ok(Self { harness })
+    }
+
     pub fn set_default_timeout(&self, timeout: f64) -> Result<()> {
         if timeout.is_sign_negative() {
             return Err(Error::new("default timeout must be >= 0"));
@@ -118,6 +126,10 @@ impl TestApp {
 
     pub fn run_until_idle(&self) -> Result<()> {
         self.harness.borrow_mut().run_until_idle()
+    }
+
+    pub fn pump_frames(&self, frames: usize) -> Result<()> {
+        self.harness.borrow_mut().pump_frames(frames)
     }
 
     pub fn advance_time(&self, delta: f64) -> Result<()> {

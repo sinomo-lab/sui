@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Rect, Result, ScrollDelta, SemanticsNode, Vector, WidgetId,
-    WindowId,
+    PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsNode, Vector,
+    WidgetId, WindowId,
 };
 use sui_platform::AccessibilitySnapshot;
 
@@ -107,6 +107,27 @@ impl Locator {
         self.dispatch_event(Event::Pointer(up))
     }
 
+    pub fn touch_tap(&self) -> Result<()> {
+        self.touch_tap_with_id(1)
+    }
+
+    pub fn touch_tap_with_id(&self, pointer_id: u64) -> Result<()> {
+        let point = self.action_point("touch tap")?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.pointer_id = pointer_id;
+        down.pointer_kind = PointerKind::Touch;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        self.dispatch_event(Event::Pointer(down))?;
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, point);
+        up.pointer_id = pointer_id;
+        up.pointer_kind = PointerKind::Touch;
+        up.button = Some(PointerButton::Primary);
+        self.dispatch_event(Event::Pointer(up))
+    }
+
     pub fn scroll_pixels(&self, delta: Vector) -> Result<()> {
         self.scroll_with_delta(ScrollDelta::Pixels(delta))
     }
@@ -162,6 +183,12 @@ impl Locator {
         self.harness
             .borrow_mut()
             .dispatch_event(self.window_id, event)
+    }
+
+    pub fn dispatch_event_now(&self, event: Event) -> Result<()> {
+        self.harness
+            .borrow_mut()
+            .dispatch_event_now(self.window_id, event)
     }
 
     pub fn capture_screenshot(&self) -> Result<Screenshot> {

@@ -3,7 +3,9 @@ use crate::{
     RegisteredImage, Result, Runtime, Widget, WindowBuilder, WindowIcon, WindowRenderOptions,
 };
 
-#[cfg(any(feature = "desktop", feature = "web"))]
+#[cfg(all(target_os = "android", feature = "mobile"))]
+use crate::AndroidApp;
+#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 use crate::Waker;
 
 /// User-facing SUI application builder.
@@ -106,6 +108,21 @@ impl App {
     pub fn run_with_handle(self, on_ready: impl FnOnce(UiHandle)) -> Result<()> {
         self.application
             .run_with(|waker| on_ready(UiHandle::new(waker)))
+    }
+
+    #[cfg(all(target_os = "android", feature = "mobile"))]
+    pub fn run_android(self, android_app: AndroidApp) -> Result<()> {
+        self.application.run_android(android_app)
+    }
+
+    #[cfg(all(target_os = "android", feature = "mobile"))]
+    pub fn run_android_with_handle(
+        self,
+        android_app: AndroidApp,
+        on_ready: impl FnOnce(UiHandle),
+    ) -> Result<()> {
+        self.application
+            .run_android_with(android_app, |waker| on_ready(UiHandle::new(waker)))
     }
 
     /// Convert back to the lower-level application builder.
@@ -246,14 +263,22 @@ impl ResourceRegistry<'_> {
 }
 
 /// Cloneable UI wake handle for background work.
-#[cfg(any(feature = "desktop", feature = "web"))]
+#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 #[derive(Clone)]
 pub struct UiHandle {
     waker: Waker,
 }
 
-#[cfg(any(feature = "desktop", feature = "web"))]
+#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 impl UiHandle {
+    #[cfg_attr(
+        not(any(
+            feature = "desktop",
+            feature = "web",
+            all(target_os = "android", feature = "mobile")
+        )),
+        allow(dead_code)
+    )]
     fn new(waker: Waker) -> Self {
         Self { waker }
     }
