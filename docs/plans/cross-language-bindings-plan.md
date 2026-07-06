@@ -11,6 +11,119 @@ The foreign-language APIs expose a smaller, stable surface focused on:
 - opting into controlled graphics and GPU interop where the host application
   owns the backend-specific details
 
+## Current Implementation Status
+
+The first binding foundation is now in the workspace:
+
+- `crates/sui-bindings-core` implements the language-neutral bridge:
+  foreign widget IDs, callback error boundaries, `ForeignWidget`, retained
+  child forwarding, a thread-safe UI task queue, and a binding-safe
+  `PaintCommandBuilder`. It also defines descriptor-level graphics interop
+  capability and external texture types with CPU fallback validation. The
+  shared high-level binding model now covers `BindingApp`, `BindingWindow`,
+  thread-safe `BindingState`, binding actions, labels, buttons, links,
+  checkboxes, switches, radio buttons, sliders, number inputs, selects,
+  progress bars, busy indicators, single-line and multiline text inputs, rich
+  text, images, color swatches, separators, scroll views, row/column flex layouts, render snapshots,
+  `BindingRuntime`,
+  `BindingWindowId`, and binding `UiHandle` integration.
+  Declarative binding trees can now contain
+  language-owned foreign widgets, so custom widgets participate in app/window
+  layout, rendering, semantics, and event dispatch through the same callback
+  error boundaries as standalone foreign widgets. Binding apps now support both
+  host-driven `App.start()` runtimes and desktop-gated `App.run()` /
+  `App.run_with_handle()` execution through SUI's platform event loop. When a
+  binding app is started or run, state objects used by the widget tree are
+  attached to the UI queue; `State.set` from outside the UI drain path queues a
+  UI-thread update and marks windows for redraw after tasks are drained. The
+  root binding adapter drains queued UI work when the desktop event loop
+  delivers SUI's external wake event, so cross-thread updates can wake and
+  refresh normal desktop windows. The binding-safe paint
+  surface now includes `BindingShader` for validated built-in widget shaders,
+  shader-rect paint commands, binding image handles, validated image draw
+  commands including image quads, styled text validation, binding font handles,
+  paths, path clips, rounded rectangles, drop shadows, transform scopes,
+  widget-local RGBA image registration for foreign paint callbacks, app-level
+  font byte resources, and app-level RGBA/PNG/SVG image resource registration. The graphics interop foundation includes
+  validated external texture descriptors for CPU upload, shared textures,
+  shared render targets, backend handles, synchronization metadata, and
+  capability/tier reporting. Binding apps can now include an `ExternalSurface`
+  widget that participates in layout and semantics, renders CPU RGBA external
+  textures through SUI's image path, and preserves shared-texture/shared-target
+  descriptors for future renderer integration. Core now also includes binding-safe pointer,
+  keyboard, IME, window, custom event snapshots, and semantics snapshot
+  role/name/value/description/state arrays, editable-text flags, and
+  disabled/focused/hidden/hovered/selected/expanded state arrays plus host-driven
+  `BindingRuntime::handle_event` entry points.
+- `crates/sui-python` exposes the first PyO3 surface: geometry, color,
+  constraints, `Paint`, custom `Widget(callbacks)`, `UiTaskQueue`, `State`,
+  `App`, `Window`, `RunningApp`, `UiHandle`, `WindowHandle`, `Label`,
+  `Button`, `Link`, `Checkbox`, `Switch`, `RadioButton`, `Slider`,
+  `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`, `TextArea`,
+  `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `ScrollView`, `Column`, `Row`, `FontHandle`,
+  `ImageHandle`, app-level `App.font_bytes` /
+  `App.font_file`, `App.rgba_image` / `App.png_image` / `App.png_file` /
+  `App.svg_image` / `App.svg_file` helpers, built-in `Shader` factories,
+  `Path`, `PathBuilder`, `Transform`, `Shadow`, `Paint.draw_text` style
+  fields, rich low-level paint commands for paths, clips, rounded rects,
+  shadows, transforms, and image quads, `Paint.draw_shader_rect`,
+  `Paint.rgba_image`, `Paint.draw_image`, renderer interop capabilities,
+  external backend handles, external sync descriptors, external texture
+  descriptors, `ExternalSurface`, `Event` and `Modifiers` descriptors, host-driven
+  `RunningApp.handle_event`, desktop `App.run` and `App.run_with_handle`
+  methods, custom widget `event(event)` and `semantics(semantics)` callbacks,
+  custom widgets inside `App`/layout trees, render smoke helpers for custom,
+  event, semantics, shader, interop descriptor, and high-level widget trees, and initial maturin packaging
+  metadata with counter/custom-widget examples.
+- `crates/sui-js` exposes the first native napi-rs surface for Node/Electron:
+  geometry, color, constraints, `Paint`, custom `Widget(callbacks)`,
+  `UiTaskQueue`, `State`, `App`, `Window`, `RunningApp`, `UiHandle`,
+  `WindowHandle`, `Label`, `Button`, `Link`, `Checkbox`, `Switch`, `Slider`,
+  `RadioButton`, `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
+  `TextArea`, `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `ScrollView`, `Column`, `Row`,
+  `FontHandle`, `ImageHandle`, app-level
+  `App.fontBytes` / `App.fontFile`, `App.rgbaImage` / `App.pngImage` /
+  `App.pngFile` / `App.svgImage` / `App.svgFile` helpers, built-in
+  `Shader` factories, `Path`, `PathBuilder`, `Transform`, `Shadow`,
+  `Paint.drawText` style fields, rich low-level paint commands for paths,
+  clips, rounded rects, shadows, transforms, and image quads,
+  `Paint.drawShaderRect`, `Paint.rgbaImage`, `Paint.drawImage`, renderer
+  interop capabilities, external
+  backend handles, external sync descriptors, external texture descriptors,
+  `ExternalSurface`, `Event` and `Modifiers` descriptors, host-driven `RunningApp.handleEvent`,
+  desktop `App.run` and `App.runWithHandle` methods, custom widget
+  `event(event)` and `semantics(semantics)` callbacks, custom widgets inside
+  `App`/layout trees, render smoke helpers for custom, event descriptor,
+  semantics, shader, interop descriptor, and
+  high-level widget trees, and initial npm package metadata with a native
+  loader, TypeScript declarations, and counter/custom-widget examples.
+- The workspace now includes initial cross-language compatibility smoke tests
+  that render equivalent Rust/core, Python, and JavaScript high-level apps and
+  assert the same semantic role/name/value/description/state/editable-text snapshot signature.
+
+This does not yet complete the full cross-language UI kit. Still missing:
+
+- desktop event-loop smoke tests that open real windows on supported platforms,
+  plus more polished async/thread helpers layered on top of `run_with_handle`;
+  the binding crates now expose desktop-gated `run` and `run_with_handle`
+  entrypoints, while `App.start()` remains the host-driven embedding API
+- additional high-level widgets, broader raster image-loading helpers, richer text
+  controls, and broader accessibility controls in Python and
+  JavaScript; custom semantics callbacks, checkbox, switch, link, slider,
+  progress bar, busy indicator, radio button, number input, select, single-line and multiline text input bindings, basic rich text, image widgets, color swatches, separators, scroll views, app-level font
+  bytes/files and RGBA/PNG/SVG image resources including PNG/SVG file helpers,
+  styled custom-widget text paint, paths, clips, transforms, rounded rects, shadows, image quads, and
+  widget-local RGBA image paint support now exist
+- published Python wheels/npm packages, platform-specific native artifacts, and
+  release automation; local package metadata and examples exist
+- JavaScript web/WASM bindings
+- custom WGSL shader registration, user shader validation, uniforms, and
+  resource binding; the current shader support exposes validated built-in SUI
+  widget shaders only
+- broader host-driven renderer APIs and graphics interop renderer integration
+  for shared textures/shared render targets; `ExternalSurface` exists with CPU
+  fallback, but zero-copy/shared-target composition is not implemented yet
+
 ## Design Principles
 
 1. Keep the UI tree on the SUI UI thread.
@@ -64,7 +177,7 @@ specific JavaScript engine. Its job is to own:
 The language crates translate Python or JavaScript objects into those shared
 adapters.
 
-## Public API Shape
+## Target Public API Shape
 
 ### Python
 

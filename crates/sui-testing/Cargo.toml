@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-png = "0.17"
+png = { workspace = true }
 exr = "1"
 sui-avif = { workspace = true }
 sui-core = { workspace = true }

@@ -31,19 +31,27 @@ fontdb = "0.23"
 js-sys = "0.3"
 lyon_path = "1.0"
 lyon_tessellation = "1.0"
+napi = "3.10.3"
+napi-build = "2.3.2"
+napi-derive = "3.5.9"
 palette = "0.7"
+png = "0.17"
 pollster = "0.4"
+pyo3 = "0.29.0"
 rustybuzz = "0.20"
 swash = "0.2.7"
 sui = { path = "crates/sui" }
 sui-animation = { path = "crates/sui-animation" }
 sui-avif = { path = "crates/sui-avif" }
+sui-bindings-core = { path = "crates/sui-bindings-core" }
 sui-debug = { path = "crates/sui-debug" }
 sui-core = { path = "crates/sui-core" }
 sui-demo = { path = "crates/sui-demo" }
+sui-js = { path = "crates/sui-js" }
 sui-layout = { path = "crates/sui-layout" }
 sui-lucide = { path = "crates/sui-lucide" }
 sui-platform = { path = "crates/sui-platform" }
+sui-python = { path = "crates/sui-python" }
 sui-text = { path = "crates/sui-text" }
 sui-testing = { path = "crates/sui-testing" }
 sui-tui = { path = "crates/sui-tui" }

@@ -1,0 +1,23 @@
+[package]
+name = "sui-js"
+version.workspace = true
+description = "JavaScript bindings for SUI."
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["desktop"]
+desktop = ["sui/desktop", "sui-bindings-core/desktop"]
+
+[lib]
+name = "sui_js"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi = { workspace = true }
+napi-derive = { workspace = true }
+sui = { path = "../sui", default-features = false }
+sui-bindings-core = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }

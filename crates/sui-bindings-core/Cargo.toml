@@ -1,0 +1,14 @@
+[package]
+name = "sui-bindings-core"
+version.workspace = true
+description = "Language-neutral binding infrastructure for SUI."
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+desktop = ["sui/desktop"]
+
+[dependencies]
+png = { workspace = true }
+sui = { path = "../sui", default-features = false }

@@ -1,0 +1,32 @@
+{
+  "name": "@sui/ui",
+  "version": "0.1.0",
+  "description": "JavaScript bindings for SUI.",
+  "license": "MIT OR Apache-2.0",
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node",
+    "README.md",
+    "examples"
+  ],
+  "scripts": {
+    "build": "napi build --platform --release",
+    "check:loader": "node --check index.js"
+  },
+  "keywords": [
+    "sui",
+    "ui",
+    "widgets",
+    "napi-rs"
+  ]
+}
