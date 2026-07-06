@@ -9,16 +9,17 @@ The design goals still live in [design.md](./design.md). The other documents des
 Suggested reading order:
 
 1. [user-api.md](./user-api.md) for the public Rust API and the intended Python/JavaScript binding shape.
-2. [architecture.md](./architecture.md) for the runtime and frame pipeline.
-3. [stack-hosts.md](./stack-hosts.md) for the planned stacking, popup-host, and multi-bounds model.
-4. [crate-architecture.md](./crate-architecture.md) for crate ownership and dependency boundaries.
-5. [layout-and-overflow.md](./layout-and-overflow.md) for the simplified sizing and overflow model.
-6. [text-system.md](./text-system.md) for the planned text-engine refactor and long-term text goals.
-7. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
-8. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
-9. [design.md](./design.md) for the long-term product and API direction.
-10. [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) for the intended HDR-native visual language and design constraints.
-11. [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) for the proposed HDR-aware theme and token model.
+2. [plans/cross-language-bindings-plan.md](./plans/cross-language-bindings-plan.md) for the proposed Python/JavaScript binding architecture.
+3. [architecture.md](./architecture.md) for the runtime and frame pipeline.
+4. [stack-hosts.md](./stack-hosts.md) for the planned stacking, popup-host, and multi-bounds model.
+5. [crate-architecture.md](./crate-architecture.md) for crate ownership and dependency boundaries.
+6. [layout-and-overflow.md](./layout-and-overflow.md) for the simplified sizing and overflow model.
+7. [text-system.md](./text-system.md) for the planned text-engine refactor and long-term text goals.
+8. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
+9. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
+10. [design.md](./design.md) for the long-term product and API direction.
+11. [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) for the intended HDR-native visual language and design constraints.
+12. [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) for the proposed HDR-aware theme and token model.
 
 ## Workspace At A Glance
 
