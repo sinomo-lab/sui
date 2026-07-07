@@ -11,10 +11,10 @@ and external graphics interop descriptors. `ExternalSurface` can reserve layout
 for an external texture descriptor and renders CPU RGBA descriptors through
 SUI's image path.
 Fonts, PNG images, and SVG images can be registered from bytes or local files.
-The initial high-level widget set includes labels, buttons, links, checkboxes,
-switches, radio buttons, sliders, number inputs, selects, progress bars, busy indicators,
+The initial high-level widget set includes labels, buttons, icons, icon buttons, links, checkboxes,
+switches, radio buttons, radio groups, segmented controls, breadcrumbs/path bars, list views, tables/data grids, signal meters, status badges, status bars, detail rows, sliders, number inputs, selects, progress bars, busy indicators,
 single-line text inputs, multiline text areas, rich text, images, color swatches,
-separators, scroll views, rows, and columns.
+separators, empty states, surfaces, toolbars, scroll views, rows, and columns.
 
 Custom widget paint callbacks can call `paint.draw_text(rect, text, color,
 font_size=..., line_height=..., font=..., weight=..., style=...,

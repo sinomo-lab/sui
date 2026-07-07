@@ -21,10 +21,10 @@ The first binding foundation is now in the workspace:
   `PaintCommandBuilder`. It also defines descriptor-level graphics interop
   capability and external texture types with CPU fallback validation. The
   shared high-level binding model now covers `BindingApp`, `BindingWindow`,
-  thread-safe `BindingState`, binding actions, labels, buttons, links,
-  checkboxes, switches, radio buttons, sliders, number inputs, selects,
+  thread-safe `BindingState`, binding actions, labels, buttons, icons, icon buttons, links,
+  checkboxes, switches, radio buttons, radio groups, segmented controls, breadcrumbs/path bars, list views, tables/data grids, signal meters, status badges, status bars, detail rows, sliders, number inputs, selects,
   progress bars, busy indicators, single-line and multiline text inputs, rich
-  text, images, color swatches, separators, scroll views, row/column flex layouts, render snapshots,
+  text, images, color swatches, separators, empty states, surfaces, toolbars, scroll views, row/column flex layouts, render snapshots,
   `BindingRuntime`,
   `BindingWindowId`, and binding `UiHandle` integration.
   Declarative binding trees can now contain
@@ -58,9 +58,9 @@ The first binding foundation is now in the workspace:
 - `crates/sui-python` exposes the first PyO3 surface: geometry, color,
   constraints, `Paint`, custom `Widget(callbacks)`, `UiTaskQueue`, `State`,
   `App`, `Window`, `RunningApp`, `UiHandle`, `WindowHandle`, `Label`,
-  `Button`, `Link`, `Checkbox`, `Switch`, `RadioButton`, `Slider`,
+  `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`, `Switch`, `RadioButton`, `RadioGroup`, `SegmentedControlItem`, `SegmentedControl`, `Breadcrumb`, `PathBar`, `ListView`, `TableColumn`, `TableRow`, `Table`, `DataGrid`, `SignalMeter`, `StatusBadge`, `StatusBarSegment`, `StatusBar`, `DetailRow`, `Slider`,
   `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`, `TextArea`,
-  `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `ScrollView`, `Column`, `Row`, `FontHandle`,
+  `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `EmptyState`, `Surface`, `Toolbar`, `ScrollView`, `Column`, `Row`, `FontHandle`,
   `ImageHandle`, app-level `App.font_bytes` /
   `App.font_file`, `App.rgba_image` / `App.png_image` / `App.png_file` /
   `App.svg_image` / `App.svg_file` helpers, built-in `Shader` factories,
@@ -78,9 +78,9 @@ The first binding foundation is now in the workspace:
 - `crates/sui-js` exposes the first native napi-rs surface for Node/Electron:
   geometry, color, constraints, `Paint`, custom `Widget(callbacks)`,
   `UiTaskQueue`, `State`, `App`, `Window`, `RunningApp`, `UiHandle`,
-  `WindowHandle`, `Label`, `Button`, `Link`, `Checkbox`, `Switch`, `Slider`,
-  `RadioButton`, `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
-  `TextArea`, `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `ScrollView`, `Column`, `Row`,
+  `WindowHandle`, `Label`, `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`, `Switch`, `Slider`,
+  `RadioButton`, `RadioGroup`, `SegmentedControlItem`, `SegmentedControl`, `Breadcrumb`, `PathBar`, `ListView`, `TableColumn`, `TableRow`, `Table`, `DataGrid`, `SignalMeter`, `StatusBadge`, `StatusBarSegment`, `StatusBar`, `DetailRow`, `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
+  `TextArea`, `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `EmptyState`, `Surface`, `Toolbar`, `ScrollView`, `Column`, `Row`,
   `FontHandle`, `ImageHandle`, app-level
   `App.fontBytes` / `App.fontFile`, `App.rgbaImage` / `App.pngImage` /
   `App.pngFile` / `App.svgImage` / `App.svgFile` helpers, built-in
@@ -110,7 +110,7 @@ This does not yet complete the full cross-language UI kit. Still missing:
 - additional high-level widgets, broader raster image-loading helpers, richer text
   controls, and broader accessibility controls in Python and
   JavaScript; custom semantics callbacks, checkbox, switch, link, slider,
-  progress bar, busy indicator, radio button, number input, select, single-line and multiline text input bindings, basic rich text, image widgets, color swatches, separators, scroll views, app-level font
+  progress bar, busy indicator, signal meter, status badge, status bar, detail row, icon, icon button, radio button, radio group, segmented control, breadcrumb/path bar, list view, table/data grid, number input, select, single-line and multiline text input bindings, basic rich text, image widgets, color swatches, separators, empty states, surfaces, toolbars, scroll views, app-level font
   bytes/files and RGBA/PNG/SVG image resources including PNG/SVG file helpers,
   styled custom-widget text paint, paths, clips, transforms, rounded rects, shadows, image quads, and
   widget-local RGBA image paint support now exist

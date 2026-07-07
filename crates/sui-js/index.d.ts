@@ -12,6 +12,62 @@ export type InteropTier = "cpuUpload" | "sharedTexture" | "sharedRenderTarget";
 export type ImageFit = "fill" | "contain" | "cover" | "none";
 export type Axis = "horizontal" | "vertical";
 export type ScrollAxes = Axis | "both";
+export type SurfaceRole = "window" | "sidebar" | "panel" | "titlebar" | "field";
+export type SurfaceBorder = "none" | "all" | "top" | "right" | "bottom" | "left";
+export type SurfaceElevation = "none" | "small" | "medium" | "large";
+export type SemanticTone =
+  | "neutral"
+  | "accent"
+  | "info"
+  | "success"
+  | "warning"
+  | "danger";
+export type IconGlyph =
+  | "add"
+  | "remove"
+  | "check"
+  | "chevron-down"
+  | "chevron-up"
+  | "chevron-left"
+  | "chevron-right"
+  | "close"
+  | "maximize"
+  | "restore"
+  | "fit-view"
+  | "actual-size"
+  | "more-horizontal"
+  | "more-vertical"
+  | "search"
+  | "undo"
+  | "redo"
+  | "brush"
+  | "eraser"
+  | "paint-bucket"
+  | "hand"
+  | "lock"
+  | "unlock"
+  | "trash"
+  | "download"
+  | "sparkles"
+  | "chat"
+  | "history"
+  | "folder"
+  | "file"
+  | "link"
+  | "send"
+  | "alert"
+  | "storage"
+  | "audio-lines"
+  | "mic"
+  | "mic-off"
+  | "camera"
+  | "camera-off"
+  | "video"
+  | "video-off"
+  | "phone"
+  | "phone-off"
+  | "monitor"
+  | "screen-share";
 export type NativeBackend =
   | "cpu"
   | "wgpu"
@@ -291,6 +347,33 @@ export class TextSpan {
   readonly text: string;
 }
 
+export class StatusBarSegment {
+  constructor(
+    text: State | BindingValue,
+    tone?: SemanticTone | string,
+    minWidth?: number,
+    expand?: boolean
+  );
+}
+
+export class SegmentedControlItem {
+  constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
+}
+
+export class TableColumn {
+  constructor(
+    title: string,
+    width?: number,
+    minWidth?: number,
+    alignment?: "start" | "center" | "end" | "left" | "right",
+    numeric?: boolean
+  );
+}
+
+export class TableRow {
+  constructor(cells: string[]);
+}
+
 export class ImageHandle {
   constructor(id: string);
   static local(slot: number): ImageHandle;
@@ -460,6 +543,22 @@ export class RenderSnapshot {
 
 export function Label(value: State | BindingValue): Widget;
 export function Button(label: State | BindingValue, onPress?: () => void): Widget;
+export function Icon(
+  glyph: IconGlyph | string,
+  label?: string,
+  size?: number,
+  color?: Color
+): Widget;
+export function IconButton(
+  glyph: IconGlyph | string,
+  label: State | BindingValue,
+  selected?: State | boolean | number,
+  enabled?: State | boolean | number,
+  size?: number,
+  iconSize?: number,
+  description?: string,
+  onPress?: () => void
+): Widget;
 export function Link(
   label: State | BindingValue,
   url: State | BindingValue,
@@ -481,6 +580,50 @@ export function RadioButton(
   label: State | BindingValue,
   selected?: State | boolean | number,
   onSelect?: () => void
+): Widget;
+export function RadioGroup(
+  name: State | BindingValue,
+  options: string[],
+  selected?: State | number | boolean,
+  onChange?: (index: number, value: string) => void
+): Widget;
+export function SegmentedControl(
+  name: State | BindingValue,
+  items: SegmentedControlItem[],
+  selected?: State | number | boolean,
+  onChange?: (index: number, value: string) => void
+): Widget;
+export function Breadcrumb(
+  name: State | BindingValue,
+  items: string[],
+  current?: State | number | boolean,
+  onActivate?: (index: number, value: string) => void
+): Widget;
+export function PathBar(
+  name: State | BindingValue,
+  items: string[],
+  current?: State | number | boolean,
+  onActivate?: (index: number, value: string) => void
+): Widget;
+export function ListView(
+  name: State | BindingValue,
+  items: string[],
+  selected?: State | number | boolean,
+  onChange?: (index: number, value: string) => void
+): Widget;
+export function Table(
+  name: State | BindingValue,
+  columns: TableColumn[],
+  rows: TableRow[],
+  selected?: State | number | boolean,
+  onChange?: (index: number, value: string) => void
+): Widget;
+export function DataGrid(
+  name: State | BindingValue,
+  columns: TableColumn[],
+  rows: TableRow[],
+  selected?: State | number | boolean,
+  onChange?: (index: number, value: string) => void
 ): Widget;
 export function Slider(
   name: State | BindingValue,
@@ -512,6 +655,30 @@ export function ProgressBar(
   min?: number,
   max?: number,
   showValue?: boolean
+): Widget;
+export function SignalMeter(
+  name: State | BindingValue,
+  active?: State | boolean | number,
+  description?: string,
+  bars?: number,
+  size?: Size
+): Widget;
+export function StatusBadge(
+  label: State | BindingValue,
+  tone?: SemanticTone | string,
+  icon?: IconGlyph | string,
+  minWidth?: number
+): Widget;
+export function StatusBar(
+  segments: StatusBarSegment[],
+  name?: string,
+  description?: State | BindingValue,
+  height?: number
+): Widget;
+export function DetailRow(
+  label: State | BindingValue,
+  value: State | BindingValue,
+  maxValueLines?: number
 ): Widget;
 export function BusyIndicator(
   name: State | BindingValue,
@@ -555,6 +722,37 @@ export function Separator(
   inset?: number,
   thickness?: number,
   length?: number
+): Widget;
+export function EmptyState(
+  title: string,
+  description: string,
+  name?: string,
+  detail?: string,
+  icon?: IconGlyph | string,
+  action?: Widget,
+  background?: Color,
+  transparent?: boolean
+): Widget;
+export function Surface(
+  child: Widget,
+  role?: SurfaceRole | string,
+  name?: string,
+  border?: SurfaceBorder | string,
+  elevation?: SurfaceElevation | string,
+  radius?: number,
+  padding?: number,
+  fillWidth?: boolean,
+  fillHeight?: boolean
+): Widget;
+export function Toolbar(
+  children: Widget[],
+  axis?: Axis,
+  name?: string,
+  extent?: number,
+  padding?: number,
+  spacing?: number,
+  background?: Color,
+  divider?: boolean
 ): Widget;
 export function Column(children: Widget[], gap?: number): Widget;
 export function Row(children: Widget[], gap?: number): Widget;

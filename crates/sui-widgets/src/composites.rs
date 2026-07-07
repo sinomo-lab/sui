@@ -2909,7 +2909,9 @@ pub struct DetailRow {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
     value: String,
+    value_reader: Option<Box<dyn Fn() -> String>>,
     max_value_lines: Option<usize>,
 }
 
@@ -2919,7 +2921,9 @@ impl DetailRow {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            label_reader: None,
             value: value.into(),
+            value_reader: None,
             max_value_lines: None,
         }
     }
@@ -2938,9 +2942,39 @@ impl DetailRow {
         self
     }
 
+    pub fn label_when<F>(mut self, label: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label_reader = Some(Box::new(label));
+        self
+    }
+
+    pub fn value_when<F>(mut self, value: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.value_reader = Some(Box::new(value));
+        self
+    }
+
     pub fn max_value_lines(mut self, max_lines: usize) -> Self {
         self.max_value_lines = Some(max_lines.max(1));
         self
+    }
+
+    fn label(&self) -> String {
+        self.label_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.label.clone())
+    }
+
+    fn value(&self) -> String {
+        self.value_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.value.clone())
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -2959,11 +2993,12 @@ impl Widget for DetailRow {
         let width = if constraints.max.width.is_finite() {
             constraints.max.width.max(0.0)
         } else {
-            let label = measure_text(ctx, &self.label.to_uppercase(), &label_style);
-            let value = measure_text(ctx, &self.value, &value_style);
+            let label = measure_text(ctx, &self.label().to_uppercase(), &label_style);
+            let value = measure_text(ctx, &self.value(), &value_style);
             label.width.max(value.width)
         };
-        let lines = wrap_detail_row_value(&self.value, width, self.max_value_lines, |text| {
+        let value = self.value();
+        let lines = wrap_detail_row_value(&value, width, self.max_value_lines, |text| {
             measure_text(ctx, text, &value_style).width
         });
         constraints.clamp(Size::new(width, detail_row_height(&theme, lines.len())))
@@ -2976,8 +3011,8 @@ impl Widget for DetailRow {
             &theme,
             Point::new(ctx.bounds().x(), ctx.bounds().y()),
             ctx.bounds().width(),
-            &self.label,
-            &self.value,
+            &self.label(),
+            &self.value(),
             self.max_value_lines,
         );
     }
@@ -2988,8 +3023,8 @@ impl Widget for DetailRow {
             SemanticsRole::GenericContainer,
             ctx.bounds(),
         );
-        node.name = Some(self.label.clone());
-        node.value = Some(SemanticsValue::Text(self.value.clone()));
+        node.name = Some(self.label());
+        node.value = Some(SemanticsValue::Text(self.value()));
         ctx.push(node);
     }
 }
@@ -8627,6 +8662,7 @@ pub struct SegmentedControl {
     name: String,
     segments: Vec<SegmentedControlItem>,
     selected: usize,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     selection_from: usize,
     selection_animation: AnimatedScalar,
     hovered: Option<usize>,
@@ -8686,6 +8722,7 @@ impl SegmentedControl {
             name: name.into(),
             segments: Vec::new(),
             selected: 0,
+            selected_reader: None,
             selection_from: 0,
             selection_animation: AnimatedScalar::new(1.0),
             hovered: None,
@@ -8740,8 +8777,17 @@ impl SegmentedControl {
 
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = index;
+        self.selected_reader = None;
         self.selection_from = index;
         self.selection_animation = AnimatedScalar::new(1.0);
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
         self
     }
 
@@ -8766,10 +8812,15 @@ impl SegmentedControl {
     }
 
     fn normalized_selected(&self) -> usize {
+        let selected = self
+            .selected_reader
+            .as_ref()
+            .and_then(|reader| reader())
+            .unwrap_or(self.selected);
         if self.segments.is_empty() {
             0
         } else {
-            self.selected.min(self.segments.len() - 1)
+            selected.min(self.segments.len() - 1)
         }
     }
 
@@ -8822,9 +8873,10 @@ impl SegmentedControl {
         }
 
         let index = index.min(self.segments.len() - 1);
-        if self.selected != index {
+        let selected = self.normalized_selected();
+        if selected != index {
             let theme = self.resolved_theme();
-            self.selection_from = self.normalized_selected();
+            self.selection_from = selected;
             self.selected = index;
             self.selection_animation = AnimatedScalar::new(0.0);
             self.selection_animation.set_target_event(

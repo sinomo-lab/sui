@@ -3818,6 +3818,7 @@ pub struct RadioGroup {
     name: String,
     options: Vec<String>,
     selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
     pressed: Option<usize>,
     hover_visual: Option<usize>,
@@ -3840,6 +3841,7 @@ impl RadioGroup {
             name: name.into(),
             options: Vec::new(),
             selected: None,
+            selected_reader: None,
             hovered: None,
             pressed: None,
             hover_visual: None,
@@ -3885,6 +3887,7 @@ impl RadioGroup {
 
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = Some(selected);
+        self.selected_reader = None;
         self.selected_visual = Some(selected);
         self.selection_animation = AnimatedScalar::new(1.0);
         self
@@ -3892,6 +3895,14 @@ impl RadioGroup {
 
     pub const fn selected_index(&self) -> Option<usize> {
         self.selected
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -3919,13 +3930,21 @@ impl RadioGroup {
         })
     }
 
+    fn current_selected_index(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.options.len())
+    }
+
     fn select(&mut self, index: usize, ctx: &mut EventCtx) {
         if self.options.is_empty() {
             return;
         }
 
         let selected = index.min(self.options.len().saturating_sub(1));
-        let changed = self.selected != Some(selected);
+        let changed = self.current_selected_index() != Some(selected);
         self.selected = Some(selected);
         if changed || self.selected_visual != Some(selected) {
             let theme = self.resolved_theme();
@@ -4008,9 +4027,10 @@ impl RadioGroup {
     }
 
     fn selection_progress_for(&self, index: usize) -> f32 {
-        if self.selected_visual == Some(index) {
+        let selected = self.current_selected_index();
+        if selected == Some(index) && self.selected_visual == Some(index) {
             self.selection_animation.value
-        } else if self.selected == Some(index) {
+        } else if selected == Some(index) {
             1.0
         } else {
             0.0
@@ -4100,7 +4120,10 @@ impl Widget for RadioGroup {
                     return;
                 }
 
-                let current = self.selected.unwrap_or(0).min(self.options.len() - 1);
+                let current = self
+                    .current_selected_index()
+                    .unwrap_or(0)
+                    .min(self.options.len() - 1);
                 let next = match key.key.as_str() {
                     "ArrowUp" | "ArrowLeft" => Some(current.saturating_sub(1)),
                     "ArrowDown" | "ArrowRight" => Some((current + 1).min(self.options.len() - 1)),
@@ -4259,7 +4282,7 @@ impl Widget for RadioGroup {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::RadioGroup, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = self
-            .selected
+            .current_selected_index()
             .and_then(|index| self.options.get(index).cloned())
             .map(SemanticsValue::Text);
         node.state.focused = ctx.is_focused();
@@ -12562,6 +12585,58 @@ mod tests {
             select.value,
             Some(SemanticsValue::Text("Choose mode".to_string()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn radio_group_selected_when_reads_external_selection() -> Result<()> {
+        let selected = Rc::new(RefCell::new(Some(1usize)));
+        let selected_reader = Rc::clone(&selected);
+        let (mut runtime, window_id) = build_runtime(
+            RadioGroup::new("Mode")
+                .options(["Manual", "Automatic", "Scheduled"])
+                .selected_when(move || *selected_reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        let group = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioGroup)
+            .expect("radio group semantics present");
+        assert_eq!(
+            group.value,
+            Some(SemanticsValue::Text("Automatic".to_string()))
+        );
+
+        *selected.borrow_mut() = Some(2);
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 120.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let group = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioGroup)
+            .expect("radio group semantics present after external selection changes");
+        assert_eq!(
+            group.value,
+            Some(SemanticsValue::Text("Scheduled".to_string()))
+        );
+
+        *selected.borrow_mut() = None;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 120.0))),
+        )?;
+        let output = runtime.render(window_id)?;
+        let group = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioGroup)
+            .expect("radio group semantics present after external selection clears");
+        assert_eq!(group.value, None);
         Ok(())
     }
 

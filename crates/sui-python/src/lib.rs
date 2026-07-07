@@ -19,19 +19,24 @@ use sui_bindings_core::{
     BindingKeyboardEvent, BindingModifiers, BindingNumber, BindingNumberAction,
     BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
     BindingRenderSnapshot, BindingRuntime, BindingScrollAxes, BindingScrollDelta,
-    BindingSelectAction, BindingShader, BindingState, BindingStringAction, BindingText,
+    BindingSegmentedControlItem, BindingSelectAction, BindingShader, BindingState,
+    BindingStatusBarSegment, BindingStringAction, BindingTableColumn, BindingTableRow, BindingText,
     BindingTextSpan, BindingUiHandle, BindingValue, BindingWidget, BindingWindow,
     BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
     ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
     ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
     ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
-    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
+    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_icon_glyph_from_name,
+    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
+    binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_role_from_name, binding_semantics_roles, binding_semantics_selected,
-    binding_semantics_values, binding_toggle_state_from_name, resolve_binding_image_slots,
+    binding_semantics_values, binding_surface_border_from_name,
+    binding_surface_elevation_from_name, binding_surface_role_from_name,
+    binding_table_column_alignment_from_name, binding_toggle_state_from_name,
+    resolve_binding_image_slots,
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
@@ -983,6 +988,116 @@ impl PyTextSpan {
 
     fn __repr__(&self) -> String {
         format!("TextSpan({:?})", self.inner.text)
+    }
+}
+
+#[pyclass(name = "StatusBarSegment", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyStatusBarSegment {
+    inner: BindingStatusBarSegment,
+}
+
+#[pymethods]
+impl PyStatusBarSegment {
+    #[new]
+    #[pyo3(signature = (text, tone="neutral", min_width=None, expand=false))]
+    pub fn new(
+        text: &Bound<'_, PyAny>,
+        tone: &str,
+        min_width: Option<f32>,
+        expand: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingStatusBarSegment::new(
+                binding_text_from_py(text)?,
+                py_semantic_tone(tone)?,
+                min_width,
+                expand,
+            ),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
+#[pyclass(name = "SegmentedControlItem", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PySegmentedControlItem {
+    inner: BindingSegmentedControlItem,
+}
+
+#[pymethods]
+impl PySegmentedControlItem {
+    #[new]
+    #[pyo3(signature = (label, semantic_name=None, description=None, disabled=false))]
+    pub fn new(
+        label: String,
+        semantic_name: Option<String>,
+        description: Option<String>,
+        disabled: bool,
+    ) -> Self {
+        Self {
+            inner: BindingSegmentedControlItem::new(label, semantic_name, description, disabled),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
+#[pyclass(name = "TableColumn", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyTableColumn {
+    inner: BindingTableColumn,
+}
+
+#[pymethods]
+impl PyTableColumn {
+    #[new]
+    #[pyo3(signature = (title, width=None, min_width=None, alignment="start", numeric=false))]
+    pub fn new(
+        title: String,
+        width: Option<f32>,
+        min_width: Option<f32>,
+        alignment: &str,
+        numeric: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingTableColumn::new(
+                title,
+                width,
+                min_width,
+                py_table_column_alignment(alignment)?,
+                numeric,
+            ),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
+#[pyclass(name = "TableRow", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyTableRow {
+    inner: BindingTableRow,
+}
+
+#[pymethods]
+impl PyTableRow {
+    #[new]
+    pub fn new(cells: Vec<String>) -> Self {
+        Self {
+            inner: BindingTableRow::new(cells),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
     }
 }
 
@@ -2369,6 +2484,64 @@ pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyRes
     )))
 }
 
+#[pyfunction(name = "Icon")]
+#[pyo3(signature = (glyph, label=None, size=None, color=None))]
+pub fn py_icon(
+    glyph: &str,
+    label: Option<String>,
+    size: Option<f32>,
+    color: Option<PyColor>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::icon(
+        py_icon_glyph(glyph)?,
+        label,
+        size,
+        color.map(Into::into),
+    )))
+}
+
+#[pyfunction(name = "IconButton")]
+#[pyo3(signature = (glyph, label, selected=None, enabled=None, size=None, icon_size=None, description=None, on_press=None))]
+pub fn py_icon_button(
+    glyph: &str,
+    label: &Bound<'_, PyAny>,
+    selected: Option<&Bound<'_, PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
+    size: Option<f32>,
+    icon_size: Option<f32>,
+    description: Option<String>,
+    on_press: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let selected = selected
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(false));
+    let enabled = enabled
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(true));
+    let action = on_press.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::icon_button(
+        py_icon_glyph(glyph)?,
+        binding_text_from_py(label)?,
+        selected,
+        enabled,
+        size,
+        icon_size,
+        description,
+        action,
+    )))
+}
+
 #[pyfunction(name = "Link")]
 #[pyo3(signature = (label, url, semantic_name=None, enabled=None, on_open=None))]
 pub fn py_link(
@@ -2483,6 +2656,185 @@ pub fn py_radio_button(
         selected,
         action,
     )))
+}
+
+#[pyfunction(name = "RadioGroup")]
+#[pyo3(signature = (name, options, selected=None, on_change=None))]
+pub fn py_radio_group(
+    name: &Bound<'_, PyAny>,
+    options: Vec<String>,
+    selected: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let selected = selected.map(binding_number_from_py).transpose()?;
+    let action = on_change.map(|callback| {
+        BindingSelectAction::new(move |index, value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (index, value))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::radio_group(
+        binding_text_from_py(name)?,
+        options,
+        selected,
+        action,
+    )))
+}
+
+#[pyfunction(name = "SegmentedControl")]
+#[pyo3(signature = (name, items, selected=None, on_change=None))]
+pub fn py_segmented_control(
+    name: &Bound<'_, PyAny>,
+    items: &Bound<'_, PyAny>,
+    selected: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let selected = selected.map(binding_number_from_py).transpose()?;
+    let action = on_change.map(|callback| {
+        BindingSelectAction::new(move |index, value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (index, value))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::segmented_control(
+        binding_text_from_py(name)?,
+        extract_segmented_control_items(items)?,
+        selected,
+        action,
+    )))
+}
+
+fn py_breadcrumb_widget(
+    name: &Bound<'_, PyAny>,
+    items: Vec<String>,
+    current: Option<&Bound<'_, PyAny>>,
+    on_activate: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let current = current.map(binding_number_from_py).transpose()?;
+    let action = on_activate.map(|callback| {
+        BindingSelectAction::new(move |index, value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (index, value))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::breadcrumb(
+        binding_text_from_py(name)?,
+        items,
+        current,
+        action,
+    )))
+}
+
+#[pyfunction(name = "Breadcrumb")]
+#[pyo3(signature = (name, items, current=None, on_activate=None))]
+pub fn py_breadcrumb(
+    name: &Bound<'_, PyAny>,
+    items: Vec<String>,
+    current: Option<&Bound<'_, PyAny>>,
+    on_activate: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    py_breadcrumb_widget(name, items, current, on_activate)
+}
+
+#[pyfunction(name = "PathBar")]
+#[pyo3(signature = (name, items, current=None, on_activate=None))]
+pub fn py_path_bar(
+    name: &Bound<'_, PyAny>,
+    items: Vec<String>,
+    current: Option<&Bound<'_, PyAny>>,
+    on_activate: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    py_breadcrumb_widget(name, items, current, on_activate)
+}
+
+#[pyfunction(name = "ListView")]
+#[pyo3(signature = (name, items, selected=None, on_change=None))]
+pub fn py_list_view(
+    name: &Bound<'_, PyAny>,
+    items: Vec<String>,
+    selected: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let selected = selected.map(binding_number_from_py).transpose()?;
+    let action = on_change.map(|callback| {
+        BindingSelectAction::new(move |index, value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (index, value))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::list_view(
+        binding_text_from_py(name)?,
+        items,
+        selected,
+        action,
+    )))
+}
+
+fn py_table_widget(
+    name: &Bound<'_, PyAny>,
+    columns: &Bound<'_, PyAny>,
+    rows: &Bound<'_, PyAny>,
+    selected: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let selected = selected.map(binding_number_from_py).transpose()?;
+    let action = on_change.map(|callback| {
+        BindingSelectAction::new(move |index, value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (index, value))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::table(
+        binding_text_from_py(name)?,
+        extract_table_columns(columns)?,
+        extract_table_rows(rows)?,
+        selected,
+        action,
+    )))
+}
+
+#[pyfunction(name = "Table")]
+#[pyo3(signature = (name, columns, rows, selected=None, on_change=None))]
+pub fn py_table(
+    name: &Bound<'_, PyAny>,
+    columns: &Bound<'_, PyAny>,
+    rows: &Bound<'_, PyAny>,
+    selected: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    py_table_widget(name, columns, rows, selected, on_change)
+}
+
+#[pyfunction(name = "DataGrid")]
+#[pyo3(signature = (name, columns, rows, selected=None, on_change=None))]
+pub fn py_data_grid(
+    name: &Bound<'_, PyAny>,
+    columns: &Bound<'_, PyAny>,
+    rows: &Bound<'_, PyAny>,
+    selected: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    py_table_widget(name, columns, rows, selected, on_change)
 }
 
 #[pyfunction(name = "Slider")]
@@ -2603,6 +2955,74 @@ pub fn py_progress_bar(
         min_value,
         max_value,
         show_value,
+    )))
+}
+
+#[pyfunction(name = "SignalMeter")]
+#[pyo3(signature = (name, active=None, description=None, bars=12, size=None))]
+pub fn py_signal_meter(
+    name: &Bound<'_, PyAny>,
+    active: Option<&Bound<'_, PyAny>>,
+    description: Option<String>,
+    bars: usize,
+    size: Option<PySize>,
+) -> PyResult<PyWidget> {
+    let active = active
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(false));
+    Ok(PyWidget::from_binding(BindingWidget::signal_meter(
+        binding_text_from_py(name)?,
+        active,
+        description,
+        bars,
+        size.map(Into::into),
+    )))
+}
+
+#[pyfunction(name = "StatusBadge")]
+#[pyo3(signature = (label, tone="neutral", icon=None, min_width=None))]
+pub fn py_status_badge(
+    label: &Bound<'_, PyAny>,
+    tone: &str,
+    icon: Option<String>,
+    min_width: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::status_badge(
+        binding_text_from_py(label)?,
+        py_semantic_tone(tone)?,
+        icon.as_deref().map(py_icon_glyph).transpose()?,
+        min_width,
+    )))
+}
+
+#[pyfunction(name = "StatusBar")]
+#[pyo3(signature = (segments, name=None, description=None, height=None))]
+pub fn py_status_bar(
+    segments: &Bound<'_, PyAny>,
+    name: Option<String>,
+    description: Option<&Bound<'_, PyAny>>,
+    height: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::status_bar(
+        extract_status_bar_segments(segments)?,
+        name,
+        description.map(binding_text_from_py).transpose()?,
+        height,
+    )))
+}
+
+#[pyfunction(name = "DetailRow")]
+#[pyo3(signature = (label, value, max_value_lines=None))]
+pub fn py_detail_row(
+    label: &Bound<'_, PyAny>,
+    value: &Bound<'_, PyAny>,
+    max_value_lines: Option<usize>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::detail_row(
+        binding_text_from_py(label)?,
+        binding_text_from_py(value)?,
+        max_value_lines,
     )))
 }
 
@@ -2756,6 +3176,83 @@ pub fn py_separator(
         inset,
         thickness,
         length,
+    )))
+}
+
+#[pyfunction(name = "EmptyState")]
+#[pyo3(signature = (title, description, name=None, detail=None, icon=None, action=None, background=None, transparent=false))]
+pub fn py_empty_state(
+    title: &str,
+    description: &str,
+    name: Option<String>,
+    detail: Option<String>,
+    icon: Option<String>,
+    action: Option<PyRef<'_, PyWidget>>,
+    background: Option<PyColor>,
+    transparent: bool,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::empty_state(
+        title,
+        description,
+        name,
+        detail,
+        icon.as_deref().map(py_icon_glyph).transpose()?,
+        action
+            .as_ref()
+            .map(|widget| widget.binding_widget())
+            .transpose()?,
+        background.map(Into::into),
+        transparent,
+    )))
+}
+
+#[pyfunction(name = "Surface")]
+#[pyo3(signature = (child, role="panel", name=None, border=None, elevation=None, radius=None, padding=None, fill_width=false, fill_height=false))]
+pub fn py_surface(
+    child: PyRef<'_, PyWidget>,
+    role: &str,
+    name: Option<String>,
+    border: Option<String>,
+    elevation: Option<String>,
+    radius: Option<f32>,
+    padding: Option<f32>,
+    fill_width: bool,
+    fill_height: bool,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::surface(
+        child.binding_widget()?,
+        py_surface_role(role)?,
+        name,
+        border.as_deref().map(py_surface_border).transpose()?,
+        elevation.as_deref().map(py_surface_elevation).transpose()?,
+        radius,
+        padding,
+        fill_width,
+        fill_height,
+    )))
+}
+
+#[pyfunction(name = "Toolbar")]
+#[pyo3(signature = (children, axis="horizontal", name=None, extent=None, padding=None, spacing=None, background=None, divider=true))]
+pub fn py_toolbar(
+    children: &Bound<'_, PyAny>,
+    axis: &str,
+    name: Option<String>,
+    extent: Option<f32>,
+    padding: Option<f32>,
+    spacing: Option<f32>,
+    background: Option<PyColor>,
+    divider: bool,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::toolbar(
+        extract_binding_widgets(children)?,
+        py_axis(axis)?,
+        name,
+        extent,
+        padding,
+        spacing,
+        background.map(Into::into),
+        divider,
     )))
 }
 
@@ -2918,16 +3415,33 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUiTaskQueue>()?;
     m.add_class::<PyRenderSnapshot>()?;
     m.add_class::<PyTextSpan>()?;
+    m.add_class::<PyStatusBarSegment>()?;
+    m.add_class::<PySegmentedControlItem>()?;
+    m.add_class::<PyTableColumn>()?;
+    m.add_class::<PyTableRow>()?;
     m.add_function(wrap_pyfunction!(py_label, m)?)?;
     m.add_function(wrap_pyfunction!(py_button, m)?)?;
+    m.add_function(wrap_pyfunction!(py_icon, m)?)?;
+    m.add_function(wrap_pyfunction!(py_icon_button, m)?)?;
     m.add_function(wrap_pyfunction!(py_link, m)?)?;
     m.add_function(wrap_pyfunction!(py_checkbox, m)?)?;
     m.add_function(wrap_pyfunction!(py_switch, m)?)?;
     m.add_function(wrap_pyfunction!(py_radio_button, m)?)?;
+    m.add_function(wrap_pyfunction!(py_radio_group, m)?)?;
+    m.add_function(wrap_pyfunction!(py_segmented_control, m)?)?;
+    m.add_function(wrap_pyfunction!(py_breadcrumb, m)?)?;
+    m.add_function(wrap_pyfunction!(py_path_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_list_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_table, m)?)?;
+    m.add_function(wrap_pyfunction!(py_data_grid, m)?)?;
     m.add_function(wrap_pyfunction!(py_slider, m)?)?;
     m.add_function(wrap_pyfunction!(py_number_input, m)?)?;
     m.add_function(wrap_pyfunction!(py_select, m)?)?;
     m.add_function(wrap_pyfunction!(py_progress_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_signal_meter, m)?)?;
+    m.add_function(wrap_pyfunction!(py_status_badge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_status_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_detail_row, m)?)?;
     m.add_function(wrap_pyfunction!(py_busy_indicator, m)?)?;
     m.add_function(wrap_pyfunction!(py_text_input, m)?)?;
     m.add_function(wrap_pyfunction!(py_text_area, m)?)?;
@@ -2935,6 +3449,9 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_image, m)?)?;
     m.add_function(wrap_pyfunction!(py_color_swatch, m)?)?;
     m.add_function(wrap_pyfunction!(py_separator, m)?)?;
+    m.add_function(wrap_pyfunction!(py_empty_state, m)?)?;
+    m.add_function(wrap_pyfunction!(py_surface, m)?)?;
+    m.add_function(wrap_pyfunction!(py_toolbar, m)?)?;
     m.add_function(wrap_pyfunction!(py_column, m)?)?;
     m.add_function(wrap_pyfunction!(py_row, m)?)?;
     m.add_function(wrap_pyfunction!(py_scroll_view, m)?)?;
@@ -3011,6 +3528,36 @@ fn py_image_fit(value: &str) -> PyResult<BindingImageFit> {
     }
 }
 
+fn py_icon_glyph(value: &str) -> PyResult<sui_crate::IconGlyph> {
+    binding_icon_glyph_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown icon glyph '{value}'")))
+}
+
+fn py_semantic_tone(value: &str) -> PyResult<sui_crate::SemanticTone> {
+    binding_semantic_tone_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown semantic tone '{value}'")))
+}
+
+fn py_table_column_alignment(value: &str) -> PyResult<sui_crate::TableColumnAlignment> {
+    binding_table_column_alignment_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown table column alignment '{value}'")))
+}
+
+fn py_surface_role(value: &str) -> PyResult<sui_crate::SurfaceRole> {
+    binding_surface_role_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown surface role '{value}'")))
+}
+
+fn py_surface_border(value: &str) -> PyResult<sui_crate::SurfaceBorder> {
+    binding_surface_border_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown surface border '{value}'")))
+}
+
+fn py_surface_elevation(value: &str) -> PyResult<sui_crate::SurfaceElevation> {
+    binding_surface_elevation_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown surface elevation '{value}'")))
+}
+
 fn py_axis(value: &str) -> PyResult<Axis> {
     match value {
         "horizontal" | "x" | "row" => Ok(Axis::Horizontal),
@@ -3045,6 +3592,42 @@ fn extract_text_spans(spans: &Bound<'_, PyAny>) -> PyResult<Vec<BindingTextSpan>
         .extract::<Vec<PyRef<'_, PyTextSpan>>>()?
         .iter()
         .map(|span| span.inner.clone())
+        .collect())
+}
+
+fn extract_status_bar_segments(
+    segments: &Bound<'_, PyAny>,
+) -> PyResult<Vec<BindingStatusBarSegment>> {
+    Ok(segments
+        .extract::<Vec<PyRef<'_, PyStatusBarSegment>>>()?
+        .iter()
+        .map(|segment| segment.inner.clone())
+        .collect())
+}
+
+fn extract_segmented_control_items(
+    items: &Bound<'_, PyAny>,
+) -> PyResult<Vec<BindingSegmentedControlItem>> {
+    Ok(items
+        .extract::<Vec<PyRef<'_, PySegmentedControlItem>>>()?
+        .iter()
+        .map(|item| item.inner.clone())
+        .collect())
+}
+
+fn extract_table_columns(columns: &Bound<'_, PyAny>) -> PyResult<Vec<BindingTableColumn>> {
+    Ok(columns
+        .extract::<Vec<PyRef<'_, PyTableColumn>>>()?
+        .iter()
+        .map(|column| column.inner.clone())
+        .collect())
+}
+
+fn extract_table_rows(rows: &Bound<'_, PyAny>) -> PyResult<Vec<BindingTableRow>> {
+    Ok(rows
+        .extract::<Vec<PyRef<'_, PyTableRow>>>()?
+        .iter()
+        .map(|row| row.inner.clone())
         .collect())
 }
 
@@ -4042,10 +4625,46 @@ app = sui.App()
 root = sui.Column([
     sui.Label('Ready'),
     sui.Button('Apply'),
+    sui.Icon('search', label='Search icon'),
+    sui.IconButton('download', 'Download', selected=True, enabled=True, size=28, icon_size=16, description='Download file'),
+    sui.Surface(
+        sui.Label('Surface content'),
+        role='panel',
+        name='Main surface',
+        elevation='small',
+        padding=6.0,
+    ),
+    sui.Toolbar([
+        sui.Button('Toolbar action'),
+        sui.Icon('search', label='Toolbar search'),
+    ], name='Main toolbar', extent=32.0, padding=4.0, spacing=4.0),
     sui.Link('Documentation', 'https://example.invalid/docs'),
     sui.Checkbox('Enabled', True),
     sui.Switch('Airplane mode', False),
     sui.RadioButton('Manual', True),
+    sui.RadioGroup('Priority', ['Low', 'Medium', 'High'], selected=1),
+    sui.SegmentedControl('View mode', [
+        sui.SegmentedControlItem('List', semantic_name='Show list view', description='Compact rows'),
+        sui.SegmentedControlItem('Gallery'),
+        sui.SegmentedControlItem('Map', semantic_name='Show map view', disabled=True),
+    ], selected=1),
+    sui.Breadcrumb('Workspace path', ['D:', 'Workspace', 'sui'], current=2),
+    sui.ListView('Assets', ['Brush', 'Canvas', 'Export'], selected=1),
+    sui.Table('Build table', [
+        sui.TableColumn('Task', width=160.0),
+        sui.TableColumn('Owner', width=96.0, alignment='center'),
+    ], [
+        sui.TableRow(['Bindings', 'IX']),
+        sui.TableRow(['Renderer', 'Core']),
+    ], selected=0),
+    sui.SignalMeter('Input signal', True, description='Live audio input', bars=8, size=sui.Size(76, 16)),
+    sui.StatusBadge('Online', tone='success', icon='check', min_width=72.0),
+    sui.StatusBar([
+        sui.StatusBarSegment('Ln 12'),
+        sui.StatusBarSegment('Writable', tone='success', min_width=84.0),
+        sui.StatusBarSegment('UTF-8', tone='info', expand=True),
+    ], name='Editor status', description='All systems nominal', height=24.0),
+    sui.DetailRow('Build', 'Debug profile with local bindings', max_value_lines=2),
     sui.Slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.25),
     sui.NumberInput('Count', count, min_value=0.0, max_value=10.0, step=1.0, precision=0),
     sui.Select('Mode', ['Draft', 'Final', 'Review'], selected=1, placeholder='Choose mode'),
@@ -4062,23 +4681,37 @@ root = sui.Column([
     ),
     sui.ColorSwatch('Accent', sui.Color.rgba(0.25, 0.5, 0.75, 1.0), size=sui.Size(24, 24)),
     sui.Separator('horizontal', name='Section divider', length=24.0),
+    sui.EmptyState(
+        'No projects',
+        'Create a project to get started.',
+        name='Projects empty',
+        detail='Templates are available',
+        icon='folder',
+        action=sui.Button('New project'),
+        transparent=True,
+    ),
 ], gap=6.0)
 app.window(sui.Window('Compatibility').root(root))
 snapshot = app.render()
 
 assert snapshot.command_count > 0
-assert snapshot.semantics_count >= 17
+assert snapshot.semantics_count >= 30
 
-for role in ('text', 'button', 'link', 'checkbox', 'switch', 'radio_button', 'slider', 'spin_box', 'combo_box', 'progress_bar', 'busy_indicator', 'text_input', 'scroll_view', 'color_swatch', 'separator'):
+for role in ('generic_container', 'text', 'button', 'link', 'checkbox', 'switch', 'radio_button', 'radio_group', 'breadcrumb', 'list', 'list_item', 'table', 'slider', 'spin_box', 'combo_box', 'progress_bar', 'busy_indicator', 'text_input', 'image', 'scroll_view', 'color_swatch', 'separator'):
     assert role in snapshot.semantics_roles, (role, snapshot.semantics_roles)
 
-for name in ('Ready', 'Apply', 'Documentation', 'Enabled', 'Airplane mode', 'Manual', 'Opacity', 'Count', 'Mode', 'Load progress', 'Background work', 'Name', 'Notes', 'Scrollable content', 'Rich summary', 'Accent', 'Section divider'):
+for name in ('Ready', 'Apply', 'Search icon', 'Download', 'Main surface', 'Surface content', 'Main toolbar', 'Toolbar action', 'Toolbar search', 'Documentation', 'Enabled', 'Airplane mode', 'Manual', 'Priority', 'View mode', 'Show list view', 'Gallery', 'Show map view', 'Workspace path', 'Assets', 'Brush', 'Canvas', 'Export', 'Build table', 'Input signal', 'Online', 'Editor status', 'Ln 12', 'Writable', 'UTF-8', 'Build', 'Opacity', 'Count', 'Mode', 'Load progress', 'Background work', 'Name', 'Notes', 'Scrollable content', 'Rich summary', 'Accent', 'Section divider', 'Projects empty', 'New project'):
     assert name in snapshot.semantics_names, (name, snapshot.semantics_names)
 
-for value in ('https://example.invalid/docs', '0.5:0:1', '3', 'Final', '0.25:0:1', 'Ada', 'Line one' + chr(10) + 'Line two', 'Warm cool', '#4080BFFF'):
+for value in ('https://example.invalid/docs', '0.5:0:1', '3', 'Medium', 'Gallery', 'List', 'Map', 'sui', 'Canvas', 'Bindings', 'active', 'Online', 'All systems nominal', 'Ln 12', 'Writable', 'UTF-8', 'Debug profile with local bindings', 'Final', '0.25:0:1', 'Ada', 'Line one' + chr(10) + 'Line two', 'Warm cool', '#4080BFFF'):
     assert value in snapshot.semantics_values, (value, snapshot.semantics_values)
 
 assert 'Loading assets' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
+assert 'Download file' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
+assert 'Live audio input' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
+assert 'Compact rows' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
+assert 'All systems nominal' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
+assert 'Create a project to get started. Templates are available' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
 assert 'checked' in snapshot.semantics_checked, snapshot.semantics_checked
 assert 'unchecked' in snapshot.semantics_checked, snapshot.semantics_checked
 assert True in snapshot.semantics_busy, snapshot.semantics_busy
@@ -4216,6 +4849,8 @@ import sui
 
 checked = sui.State(False)
 opacity = sui.State(0.25)
+selected = sui.State(False)
+enabled = sui.State(True)
 changes = []
 
 app = sui.App()
@@ -4224,13 +4859,18 @@ app.window(sui.Window('Controls').root(
         sui.Checkbox('Enabled', checked, on_toggle=changes.append),
         sui.Switch('Airplane mode', False),
         sui.Slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.05),
+        sui.Icon('search', label='Search icon'),
+        sui.IconButton('download', 'Download', selected=selected, enabled=enabled, description='Download file'),
     ], gap=8)
 ))
 
 running = app.start()
 snapshot = running.render()
 assert snapshot.command_count > 0
-assert snapshot.semantics_count >= 3
+assert snapshot.semantics_count >= 5
+assert 'image' in snapshot.semantics_roles, snapshot.semantics_roles
+assert 'Search icon' in snapshot.semantics_names, snapshot.semantics_names
+assert 'Download' in snapshot.semantics_names, snapshot.semantics_names
 assert checked.get() is False
 
 running.handle_event(sui.Event.pointer(
@@ -4247,6 +4887,14 @@ running.handle_event(sui.Event.pointer(
 
 assert checked.get() is True
 assert changes == [True]
+
+selected.set(True)
+enabled.set(False)
+assert running.pending_count() == 2
+assert running.drain() == 2
+snapshot = running.render()
+assert True in snapshot.semantics_selected, snapshot.semantics_selected
+assert True in snapshot.semantics_disabled, snapshot.semantics_disabled
 ",
                 c"controls.py",
                 c"controls",
@@ -4410,6 +5058,149 @@ assert calls == ['selected']
 ",
                 c"radio_button.py",
                 c"radio_button",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_radio_group_updates_bound_state() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+selected = sui.State(0)
+changes = []
+app = sui.App()
+app.window(sui.Window('Radio').root(
+    sui.RadioGroup(
+        'Priority',
+        ['Low', 'Medium', 'High'],
+        selected=selected,
+        on_change=lambda index, value: changes.append((index, value)),
+    )
+))
+
+running = app.start()
+snapshot = running.render()
+assert 'radio_group' in snapshot.semantics_roles, snapshot.semantics_roles
+assert 'Low' in snapshot.semantics_values, snapshot.semantics_values
+assert selected.get() == 0
+running.handle_event(sui.Event.pointer(
+    'down',
+    sui.Point(20, 52),
+    button='primary',
+    buttons=1,
+))
+running.handle_event(sui.Event.pointer(
+    'up',
+    sui.Point(20, 52),
+    button='primary',
+))
+
+assert selected.get() == 1
+assert changes == [(1, 'Medium')]
+snapshot = running.render()
+assert 'Medium' in snapshot.semantics_values, snapshot.semantics_values
+",
+                c"radio_group.py",
+                c"radio_group",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_list_view_updates_bound_state() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+selected = sui.State(0)
+changes = []
+app = sui.App()
+app.window(sui.Window('List').root(
+    sui.ListView(
+        'Assets',
+        ['Brush', 'Canvas', 'Export'],
+        selected=selected,
+        on_change=lambda index, value: changes.append((index, value)),
+    )
+))
+
+running = app.start()
+snapshot = running.render()
+assert 'list' in snapshot.semantics_roles, snapshot.semantics_roles
+assert 'list_item' in snapshot.semantics_roles, snapshot.semantics_roles
+assert 'Brush' in snapshot.semantics_values, snapshot.semantics_values
+assert selected.get() == 0
+running.handle_event(sui.Event.pointer(
+    'down',
+    sui.Point(44, 44),
+    button='primary',
+    buttons=1,
+))
+running.handle_event(sui.Event.pointer(
+    'up',
+    sui.Point(44, 44),
+    button='primary',
+))
+
+assert selected.get() == 1
+assert changes == [(1, 'Canvas')]
+snapshot = running.render()
+assert 'Canvas' in snapshot.semantics_values, snapshot.semantics_values
+assert True in snapshot.semantics_selected, snapshot.semantics_selected
+",
+                c"list_view.py",
+                c"list_view",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_signal_meter_reads_bound_state() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+active = sui.State(True)
+app = sui.App()
+app.window(sui.Window('Signal').root(
+    sui.SignalMeter(
+        'Input signal',
+        active,
+        description='Live audio input',
+        bars=8,
+        size=sui.Size(76, 16),
+    )
+))
+
+running = app.start()
+snapshot = running.render()
+assert 'generic_container' in snapshot.semantics_roles, snapshot.semantics_roles
+assert 'Input signal' in snapshot.semantics_names, snapshot.semantics_names
+assert 'Live audio input' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
+assert 'active' in snapshot.semantics_values, snapshot.semantics_values
+
+active.set(False)
+assert running.pending_count() == 1
+assert running.drain() == 1
+snapshot = running.render()
+assert 'idle' in snapshot.semantics_values, snapshot.semantics_values
+",
+                c"signal_meter.py",
+                c"signal_meter",
             )?;
             Ok(())
         })

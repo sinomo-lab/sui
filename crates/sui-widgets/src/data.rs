@@ -2736,9 +2736,11 @@ pub struct Table {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    name_reader: Option<Box<dyn Fn() -> String>>,
     columns: Vec<TableColumn>,
     rows: Vec<TableRow>,
     selected: Option<usize>,
+    selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     hovered: Option<usize>,
     pressed: Option<usize>,
     hover_motion: IndexedInteractionMotion<usize>,
@@ -2757,9 +2759,11 @@ impl Table {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            name_reader: None,
             columns: Vec::new(),
             rows: Vec::new(),
             selected: None,
+            selected_reader: None,
             hovered: None,
             pressed: None,
             hover_motion: IndexedInteractionMotion::new(),
@@ -2784,6 +2788,14 @@ impl Table {
         F: Fn() -> DefaultTheme + 'static,
     {
         self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn name_when<F>(mut self, name: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.name_reader = Some(Box::new(name));
         self
     }
 
@@ -2815,6 +2827,15 @@ impl Table {
 
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = Some(selected);
+        self.selected_reader = None;
+        self
+    }
+
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.selected_reader = Some(Box::new(selected));
         self
     }
 
@@ -2831,6 +2852,13 @@ impl Table {
             .as_ref()
             .map(|theme| theme())
             .unwrap_or(*self.theme)
+    }
+
+    fn name(&self) -> String {
+        self.name_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.name.clone())
     }
 
     fn resolved_row_height(&self) -> f32 {
@@ -2858,6 +2886,14 @@ impl Table {
 
     fn content_height(&self) -> f32 {
         self.rows.len() as f32 * self.resolved_row_height()
+    }
+
+    fn current_selected(&self) -> Option<usize> {
+        self.selected_reader
+            .as_ref()
+            .map(|selected| selected())
+            .unwrap_or(self.selected)
+            .filter(|index| *index < self.rows.len())
     }
 
     fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
@@ -3038,7 +3074,7 @@ impl Widget for Table {
                     return;
                 }
 
-                let current = self.selected.unwrap_or(0);
+                let current = self.current_selected().unwrap_or(0);
                 match key.key.as_str() {
                     "ArrowUp" => self.activate(current.saturating_sub(1)),
                     "ArrowDown" => self.activate((current + 1).min(self.rows.len() - 1)),
@@ -3137,7 +3173,7 @@ impl Widget for Table {
         for row_index in start..end {
             let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
             let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
-            let selected = self.selected == Some(row_index);
+            let selected = self.current_selected() == Some(row_index);
             let hover_amount = self.hover_motion.amount_for(&row_index);
             let press_amount = self.press_motion.amount_for(&row_index);
             let background = if row_index % 2 == 0 {
@@ -3199,10 +3235,10 @@ impl Widget for Table {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Table, ctx.bounds());
-        node.name = Some(self.name.clone());
+        node.name = Some(self.name());
         node.state.focused = ctx.is_focused();
         node.value = self
-            .selected
+            .current_selected()
             .and_then(|row| self.rows.get(row))
             .and_then(|row| row.cells.first())
             .cloned()
@@ -3991,8 +4027,10 @@ pub struct Breadcrumb {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    name_reader: Option<Box<dyn Fn() -> String>>,
     items: Vec<BreadcrumbItem>,
     current: usize,
+    current_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     focused_index: usize,
     hovered: Option<usize>,
     pressed: Option<usize>,
@@ -4014,8 +4052,10 @@ impl Breadcrumb {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            name_reader: None,
             items: Vec::new(),
             current: 0,
+            current_reader: None,
             focused_index: 0,
             hovered: None,
             pressed: None,
@@ -4061,7 +4101,24 @@ impl Breadcrumb {
 
     pub fn current(mut self, current: usize) -> Self {
         self.current = current;
+        self.current_reader = None;
         self.focused_index = current;
+        self
+    }
+
+    pub fn name_when<F>(mut self, name: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.name_reader = Some(Box::new(name));
+        self
+    }
+
+    pub fn current_when<F>(mut self, current: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        self.current_reader = Some(Box::new(current));
         self
     }
 
@@ -4074,11 +4131,23 @@ impl Breadcrumb {
     }
 
     fn normalized_current(&self) -> usize {
+        let current = self
+            .current_reader
+            .as_ref()
+            .and_then(|reader| reader())
+            .unwrap_or(self.current);
         if self.items.is_empty() {
             0
         } else {
-            self.current.min(self.items.len() - 1)
+            current.min(self.items.len() - 1)
         }
+    }
+
+    fn name(&self) -> String {
+        self.name_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.name.clone())
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -4427,7 +4496,7 @@ impl Widget for Breadcrumb {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Breadcrumb, ctx.bounds());
-        node.name = Some(self.name.clone());
+        node.name = Some(self.name());
         node.state.focused = ctx.is_focused();
         node.value = self
             .items

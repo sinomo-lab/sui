@@ -12,17 +12,21 @@ use std::{
 };
 
 use sui::{
-    ArrangeCtx, Axis, Border, Brush, BusyIndicator, Button, Checkbox, Color, ColorSpace,
-    ColorSwatch, Constraints, CustomEvent, DpiInfo, EXTERNAL_WAKE_KIND, Event, EventCtx,
-    EventPhase, Flex, FontHandle, Image, ImageFit, ImageHandle, ImageSource, ImeEvent,
+    ArrangeCtx, Axis, Border, Breadcrumb, BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox,
+    Color, ColorSpace, ColorSwatch, Constraints, CustomEvent, DetailRow, DpiInfo,
+    EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase, Flex, FontHandle, Icon,
+    IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
-    Link, MeasureCtx, Modifiers, NumberInput, PaintCtx, Path, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, PointerKind, ProgressBar, RadioButton, Rect, RegisteredFont,
-    RegisteredImage, RichText, Runtime, SceneCommand, ScrollDelta, ScrollView, Select,
-    SemanticsCtx, SemanticsNode, SemanticsRole, SemanticsValue, Separator, ShadowParams, Size,
-    Slider, StrokeStyle, Switch, TextArea, TextInput, TextSpan, TextStyle, TimerToken, ToggleState,
-    Transform, Vector, Widget, WidgetId, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
-    WidgetShader, WindowBuilder, WindowEvent, WindowId,
+    Link, ListItem, ListView, MeasureCtx, Modifiers, NumberInput, PaintCtx, Path, Point,
+    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, ProgressBar,
+    RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage, RichText, Runtime,
+    SceneCommand, ScrollDelta, ScrollView, SegmentedControl, SegmentedControlItem, Select,
+    SemanticTone, SemanticsCtx, SemanticsNode, SemanticsRole, SemanticsValue, Separator,
+    ShadowParams, SignalMeter, Size, Slider, StatusBadge, StatusBar, StatusBarSegment, StrokeStyle,
+    Surface, SurfaceBorder, SurfaceElevation, SurfaceRole, Switch, Table, TableColumn,
+    TableColumnAlignment, TableRow, TextArea, TextInput, TextSpan, TextStyle, TimerToken,
+    ToggleState, Toolbar, Transform, Vector, Widget, WidgetId, WidgetPod, WidgetPodMutVisitor,
+    WidgetPodVisitor, WidgetShader, WindowBuilder, WindowEvent, WindowId,
 };
 
 #[cfg(feature = "desktop")]
@@ -669,11 +673,317 @@ impl BindingTextSpan {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BindingStatusBarSegment {
+    text: BindingText,
+    tone: SemanticTone,
+    min_width: Option<f32>,
+    expand: bool,
+}
+
+impl BindingStatusBarSegment {
+    pub fn new(
+        text: impl Into<BindingText>,
+        tone: SemanticTone,
+        min_width: Option<f32>,
+        expand: bool,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+            min_width,
+            expand,
+        }
+    }
+
+    fn bind_ui_handle(&self, handle: &BindingUiHandle) {
+        self.text.bind_ui_handle(handle);
+    }
+
+    fn into_sui(&self) -> StatusBarSegment {
+        let mut segment = if matches!(self.text, BindingText::State(_)) {
+            StatusBarSegment::dynamic(self.text.resolve(), {
+                let text = self.text.clone();
+                move || text.resolve()
+            })
+        } else {
+            StatusBarSegment::new(self.text.resolve())
+        }
+        .tone(self.tone)
+        .expand(self.expand);
+        if let Some(min_width) = self.min_width {
+            segment = segment.min_width(min_width);
+        }
+        segment
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingSegmentedControlItem {
+    label: String,
+    semantic_name: Option<String>,
+    description: Option<String>,
+    disabled: bool,
+}
+
+impl BindingSegmentedControlItem {
+    pub fn new(
+        label: impl Into<String>,
+        semantic_name: Option<String>,
+        description: Option<String>,
+        disabled: bool,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            semantic_name,
+            description,
+            disabled,
+        }
+    }
+
+    fn into_sui(&self) -> SegmentedControlItem {
+        let mut item = SegmentedControlItem::new(self.label.clone());
+        if let Some(semantic_name) = &self.semantic_name {
+            item = item.semantic_name(semantic_name.clone());
+        }
+        if let Some(description) = &self.description {
+            item = item.description(description.clone());
+        }
+        if self.disabled {
+            item = item.disabled();
+        }
+        item
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingTableColumn {
+    title: String,
+    width: Option<f32>,
+    min_width: Option<f32>,
+    alignment: TableColumnAlignment,
+    numeric: bool,
+}
+
+impl BindingTableColumn {
+    pub fn new(
+        title: impl Into<String>,
+        width: Option<f32>,
+        min_width: Option<f32>,
+        alignment: TableColumnAlignment,
+        numeric: bool,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            width,
+            min_width,
+            alignment,
+            numeric,
+        }
+    }
+
+    fn into_sui(&self) -> TableColumn {
+        let mut column = TableColumn::new(self.title.clone());
+        if let Some(width) = self.width {
+            column = column.width(width);
+        }
+        if let Some(min_width) = self.min_width {
+            column = column.min_width(min_width);
+        }
+        if self.numeric {
+            column = column.numeric();
+        } else {
+            column = column.alignment(self.alignment);
+        }
+        column
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingTableRow {
+    cells: Vec<String>,
+}
+
+impl BindingTableRow {
+    pub fn new(cells: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            cells: cells.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    fn into_sui(&self) -> TableRow {
+        TableRow::new(self.cells.clone())
+    }
+}
+
 fn binding_number_to_index(value: f64) -> Option<usize> {
     if value.is_finite() && value >= 0.0 {
         Some(value.floor() as usize)
     } else {
         None
+    }
+}
+
+fn normalize_binding_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !matches!(ch, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+pub fn binding_icon_glyph_from_name(value: &str) -> Option<IconGlyph> {
+    match normalize_binding_name(value).as_str() {
+        "add" | "plus" => Some(IconGlyph::Add),
+        "remove" | "minus" => Some(IconGlyph::Remove),
+        "check" => Some(IconGlyph::Check),
+        "chevrondown" => Some(IconGlyph::ChevronDown),
+        "chevronup" => Some(IconGlyph::ChevronUp),
+        "chevronleft" => Some(IconGlyph::ChevronLeft),
+        "chevronright" => Some(IconGlyph::ChevronRight),
+        "close" | "x" => Some(IconGlyph::Close),
+        "maximize" => Some(IconGlyph::Maximize),
+        "restore" => Some(IconGlyph::Restore),
+        "fitview" => Some(IconGlyph::FitView),
+        "actualsize" => Some(IconGlyph::ActualSize),
+        "morehorizontal" => Some(IconGlyph::MoreHorizontal),
+        "morevertical" => Some(IconGlyph::MoreVertical),
+        "search" => Some(IconGlyph::Search),
+        "undo" => Some(IconGlyph::Undo),
+        "redo" => Some(IconGlyph::Redo),
+        "brush" => Some(IconGlyph::Brush),
+        "eraser" => Some(IconGlyph::Eraser),
+        "paintbucket" => Some(IconGlyph::PaintBucket),
+        "hand" => Some(IconGlyph::Hand),
+        "lock" => Some(IconGlyph::Lock),
+        "unlock" => Some(IconGlyph::Unlock),
+        "trash" => Some(IconGlyph::Trash),
+        "download" => Some(IconGlyph::Download),
+        "sparkles" => Some(IconGlyph::Sparkles),
+        "chat" => Some(IconGlyph::Chat),
+        "history" => Some(IconGlyph::History),
+        "folder" => Some(IconGlyph::Folder),
+        "file" => Some(IconGlyph::File),
+        "link" => Some(IconGlyph::Link),
+        "send" => Some(IconGlyph::Send),
+        "alert" => Some(IconGlyph::Alert),
+        "storage" => Some(IconGlyph::Storage),
+        "audiolines" => Some(IconGlyph::AudioLines),
+        "mic" => Some(IconGlyph::Mic),
+        "micoff" => Some(IconGlyph::MicOff),
+        "camera" => Some(IconGlyph::Camera),
+        "cameraoff" => Some(IconGlyph::CameraOff),
+        "video" => Some(IconGlyph::Video),
+        "videooff" => Some(IconGlyph::VideoOff),
+        "phone" => Some(IconGlyph::Phone),
+        "phoneoff" => Some(IconGlyph::PhoneOff),
+        "monitor" => Some(IconGlyph::Monitor),
+        "screenshare" => Some(IconGlyph::ScreenShare),
+        _ => None,
+    }
+}
+
+pub fn binding_icon_glyph_name(glyph: IconGlyph) -> &'static str {
+    match glyph {
+        IconGlyph::Add => "add",
+        IconGlyph::Remove => "remove",
+        IconGlyph::Check => "check",
+        IconGlyph::ChevronDown => "chevron-down",
+        IconGlyph::ChevronUp => "chevron-up",
+        IconGlyph::ChevronLeft => "chevron-left",
+        IconGlyph::ChevronRight => "chevron-right",
+        IconGlyph::Close => "close",
+        IconGlyph::Maximize => "maximize",
+        IconGlyph::Restore => "restore",
+        IconGlyph::FitView => "fit-view",
+        IconGlyph::ActualSize => "actual-size",
+        IconGlyph::MoreHorizontal => "more-horizontal",
+        IconGlyph::MoreVertical => "more-vertical",
+        IconGlyph::Search => "search",
+        IconGlyph::Undo => "undo",
+        IconGlyph::Redo => "redo",
+        IconGlyph::Brush => "brush",
+        IconGlyph::Eraser => "eraser",
+        IconGlyph::PaintBucket => "paint-bucket",
+        IconGlyph::Hand => "hand",
+        IconGlyph::Lock => "lock",
+        IconGlyph::Unlock => "unlock",
+        IconGlyph::Trash => "trash",
+        IconGlyph::Download => "download",
+        IconGlyph::Sparkles => "sparkles",
+        IconGlyph::Chat => "chat",
+        IconGlyph::History => "history",
+        IconGlyph::Folder => "folder",
+        IconGlyph::File => "file",
+        IconGlyph::Link => "link",
+        IconGlyph::Send => "send",
+        IconGlyph::Alert => "alert",
+        IconGlyph::Storage => "storage",
+        IconGlyph::AudioLines => "audio-lines",
+        IconGlyph::Mic => "mic",
+        IconGlyph::MicOff => "mic-off",
+        IconGlyph::Camera => "camera",
+        IconGlyph::CameraOff => "camera-off",
+        IconGlyph::Video => "video",
+        IconGlyph::VideoOff => "video-off",
+        IconGlyph::Phone => "phone",
+        IconGlyph::PhoneOff => "phone-off",
+        IconGlyph::Monitor => "monitor",
+        IconGlyph::ScreenShare => "screen-share",
+    }
+}
+
+pub fn binding_surface_role_from_name(value: &str) -> Option<SurfaceRole> {
+    match normalize_binding_name(value).as_str() {
+        "window" => Some(SurfaceRole::Window),
+        "sidebar" | "side" => Some(SurfaceRole::Sidebar),
+        "panel" => Some(SurfaceRole::Panel),
+        "titlebar" | "title" => Some(SurfaceRole::Titlebar),
+        "field" => Some(SurfaceRole::Field),
+        _ => None,
+    }
+}
+
+pub fn binding_surface_border_from_name(value: &str) -> Option<SurfaceBorder> {
+    match normalize_binding_name(value).as_str() {
+        "none" | "false" | "off" => Some(SurfaceBorder::None),
+        "all" | "true" | "on" => Some(SurfaceBorder::All),
+        "top" => Some(SurfaceBorder::Top),
+        "right" => Some(SurfaceBorder::Right),
+        "bottom" => Some(SurfaceBorder::Bottom),
+        "left" => Some(SurfaceBorder::Left),
+        _ => None,
+    }
+}
+
+pub fn binding_surface_elevation_from_name(value: &str) -> Option<SurfaceElevation> {
+    match normalize_binding_name(value).as_str() {
+        "none" | "flat" => Some(SurfaceElevation::None),
+        "small" | "sm" => Some(SurfaceElevation::Small),
+        "medium" | "md" => Some(SurfaceElevation::Medium),
+        "large" | "lg" => Some(SurfaceElevation::Large),
+        _ => None,
+    }
+}
+
+pub fn binding_semantic_tone_from_name(value: &str) -> Option<SemanticTone> {
+    match normalize_binding_name(value).as_str() {
+        "neutral" => Some(SemanticTone::Neutral),
+        "accent" | "primary" => Some(SemanticTone::Accent),
+        "info" | "information" => Some(SemanticTone::Info),
+        "success" | "ok" => Some(SemanticTone::Success),
+        "warning" | "warn" => Some(SemanticTone::Warning),
+        "danger" | "error" | "critical" => Some(SemanticTone::Danger),
+        _ => None,
+    }
+}
+
+pub fn binding_table_column_alignment_from_name(value: &str) -> Option<TableColumnAlignment> {
+    match normalize_binding_name(value).as_str() {
+        "start" | "left" => Some(TableColumnAlignment::Start),
+        "center" | "centre" | "middle" => Some(TableColumnAlignment::Center),
+        "end" | "right" => Some(TableColumnAlignment::End),
+        _ => None,
     }
 }
 
@@ -715,12 +1025,53 @@ impl fmt::Debug for BindingWidget {
         match self.inner.as_ref() {
             BindingWidgetKind::Label { .. } => f.debug_tuple("BindingWidget::Label").finish(),
             BindingWidgetKind::Button { .. } => f.debug_tuple("BindingWidget::Button").finish(),
+            BindingWidgetKind::Icon { glyph, .. } => f
+                .debug_struct("BindingWidget::Icon")
+                .field("glyph", &binding_icon_glyph_name(*glyph))
+                .finish(),
+            BindingWidgetKind::IconButton { glyph, .. } => f
+                .debug_struct("BindingWidget::IconButton")
+                .field("glyph", &binding_icon_glyph_name(*glyph))
+                .finish(),
             BindingWidgetKind::Link { .. } => f.debug_tuple("BindingWidget::Link").finish(),
             BindingWidgetKind::Checkbox { .. } => f.debug_tuple("BindingWidget::Checkbox").finish(),
             BindingWidgetKind::Switch { .. } => f.debug_tuple("BindingWidget::Switch").finish(),
             BindingWidgetKind::RadioButton { .. } => {
                 f.debug_tuple("BindingWidget::RadioButton").finish()
             }
+            BindingWidgetKind::RadioGroup { .. } => {
+                f.debug_tuple("BindingWidget::RadioGroup").finish()
+            }
+            BindingWidgetKind::SegmentedControl { items, .. } => f
+                .debug_struct("BindingWidget::SegmentedControl")
+                .field("items", items)
+                .finish(),
+            BindingWidgetKind::Breadcrumb { items, .. } => f
+                .debug_struct("BindingWidget::Breadcrumb")
+                .field("items", items)
+                .finish(),
+            BindingWidgetKind::ListView { .. } => f.debug_tuple("BindingWidget::ListView").finish(),
+            BindingWidgetKind::Table { columns, rows, .. } => f
+                .debug_struct("BindingWidget::Table")
+                .field("columns", columns)
+                .field("rows", rows)
+                .finish(),
+            BindingWidgetKind::SignalMeter { .. } => {
+                f.debug_tuple("BindingWidget::SignalMeter").finish()
+            }
+            BindingWidgetKind::StatusBadge { tone, .. } => f
+                .debug_struct("BindingWidget::StatusBadge")
+                .field("tone", tone)
+                .finish(),
+            BindingWidgetKind::StatusBar { segments, .. } => f
+                .debug_struct("BindingWidget::StatusBar")
+                .field("segments", segments)
+                .finish(),
+            BindingWidgetKind::DetailRow { label, value, .. } => f
+                .debug_struct("BindingWidget::DetailRow")
+                .field("label", label)
+                .field("value", value)
+                .finish(),
             BindingWidgetKind::Slider { .. } => f.debug_tuple("BindingWidget::Slider").finish(),
             BindingWidgetKind::NumberInput { .. } => {
                 f.debug_tuple("BindingWidget::NumberInput").finish()
@@ -744,9 +1095,24 @@ impl fmt::Debug for BindingWidget {
             BindingWidgetKind::Separator { .. } => {
                 f.debug_tuple("BindingWidget::Separator").finish()
             }
+            BindingWidgetKind::EmptyState { title, action, .. } => f
+                .debug_struct("BindingWidget::EmptyState")
+                .field("title", title)
+                .field("action", action)
+                .finish(),
+            BindingWidgetKind::Surface { role, child, .. } => f
+                .debug_struct("BindingWidget::Surface")
+                .field("role", role)
+                .field("child", child)
+                .finish(),
             BindingWidgetKind::ExternalSurface { tier, .. } => f
                 .debug_struct("BindingWidget::ExternalSurface")
                 .field("tier", tier)
+                .finish(),
+            BindingWidgetKind::Toolbar { axis, children, .. } => f
+                .debug_struct("BindingWidget::Toolbar")
+                .field("axis", axis)
+                .field("children", children)
                 .finish(),
             BindingWidgetKind::ScrollView { axes, child, .. } => f
                 .debug_struct("BindingWidget::ScrollView")
@@ -777,6 +1143,22 @@ enum BindingWidgetKind {
         label: BindingText,
         action: Option<BindingAction>,
     },
+    Icon {
+        glyph: IconGlyph,
+        label: Option<String>,
+        size: Option<f32>,
+        color: Option<Color>,
+    },
+    IconButton {
+        glyph: IconGlyph,
+        label: BindingText,
+        selected: BindingBool,
+        enabled: BindingBool,
+        size: Option<f32>,
+        icon_size: Option<f32>,
+        description: Option<String>,
+        action: Option<BindingAction>,
+    },
     Link {
         label: BindingText,
         url: BindingText,
@@ -798,6 +1180,61 @@ enum BindingWidgetKind {
         label: BindingText,
         selected: BindingBool,
         action: Option<BindingAction>,
+    },
+    RadioGroup {
+        name: BindingText,
+        options: Vec<String>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    SegmentedControl {
+        name: BindingText,
+        items: Vec<BindingSegmentedControlItem>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    Breadcrumb {
+        name: BindingText,
+        items: Vec<String>,
+        current: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    ListView {
+        name: BindingText,
+        items: Vec<String>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    Table {
+        name: BindingText,
+        columns: Vec<BindingTableColumn>,
+        rows: Vec<BindingTableRow>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    SignalMeter {
+        name: BindingText,
+        active: BindingBool,
+        description: Option<String>,
+        bars: usize,
+        size: Option<Size>,
+    },
+    StatusBadge {
+        label: BindingText,
+        tone: SemanticTone,
+        icon: Option<IconGlyph>,
+        min_width: Option<f32>,
+    },
+    StatusBar {
+        segments: Vec<BindingStatusBarSegment>,
+        name: Option<String>,
+        description: Option<BindingText>,
+        height: Option<f32>,
+    },
+    DetailRow {
+        label: BindingText,
+        value: BindingText,
+        max_value_lines: Option<usize>,
     },
     Slider {
         name: BindingText,
@@ -873,11 +1310,42 @@ enum BindingWidgetKind {
         thickness: Option<f32>,
         length: Option<f32>,
     },
+    EmptyState {
+        title: String,
+        description: String,
+        name: Option<String>,
+        detail: Option<String>,
+        icon: Option<IconGlyph>,
+        action: Option<BindingWidget>,
+        background: Option<Color>,
+        transparent: bool,
+    },
+    Surface {
+        child: BindingWidget,
+        role: SurfaceRole,
+        name: Option<String>,
+        border: Option<SurfaceBorder>,
+        elevation: Option<SurfaceElevation>,
+        radius: Option<f32>,
+        padding: Option<f32>,
+        fill_width: bool,
+        fill_height: bool,
+    },
     ExternalSurface {
         descriptor: ExternalTextureDescriptor,
         desired_size: Size,
         name: Option<String>,
         tier: RendererInteropTier,
+    },
+    Toolbar {
+        children: Vec<BindingWidget>,
+        axis: Axis,
+        name: Option<String>,
+        extent: Option<f32>,
+        padding: Option<f32>,
+        spacing: Option<f32>,
+        background: Option<Color>,
+        divider: bool,
     },
     ScrollView {
         child: BindingWidget,
@@ -906,6 +1374,42 @@ impl BindingWidget {
     pub fn button(label: impl Into<BindingText>, action: Option<BindingAction>) -> Self {
         Self::from_kind(BindingWidgetKind::Button {
             label: label.into(),
+            action,
+        })
+    }
+
+    pub fn icon(
+        glyph: IconGlyph,
+        label: Option<String>,
+        size: Option<f32>,
+        color: Option<Color>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Icon {
+            glyph,
+            label,
+            size,
+            color,
+        })
+    }
+
+    pub fn icon_button(
+        glyph: IconGlyph,
+        label: impl Into<BindingText>,
+        selected: impl Into<BindingBool>,
+        enabled: impl Into<BindingBool>,
+        size: Option<f32>,
+        icon_size: Option<f32>,
+        description: Option<String>,
+        action: Option<BindingAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::IconButton {
+            glyph,
+            label: label.into(),
+            selected: selected.into(),
+            enabled: enabled.into(),
+            size,
+            icon_size,
+            description,
             action,
         })
     }
@@ -959,6 +1463,134 @@ impl BindingWidget {
             label: label.into(),
             selected: selected.into(),
             action,
+        })
+    }
+
+    pub fn radio_group(
+        name: impl Into<BindingText>,
+        options: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::RadioGroup {
+            name: name.into(),
+            options: options.into_iter().map(Into::into).collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn segmented_control(
+        name: impl Into<BindingText>,
+        items: impl IntoIterator<Item = BindingSegmentedControlItem>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SegmentedControl {
+            name: name.into(),
+            items: items.into_iter().collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn breadcrumb(
+        name: impl Into<BindingText>,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        current: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Breadcrumb {
+            name: name.into(),
+            items: items.into_iter().map(Into::into).collect(),
+            current,
+            action,
+        })
+    }
+
+    pub fn list_view(
+        name: impl Into<BindingText>,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ListView {
+            name: name.into(),
+            items: items.into_iter().map(Into::into).collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn table(
+        name: impl Into<BindingText>,
+        columns: impl IntoIterator<Item = BindingTableColumn>,
+        rows: impl IntoIterator<Item = BindingTableRow>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Table {
+            name: name.into(),
+            columns: columns.into_iter().collect(),
+            rows: rows.into_iter().collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn signal_meter(
+        name: impl Into<BindingText>,
+        active: impl Into<BindingBool>,
+        description: Option<String>,
+        bars: usize,
+        size: Option<Size>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SignalMeter {
+            name: name.into(),
+            active: active.into(),
+            description,
+            bars,
+            size,
+        })
+    }
+
+    pub fn status_badge(
+        label: impl Into<BindingText>,
+        tone: SemanticTone,
+        icon: Option<IconGlyph>,
+        min_width: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::StatusBadge {
+            label: label.into(),
+            tone,
+            icon,
+            min_width,
+        })
+    }
+
+    pub fn status_bar(
+        segments: impl IntoIterator<Item = BindingStatusBarSegment>,
+        name: Option<String>,
+        description: Option<BindingText>,
+        height: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::StatusBar {
+            segments: segments.into_iter().collect(),
+            name,
+            description,
+            height,
+        })
+    }
+
+    pub fn detail_row(
+        label: impl Into<BindingText>,
+        value: impl Into<BindingText>,
+        max_value_lines: Option<usize>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::DetailRow {
+            label: label.into(),
+            value: value.into(),
+            max_value_lines,
         })
     }
 
@@ -1132,6 +1764,52 @@ impl BindingWidget {
         })
     }
 
+    pub fn empty_state(
+        title: impl Into<String>,
+        description: impl Into<String>,
+        name: Option<String>,
+        detail: Option<String>,
+        icon: Option<IconGlyph>,
+        action: Option<BindingWidget>,
+        background: Option<Color>,
+        transparent: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::EmptyState {
+            title: title.into(),
+            description: description.into(),
+            name,
+            detail,
+            icon,
+            action,
+            background,
+            transparent,
+        })
+    }
+
+    pub fn surface(
+        child: BindingWidget,
+        role: SurfaceRole,
+        name: Option<String>,
+        border: Option<SurfaceBorder>,
+        elevation: Option<SurfaceElevation>,
+        radius: Option<f32>,
+        padding: Option<f32>,
+        fill_width: bool,
+        fill_height: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Surface {
+            child,
+            role,
+            name,
+            border,
+            elevation,
+            radius,
+            padding,
+            fill_width,
+            fill_height,
+        })
+    }
+
     pub fn external_surface(
         descriptor: ExternalTextureDescriptor,
         desired_size: Option<Size>,
@@ -1146,6 +1824,28 @@ impl BindingWidget {
             desired_size,
             name,
         }))
+    }
+
+    pub fn toolbar(
+        children: impl IntoIterator<Item = BindingWidget>,
+        axis: Axis,
+        name: Option<String>,
+        extent: Option<f32>,
+        padding: Option<f32>,
+        spacing: Option<f32>,
+        background: Option<Color>,
+        divider: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Toolbar {
+            children: children.into_iter().collect(),
+            axis,
+            name,
+            extent,
+            padding,
+            spacing,
+            background,
+            divider,
+        })
     }
 
     pub fn scroll_view(
@@ -1190,6 +1890,17 @@ impl BindingWidget {
         match self.inner.as_ref() {
             BindingWidgetKind::Label { text } => text.bind_ui_handle(handle),
             BindingWidgetKind::Button { label, .. } => label.bind_ui_handle(handle),
+            BindingWidgetKind::Icon { .. } => {}
+            BindingWidgetKind::IconButton {
+                label,
+                selected,
+                enabled,
+                ..
+            } => {
+                label.bind_ui_handle(handle);
+                selected.bind_ui_handle(handle);
+                enabled.bind_ui_handle(handle);
+            }
             BindingWidgetKind::Link {
                 label,
                 url,
@@ -1213,6 +1924,57 @@ impl BindingWidget {
             } => {
                 label.bind_ui_handle(handle);
                 selected.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::RadioGroup { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::SegmentedControl { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Breadcrumb { name, current, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(current) = current {
+                    current.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::ListView { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Table { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::SignalMeter { name, active, .. } => {
+                name.bind_ui_handle(handle);
+                active.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::StatusBadge { label, .. } => label.bind_ui_handle(handle),
+            BindingWidgetKind::StatusBar {
+                segments,
+                description,
+                ..
+            } => {
+                for segment in segments {
+                    segment.bind_ui_handle(handle);
+                }
+                if let Some(description) = description {
+                    description.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::DetailRow { label, value, .. } => {
+                label.bind_ui_handle(handle);
+                value.bind_ui_handle(handle);
             }
             BindingWidgetKind::Slider { name, value, .. } => {
                 name.bind_ui_handle(handle);
@@ -1250,7 +2012,18 @@ impl BindingWidget {
             BindingWidgetKind::Image { .. } => {}
             BindingWidgetKind::ColorSwatch { .. } => {}
             BindingWidgetKind::Separator { .. } => {}
+            BindingWidgetKind::EmptyState { action, .. } => {
+                if let Some(action) = action {
+                    action.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Surface { child, .. } => child.bind_ui_handle(handle),
             BindingWidgetKind::ExternalSurface { .. } => {}
+            BindingWidgetKind::Toolbar { children, .. } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
             BindingWidgetKind::ScrollView { child, .. } => child.bind_ui_handle(handle),
             BindingWidgetKind::Flex { children, .. } => {
                 for child in children {
@@ -1283,6 +2056,68 @@ impl BindingWidget {
                                     error.message,
                                 ));
                             }
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(button)
+            }
+            BindingWidgetKind::Icon {
+                glyph,
+                label,
+                size,
+                color,
+            } => {
+                let mut icon = Icon::new(*glyph);
+                if let Some(label) = label {
+                    icon = icon.label(label.clone());
+                }
+                if let Some(size) = size {
+                    icon = icon.size(*size);
+                }
+                if let Some(color) = color {
+                    icon = icon.color(*color);
+                }
+                BindingRuntimeWidget::new(icon)
+            }
+            BindingWidgetKind::IconButton {
+                glyph,
+                label,
+                selected,
+                enabled,
+                size,
+                icon_size,
+                description,
+                action,
+            } => {
+                let mut button = IconButton::new(*glyph, label.resolve())
+                    .selected(selected.resolve())
+                    .enabled(enabled.resolve());
+                if let Some(size) = size {
+                    button = button.size(*size);
+                }
+                if let Some(icon_size) = icon_size {
+                    button = button.icon_size(*icon_size);
+                }
+                if let Some(description) = description {
+                    button = button.description(description.clone());
+                }
+                if matches!(selected, BindingBool::State(_)) {
+                    let selected = selected.clone();
+                    button = button.selected_when(move || selected.resolve());
+                }
+                if matches!(enabled, BindingBool::State(_)) {
+                    let enabled = enabled.clone();
+                    button = button.enabled_when(move || enabled.resolve());
+                }
+                if let Some(action) = action.clone() {
+                    let errors = errors.clone();
+                    button = button.on_press(move || {
+                        if let Err(error) = action.run() {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
                         }
                     });
                 }
@@ -1410,6 +2245,304 @@ impl BindingWidget {
                     inner: radio,
                     selected: selected.clone(),
                 })
+            }
+            BindingWidgetKind::RadioGroup {
+                name,
+                options,
+                selected,
+                action,
+            } => {
+                let mut radio_group = RadioGroup::new(name.resolve()).options(options.clone());
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        radio_group = radio_group.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        radio_group = radio_group
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    radio_group = radio_group.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(radio_group)
+            }
+            BindingWidgetKind::SegmentedControl {
+                name,
+                items,
+                selected,
+                action,
+            } => {
+                let mut control = SegmentedControl::new(name.resolve())
+                    .items(items.iter().map(|item| item.into_sui()));
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        control = control.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        control = control
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    control = control.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(control)
+            }
+            BindingWidgetKind::Breadcrumb {
+                name,
+                items,
+                current,
+                action,
+            } => {
+                let mut breadcrumb = Breadcrumb::new(name.resolve())
+                    .items(items.iter().cloned().map(BreadcrumbItem::new));
+                if matches!(name, BindingText::State(_)) {
+                    let name = name.clone();
+                    breadcrumb = breadcrumb.name_when(move || name.resolve());
+                }
+                if let Some(current) = current {
+                    if let Some(index) = binding_number_to_index(current.resolve()) {
+                        breadcrumb = breadcrumb.current(index);
+                    }
+                    if matches!(current, BindingNumber::State(_)) {
+                        let current = current.clone();
+                        breadcrumb = breadcrumb
+                            .current_when(move || binding_number_to_index(current.resolve()));
+                    }
+                }
+                let state = current.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    breadcrumb = breadcrumb.on_activate(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(breadcrumb)
+            }
+            BindingWidgetKind::ListView {
+                name,
+                items,
+                selected,
+                action,
+            } => {
+                let mut list_view =
+                    ListView::new(name.resolve()).items(items.iter().cloned().map(ListItem::new));
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        list_view = list_view.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        list_view = list_view
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    list_view = list_view.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(list_view)
+            }
+            BindingWidgetKind::Table {
+                name,
+                columns,
+                rows,
+                selected,
+                action,
+            } => {
+                let row_values: Vec<String> = rows
+                    .iter()
+                    .map(|row| row.cells.first().cloned().unwrap_or_default())
+                    .collect();
+                let mut table = Table::new(name.resolve())
+                    .columns(columns.iter().map(BindingTableColumn::into_sui))
+                    .rows(rows.iter().map(BindingTableRow::into_sui));
+                if matches!(name, BindingText::State(_)) {
+                    let name = name.clone();
+                    table = table.name_when(move || name.resolve());
+                }
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        table = table.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        table = table
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    table = table.on_change(move |index| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        let value = row_values.get(index).cloned().unwrap_or_default();
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(table)
+            }
+            BindingWidgetKind::SignalMeter {
+                name,
+                active,
+                description,
+                bars,
+                size,
+            } => {
+                let mut signal_meter = SignalMeter::new(name.resolve())
+                    .active(active.resolve())
+                    .bars(*bars);
+                if let Some(description) = description {
+                    signal_meter = signal_meter.description(description.clone());
+                }
+                if let Some(size) = size {
+                    signal_meter = signal_meter.size(*size);
+                }
+                if matches!(active, BindingBool::State(_)) {
+                    let active = active.clone();
+                    signal_meter = signal_meter.active_when(move || active.resolve());
+                }
+                BindingRuntimeWidget::new(signal_meter)
+            }
+            BindingWidgetKind::StatusBadge {
+                label,
+                tone,
+                icon,
+                min_width,
+            } => {
+                let mut badge = if matches!(label, BindingText::State(_)) {
+                    StatusBadge::dynamic(label.resolve(), {
+                        let label = label.clone();
+                        move || label.resolve()
+                    })
+                } else {
+                    StatusBadge::new(label.resolve())
+                }
+                .tone(*tone);
+                if let Some(icon) = icon {
+                    badge = badge.icon(*icon);
+                }
+                if let Some(min_width) = min_width {
+                    badge = badge.min_width(*min_width);
+                }
+                BindingRuntimeWidget::new(badge)
+            }
+            BindingWidgetKind::StatusBar {
+                segments,
+                name,
+                description,
+                height,
+            } => {
+                let mut status_bar = StatusBar::new();
+                if let Some(name) = name {
+                    status_bar = status_bar.name(name.clone());
+                }
+                if let Some(description) = description {
+                    status_bar = status_bar.description(description.resolve());
+                    if matches!(description, BindingText::State(_)) {
+                        let description = description.clone();
+                        status_bar = status_bar.description_when(move || description.resolve());
+                    }
+                }
+                if let Some(height) = height {
+                    status_bar = status_bar.height(*height);
+                }
+                for segment in segments {
+                    status_bar = status_bar.segment(segment.into_sui());
+                }
+                BindingRuntimeWidget::new(status_bar)
+            }
+            BindingWidgetKind::DetailRow {
+                label,
+                value,
+                max_value_lines,
+            } => {
+                let mut detail_row = DetailRow::new(label.resolve(), value.resolve());
+                if matches!(label, BindingText::State(_)) {
+                    let label = label.clone();
+                    detail_row = detail_row.label_when(move || label.resolve());
+                }
+                if matches!(value, BindingText::State(_)) {
+                    let value = value.clone();
+                    detail_row = detail_row.value_when(move || value.resolve());
+                }
+                if let Some(max_value_lines) = max_value_lines {
+                    detail_row = detail_row.max_value_lines(*max_value_lines);
+                }
+                BindingRuntimeWidget::new(detail_row)
             }
             BindingWidgetKind::Slider {
                 name,
@@ -1698,6 +2831,79 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(separator)
             }
+            BindingWidgetKind::EmptyState {
+                title,
+                description,
+                name,
+                detail,
+                icon,
+                action,
+                background,
+                transparent,
+            } => {
+                let mut empty_state = EmptyState::new(title.clone(), description.clone());
+                if let Some(name) = name {
+                    empty_state = empty_state.name(name.clone());
+                }
+                if let Some(detail) = detail {
+                    empty_state = empty_state.detail(detail.clone());
+                }
+                if let Some(icon) = icon {
+                    empty_state = empty_state.icon(*icon);
+                }
+                if *transparent {
+                    empty_state = empty_state.transparent();
+                } else if let Some(background) = background {
+                    empty_state = empty_state.background(*background);
+                }
+                if let Some(action) = action {
+                    empty_state = empty_state.action(action.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(empty_state)
+            }
+            BindingWidgetKind::Surface {
+                child,
+                role,
+                name,
+                border,
+                elevation,
+                radius,
+                padding,
+                fill_width,
+                fill_height,
+            } => {
+                let child = child.into_runtime_widget(errors.clone());
+                let mut surface = match role {
+                    SurfaceRole::Window => Surface::window(child),
+                    SurfaceRole::Sidebar => Surface::sidebar(child),
+                    SurfaceRole::Panel => Surface::panel(child),
+                    SurfaceRole::Titlebar => Surface::titlebar(child),
+                    SurfaceRole::Field => Surface::field(child),
+                };
+                if let Some(name) = name {
+                    surface = surface.name(name.clone());
+                }
+                if let Some(border) = border {
+                    surface = surface.border(*border);
+                }
+                if let Some(elevation) = elevation {
+                    surface = surface.elevation(*elevation);
+                }
+                if let Some(radius) = radius {
+                    surface = surface.radius(*radius);
+                }
+                if let Some(padding) = padding {
+                    surface = surface.padding(Insets::all(padding.max(0.0)));
+                }
+                if *fill_width && *fill_height {
+                    surface = surface.fill();
+                } else if *fill_width {
+                    surface = surface.fill_width();
+                } else if *fill_height {
+                    surface = surface.fill_height();
+                }
+                BindingRuntimeWidget::new(surface)
+            }
             BindingWidgetKind::ExternalSurface {
                 descriptor,
                 desired_size,
@@ -1708,6 +2914,37 @@ impl BindingWidget {
                 desired_size: *desired_size,
                 name: name.clone(),
             }),
+            BindingWidgetKind::Toolbar {
+                children,
+                axis,
+                name,
+                extent,
+                padding,
+                spacing,
+                background,
+                divider,
+            } => {
+                let mut toolbar = Toolbar::new(*axis).divider(*divider);
+                if let Some(name) = name {
+                    toolbar = toolbar.name(name.clone());
+                }
+                if let Some(extent) = extent {
+                    toolbar = toolbar.extent(*extent);
+                }
+                if let Some(padding) = padding {
+                    toolbar = toolbar.padding(Insets::all(padding.max(0.0)));
+                }
+                if let Some(spacing) = spacing {
+                    toolbar = toolbar.spacing(*spacing);
+                }
+                if let Some(background) = background {
+                    toolbar = toolbar.background(*background);
+                }
+                for child in children {
+                    toolbar = toolbar.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(toolbar)
+            }
             BindingWidgetKind::ScrollView { child, axes, name } => {
                 let child = child.into_runtime_widget(errors.clone());
                 let mut scroll_view = match axes {
@@ -2168,22 +3405,30 @@ impl BindingUiTaskRootWidget {
         Self { inner, ui_tasks }
     }
 
-    fn drain_ui_tasks(&self, ctx: &mut EventCtx) {
-        if self.ui_tasks.drain() > 0 {
+    fn drain_ui_tasks(&self, ctx: &mut EventCtx) -> usize {
+        let drained = self.ui_tasks.drain();
+        if drained > 0 {
             ctx.request_measure();
             ctx.request_paint();
             ctx.request_semantics();
         }
+        drained
     }
 }
 
 impl Widget for BindingUiTaskRootWidget {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if matches!(
+        let external_wake = matches!(
             event,
             Event::Custom(CustomEvent { kind, .. }) if kind == EXTERNAL_WAKE_KIND
-        ) {
-            self.drain_ui_tasks(ctx);
+        );
+        if external_wake {
+            let drained = self.drain_ui_tasks(ctx);
+            if drained == 0 {
+                ctx.request_measure();
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
         }
 
         self.inner.event(ctx, event);
@@ -2705,11 +3950,15 @@ impl BindingRuntime {
     }
 
     pub fn drain_ui_tasks(&mut self) -> Result<usize, String> {
-        let drained = self.ui_tasks.drain();
-        if drained > 0 {
-            self.request_redraw_all()?;
+        let pending = self.ui_tasks.pending_count();
+        if pending > 0 {
+            for window_id in self.window_ids.clone() {
+                self.runtime
+                    .wake_root(window_id.into_sui())
+                    .map_err(|error| error.to_string())?;
+            }
         }
-        Ok(drained)
+        Ok(pending.saturating_sub(self.ui_tasks.pending_count()))
     }
 
     pub fn window_count(&self) -> usize {
@@ -5738,21 +6987,28 @@ mod tests {
 
     fn assert_cross_language_snapshot_signature(snapshot: &BindingRenderSnapshot) {
         assert!(snapshot.command_count > 0);
-        assert!(snapshot.semantics_count >= 17);
+        assert!(snapshot.semantics_count >= 30);
 
         for role in [
+            "generic_container",
             "text",
             "button",
             "link",
             "checkbox",
             "switch",
             "radio_button",
+            "radio_group",
+            "breadcrumb",
+            "list",
+            "list_item",
+            "table",
             "slider",
             "spin_box",
             "combo_box",
             "progress_bar",
             "busy_indicator",
             "text_input",
+            "image",
             "scroll_view",
             "color_swatch",
             "separator",
@@ -5767,10 +7023,35 @@ mod tests {
         for name in [
             "Ready",
             "Apply",
+            "Search icon",
+            "Download",
+            "Main surface",
+            "Surface content",
+            "Main toolbar",
+            "Toolbar action",
+            "Toolbar search",
             "Documentation",
             "Enabled",
             "Airplane mode",
             "Manual",
+            "Priority",
+            "View mode",
+            "Show list view",
+            "Gallery",
+            "Show map view",
+            "Workspace path",
+            "Assets",
+            "Brush",
+            "Canvas",
+            "Export",
+            "Build table",
+            "Input signal",
+            "Online",
+            "Editor status",
+            "Ln 12",
+            "Writable",
+            "UTF-8",
+            "Build",
             "Opacity",
             "Count",
             "Mode",
@@ -5782,6 +7063,8 @@ mod tests {
             "Rich summary",
             "Accent",
             "Section divider",
+            "Projects empty",
+            "New project",
         ] {
             assert!(
                 snapshot.semantics_names.iter().any(|value| value == name),
@@ -5794,6 +7077,20 @@ mod tests {
             "https://example.invalid/docs",
             "0.5:0:1",
             "3",
+            "Medium",
+            "Gallery",
+            "List",
+            "Map",
+            "sui",
+            "Canvas",
+            "Bindings",
+            "active",
+            "Online",
+            "All systems nominal",
+            "Ln 12",
+            "Writable",
+            "UTF-8",
+            "Debug profile with local bindings",
             "Final",
             "0.25:0:1",
             "Ada",
@@ -5814,6 +7111,46 @@ mod tests {
                 .iter()
                 .any(|value| value == "Loading assets"),
             "missing busy indicator description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Download file"),
+            "missing icon button description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Live audio input"),
+            "missing signal meter description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Compact rows"),
+            "missing segmented control description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "All systems nominal"),
+            "missing status bar description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Create a project to get started. Templates are available"),
+            "missing empty state description in {:?}",
             snapshot.semantics_descriptions
         );
         for checked in ["checked", "unchecked"] {
@@ -5857,6 +7194,51 @@ mod tests {
             [
                 BindingWidget::label("Ready"),
                 BindingWidget::button("Apply", None),
+                BindingWidget::icon(
+                    IconGlyph::Search,
+                    Some("Search icon".to_owned()),
+                    None,
+                    None,
+                ),
+                BindingWidget::icon_button(
+                    IconGlyph::Download,
+                    "Download",
+                    true,
+                    true,
+                    Some(28.0),
+                    Some(16.0),
+                    Some("Download file".to_owned()),
+                    None,
+                ),
+                BindingWidget::surface(
+                    BindingWidget::label("Surface content"),
+                    SurfaceRole::Panel,
+                    Some("Main surface".to_owned()),
+                    None,
+                    Some(SurfaceElevation::Small),
+                    None,
+                    Some(6.0),
+                    false,
+                    false,
+                ),
+                BindingWidget::toolbar(
+                    [
+                        BindingWidget::button("Toolbar action", None),
+                        BindingWidget::icon(
+                            IconGlyph::Search,
+                            Some("Toolbar search".to_owned()),
+                            None,
+                            None,
+                        ),
+                    ],
+                    Axis::Horizontal,
+                    Some("Main toolbar".to_owned()),
+                    Some(32.0),
+                    Some(4.0),
+                    Some(4.0),
+                    None,
+                    true,
+                ),
                 BindingWidget::link(
                     "Documentation",
                     "https://example.invalid/docs",
@@ -5867,6 +7249,98 @@ mod tests {
                 BindingWidget::checkbox("Enabled", true, None),
                 BindingWidget::switch("Airplane mode", false, None),
                 BindingWidget::radio_button("Manual", true, None),
+                BindingWidget::radio_group(
+                    "Priority",
+                    ["Low", "Medium", "High"],
+                    Some(BindingNumber::Static(1.0)),
+                    None,
+                ),
+                BindingWidget::segmented_control(
+                    "View mode",
+                    [
+                        BindingSegmentedControlItem::new(
+                            "List",
+                            Some("Show list view".to_string()),
+                            Some("Compact rows".to_string()),
+                            false,
+                        ),
+                        BindingSegmentedControlItem::new("Gallery", None, None, false),
+                        BindingSegmentedControlItem::new(
+                            "Map",
+                            Some("Show map view".to_string()),
+                            None,
+                            true,
+                        ),
+                    ],
+                    Some(BindingNumber::Static(1.0)),
+                    None,
+                ),
+                BindingWidget::breadcrumb(
+                    "Workspace path",
+                    ["D:", "Workspace", "sui"],
+                    Some(BindingNumber::Static(2.0)),
+                    None,
+                ),
+                BindingWidget::list_view(
+                    "Assets",
+                    ["Brush", "Canvas", "Export"],
+                    Some(BindingNumber::Static(1.0)),
+                    None,
+                ),
+                BindingWidget::table(
+                    "Build table",
+                    [
+                        BindingTableColumn::new(
+                            "Task",
+                            Some(160.0),
+                            None,
+                            TableColumnAlignment::Start,
+                            false,
+                        ),
+                        BindingTableColumn::new(
+                            "Owner",
+                            Some(96.0),
+                            None,
+                            TableColumnAlignment::Center,
+                            false,
+                        ),
+                    ],
+                    [
+                        BindingTableRow::new(["Bindings", "IX"]),
+                        BindingTableRow::new(["Renderer", "Core"]),
+                    ],
+                    Some(BindingNumber::Static(0.0)),
+                    None,
+                ),
+                BindingWidget::signal_meter(
+                    "Input signal",
+                    true,
+                    Some("Live audio input".to_string()),
+                    8,
+                    Some(Size::new(76.0, 16.0)),
+                ),
+                BindingWidget::status_badge(
+                    "Online",
+                    SemanticTone::Success,
+                    Some(IconGlyph::Check),
+                    Some(72.0),
+                ),
+                BindingWidget::status_bar(
+                    [
+                        BindingStatusBarSegment::new("Ln 12", SemanticTone::Neutral, None, false),
+                        BindingStatusBarSegment::new(
+                            "Writable",
+                            SemanticTone::Success,
+                            Some(84.0),
+                            false,
+                        ),
+                        BindingStatusBarSegment::new("UTF-8", SemanticTone::Info, None, true),
+                    ],
+                    Some("Editor status".to_string()),
+                    Some("All systems nominal".into()),
+                    Some(24.0),
+                ),
+                BindingWidget::detail_row("Build", "Debug profile with local bindings", Some(2)),
                 BindingWidget::slider("Opacity", opacity, 0.0, 1.0, 0.25, None),
                 BindingWidget::number_input("Count", count, 0.0, 10.0, 1.0, 0, None),
                 BindingWidget::select(
@@ -5916,6 +7390,16 @@ mod tests {
                     0.0,
                     None,
                     Some(24.0),
+                ),
+                BindingWidget::empty_state(
+                    "No projects",
+                    "Create a project to get started.",
+                    Some("Projects empty".to_string()),
+                    Some("Templates are available".to_string()),
+                    Some(IconGlyph::Folder),
+                    Some(BindingWidget::button("New project", None)),
+                    None,
+                    true,
                 ),
             ],
             6.0,
@@ -6187,6 +7671,106 @@ mod tests {
     }
 
     #[test]
+    fn binding_breadcrumb_reads_bound_state() {
+        let name = BindingState::new("Workspace path");
+        let current = BindingState::new(0.0);
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Breadcrumb",
+            BindingWidget::breadcrumb(
+                BindingText::State(name.clone()),
+                ["D:", "Workspace", "sui"],
+                Some(BindingNumber::State(current.clone())),
+                None,
+            ),
+        ));
+
+        let snapshot = app.render_window(0).unwrap();
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "breadcrumb")
+        );
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|found| found == "Workspace path")
+        );
+        assert!(snapshot.semantics_values.iter().any(|value| value == "D:"));
+
+        name.set("Project path");
+        current.set(2.0);
+        let snapshot = app.render_window(0).unwrap();
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|found| found == "Project path")
+        );
+        assert!(snapshot.semantics_values.iter().any(|value| value == "sui"));
+    }
+
+    #[test]
+    fn binding_table_reads_bound_state() {
+        let name = BindingState::new("Build table");
+        let selected = BindingState::new(1.0);
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Table",
+            BindingWidget::table(
+                BindingText::State(name.clone()),
+                [
+                    BindingTableColumn::new("Task", None, None, TableColumnAlignment::Start, false),
+                    BindingTableColumn::new(
+                        "Owner",
+                        None,
+                        None,
+                        TableColumnAlignment::Center,
+                        false,
+                    ),
+                ],
+                [
+                    BindingTableRow::new(["Bindings", "IX"]),
+                    BindingTableRow::new(["Renderer", "Core"]),
+                ],
+                Some(BindingNumber::State(selected.clone())),
+                None,
+            ),
+        ));
+
+        let snapshot = app.render_window(0).unwrap();
+        assert!(snapshot.semantics_roles.iter().any(|role| role == "table"));
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|found| found == "Build table")
+        );
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Renderer")
+        );
+
+        name.set("Task table");
+        selected.set(0.0);
+        let snapshot = app.render_window(0).unwrap();
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|found| found == "Task table")
+        );
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Bindings")
+        );
+    }
+
+    #[test]
     fn binding_select_updates_bound_state_from_keyboard() {
         let selected = BindingState::new(0.0);
         let changes = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
@@ -6267,6 +7851,344 @@ mod tests {
                 .semantics_values
                 .iter()
                 .any(|value| value == "Final")
+        );
+    }
+
+    #[test]
+    fn binding_radio_group_updates_bound_state_from_pointer() {
+        let selected = BindingState::new(0.0);
+        let changes = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+        let action = BindingSelectAction::new({
+            let changes = Arc::clone(&changes);
+            move |index, value| {
+                changes.lock().unwrap().push((index, value));
+                Ok(())
+            }
+        });
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Radio group",
+            BindingWidget::radio_group(
+                "Priority",
+                ["Low", "Medium", "High"],
+                Some(BindingNumber::State(selected.clone())),
+                Some(action),
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "radio_group")
+        );
+        assert!(snapshot.semantics_values.iter().any(|value| value == "Low"));
+        assert_eq!(selected.get(), BindingValue::Number(0.0));
+
+        let mut down =
+            BindingPointerEvent::new(BindingPointerEventKind::Down, Point::new(20.0, 52.0));
+        down.button = Some(BindingPointerButton::Primary);
+        down.buttons = 1;
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(down))
+            .unwrap();
+        let mut up = BindingPointerEvent::new(BindingPointerEventKind::Up, Point::new(20.0, 52.0));
+        up.button = Some(BindingPointerButton::Primary);
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(up))
+            .unwrap();
+
+        assert_eq!(selected.get(), BindingValue::Number(1.0));
+        assert_eq!(
+            changes.lock().unwrap().as_slice(),
+            &[(1, "Medium".to_string())]
+        );
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Medium")
+        );
+    }
+
+    #[test]
+    fn binding_segmented_control_updates_bound_state_from_pointer() {
+        let selected = BindingState::new(0.0);
+        let changes = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+        let action = BindingSelectAction::new({
+            let changes = Arc::clone(&changes);
+            move |index, value| {
+                changes.lock().unwrap().push((index, value));
+                Ok(())
+            }
+        });
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Segmented control",
+            BindingWidget::segmented_control(
+                "View mode",
+                [
+                    BindingSegmentedControlItem::new(
+                        "List",
+                        Some("Show list view".to_string()),
+                        Some("Compact rows".to_string()),
+                        false,
+                    ),
+                    BindingSegmentedControlItem::new("Gallery", None, None, false),
+                    BindingSegmentedControlItem::new(
+                        "Map",
+                        Some("Show map view".to_string()),
+                        None,
+                        true,
+                    ),
+                ],
+                Some(BindingNumber::State(selected.clone())),
+                Some(action),
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "radio_group")
+        );
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Show list view")
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|description| description == "Compact rows")
+        );
+        assert_eq!(selected.get(), BindingValue::Number(0.0));
+
+        'scan: for y in [4.0, 12.0, 20.0, 32.0, 48.0, 64.0] {
+            for x in (0..=2000).step_by(24) {
+                let point = Point::new(x as f32, y);
+                let mut down = BindingPointerEvent::new(BindingPointerEventKind::Down, point);
+                down.button = Some(BindingPointerButton::Primary);
+                down.buttons = 1;
+                runtime
+                    .handle_event(window_id, BindingEvent::Pointer(down))
+                    .unwrap();
+                let mut up = BindingPointerEvent::new(BindingPointerEventKind::Up, point);
+                up.button = Some(BindingPointerButton::Primary);
+                runtime
+                    .handle_event(window_id, BindingEvent::Pointer(up))
+                    .unwrap();
+                if selected.get() == BindingValue::Number(1.0) {
+                    break 'scan;
+                }
+            }
+        }
+
+        assert_eq!(selected.get(), BindingValue::Number(1.0));
+        assert_eq!(
+            changes.lock().unwrap().as_slice(),
+            &[(1, "Gallery".to_string())]
+        );
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Gallery")
+        );
+        assert!(
+            snapshot.semantics_disabled.iter().any(|disabled| *disabled),
+            "missing disabled segmented-control item in {:?}",
+            snapshot.semantics_disabled
+        );
+    }
+
+    #[test]
+    fn binding_list_view_updates_bound_state_from_pointer() {
+        let selected = BindingState::new(0.0);
+        let changes = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+        let action = BindingSelectAction::new({
+            let changes = Arc::clone(&changes);
+            move |index, value| {
+                changes.lock().unwrap().push((index, value));
+                Ok(())
+            }
+        });
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "List view",
+            BindingWidget::list_view(
+                "Assets",
+                ["Brush", "Canvas", "Export"],
+                Some(BindingNumber::State(selected.clone())),
+                Some(action),
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(snapshot.semantics_roles.iter().any(|role| role == "list"));
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "list_item")
+        );
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Brush")
+        );
+        assert_eq!(selected.get(), BindingValue::Number(0.0));
+
+        let mut down =
+            BindingPointerEvent::new(BindingPointerEventKind::Down, Point::new(44.0, 44.0));
+        down.button = Some(BindingPointerButton::Primary);
+        down.buttons = 1;
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(down))
+            .unwrap();
+        let mut up = BindingPointerEvent::new(BindingPointerEventKind::Up, Point::new(44.0, 44.0));
+        up.button = Some(BindingPointerButton::Primary);
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(up))
+            .unwrap();
+
+        assert_eq!(selected.get(), BindingValue::Number(1.0));
+        assert_eq!(
+            changes.lock().unwrap().as_slice(),
+            &[(1, "Canvas".to_string())]
+        );
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Canvas")
+        );
+        assert!(
+            snapshot.semantics_selected.iter().any(|selected| *selected),
+            "missing selected list item state in {:?}",
+            snapshot.semantics_selected
+        );
+    }
+
+    #[test]
+    fn binding_signal_meter_reads_bound_active_state() {
+        let active = BindingState::new(true);
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Signal meter",
+            BindingWidget::signal_meter(
+                "Input signal",
+                active.clone(),
+                Some("Live audio input".to_string()),
+                8,
+                Some(Size::new(76.0, 16.0)),
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(snapshot.command_count > 0);
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "generic_container")
+        );
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Input signal")
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|description| description == "Live audio input")
+        );
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "active")
+        );
+
+        active.set(false);
+        assert_eq!(runtime.pending_ui_task_count(), 1);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "idle")
+        );
+    }
+
+    #[test]
+    fn binding_icon_button_reads_bound_state() {
+        let selected = BindingState::new(false);
+        let enabled = BindingState::new(true);
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Icon button",
+            BindingWidget::icon_button(
+                IconGlyph::Download,
+                "Download",
+                selected.clone(),
+                enabled.clone(),
+                Some(28.0),
+                Some(16.0),
+                Some("Download file".to_string()),
+                None,
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(snapshot.command_count > 0);
+        assert!(snapshot.semantics_roles.iter().any(|role| role == "button"));
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Download")
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|description| description == "Download file")
+        );
+        assert!(!snapshot.semantics_selected.iter().any(|value| *value));
+        assert!(!snapshot.semantics_disabled.iter().any(|value| *value));
+
+        selected.set(true);
+        enabled.set(false);
+        assert_eq!(runtime.pending_ui_task_count(), 2);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 2);
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot.semantics_selected.iter().any(|value| *value),
+            "missing selected icon button state in {:?}",
+            snapshot.semantics_selected
+        );
+        assert!(
+            snapshot.semantics_disabled.iter().any(|value| *value),
+            "missing disabled icon button state in {:?}",
+            snapshot.semantics_disabled
         );
     }
 

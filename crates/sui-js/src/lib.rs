@@ -12,19 +12,24 @@ use sui_bindings_core::{
     BindingKeyboardEvent, BindingModifiers, BindingNumber, BindingNumberAction,
     BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
     BindingRenderSnapshot, BindingRuntime, BindingScrollAxes, BindingScrollDelta,
-    BindingSelectAction, BindingShader, BindingState, BindingStringAction, BindingText,
+    BindingSegmentedControlItem, BindingSelectAction, BindingShader, BindingState,
+    BindingStatusBarSegment, BindingStringAction, BindingTableColumn, BindingTableRow, BindingText,
     BindingTextSpan, BindingUiHandle, BindingValue, BindingWidget, BindingWindow,
     BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
     ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
     ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
     ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
-    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
+    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_icon_glyph_from_name,
+    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
+    binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_role_from_name, binding_semantics_roles, binding_semantics_selected,
-    binding_semantics_values, binding_toggle_state_from_name, resolve_binding_image_slots,
+    binding_semantics_values, binding_surface_border_from_name,
+    binding_surface_elevation_from_name, binding_surface_role_from_name,
+    binding_table_column_alignment_from_name, binding_toggle_state_from_name,
+    resolve_binding_image_slots,
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
@@ -976,6 +981,102 @@ impl JsTextSpan {
     #[napi(getter)]
     pub fn text(&self) -> String {
         self.inner.text.clone()
+    }
+}
+
+#[napi(js_name = "StatusBarSegment")]
+#[derive(Debug, Clone)]
+pub struct JsStatusBarSegment {
+    inner: BindingStatusBarSegment,
+}
+
+#[napi]
+impl JsStatusBarSegment {
+    #[napi(constructor)]
+    pub fn new(
+        text: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+        tone: Option<String>,
+        min_width: Option<f64>,
+        expand: Option<bool>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingStatusBarSegment::new(
+                binding_text_from_js(text),
+                semantic_tone_from_js(tone.as_deref().unwrap_or("neutral"))?,
+                min_width.map(|value| value as f32),
+                expand.unwrap_or(false),
+            ),
+        })
+    }
+}
+
+#[napi(js_name = "SegmentedControlItem")]
+#[derive(Debug, Clone)]
+pub struct JsSegmentedControlItem {
+    inner: BindingSegmentedControlItem,
+}
+
+#[napi]
+impl JsSegmentedControlItem {
+    #[napi(constructor)]
+    pub fn new(
+        label: String,
+        semantic_name: Option<String>,
+        description: Option<String>,
+        disabled: Option<bool>,
+    ) -> Self {
+        Self {
+            inner: BindingSegmentedControlItem::new(
+                label,
+                semantic_name,
+                description,
+                disabled.unwrap_or(false),
+            ),
+        }
+    }
+}
+
+#[napi(js_name = "TableColumn")]
+#[derive(Debug, Clone)]
+pub struct JsTableColumn {
+    inner: BindingTableColumn,
+}
+
+#[napi]
+impl JsTableColumn {
+    #[napi(constructor)]
+    pub fn new(
+        title: String,
+        width: Option<f64>,
+        min_width: Option<f64>,
+        alignment: Option<String>,
+        numeric: Option<bool>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingTableColumn::new(
+                title,
+                width.map(|value| value as f32),
+                min_width.map(|value| value as f32),
+                table_column_alignment_from_js(alignment.as_deref().unwrap_or("start"))?,
+                numeric.unwrap_or(false),
+            ),
+        })
+    }
+}
+
+#[napi(js_name = "TableRow")]
+#[derive(Debug, Clone)]
+pub struct JsTableRow {
+    inner: BindingTableRow,
+}
+
+#[napi]
+impl JsTableRow {
+    #[napi(constructor)]
+    pub fn new(cells: Vec<String>) -> Self {
+        Self {
+            inner: BindingTableRow::new(cells),
+        }
     }
 }
 
@@ -2462,6 +2563,64 @@ pub fn js_button(
     )))
 }
 
+#[napi(js_name = "Icon")]
+pub fn js_icon(
+    glyph: String,
+    label: Option<String>,
+    size: Option<f64>,
+    color: Option<&JsColor>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::icon(
+        icon_glyph_from_js(&glyph)?,
+        label,
+        size.map(|value| value as f32),
+        color.map(|value| (*value).into()),
+    )))
+}
+
+#[napi(js_name = "IconButton")]
+pub fn js_icon_button(
+    env: Env,
+    glyph: String,
+    label: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, bool, f64>>,
+    enabled: Option<Either3<ClassInstance<'_, JsState>, bool, f64>>,
+    size: Option<f64>,
+    icon_size: Option<f64>,
+    description: Option<String>,
+    on_press: Option<Function<'_, (), ()>>,
+) -> Result<JsWidget> {
+    let action = on_press
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingAction::new(move || {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::icon_button(
+        icon_glyph_from_js(&glyph)?,
+        binding_text_from_js(label),
+        selected
+            .map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(false)),
+        enabled
+            .map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(true)),
+        size.map(|value| value as f32),
+        icon_size.map(|value| value as f32),
+        description,
+        action,
+    )))
+}
+
 #[napi(js_name = "Link")]
 pub fn js_link(
     env: Env,
@@ -2589,6 +2748,207 @@ pub fn js_radio_button(
     )))
 }
 
+#[napi(js_name = "RadioGroup")]
+pub fn js_radio_group(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    options: Vec<String>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::radio_group(
+        binding_text_from_js(name),
+        options,
+        selected.map(binding_number_from_js),
+        action,
+    )))
+}
+
+#[napi(js_name = "SegmentedControl")]
+pub fn js_segmented_control(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    items: Array<'_>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::segmented_control(
+        binding_text_from_js(name),
+        extract_segmented_control_items(&items)?,
+        selected.map(binding_number_from_js),
+        action,
+    )))
+}
+
+fn js_breadcrumb_widget(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    items: Vec<String>,
+    current: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_activate: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let action = on_activate
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::breadcrumb(
+        binding_text_from_js(name),
+        items,
+        current.map(binding_number_from_js),
+        action,
+    )))
+}
+
+#[napi(js_name = "Breadcrumb")]
+pub fn js_breadcrumb(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    items: Vec<String>,
+    current: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_activate: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    js_breadcrumb_widget(env, name, items, current, on_activate)
+}
+
+#[napi(js_name = "PathBar")]
+pub fn js_path_bar(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    items: Vec<String>,
+    current: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_activate: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    js_breadcrumb_widget(env, name, items, current, on_activate)
+}
+
+#[napi(js_name = "ListView")]
+pub fn js_list_view(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    items: Vec<String>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::list_view(
+        binding_text_from_js(name),
+        items,
+        selected.map(binding_number_from_js),
+        action,
+    )))
+}
+
+fn js_table_widget(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    columns: Array<'_>,
+    rows: Array<'_>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::table(
+        binding_text_from_js(name),
+        extract_table_columns(&columns)?,
+        extract_table_rows(&rows)?,
+        selected.map(binding_number_from_js),
+        action,
+    )))
+}
+
+#[napi(js_name = "Table")]
+pub fn js_table(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    columns: Array<'_>,
+    rows: Array<'_>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    js_table_widget(env, name, columns, rows, selected, on_change)
+}
+
+#[napi(js_name = "DataGrid")]
+pub fn js_data_grid(
+    env: Env,
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    columns: Array<'_>,
+    rows: Array<'_>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    js_table_widget(env, name, columns, rows, selected, on_change)
+}
+
 #[napi(js_name = "Slider")]
 pub fn js_slider(
     env: Env,
@@ -2714,6 +3074,68 @@ pub fn js_progress_bar(
         min.unwrap_or(0.0),
         max.unwrap_or(1.0),
         show_value.unwrap_or(false),
+    )))
+}
+
+#[napi(js_name = "SignalMeter")]
+pub fn js_signal_meter(
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    active: Option<Either3<ClassInstance<'_, JsState>, bool, f64>>,
+    description: Option<String>,
+    bars: Option<u32>,
+    size: Option<&JsSize>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::signal_meter(
+        binding_text_from_js(name),
+        active
+            .map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(false)),
+        description,
+        bars.unwrap_or(12) as usize,
+        size.map(|size| Size::new(size.width as f32, size.height as f32)),
+    )))
+}
+
+#[napi(js_name = "StatusBadge")]
+pub fn js_status_badge(
+    label: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    tone: Option<String>,
+    icon: Option<String>,
+    min_width: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::status_badge(
+        binding_text_from_js(label),
+        semantic_tone_from_js(tone.as_deref().unwrap_or("neutral"))?,
+        icon.as_deref().map(icon_glyph_from_js).transpose()?,
+        min_width.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "StatusBar")]
+pub fn js_status_bar(
+    segments: Array<'_>,
+    name: Option<String>,
+    description: Option<Either4<ClassInstance<'_, JsState>, String, f64, bool>>,
+    height: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::status_bar(
+        extract_status_bar_segments(&segments)?,
+        name,
+        description.map(binding_text_from_js),
+        height.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "DetailRow")]
+pub fn js_detail_row(
+    label: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    value: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    max_value_lines: Option<u32>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::detail_row(
+        binding_text_from_js(label),
+        binding_text_from_js(value),
+        max_value_lines.map(|value| value as usize),
     )))
 }
 
@@ -2873,6 +3295,80 @@ pub fn js_separator(
         inset.unwrap_or(0.0) as f32,
         thickness.map(|value| value as f32),
         length.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "EmptyState")]
+pub fn js_empty_state(
+    title: String,
+    description: String,
+    name: Option<String>,
+    detail: Option<String>,
+    icon: Option<String>,
+    action: Option<ClassInstance<'_, JsWidget>>,
+    background: Option<&JsColor>,
+    transparent: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::empty_state(
+        title,
+        description,
+        name,
+        detail,
+        icon.as_deref().map(icon_glyph_from_js).transpose()?,
+        action.map(|widget| widget.binding_widget()).transpose()?,
+        background.map(|value| (*value).into()),
+        transparent.unwrap_or(false),
+    )))
+}
+
+#[napi(js_name = "Surface")]
+pub fn js_surface(
+    child: ClassInstance<'_, JsWidget>,
+    role: Option<String>,
+    name: Option<String>,
+    border: Option<String>,
+    elevation: Option<String>,
+    radius: Option<f64>,
+    padding: Option<f64>,
+    fill_width: Option<bool>,
+    fill_height: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::surface(
+        child.binding_widget()?,
+        surface_role_from_js(role.as_deref().unwrap_or("panel"))?,
+        name,
+        border.as_deref().map(surface_border_from_js).transpose()?,
+        elevation
+            .as_deref()
+            .map(surface_elevation_from_js)
+            .transpose()?,
+        radius.map(|value| value as f32),
+        padding.map(|value| value as f32),
+        fill_width.unwrap_or(false),
+        fill_height.unwrap_or(false),
+    )))
+}
+
+#[napi(js_name = "Toolbar")]
+pub fn js_toolbar(
+    children: Array<'_>,
+    axis: Option<String>,
+    name: Option<String>,
+    extent: Option<f64>,
+    padding: Option<f64>,
+    spacing: Option<f64>,
+    background: Option<&JsColor>,
+    divider: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::toolbar(
+        extract_binding_widgets(&children)?,
+        js_axis(axis.as_deref().unwrap_or("horizontal"))?,
+        name,
+        extent.map(|value| value as f32),
+        padding.map(|value| value as f32),
+        spacing.map(|value| value as f32),
+        background.map(|value| (*value).into()),
+        divider.unwrap_or(true),
     )))
 }
 
@@ -3065,6 +3561,36 @@ fn js_image_fit(value: &str) -> Result<BindingImageFit> {
             "image fit must be 'fill', 'contain', 'cover', or 'none'",
         )),
     }
+}
+
+fn icon_glyph_from_js(value: &str) -> Result<sui_crate::IconGlyph> {
+    binding_icon_glyph_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown icon glyph '{value}'")))
+}
+
+fn semantic_tone_from_js(value: &str) -> Result<sui_crate::SemanticTone> {
+    binding_semantic_tone_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown semantic tone '{value}'")))
+}
+
+fn table_column_alignment_from_js(value: &str) -> Result<sui_crate::TableColumnAlignment> {
+    binding_table_column_alignment_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown table column alignment '{value}'")))
+}
+
+fn surface_role_from_js(value: &str) -> Result<sui_crate::SurfaceRole> {
+    binding_surface_role_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown surface role '{value}'")))
+}
+
+fn surface_border_from_js(value: &str) -> Result<sui_crate::SurfaceBorder> {
+    binding_surface_border_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown surface border '{value}'")))
+}
+
+fn surface_elevation_from_js(value: &str) -> Result<sui_crate::SurfaceElevation> {
+    binding_surface_elevation_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown surface elevation '{value}'")))
 }
 
 fn js_axis(value: &str) -> Result<Axis> {
@@ -3437,6 +3963,54 @@ fn extract_text_spans(spans: &Array<'_>) -> Result<Vec<BindingTextSpan>> {
     Ok(out)
 }
 
+fn extract_status_bar_segments(segments: &Array<'_>) -> Result<Vec<BindingStatusBarSegment>> {
+    let mut out = Vec::with_capacity(segments.len() as usize);
+    for index in 0..segments.len() {
+        let segment = segments
+            .get::<ClassInstance<'_, JsStatusBarSegment>>(index)?
+            .ok_or_else(|| {
+                napi_invalid_arg(format!("status bar segment {index} is out of range"))
+            })?;
+        out.push(segment.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_segmented_control_items(items: &Array<'_>) -> Result<Vec<BindingSegmentedControlItem>> {
+    let mut out = Vec::with_capacity(items.len() as usize);
+    for index in 0..items.len() {
+        let item = items
+            .get::<ClassInstance<'_, JsSegmentedControlItem>>(index)?
+            .ok_or_else(|| {
+                napi_invalid_arg(format!("segmented control item {index} is out of range"))
+            })?;
+        out.push(item.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_table_columns(columns: &Array<'_>) -> Result<Vec<BindingTableColumn>> {
+    let mut out = Vec::with_capacity(columns.len() as usize);
+    for index in 0..columns.len() {
+        let column = columns
+            .get::<ClassInstance<'_, JsTableColumn>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("table column {index} is out of range")))?;
+        out.push(column.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_table_rows(rows: &Array<'_>) -> Result<Vec<BindingTableRow>> {
+    let mut out = Vec::with_capacity(rows.len() as usize);
+    for index in 0..rows.len() {
+        let row = rows
+            .get::<ClassInstance<'_, JsTableRow>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("table row {index} is out of range")))?;
+        out.push(row.inner.clone());
+    }
+    Ok(out)
+}
+
 fn napi_value_error(error: PaintValidationError) -> Error {
     Error::new(Status::InvalidArg, error.to_string())
 }
@@ -3709,11 +4283,29 @@ mod tests {
     fn binding_tree_renders_form_controls_and_updates_checkbox_state() {
         let checked = JsState::new(Either3::C(false));
         let slider_value = JsState::new(Either3::B(0.25));
+        let selected = JsState::new(Either3::C(false));
+        let enabled = JsState::new(Either3::C(true));
         let root = BindingWidget::column(
             [
                 BindingWidget::checkbox("Enabled", checked.inner.clone(), None),
                 BindingWidget::switch("Airplane mode", false, None),
                 BindingWidget::slider("Opacity", slider_value.inner.clone(), 0.0, 1.0, 0.05, None),
+                BindingWidget::icon(
+                    sui_crate::IconGlyph::Search,
+                    Some("Search icon".to_owned()),
+                    None,
+                    None,
+                ),
+                BindingWidget::icon_button(
+                    sui_crate::IconGlyph::Download,
+                    "Download",
+                    selected.inner.clone(),
+                    enabled.inner.clone(),
+                    None,
+                    None,
+                    Some("Download file".to_owned()),
+                    None,
+                ),
             ],
             8.0,
         );
@@ -3723,7 +4315,20 @@ mod tests {
         let snapshot = runtime.render_window(window_id).unwrap();
 
         assert!(snapshot.command_count > 0);
-        assert!(snapshot.semantics_count >= 3);
+        assert!(snapshot.semantics_count >= 5);
+        assert!(snapshot.semantics_roles.iter().any(|role| role == "image"));
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Search icon")
+        );
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Download")
+        );
         assert_eq!(checked.text(), "false");
 
         let down = JsEvent::pointer(
@@ -3757,6 +4362,14 @@ mod tests {
 
         assert!(snapshot.command_count > 0);
         assert_eq!(checked.text(), "true");
+
+        selected.set(Either3::C(true));
+        enabled.set(Either3::C(false));
+        assert_eq!(runtime.pending_ui_task_count(), 2);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 2);
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(snapshot.semantics_selected.iter().any(|value| *value));
+        assert!(snapshot.semantics_disabled.iter().any(|value| *value));
     }
 
     #[test]
@@ -3805,6 +4418,215 @@ mod tests {
         runtime.handle_event(window_id, up.binding_event()).unwrap();
 
         assert_eq!(selected.text(), "true");
+    }
+
+    #[test]
+    fn binding_tree_radio_group_updates_state_from_pointer() {
+        let selected = JsState::new(Either3::B(0.0));
+        let changes = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+        let action = BindingSelectAction::new({
+            let changes = Arc::clone(&changes);
+            move |index, value| {
+                changes.lock().unwrap().push((index, value));
+                Ok(())
+            }
+        });
+        let root = BindingWidget::radio_group(
+            "Priority",
+            ["Low", "Medium", "High"],
+            Some(BindingNumber::State(selected.inner.clone())),
+            Some(action),
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Radio group", root));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "radio_group")
+        );
+        assert!(snapshot.semantics_values.iter().any(|value| value == "Low"));
+        assert_eq!(selected.text(), "0");
+
+        let down = JsEvent::pointer(
+            "down".to_owned(),
+            &JsPoint::new(20.0, 52.0),
+            None,
+            None,
+            Some("primary".to_owned()),
+            Some(1),
+            None,
+            None,
+        )
+        .unwrap();
+        runtime
+            .handle_event(window_id, down.binding_event())
+            .unwrap();
+
+        let up = JsEvent::pointer(
+            "up".to_owned(),
+            &JsPoint::new(20.0, 52.0),
+            None,
+            None,
+            Some("primary".to_owned()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        runtime.handle_event(window_id, up.binding_event()).unwrap();
+
+        assert_eq!(selected.text(), "1");
+        assert_eq!(
+            changes.lock().unwrap().as_slice(),
+            &[(1, "Medium".to_owned())]
+        );
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Medium")
+        );
+    }
+
+    #[test]
+    fn binding_tree_list_view_updates_state_from_pointer() {
+        let selected = JsState::new(Either3::B(0.0));
+        let changes = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+        let action = BindingSelectAction::new({
+            let changes = Arc::clone(&changes);
+            move |index, value| {
+                changes.lock().unwrap().push((index, value));
+                Ok(())
+            }
+        });
+        let root = BindingWidget::list_view(
+            "Assets",
+            ["Brush", "Canvas", "Export"],
+            Some(BindingNumber::State(selected.inner.clone())),
+            Some(action),
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("List view", root));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(snapshot.semantics_roles.iter().any(|role| role == "list"));
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "list_item")
+        );
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Brush")
+        );
+        assert_eq!(selected.text(), "0");
+
+        let down = JsEvent::pointer(
+            "down".to_owned(),
+            &JsPoint::new(44.0, 44.0),
+            None,
+            None,
+            Some("primary".to_owned()),
+            Some(1),
+            None,
+            None,
+        )
+        .unwrap();
+        runtime
+            .handle_event(window_id, down.binding_event())
+            .unwrap();
+
+        let up = JsEvent::pointer(
+            "up".to_owned(),
+            &JsPoint::new(44.0, 44.0),
+            None,
+            None,
+            Some("primary".to_owned()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        runtime.handle_event(window_id, up.binding_event()).unwrap();
+
+        assert_eq!(selected.text(), "1");
+        assert_eq!(
+            changes.lock().unwrap().as_slice(),
+            &[(1, "Canvas".to_owned())]
+        );
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "Canvas")
+        );
+        assert!(
+            snapshot.semantics_selected.iter().any(|selected| *selected),
+            "missing selected list item state in {:?}",
+            snapshot.semantics_selected
+        );
+    }
+
+    #[test]
+    fn binding_tree_signal_meter_reads_bound_state() {
+        let active = JsState::new(Either3::C(true));
+        let root = BindingWidget::signal_meter(
+            "Input signal",
+            active.inner.clone(),
+            Some("Live audio input".to_owned()),
+            8,
+            Some(Size::new(76.0, 16.0)),
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Signal", root));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "generic_container")
+        );
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Input signal")
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|description| description == "Live audio input")
+        );
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "active")
+        );
+
+        active.set(Either3::C(false));
+        assert_eq!(runtime.pending_ui_task_count(), 1);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "idle")
+        );
     }
 
     #[test]
@@ -4158,21 +4980,28 @@ mod tests {
 
     fn assert_cross_language_snapshot_signature(snapshot: &JsRenderSnapshot) {
         assert!(snapshot.command_count > 0);
-        assert!(snapshot.semantics_count >= 17);
+        assert!(snapshot.semantics_count >= 30);
 
         for role in [
+            "generic_container",
             "text",
             "button",
             "link",
             "checkbox",
             "switch",
             "radio_button",
+            "radio_group",
+            "breadcrumb",
+            "list",
+            "list_item",
+            "table",
             "slider",
             "spin_box",
             "combo_box",
             "progress_bar",
             "busy_indicator",
             "text_input",
+            "image",
             "scroll_view",
             "color_swatch",
             "separator",
@@ -4187,10 +5016,35 @@ mod tests {
         for name in [
             "Ready",
             "Apply",
+            "Search icon",
+            "Download",
+            "Main surface",
+            "Surface content",
+            "Main toolbar",
+            "Toolbar action",
+            "Toolbar search",
             "Documentation",
             "Enabled",
             "Airplane mode",
             "Manual",
+            "Priority",
+            "View mode",
+            "Show list view",
+            "Gallery",
+            "Show map view",
+            "Workspace path",
+            "Assets",
+            "Brush",
+            "Canvas",
+            "Export",
+            "Build table",
+            "Input signal",
+            "Online",
+            "Editor status",
+            "Ln 12",
+            "Writable",
+            "UTF-8",
+            "Build",
             "Opacity",
             "Count",
             "Mode",
@@ -4202,6 +5056,8 @@ mod tests {
             "Rich summary",
             "Accent",
             "Section divider",
+            "Projects empty",
+            "New project",
         ] {
             assert!(
                 snapshot.semantics_names.iter().any(|value| value == name),
@@ -4214,6 +5070,20 @@ mod tests {
             "https://example.invalid/docs",
             "0.5:0:1",
             "3",
+            "Medium",
+            "Gallery",
+            "List",
+            "Map",
+            "sui",
+            "Canvas",
+            "Bindings",
+            "active",
+            "Online",
+            "All systems nominal",
+            "Ln 12",
+            "Writable",
+            "UTF-8",
+            "Debug profile with local bindings",
             "Final",
             "0.25:0:1",
             "Ada",
@@ -4234,6 +5104,46 @@ mod tests {
                 .iter()
                 .any(|value| value == "Loading assets"),
             "missing busy indicator description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Download file"),
+            "missing icon button description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Live audio input"),
+            "missing signal meter description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Compact rows"),
+            "missing segmented control description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "All systems nominal"),
+            "missing status bar description in {:?}",
+            snapshot.semantics_descriptions
+        );
+        assert!(
+            snapshot
+                .semantics_descriptions
+                .iter()
+                .any(|value| value == "Create a project to get started. Templates are available"),
+            "missing empty state description in {:?}",
             snapshot.semantics_descriptions
         );
         for checked in ["checked", "unchecked"] {
@@ -4277,6 +5187,51 @@ mod tests {
             [
                 BindingWidget::label("Ready"),
                 BindingWidget::button("Apply", None),
+                BindingWidget::icon(
+                    sui_crate::IconGlyph::Search,
+                    Some("Search icon".to_owned()),
+                    None,
+                    None,
+                ),
+                BindingWidget::icon_button(
+                    sui_crate::IconGlyph::Download,
+                    "Download",
+                    true,
+                    true,
+                    Some(28.0),
+                    Some(16.0),
+                    Some("Download file".to_owned()),
+                    None,
+                ),
+                BindingWidget::surface(
+                    BindingWidget::label("Surface content"),
+                    sui_crate::SurfaceRole::Panel,
+                    Some("Main surface".to_owned()),
+                    None,
+                    Some(sui_crate::SurfaceElevation::Small),
+                    None,
+                    Some(6.0),
+                    false,
+                    false,
+                ),
+                BindingWidget::toolbar(
+                    [
+                        BindingWidget::button("Toolbar action", None),
+                        BindingWidget::icon(
+                            sui_crate::IconGlyph::Search,
+                            Some("Toolbar search".to_owned()),
+                            None,
+                            None,
+                        ),
+                    ],
+                    Axis::Horizontal,
+                    Some("Main toolbar".to_owned()),
+                    Some(32.0),
+                    Some(4.0),
+                    Some(4.0),
+                    None,
+                    true,
+                ),
                 BindingWidget::link(
                     "Documentation",
                     "https://example.invalid/docs",
@@ -4287,6 +5242,108 @@ mod tests {
                 BindingWidget::checkbox("Enabled", true, None),
                 BindingWidget::switch("Airplane mode", false, None),
                 BindingWidget::radio_button("Manual", true, None),
+                BindingWidget::radio_group(
+                    "Priority",
+                    ["Low", "Medium", "High"],
+                    Some(BindingNumber::Static(1.0)),
+                    None,
+                ),
+                BindingWidget::segmented_control(
+                    "View mode",
+                    [
+                        BindingSegmentedControlItem::new(
+                            "List",
+                            Some("Show list view".to_owned()),
+                            Some("Compact rows".to_owned()),
+                            false,
+                        ),
+                        BindingSegmentedControlItem::new("Gallery", None, None, false),
+                        BindingSegmentedControlItem::new(
+                            "Map",
+                            Some("Show map view".to_owned()),
+                            None,
+                            true,
+                        ),
+                    ],
+                    Some(BindingNumber::Static(1.0)),
+                    None,
+                ),
+                BindingWidget::breadcrumb(
+                    "Workspace path",
+                    ["D:", "Workspace", "sui"],
+                    Some(BindingNumber::Static(2.0)),
+                    None,
+                ),
+                BindingWidget::list_view(
+                    "Assets",
+                    ["Brush", "Canvas", "Export"],
+                    Some(BindingNumber::Static(1.0)),
+                    None,
+                ),
+                BindingWidget::table(
+                    "Build table",
+                    [
+                        BindingTableColumn::new(
+                            "Task",
+                            Some(160.0),
+                            None,
+                            sui_crate::TableColumnAlignment::Start,
+                            false,
+                        ),
+                        BindingTableColumn::new(
+                            "Owner",
+                            Some(96.0),
+                            None,
+                            sui_crate::TableColumnAlignment::Center,
+                            false,
+                        ),
+                    ],
+                    [
+                        BindingTableRow::new(["Bindings", "IX"]),
+                        BindingTableRow::new(["Renderer", "Core"]),
+                    ],
+                    Some(BindingNumber::Static(0.0)),
+                    None,
+                ),
+                BindingWidget::signal_meter(
+                    "Input signal",
+                    true,
+                    Some("Live audio input".to_owned()),
+                    8,
+                    Some(Size::new(76.0, 16.0)),
+                ),
+                BindingWidget::status_badge(
+                    "Online",
+                    sui_crate::SemanticTone::Success,
+                    Some(sui_crate::IconGlyph::Check),
+                    Some(72.0),
+                ),
+                BindingWidget::status_bar(
+                    [
+                        BindingStatusBarSegment::new(
+                            "Ln 12",
+                            sui_crate::SemanticTone::Neutral,
+                            None,
+                            false,
+                        ),
+                        BindingStatusBarSegment::new(
+                            "Writable",
+                            sui_crate::SemanticTone::Success,
+                            Some(84.0),
+                            false,
+                        ),
+                        BindingStatusBarSegment::new(
+                            "UTF-8",
+                            sui_crate::SemanticTone::Info,
+                            None,
+                            true,
+                        ),
+                    ],
+                    Some("Editor status".to_owned()),
+                    Some("All systems nominal".into()),
+                    Some(24.0),
+                ),
+                BindingWidget::detail_row("Build", "Debug profile with local bindings", Some(2)),
                 BindingWidget::slider("Opacity", opacity.inner.clone(), 0.0, 1.0, 0.25, None),
                 BindingWidget::number_input("Count", count.inner.clone(), 0.0, 10.0, 1.0, 0, None),
                 BindingWidget::select(
@@ -4352,6 +5409,16 @@ mod tests {
                     0.0,
                     None,
                     Some(24.0),
+                ),
+                BindingWidget::empty_state(
+                    "No projects",
+                    "Create a project to get started.",
+                    Some("Projects empty".to_owned()),
+                    Some("Templates are available".to_owned()),
+                    Some(sui_crate::IconGlyph::Folder),
+                    Some(BindingWidget::button("New project", None)),
+                    None,
+                    true,
                 ),
             ],
             6.0,
