@@ -1,0 +1,665 @@
+# Common widget binding manifest.
+#
+# The checker treats `status = "stable"` as required coverage and reports
+# `status = "planned"` as visible backlog without failing.
+
+[[item]]
+name = "TextSpan"
+kind = "descriptor"
+status = "stable"
+core_descriptor = "BindingTextSpan"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["TextSpan"]
+
+[[item]]
+name = "StatusBarSegment"
+kind = "descriptor"
+status = "stable"
+core_descriptor = "BindingStatusBarSegment"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["StatusBarSegment"]
+
+[[item]]
+name = "SegmentedControlItem"
+kind = "descriptor"
+status = "stable"
+core_descriptor = "BindingSegmentedControlItem"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["SegmentedControlItem"]
+
+[[item]]
+name = "TableColumn"
+kind = "descriptor"
+status = "stable"
+core_descriptor = "BindingTableColumn"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["TableColumn"]
+
+[[item]]
+name = "TableRow"
+kind = "descriptor"
+status = "stable"
+core_descriptor = "BindingTableRow"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["TableRow"]
+
+[[item]]
+name = "Label"
+kind = "widget"
+status = "stable"
+core_kind = "Label"
+core_constructor = "label"
+python_kind = "function"
+python_rust = "py_label"
+js_kind = "function"
+js_rust = "js_label"
+ts_kind = "function"
+docs = ["Label"]
+compat = true
+
+[[item]]
+name = "Button"
+kind = "widget"
+status = "stable"
+core_kind = "Button"
+core_constructor = "button"
+python_kind = "function"
+python_rust = "py_button"
+js_kind = "function"
+js_rust = "js_button"
+ts_kind = "function"
+docs = ["Button"]
+compat = true
+
+[[item]]
+name = "Icon"
+kind = "widget"
+status = "stable"
+core_kind = "Icon"
+core_constructor = "icon"
+python_kind = "function"
+python_rust = "py_icon"
+js_kind = "function"
+js_rust = "js_icon"
+ts_kind = "function"
+docs = ["Icon"]
+compat = true
+
+[[item]]
+name = "IconButton"
+kind = "widget"
+status = "stable"
+core_kind = "IconButton"
+core_constructor = "icon_button"
+python_kind = "function"
+python_rust = "py_icon_button"
+js_kind = "function"
+js_rust = "js_icon_button"
+ts_kind = "function"
+docs = ["IconButton"]
+compat = true
+
+[[item]]
+name = "Link"
+kind = "widget"
+status = "stable"
+core_kind = "Link"
+core_constructor = "link"
+python_kind = "function"
+python_rust = "py_link"
+js_kind = "function"
+js_rust = "js_link"
+ts_kind = "function"
+docs = ["Link"]
+compat = true
+
+[[item]]
+name = "Checkbox"
+kind = "widget"
+status = "stable"
+core_kind = "Checkbox"
+core_constructor = "checkbox"
+python_kind = "function"
+python_rust = "py_checkbox"
+js_kind = "function"
+js_rust = "js_checkbox"
+ts_kind = "function"
+docs = ["Checkbox"]
+compat = true
+
+[[item]]
+name = "Switch"
+kind = "widget"
+status = "stable"
+core_kind = "Switch"
+core_constructor = "switch"
+python_kind = "function"
+python_rust = "py_switch"
+js_kind = "function"
+js_rust = "js_switch"
+ts_kind = "function"
+docs = ["Switch"]
+compat = true
+
+[[item]]
+name = "RadioButton"
+kind = "widget"
+status = "stable"
+core_kind = "RadioButton"
+core_constructor = "radio_button"
+python_kind = "function"
+python_rust = "py_radio_button"
+js_kind = "function"
+js_rust = "js_radio_button"
+ts_kind = "function"
+docs = ["RadioButton"]
+compat = true
+
+[[item]]
+name = "RadioGroup"
+kind = "widget"
+status = "stable"
+core_kind = "RadioGroup"
+core_constructor = "radio_group"
+python_kind = "function"
+python_rust = "py_radio_group"
+js_kind = "function"
+js_rust = "js_radio_group"
+ts_kind = "function"
+docs = ["RadioGroup"]
+compat = true
+
+[[item]]
+name = "SegmentedControl"
+kind = "widget"
+status = "stable"
+core_kind = "SegmentedControl"
+core_constructor = "segmented_control"
+python_kind = "function"
+python_rust = "py_segmented_control"
+js_kind = "function"
+js_rust = "js_segmented_control"
+ts_kind = "function"
+docs = ["SegmentedControl"]
+compat = true
+
+[[item]]
+name = "Breadcrumb"
+kind = "widget"
+status = "stable"
+core_kind = "Breadcrumb"
+core_constructor = "breadcrumb"
+python_kind = "function"
+python_rust = "py_breadcrumb"
+js_kind = "function"
+js_rust = "js_breadcrumb"
+ts_kind = "function"
+docs = ["Breadcrumb"]
+compat = true
+
+[[item]]
+name = "PathBar"
+kind = "alias"
+status = "stable"
+python_kind = "function"
+python_rust = "py_path_bar"
+js_kind = "function"
+js_rust = "js_path_bar"
+ts_kind = "function"
+docs = ["PathBar"]
+
+[[item]]
+name = "ListView"
+kind = "widget"
+status = "stable"
+core_kind = "ListView"
+core_constructor = "list_view"
+python_kind = "function"
+python_rust = "py_list_view"
+js_kind = "function"
+js_rust = "js_list_view"
+ts_kind = "function"
+docs = ["ListView"]
+compat = true
+
+[[item]]
+name = "Table"
+kind = "widget"
+status = "stable"
+core_kind = "Table"
+core_constructor = "table"
+python_kind = "function"
+python_rust = "py_table"
+js_kind = "function"
+js_rust = "js_table"
+ts_kind = "function"
+docs = ["Table"]
+compat = true
+
+[[item]]
+name = "DataGrid"
+kind = "alias"
+status = "stable"
+python_kind = "function"
+python_rust = "py_data_grid"
+js_kind = "function"
+js_rust = "js_data_grid"
+ts_kind = "function"
+docs = ["DataGrid"]
+
+[[item]]
+name = "Slider"
+kind = "widget"
+status = "stable"
+core_kind = "Slider"
+core_constructor = "slider"
+python_kind = "function"
+python_rust = "py_slider"
+js_kind = "function"
+js_rust = "js_slider"
+ts_kind = "function"
+docs = ["Slider"]
+compat = true
+
+[[item]]
+name = "NumberInput"
+kind = "widget"
+status = "stable"
+core_kind = "NumberInput"
+core_constructor = "number_input"
+python_kind = "function"
+python_rust = "py_number_input"
+js_kind = "function"
+js_rust = "js_number_input"
+ts_kind = "function"
+docs = ["NumberInput"]
+compat = true
+
+[[item]]
+name = "Select"
+kind = "widget"
+status = "stable"
+core_kind = "Select"
+core_constructor = "select"
+python_kind = "function"
+python_rust = "py_select"
+js_kind = "function"
+js_rust = "js_select"
+ts_kind = "function"
+docs = ["Select"]
+compat = true
+
+[[item]]
+name = "ProgressBar"
+kind = "widget"
+status = "stable"
+core_kind = "ProgressBar"
+core_constructor = "progress_bar"
+python_kind = "function"
+python_rust = "py_progress_bar"
+js_kind = "function"
+js_rust = "js_progress_bar"
+ts_kind = "function"
+docs = ["ProgressBar"]
+compat = true
+
+[[item]]
+name = "SignalMeter"
+kind = "widget"
+status = "stable"
+core_kind = "SignalMeter"
+core_constructor = "signal_meter"
+python_kind = "function"
+python_rust = "py_signal_meter"
+js_kind = "function"
+js_rust = "js_signal_meter"
+ts_kind = "function"
+docs = ["SignalMeter"]
+compat = true
+
+[[item]]
+name = "StatusBadge"
+kind = "widget"
+status = "stable"
+core_kind = "StatusBadge"
+core_constructor = "status_badge"
+python_kind = "function"
+python_rust = "py_status_badge"
+js_kind = "function"
+js_rust = "js_status_badge"
+ts_kind = "function"
+docs = ["StatusBadge"]
+compat = true
+
+[[item]]
+name = "StatusBar"
+kind = "widget"
+status = "stable"
+core_kind = "StatusBar"
+core_constructor = "status_bar"
+python_kind = "function"
+python_rust = "py_status_bar"
+js_kind = "function"
+js_rust = "js_status_bar"
+ts_kind = "function"
+docs = ["StatusBar"]
+compat = true
+
+[[item]]
+name = "DetailRow"
+kind = "widget"
+status = "stable"
+core_kind = "DetailRow"
+core_constructor = "detail_row"
+python_kind = "function"
+python_rust = "py_detail_row"
+js_kind = "function"
+js_rust = "js_detail_row"
+ts_kind = "function"
+docs = ["DetailRow"]
+compat = true
+
+[[item]]
+name = "BusyIndicator"
+kind = "widget"
+status = "stable"
+core_kind = "BusyIndicator"
+core_constructor = "busy_indicator"
+python_kind = "function"
+python_rust = "py_busy_indicator"
+js_kind = "function"
+js_rust = "js_busy_indicator"
+ts_kind = "function"
+docs = ["BusyIndicator"]
+compat = true
+
+[[item]]
+name = "TextInput"
+kind = "widget"
+status = "stable"
+core_kind = "TextInput"
+core_constructor = "text_input"
+python_kind = "function"
+python_rust = "py_text_input"
+js_kind = "function"
+js_rust = "js_text_input"
+ts_kind = "function"
+docs = ["TextInput"]
+compat = true
+
+[[item]]
+name = "TextArea"
+kind = "widget"
+status = "stable"
+core_kind = "TextArea"
+core_constructor = "text_area"
+python_kind = "function"
+python_rust = "py_text_area"
+js_kind = "function"
+js_rust = "js_text_area"
+ts_kind = "function"
+docs = ["TextArea"]
+compat = true
+
+[[item]]
+name = "RichText"
+kind = "widget"
+status = "stable"
+core_kind = "RichText"
+core_constructor = "rich_text"
+python_kind = "function"
+python_rust = "py_rich_text"
+js_kind = "function"
+js_rust = "js_rich_text"
+ts_kind = "function"
+docs = ["RichText"]
+compat = true
+
+[[item]]
+name = "Image"
+kind = "widget"
+status = "stable"
+core_kind = "Image"
+core_constructor = "image"
+python_kind = "function"
+python_rust = "py_image"
+js_kind = "function"
+js_rust = "js_image"
+ts_kind = "function"
+docs = ["Image"]
+
+[[item]]
+name = "ColorSwatch"
+kind = "widget"
+status = "stable"
+core_kind = "ColorSwatch"
+core_constructor = "color_swatch"
+python_kind = "function"
+python_rust = "py_color_swatch"
+js_kind = "function"
+js_rust = "js_color_swatch"
+ts_kind = "function"
+docs = ["ColorSwatch"]
+compat = true
+
+[[item]]
+name = "Separator"
+kind = "widget"
+status = "stable"
+core_kind = "Separator"
+core_constructor = "separator"
+python_kind = "function"
+python_rust = "py_separator"
+js_kind = "function"
+js_rust = "js_separator"
+ts_kind = "function"
+docs = ["Separator"]
+compat = true
+
+[[item]]
+name = "EmptyState"
+kind = "widget"
+status = "stable"
+core_kind = "EmptyState"
+core_constructor = "empty_state"
+python_kind = "function"
+python_rust = "py_empty_state"
+js_kind = "function"
+js_rust = "js_empty_state"
+ts_kind = "function"
+docs = ["EmptyState"]
+compat = true
+
+[[item]]
+name = "Surface"
+kind = "widget"
+status = "stable"
+core_kind = "Surface"
+core_constructor = "surface"
+python_kind = "function"
+python_rust = "py_surface"
+js_kind = "function"
+js_rust = "js_surface"
+ts_kind = "function"
+docs = ["Surface"]
+compat = true
+
+[[item]]
+name = "Toolbar"
+kind = "widget"
+status = "stable"
+core_kind = "Toolbar"
+core_constructor = "toolbar"
+python_kind = "function"
+python_rust = "py_toolbar"
+js_kind = "function"
+js_rust = "js_toolbar"
+ts_kind = "function"
+docs = ["Toolbar"]
+compat = true
+
+[[item]]
+name = "Column"
+kind = "layout"
+status = "stable"
+core_constructor = "column"
+python_kind = "function"
+python_rust = "py_column"
+js_kind = "function"
+js_rust = "js_column"
+ts_kind = "function"
+docs = ["Column"]
+
+[[item]]
+name = "Row"
+kind = "layout"
+status = "stable"
+core_constructor = "row"
+python_kind = "function"
+python_rust = "py_row"
+js_kind = "function"
+js_rust = "js_row"
+ts_kind = "function"
+docs = ["Row"]
+
+[[item]]
+name = "ScrollView"
+kind = "widget"
+status = "stable"
+core_kind = "ScrollView"
+core_constructor = "scroll_view"
+python_kind = "function"
+python_rust = "py_scroll_view"
+js_kind = "function"
+js_rust = "js_scroll_view"
+ts_kind = "function"
+docs = ["ScrollView"]
+compat = true
+
+[[item]]
+name = "ExternalSurface"
+kind = "interop-widget"
+status = "stable"
+core_kind = "ExternalSurface"
+core_constructor = "external_surface"
+python_kind = "function"
+python_rust = "py_external_surface"
+js_kind = "function"
+js_rust = "js_external_surface"
+ts_kind = "function"
+docs = ["ExternalSurface"]
+
+[[item]]
+name = "TreeItem"
+kind = "descriptor"
+status = "planned"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["TreeItem"]
+
+[[item]]
+name = "TreeView"
+kind = "widget"
+status = "planned"
+core_kind = "TreeView"
+core_constructor = "tree_view"
+python_kind = "function"
+python_rust = "py_tree_view"
+js_kind = "function"
+js_rust = "js_tree_view"
+ts_kind = "function"
+docs = ["TreeView"]
+
+[[item]]
+name = "LayerListItem"
+kind = "descriptor"
+status = "planned"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["LayerListItem"]
+
+[[item]]
+name = "LayerList"
+kind = "widget"
+status = "planned"
+core_kind = "LayerList"
+core_constructor = "layer_list"
+python_kind = "function"
+python_rust = "py_layer_list"
+js_kind = "function"
+js_rust = "js_layer_list"
+ts_kind = "function"
+docs = ["LayerList"]
+
+[[item]]
+name = "MenuItem"
+kind = "descriptor"
+status = "planned"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["MenuItem"]
+
+[[item]]
+name = "Menu"
+kind = "widget"
+status = "planned"
+core_kind = "Menu"
+core_constructor = "menu"
+python_kind = "function"
+python_rust = "py_menu"
+js_kind = "function"
+js_rust = "js_menu"
+ts_kind = "function"
+docs = ["Menu"]
+
+[[item]]
+name = "TabBar"
+kind = "widget"
+status = "planned"
+core_kind = "TabBar"
+core_constructor = "tab_bar"
+python_kind = "function"
+python_rust = "py_tab_bar"
+js_kind = "function"
+js_rust = "js_tab_bar"
+ts_kind = "function"
+docs = ["TabBar"]
+
+[[item]]
+name = "Tabs"
+kind = "widget"
+status = "planned"
+core_kind = "Tabs"
+core_constructor = "tabs"
+python_kind = "function"
+python_rust = "py_tabs"
+js_kind = "function"
+js_rust = "js_tabs"
+ts_kind = "function"
+docs = ["Tabs"]
+
+[[item]]
+name = "Dialog"
+kind = "widget"
+status = "planned"
+core_kind = "Dialog"
+core_constructor = "dialog"
+python_kind = "function"
+python_rust = "py_dialog"
+js_kind = "function"
+js_rust = "js_dialog"
+ts_kind = "function"
+docs = ["Dialog"]
