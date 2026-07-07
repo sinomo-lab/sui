@@ -6235,8 +6235,9 @@ impl StatusBadge {
     }
 
     fn text_style(&self, theme: &DefaultTheme, label: &str, tone: SemanticTone) -> TextStyle {
-        let (_, tone_text) = theme.semantic_tone_colors(tone);
-        let mut style = text_token_style(theme, theme.text.sm, tone_text);
+        // Mesh badge label: xs/600 in the status ink that reads on the soft wash.
+        let (_, tone_ink) = theme.semantic_tone_soft_colors(tone);
+        let mut style = text_token_style(theme, theme.text.xs, tone_ink);
         style.weight = FontWeight::SEMIBOLD;
         numeric_text_style_if_numeric(label, style)
     }
@@ -6262,18 +6263,15 @@ pub fn paint_status_badge(
         return;
     }
 
-    let (tone_color, tone_text) = theme.semantic_tone_colors(tone);
+    // Mesh badge: soft status wash, no border, status-hued ink (`--sm-*-soft`
+    // fill + `--sm-*-text` content) at the xs/600 label size, r-1 corners.
+    let (tone_soft, tone_ink) = theme.semantic_tone_soft_colors(tone);
     let icon_size = (rect.height() - 13.0).clamp(11.0, 15.0);
     let gap = theme.metrics.icon_label_gap.max(4.0);
-    let padding = theme.metrics.button_padding.left.max(8.0);
-    let radius = (rect.height() * 0.5).min(theme.radius._4xl);
+    let padding = theme.metrics.button_padding.left.max(6.0);
+    let radius = theme.radius.sm.min(rect.height() * 0.5);
 
-    ctx.fill(rounded_rect_path(rect, radius), tone_color.with_alpha(0.12));
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
-        tone_color.with_alpha(0.52),
-        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
-    );
+    ctx.fill(rounded_rect_path(rect, radius), tone_soft);
 
     let mut x = rect.x() + padding.min(rect.width() * 0.5);
     if let Some(icon) = icon {
@@ -6283,7 +6281,7 @@ pub fn paint_status_badge(
             icon_size,
             icon_size,
         );
-        draw_icon_glyph(ctx, icon, icon_rect, tone_text);
+        draw_icon_glyph(ctx, icon, icon_rect, tone_ink);
         x = icon_rect.max_x() + gap;
     }
     let content_rect = Rect::new(
@@ -6296,7 +6294,7 @@ pub fn paint_status_badge(
         return;
     }
 
-    let mut style = text_token_style(theme, theme.text.sm, tone_text);
+    let mut style = text_token_style(theme, theme.text.xs, tone_ink);
     style.weight = FontWeight::SEMIBOLD;
     let style = numeric_text_style_if_numeric(label, style);
     ctx.push_clip_rect(content_rect);
@@ -6843,11 +6841,14 @@ pub fn paint_callout(
     }
 
     let palette = theme.palette;
-    let (tone_color, tone_text) = theme.semantic_tone_colors(style.tone);
-    let fill = style.fill.unwrap_or_else(|| tone_color.with_alpha(0.12));
+    let (tone_color, _) = theme.semantic_tone_colors(style.tone);
+    // Mesh callout: quiet soft wash, hairline border, a 2px status rail, and
+    // the status-hued ink (not the on-solid content color) for the icon.
+    let (tone_soft, tone_ink) = theme.semantic_tone_soft_colors(style.tone);
+    let fill = style.fill.unwrap_or(tone_soft);
     let border = style.border.unwrap_or_else(|| palette.border);
     let rail = style.rail_color.unwrap_or(tone_color);
-    let radius = style.radius.unwrap_or(theme.radius.sm).max(0.0);
+    let radius = style.radius.unwrap_or(theme.radius.md).max(0.0);
 
     ctx.fill(rounded_rect_path(rect, radius), fill);
     ctx.stroke(
@@ -6888,7 +6889,7 @@ pub fn paint_callout(
             icon_size,
             icon_size,
         );
-        draw_icon_glyph(ctx, icon, icon_rect, style.icon_color.unwrap_or(tone_text));
+        draw_icon_glyph(ctx, icon, icon_rect, style.icon_color.unwrap_or(tone_ink));
         text_x = icon_rect.max_x() + style.icon_gap.max(0.0);
     }
 
@@ -13274,14 +13275,7 @@ fn draw_control_shape(
 }
 
 fn mix_color(left: Color, right: Color, amount: f32) -> Color {
-    let amount = amount.clamp(0.0, 1.0);
-    Color {
-        red: left.red + ((right.red - left.red) * amount),
-        green: left.green + ((right.green - left.green) * amount),
-        blue: left.blue + ((right.blue - left.blue) * amount),
-        alpha: left.alpha + ((right.alpha - left.alpha) * amount),
-        ..left
-    }
+    crate::animation::Interpolate::interpolate(left, right, amount)
 }
 
 fn draw_popover_arrival_overlay(
@@ -14393,8 +14387,9 @@ mod tests {
                 .tone(SemanticTone::Success)
                 .icon(crate::IconGlyph::Storage),
         );
-        assert!(solid_fill_colors(&badge).contains(&theme.palette.success.with_alpha(0.12)));
-        assert!(solid_stroke_colors(&badge).contains(&theme.palette.success.with_alpha(0.52)));
+        // Mesh badges fill with the soft status wash and draw no border.
+        assert!(solid_fill_colors(&badge).contains(&theme.palette.success_soft));
+        assert!(!solid_stroke_colors(&badge).contains(&theme.palette.success.with_alpha(0.52)));
 
         let progress_bar = render(
             ProgressBar::new("Delete progress")
@@ -14720,9 +14715,10 @@ mod tests {
     fn callout_paint_uses_tone_rail_wrapped_text_and_reserved_bottom() {
         let theme = DefaultTheme::default();
         let (tone, _) = theme.semantic_tone_colors(SemanticTone::Warning);
+        let (tone_soft, _) = theme.semantic_tone_soft_colors(SemanticTone::Warning);
         let output = render(CalloutPaintFixture { theme });
 
-        assert!(solid_fill_colors(&output).contains(&tone.with_alpha(0.12)));
+        assert!(solid_fill_colors(&output).contains(&tone_soft));
         assert!(solid_fill_colors(&output).contains(&tone));
         assert!(solid_stroke_colors(&output).contains(&theme.palette.border));
 
@@ -14905,7 +14901,7 @@ mod tests {
                 .min_width(136.0),
         );
 
-        assert!(solid_fill_colors(&output).contains(&theme.palette.success.with_alpha(0.12)));
+        assert!(solid_fill_colors(&output).contains(&theme.palette.success_soft));
         assert!(
             solid_fill_colors(&output)
                 .iter()
@@ -14977,7 +14973,7 @@ mod tests {
             coverage.rect
         );
         assert!(
-            solid_fill_colors(&output).contains(&theme.palette.success.with_alpha(0.12)),
+            solid_fill_colors(&output).contains(&theme.palette.success_soft),
             "padded placement badge should still paint the status fill"
         );
     }
@@ -15629,7 +15625,7 @@ mod tests {
             node.value,
             Some(SemanticsValue::Text("Primary on atlas".to_string()))
         );
-        assert_text_run_uses_token(&text_run_for(&output, "Primary on atlas"), theme.text.sm);
+        assert_text_run_uses_token(&text_run_for(&output, "Primary on atlas"), theme.text.xs);
     }
 
     #[test]

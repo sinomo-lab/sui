@@ -1668,15 +1668,7 @@ fn set_focus_animation_target(
 }
 
 fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    let amount = amount.clamp(0.0, 1.0);
-    Color::new(
-        from.space,
-        from.red + (to.red - from.red) * amount,
-        from.green + (to.green - from.green) * amount,
-        from.blue + (to.blue - from.blue) * amount,
-        from.alpha + (to.alpha - from.alpha) * amount,
-    )
-    .clamped()
+    crate::animation::Interpolate::interpolate(from, to, amount).clamped()
 }
 
 fn inset_rect(rect: Rect, padding: Insets) -> Rect {

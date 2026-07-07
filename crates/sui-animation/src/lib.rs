@@ -12,7 +12,17 @@ pub trait Interpolate: Sized {
 
 impl Interpolate for f32 {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        from + ((to - from) * t.clamp(0.0, 1.0))
+        let t = t.clamp(0.0, 1.0);
+        // Endpoint-exact: `from + (to - from) * 1.0` accumulates float error
+        // and lands one bit away from `to`, so settled animations would never
+        // exactly reach their target value.
+        if t <= 0.0 {
+            return from;
+        }
+        if t >= 1.0 {
+            return to;
+        }
+        from + ((to - from) * t)
     }
 }
 
@@ -143,7 +153,15 @@ where
         if self.duration <= f64::EPSILON {
             return 1.0;
         }
-        ((time - self.start_time) / self.duration).clamp(0.0, 1.0) as f32
+        let elapsed = time - self.start_time;
+        // Snap to completion with a hair of tolerance: durations often
+        // originate as f32 theme tokens, so a fixed-step advance can land
+        // float dust short of `duration` and would otherwise sample at
+        // t = 1 - ε, leaving settled states one bit away from their target.
+        if elapsed >= self.duration * (1.0 - 1e-6) {
+            return 1.0;
+        }
+        (elapsed / self.duration).clamp(0.0, 1.0) as f32
     }
 
     pub fn sample(&self, time: f64) -> T {

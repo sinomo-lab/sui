@@ -12,16 +12,22 @@ use crate::hdr_theme::HdrThemeTokens;
 /// [`crate::animation::AnimatedValue::tick`] and the `time`/`delta` fields of
 /// `WakeEvent::AnimationFrame`). Easing curves are built from the
 /// [`Easing`] enum and are [`Copy`], keeping [`DefaultTheme`] `Copy`.
+///
+/// The duration ladder follows the Mesh design language: 70ms micro feedback,
+/// 140ms small state changes, 220ms medium surfaces (popovers, dialogs) and
+/// 340ms large transitions (drawers, sheets, page changes).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeMotion {
     /// No animation: state changes apply immediately (0.0s).
     pub duration_instant: f32,
-    /// Quick feedback such as hover/press state changes (~0.12s).
+    /// Micro feedback such as hover tint / press state changes (0.07s).
     pub duration_fast: f32,
-    /// The default transition duration for most state changes (~0.2s).
+    /// Small state changes: toggles, fades, tooltips (0.14s).
     pub duration_normal: f32,
-    /// Larger or more prominent transitions, e.g. expanding panels (~0.32s).
+    /// Medium surfaces: popovers, dialogs, expanding panels (0.22s).
     pub duration_slow: f32,
+    /// Large transitions: drawers, sheets, page changes (0.34s).
+    pub duration_slower: f32,
     /// The standard easing curve: gentle acceleration, firm deceleration.
     /// Use for the majority of UI transitions.
     pub easing_standard: Easing,
@@ -40,9 +46,10 @@ impl ThemeMotion {
     pub const fn standard() -> Self {
         Self {
             duration_instant: 0.0,
-            duration_fast: 0.1,
-            duration_normal: 0.16,
-            duration_slow: 0.26,
+            duration_fast: 0.07,
+            duration_normal: 0.14,
+            duration_slow: 0.22,
+            duration_slower: 0.34,
             easing_standard: Easing::CubicBezier {
                 x1: 0.2,
                 y1: 0.0,
@@ -408,27 +415,27 @@ impl Default for ThemeTextScale {
         Self {
             xs: ThemeTextToken {
                 size: 11.0,
-                line_height: 15.0,
+                line_height: 16.0,
             },
             sm: ThemeTextToken {
                 size: 12.0,
-                line_height: 18.0,
+                line_height: 17.0,
             },
             base: ThemeTextToken {
-                size: 13.0,
-                line_height: 19.0,
+                size: 14.0,
+                line_height: 20.0,
             },
             lg: ThemeTextToken {
-                size: 14.0,
-                line_height: 21.0,
-            },
-            xl: ThemeTextToken {
                 size: 16.0,
                 line_height: 24.0,
             },
-            _2xl: ThemeTextToken {
-                size: 19.0,
+            xl: ThemeTextToken {
+                size: 18.0,
                 line_height: 26.0,
+            },
+            _2xl: ThemeTextToken {
+                size: 20.0,
+                line_height: 28.0,
             },
             _3xl: ThemeTextToken {
                 size: 24.0,
@@ -763,6 +770,223 @@ impl Default for ThemeShadows {
     }
 }
 
+impl ThemeShadows {
+    /// Scheme-aware elevation per the Mesh design language: Light casts faint
+    /// ink-tinted shadows, Dark casts deeper black shadows, and the true-black
+    /// OLED theme casts none at all — elevation there is drawn with borders,
+    /// never shadows (`--sm-shadow-*: none` in Void).
+    pub fn for_scheme(scheme: ThemeColorScheme) -> Self {
+        match scheme {
+            ThemeColorScheme::Light => Self::light(),
+            ThemeColorScheme::Dark => Self::dark(),
+            ThemeColorScheme::HighContrast => Self::none(),
+        }
+    }
+
+    /// Mesh Light ladder: `0 1px 2px 6%`, `0 2px 10px 8%`, `0 16px 40px 16%`
+    /// anchors interpolated across the scale, tinted with ink `#0d1220`.
+    pub fn light() -> Self {
+        let ink = |alpha: f32| rgb8(13, 18, 32).with_alpha(alpha);
+
+        Self {
+            box_shadow: ThemeBoxShadowScale {
+                _2xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 2.0, 0.0, ink(0.04), false)),
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 2.0, 0.0, ink(0.06), false)),
+                sm: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 3.0, 0.0, ink(0.07), false),
+                    shadow_layer(0.0, 1.0, 2.0, -1.0, ink(0.06), false),
+                ),
+                md: ThemeShadow::single(shadow_layer(0.0, 2.0, 10.0, 0.0, ink(0.08), false)),
+                lg: ThemeShadow::single(shadow_layer(0.0, 8.0, 24.0, -2.0, ink(0.12), false)),
+                xl: ThemeShadow::single(shadow_layer(0.0, 16.0, 40.0, -4.0, ink(0.16), false)),
+                _2xl: ThemeShadow::single(shadow_layer(0.0, 24.0, 56.0, -8.0, ink(0.20), false)),
+            },
+            inset: ThemeInsetShadowScale {
+                _2xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 0.0, 0.0, ink(0.05), true)),
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 1.0, 0.0, ink(0.05), true)),
+                sm: ThemeShadow::single(shadow_layer(0.0, 2.0, 4.0, 0.0, ink(0.05), true)),
+            },
+            drop: ThemeDropShadowScale {
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 1.0, 0.0, ink(0.05), false)),
+                sm: ThemeShadow::single(shadow_layer(0.0, 1.0, 2.0, 0.0, ink(0.12), false)),
+                md: ThemeShadow::single(shadow_layer(0.0, 3.0, 3.0, 0.0, ink(0.10), false)),
+                lg: ThemeShadow::single(shadow_layer(0.0, 4.0, 4.0, 0.0, ink(0.12), false)),
+                xl: ThemeShadow::single(shadow_layer(0.0, 9.0, 7.0, 0.0, ink(0.09), false)),
+                _2xl: ThemeShadow::single(shadow_layer(0.0, 25.0, 25.0, 0.0, ink(0.12), false)),
+            },
+            text: ThemeTextShadowScale {
+                _2xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 0.0, 0.0, ink(0.12), false)),
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 1.0, 0.0, ink(0.16), false)),
+                sm: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 0.0, 0.0, ink(0.07), false),
+                    shadow_layer(0.0, 1.0, 1.0, 0.0, ink(0.07), false),
+                ),
+                md: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 1.0, 0.0, ink(0.09), false),
+                    shadow_layer(0.0, 2.0, 4.0, 0.0, ink(0.09), false),
+                ),
+                lg: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 2.0, 0.0, ink(0.09), false),
+                    shadow_layer(0.0, 4.0, 8.0, 0.0, ink(0.09), false),
+                ),
+            },
+        }
+    }
+
+    /// Mesh Dark ladder: `0 1px 2px 30%`, `0 4px 16px 40%`, `0 20px 48px 55%`
+    /// anchors interpolated across the scale (pure black, deeper than Light).
+    pub fn dark() -> Self {
+        let black = |alpha: f32| Color::BLACK.with_alpha(alpha);
+
+        Self {
+            box_shadow: ThemeBoxShadowScale {
+                _2xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 2.0, 0.0, black(0.24), false)),
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 2.0, 0.0, black(0.30), false)),
+                sm: ThemeShadow::double(
+                    shadow_layer(0.0, 2.0, 6.0, 0.0, black(0.32), false),
+                    shadow_layer(0.0, 1.0, 2.0, -1.0, black(0.28), false),
+                ),
+                md: ThemeShadow::single(shadow_layer(0.0, 4.0, 16.0, 0.0, black(0.40), false)),
+                lg: ThemeShadow::single(shadow_layer(0.0, 10.0, 28.0, -2.0, black(0.46), false)),
+                xl: ThemeShadow::single(shadow_layer(0.0, 20.0, 48.0, -4.0, black(0.55), false)),
+                _2xl: ThemeShadow::single(shadow_layer(0.0, 28.0, 64.0, -8.0, black(0.60), false)),
+            },
+            inset: ThemeInsetShadowScale {
+                _2xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 0.0, 0.0, black(0.24), true)),
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 1.0, 0.0, black(0.24), true)),
+                sm: ThemeShadow::single(shadow_layer(0.0, 2.0, 4.0, 0.0, black(0.24), true)),
+            },
+            drop: ThemeDropShadowScale {
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 1.0, 0.0, black(0.24), false)),
+                sm: ThemeShadow::single(shadow_layer(0.0, 1.0, 2.0, 0.0, black(0.34), false)),
+                md: ThemeShadow::single(shadow_layer(0.0, 3.0, 3.0, 0.0, black(0.32), false)),
+                lg: ThemeShadow::single(shadow_layer(0.0, 4.0, 4.0, 0.0, black(0.34), false)),
+                xl: ThemeShadow::single(shadow_layer(0.0, 9.0, 7.0, 0.0, black(0.30), false)),
+                _2xl: ThemeShadow::single(shadow_layer(0.0, 25.0, 25.0, 0.0, black(0.34), false)),
+            },
+            text: ThemeTextShadowScale {
+                _2xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 0.0, 0.0, black(0.30), false)),
+                xs: ThemeShadow::single(shadow_layer(0.0, 1.0, 1.0, 0.0, black(0.36), false)),
+                sm: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 0.0, 0.0, black(0.20), false),
+                    shadow_layer(0.0, 1.0, 1.0, 0.0, black(0.20), false),
+                ),
+                md: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 1.0, 0.0, black(0.24), false),
+                    shadow_layer(0.0, 2.0, 4.0, 0.0, black(0.24), false),
+                ),
+                lg: ThemeShadow::double(
+                    shadow_layer(0.0, 1.0, 2.0, 0.0, black(0.24), false),
+                    shadow_layer(0.0, 4.0, 8.0, 0.0, black(0.24), false),
+                ),
+            },
+        }
+    }
+
+    /// No shadows anywhere: the Void/OLED elevation contract. Shadows are dead
+    /// pixels on OLED; surfaces separate with borders instead.
+    pub fn none() -> Self {
+        let empty_box = ThemeBoxShadowScale {
+            _2xs: ThemeShadow::empty(),
+            xs: ThemeShadow::empty(),
+            sm: ThemeShadow::empty(),
+            md: ThemeShadow::empty(),
+            lg: ThemeShadow::empty(),
+            xl: ThemeShadow::empty(),
+            _2xl: ThemeShadow::empty(),
+        };
+
+        Self {
+            box_shadow: empty_box,
+            inset: ThemeInsetShadowScale {
+                _2xs: ThemeShadow::empty(),
+                xs: ThemeShadow::empty(),
+                sm: ThemeShadow::empty(),
+            },
+            drop: ThemeDropShadowScale {
+                xs: ThemeShadow::empty(),
+                sm: ThemeShadow::empty(),
+                md: ThemeShadow::empty(),
+                lg: ThemeShadow::empty(),
+                xl: ThemeShadow::empty(),
+                _2xl: ThemeShadow::empty(),
+            },
+            text: ThemeTextShadowScale {
+                _2xs: ThemeShadow::empty(),
+                xs: ThemeShadow::empty(),
+                sm: ThemeShadow::empty(),
+                md: ThemeShadow::empty(),
+                lg: ThemeShadow::empty(),
+            },
+        }
+    }
+}
+
+/// Glow tokens: soft zero-offset halos reserved for **live signals** (streaming,
+/// voice, busy indicators, the primary action). Mesh keeps Light glow-free
+/// (light does not glow on paper), gives Dark full glows, and damps Void to
+/// protect OLED panels. Paint with [`paint_theme_shadow`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThemeGlows {
+    /// Accent-hued glow: live/primary signals (`--sm-glow-accent`).
+    pub accent: ThemeShadow,
+    /// Secondary-hued glow: voice/duplex signals (`--sm-glow-voice`).
+    pub secondary: ThemeShadow,
+}
+
+impl ThemeGlows {
+    pub fn for_scheme(scheme: ThemeColorScheme) -> Self {
+        match scheme {
+            ThemeColorScheme::Light => Self {
+                accent: ThemeShadow::empty(),
+                secondary: ThemeShadow::empty(),
+            },
+            ThemeColorScheme::Dark => Self {
+                accent: ThemeShadow::single(shadow_layer(
+                    0.0,
+                    0.0,
+                    16.0,
+                    0.0,
+                    rgb8(53, 210, 238).with_alpha(0.22),
+                    false,
+                )),
+                secondary: ThemeShadow::single(shadow_layer(
+                    0.0,
+                    0.0,
+                    18.0,
+                    0.0,
+                    rgb8(143, 125, 248).with_alpha(0.26),
+                    false,
+                )),
+            },
+            ThemeColorScheme::HighContrast => Self {
+                accent: ThemeShadow::single(shadow_layer(
+                    0.0,
+                    0.0,
+                    10.0,
+                    0.0,
+                    rgb8(33, 199, 229).with_alpha(0.14),
+                    false,
+                )),
+                secondary: ThemeShadow::single(shadow_layer(
+                    0.0,
+                    0.0,
+                    12.0,
+                    0.0,
+                    rgb8(143, 125, 248).with_alpha(0.16),
+                    false,
+                )),
+            },
+        }
+    }
+}
+
+impl Default for ThemeGlows {
+    fn default() -> Self {
+        Self::for_scheme(ThemeColorScheme::Light)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeBlurScale {
     pub xs: f32,
@@ -820,6 +1044,145 @@ impl Default for ThemeAspectRatios {
     }
 }
 
+/// The exact Mesh semantic role values for a built-in theme. The Mesh design
+/// language specifies these directly (several are translucent so they compose
+/// over any surface), so the built-in light/dark/void themes consume this
+/// table instead of the generic mix-based derivation, which remains the
+/// fallback for custom [`ThemeColors`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MeshRoles {
+    bg_subtle: Color,
+    surface: Color,
+    surface_2: Color,
+    surface_3: Color,
+    overlay: Color,
+    field: Color,
+    border: Color,
+    border_strong: Color,
+    border_subtle: Color,
+    text_2: Color,
+    text_3: Color,
+    text_disabled: Color,
+    text_invert: Color,
+    accent_hover: Color,
+    accent_text: Color,
+    accent_soft: Color,
+    accent_border: Color,
+    ok_text: Color,
+    ok_soft: Color,
+    warn_text: Color,
+    warn_soft: Color,
+    danger_text: Color,
+    danger_soft: Color,
+    danger_hover: Color,
+    info_text: Color,
+    info_soft: Color,
+    focus: Color,
+    selection: Color,
+    scrim: Color,
+}
+
+/// Look up the Mesh role table for one of the built-in themes. Returns `None`
+/// for custom palettes, which fall back to derived roles.
+fn mesh_roles(colors: &ThemeColors) -> Option<MeshRoles> {
+    match (colors.name, colors.scheme) {
+        ("light", ThemeColorScheme::Light) => Some(MeshRoles {
+            bg_subtle: rgb8(247, 248, 250),
+            surface: rgb8(255, 255, 255),
+            surface_2: rgb8(243, 245, 248),
+            surface_3: rgb8(234, 238, 243),
+            overlay: rgb8(255, 255, 255),
+            field: rgb8(255, 255, 255),
+            border: rgb8(227, 232, 239),
+            border_strong: rgb8(205, 213, 224),
+            border_subtle: rgb8(238, 241, 246),
+            text_2: rgb8(73, 84, 107),
+            text_3: rgb8(104, 115, 144),
+            text_disabled: rgb8(163, 173, 194),
+            text_invert: rgb8(255, 255, 255),
+            accent_hover: rgb8(7, 109, 144),
+            accent_text: rgb8(8, 124, 164),
+            accent_soft: rgba8(8, 124, 164, 0.08),
+            accent_border: rgba8(8, 124, 164, 0.35),
+            ok_text: rgb8(21, 128, 61),
+            ok_soft: rgba8(22, 163, 74, 0.10),
+            warn_text: rgb8(154, 103, 0),
+            warn_soft: rgba8(154, 103, 0, 0.10),
+            danger_text: rgb8(217, 45, 32),
+            danger_soft: rgba8(217, 45, 32, 0.08),
+            danger_hover: rgb8(180, 35, 24),
+            info_text: rgb8(23, 92, 211),
+            info_soft: rgba8(41, 112, 255, 0.09),
+            focus: rgb8(9, 148, 198),
+            selection: rgba8(8, 124, 164, 0.18),
+            scrim: rgba8(9, 12, 20, 0.45),
+        }),
+        ("dark", ThemeColorScheme::Dark) => Some(MeshRoles {
+            bg_subtle: rgb8(14, 18, 26),
+            surface: rgb8(18, 22, 31),
+            surface_2: rgb8(23, 28, 39),
+            surface_3: rgb8(29, 36, 49),
+            overlay: rgb8(22, 27, 38),
+            field: rgb8(15, 19, 27),
+            border: rgba8(151, 168, 199, 0.16),
+            border_strong: rgba8(151, 168, 199, 0.27),
+            border_subtle: rgba8(151, 168, 199, 0.09),
+            text_2: rgb8(166, 178, 200),
+            text_3: rgb8(124, 137, 163),
+            text_disabled: rgb8(81, 93, 117),
+            text_invert: rgb8(13, 18, 32),
+            accent_hover: rgb8(95, 224, 246),
+            accent_text: rgb8(83, 215, 240),
+            accent_soft: rgba8(53, 210, 238, 0.12),
+            accent_border: rgba8(53, 210, 238, 0.35),
+            ok_text: rgb8(74, 222, 128),
+            ok_soft: rgba8(74, 222, 128, 0.12),
+            warn_text: rgb8(253, 176, 34),
+            warn_soft: rgba8(253, 176, 34, 0.12),
+            danger_text: rgb8(249, 112, 102),
+            danger_soft: rgba8(249, 112, 102, 0.12),
+            danger_hover: rgb8(246, 121, 125),
+            info_text: rgb8(132, 169, 255),
+            info_soft: rgba8(132, 169, 255, 0.12),
+            focus: rgb8(73, 199, 234),
+            selection: rgba8(53, 210, 238, 0.24),
+            scrim: rgba8(2, 4, 8, 0.6),
+        }),
+        ("void", ThemeColorScheme::HighContrast) => Some(MeshRoles {
+            bg_subtle: Color::BLACK,
+            surface: Color::BLACK,
+            surface_2: rgb8(11, 14, 20),
+            surface_3: rgb8(19, 23, 34),
+            overlay: rgb8(10, 13, 19),
+            field: rgb8(11, 14, 20),
+            border: rgba8(158, 175, 205, 0.18),
+            border_strong: rgba8(158, 175, 205, 0.30),
+            border_subtle: rgba8(158, 175, 205, 0.10),
+            text_2: rgb8(153, 165, 188),
+            text_3: rgb8(117, 129, 154),
+            text_disabled: rgb8(72, 83, 107),
+            text_invert: rgb8(13, 18, 32),
+            accent_hover: rgb8(76, 212, 236),
+            accent_text: rgb8(64, 205, 232),
+            accent_soft: rgba8(33, 199, 229, 0.10),
+            accent_border: rgba8(33, 199, 229, 0.32),
+            ok_text: rgb8(64, 212, 122),
+            ok_soft: rgba8(64, 212, 122, 0.10),
+            warn_text: rgb8(242, 169, 31),
+            warn_soft: rgba8(242, 169, 31, 0.10),
+            danger_text: rgb8(244, 104, 94),
+            danger_soft: rgba8(244, 104, 94, 0.10),
+            danger_hover: rgb8(240, 104, 109),
+            info_text: rgb8(123, 162, 252),
+            info_soft: rgba8(123, 162, 252, 0.10),
+            focus: rgb8(63, 196, 228),
+            selection: rgba8(33, 199, 229, 0.22),
+            scrim: rgba8(0, 0, 0, 0.72),
+        }),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ControlPalette {
     pub text: Color,
@@ -830,6 +1193,10 @@ pub struct ControlPalette {
     pub control: Color,
     pub control_hover: Color,
     pub control_active: Color,
+    /// Inset field background for text inputs and editable surfaces
+    /// (`--sm-field-bg`). Distinct from `control`, the raised neutral fill
+    /// used by buttons and similar controls (`--sm-surface-2`).
+    pub field: Color,
     pub surface_hover: Color,
     pub surface_pressed: Color,
     pub surface_focus: Color,
@@ -837,6 +1204,9 @@ pub struct ControlPalette {
     pub border_strong: Color,
     pub border_hover: Color,
     pub border_focus: Color,
+    /// The dedicated keyboard focus color (`--sm-focus`): a solid ring drawn
+    /// at `focus_ring_width` with `focus_ring_outset` offset.
+    pub focus: Color,
     pub focus_ring: Color,
     pub caret: Color,
     pub selection: Color,
@@ -847,14 +1217,30 @@ pub struct ControlPalette {
     pub accent_border_hover: Color,
     pub accent_border_focus: Color,
     pub accent_text: Color,
+    /// Translucent accent wash (`--sm-accent-soft`): selected rows, badges,
+    /// input focus halos. Pair with `accent_soft_text` for legible content.
+    pub accent_soft: Color,
+    /// Accent-hued text that stays legible on plain and soft surfaces
+    /// (`--sm-accent-text` in Mesh terms; `accent_text` remains the
+    /// on-solid-accent content color).
+    pub accent_soft_text: Color,
     pub info: Color,
     pub info_text: Color,
+    pub info_soft: Color,
+    pub info_soft_text: Color,
     pub success: Color,
     pub success_text: Color,
+    pub success_soft: Color,
+    pub success_soft_text: Color,
     pub warning: Color,
     pub warning_text: Color,
+    pub warning_soft: Color,
+    pub warning_soft_text: Color,
     pub danger: Color,
     pub danger_text: Color,
+    pub danger_soft: Color,
+    pub danger_soft_text: Color,
+    pub danger_hover: Color,
 }
 
 impl ControlPalette {
@@ -863,35 +1249,72 @@ impl ControlPalette {
             colors.scheme,
             ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
         );
+        let roles = mesh_roles(colors);
         let surface = colors.base_100;
-        let surface_raised = colors.base_200;
-        let control = colors.base_200;
-        let control_hover = interactive_surface(control, colors.scheme, 0.035);
-        let control_active = interactive_surface(control, colors.scheme, 0.075);
-        let text_muted = mix(
-            colors.base_content,
-            surface,
-            if is_dark { 0.34 } else { 0.16 },
-        );
-        let placeholder = mix(
-            colors.base_content,
-            surface,
-            if is_dark { 0.50 } else { 0.22 },
-        );
-        let border = if is_dark {
-            mix(colors.base_300, surface, 0.22)
-        } else {
-            colors.base_300
-        };
-        let border_strong = mix(
-            colors.base_300,
-            colors.base_content,
-            if is_dark { 0.18 } else { 0.10 },
-        );
-        let border_hover = mix(border, colors.primary, if is_dark { 0.28 } else { 0.18 });
+        let surface_raised = roles.map(|r| r.surface).unwrap_or(colors.base_200);
+        // Mesh authors its translucent tokens as CSS rgba values, which
+        // composite in encoded (gamma) space. The renderer blends in linear
+        // space — noticeably heavier — so translucent roles are flattened
+        // onto the card surface here with the CSS arithmetic.
+        let flatten = move |color: Color| color.over(surface_raised);
+        // Neutral raised control fill (buttons, chips): Mesh `--sm-surface-2`.
+        let control = roles.map(|r| r.surface_2).unwrap_or(colors.base_200);
+        let control_hover = roles
+            .map(|r| r.surface_3)
+            .unwrap_or_else(|| interactive_surface(control, colors.scheme, 0.035));
+        let control_active = roles
+            .map(|r| mix(r.surface_3, colors.base_content, 0.04))
+            .unwrap_or_else(|| interactive_surface(control, colors.scheme, 0.075));
+        let field = roles.map(|r| r.field).unwrap_or(control);
+        let text_muted = roles.map(|r| r.text_2).unwrap_or_else(|| {
+            mix(
+                colors.base_content,
+                surface,
+                if is_dark { 0.34 } else { 0.16 },
+            )
+        });
+        let placeholder = roles.map(|r| r.text_3).unwrap_or_else(|| {
+            mix(
+                colors.base_content,
+                surface,
+                if is_dark { 0.50 } else { 0.22 },
+            )
+        });
+        let border = roles.map(|r| flatten(r.border)).unwrap_or_else(|| {
+            if is_dark {
+                mix(colors.base_300, surface, 0.22)
+            } else {
+                colors.base_300
+            }
+        });
+        let border_strong = roles.map(|r| flatten(r.border_strong)).unwrap_or_else(|| {
+            mix(
+                colors.base_300,
+                colors.base_content,
+                if is_dark { 0.18 } else { 0.10 },
+            )
+        });
+        // Hovered controls strengthen their border rather than tinting toward
+        // the accent (Mesh keeps accent reserved for live signals).
+        let border_hover = roles
+            .map(|r| flatten(r.border_strong))
+            .unwrap_or_else(|| mix(border, colors.primary, if is_dark { 0.28 } else { 0.18 }));
         let border_focus = colors.primary;
-        let focus_alpha = 0.32;
-        let selection = mix(surface, colors.primary, if is_dark { 0.30 } else { 0.14 });
+        let focus = roles.map(|r| r.focus).unwrap_or(colors.primary);
+        let selection = roles
+            .map(|r| flatten(r.selection))
+            .unwrap_or_else(|| mix(surface, colors.primary, if is_dark { 0.30 } else { 0.14 }));
+        // Fallback derivations for soft washes and on-surface status text used
+        // by custom themes; built-ins take the exact Mesh values.
+        let soft_alpha = if is_dark { 0.12 } else { 0.10 };
+        let derived_soft = move |color: Color| color.with_alpha(soft_alpha).over(surface_raised);
+        let derived_soft_text = |color: Color| {
+            if is_dark {
+                mix(color, Color::WHITE, 0.22)
+            } else {
+                mix(color, Color::BLACK, 0.12)
+            }
+        };
 
         Self {
             text: colors.base_content,
@@ -902,31 +1325,74 @@ impl ControlPalette {
             control,
             control_hover,
             control_active,
+            field,
             surface_hover: control_hover,
             surface_pressed: control_active,
-            surface_focus: mix(control, colors.primary, if is_dark { 0.14 } else { 0.08 }),
+            surface_focus: roles
+                .map(|r| flatten(r.accent_soft))
+                .unwrap_or_else(|| mix(control, colors.primary, if is_dark { 0.14 } else { 0.08 })),
             border,
             border_strong,
             border_hover,
             border_focus,
-            focus_ring: colors.primary.with_alpha(focus_alpha),
+            focus,
+            focus_ring: focus,
             caret: colors.primary,
             selection,
             accent: colors.primary,
-            accent_hover: interactive_variant(colors.primary, colors.scheme, 0.08),
+            accent_hover: roles
+                .map(|r| r.accent_hover)
+                .unwrap_or_else(|| interactive_variant(colors.primary, colors.scheme, 0.08)),
             accent_pressed: interactive_variant(colors.primary, colors.scheme, 0.16),
-            accent_border: interactive_variant(colors.primary, colors.scheme, 0.12),
-            accent_border_hover: interactive_variant(colors.primary, colors.scheme, 0.2),
+            accent_border: roles
+                .map(|r| flatten(r.accent_border))
+                .unwrap_or_else(|| interactive_variant(colors.primary, colors.scheme, 0.12)),
+            accent_border_hover: roles
+                .map(|r| flatten(r.accent_border))
+                .unwrap_or_else(|| interactive_variant(colors.primary, colors.scheme, 0.2)),
             accent_border_focus: colors.primary,
             accent_text: colors.primary_content,
+            accent_soft: roles
+                .map(|r| flatten(r.accent_soft))
+                .unwrap_or_else(|| derived_soft(colors.primary)),
+            accent_soft_text: roles
+                .map(|r| r.accent_text)
+                .unwrap_or_else(|| derived_soft_text(colors.primary)),
             info: colors.info,
             info_text: colors.info_content,
+            info_soft: roles
+                .map(|r| flatten(r.info_soft))
+                .unwrap_or_else(|| derived_soft(colors.info)),
+            info_soft_text: roles
+                .map(|r| r.info_text)
+                .unwrap_or_else(|| derived_soft_text(colors.info)),
             success: colors.success,
             success_text: colors.success_content,
+            success_soft: roles
+                .map(|r| flatten(r.ok_soft))
+                .unwrap_or_else(|| derived_soft(colors.success)),
+            success_soft_text: roles
+                .map(|r| r.ok_text)
+                .unwrap_or_else(|| derived_soft_text(colors.success)),
             warning: colors.warning,
             warning_text: colors.warning_content,
+            warning_soft: roles
+                .map(|r| flatten(r.warn_soft))
+                .unwrap_or_else(|| derived_soft(colors.warning)),
+            warning_soft_text: roles
+                .map(|r| r.warn_text)
+                .unwrap_or_else(|| derived_soft_text(colors.warning)),
             danger: colors.error,
             danger_text: colors.error_content,
+            danger_soft: roles
+                .map(|r| flatten(r.danger_soft))
+                .unwrap_or_else(|| derived_soft(colors.error)),
+            danger_soft_text: roles
+                .map(|r| r.danger_text)
+                .unwrap_or_else(|| derived_soft_text(colors.error)),
+            danger_hover: roles
+                .map(|r| r.danger_hover)
+                .unwrap_or_else(|| interactive_variant(colors.error, colors.scheme, 0.08)),
         }
     }
 }
@@ -941,18 +1407,42 @@ impl Default for ControlPalette {
 pub struct SurfacePalette {
     pub dark: bool,
     pub window: Color,
+    /// Slightly recessed window background (`--sm-bg-subtle`): sidebars,
+    /// table headers, code block chrome.
+    pub window_subtle: Color,
     pub sidebar: Color,
     pub panel: Color,
+    /// Nested/raised fill one step above `panel` (`--sm-surface-2`).
+    pub surface_2: Color,
+    /// The strongest neutral fill tier (`--sm-surface-3`): hover wells,
+    /// track backgrounds, avatar fills.
+    pub surface_3: Color,
+    /// Floating surface for menus, popovers, dialogs, toasts (`--sm-overlay`).
+    pub overlay: Color,
     pub titlebar: Color,
     pub field: Color,
     pub border: Color,
     pub border_strong: Color,
+    /// Hairline separators inside components (`--sm-border-subtle`).
+    pub border_subtle: Color,
     pub text: Color,
     pub text_muted: Color,
     pub text_faint: Color,
+    /// Disabled content (`--sm-text-disabled`).
+    pub text_disabled: Color,
+    /// Content drawn on inverted surfaces (`--sm-text-invert`).
+    pub text_invert: Color,
     pub accent: Color,
     pub accent_hover: Color,
     pub on_accent: Color,
+    /// Accent-hued text legible on plain surfaces (`--sm-accent-text`).
+    pub accent_text: Color,
+    /// Translucent accent wash (`--sm-accent-soft`).
+    pub accent_soft: Color,
+    /// Translucent accent border (`--sm-accent-border`).
+    pub accent_border: Color,
+    /// The dedicated keyboard-focus ring color (`--sm-focus`).
+    pub focus: Color,
     pub hover: Color,
     pub selected: Color,
     pub overlay_scrim: Color,
@@ -983,8 +1473,26 @@ pub struct SurfacePalette {
     pub color_picker_sdr_marker: Color,
     pub color_picker_hdr_divider: Color,
     pub good: Color,
+    /// Positive-status text legible on plain/soft surfaces (`--sm-ok-text`).
+    pub good_text: Color,
+    /// Translucent positive wash (`--sm-ok-soft`).
+    pub good_soft: Color,
     pub warn: Color,
+    /// Warning text legible on plain/soft surfaces (`--sm-warn-text`).
+    pub warn_text: Color,
+    /// Translucent warning wash (`--sm-warn-soft`).
+    pub warn_soft: Color,
     pub bad: Color,
+    /// Danger text legible on plain/soft surfaces (`--sm-danger-text`).
+    pub bad_text: Color,
+    /// Translucent danger wash (`--sm-danger-soft`).
+    pub bad_soft: Color,
+    /// Solid informational status (`--sm-info`).
+    pub info: Color,
+    /// Informational text legible on plain/soft surfaces (`--sm-info-text`).
+    pub info_text: Color,
+    /// Translucent informational wash (`--sm-info-soft`).
+    pub info_soft: Color,
 }
 
 impl SurfacePalette {
@@ -993,58 +1501,60 @@ impl SurfacePalette {
             colors.scheme,
             ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
         );
-        let text_muted = mix(
-            controls.text,
-            controls.surface,
-            if dark { 0.34 } else { 0.18 },
-        );
-        let text_faint = mix(
-            controls.text,
-            controls.surface,
-            if dark { 0.50 } else { 0.28 },
-        );
+        let roles = mesh_roles(colors);
+        let text_muted = controls.text_muted;
+        let text_faint = controls.placeholder;
+        let window_subtle = roles
+            .map(|r| r.bg_subtle)
+            .unwrap_or_else(|| mix(controls.surface, controls.control, 0.4));
+        let overlay = roles.map(|r| r.overlay).unwrap_or(controls.surface_raised);
 
         Self {
             dark,
             window: controls.surface,
-            sidebar: if dark {
-                mix(controls.surface, controls.surface_raised, 0.22)
-            } else {
-                controls.surface
-            },
+            window_subtle,
+            // The workspace chrome (sidebars, title bars) sits on the subtle
+            // background tier so content panes read as the brighter surface.
+            sidebar: window_subtle,
             panel: controls.surface_raised,
-            titlebar: if dark {
-                mix(controls.surface_raised, controls.control, 0.35)
-            } else {
-                controls.surface_raised
-            },
-            field: controls.control,
+            surface_2: controls.control,
+            surface_3: controls.control_hover,
+            overlay,
+            titlebar: window_subtle,
+            field: controls.field,
             border: controls.border,
             border_strong: controls.border_strong,
+            border_subtle: roles
+                .map(|r| r.border_subtle.over(controls.surface_raised))
+                .unwrap_or_else(|| mix(controls.border, controls.surface_raised, 0.44)),
             text: controls.text,
             text_muted,
             text_faint,
+            text_disabled: roles.map(|r| r.text_disabled).unwrap_or_else(|| {
+                mix(
+                    controls.text,
+                    controls.surface,
+                    if dark { 0.62 } else { 0.44 },
+                )
+            }),
+            text_invert: roles.map(|r| r.text_invert).unwrap_or(controls.surface),
             accent: controls.accent,
             accent_hover: controls.accent_hover,
             on_accent: controls.accent_text,
+            accent_text: controls.accent_soft_text,
+            accent_soft: controls.accent_soft,
+            accent_border: controls.accent_border,
+            focus: controls.focus,
             hover: controls.text.with_alpha(if dark { 0.06 } else { 0.045 }),
             selected: controls.selection,
-            overlay_scrim: Color::rgba(0.06, 0.08, 0.12, if dark { 0.38 } else { 0.24 }),
-            tooltip: if dark {
-                controls.surface_raised
-            } else {
-                controls.text
-            },
-            tooltip_border: if dark {
-                controls.border_strong
-            } else {
-                mix(controls.text, controls.surface, 0.20)
-            },
-            tooltip_text: if dark {
-                controls.text
-            } else {
-                controls.surface
-            },
+            overlay_scrim: roles
+                .map(|r| r.scrim)
+                .unwrap_or_else(|| Color::rgba(0.06, 0.08, 0.12, if dark { 0.38 } else { 0.24 })),
+            // Mesh tooltips are quiet floating surfaces, not inverted bubbles:
+            // overlay fill, strong border, secondary ink.
+            tooltip: overlay,
+            tooltip_border: controls.border_strong,
+            tooltip_text: text_muted,
             canvas: controls.surface,
             canvas_grid: controls.border.with_alpha(if dark { 0.30 } else { 0.18 }),
             canvas_axis_x: colors.error.with_alpha(if dark { 0.72 } else { 0.55 }),
@@ -1081,8 +1591,17 @@ impl SurfacePalette {
             color_picker_sdr_marker: controls.surface_raised.with_alpha(0.30),
             color_picker_hdr_divider: controls.surface_raised.with_alpha(0.28),
             good: colors.success,
+            good_text: controls.success_soft_text,
+            good_soft: controls.success_soft,
             warn: colors.warning,
+            warn_text: controls.warning_soft_text,
+            warn_soft: controls.warning_soft,
             bad: colors.error,
+            bad_text: controls.danger_soft_text,
+            bad_soft: controls.danger_soft,
+            info: colors.info,
+            info_text: controls.info_soft_text,
+            info_soft: controls.info_soft,
         }
     }
 }
@@ -1103,9 +1622,20 @@ pub struct ControlTypography {
 
 impl ControlTypography {
     pub fn from_text_scale(text: &ThemeTextScale) -> Self {
+        Self::for_density(text, ThemeDensity::default())
+    }
+
+    /// Body/control type per the Mesh density contract: compact and
+    /// comfortable share the 14px body (`--sm-text-md`); touch reads at 16px
+    /// (`--sm-text-lg`).
+    pub fn for_density(text: &ThemeTextScale, density: ThemeDensity) -> Self {
+        let token = match density {
+            ThemeDensity::Compact | ThemeDensity::Comfortable => text.base,
+            ThemeDensity::Touch => text.lg,
+        };
         Self {
-            body_font_size: text.base.size,
-            body_line_height: text.base.line_height,
+            body_font_size: token.size,
+            body_line_height: token.line_height,
         }
     }
 }
@@ -1461,12 +1991,12 @@ impl ControlMetrics {
                     right: unit,
                     bottom: unit * 0.5,
                 },
-                12.0,
+                15.0,
                 14.0,
                 28.0,
-                26.0,
-                14.0,
-                2.0,
+                32.0,
+                19.0,
+                3.0,
                 120.0,
                 Insets {
                     left: unit * 1.5,
@@ -1474,29 +2004,29 @@ impl ControlMetrics {
                     right: unit * 1.5,
                     bottom: unit * 0.5,
                 },
-                3.0,
-                12.0,
+                4.0,
+                14.0,
                 22.0,
                 150.0,
-                Insets {
-                    left: unit * 1.5,
-                    top: unit * 0.75,
-                    right: unit * 1.5,
-                    bottom: unit * 0.75,
-                },
-                64.0,
-                176.0,
-                28.0,
-                84.0,
                 Insets {
                     left: unit * 2.0,
                     top: unit * 0.75,
                     right: unit * 2.0,
                     bottom: unit * 0.75,
                 },
+                56.0,
+                176.0,
+                32.0,
+                84.0,
+                Insets {
+                    left: unit * 2.5,
+                    top: unit * 0.75,
+                    right: unit * 2.5,
+                    bottom: unit * 0.75,
+                },
                 Insets::all(unit * 3.0),
                 unit * 2.0,
-                24.0,
+                28.0,
                 Insets::all(unit),
                 Insets {
                     left: unit * 2.0,
@@ -1548,8 +2078,8 @@ impl ControlMetrics {
                 10.0,
                 unit,
                 30.0,
-                30.0,
-                unit * 1.5,
+                28.0,
+                unit * 2.5,
                 28.0,
                 Insets {
                     left: unit * 2.0,
@@ -1561,8 +2091,8 @@ impl ControlMetrics {
                 9.0,
             ),
             ThemeDensity::Comfortable => (
-                40.0,
-                40.0,
+                32.0,
+                36.0,
                 Insets {
                     left: unit * 2.0,
                     top: unit * 1.25,
@@ -1575,12 +2105,12 @@ impl ControlMetrics {
                     right: unit * 1.5,
                     bottom: unit,
                 },
-                14.0,
+                15.0,
                 16.0,
-                40.0,
-                28.0,
-                16.0,
-                2.0,
+                32.0,
+                32.0,
+                19.0,
+                3.0,
                 140.0,
                 Insets {
                     left: unit * 2.0,
@@ -1588,7 +2118,7 @@ impl ControlMetrics {
                     right: unit * 2.0,
                     bottom: unit,
                 },
-                3.0,
+                4.0,
                 14.0,
                 24.0,
                 180.0,
@@ -1598,9 +2128,9 @@ impl ControlMetrics {
                     right: unit * 2.0,
                     bottom: unit * 1.25,
                 },
-                80.0,
+                64.0,
                 200.0,
-                32.0,
+                36.0,
                 96.0,
                 Insets {
                     left: unit * 2.5,
@@ -1610,7 +2140,7 @@ impl ControlMetrics {
                 },
                 Insets::all(unit * 4.0),
                 unit * 3.0,
-                28.0,
+                32.0,
                 Insets::all(unit * 1.5),
                 Insets {
                     left: unit * 3.0,
@@ -1653,18 +2183,18 @@ impl ControlMetrics {
                 14.0,
                 unit * 2.0,
                 unit * 3.0,
-                44.0,
-                46.0,
+                36.0,
+                40.0,
                 26.0,
                 34.0,
-                44.0,
+                36.0,
                 18.0,
                 12.0,
                 6.0,
-                44.0,
-                44.0,
-                unit * 2.0,
-                40.0,
+                36.0,
+                34.0,
+                unit * 2.5,
+                36.0,
                 Insets {
                     left: unit * 2.0,
                     top: unit,
@@ -1675,8 +2205,8 @@ impl ControlMetrics {
                 10.0,
             ),
             ThemeDensity::Touch => (
-                46.0,
-                46.0,
+                36.0,
+                44.0,
                 Insets {
                     left: unit * 2.5,
                     top: unit * 1.5,
@@ -1689,12 +2219,12 @@ impl ControlMetrics {
                     right: unit * 2.0,
                     bottom: unit * 1.5,
                 },
-                16.0,
+                15.0,
                 18.0,
-                46.0,
                 36.0,
-                20.0,
-                2.5,
+                32.0,
+                19.0,
+                3.0,
                 160.0,
                 Insets {
                     left: unit * 2.5,
@@ -1703,28 +2233,28 @@ impl ControlMetrics {
                     bottom: unit * 1.5,
                 },
                 4.0,
-                18.0,
+                14.0,
                 30.0,
                 200.0,
+                Insets {
+                    left: unit * 2.0,
+                    top: unit * 1.5,
+                    right: unit * 2.0,
+                    bottom: unit * 1.5,
+                },
+                72.0,
+                230.0,
+                40.0,
+                104.0,
                 Insets {
                     left: unit * 2.5,
                     top: unit * 1.5,
                     right: unit * 2.5,
                     bottom: unit * 1.5,
                 },
-                96.0,
-                230.0,
-                36.0,
-                104.0,
-                Insets {
-                    left: unit * 3.0,
-                    top: unit * 1.5,
-                    right: unit * 3.0,
-                    bottom: unit * 1.5,
-                },
                 Insets::all(unit * 4.5),
                 unit * 3.5,
-                36.0,
+                40.0,
                 Insets::all(unit * 1.75),
                 Insets {
                     left: unit * 3.25,
@@ -1767,18 +2297,18 @@ impl ControlMetrics {
                 16.0,
                 unit * 2.25,
                 unit * 3.5,
-                52.0,
-                50.0,
+                40.0,
+                44.0,
                 32.0,
                 38.0,
-                52.0,
+                40.0,
                 22.0,
                 14.0,
                 unit * 1.5,
-                52.0,
-                52.0,
+                40.0,
+                38.0,
                 unit * 2.5,
-                46.0,
+                40.0,
                 Insets {
                     left: unit * 2.5,
                     top: unit * 1.5,
@@ -1820,11 +2350,11 @@ impl ControlMetrics {
                 unit * 2.0,
                 6.0,
                 240.0,
-                460.0,
+                440.0,
                 unit * 4.0,
                 Insets::all(unit * 3.5),
-                18.0,
-                22.0,
+                16.0,
+                24.0,
                 unit * 1.5,
                 unit * 3.0,
                 unit * 3.5,
@@ -1846,7 +2376,7 @@ impl ControlMetrics {
                 520.0,
                 unit * 6.0,
                 Insets::all(18.0),
-                20.0,
+                16.0,
                 24.0,
                 unit * 2.0,
                 14.0,
@@ -1869,8 +2399,8 @@ impl ControlMetrics {
                 600.0,
                 unit * 8.0,
                 Insets::all(unit * 6.0),
-                22.0,
-                28.0,
+                18.0,
+                26.0,
                 unit * 2.5,
                 unit * 4.5,
                 unit * 5.0,
@@ -2543,7 +3073,10 @@ impl ControlMetrics {
             pixel_canvas_grid_zoom,
             pixel_canvas_nearest_sampling_zoom,
             pixel_canvas_zoom_step,
-            corner_radius: radius.md,
+            corner_radius: match density {
+                ThemeDensity::Compact | ThemeDensity::Comfortable => radius.md,
+                ThemeDensity::Touch => radius.lg,
+            },
             indicator_corner_radius: radius.sm + 1.0,
             border_width: 1.0,
             focus_ring_width: 2.0,
@@ -2573,6 +3106,9 @@ pub struct DefaultTheme {
     pub leading: ThemeLeading,
     pub radius: ThemeRadii,
     pub shadows: ThemeShadows,
+    /// Live-signal glow halos (`--sm-glow-*`): empty in Light, damped in the
+    /// true-black theme. Paint with [`paint_theme_shadow`].
+    pub glows: ThemeGlows,
     pub blur: ThemeBlurScale,
     pub perspective: ThemePerspective,
     pub aspect: ThemeAspectRatios,
@@ -2600,6 +3136,12 @@ impl DefaultTheme {
 
     pub fn high_contrast() -> Self {
         Self::from_colors(ThemeColors::high_contrast())
+    }
+
+    /// The Mesh true-black OLED theme ("Void"): borders instead of shadows,
+    /// dimmed whites, damped glows. Alias for [`Self::high_contrast`].
+    pub fn void() -> Self {
+        Self::high_contrast()
     }
 
     pub fn compact() -> Self {
@@ -2635,7 +3177,8 @@ impl DefaultTheme {
             tracking: ThemeTracking::default(),
             leading: ThemeLeading::default(),
             radius,
-            shadows: ThemeShadows::default(),
+            shadows: ThemeShadows::for_scheme(colors.scheme),
+            glows: ThemeGlows::for_scheme(colors.scheme),
             blur: ThemeBlurScale::default(),
             perspective: ThemePerspective::default(),
             aspect: ThemeAspectRatios::default(),
@@ -2643,7 +3186,7 @@ impl DefaultTheme {
             hdr,
             palette,
             surfaces,
-            typography: ControlTypography::from_text_scale(&text),
+            typography: ControlTypography::for_density(&text, density),
             interaction: ControlStateMetrics::for_density(density),
             metrics: ControlMetrics::from_tokens(spacing, radius, density),
         };
@@ -2660,7 +3203,9 @@ impl DefaultTheme {
         self.hdr.sync_semantic_defaults(self.colors);
         self.palette = ControlPalette::from_colors(&self.colors);
         self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
-        self.typography = ControlTypography::from_text_scale(&self.text);
+        self.shadows = ThemeShadows::for_scheme(self.colors.scheme);
+        self.glows = ThemeGlows::for_scheme(self.colors.scheme);
+        self.typography = ControlTypography::for_density(&self.text, self.density);
         self.interaction = ControlStateMetrics::for_density(self.density);
         self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius, self.density);
     }
@@ -2691,6 +3236,21 @@ impl DefaultTheme {
 
     pub fn semantic_tone_text_color(&self, tone: SemanticTone) -> Color {
         self.semantic_tone_colors(tone).1
+    }
+
+    /// The Mesh soft pair for a tone: a translucent wash to fill with and the
+    /// status-hued ink that stays legible on it (`--sm-*-soft` / `--sm-*-text`).
+    /// Use for badges, callouts and selected rows; the solid pair from
+    /// [`Self::semantic_tone_colors`] is for filled controls.
+    pub fn semantic_tone_soft_colors(&self, tone: SemanticTone) -> (Color, Color) {
+        match tone {
+            SemanticTone::Neutral => (self.palette.control_hover, self.palette.text_muted),
+            SemanticTone::Accent => (self.palette.accent_soft, self.palette.accent_soft_text),
+            SemanticTone::Info => (self.palette.info_soft, self.palette.info_soft_text),
+            SemanticTone::Success => (self.palette.success_soft, self.palette.success_soft_text),
+            SemanticTone::Warning => (self.palette.warning_soft, self.palette.warning_soft_text),
+            SemanticTone::Danger => (self.palette.danger_soft, self.palette.danger_soft_text),
+        }
     }
 
     pub fn body_text_style(&self) -> TextStyle {
@@ -2748,6 +3308,10 @@ fn rgb8(red: u8, green: u8, blue: u8) -> Color {
     )
 }
 
+fn rgba8(red: u8, green: u8, blue: u8, alpha: f32) -> Color {
+    rgb8(red, green, blue).with_alpha(alpha)
+}
+
 fn shadow_layer(
     offset_x: f32,
     offset_y: f32,
@@ -2769,7 +3333,8 @@ fn shadow_layer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Color, DefaultTheme, SemanticTone, ThemeColorScheme, ThemeColors, ThemeDensity, rgb8,
+        Color, DefaultTheme, SemanticTone, ThemeColorScheme, ThemeColors, ThemeDensity,
+        ThemeShadow, rgb8, rgba8,
     };
     use crate::hdr_theme::HdrThemeMode;
 
@@ -2782,8 +3347,8 @@ mod tests {
             theme.typography.body_line_height,
             theme.text.base.line_height
         );
-        assert_eq!(theme.typography.body_font_size, 13.0);
-        assert_eq!(theme.typography.body_line_height, 19.0);
+        assert_eq!(theme.typography.body_font_size, 14.0);
+        assert_eq!(theme.typography.body_line_height, 20.0);
         assert_eq!(theme.density, ThemeDensity::Compact);
         assert_eq!(theme.metrics.min_height, 28.0);
         assert_eq!(theme.metrics.touch_target_size, 28.0);
@@ -3027,6 +3592,158 @@ mod tests {
     }
 
     #[test]
+    fn built_in_themes_use_exact_mesh_role_tokens() {
+        // Translucent Mesh tokens are flattened onto the card surface with
+        // CSS (gamma-space) compositing at theme build time, because the
+        // renderer blends in linear space (which reads far heavier).
+        let light = DefaultTheme::light();
+        let light_surface = Color::WHITE;
+        assert_eq!(light.palette.border, rgb8(227, 232, 239));
+        assert_eq!(light.palette.border_strong, rgb8(205, 213, 224));
+        assert_eq!(light.palette.text_muted, rgb8(73, 84, 107));
+        assert_eq!(light.palette.placeholder, rgb8(104, 115, 144));
+        assert_eq!(light.palette.control, rgb8(243, 245, 248));
+        assert_eq!(light.palette.control_hover, rgb8(234, 238, 243));
+        assert_eq!(light.palette.field, Color::WHITE);
+        assert_eq!(light.palette.focus, rgb8(9, 148, 198));
+        assert_eq!(
+            light.palette.selection,
+            rgba8(8, 124, 164, 0.18).over(light_surface)
+        );
+        assert_eq!(
+            light.palette.accent_soft,
+            rgba8(8, 124, 164, 0.08).over(light_surface)
+        );
+        assert_eq!(light.palette.accent_soft.alpha, 1.0);
+        assert_eq!(light.palette.accent_soft_text, rgb8(8, 124, 164));
+        assert_eq!(light.palette.warning_soft_text, rgb8(154, 103, 0));
+        assert_eq!(light.palette.danger_hover, rgb8(180, 35, 24));
+        assert_eq!(light.surfaces.window_subtle, rgb8(247, 248, 250));
+        assert_eq!(light.surfaces.sidebar, light.surfaces.window_subtle);
+        assert_eq!(light.surfaces.overlay, Color::WHITE);
+
+        let dark = DefaultTheme::dark();
+        let dark_surface = rgb8(18, 22, 31);
+        assert_eq!(
+            dark.palette.border,
+            rgba8(151, 168, 199, 0.16).over(dark_surface)
+        );
+        assert_eq!(
+            dark.palette.border_strong,
+            rgba8(151, 168, 199, 0.27).over(dark_surface)
+        );
+        assert_eq!(dark.palette.text_muted, rgb8(166, 178, 200));
+        assert_eq!(dark.palette.control, rgb8(23, 28, 39));
+        assert_eq!(dark.palette.control_hover, rgb8(29, 36, 49));
+        assert_eq!(dark.palette.field, rgb8(15, 19, 27));
+        assert_eq!(dark.palette.surface_raised, dark_surface);
+        assert_eq!(dark.palette.focus, rgb8(73, 199, 234));
+        assert_eq!(
+            dark.palette.selection,
+            rgba8(53, 210, 238, 0.24).over(dark_surface)
+        );
+        assert_eq!(dark.palette.accent_hover, rgb8(95, 224, 246));
+        assert_eq!(
+            dark.palette.success_soft,
+            rgba8(74, 222, 128, 0.12).over(dark_surface)
+        );
+        assert_eq!(dark.palette.success_soft_text, rgb8(74, 222, 128));
+        assert_eq!(dark.surfaces.window_subtle, rgb8(14, 18, 26));
+        assert_eq!(dark.surfaces.overlay, rgb8(22, 27, 38));
+        assert_eq!(
+            dark.surfaces.border_subtle,
+            rgba8(151, 168, 199, 0.09).over(dark_surface)
+        );
+        assert_eq!(dark.surfaces.text_disabled, rgb8(81, 93, 117));
+        assert_eq!(dark.surfaces.text_invert, rgb8(13, 18, 32));
+
+        let void = DefaultTheme::void();
+        assert_eq!(
+            void.palette.border,
+            rgba8(158, 175, 205, 0.18).over(Color::BLACK)
+        );
+        assert_eq!(void.palette.field, rgb8(11, 14, 20));
+        assert_eq!(void.palette.focus, rgb8(63, 196, 228));
+        assert_eq!(void.surfaces.window_subtle, Color::BLACK);
+        assert_eq!(void.surfaces.overlay, rgb8(10, 13, 19));
+        // The scrim stays translucent: it is a true overlay above arbitrary
+        // content, not a token that can be flattened ahead of time.
+        assert_eq!(void.surfaces.overlay_scrim, rgba8(0, 0, 0, 0.72));
+    }
+
+    #[test]
+    fn elevation_follows_the_mesh_ladder_per_scheme() {
+        let light = DefaultTheme::light();
+        let dark = DefaultTheme::dark();
+        let void = DefaultTheme::void();
+
+        // Light casts faint ink shadows.
+        let light_sm = light.shadows.box_shadow.xs.first.expect("light xs shadow");
+        assert!(light_sm.color.alpha > 0.0 && light_sm.color.alpha < 0.1);
+        // Dark casts deeper black shadows.
+        let dark_sm = dark.shadows.box_shadow.xs.first.expect("dark xs shadow");
+        assert!(dark_sm.color.alpha > light_sm.color.alpha);
+        // Void casts none: elevation is drawn with borders.
+        assert_eq!(void.shadows.box_shadow.xs, ThemeShadow::empty());
+        assert_eq!(void.shadows.box_shadow._2xl, ThemeShadow::empty());
+        assert_eq!(void.shadows.drop.sm, ThemeShadow::empty());
+
+        // Glows: absent in Light, present in Dark, damped in Void.
+        assert_eq!(light.glows.accent, ThemeShadow::empty());
+        let dark_glow = dark.glows.accent.first.expect("dark accent glow");
+        let void_glow = void.glows.accent.first.expect("void accent glow");
+        assert!(dark_glow.blur > void_glow.blur);
+        assert!(dark_glow.color.alpha > void_glow.color.alpha);
+        assert_eq!(dark_glow.offset_x, 0.0);
+        assert_eq!(dark_glow.offset_y, 0.0);
+    }
+
+    #[test]
+    fn density_tiers_match_the_mesh_contract() {
+        let compact = DefaultTheme::compact();
+        let comfortable = DefaultTheme::comfortable();
+        let touch = DefaultTheme::touch();
+
+        // Control heights: 28 / 32 / 36, with the 44px anchor as touch target.
+        assert_eq!(compact.metrics.min_height, 28.0);
+        assert_eq!(comfortable.metrics.min_height, 32.0);
+        assert_eq!(touch.metrics.min_height, 36.0);
+        assert_eq!(touch.metrics.touch_target_size, 44.0);
+
+        // Rows: 30 / 36 / 40.
+        assert_eq!(compact.metrics.list_row_height, 30.0);
+        assert_eq!(comfortable.metrics.list_row_height, 36.0);
+        assert_eq!(touch.metrics.list_row_height, 40.0);
+        assert_eq!(compact.metrics.table_row_height, 30.0);
+
+        // Body type: 14px compact/comfortable, 16px touch.
+        assert_eq!(compact.typography.body_font_size, 14.0);
+        assert_eq!(comfortable.typography.body_font_size, 14.0);
+        assert_eq!(touch.typography.body_font_size, 16.0);
+
+        // Control radius: 6 compact/comfortable, 8 touch.
+        assert_eq!(compact.metrics.corner_radius, 6.0);
+        assert_eq!(comfortable.metrics.corner_radius, 6.0);
+        assert_eq!(touch.metrics.corner_radius, 8.0);
+
+        // The switch is a fixed 32x19 control at every density.
+        for theme in [&compact, &comfortable, &touch] {
+            assert_eq!(theme.metrics.switch_track_width, 32.0);
+            assert_eq!(theme.metrics.switch_track_height, 19.0);
+            assert_eq!(theme.metrics.checkbox_indicator_size, 15.0);
+        }
+    }
+
+    #[test]
+    fn mesh_motion_ladder_is_70_140_220_340() {
+        let motion = super::ThemeMotion::standard();
+        assert_eq!(motion.duration_fast, 0.07);
+        assert_eq!(motion.duration_normal, 0.14);
+        assert_eq!(motion.duration_slow, 0.22);
+        assert_eq!(motion.duration_slower, 0.34);
+    }
+
+    #[test]
     fn light_and_dark_themes_derive_hdr_role_colors_from_semantics() {
         let light = DefaultTheme::light();
         let dark = DefaultTheme::dark();
@@ -3043,6 +3760,8 @@ mod tests {
         theme.colors.primary = Color::rgba(0.2, 0.3, 0.4, 1.0);
         theme.text.base.size = 11.0;
         theme.text.base.line_height = 15.0;
+        theme.text.lg.size = 15.0;
+        theme.text.lg.line_height = 22.0;
         theme.density = ThemeDensity::Touch;
         theme.sync_derived_fields();
 
@@ -3050,10 +3769,13 @@ mod tests {
         assert_eq!(theme.palette.caret, Color::rgba(0.2, 0.3, 0.4, 1.0));
         assert_eq!(theme.surfaces.accent, theme.palette.accent);
         assert_eq!(theme.surfaces.window, theme.palette.surface);
-        assert_eq!(theme.surfaces.tooltip_text, theme.palette.surface);
+        // Mesh tooltips are quiet floating surfaces: overlay fill, secondary ink.
+        assert_eq!(theme.surfaces.tooltip, theme.surfaces.overlay);
+        assert_eq!(theme.surfaces.tooltip_text, theme.palette.text_muted);
         assert!(theme.surfaces.overlay_scrim.alpha > 0.0);
-        assert_eq!(theme.typography.body_font_size, 11.0);
-        assert_eq!(theme.typography.body_line_height, 15.0);
+        // Touch density reads at the lg body size per the Mesh density contract.
+        assert_eq!(theme.typography.body_font_size, 15.0);
+        assert_eq!(theme.typography.body_line_height, 22.0);
         assert_eq!(
             theme.metrics.min_height,
             DefaultTheme::touch().metrics.min_height
@@ -3144,8 +3866,12 @@ mod tests {
         assert_eq!(theme.palette.surface, theme.colors.base_100);
         assert_eq!(theme.palette.surface, Color::BLACK);
         assert_eq!(theme.surfaces.window, Color::BLACK);
-        assert_ne!(theme.palette.surface_raised, Color::BLACK);
+        // The Void OLED contract keeps cards true black — the border is the
+        // card. Only input wells and hover fills lift off black.
+        assert_eq!(theme.palette.surface_raised, Color::BLACK);
+        assert!(theme.palette.border.alpha > 0.0);
         assert_ne!(theme.palette.control, Color::BLACK);
+        assert_ne!(theme.palette.field, Color::BLACK);
         assert_ne!(theme.palette.text, Color::WHITE);
         assert_ne!(theme.palette.control_hover, Color::BLACK);
         assert_ne!(theme.palette.control_active, Color::BLACK);

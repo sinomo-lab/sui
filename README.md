@@ -74,6 +74,25 @@ trunk build --config crates/sui-demo/web/Trunk.toml --release
 
 The output is written to `crates/sui-demo/web/dist`.
 
+## Built-in Themes: the Mesh design language
+
+The built-in themes implement **Mesh**, sinomo's design language (see the
+`sinomo-ui-design` repository for the token source of truth and documentation
+site). Three themes ship out of the box:
+
+- `DefaultTheme::light()` — pure white, ink on paper, faint ink shadows.
+- `DefaultTheme::dark()` — cool graphite, lifted surfaces, live glows.
+- `DefaultTheme::void()` — true black for OLED: elevation is drawn with
+  borders (shadow tokens are empty), whites are dimmed, glows damped.
+
+The role tokens (`--sm-*` in the design repo) map onto `ControlPalette` /
+`SurfacePalette`: three text tiers, three surface tiers plus overlay and
+field, translucent borders, soft status washes (`*_soft` + `*_soft_text`
+pairs), a dedicated focus color, selection, scrim, and per-scheme glow tokens
+(`theme.glows`). Density tiers follow the Mesh contract — compact 28px
+controls / 30px rows, comfortable 32/36, touch 36/40 with 16px type — and the
+motion ladder is 70/140/220/340ms.
+
 ## Workspace Layout
 
 - `crates/sui` - public Rust facade and prelude.

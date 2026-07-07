@@ -75,14 +75,7 @@ fn set_focus_animation_target(
 }
 
 fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    let t = amount.clamp(0.0, 1.0);
-    Color::new(
-        from.space,
-        from.red + (to.red - from.red) * t,
-        from.green + (to.green - from.green) * t,
-        from.blue + (to.blue - from.blue) * t,
-        from.alpha + (to.alpha - from.alpha) * t,
-    )
+    crate::animation::Interpolate::interpolate(from, to, amount)
 }
 
 pub type ResizablePane = SplitView;

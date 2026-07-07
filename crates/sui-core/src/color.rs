@@ -75,6 +75,27 @@ impl Color {
         }
     }
 
+    /// Source-over composite this (possibly translucent) color onto an opaque
+    /// `backdrop`, blending in the **encoded (gamma) space** — the same
+    /// arithmetic CSS uses for `rgba()` overlays. The renderer blends in
+    /// linear space, which reads translucent washes noticeably heavier than
+    /// their CSS-authored intent, so design tokens specified as CSS rgba
+    /// values should be flattened with this before painting.
+    ///
+    /// Both colors must be in the same encoded space; the backdrop's alpha is
+    /// treated as 1. The result is opaque.
+    pub fn over(self, backdrop: Color) -> Self {
+        let alpha = self.alpha.clamp(0.0, 1.0);
+        let inverse = 1.0 - alpha;
+        Self {
+            space: backdrop.space,
+            red: self.red * alpha + backdrop.red * inverse,
+            green: self.green * alpha + backdrop.green * inverse,
+            blue: self.blue * alpha + backdrop.blue * inverse,
+            alpha: 1.0,
+        }
+    }
+
     pub fn to_linear_srgb(self) -> Self {
         let decode = if self.space.is_linear() {
             |channel: f32| channel

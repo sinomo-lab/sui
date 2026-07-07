@@ -5849,14 +5849,14 @@ impl Widget for TextArea {
         let metrics = theme.metrics;
         let padding = self.resolved_padding();
         let content = inset_rect(ctx.bounds(), padding);
-        let interaction = theme.interaction;
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
         let focus_progress = self.focus_animation.value;
 
+        // Mesh text areas are inset field wells: the background stays on the
+        // field token; hover animates the border, focus tints toward the halo.
         let base_background = if self.read_only {
             palette.surface
         } else {
-            mix_color(palette.control, palette.control_hover, hover_progress)
+            palette.field
         };
         draw_control_frame(
             ctx,
@@ -6902,17 +6902,15 @@ impl Widget for Select {
                 .max(0.0),
             header.height(),
         );
+        // Mesh selects are dressed fields: the closed control sits on the
+        // field token; hover/press keep the well and animate the border.
         draw_control_frame(
             ctx,
             header,
             metrics.corner_radius,
             metrics,
             mix_color(
-                mix_color(
-                    mix_color(palette.control, palette.control_hover, hover_progress),
-                    palette.control_active,
-                    press_progress,
-                ),
+                mix_color(palette.field, palette.control_active, press_progress * 0.5),
                 palette.surface_focus,
                 focus_progress,
             ),
@@ -6920,7 +6918,7 @@ impl Widget for Select {
                 mix_color(
                     palette.border,
                     palette.border_hover,
-                    self.hover_animation.value,
+                    self.hover_animation.value.max(hover_progress),
                 ),
                 palette.border_focus,
                 focus_progress,
@@ -7619,12 +7617,14 @@ impl Widget for TextInput {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let interaction = theme.interaction;
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
+        let _ = interaction;
         let focus_progress = self.focus_animation.value;
+        // Mesh text inputs are inset field wells: the background stays on the
+        // field token; hover animates the border, focus tints toward the halo.
         let base_background = if self.read_only {
             palette.surface
         } else {
-            mix_color(palette.control, palette.control_hover, hover_progress)
+            palette.field
         };
         let background = mix_color(base_background, palette.surface_focus, focus_progress);
         let border = mix_color(
@@ -9568,30 +9568,19 @@ mod tests {
         runtime.tick(hover_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
-        let mid_background = solid_fill_colors(&mid)[0];
-        assert_ne!(mid_background, theme.palette.control);
-        assert_ne!(
-            mid_background,
-            super::mix_color(
-                theme.palette.control,
-                theme.palette.control_hover,
-                theme.interaction.hover_blend
-            )
-        );
+        // Mesh selects are dressed fields: the well stays on the field token
+        // while hover animates the border toward border_hover.
+        assert!(solid_fill_colors(&mid).contains(&theme.palette.field));
+        let mid_strokes = solid_stroke_colors(&mid);
+        assert!(!mid_strokes.contains(&theme.palette.border));
+        assert!(!mid_strokes.contains(&theme.palette.border_hover));
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
         runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
-        let end_background = solid_fill_colors(&end)[0];
-        assert_eq!(
-            end_background,
-            super::mix_color(
-                theme.palette.control,
-                theme.palette.control_hover,
-                theme.interaction.hover_blend
-            )
-        );
+        assert!(solid_fill_colors(&end).contains(&theme.palette.field));
+        assert!(solid_stroke_colors(&end).contains(&theme.palette.border_hover));
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
     }
@@ -9727,20 +9716,18 @@ mod tests {
         runtime.tick(hover_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
-        let mid_background = solid_fill_colors(&mid)[0];
-        let settled_background = super::mix_color(
-            theme.palette.control,
-            theme.palette.control_hover,
-            theme.interaction.hover_blend,
-        );
-        assert_ne!(mid_background, theme.palette.control);
-        assert_ne!(mid_background, settled_background);
+        // Mesh inputs keep the field well fixed; hover animates the border.
+        assert_eq!(solid_fill_colors(&mid)[0], theme.palette.field);
+        let mid_strokes = solid_stroke_colors(&mid);
+        assert!(!mid_strokes.contains(&theme.palette.border));
+        assert!(!mid_strokes.contains(&theme.palette.border_hover));
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
         runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
-        assert_eq!(solid_fill_colors(&end)[0], settled_background);
+        assert_eq!(solid_fill_colors(&end)[0], theme.palette.field);
+        assert!(solid_stroke_colors(&end).contains(&theme.palette.border_hover));
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
     }
@@ -10434,6 +10421,9 @@ mod tests {
     fn text_input_caret_uses_theme_palette_color() -> Result<()> {
         let mut theme = DefaultTheme::default();
         theme.palette.caret = Color::rgba(0.02, 0.18, 0.72, 1.0);
+        // A sentinel accent_text distinct from the (white) field well, so the
+        // background fill cannot mask an accent_text-colored caret.
+        theme.palette.accent_text = Color::rgba(0.9, 0.05, 0.85, 1.0);
         let caret_color = theme.palette.caret;
         let accent_text = theme.palette.accent_text;
         let (mut runtime, window_id) = build_runtime(
