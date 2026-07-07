@@ -12,7 +12,7 @@ use crate::widget_book::{
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextCoveragePolicy, TextHinting, ToggleState, WgpuRenderer, WidgetId, WidgetPodMutVisitor,
+    TextCoveragePolicy, TextHinting, ToggleState, WgpuRenderer, WidgetPodMutVisitor,
     WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
     WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
@@ -110,13 +110,11 @@ const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_00
 const DEV_SHELL_LOGO_IMAGE_SIZE: u32 = 128;
 const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
 const DEV_SHELL_TAB_GAP: f32 = 6.0;
-const DEV_SHELL_TAB_CLOSE_SIZE: f32 = 18.0;
-const DEV_SHELL_TAB_CLOSE_MARGIN: f32 = 7.0;
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 140.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
-const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 104.0;
-const DEV_SHELL_PICKER_TILE_GAP: f32 = 14.0;
+const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 124.0;
+const DEV_SHELL_PICKER_TILE_GAP: f32 = 16.0;
 const DEV_SHELL_PICKER_SCROLL_NAME: &str = "Demo picker";
 const DEV_SHELL_PICKER_SCROLL_BAR_NAME: &str = "Demo picker scroll bar";
 const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
@@ -373,16 +371,11 @@ struct DevBrowserShell {
     state: DevShellState,
     demos: Vec<DevDemo>,
     picker: SingleChild,
+    tab_bar: SingleChild,
     main_menu: SingleChild,
     plus_button: SingleChild,
     theme_toggle: SingleChild,
     settings_window: SingleChild,
-    tab_widths: Vec<f32>,
-    tab_rects: Vec<(usize, Rect)>,
-    hovered_tab: Option<usize>,
-    pressed_tab: Option<usize>,
-    hovered_close_tab: Option<usize>,
-    pressed_close_tab: Option<usize>,
     content_bounds: Rect,
 }
 
@@ -401,6 +394,7 @@ impl DevBrowserShell {
         {
             state.open_demo(index);
         }
+        let demo_titles = demos.iter().map(|demo| demo.title).collect::<Vec<_>>();
 
         let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
         for (index, demo) in demos.iter().enumerate() {
@@ -411,7 +405,7 @@ impl DevBrowserShell {
                     .theme_when(move || theme_state.theme())
                     .icon(demo.icon)
                     .accent(demo.accent)
-                    .min_width(220.0)
+                    .min_width(260.0)
                     .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
                     .on_press_with_ctx(move |ctx| {
                         ctx.clear_focus();
@@ -427,6 +421,45 @@ impl DevBrowserShell {
                 .name(DEV_SHELL_PICKER_SCROLL_NAME),
             ScrollBar::vertical(picker_scroll_state).name(DEV_SHELL_PICKER_SCROLL_BAR_NAME),
         );
+
+        let tab_titles = demo_titles.clone();
+        let tab_tabs_state = state.clone();
+        let tab_bar = BrowserTabBar::new("Open demos")
+            .theme_when(clone_dev_theme_reader(&theme_reader))
+            .tabs_when(move || {
+                tab_tabs_state
+                    .open_tabs()
+                    .into_iter()
+                    .filter_map(|index| tab_titles.get(index).map(|title| (*title).to_string()))
+                    .collect()
+            })
+            .selected_when({
+                let selected_state = state.clone();
+                move || {
+                    let tabs = selected_state.open_tabs();
+                    selected_state
+                        .active_tab()
+                        .and_then(|active| tabs.iter().position(|index| *index == active))
+                }
+            })
+            .on_change_with_ctx({
+                let select_state = state.clone();
+                move |tab_index, _, ctx| {
+                    if let Some(demo_index) = select_state.open_tabs().get(tab_index).copied() {
+                        select_state.select_tab(demo_index);
+                        request_window_refresh(ctx, true);
+                    }
+                }
+            })
+            .on_close_with_ctx({
+                let close_state = state.clone();
+                move |tab_index, _, ctx| {
+                    if let Some(demo_index) = close_state.open_tabs().get(tab_index).copied() {
+                        close_state.close_tab(demo_index);
+                        request_window_refresh(ctx, true);
+                    }
+                }
+            });
 
         let picker_state = state.clone();
         let plus_button = IconButton::new(IconGlyph::Add, "Open demo")
@@ -453,6 +486,7 @@ impl DevBrowserShell {
             state: state.clone(),
             demos,
             picker: SingleChild::new(picker),
+            tab_bar: SingleChild::new(tab_bar),
             main_menu: SingleChild::new(main_menu),
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
@@ -464,68 +498,12 @@ impl DevBrowserShell {
                     state,
                 ),
             )),
-            tab_widths: Vec::new(),
-            tab_rects: Vec::new(),
-            hovered_tab: None,
-            pressed_tab: None,
-            hovered_close_tab: None,
-            pressed_close_tab: None,
             content_bounds: Rect::ZERO,
         }
     }
 
     fn performance_overlay_reader(&self) -> Rc<dyn Fn() -> bool> {
         self.state.performance_overlay_reader()
-    }
-
-    fn tab_at(&self, position: Point) -> Option<usize> {
-        self.tab_rects
-            .iter()
-            .find_map(|(index, rect)| rect.contains(position).then_some(*index))
-    }
-
-    fn tab_close_rect(rect: Rect) -> Rect {
-        Rect::new(
-            rect.max_x() - DEV_SHELL_TAB_CLOSE_MARGIN - DEV_SHELL_TAB_CLOSE_SIZE,
-            rect.y() + ((rect.height() - DEV_SHELL_TAB_CLOSE_SIZE) * 0.5),
-            DEV_SHELL_TAB_CLOSE_SIZE,
-            DEV_SHELL_TAB_CLOSE_SIZE,
-        )
-    }
-
-    fn tab_close_at(&self, position: Point) -> Option<usize> {
-        self.tab_rects.iter().find_map(|(index, rect)| {
-            Self::tab_close_rect(*rect)
-                .contains(position)
-                .then_some(*index)
-        })
-    }
-
-    fn tab_label_rect(rect: Rect) -> Rect {
-        let close = Self::tab_close_rect(rect);
-        let x = rect.x() + 12.0;
-        let line_height = 18.0;
-        Rect::new(
-            x,
-            rect.y() + ((rect.height() - line_height) * 0.5),
-            (close.x() - x - 6.0).max(0.0),
-            line_height,
-        )
-    }
-
-    fn select_adjacent_tab(&mut self, direction: isize) {
-        let tabs = self.state.open_tabs();
-        if tabs.is_empty() {
-            return;
-        }
-        let current = self
-            .state
-            .active_tab()
-            .and_then(|active| tabs.iter().position(|index| *index == active))
-            .unwrap_or(0);
-        let last = tabs.len() as isize - 1;
-        let next = (current as isize + direction).clamp(0, last) as usize;
-        self.state.select_tab(tabs[next]);
     }
 
     fn root_size_for_constraints(constraints: Constraints) -> Size {
@@ -582,35 +560,32 @@ impl DevBrowserShell {
     }
 
     fn picker_grid_rect(content: Rect) -> Rect {
-        let width = (content.width() - 64.0).clamp(0.0, 1120.0);
+        let width = (content.width() - 72.0).clamp(0.0, 1180.0);
         let x = content.x() + ((content.width() - width) * 0.5);
         Rect::new(
             x,
-            content.y() + 104.0,
+            content.y() + 112.0,
             width,
-            (content.height() - 136.0).max(0.0),
+            (content.height() - 152.0).max(0.0),
         )
     }
 
-    fn arrange_tab_strip(&mut self, bounds: Rect) -> Rect {
-        self.tab_rects.clear();
+    fn arrange_tab_strip(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) -> Rect {
         let tab_zone = Self::tab_zone_rect(bounds);
-        let tabs = self.state.open_tabs();
-        let mut x = tab_zone.x();
-        for (order, demo_index) in tabs.into_iter().enumerate() {
-            let width = self.tab_widths.get(order).copied().unwrap_or(132.0);
-            if x + width > tab_zone.max_x() {
-                break;
-            }
-            let rect = Rect::new(x, tab_zone.y(), width, DEV_SHELL_TAB_HEIGHT);
-            self.tab_rects.push((demo_index, rect));
-            x += width + DEV_SHELL_TAB_GAP;
-        }
+        let max_tabs_width =
+            (tab_zone.width() - DEV_SHELL_TAB_GAP - DEV_SHELL_PLUS_BUTTON_SIZE).max(0.0);
+        let tabs_size = self.tab_bar.child().measured_size();
+        let tabs_width = tabs_size.width.min(max_tabs_width);
+        let tabs_rect = Rect::new(tab_zone.x(), tab_zone.y(), tabs_width, tab_zone.height());
+        self.tab_bar.arrange(ctx, tabs_rect);
+
+        let plus_x = (tabs_rect.max_x() + DEV_SHELL_TAB_GAP)
+            .min(tab_zone.max_x() - DEV_SHELL_PLUS_BUTTON_SIZE)
+            .max(tab_zone.x());
 
         Rect::new(
-            x.min(tab_zone.max_x() - DEV_SHELL_PLUS_BUTTON_SIZE)
-                .max(tab_zone.x()),
-            tab_zone.y() + ((DEV_SHELL_TAB_HEIGHT - DEV_SHELL_PLUS_BUTTON_SIZE) * 0.5),
+            plus_x,
+            tab_zone.y() + ((tab_zone.height() - DEV_SHELL_PLUS_BUTTON_SIZE) * 0.5),
             DEV_SHELL_PLUS_BUTTON_SIZE,
             DEV_SHELL_PLUS_BUTTON_SIZE,
         )
@@ -631,97 +606,6 @@ impl DevBrowserShell {
             palette.border.with_alpha(0.85),
             StrokeStyle::new(1.0),
         );
-
-        let active = self.state.active_tab();
-        for (demo_index, rect) in &self.tab_rects {
-            let selected = active == Some(*demo_index);
-            let hovered = self.hovered_tab == Some(*demo_index);
-            let pressed = self.pressed_tab == Some(*demo_index);
-            let tab_background = if selected {
-                palette.surface
-            } else if pressed {
-                palette.surface_pressed
-            } else if hovered {
-                palette.surface_hover
-            } else {
-                Color::rgba(0.0, 0.0, 0.0, 0.0)
-            };
-            if selected || hovered || pressed {
-                ctx.fill(
-                    Path::rounded_rect(*rect, 7.0),
-                    tab_background.with_alpha(if selected { 1.0 } else { 0.82 }),
-                );
-                if hovered || pressed {
-                    ctx.stroke(
-                        Path::rounded_rect(*rect, 7.0),
-                        palette.border.with_alpha(0.62),
-                        StrokeStyle::new(1.0),
-                    );
-                }
-            }
-            if selected && ctx.is_focused() {
-                let focus_outset = theme.metrics.focus_ring_outset;
-                ctx.stroke(
-                    Path::rounded_rect(
-                        rect.inflate(focus_outset, focus_outset),
-                        7.0 + focus_outset,
-                    ),
-                    palette.focus_ring,
-                    StrokeStyle::new(theme.metrics.focus_ring_width.max(1.0)),
-                );
-            }
-
-            let label = self.demos[*demo_index].title;
-            ctx.draw_text(
-                Self::tab_label_rect(*rect),
-                label,
-                TextStyle {
-                    font_size: 13.0,
-                    line_height: 18.0,
-                    color: palette.text,
-                    ..TextStyle::default()
-                },
-            );
-
-            let close = Self::tab_close_rect(*rect);
-            let close_hovered = self.hovered_close_tab == Some(*demo_index);
-            let close_pressed = self.pressed_close_tab == Some(*demo_index);
-            if close_hovered || close_pressed {
-                ctx.fill(
-                    Path::rounded_rect(close, 5.0),
-                    if close_pressed {
-                        palette.surface_pressed
-                    } else {
-                        palette.surface_hover
-                    },
-                );
-            }
-            ctx.stroke(
-                close_icon_path(close),
-                if close_hovered || selected {
-                    palette.text
-                } else {
-                    palette.placeholder
-                }
-                .with_alpha(if close_pressed { 0.95 } else { 0.78 }),
-                StrokeStyle::new(1.4),
-            );
-
-            if selected {
-                ctx.fill(
-                    Path::rounded_rect(
-                        Rect::new(
-                            rect.x() + 12.0,
-                            rect.max_y() - 3.0,
-                            rect.width() - 24.0,
-                            3.0,
-                        ),
-                        1.5,
-                    ),
-                    palette.accent,
-                );
-            }
-        }
     }
 
     fn paint_picker(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
@@ -739,8 +623,8 @@ impl DevBrowserShell {
             ),
             DEV_SHELL_PICKER_TITLE,
             TextStyle {
-                font_size: 24.0,
-                line_height: 30.0,
+                font_size: 28.0,
+                line_height: 34.0,
                 color: palette.text,
                 ..TextStyle::default()
             },
@@ -754,9 +638,9 @@ impl DevBrowserShell {
             ),
             "Renderer, text, color, editor, and widget surfaces.",
             TextStyle {
-                font_size: 13.0,
-                line_height: 18.0,
-                color: palette.placeholder,
+                font_size: 14.0,
+                line_height: 20.0,
+                color: palette.text_muted,
                 ..TextStyle::default()
             },
         );
@@ -773,9 +657,9 @@ impl DevDemoPickerGrid {
     }
 
     fn columns_for_width(width: f32) -> usize {
-        if width >= 840.0 {
+        if width >= 960.0 {
             3
-        } else if width >= 560.0 {
+        } else if width >= 620.0 {
             2
         } else {
             1
@@ -783,9 +667,12 @@ impl DevDemoPickerGrid {
     }
 
     fn column_width(width: f32, columns: usize) -> f32 {
-        ((width - (DEV_SHELL_PICKER_TILE_GAP * (columns.saturating_sub(1) as f32)))
+        if columns == 0 {
+            return 0.0;
+        }
+        ((width - (DEV_SHELL_PICKER_TILE_GAP * (columns.saturating_sub(1) as f32))).max(0.0)
             / columns as f32)
-            .max(160.0)
+            .max(0.0)
     }
 
     fn content_height(child_count: usize, columns: usize) -> f32 {
@@ -858,30 +745,6 @@ impl Widget for DevDemoPickerGrid {
     }
 }
 
-fn dev_shell_tab_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
-    const TAG: u64 = 2_u64 << 51;
-    const LOW_MASK: u64 = (1_u64 << 51) - 1;
-    WidgetId::new(
-        TAG | (parent
-            .get()
-            .wrapping_mul(313)
-            .wrapping_add(demo_index as u64 + 1)
-            & LOW_MASK),
-    )
-}
-
-fn dev_shell_tab_close_semantics_id(parent: WidgetId, demo_index: usize) -> WidgetId {
-    const TAG: u64 = 2_u64 << 51;
-    const LOW_MASK: u64 = (1_u64 << 51) - 1;
-    WidgetId::new(
-        TAG | (parent
-            .get()
-            .wrapping_mul(313)
-            .wrapping_add(10_000 + demo_index as u64)
-            & LOW_MASK),
-    )
-}
-
 impl Widget for DevBrowserShell {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if ctx.phase() != sui::EventPhase::Target {
@@ -889,99 +752,8 @@ impl Widget for DevBrowserShell {
         }
 
         match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = self.tab_at(pointer.position);
-                let hovered_close = self.tab_close_at(pointer.position);
-                if self.hovered_tab != hovered || self.hovered_close_tab != hovered_close {
-                    self.hovered_tab = hovered;
-                    self.hovered_close_tab = hovered_close;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                if self.hovered_tab.take().is_some() || self.hovered_close_tab.take().is_some() {
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-                if self.pressed_tab.is_some() && pointer.buttons.is_empty() {
-                    self.pressed_tab = None;
-                }
-                if self.pressed_close_tab.is_some() && pointer.buttons.is_empty() {
-                    self.pressed_close_tab = None;
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                if let Some(tab) = self.tab_close_at(pointer.position) {
-                    self.pressed_close_tab = Some(tab);
-                    self.hovered_close_tab = Some(tab);
-                    self.hovered_tab = Some(tab);
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_focus();
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                } else if let Some(tab) = self.tab_at(pointer.position) {
-                    self.pressed_tab = Some(tab);
-                    self.hovered_tab = Some(tab);
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_focus();
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                if let Some(pressed) = self.pressed_close_tab.take() {
-                    let hovered_close = self.tab_close_at(pointer.position);
-                    if hovered_close == Some(pressed) {
-                        self.state.close_tab(pressed);
-                    }
-                    self.hovered_tab = self.tab_at(pointer.position);
-                    self.hovered_close_tab = hovered_close;
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    request_window_refresh(ctx, true);
-                    ctx.set_handled();
-                } else if let Some(pressed) = self.pressed_tab.take() {
-                    let hovered = self.tab_at(pointer.position);
-                    if hovered == Some(pressed) {
-                        self.state.select_tab(pressed);
-                    }
-                    self.hovered_tab = hovered;
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    request_window_refresh(ctx, true);
-                    ctx.set_handled();
-                }
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed_tab.take().is_some() || self.pressed_close_tab.take().is_some() {
-                    self.hovered_tab = None;
-                    self.hovered_close_tab = None;
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    request_window_refresh(ctx, true);
-                    ctx.set_handled();
-                }
-            }
             Event::Keyboard(key) if key.state == KeyState::Pressed && ctx.is_focused() => {
                 match key.key.as_str() {
-                    "ArrowLeft" => self.select_adjacent_tab(-1),
-                    "ArrowRight" => self.select_adjacent_tab(1),
-                    "Home" => {
-                        if let Some(first) = self.state.open_tabs().first().copied() {
-                            self.state.select_tab(first);
-                        }
-                    }
-                    "End" => {
-                        if let Some(last) = self.state.open_tabs().last().copied() {
-                            self.state.select_tab(last);
-                        }
-                    }
                     "+" | "N" => self.state.show_picker(),
                     _ => return,
                 }
@@ -1000,24 +772,17 @@ impl Widget for DevBrowserShell {
         );
         let content_constraints = Constraints::tight(content_size);
 
-        let tabs = self.state.open_tabs();
-        let label_style = self.state.theme().body_text_style();
-        self.tab_widths = tabs
-            .iter()
-            .map(|index| {
-                ctx.layout()
-                    .measure_text(self.demos[*index].title, label_style.clone())
-                    .map(|measurement| {
-                        measurement.width
-                            + 12.0
-                            + 6.0
-                            + DEV_SHELL_TAB_CLOSE_SIZE
-                            + DEV_SHELL_TAB_CLOSE_MARGIN
-                    })
-                    .unwrap_or(132.0)
-                    .clamp(118.0, 240.0)
-            })
-            .collect();
+        let tab_zone = Self::tab_zone_rect(Rect::new(0.0, 0.0, root_size.width, root_size.height));
+        self.tab_bar.measure(
+            ctx,
+            Constraints::new(
+                Size::ZERO,
+                Size::new(
+                    (tab_zone.width() - DEV_SHELL_TAB_GAP - DEV_SHELL_PLUS_BUTTON_SIZE).max(0.0),
+                    DEV_SHELL_TAB_HEIGHT,
+                ),
+            ),
+        );
 
         self.main_menu.measure(ctx, constraints.loosen());
         self.plus_button.measure(
@@ -1058,7 +823,7 @@ impl Widget for DevBrowserShell {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let plus_rect = self.arrange_tab_strip(bounds);
+        let plus_rect = self.arrange_tab_strip(ctx, bounds);
         self.plus_button.arrange(ctx, plus_rect);
         self.theme_toggle.arrange(ctx, Self::theme_rect(bounds));
         let menu_origin = Self::logo_rect(bounds).origin;
@@ -1113,6 +878,7 @@ impl Widget for DevBrowserShell {
         }
 
         self.paint_toolbar(ctx, &theme);
+        self.tab_bar.paint(ctx);
         self.plus_button.paint(ctx);
         self.theme_toggle.paint(ctx);
         self.settings_window.paint(ctx);
@@ -1130,28 +896,7 @@ impl Widget for DevBrowserShell {
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
 
-        for (demo_index, rect) in &self.tab_rects {
-            let tab_id = dev_shell_tab_semantics_id(ctx.widget_id(), *demo_index);
-            let mut tab = SemanticsNode::new(tab_id, SemanticsRole::Button, *rect);
-            tab.parent = Some(ctx.widget_id());
-            tab.name = Some(self.demos[*demo_index].title.to_string());
-            tab.state.selected = self.state.active_tab() == Some(*demo_index);
-            tab.state.hovered = self.hovered_tab == Some(*demo_index);
-            tab.actions = vec![SemanticsAction::Activate, SemanticsAction::Focus];
-            ctx.push(tab);
-
-            let mut close = SemanticsNode::new(
-                dev_shell_tab_close_semantics_id(ctx.widget_id(), *demo_index),
-                SemanticsRole::Button,
-                Self::tab_close_rect(*rect),
-            );
-            close.parent = Some(tab_id);
-            close.name = Some(format!("Close {} tab", self.demos[*demo_index].title));
-            close.state.hovered = self.hovered_close_tab == Some(*demo_index);
-            close.actions = vec![SemanticsAction::Activate, SemanticsAction::Focus];
-            ctx.push(close);
-        }
-
+        self.tab_bar.semantics(ctx);
         self.plus_button.semantics(ctx);
         self.theme_toggle.semantics(ctx);
         if self.state.picker_visible() {
@@ -1168,6 +913,7 @@ impl Widget for DevBrowserShell {
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.tab_bar.visit_children(visitor);
         if self.state.picker_visible() {
             self.picker.visit_children(visitor);
         } else if let Some(active) = self.state.active_tab() {
@@ -1182,6 +928,7 @@ impl Widget for DevBrowserShell {
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.tab_bar.visit_children_mut(visitor);
         if self.state.picker_visible() {
             self.picker.visit_children_mut(visitor);
         } else if let Some(active) = self.state.active_tab() {
@@ -3256,7 +3003,6 @@ mod tests {
     };
 
     use std::{
-        collections::BTreeSet,
         path::PathBuf,
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -3266,7 +3012,7 @@ mod tests {
         Brush, Event, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, RenderOutput, Result, Runtime, SceneCommand,
         SceneStatisticsDetailMode, ScrollDelta, SemanticsNode, SemanticsRole, StackOrderPolicy,
-        Vector, WidgetId, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent,
+        Vector, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent,
         WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
         WindowToneMappingMode, set_window_scene_statistics_detail_mode,
         window_performance_snapshot, window_scene_statistics_detail_mode,
@@ -3517,6 +3263,31 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn solid_fill_bounds_for_color_in_rect(
+        output: &RenderOutput,
+        expected: Color,
+        region: Rect,
+    ) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    rect,
+                    brush: Brush::Solid(color),
+                } if *color == expected && rects_overlap(*rect, region) => rects.push(*rect),
+                SceneCommand::FillPath {
+                    path,
+                    brush: Brush::Solid(color),
+                } if *color == expected && rects_overlap(path.bounds(), region) => {
+                    rects.push(path.bounds());
+                }
+                _ => {}
+            });
+        rects
     }
 
     #[test]
@@ -4027,6 +3798,81 @@ mod tests {
             &output.semantics,
             ThemeColorScheme::Light,
             ToggleState::Unchecked,
+        );
+    }
+
+    #[test]
+    fn dev_shell_top_tabs_animate_selection_indicator() {
+        let mut runtime = build_dev_application()
+            .build()
+            .expect("dev application should build");
+        let window_id = runtime.window_ids()[0];
+        let switch_duration = DefaultTheme::default().motion.tab_switch_duration();
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render picker");
+        let widget_book_card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
+        click_runtime_point(&mut runtime, window_id, center_of(widget_book_card.bounds));
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render widget book tab");
+        let open_demo = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open demo")
+            })
+            .expect("open demo button should remain in the tab strip")
+            .clone();
+        click_runtime_point(&mut runtime, window_id, center_of(open_demo.bounds));
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render picker again");
+        let themes_card = find_picker_button(&output.semantics, THEMES_TAB_LABEL);
+        click_runtime_point(&mut runtime, window_id, center_of(themes_card.bounds));
+
+        let output = runtime
+            .render(window_id)
+            .expect("dev application should render two top tabs");
+        let from =
+            top_tab_indicator_rect(find_top_tab_button(&output.semantics, THEMES_TAB_LABEL).bounds);
+        let to = top_tab_indicator_rect(
+            find_top_tab_button(&output.semantics, WIDGET_BOOK_TAB_LABEL).bounds,
+        );
+        let widget_book_tab = find_top_tab_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
+        click_runtime_point(&mut runtime, window_id, center_of(widget_book_tab.bounds));
+
+        runtime.tick(switch_duration * 0.5);
+        let ready_events = dispatch_ready_events(&mut runtime);
+        assert!(
+            ready_events >= 1,
+            "tab switch should schedule at least one animation frame"
+        );
+        let mid = runtime
+            .render(window_id)
+            .expect("dev application should render mid tab animation");
+        let mid_indicator = dev_shell_indicator_rect(&mid);
+        assert!(
+            mid_indicator.x() > to.x() && mid_indicator.x() < from.x(),
+            "mid-animation indicator should sit between target and previous tabs: from={from:?}, to={to:?}, mid={mid_indicator:?}"
+        );
+
+        runtime.tick(switch_duration);
+        dispatch_ready_events(&mut runtime);
+        let settled = runtime
+            .render(window_id)
+            .expect("dev application should render settled tab animation");
+        let settled_indicator = dev_shell_indicator_rect(&settled);
+        assert!(
+            (settled_indicator.x() - to.x()).abs() < 0.01,
+            "settled indicator should land under the selected tab: to={to:?}, settled={settled_indicator:?}"
+        );
+        assert!(
+            (settled_indicator.width() - to.width()).abs() < 0.01,
+            "settled indicator should match the selected tab width: to={to:?}, settled={settled_indicator:?}"
         );
     }
 
@@ -6348,22 +6194,6 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn dev_shell_tab_semantics_ids_are_javascript_safe_and_distinct() {
-        let parent = WidgetId::new(17);
-        let mut ids = BTreeSet::new();
-        for demo_index in 0..13 {
-            for id in [
-                dev_shell_tab_semantics_id(parent, demo_index).get(),
-                dev_shell_tab_close_semantics_id(parent, demo_index).get(),
-            ] {
-                assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
-                assert!(ids.insert(id), "{id} should be unique");
-            }
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
     fn desktop_automation_builder_opens_requested_demo() {
         let mut runtime =
             build_dev_application_with_automation(Some(DesktopAutomationMode::WidgetBookScroll))
@@ -6963,6 +6793,60 @@ final_max_luminance={final_max_luminance}
         }
     }
 
+    fn find_top_tab_button(nodes: &[SemanticsNode], name: &str) -> SemanticsNode {
+        let matches = nodes
+            .iter()
+            .filter(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some(name)
+                    && node.bounds.y() < DEV_SHELL_TOOLBAR_HEIGHT
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        match matches.as_slice() {
+            [node] => node.clone(),
+            [] => panic!("missing top tab button named {name:?}"),
+            _ => panic!(
+                "expected exactly one top tab button named {name:?}, found {}",
+                matches.len()
+            ),
+        }
+    }
+
+    fn top_tab_indicator_rect(tab: Rect) -> Rect {
+        let theme = DefaultTheme::default();
+        let padding = theme.metrics.tab_padding;
+        let thickness = theme.interaction.active_indicator_thickness;
+        Rect::new(
+            tab.x() + padding.left,
+            tab.max_y() - thickness,
+            (tab.width() - padding.left - padding.right).max(0.0),
+            thickness,
+        )
+    }
+
+    fn dev_shell_indicator_rect(output: &RenderOutput) -> Rect {
+        let theme = DefaultTheme::default();
+        let toolbar_region = Rect::new(
+            0.0,
+            0.0,
+            output.frame.viewport.width,
+            DEV_SHELL_TOOLBAR_HEIGHT,
+        );
+        let matches =
+            solid_fill_bounds_for_color_in_rect(output, theme.palette.accent, toolbar_region)
+                .into_iter()
+                .filter(|rect| rect.height() <= 4.0 && rect.y() < DEV_SHELL_TOOLBAR_HEIGHT)
+                .collect::<Vec<_>>();
+
+        match matches.as_slice() {
+            [rect] => *rect,
+            [] => panic!("missing dev shell tab indicator"),
+            _ => panic!("expected one dev shell tab indicator, found {matches:?}"),
+        }
+    }
+
     fn assert_theme_toggle_state(
         nodes: &[SemanticsNode],
         scheme: ThemeColorScheme,
@@ -7042,13 +6926,20 @@ final_max_luminance={final_max_luminance}
             .expect("key release should dispatch");
     }
 
-    fn settle_runtime_animations(runtime: &mut Runtime, window_id: WindowId) {
-        runtime.tick(DefaultTheme::default().motion.focus_duration() + 0.01);
-        for (ready_window_id, event) in runtime.drain_ready_events() {
+    fn dispatch_ready_events(runtime: &mut Runtime) -> usize {
+        let ready = runtime.drain_ready_events();
+        let count = ready.len();
+        for (ready_window_id, event) in ready {
             runtime
                 .handle_event(ready_window_id, event)
-                .expect("ready animation event should dispatch");
+                .expect("ready event should dispatch");
         }
+        count
+    }
+
+    fn settle_runtime_animations(runtime: &mut Runtime, window_id: WindowId) {
+        runtime.tick(DefaultTheme::default().motion.focus_duration() + 0.01);
+        dispatch_ready_events(runtime);
         runtime
             .render(window_id)
             .expect("runtime should render after settling animations");
