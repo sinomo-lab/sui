@@ -9,13 +9,14 @@ use std::{
 use sui::prelude::*;
 use sui::{
     FramePhase, HdrLuminanceTokens, HdrThemeMode, HdrThemeTokens, InvalidationKind,
-    InvalidationRequest, InvalidationTarget, PointerEventKind, Rect, SceneStatisticsDetailMode,
-    SemanticColorToken, SemanticsNode, SemanticsRole, SemanticsValue, TextDirection, TextStyle,
-    TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap,
-    ThemeDensity, Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot,
-    resolve_semantic_color, resolve_widget_hdr_style, set_window_scene_statistics_detail_mode,
-    window_performance_snapshot, window_scene_statistics_detail_mode,
+    InvalidationRequest, InvalidationTarget, PlacementBadge, PointerEventKind, Rect,
+    SceneStatisticsDetailMode, SemanticColorToken, SemanticRegion, SemanticTone, SemanticsNode,
+    SemanticsRole, SemanticsValue, SignalMeter, StatusBadge, TextDirection, TextStyle, TextSurface,
+    TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap, ThemeDensity,
+    Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
+    WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot, resolve_semantic_color,
+    resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};
@@ -133,6 +134,57 @@ pub const BREADCRUMB_NAME: &str = "Project path";
 pub const COLOR_SWATCH_NAME: &str = "Primary swatch";
 pub const COLOR_PICKER_NAME: &str = "Accent picker";
 pub const DEMO_IMAGE_LABEL: &str = "Preview image";
+pub const COMPOSITE_WIDGETS_GALLERY_NAME: &str = "Composite widgets";
+pub const LAYOUT_WIDGETS_GALLERY_NAME: &str = "Layout widgets";
+pub const TEXT_WIDGETS_GALLERY_NAME: &str = "Text widgets";
+pub const DATA_WIDGETS_GALLERY_NAME: &str = "Data and interaction widgets";
+pub const CANVAS_WIDGETS_GALLERY_NAME: &str = "Canvas and media widgets";
+pub const SURFACE_SAMPLE_NAME: &str = "Panel surface sample";
+pub const ACTION_CARD_NAME: &str = "Open canvas workspace";
+pub const SECTION_LABEL_NAME: &str = "Inspector section label";
+pub const STATUS_BADGE_NAME: &str = "Synced";
+pub const STATUS_BAR_NAME: &str = "Document status bar";
+pub const COMMAND_GROUP_NAME: &str = "View commands";
+pub const TOOL_PALETTE_NAME: &str = "Paint tools";
+pub const TOOLBAR_NAME: &str = "Document toolbar";
+pub const FORM_SECTION_NAME: &str = "Publish settings";
+pub const PROPERTY_ROW_NAME: &str = "Opacity property";
+pub const DETAIL_ROW_NAME: &str = "Last publish";
+pub const PANEL_SECTION_NAME: &str = "Layer properties";
+pub const DOCK_PANEL_NAME: &str = "Inspector dock panel";
+pub const EMPTY_STATE_NAME: &str = "No search results";
+pub const PRESET_STRIP_NAME: &str = "Export presets";
+pub const SEGMENTED_CONTROL_NAME: &str = "Preview mode";
+pub const COVERAGE_DOTS_NAME: &str = "Replica coverage";
+pub const PLACEMENT_BADGE_NAME: &str = "Cluster";
+pub const BUSY_INDICATOR_NAME: &str = "Indexing busy indicator";
+pub const LAYOUT_REGION_NAME: &str = "Layout primitive region";
+pub const SCROLL_VIEW_NAME: &str = "Inner scroll view";
+pub const VIRTUAL_SCROLL_SAMPLE_NAME: &str = "Virtual scroll sample";
+pub const FIXED_PANE_SPLIT_NAME: &str = "Fixed pane split sample";
+pub const DOCK_LAYOUT_NAME: &str = "Dock layout sample";
+pub const MEASURED_BOTTOM_DOCK_NAME: &str = "Measured bottom dock sample";
+pub const SWITCH_VIEW_NAME: &str = "Switch view sample";
+pub const TRAILING_SLOT_ROW_NAME: &str = "Trailing slot row sample";
+pub const RICH_TEXT_NAME: &str = "Rich text sample";
+pub const COMBO_BOX_ALIAS_NAME: &str = "ComboBox alias";
+pub const SPIN_BOX_ALIAS_NAME: &str = "SpinBox alias";
+pub const MULTILINE_ALIAS_NAME: &str = "MultilineTextInput alias";
+pub const DIVIDER_ALIAS_NAME: &str = "Divider alias";
+pub const LINK_NAME: &str = "Documentation link";
+pub const PATH_BAR_NAME: &str = "Asset path bar";
+pub const DATA_GRID_NAME: &str = "Data grid alias";
+pub const VIRTUAL_TABLE_NAME: &str = "Virtual asset table";
+pub const LAYER_LIST_NAME: &str = "Layer stack";
+pub const REORDERABLE_LIST_NAME: &str = "Reorderable task list";
+pub const DRAG_SOURCE_NAME: &str = "Drag source item";
+pub const DROP_TARGET_NAME: &str = "Drop target slot";
+pub const CANVAS_NAME: &str = "Vector canvas";
+pub const CANVAS_RULER_NAME: &str = "Canvas horizontal ruler";
+pub const PIXEL_CANVAS_NAME: &str = "Pixel canvas";
+pub const COLOR_PALETTE_NAME: &str = "Document palette";
+pub const BRUSH_PREVIEW_NAME: &str = "Brush preview";
+pub const SIGNAL_METER_NAME: &str = "Live signal meter";
 pub const ANIMATION_BENCHMARK_RETAINED_NAME: &str = "Animation benchmark retained lane";
 pub const ANIMATION_BENCHMARK_REPAINT_NAME: &str = "Animation benchmark repaint lane";
 pub const ANIMATION_BENCHMARK_SCALE_NAME: &str = "Animation benchmark scale grid";
@@ -3413,6 +3465,21 @@ pub fn build_widget_book_gallery_with_theme(
                         ),
                     ),
             ))
+            .with_child(build_composite_widgets_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
+            .with_child(build_layout_widgets_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
+            .with_child(build_text_widgets_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
+            .with_child(build_data_and_interaction_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
+            .with_child(build_canvas_and_media_gallery_with_theme(Rc::clone(
+                &theme_reader,
+            )))
             .with_child(build_color_and_imagery_story_with_theme(Rc::clone(
                 &theme_reader,
             )));
@@ -3951,6 +4018,964 @@ where
                 })),
         )
         .with_child(body)
+}
+
+fn widget_book_body_text(
+    theme_reader: WidgetBookThemeReader,
+    text: impl Into<String>,
+) -> impl Widget {
+    Label::new(text)
+        .font_size(14.0)
+        .line_height(19.0)
+        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+            theme.palette.text
+        }))
+}
+
+fn widget_book_muted_text(
+    theme_reader: WidgetBookThemeReader,
+    text: impl Into<String>,
+) -> impl Widget {
+    Label::new(text)
+        .font_size(13.0)
+        .line_height(18.0)
+        .color_when(widget_book_theme_color(&theme_reader, |theme| {
+            theme.palette.text_muted
+        }))
+}
+
+fn build_composite_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    NamedSection::new(
+        COMPOSITE_WIDGETS_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            COMPOSITE_WIDGETS_GALLERY_NAME,
+            "Composite widgets cover reusable app chrome, status, forms, empty states, and compact command surfaces.",
+            Stack::vertical()
+                .spacing(16.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(14.0)
+                        .alignment(Alignment::Start)
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Surfaces and actions",
+                            "Surface, action card, section label, status badge, coverage dots, and placement badge.",
+                            Stack::vertical()
+                                .spacing(12.0)
+                                .alignment(Alignment::Start)
+                                .with_child(SizedBox::new().width(340.0).with_child(
+                                    Surface::panel(
+                                        Stack::vertical()
+                                            .spacing(8.0)
+                                            .alignment(Alignment::Stretch)
+                                            .with_child(
+                                                SectionLabel::new("Inspector")
+                                                    .semantic_name(SECTION_LABEL_NAME)
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                            )
+                                            .with_child(widget_book_body_text(
+                                                Rc::clone(&theme_reader),
+                                                "Panel surface with compact content.",
+                                            ))
+                                            .with_child(
+                                                Stack::horizontal()
+                                                    .spacing(8.0)
+                                                    .alignment(Alignment::Center)
+                                                    .with_child(
+                                                        StatusBadge::new(STATUS_BADGE_NAME)
+                                                            .icon(IconGlyph::Check)
+                                                            .tone(SemanticTone::Success)
+                                                            .theme_when(
+                                                                clone_widget_book_theme_reader(
+                                                                    &theme_reader,
+                                                                ),
+                                                            ),
+                                                    )
+                                                    .with_child(
+                                                        CoverageDots::new(
+                                                            COVERAGE_DOTS_NAME,
+                                                            3,
+                                                            4,
+                                                        )
+                                                        .tone(SemanticTone::Accent)
+                                                        .theme_when(
+                                                            clone_widget_book_theme_reader(
+                                                                &theme_reader,
+                                                            ),
+                                                        ),
+                                                    )
+                                                    .with_child(
+                                                        PlacementBadge::new(PLACEMENT_BADGE_NAME)
+                                                            .icon(IconGlyph::Storage)
+                                                            .tone(SemanticTone::Info)
+                                                            .coverage(2, 3)
+                                                            .theme_when(
+                                                                clone_widget_book_theme_reader(
+                                                                    &theme_reader,
+                                                                ),
+                                                            ),
+                                                    ),
+                                            ),
+                                    )
+                                    .name(SURFACE_SAMPLE_NAME)
+                                    .padding(Insets::all(12.0))
+                                    .elevation(SurfaceElevation::Small)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(
+                                    ActionCard::new(
+                                        ACTION_CARD_NAME,
+                                        "Jump into a focused drawing workspace.",
+                                    )
+                                    .icon(IconGlyph::Sparkles)
+                                    .min_width(300.0)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ),
+                        ))
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Commands and tools",
+                            "Toolbar, command group, tool palette, preset strip, segmented control, and busy indicator aliases.",
+                            Stack::vertical()
+                                .spacing(12.0)
+                                .alignment(Alignment::Start)
+                                .with_child(SizedBox::new().width(380.0).height(48.0).with_child(
+                                    Toolbar::horizontal()
+                                        .name(TOOLBAR_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .with_child(IconButton::new(
+                                            IconGlyph::Undo,
+                                            "Undo command",
+                                        ))
+                                        .with_child(IconButton::new(
+                                            IconGlyph::Redo,
+                                            "Redo command",
+                                        ))
+                                        .with_child(Divider::vertical().name(DIVIDER_ALIAS_NAME))
+                                        .with_child(Button::new("Save")),
+                                ))
+                                .with_child(
+                                    CommandGroup::horizontal(COMMAND_GROUP_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .with_child(IconButton::new(
+                                            IconGlyph::Add,
+                                            "Zoom in",
+                                        ))
+                                        .with_child(IconButton::new(
+                                            IconGlyph::Remove,
+                                            "Zoom out",
+                                        ))
+                                        .with_child(IconButton::new(
+                                            IconGlyph::FitView,
+                                            "Fit canvas",
+                                        )),
+                                )
+                                .with_child(
+                                    ToolPalette::horizontal(TOOL_PALETTE_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .items([
+                                            ToolPaletteItem::new(IconGlyph::Check, "Select"),
+                                            ToolPaletteItem::new(IconGlyph::Brush, "Brush"),
+                                            ToolPaletteItem::new(IconGlyph::Eraser, "Erase"),
+                                            ToolPaletteItem::new(IconGlyph::Hand, "Pan"),
+                                        ])
+                                        .selected(1),
+                                )
+                                .with_child(
+                                    PresetStrip::new(PRESET_STRIP_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .presets(["Draft", "Review", "Final"])
+                                        .selected(1),
+                                )
+                                .with_child(
+                                    SegmentedControl::new(SEGMENTED_CONTROL_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .segments(["Preview", "Inspect", "Compare"])
+                                        .selected(0),
+                                )
+                                .with_child(
+                                    BusyIndicator::new(BUSY_INDICATOR_NAME)
+                                        .label("Indexing assets")
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ),
+                        )),
+                )
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(14.0)
+                        .alignment(Alignment::Start)
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Forms and details",
+                            "Form section, field group, form rows, property rows, and detail rows.",
+                            SizedBox::new().width(380.0).with_child(
+                                FormSection::new(
+                                    FORM_SECTION_NAME,
+                                    FieldGroup::new()
+                                        .fill_width()
+                                        .spacing(10.0)
+                                        .with_child(
+                                            FormRow::new(
+                                                "Target",
+                                                TextInput::new("Publish target")
+                                                    .value("staging")
+                                                    .theme_when(
+                                                        clone_widget_book_theme_reader(
+                                                            &theme_reader,
+                                                        ),
+                                                    ),
+                                            )
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                        )
+                                        .with_child(
+                                            PropertyRow::new(
+                                                PROPERTY_ROW_NAME,
+                                                Slider::new("Opacity property value")
+                                                    .range(0.0, 100.0)
+                                                    .value(72.0)
+                                                    .theme_when(
+                                                        clone_widget_book_theme_reader(
+                                                            &theme_reader,
+                                                        ),
+                                                    ),
+                                            )
+                                            .inline()
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                        )
+                                        .with_child(
+                                            DetailRow::new(DETAIL_ROW_NAME, "2 min ago")
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                        ),
+                                )
+                                .description("Cluster-wide settings with reusable rows.")
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                            ),
+                        ))
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Panels and empty states",
+                            "Panel section, dock panel, status bar, and empty state cover common app shells.",
+                            Stack::vertical()
+                                .spacing(12.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(SizedBox::new().width(380.0).with_child(
+                                    DockPanel::new(
+                                        "Inspector",
+                                        PanelSection::new(
+                                            PANEL_SECTION_NAME,
+                                            Stack::vertical()
+                                                .spacing(8.0)
+                                                .alignment(Alignment::Stretch)
+                                                .with_child(widget_book_muted_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Layer blend: Screen",
+                                                ))
+                                                .with_child(widget_book_muted_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Mask feather: 8 px",
+                                                )),
+                                        )
+                                        .collapsible(true)
+                                        .theme_when(clone_widget_book_theme_reader(
+                                            &theme_reader,
+                                        )),
+                                    )
+                                    .name(DOCK_PANEL_NAME)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(SizedBox::new().width(380.0).height(120.0).with_child(
+                                    EmptyState::new(
+                                        "No search results",
+                                        "Try a broader query or clear active filters.",
+                                    )
+                                    .name(EMPTY_STATE_NAME)
+                                    .icon(IconGlyph::Search)
+                                    .action(Button::new("Clear filters"))
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ))
+                                .with_child(SizedBox::new().width(380.0).with_child(
+                                    StatusBar::new()
+                                        .name(STATUS_BAR_NAME)
+                                        .description("Ready, two warnings, zoom 72 percent")
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .segment(
+                                            StatusBarSegment::new("Ready").min_width(76.0),
+                                        )
+                                        .segment(
+                                            StatusBarSegment::new("2 warnings")
+                                                .tone(SemanticTone::Warning)
+                                                .min_width(104.0),
+                                        )
+                                        .segment(
+                                            StatusBarSegment::new("Zoom 72%")
+                                                .min_width(96.0)
+                                                .expand(true),
+                                        ),
+                                )),
+                        )),
+                ),
+        ),
+    )
+}
+
+fn build_layout_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    let scroll_state = ScrollState::new();
+    let virtual_scroll_state = ScrollState::new();
+
+    NamedSection::new(
+        LAYOUT_WIDGETS_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            LAYOUT_WIDGETS_GALLERY_NAME,
+            "Layout widgets cover explicit size, alignment, docking, fixed panes, measured bottom docks, switch views, and scroll containers.",
+            SemanticRegion::new(
+                LAYOUT_REGION_NAME,
+                Stack::vertical()
+                    .spacing(16.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(14.0)
+                            .alignment(Alignment::Start)
+                            .with_child(control_story_with_theme(
+                                Rc::clone(&theme_reader),
+                                "Box, stack, flex",
+                                "SizedBox, Padding, Background, Align, Stack, and Flex.",
+                                SizedBox::new().width(380.0).height(170.0).with_child(
+                                    Background::new(
+                                        theme_reader().palette.control,
+                                        Padding::all(
+                                            12.0,
+                                            Align::center(
+                                                Flex::horizontal()
+                                                    .gap(10.0)
+                                                    .wrap(FlexWrap::Wrap)
+                                                    .with_child(
+                                                        Surface::field(
+                                                            Label::new("Sized")
+                                                                .font_size(13.0)
+                                                                .line_height(18.0),
+                                                        )
+                                                        .padding(Insets::all(8.0))
+                                                        .theme_when(
+                                                            clone_widget_book_theme_reader(
+                                                                &theme_reader,
+                                                            ),
+                                                        ),
+                                                    )
+                                                    .with_child(
+                                                        Surface::field(
+                                                            Label::new("Aligned")
+                                                                .font_size(13.0)
+                                                                .line_height(18.0),
+                                                        )
+                                                        .padding(Insets::all(8.0))
+                                                        .theme_when(
+                                                            clone_widget_book_theme_reader(
+                                                                &theme_reader,
+                                                            ),
+                                                        ),
+                                                    )
+                                                    .with_child(
+                                                        Surface::field(
+                                                            Label::new("Wrapped")
+                                                                .font_size(13.0)
+                                                                .line_height(18.0),
+                                                        )
+                                                        .padding(Insets::all(8.0))
+                                                        .theme_when(
+                                                            clone_widget_book_theme_reader(
+                                                                &theme_reader,
+                                                            ),
+                                                        ),
+                                                    ),
+                                            ),
+                                        ),
+                                    )
+                                    .brush_when(widget_book_theme_color(&theme_reader, |theme| {
+                                        theme.palette.control
+                                    })),
+                                ),
+                            ))
+                            .with_child(control_story_with_theme(
+                                Rc::clone(&theme_reader),
+                                "Dock and switch",
+                                "Dock, MeasuredBottomDock, SwitchView, and TrailingSlotRow.",
+                                Stack::vertical()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Stretch)
+                                    .with_child(SemanticRegion::new(
+                                        DOCK_LAYOUT_NAME,
+                                        SizedBox::new().width(380.0).height(150.0).with_child(
+                                            Dock::new(
+                                                Surface::panel(widget_book_muted_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Dock body fills remaining space.",
+                                                ))
+                                                .padding(Insets::all(12.0))
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                            )
+                                            .top(
+                                                34.0,
+                                                Surface::titlebar(Label::new("Top slot"))
+                                                    .padding(Insets::all(8.0))
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                            )
+                                            .bottom(
+                                                34.0,
+                                                Surface::titlebar(Label::new("Bottom slot"))
+                                                    .padding(Insets::all(8.0))
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                            ),
+                                        ),
+                                    ))
+                                    .with_child(SemanticRegion::new(
+                                        MEASURED_BOTTOM_DOCK_NAME,
+                                        SizedBox::new().width(380.0).height(130.0).with_child(
+                                            MeasuredBottomDock::new(
+                                                Surface::panel(widget_book_muted_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Measured body",
+                                                ))
+                                                .padding(Insets::all(12.0))
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                                StatusBar::new()
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    ))
+                                                    .text_segment("Measured bottom"),
+                                            ),
+                                        ),
+                                    ))
+                                    .with_child(SemanticRegion::new(
+                                        SWITCH_VIEW_NAME,
+                                        SwitchView::new()
+                                            .selected(1)
+                                            .with_child(Label::new("First view"))
+                                            .with_child(widget_book_body_text(
+                                                Rc::clone(&theme_reader),
+                                                "Second view is selected.",
+                                            )),
+                                    ))
+                                    .with_child(SemanticRegion::new(
+                                        TRAILING_SLOT_ROW_NAME,
+                                        SizedBox::new().width(380.0).height(34.0).with_child(
+                                            TrailingSlotRow::new(
+                                                widget_book_body_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Trailing slot row",
+                                                ),
+                                                StatusBadge::new("Active")
+                                                    .tone(SemanticTone::Success)
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                            )
+                                            .trailing_width(96.0)
+                                            .trailing_height(28.0)
+                                            .gap(10.0),
+                                        ),
+                                    )),
+                            )),
+                    )
+                    .with_child(
+                        Stack::horizontal()
+                            .spacing(14.0)
+                            .alignment(Alignment::Start)
+                            .with_child(control_story_with_theme(
+                                Rc::clone(&theme_reader),
+                                "Fixed panes",
+                                "FixedPaneSplit and the ResizablePane alias both use the split-pane path.",
+                                Stack::vertical()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Stretch)
+                                    .with_child(SemanticRegion::new(
+                                        FIXED_PANE_SPLIT_NAME,
+                                        SizedBox::new().width(380.0).height(142.0).with_child(
+                                            FixedPaneSplit::horizontal(
+                                                Surface::sidebar(Label::new("Fixed"))
+                                                    .padding(Insets::all(12.0))
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                                Separator::vertical()
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                                Surface::panel(Label::new("Flexible"))
+                                                    .padding(Insets::all(12.0))
+                                                    .theme_when(clone_widget_book_theme_reader(
+                                                        &theme_reader,
+                                                    )),
+                                            )
+                                            .fixed_first(126.0)
+                                            .divider_extent(1.0),
+                                        ),
+                                    ))
+                                    .with_child(SizedBox::new().width(380.0).height(120.0).with_child(
+                                        ResizablePane::horizontal(
+                                            Surface::panel(Label::new("Resizable alias A"))
+                                                .padding(Insets::all(12.0))
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                            Surface::panel(Label::new("Resizable alias B"))
+                                                .padding(Insets::all(12.0))
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                        )
+                                        .name("ResizablePane alias")
+                                        .ratio(0.45),
+                                    )),
+                            ))
+                            .with_child(control_story_with_theme(
+                                Rc::clone(&theme_reader),
+                                "Scroll containers",
+                                "ScrollView and VirtualScrollView expose bounded content and virtualized child layout.",
+                                Stack::vertical()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Stretch)
+                                    .with_child(SizedBox::new().width(380.0).height(110.0).with_child(
+                                        ScrollView::vertical(
+                                            Stack::vertical()
+                                                .spacing(8.0)
+                                                .alignment(Alignment::Stretch)
+                                                .with_child(widget_book_body_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Scroll item 1",
+                                                ))
+                                                .with_child(widget_book_body_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Scroll item 2",
+                                                ))
+                                                .with_child(widget_book_body_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Scroll item 3",
+                                                ))
+                                                .with_child(widget_book_body_text(
+                                                    Rc::clone(&theme_reader),
+                                                    "Scroll item 4",
+                                                )),
+                                        )
+                                        .name(SCROLL_VIEW_NAME)
+                                        .state(scroll_state.clone())
+                                        .theme(theme_reader()),
+                                    ))
+                                    .with_child(SizedBox::new().width(380.0).height(130.0).with_child(
+                                        VirtualScrollView::new()
+                                            .name(VIRTUAL_SCROLL_SAMPLE_NAME)
+                                            .state(virtual_scroll_state)
+                                            .padding(Insets::all(8.0))
+                                            .spacing(8.0)
+                                            .with_child(Label::new("Virtual row 1"))
+                                            .with_child(Label::new("Virtual row 2"))
+                                            .with_child(Label::new("Virtual row 3"))
+                                            .with_child(Label::new("Virtual row 4"))
+                                            .theme(theme_reader()),
+                                    )),
+                            )),
+                    ),
+            )
+            .description("Named wrapper for layout-only widgets."),
+        ),
+    )
+}
+
+fn build_text_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    NamedSection::new(
+        TEXT_WIDGETS_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            TEXT_WIDGETS_GALLERY_NAME,
+            "Text widgets cover labels, links, rich text, text input aliases, and separator aliases.",
+            Stack::horizontal()
+                .spacing(14.0)
+                .alignment(Alignment::Start)
+                .with_child(control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "Rich text and links",
+                    "RichText handles styled text documents while Link exposes URL semantics.",
+                    Stack::vertical()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(
+                            RichText::from_plain_text(
+                                "Rich text sample with wrapping and retained layout.",
+                                theme_reader().body_text_style(),
+                            )
+                            .semantic_name(RICH_TEXT_NAME)
+                            .padding(Insets::all(8.0))
+                            .min_width(340.0),
+                        )
+                        .with_child(
+                            Link::new("Open SUI docs", "https://example.invalid/sui")
+                                .semantic_name(LINK_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        ),
+                ))
+                .with_child(control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "Public aliases",
+                    "ComboBox, SpinBox, MultilineTextInput, and Divider remain visible in the public API.",
+                    Stack::vertical()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(SizedBox::new().width(260.0).with_child(
+                            ComboBox::new(COMBO_BOX_ALIAS_NAME)
+                                .options(["Small", "Medium", "Large"])
+                                .selected(1)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        ))
+                        .with_child(SizedBox::new().width(220.0).with_child(
+                            SpinBox::new(SPIN_BOX_ALIAS_NAME)
+                                .range(0.0, 64.0)
+                                .step(1.0)
+                                .precision(0)
+                                .value(24.0)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        ))
+                        .with_child(SizedBox::new().width(320.0).height(96.0).with_child(
+                            MultilineTextInput::new(MULTILINE_ALIAS_NAME)
+                                .value("Multiline alias\nuses the TextArea widget.")
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        ))
+                        .with_child(SizedBox::new().width(260.0).with_child(
+                            Divider::horizontal()
+                                .name(DIVIDER_ALIAS_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        )),
+                )),
+        ),
+    )
+}
+
+fn build_data_and_interaction_gallery_with_theme(
+    theme_reader: WidgetBookThemeReader,
+) -> impl Widget {
+    let drag_scope = DragDropScope::new();
+
+    NamedSection::new(
+        DATA_WIDGETS_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            DATA_WIDGETS_GALLERY_NAME,
+            "Data widgets and interaction primitives cover long lists, virtual tables, layered rows, reorderable lists, and drag/drop hosts.",
+            Stack::vertical()
+                .spacing(16.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(14.0)
+                        .alignment(Alignment::Start)
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Path and layers",
+                            "PathBar aliases Breadcrumb, while LayerList adds visibility, lock, and reorder affordances.",
+                            Stack::vertical()
+                                .spacing(12.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(SizedBox::new().width(380.0).with_child(
+                                    PathBar::new(PATH_BAR_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .items([
+                                            BreadcrumbItem::new("Workspace"),
+                                            BreadcrumbItem::new("Assets"),
+                                            BreadcrumbItem::new("Materials"),
+                                            BreadcrumbItem::new("Glass"),
+                                        ])
+                                        .current(3),
+                                ))
+                                .with_child(SizedBox::new().width(380.0).height(160.0).with_child(
+                                    LayerList::new(LAYER_LIST_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .layers([
+                                            LayerListItem::new("Highlights")
+                                                .detail("Screen 72%")
+                                                .thumbnail(Color::rgba(0.9, 0.72, 0.18, 1.0)),
+                                            LayerListItem::new("Glass")
+                                                .detail("Normal")
+                                                .thumbnail(Color::rgba(0.25, 0.56, 0.9, 1.0)),
+                                            LayerListItem::new("Shadow")
+                                                .detail("Multiply")
+                                                .thumbnail(Color::rgba(0.08, 0.1, 0.16, 1.0))
+                                                .locked(true),
+                                        ])
+                                        .selected(1),
+                                )),
+                        ))
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Tables",
+                            "DataGrid aliases Table, and VirtualTable renders large row counts through row painters.",
+                            Stack::vertical()
+                                .spacing(12.0)
+                                .alignment(Alignment::Stretch)
+                                .with_child(SizedBox::new().width(420.0).height(150.0).with_child(
+                                    DataGrid::new(DATA_GRID_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .columns([
+                                            TableColumn::new("Asset"),
+                                            TableColumn::new("Type").width(92.0),
+                                            TableColumn::new("State").width(100.0),
+                                        ])
+                                        .rows([
+                                            TableRow::new(["hero.png", "Image", "Ready"]),
+                                            TableRow::new(["glass.mat", "Material", "Dirty"]),
+                                            TableRow::new(["rig.skel", "Rig", "Cached"]),
+                                        ])
+                                        .selected(0),
+                                ))
+                                .with_child(SizedBox::new().width(420.0).height(170.0).with_child(
+                                    VirtualTable::new(VIRTUAL_TABLE_NAME)
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                        .columns([
+                                            VirtualTableColumn::new("Row").width(80.0),
+                                            VirtualTableColumn::new("Asset").width(170.0),
+                                            VirtualTableColumn::new("Status").width(120.0),
+                                        ])
+                                        .row_count(10_000)
+                                        .selected(42)
+                                        .row_name(|row| format!("Virtual row {row}"))
+                                        .row_description(|row| format!("Asset record {row}")),
+                                )),
+                        )),
+                )
+                .with_child(
+                    Stack::horizontal()
+                        .spacing(14.0)
+                        .alignment(Alignment::Start)
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Reorderable list",
+                            "ReorderableList wraps child rows with drag-aware order state.",
+                            SizedBox::new().width(380.0).with_child(
+                                ReorderableList::new(REORDERABLE_LIST_NAME)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                    .item(
+                                        Surface::field(Label::new("Capture screenshots"))
+                                            .padding(Insets::all(10.0))
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    )
+                                    .item(
+                                        Surface::field(Label::new("Review contrast"))
+                                            .padding(Insets::all(10.0))
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    )
+                                    .item(
+                                        Surface::field(Label::new("Update docs"))
+                                            .padding(Insets::all(10.0))
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                    ),
+                            ),
+                        ))
+                        .with_child(control_story_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Drag and drop",
+                            "DragDropHost coordinates Draggable and DropTarget under one scope.",
+                            SizedBox::new().width(380.0).with_child(DragDropHost::new(
+                                drag_scope.clone(),
+                                Stack::horizontal()
+                                    .spacing(12.0)
+                                    .alignment(Alignment::Center)
+                                    .with_child(
+                                        Draggable::new(
+                                            Surface::field(widget_book_body_text(
+                                                Rc::clone(&theme_reader),
+                                                DRAG_SOURCE_NAME,
+                                            ))
+                                            .padding(Insets::all(12.0))
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                        )
+                                        .scope(drag_scope.clone())
+                                        .payload(|| DragPayload::text("asset://hero"))
+                                        .effect(DropEffect::Copy)
+                                        .preview_label(DRAG_SOURCE_NAME),
+                                    )
+                                    .with_child(
+                                        DropTarget::new(
+                                            Surface::panel(widget_book_body_text(
+                                                Rc::clone(&theme_reader),
+                                                DROP_TARGET_NAME,
+                                            ))
+                                            .padding(Insets::all(12.0))
+                                            .theme_when(clone_widget_book_theme_reader(
+                                                &theme_reader,
+                                            )),
+                                        )
+                                        .scope(drag_scope)
+                                        .accept(|_| DropEffect::Copy),
+                                    ),
+                            )),
+                        )),
+                ),
+        ),
+    )
+}
+
+fn build_canvas_and_media_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    let canvas_viewport = CanvasViewport::new().zoom(0.78).pan(Vector::new(8.0, -6.0));
+    let canvas_document = Size::new(640.0, 420.0);
+
+    NamedSection::new(
+        CANVAS_WIDGETS_GALLERY_NAME,
+        panel_with_theme(
+            Rc::clone(&theme_reader),
+            CANVAS_WIDGETS_GALLERY_NAME,
+            "Canvas and media widgets cover vector drawing, rulers, pixel editing, palettes, brush previews, and live signal meters.",
+            Stack::horizontal()
+                .spacing(14.0)
+                .alignment(Alignment::Start)
+                .with_child(control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "Vector and pixel canvas",
+                    "Canvas, CanvasRuler, CanvasViewport, CanvasShape, CanvasStroke, PixelCanvas, and PixelCanvasState.",
+                    Stack::vertical()
+                        .spacing(12.0)
+                        .alignment(Alignment::Stretch)
+                        .with_child(SizedBox::new().width(380.0).with_child(
+                            CanvasRuler::horizontal(CANVAS_RULER_NAME, canvas_document)
+                                .viewport(canvas_viewport, Size::new(380.0, 26.0))
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        ))
+                        .with_child(SizedBox::new().width(380.0).height(190.0).with_child(
+                            Canvas::new(CANVAS_NAME)
+                                .desired_size(Size::new(380.0, 190.0))
+                                .viewport(canvas_viewport)
+                                .shape(CanvasShape::rect(
+                                    Rect::new(80.0, 70.0, 160.0, 90.0),
+                                    Some(Color::rgba(0.14, 0.46, 0.86, 0.28)),
+                                    Some(CanvasStroke::new(
+                                        Color::rgba(0.14, 0.46, 0.86, 1.0),
+                                        2.0,
+                                    )),
+                                ))
+                                .shape(CanvasShape::circle(
+                                    Point::new(330.0, 160.0),
+                                    48.0,
+                                    Some(Color::rgba(0.88, 0.55, 0.18, 0.3)),
+                                    Some(CanvasStroke::new(
+                                        Color::rgba(0.88, 0.55, 0.18, 1.0),
+                                        2.0,
+                                    )),
+                                ))
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        ))
+                        .with_child(SizedBox::new().width(380.0).height(170.0).with_child(
+                            PixelCanvas::from_fn(PIXEL_CANVAS_NAME, 16, 12, |x, y| {
+                                let checker = (x + y) % 2 == 0;
+                                if checker {
+                                    Color::rgba(0.12, 0.54, 0.88, 1.0)
+                                } else {
+                                    Color::rgba(0.92, 0.74, 0.25, 1.0)
+                                }
+                            })
+                            .state(PixelCanvasState::new())
+                            .desired_size(Size::new(380.0, 170.0))
+                            .fit_on_first_layout()
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                        )),
+                ))
+                .with_child(control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "Media controls",
+                    "ColorPalette, BrushPreview, ColorSwatch, Image, and SignalMeter sit beside the larger ColorPicker story below.",
+                    Stack::vertical()
+                        .spacing(12.0)
+                        .alignment(Alignment::Start)
+                        .with_child(
+                            ColorPalette::new(COLOR_PALETTE_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                .columns(4)
+                                .swatch_size(28.0)
+                                .swatches([
+                                    ColorPaletteSwatch::new(
+                                        "Primary",
+                                        Color::rgba(0.12, 0.55, 0.88, 1.0),
+                                    ),
+                                    ColorPaletteSwatch::new(
+                                        "Secondary",
+                                        Color::rgba(0.88, 0.54, 0.22, 1.0),
+                                    ),
+                                    ColorPaletteSwatch::new(
+                                        "Success",
+                                        Color::rgba(0.18, 0.64, 0.38, 1.0),
+                                    ),
+                                    ColorPaletteSwatch::new(
+                                        "Danger",
+                                        Color::rgba(0.84, 0.22, 0.22, 1.0),
+                                    ),
+                                ])
+                                .selected(0),
+                        )
+                        .with_child(
+                            BrushPreview::new(BRUSH_PREVIEW_NAME)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                .spec(BrushPreviewSpec::new(
+                                    Color::rgba(0.12, 0.55, 0.88, 1.0),
+                                    28.0,
+                                    0.78,
+                                    BrushPreviewShape::Round,
+                                ))
+                                .size(Size::new(280.0, 56.0)),
+                        )
+                        .with_child(
+                            Stack::horizontal()
+                                .spacing(10.0)
+                                .alignment(Alignment::Center)
+                                .with_child(
+                                    ColorSwatch::new(
+                                        "Canvas accent swatch",
+                                        Color::rgba(0.12, 0.55, 0.88, 1.0),
+                                    )
+                                    .size(Size::new(54.0, 30.0)),
+                                )
+                                .with_child(
+                                    Image::new(WIDGET_BOOK_IMAGE_HANDLE)
+                                        .label("Media thumbnail")
+                                        .fit(ImageFit::Contain)
+                                        .corner_radius(8.0),
+                                )
+                                .with_child(
+                                    SignalMeter::new(SIGNAL_METER_NAME)
+                                        .active(true)
+                                        .tone(SemanticTone::Success)
+                                        .bars(10)
+                                        .size(Size::new(92.0, 34.0))
+                                        .theme_when(clone_widget_book_theme_reader(
+                                            &theme_reader,
+                                        )),
+                                ),
+                        ),
+                )),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -6327,6 +7352,137 @@ mod tests {
                 )
                 .build()
         })
+    }
+
+    fn semantics_contains(
+        semantics: &[sui::SemanticsNode],
+        role: &SemanticsRole,
+        name: &str,
+    ) -> bool {
+        semantics
+            .iter()
+            .any(|node| &node.role == role && node.name.as_deref() == Some(name))
+    }
+
+    #[test]
+    fn widget_book_new_sections_cover_exported_widget_families() -> Result<()> {
+        let theme_reader = super::default_widget_book_theme_reader();
+        let root = SizedBox::new().width(1280.0).height(3600.0).with_child(
+            sui::Stack::vertical()
+                .spacing(18.0)
+                .alignment(sui::Alignment::Stretch)
+                .with_child(super::build_composite_widgets_gallery_with_theme(
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(super::build_layout_widgets_gallery_with_theme(Rc::clone(
+                    &theme_reader,
+                )))
+                .with_child(super::build_text_widgets_gallery_with_theme(Rc::clone(
+                    &theme_reader,
+                )))
+                .with_child(super::build_data_and_interaction_gallery_with_theme(
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(super::build_canvas_and_media_gallery_with_theme(Rc::clone(
+                    &theme_reader,
+                ))),
+        );
+        let mut runtime = App::new()
+            .with_resources(|resources| {
+                register_widget_book_images(resources);
+                Ok(())
+            })?
+            .window(Window::new("Widget family coverage").root(root))
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+
+        let expected = [
+            (
+                SemanticsRole::GenericContainer,
+                super::COMPOSITE_WIDGETS_GALLERY_NAME,
+            ),
+            (
+                SemanticsRole::GenericContainer,
+                super::LAYOUT_WIDGETS_GALLERY_NAME,
+            ),
+            (
+                SemanticsRole::GenericContainer,
+                super::TEXT_WIDGETS_GALLERY_NAME,
+            ),
+            (
+                SemanticsRole::GenericContainer,
+                super::DATA_WIDGETS_GALLERY_NAME,
+            ),
+            (
+                SemanticsRole::GenericContainer,
+                super::CANVAS_WIDGETS_GALLERY_NAME,
+            ),
+            (SemanticsRole::GenericContainer, super::SURFACE_SAMPLE_NAME),
+            (SemanticsRole::Button, super::ACTION_CARD_NAME),
+            (SemanticsRole::Text, super::SECTION_LABEL_NAME),
+            (SemanticsRole::Text, super::STATUS_BADGE_NAME),
+            (SemanticsRole::Text, super::COVERAGE_DOTS_NAME),
+            (SemanticsRole::Text, super::PLACEMENT_BADGE_NAME),
+            (SemanticsRole::GenericContainer, super::TOOLBAR_NAME),
+            (SemanticsRole::GenericContainer, super::COMMAND_GROUP_NAME),
+            (SemanticsRole::GenericContainer, super::TOOL_PALETTE_NAME),
+            (SemanticsRole::GenericContainer, super::PRESET_STRIP_NAME),
+            (SemanticsRole::RadioGroup, super::SEGMENTED_CONTROL_NAME),
+            (SemanticsRole::BusyIndicator, super::BUSY_INDICATOR_NAME),
+            (SemanticsRole::GenericContainer, super::FORM_SECTION_NAME),
+            (SemanticsRole::GenericContainer, super::PROPERTY_ROW_NAME),
+            (SemanticsRole::GenericContainer, super::DETAIL_ROW_NAME),
+            (SemanticsRole::GenericContainer, super::PANEL_SECTION_NAME),
+            (SemanticsRole::GenericContainer, super::DOCK_PANEL_NAME),
+            (SemanticsRole::GenericContainer, super::EMPTY_STATE_NAME),
+            (SemanticsRole::GenericContainer, super::STATUS_BAR_NAME),
+            (SemanticsRole::GenericContainer, super::LAYOUT_REGION_NAME),
+            (SemanticsRole::GenericContainer, super::DOCK_LAYOUT_NAME),
+            (
+                SemanticsRole::GenericContainer,
+                super::MEASURED_BOTTOM_DOCK_NAME,
+            ),
+            (SemanticsRole::GenericContainer, super::SWITCH_VIEW_NAME),
+            (
+                SemanticsRole::GenericContainer,
+                super::TRAILING_SLOT_ROW_NAME,
+            ),
+            (
+                SemanticsRole::GenericContainer,
+                super::FIXED_PANE_SPLIT_NAME,
+            ),
+            (SemanticsRole::ScrollView, super::SCROLL_VIEW_NAME),
+            (SemanticsRole::ScrollView, super::VIRTUAL_SCROLL_SAMPLE_NAME),
+            (SemanticsRole::Text, super::RICH_TEXT_NAME),
+            (SemanticsRole::Link, super::LINK_NAME),
+            (SemanticsRole::ComboBox, super::COMBO_BOX_ALIAS_NAME),
+            (SemanticsRole::SpinBox, super::SPIN_BOX_ALIAS_NAME),
+            (SemanticsRole::TextInput, super::MULTILINE_ALIAS_NAME),
+            (SemanticsRole::Separator, super::DIVIDER_ALIAS_NAME),
+            (SemanticsRole::Breadcrumb, super::PATH_BAR_NAME),
+            (SemanticsRole::List, super::LAYER_LIST_NAME),
+            (SemanticsRole::Table, super::DATA_GRID_NAME),
+            (SemanticsRole::Table, super::VIRTUAL_TABLE_NAME),
+            (SemanticsRole::List, super::REORDERABLE_LIST_NAME),
+            (SemanticsRole::Text, super::DRAG_SOURCE_NAME),
+            (SemanticsRole::Text, super::DROP_TARGET_NAME),
+            (SemanticsRole::GenericContainer, super::CANVAS_RULER_NAME),
+            (SemanticsRole::Canvas, super::CANVAS_NAME),
+            (SemanticsRole::Canvas, super::PIXEL_CANVAS_NAME),
+            (SemanticsRole::GenericContainer, super::COLOR_PALETTE_NAME),
+            (SemanticsRole::Image, super::BRUSH_PREVIEW_NAME),
+            (SemanticsRole::GenericContainer, super::SIGNAL_METER_NAME),
+        ];
+
+        for (role, name) in expected {
+            assert!(
+                semantics_contains(&output.semantics, &role, name),
+                "missing {role:?} named {name:?}"
+            );
+        }
+
+        Ok(())
     }
 
     #[test]
