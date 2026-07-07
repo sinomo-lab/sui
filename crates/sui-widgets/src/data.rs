@@ -11,13 +11,16 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
     WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_text::{FontFeature, TextMeasurement, TextStyle};
+use sui_text::{
+    FontFeature, FontWeight, TextAlign, TextDocument, TextLayoutRequest, TextMeasurement,
+    TextStyle, TextWrap,
+};
 
 use crate::{
-    DefaultTheme, MotionScalar,
+    DefaultTheme, MotionScalar, ThemeTextToken,
     controls::{IconGlyph, draw_icon_glyph},
     text_align::{paint_aligned_text, vertically_centered_text_rect_y},
 };
@@ -25,12 +28,15 @@ use crate::{
 pub struct ListItem {
     label: String,
     detail: Option<String>,
+    semantic_name: Option<String>,
+    semantic_description: Option<String>,
     trailing: Option<String>,
     leading_icon: Option<IconGlyph>,
     leading_text: Option<String>,
     leading_color: Option<Color>,
     accent: Option<Color>,
     disabled: bool,
+    activate_with_child: bool,
     content: Option<SingleChild>,
 }
 
@@ -39,12 +45,15 @@ impl ListItem {
         Self {
             label: label.into(),
             detail: None,
+            semantic_name: None,
+            semantic_description: None,
             trailing: None,
             leading_icon: None,
             leading_text: None,
             leading_color: None,
             accent: None,
             disabled: false,
+            activate_with_child: false,
             content: None,
         }
     }
@@ -56,6 +65,16 @@ impl ListItem {
 
     pub fn subtitle(self, subtitle: impl Into<String>) -> Self {
         self.detail(subtitle)
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.semantic_description = Some(description.into());
+        self
     }
 
     pub fn trailing(mut self, trailing: impl Into<String>) -> Self {
@@ -90,6 +109,11 @@ impl ListItem {
         self
     }
 
+    pub fn activate_with_child(mut self) -> Self {
+        self.activate_with_child = true;
+        self
+    }
+
     pub fn with_child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
@@ -104,6 +128,10 @@ impl ListItem {
 
     pub fn has_child(&self) -> bool {
         self.content.is_some()
+    }
+
+    fn can_activate_from_row(&self) -> bool {
+        !self.disabled && (self.content.is_none() || self.activate_with_child)
     }
 }
 
@@ -124,7 +152,8 @@ pub struct ListView {
     row_heights: Vec<f32>,
     row_offsets: Vec<f32>,
     content_height: f32,
-    on_change: Option<Box<dyn FnMut(usize, String)>>,
+    on_change: Option<ListViewChange>,
+    on_change_with_ctx: Option<ListViewContextChange>,
 }
 
 impl ListView {
@@ -147,6 +176,7 @@ impl ListView {
             row_offsets: Vec::new(),
             content_height: 0.0,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -201,6 +231,14 @@ impl ListView {
         F: FnMut(usize, String) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize, String, &mut EventCtx) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -312,32 +350,44 @@ impl ListView {
         self.scroll_y = self.clamp_scroll(viewport_height, self.scroll_y);
     }
 
-    fn row_has_child(&self, index: usize) -> bool {
-        self.items.get(index).is_some_and(ListItem::has_child)
+    fn row_blocks_parent_activation(&self, index: usize) -> bool {
+        self.items
+            .get(index)
+            .is_some_and(|item| item.has_child() && !item.activate_with_child)
     }
 
-    fn activate(&mut self, index: usize) {
+    fn row_activation_waits_for_child_target(&self, index: usize) -> bool {
+        self.items
+            .get(index)
+            .is_some_and(|item| item.has_child() && item.activate_with_child)
+    }
+
+    fn activate(&mut self, index: usize, ctx: &mut EventCtx) {
         let Some(item) = self.items.get(index) else {
             return;
         };
         if item.disabled {
             return;
         }
+        let label = item.label.clone();
 
         self.selected = Some(index);
         if let Some(on_change) = &mut self.on_change {
-            on_change(index, item.label.clone());
+            on_change(index, label.clone());
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(index, label, ctx);
         }
     }
 
-    fn move_selection(&mut self, delta: isize, viewport_height: f32) {
+    fn move_selection(&mut self, delta: isize, viewport_height: f32, ctx: &mut EventCtx) {
         if self.items.is_empty() {
             return;
         }
 
         let current = self.selected.unwrap_or(0) as isize;
         let next = (current + delta).clamp(0, self.items.len() as isize - 1) as usize;
-        self.activate(next);
+        self.activate(next, ctx);
         self.ensure_visible(viewport_height, next);
     }
 
@@ -411,7 +461,12 @@ impl Widget for ListView {
                     && viewport.contains(pointer.position) =>
             {
                 let row = self.row_at_position(ctx.bounds(), pointer.position);
-                if row.is_some_and(|index| self.row_has_child(index)) {
+                if row.is_some_and(|index| self.row_blocks_parent_activation(index)) {
+                    return;
+                }
+                if ctx.phase() == EventPhase::Capture
+                    && row.is_some_and(|index| self.row_activation_waits_for_child_target(index))
+                {
                     return;
                 }
                 self.set_hovered(row, ctx);
@@ -434,8 +489,8 @@ impl Widget for ListView {
                     .filter(|(pressed, hovered)| pressed == hovered)
                     .map(|(index, _)| index)
                 {
-                    if !self.row_has_child(index) {
-                        self.activate(index);
+                    if !self.row_blocks_parent_activation(index) {
+                        self.activate(index, ctx);
                     }
                 }
                 self.set_hovered(hovered, ctx);
@@ -459,18 +514,18 @@ impl Widget for ListView {
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowUp" => self.move_selection(-1, viewport.height()),
-                    "ArrowDown" => self.move_selection(1, viewport.height()),
+                    "ArrowUp" => self.move_selection(-1, viewport.height(), ctx),
+                    "ArrowDown" => self.move_selection(1, viewport.height(), ctx),
                     "Home" => {
                         if !self.items.is_empty() {
-                            self.activate(0);
+                            self.activate(0, ctx);
                             self.ensure_visible(viewport.height(), 0);
                         }
                     }
                     "End" => {
                         if !self.items.is_empty() {
                             let last = self.items.len() - 1;
-                            self.activate(last);
+                            self.activate(last, ctx);
                             self.ensure_visible(viewport.height(), last);
                         }
                     }
@@ -521,6 +576,7 @@ impl Widget for ListView {
         };
         let child_constraints =
             Constraints::new(Size::ZERO, Size::new(child_max_width, f32::INFINITY));
+        let explicit_row_height = self.row_height.is_some();
         let mut content_width: f32 = 220.0;
         let mut content_height = 0.0;
         self.row_offsets.clear();
@@ -529,16 +585,32 @@ impl Widget for ListView {
         for item in &mut self.items {
             self.row_offsets.push(content_height);
             let (row_width, row_height) = if let Some(content) = &mut item.content {
-                let child_size = content.measure(ctx, child_constraints);
+                let content_constraints = if explicit_row_height {
+                    let child_height = (base_row_height
+                        - metrics.data_row_padding.top
+                        - metrics.data_row_padding.bottom)
+                        .max(0.0);
+                    Constraints::new(
+                        Size::new(0.0, child_height),
+                        Size::new(child_max_width, child_height),
+                    )
+                } else {
+                    child_constraints
+                };
+                let child_size = content.measure(ctx, content_constraints);
                 (
                     (child_size.width
                         + metrics.data_row_padding.left
                         + metrics.data_row_padding.right)
                         .max(220.0),
-                    (child_size.height
-                        + metrics.data_row_padding.top
-                        + metrics.data_row_padding.bottom)
-                        .max(base_row_height),
+                    if explicit_row_height {
+                        base_row_height
+                    } else {
+                        (child_size.height
+                            + metrics.data_row_padding.top
+                            + metrics.data_row_padding.bottom)
+                            .max(base_row_height)
+                    },
                 )
             } else {
                 let label = measure_text(ctx, &item.label, &text_style).width;
@@ -810,15 +882,22 @@ impl Widget for ListView {
                     bounds,
                 );
                 row.parent = Some(ctx.widget_id());
-                row.name = Some(item.label.clone());
-                row.description = item.detail.clone();
+                row.name = Some(
+                    item.semantic_name
+                        .clone()
+                        .unwrap_or_else(|| item.label.clone()),
+                );
+                row.description = item
+                    .semantic_description
+                    .clone()
+                    .or_else(|| item.detail.clone());
                 row.value = Some(SemanticsValue::Text(
                     item.detail.clone().unwrap_or_else(|| item.label.clone()),
                 ));
                 row.state.disabled = item.disabled;
                 row.state.hovered = self.hovered == Some(index);
                 row.state.selected = self.current_selected() == Some(index);
-                if !item.disabled && item.content.is_none() {
+                if item.can_activate_from_row() {
                     row.actions = vec![SemanticsAction::Activate];
                 }
                 ctx.push(row);
@@ -3206,6 +3285,8 @@ pub struct VirtualTableRowContext<'a> {
     pub pressed: bool,
 }
 
+type ListViewChange = Box<dyn FnMut(usize, String)>;
+type ListViewContextChange = Box<dyn FnMut(usize, String, &mut EventCtx)>;
 type VirtualTableRowPainter = Box<dyn for<'a> Fn(&mut PaintCtx, &VirtualTableRowContext<'a>)>;
 type VirtualTableRowName = Box<dyn Fn(usize) -> String>;
 type VirtualTableRowDescription = Box<dyn Fn(usize) -> String>;
@@ -4625,6 +4706,394 @@ fn numeric_text_style(mut style: TextStyle) -> TextStyle {
     style
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LeadingLabelCellPaint {
+    pub icon: Option<IconGlyph>,
+    pub icon_color: Option<Color>,
+    pub label_color: Option<Color>,
+    pub label_weight: FontWeight,
+    pub padding_left: f32,
+    pub padding_right: f32,
+    pub icon_slot_side: Option<f32>,
+    pub icon_inset: f32,
+    pub gap: Option<f32>,
+}
+
+impl LeadingLabelCellPaint {
+    pub const fn new() -> Self {
+        Self {
+            icon: None,
+            icon_color: None,
+            label_color: None,
+            label_weight: FontWeight::NORMAL,
+            padding_left: 6.0,
+            padding_right: 8.0,
+            icon_slot_side: None,
+            icon_inset: 2.0,
+            gap: None,
+        }
+    }
+
+    pub const fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub const fn icon_color(mut self, color: Color) -> Self {
+        self.icon_color = Some(color);
+        self
+    }
+
+    pub const fn label_color(mut self, color: Color) -> Self {
+        self.label_color = Some(color);
+        self
+    }
+
+    pub const fn label_weight(mut self, weight: FontWeight) -> Self {
+        self.label_weight = weight;
+        self
+    }
+
+    pub const fn padding(mut self, left: f32, right: f32) -> Self {
+        self.padding_left = left;
+        self.padding_right = right;
+        self
+    }
+
+    pub const fn icon_slot_side(mut self, side: f32) -> Self {
+        self.icon_slot_side = Some(side);
+        self
+    }
+
+    pub const fn icon_inset(mut self, inset: f32) -> Self {
+        self.icon_inset = inset;
+        self
+    }
+
+    pub const fn gap(mut self, gap: f32) -> Self {
+        self.gap = Some(gap);
+        self
+    }
+}
+
+impl Default for LeadingLabelCellPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextCellPaint {
+    pub color: Option<Color>,
+    pub weight: FontWeight,
+    pub padding_left: f32,
+    pub padding_right: f32,
+    pub alignment: TableColumnAlignment,
+    pub numeric: bool,
+    pub text_token: Option<ThemeTextToken>,
+}
+
+impl TextCellPaint {
+    pub const fn new() -> Self {
+        Self {
+            color: None,
+            weight: FontWeight::NORMAL,
+            padding_left: 8.0,
+            padding_right: 8.0,
+            alignment: TableColumnAlignment::Start,
+            numeric: false,
+            text_token: None,
+        }
+    }
+
+    pub const fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    pub const fn padding(mut self, left: f32, right: f32) -> Self {
+        self.padding_left = left;
+        self.padding_right = right;
+        self
+    }
+
+    pub const fn alignment(mut self, alignment: TableColumnAlignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
+    pub const fn numeric(mut self) -> Self {
+        self.numeric = true;
+        self
+    }
+
+    pub const fn text_token(mut self, token: ThemeTextToken) -> Self {
+        self.text_token = Some(token);
+        self
+    }
+}
+
+impl Default for TextCellPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextBlockPaint {
+    pub color: Option<Color>,
+    pub weight: FontWeight,
+    pub padding: Insets,
+    pub text_token: Option<ThemeTextToken>,
+    pub wrap: TextWrap,
+    pub alignment: TextAlign,
+}
+
+impl TextBlockPaint {
+    pub const fn new() -> Self {
+        Self {
+            color: None,
+            weight: FontWeight::NORMAL,
+            padding: Insets::ZERO,
+            text_token: None,
+            wrap: TextWrap::Word,
+            alignment: TextAlign::Start,
+        }
+    }
+
+    pub const fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    pub const fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub const fn text_token(mut self, token: ThemeTextToken) -> Self {
+        self.text_token = Some(token);
+        self
+    }
+
+    pub const fn wrap(mut self, wrap: TextWrap) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    pub const fn alignment(mut self, alignment: TextAlign) -> Self {
+        self.alignment = alignment;
+        self
+    }
+}
+
+impl Default for TextBlockPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn paint_leading_label_cell(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    style: LeadingLabelCellPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let mut text_x = rect.x() + style.padding_left.max(0.0);
+    if let Some(icon) = style.icon {
+        let slot_side = style
+            .icon_slot_side
+            .unwrap_or(theme.metrics.data_row_icon_size)
+            .min((rect.height() - 6.0).max(0.0))
+            .max(0.0);
+        let icon_rect = Rect::new(
+            text_x,
+            rect.y() + ((rect.height() - slot_side) * 0.5).max(0.0),
+            slot_side,
+            slot_side,
+        );
+        let icon_inset = style.icon_inset.max(0.0).min(slot_side * 0.45);
+        draw_icon_glyph(
+            ctx,
+            icon,
+            icon_rect.inflate(-icon_inset, -icon_inset),
+            style.icon_color.unwrap_or(theme.palette.text_muted),
+        );
+        text_x = icon_rect.max_x()
+            + style
+                .gap
+                .unwrap_or(theme.metrics.data_row_icon_gap)
+                .max(0.0);
+    }
+
+    let label_rect = Rect::new(
+        text_x,
+        rect.y(),
+        (rect.max_x() - text_x - style.padding_right.max(0.0)).max(0.0),
+        rect.height(),
+    );
+    if label_rect.width() <= 0.0 {
+        return;
+    }
+
+    let mut label_style = TextStyle {
+        font_size: theme.text.sm.size.max(1.0),
+        line_height: theme.text.sm.line_height.max(1.0),
+        color: style.label_color.unwrap_or(theme.palette.text),
+        ..theme.body_text_style()
+    };
+    label_style.weight = style.label_weight;
+    let measurement = paint_text_measurement(ctx, label, &label_style);
+    let text_rect = vertically_centered_text_rect_y(
+        ctx,
+        label_rect,
+        measurement,
+        label_style.line_height.max(measurement.height),
+    );
+    let text_rect = Rect::new(
+        label_rect.x(),
+        text_rect,
+        label_rect.width(),
+        label_rect.height(),
+    );
+
+    ctx.push_clip_rect(label_rect);
+    paint_aligned_text(
+        ctx,
+        text_rect,
+        label,
+        &label_style,
+        label_style.line_height,
+        0.0,
+    );
+    ctx.pop_clip();
+}
+
+pub fn paint_text_block(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    text: &str,
+    style: TextBlockPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let content = Rect::new(
+        rect.x() + style.padding.left.max(0.0),
+        rect.y() + style.padding.top.max(0.0),
+        (rect.width() - style.padding.left.max(0.0) - style.padding.right.max(0.0)).max(0.0),
+        (rect.height() - style.padding.top.max(0.0) - style.padding.bottom.max(0.0)).max(0.0),
+    );
+    if content.width() <= 0.0 || content.height() <= 0.0 {
+        return;
+    }
+
+    let token = style.text_token.unwrap_or(theme.text.sm);
+    let mut text_style = TextStyle {
+        font_size: token.size.max(1.0),
+        line_height: token.line_height.max(1.0),
+        color: style.color.unwrap_or(theme.palette.text),
+        ..theme.body_text_style()
+    };
+    text_style.weight = style.weight;
+
+    let color = text_style.color;
+    let mut layout_style = text_style.clone();
+    layout_style.color = Color::WHITE;
+    let mut document = TextDocument::from_plain_text(text.to_string(), layout_style);
+    for paragraph in &mut document.paragraphs {
+        paragraph.style.align = style.alignment;
+        paragraph.style.wrap = style.wrap;
+    }
+
+    ctx.push_clip_rect(content);
+    if let Ok(layout) = ctx.layout_text_document(TextLayoutRequest::new(document).with_box_size(
+        Size::new(content.width().max(1.0), content.height().max(1.0)),
+    )) {
+        ctx.draw_text_layout_with_color(content.origin, &layout, color);
+    } else {
+        ctx.draw_text(content, text.to_string(), text_style);
+    }
+    ctx.pop_clip();
+}
+
+pub fn paint_text_cell(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    text: &str,
+    style: TextCellPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let left = style.padding_left.max(0.0);
+    let right = style.padding_right.max(0.0);
+    let content = Rect::new(
+        rect.x() + left,
+        rect.y(),
+        (rect.width() - left - right).max(0.0),
+        rect.height(),
+    );
+    if content.width() <= 0.0 {
+        return;
+    }
+
+    let token = style.text_token.unwrap_or(theme.text.sm);
+    let mut text_style = TextStyle {
+        font_size: token.size.max(1.0),
+        line_height: token.line_height.max(1.0),
+        color: style.color.unwrap_or(theme.palette.text),
+        ..theme.body_text_style()
+    };
+    text_style.weight = style.weight;
+    if style.numeric {
+        text_style = numeric_text_style(text_style);
+    }
+
+    let measurement = paint_text_measurement(ctx, text, &text_style);
+    let text_y = vertically_centered_text_rect_y(
+        ctx,
+        content,
+        measurement,
+        text_style.line_height.max(measurement.height),
+    );
+    let text_rect = Rect::new(content.x(), text_y, content.width(), content.height());
+
+    ctx.push_clip_rect(content);
+    paint_aligned_text(
+        ctx,
+        text_rect,
+        text,
+        &text_style,
+        text_style.line_height,
+        match style.alignment {
+            TableColumnAlignment::Start => 0.0,
+            TableColumnAlignment::Center => 0.5,
+            TableColumnAlignment::End => 1.0,
+        },
+    );
+    ctx.pop_clip();
+}
+
 fn measure_list_item_leading_width(
     ctx: &mut MeasureCtx,
     item: &ListItem,
@@ -5104,8 +5573,9 @@ mod tests {
 
     use super::{
         Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, LayerListReorderChange,
-        ListItem, ListView, Table, TableColumn, TableColumnAlignment, TableRow, TreeItem, TreeView,
-        VirtualTable, VirtualTableColumn,
+        LeadingLabelCellPaint, ListItem, ListView, Table, TableColumn, TableColumnAlignment,
+        TableRow, TextBlockPaint, TextCellPaint, TreeItem, TreeView, VirtualTable,
+        VirtualTableColumn,
     };
     use crate::{Button, Label, ScrollView, SizedBox, Stack, ThemeTextToken};
     use sui_core::{
@@ -5113,9 +5583,10 @@ mod tests {
         PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
         SemanticsRole, SemanticsValue, Size, ToggleState, Vector, WidgetId, WindowEvent,
     };
-    use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
+    use sui_layout::{Constraints, Padding as Insets};
+    use sui_runtime::{Application, PaintCtx, RenderOutput, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, SceneCommand};
-    use sui_text::{FontFeature, FontRegistry, TextSystem};
+    use sui_text::{FontFeature, FontRegistry, FontWeight, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -6077,6 +6548,40 @@ mod tests {
     }
 
     #[test]
+    fn list_view_change_callback_can_request_relayout() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let requests = Rc::new(RefCell::new(0_usize));
+        let on_change = Rc::clone(&changes);
+        let requested = Rc::clone(&requests);
+        let (mut runtime, window_id) = build_runtime(
+            ListView::new("Assets")
+                .items([ListItem::new("First"), ListItem::new("Second")])
+                .on_change_with_ctx(move |index, label, ctx| {
+                    on_change.borrow_mut().push((index, label));
+                    *requested.borrow_mut() += 1;
+                    ctx.request_measure();
+                    ctx.request_arrange();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(44.0, 44.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(44.0, 44.0), false),
+        )?;
+
+        assert_eq!(changes.borrow().as_slice(), &[(1, "Second".to_string())]);
+        assert_eq!(*requests.borrow(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn list_view_exposes_visible_row_semantics() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().width(260.0).height(132.0).with_child(
@@ -6649,6 +7154,129 @@ mod tests {
                 .iter()
                 .any(|node| node.role == SemanticsRole::Button
                     && node.name.as_deref() == Some("Open"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn list_item_child_row_can_opt_into_row_activation() -> Result<()> {
+        let row_changes = Rc::new(RefCell::new(Vec::new()));
+        let button_presses = Rc::new(RefCell::new(0));
+        let on_row = Rc::clone(&row_changes);
+        let on_button = Rc::clone(&button_presses);
+        let row = Stack::horizontal()
+            .spacing(8.0)
+            .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
+            .with_child(Button::new("Open").on_press(move || *on_button.borrow_mut() += 1));
+        let item = ListItem::new("Asset")
+            .semantic_name("Asset row")
+            .description("Selectable asset row")
+            .activate_with_child()
+            .with_child(row);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(260.0).height(80.0).with_child(
+                ListView::new("Actions")
+                    .item(item)
+                    .on_change(move |index, label| {
+                        on_row.borrow_mut().push((index, label));
+                    }),
+            ),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(36.0, 28.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(36.0, 28.0), false),
+        )?;
+
+        assert_eq!(row_changes.borrow().as_slice(), &[(0, "Asset".to_string())]);
+        assert_eq!(*button_presses.borrow(), 0);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(136.0, 28.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(136.0, 28.0), false),
+        )?;
+
+        assert_eq!(
+            row_changes.borrow().as_slice(),
+            &[(0, "Asset".to_string())],
+            "nested button clicks should not also activate the row"
+        );
+        assert_eq!(*button_presses.borrow(), 1);
+
+        let output = runtime.render(window_id)?;
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Asset row")
+            })
+            .expect("custom child row should expose list-item semantics");
+        assert_eq!(row.description.as_deref(), Some("Selectable asset row"));
+        assert!(row.actions.contains(&SemanticsAction::Activate));
+        Ok(())
+    }
+
+    #[test]
+    fn list_item_child_respects_explicit_row_height() -> Result<()> {
+        let row_changes = Rc::new(RefCell::new(Vec::new()));
+        let on_row = Rc::clone(&row_changes);
+        let item = ListItem::new("Tall asset")
+            .activate_with_child()
+            .with_child(
+                SizedBox::new()
+                    .height(180.0)
+                    .with_child(Label::new("Tall custom row")),
+            );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(260.0).height(96.0).with_child(
+                ListView::new("Assets")
+                    .row_height(36.0)
+                    .item(item)
+                    .on_change(move |index, label| {
+                        on_row.borrow_mut().push((index, label));
+                    }),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Tall asset")
+            })
+            .expect("fixed-height child row should expose list-item semantics");
+        assert!(
+            (row.bounds.height() - 36.0).abs() <= 0.5,
+            "explicit row height should cap oversized child content, got {:?}",
+            row.bounds
+        );
+
+        let position = Point::new(
+            row.bounds.x() + row.bounds.width() * 0.5,
+            row.bounds.y() + row.bounds.height() * 0.5,
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert_eq!(
+            row_changes.borrow().as_slice(),
+            &[(0, "Tall asset".to_string())]
         );
         Ok(())
     }
@@ -7234,9 +7862,11 @@ mod tests {
 
     #[test]
     fn list_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
+        let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().width(320.0).height(100.0).with_child(
                 ListView::new("Assets")
+                    .theme(theme)
                     .items([
                         ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
                         ListItem::new("UI icon sheet").detail("Tagged for export"),
@@ -7258,8 +7888,8 @@ mod tests {
             .copied()
             .expect("selected list row highlight should be painted");
 
-        assert!(highlight.y() >= 8.0);
-        assert!(highlight.max_y() <= 100.0 - 8.0);
+        assert!(highlight.y() >= theme.metrics.data_viewport_padding.top);
+        assert!(highlight.max_y() <= 100.0 - theme.metrics.data_viewport_padding.bottom);
         Ok(())
     }
 
@@ -7311,6 +7941,7 @@ mod tests {
 
     #[test]
     fn tree_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
+        let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().width(320.0).height(120.0).with_child(
                 TreeView::new("Scene").item(
@@ -7343,8 +7974,8 @@ mod tests {
             .copied()
             .expect("selected tree row highlight should be painted");
 
-        assert!(highlight.y() >= 8.0);
-        assert!(highlight.max_y() <= 120.0 - 8.0);
+        assert!(highlight.y() >= theme.metrics.data_viewport_padding.top);
+        assert!(highlight.max_y() <= 120.0 - theme.metrics.data_viewport_padding.bottom);
         Ok(())
     }
 
@@ -7629,6 +8260,209 @@ mod tests {
         let row_center = output.frame.viewport.height * 0.5;
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
+    }
+
+    struct LeadingLabelCellFixture {
+        theme: DefaultTheme,
+    }
+
+    impl Widget for LeadingLabelCellFixture {
+        fn measure(
+            &mut self,
+            _ctx: &mut sui_runtime::MeasureCtx,
+            constraints: Constraints,
+        ) -> Size {
+            constraints.clamp(Size::new(132.0, 32.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            super::paint_leading_label_cell(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "artifact.txt",
+                LeadingLabelCellPaint::new()
+                    .icon(crate::IconGlyph::File)
+                    .icon_color(self.theme.palette.text_muted)
+                    .label_color(self.theme.palette.text)
+                    .label_weight(FontWeight::MEDIUM)
+                    .icon_slot_side(20.0)
+                    .icon_inset(2.0)
+                    .gap(8.0)
+                    .padding(6.0, 8.0),
+            );
+        }
+    }
+
+    #[test]
+    fn leading_label_cell_uses_compact_token_and_clips_to_cell() {
+        let theme = DefaultTheme::default();
+        let output = render(LeadingLabelCellFixture { theme });
+        let label = text_runs_for(&output, "artifact.txt")
+            .into_iter()
+            .next()
+            .expect("leading-label cell text should paint");
+
+        assert_text_run_uses_token(&label, theme.text.sm);
+        assert_eq!(label.style.weight, FontWeight::MEDIUM);
+        assert!(label.rect.x() >= 34.0);
+        assert!(
+            label.rect.max_x() <= output.frame.viewport.width + 0.75,
+            "label should stay within the cell bounds: {:?}",
+            label.rect
+        );
+    }
+
+    struct TextCellFixture {
+        theme: DefaultTheme,
+    }
+
+    impl Widget for TextCellFixture {
+        fn measure(
+            &mut self,
+            _ctx: &mut sui_runtime::MeasureCtx,
+            constraints: Constraints,
+        ) -> Size {
+            constraints.clamp(Size::new(160.0, 32.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            super::paint_text_cell(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "128",
+                TextCellPaint::new()
+                    .text_token(self.theme.text.xs)
+                    .color(self.theme.palette.text_muted)
+                    .weight(FontWeight::MEDIUM)
+                    .padding(10.0, 18.0)
+                    .alignment(TableColumnAlignment::End)
+                    .numeric(),
+            );
+        }
+    }
+
+    #[test]
+    fn text_cell_paint_uses_alignment_numeric_token_and_clipping() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 10.5,
+            line_height: 17.5,
+        };
+        theme.sync_derived_fields();
+        let output = render(TextCellFixture { theme });
+        let run = text_runs_for(&output, "128")
+            .into_iter()
+            .next()
+            .expect("text-cell text should paint");
+        let clip = draw_clip_rects_for(&output, "128")
+            .into_iter()
+            .next()
+            .expect("text-cell text should clip to padded content");
+        let content_right = output.frame.viewport.width - 18.0;
+
+        assert_text_run_uses_token(&run, theme.text.xs);
+        assert_eq!(run.style.color, theme.palette.text_muted);
+        assert_eq!(run.style.weight, FontWeight::MEDIUM);
+        assert!(
+            run.style
+                .features
+                .iter()
+                .any(|feature| feature.tag == FontFeature::TABULAR_FIGURES && feature.value == 1),
+            "numeric text cells should opt into tabular figures"
+        );
+        assert!((run.rect.max_x() - content_right).abs() < 0.75);
+        assert!((clip.x() - 10.0).abs() < 0.01);
+        assert!((clip.max_x() - content_right).abs() < 0.01);
+    }
+
+    struct TextBlockFixture {
+        theme: DefaultTheme,
+        text: String,
+    }
+
+    impl Widget for TextBlockFixture {
+        fn measure(
+            &mut self,
+            _ctx: &mut sui_runtime::MeasureCtx,
+            constraints: Constraints,
+        ) -> Size {
+            constraints.clamp(Size::new(178.0, 76.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            super::paint_text_block(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                &self.text,
+                TextBlockPaint::new()
+                    .text_token(self.theme.text.sm)
+                    .color(self.theme.palette.text_muted)
+                    .weight(FontWeight::MEDIUM)
+                    .padding(Insets {
+                        left: 12.0,
+                        top: 7.0,
+                        right: 16.0,
+                        bottom: 9.0,
+                    }),
+            );
+        }
+    }
+
+    #[test]
+    fn text_block_paint_wraps_top_aligns_and_clips_to_padding() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 12.0,
+            line_height: 18.0,
+        };
+        theme.sync_derived_fields();
+        let text =
+            "This preview line wraps through SUI text layout.\nSecond paragraph stays compact."
+                .to_string();
+        let output = render(TextBlockFixture {
+            theme,
+            text: text.clone(),
+        });
+        let (origin, layout, color) = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| {
+                let SceneCommand::DrawShapedText(run) = command else {
+                    return None;
+                };
+                let layout = run.resolve(output.frame.text_layout_registry.as_ref())?;
+                (layout.text() == text).then_some((run.origin, layout.clone(), run.color_override))
+            })
+            .expect("text block should paint as a shaped text layout");
+        let clip = draw_clip_rects_for(&output, &text)
+            .into_iter()
+            .next()
+            .expect("text block should clip to padded content");
+
+        assert_eq!(color, Some(theme.palette.text_muted));
+        assert!((origin.x - 12.0).abs() < 0.01);
+        assert!((origin.y - 7.0).abs() < 0.01);
+        assert!((layout.box_size().width - 150.0).abs() < 0.01);
+        assert!((layout.box_size().height - 60.0).abs() < 0.01);
+        assert!(layout.lines().len() >= 2, "text block should wrap");
+        assert_text_run_uses_token(
+            &sui_text::TextRun {
+                rect: Rect::ZERO,
+                text,
+                style: layout.style().clone(),
+            },
+            theme.text.sm,
+        );
+        assert_eq!(layout.style().weight, FontWeight::MEDIUM);
+        assert!((clip.x() - 12.0).abs() < 0.01);
+        assert!((clip.y() - 7.0).abs() < 0.01);
+        assert!((clip.width() - 150.0).abs() < 0.01);
+        assert!((clip.height() - 60.0).abs() < 0.01);
     }
 
     #[test]

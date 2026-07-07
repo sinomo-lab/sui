@@ -10,7 +10,7 @@ name = "sui_python"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["extension-module", "desktop"]
+default = ["desktop"]
 desktop = ["sui/desktop", "sui-bindings-core/desktop"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
@@ -19,3 +19,6 @@ auto-initialize = ["pyo3/auto-initialize"]
 pyo3 = { workspace = true }
 sui = { path = "../sui", default-features = false }
 sui-bindings-core = { workspace = true }
+
+[dev-dependencies]
+pyo3 = { workspace = true, features = ["auto-initialize"] }

@@ -4821,8 +4821,11 @@ mod tests {
         );
 
         assert_eq!(pixel_canvas_zoom_percent(&output), 25.0);
-        assert!((state.viewport().zoom - 0.24583334).abs() < 0.001);
         assert_eq!(state.viewport_size(), Size::new(520.0, 360.0));
+        let padding = DefaultTheme::default().metrics.pixel_canvas_fit_padding;
+        let expected_zoom = ((state.viewport_size().width - padding * 2.0) / 1920.0)
+            .min((state.viewport_size().height - padding * 2.0) / 1080.0);
+        assert!((state.viewport().zoom - expected_zoom).abs() < 0.001);
     }
 
     #[test]

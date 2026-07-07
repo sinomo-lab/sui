@@ -42,7 +42,7 @@ mod tests {
     use crate::TestApp;
     use sui_core::{
         Color, Event, ImeEvent, KeyState, PointerEventKind, Result, SemanticsAction, SemanticsNode,
-        SemanticsRole, SemanticsValue, Size, TimerToken, Vector, WakeEvent,
+        SemanticsRole, SemanticsValue, Size, TimerToken, Vector, WakeEvent, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_runtime::{
@@ -670,6 +670,45 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct NonIdleWidget {
+        timer: Option<TimerToken>,
+    }
+
+    impl Widget for NonIdleWidget {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Window(WindowEvent::RedrawRequested) if self.timer.is_none() => {
+                    self.timer = Some(ctx.schedule_timer_after(0.0));
+                }
+                Event::Wake(WakeEvent::Timer { token, .. }) if self.timer == Some(*token) => {
+                    self.timer = Some(ctx.schedule_timer_after(0.0));
+                    ctx.request_paint();
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(48.0, 48.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_rect(ctx.bounds(), Color::rgba(0.8, 0.2, 0.2, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some("Non-idle".to_string());
+            ctx.push(node);
+        }
+    }
+
     fn build_scroll_app() -> Result<TestApp> {
         TestApp::new(|| {
             Application::new().window(
@@ -678,6 +717,17 @@ mod tests {
                     .root(ScrollHarness::new()),
             )
         })
+    }
+
+    fn build_non_idle_app() -> Result<TestApp> {
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Non-idle Harness")
+                    .root(NonIdleWidget::default()),
+            )
+            .build()?;
+        TestApp::from_runtime_with_frame_budget(runtime, 2)
     }
 
     #[test]
@@ -771,6 +821,23 @@ mod tests {
         assert!(error.message().contains("selector: text=\"missing\""));
         assert!(error.message().contains("Semantics snapshot:"));
         assert!(error.message().contains("Widget graph:"));
+    }
+
+    #[test]
+    fn run_until_idle_times_out_when_headless_work_never_settles() -> Result<()> {
+        let app = build_non_idle_app()?;
+        app.set_default_timeout(0.01)?;
+        let window = app.main_window()?;
+
+        let error = window.run_until_idle().unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("headless harness idle did not complete within"),
+            "{error}"
+        );
+
+        Ok(())
     }
 
     #[test]

@@ -8,11 +8,14 @@ use sui_core::{
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
     ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPodMutVisitor,
+    SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
     WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
-use sui_text::{FontFeature, FontWeight, TextMeasurement, TextStyle};
+use sui_text::{
+    FontFeature, FontWeight, TextAlign, TextDocument, TextLayoutRequest, TextMeasurement,
+    TextStyle, TextWrap,
+};
 
 use crate::{
     Button, ControlMetrics, DefaultTheme, HdrThemeMode, IconGlyph, Interpolate, MotionScalar,
@@ -20,7 +23,7 @@ use crate::{
     WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
     paint_theme_shadow, resolve_widget_hdr_style,
-    text_align::paint_aligned_text,
+    text_align::{paint_aligned_text, paint_single_line_aligned_text},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2683,12 +2686,12 @@ impl Widget for PropertyRow {
             ),
         };
         ctx.push_clip_rect(label_rect);
-        paint_aligned_text(
+        paint_single_line_aligned_text(
             ctx,
             label_rect,
             &self.label,
             &label_style,
-            label_style.line_height,
+            label_height,
             0.0,
         );
         ctx.pop_clip();
@@ -2751,6 +2754,382 @@ fn property_row_label_id(parent: WidgetId) -> WidgetId {
     const LOW_MASK: u64 = (1_u64 << 51) - 1;
 
     WidgetId::new(TAG | (parent.get().wrapping_mul(271).wrapping_add(1) & LOW_MASK))
+}
+
+pub struct SectionLabel {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    label: String,
+    semantic_name: Option<String>,
+    color: Option<Color>,
+}
+
+impl SectionLabel {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            label: label.into(),
+            semantic_name: None,
+            color: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn display_text(&self) -> String {
+        self.label.to_uppercase()
+    }
+
+    fn text_style(&self, theme: &DefaultTheme) -> TextStyle {
+        section_label_text_style(theme, self.color)
+    }
+}
+
+impl Widget for SectionLabel {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let style = self.text_style(&theme);
+        let text = self.display_text();
+        let measured = measure_text(ctx, &text, &style);
+        constraints.clamp(Size::new(measured.width, style.line_height))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let style = self.text_style(&theme);
+        let text = self.display_text();
+        ctx.push_clip_rect(ctx.bounds());
+        paint_single_line_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+        ctx.pop_clip();
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
+        let name = self
+            .semantic_name
+            .clone()
+            .unwrap_or_else(|| self.label.clone());
+        node.name = Some(name.clone());
+        node.value = Some(SemanticsValue::Text(name));
+        ctx.push(node);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SectionLabelPaint {
+    color: Option<Color>,
+}
+
+impl SectionLabelPaint {
+    pub const fn new() -> Self {
+        Self { color: None }
+    }
+
+    pub const fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+pub fn paint_section_label(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    paint: SectionLabelPaint,
+) {
+    let style = section_label_text_style(theme, paint.color);
+    let text = label.to_uppercase();
+    ctx.push_clip_rect(rect);
+    paint_single_line_aligned_text(ctx, rect, &text, &style, style.line_height, 0.0);
+    ctx.pop_clip();
+}
+
+pub fn paint_section_label_detail(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    detail: &str,
+    paint: SectionLabelPaint,
+) {
+    let style = section_label_text_style(theme, paint.color);
+    let text = if detail.trim().is_empty() {
+        label.to_uppercase()
+    } else {
+        format!("{} · {detail}", label.to_uppercase())
+    };
+    ctx.push_clip_rect(rect);
+    paint_single_line_aligned_text(ctx, rect, &text, &style, style.line_height, 0.0);
+    ctx.pop_clip();
+}
+
+fn section_label_text_style(theme: &DefaultTheme, color: Option<Color>) -> TextStyle {
+    let mut style = text_token_style(
+        theme,
+        theme.text.xs,
+        color.unwrap_or(theme.surfaces.text_faint),
+    );
+    style.weight = FontWeight::SEMIBOLD;
+    style.line_height = style.line_height.max(14.0);
+    style
+}
+
+pub struct DetailRow {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    label: String,
+    value: String,
+    max_value_lines: Option<usize>,
+}
+
+impl DetailRow {
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            label: label.into(),
+            value: value.into(),
+            max_value_lines: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn max_value_lines(mut self, max_lines: usize) -> Self {
+        self.max_value_lines = Some(max_lines.max(1));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+}
+
+impl Widget for DetailRow {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let label_style = detail_row_label_style(&theme);
+        let value_style = detail_row_value_style(&theme);
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width.max(0.0)
+        } else {
+            let label = measure_text(ctx, &self.label.to_uppercase(), &label_style);
+            let value = measure_text(ctx, &self.value, &value_style);
+            label.width.max(value.width)
+        };
+        let lines = wrap_detail_row_value(&self.value, width, self.max_value_lines, |text| {
+            measure_text(ctx, text, &value_style).width
+        });
+        constraints.clamp(Size::new(width, detail_row_height(&theme, lines.len())))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        paint_detail_row_at(
+            ctx,
+            &theme,
+            Point::new(ctx.bounds().x(), ctx.bounds().y()),
+            ctx.bounds().width(),
+            &self.label,
+            &self.value,
+            self.max_value_lines,
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(self.label.clone());
+        node.value = Some(SemanticsValue::Text(self.value.clone()));
+        ctx.push(node);
+    }
+}
+
+pub fn paint_detail_row_at(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    origin: Point,
+    width: f32,
+    label: &str,
+    value: &str,
+    max_value_lines: Option<usize>,
+) -> f32 {
+    let width = width.max(0.0);
+    let label_style = detail_row_label_style(theme);
+    let value_style = detail_row_value_style(theme);
+    let lines = wrap_detail_row_value(value, width, max_value_lines, |text| {
+        ctx.measure_text(text.to_string(), value_style.clone())
+            .map(|measurement| measurement.width)
+            .unwrap_or(0.0)
+    });
+    let height = detail_row_height(theme, lines.len());
+    let clip = Rect::new(origin.x, origin.y, width, height);
+
+    ctx.push_clip_rect(clip);
+    paint_aligned_text(
+        ctx,
+        Rect::new(origin.x, origin.y, width, label_style.line_height),
+        &label.to_uppercase(),
+        &label_style,
+        label_style.line_height,
+        0.0,
+    );
+
+    let mut y = origin.y + label_style.line_height + detail_row_label_value_gap(theme);
+    for line in lines {
+        paint_aligned_text(
+            ctx,
+            Rect::new(origin.x, y, width, value_style.line_height),
+            &line,
+            &value_style,
+            value_style.line_height,
+            0.0,
+        );
+        y += value_style.line_height;
+    }
+    ctx.pop_clip();
+    height
+}
+
+pub fn detail_row_height_for_value(
+    ctx: &PaintCtx,
+    theme: &DefaultTheme,
+    width: f32,
+    value: &str,
+    max_value_lines: Option<usize>,
+) -> f32 {
+    let width = width.max(0.0);
+    let value_style = detail_row_value_style(theme);
+    let lines = wrap_detail_row_value(value, width, max_value_lines, |text| {
+        ctx.measure_text(text.to_string(), value_style.clone())
+            .map(|measurement| measurement.width)
+            .unwrap_or(0.0)
+    });
+    detail_row_height(theme, lines.len())
+}
+
+fn detail_row_label_style(theme: &DefaultTheme) -> TextStyle {
+    let mut style = text_token_style(theme, theme.text.xs, theme.palette.text_muted);
+    style.weight = FontWeight::SEMIBOLD;
+    style.line_height = style.line_height.max(14.0);
+    style
+}
+
+fn detail_row_value_style(theme: &DefaultTheme) -> TextStyle {
+    let mut style = text_token_style(theme, theme.text.sm, theme.palette.text);
+    style.line_height = style.line_height.max(17.0);
+    style
+}
+
+fn detail_row_label_value_gap(theme: &DefaultTheme) -> f32 {
+    (theme.metrics.icon_label_gap * 0.35).max(2.0)
+}
+
+fn detail_row_bottom_gap(theme: &DefaultTheme) -> f32 {
+    theme.metrics.property_row_stacked_gap.max(6.0)
+}
+
+fn detail_row_height(theme: &DefaultTheme, value_lines: usize) -> f32 {
+    let label_style = detail_row_label_style(theme);
+    let value_style = detail_row_value_style(theme);
+    label_style.line_height
+        + detail_row_label_value_gap(theme)
+        + value_style.line_height * value_lines.max(1) as f32
+        + detail_row_bottom_gap(theme)
+}
+
+fn wrap_detail_row_value<F>(
+    value: &str,
+    width: f32,
+    max_lines: Option<usize>,
+    mut measure: F,
+) -> Vec<String>
+where
+    F: FnMut(&str) -> f32,
+{
+    let max_lines = max_lines.unwrap_or(usize::MAX).max(1);
+    let width = width.max(1.0);
+    let mut lines = Vec::new();
+
+    for paragraph in value.split('\n') {
+        if lines.len() >= max_lines {
+            break;
+        }
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            let candidate = if current.is_empty() {
+                word.to_string()
+            } else {
+                format!("{current} {word}")
+            };
+            if current.is_empty() || measure(&candidate) <= width {
+                current = candidate;
+            } else {
+                lines.push(std::mem::take(&mut current));
+                if lines.len() >= max_lines {
+                    break;
+                }
+                current = word.to_string();
+            }
+        }
+        if lines.len() < max_lines {
+            lines.push(current);
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 pub struct FormRow {
@@ -4358,6 +4737,373 @@ fn dock_panel_title_id(parent: WidgetId) -> WidgetId {
     WidgetId::new(TAG | (parent.get().wrapping_mul(467).wrapping_add(11) & LOW_MASK))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HairlineEdge {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+pub fn paint_rounded_rect(ctx: &mut PaintCtx, rect: Rect, color: Color, radius: f32) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    let radius = radius
+        .min(rect.width() * 0.5)
+        .min(rect.height() * 0.5)
+        .max(0.0);
+    if radius <= 0.5 {
+        ctx.fill_rect(rect, color);
+    } else {
+        ctx.fill(Path::rounded_rect(rect, radius), color);
+    }
+}
+
+pub fn paint_rounded_panel(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    fill: Color,
+    border: Color,
+    radius: f32,
+) {
+    paint_rounded_rect(ctx, rect, border, radius);
+    paint_rounded_rect(ctx, rect.inflate(-1.0, -1.0), fill, (radius - 1.0).max(0.0));
+}
+
+pub fn paint_hairline(ctx: &mut PaintCtx, rect: Rect, edge: HairlineEdge, color: Color) {
+    let line = match edge {
+        HairlineEdge::Top => Rect::new(rect.x(), rect.y(), rect.width(), 1.0),
+        HairlineEdge::Right => Rect::new(rect.max_x() - 1.0, rect.y(), 1.0, rect.height()),
+        HairlineEdge::Bottom => Rect::new(rect.x(), rect.max_y() - 1.0, rect.width(), 1.0),
+        HairlineEdge::Left => Rect::new(rect.x(), rect.y(), 1.0, rect.height()),
+    };
+    ctx.fill_rect(line, color);
+}
+
+pub fn paint_border(ctx: &mut PaintCtx, rect: Rect, color: Color) {
+    paint_hairline(ctx, rect, HairlineEdge::Top, color);
+    paint_hairline(ctx, rect, HairlineEdge::Right, color);
+    paint_hairline(ctx, rect, HairlineEdge::Bottom, color);
+    paint_hairline(ctx, rect, HairlineEdge::Left, color);
+}
+
+fn paint_centered_text(ctx: &mut PaintCtx, text: &str, style: TextStyle, cx: f32, cy: f32) {
+    let measurement = ctx.measure_text(text.to_string(), style.clone()).ok();
+    let (width, height) = measurement
+        .map(|measurement| (measurement.width, measurement.height))
+        .unwrap_or((
+            text.chars().count() as f32 * style.font_size * 0.55,
+            style.line_height,
+        ));
+    ctx.draw_text(
+        Rect::new(
+            cx - width * 0.5,
+            cy - height * 0.5,
+            width + 2.0,
+            height + 2.0,
+        ),
+        text.to_string(),
+        style,
+    );
+}
+
+#[derive(Clone, Copy)]
+pub struct EmptyStatePaint<'a> {
+    icon: Option<IconGlyph>,
+    title: &'a str,
+    description: &'a str,
+    detail: Option<&'a str>,
+    background: Option<Color>,
+    center_offset_y: f32,
+    reserve_action_space: bool,
+}
+
+impl<'a> EmptyStatePaint<'a> {
+    pub const fn new(title: &'a str, description: &'a str) -> Self {
+        Self {
+            icon: None,
+            title,
+            description,
+            detail: None,
+            background: None,
+            center_offset_y: 0.0,
+            reserve_action_space: false,
+        }
+    }
+
+    pub const fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub const fn detail(mut self, detail: &'a str) -> Self {
+        self.detail = Some(detail);
+        self
+    }
+
+    pub const fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub const fn center_offset_y(mut self, offset: f32) -> Self {
+        self.center_offset_y = offset;
+        self
+    }
+
+    pub const fn reserve_action_space(mut self, reserve: bool) -> Self {
+        self.reserve_action_space = reserve;
+        self
+    }
+}
+
+pub fn paint_empty_state(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    bounds: Rect,
+    paint: EmptyStatePaint<'_>,
+) {
+    if let Some(background) = paint.background {
+        ctx.fill_rect(bounds, background);
+    }
+
+    let cx = bounds.x() + bounds.width() * 0.5;
+    let cy = bounds.y() + bounds.height() * 0.5
+        - if paint.reserve_action_space {
+            18.0
+        } else {
+            0.0
+        }
+        + paint.center_offset_y;
+    let icon_color = theme.surfaces.text_faint;
+    if let Some(icon) = paint.icon {
+        let side = 40.0;
+        draw_icon_glyph(
+            ctx,
+            icon,
+            Rect::new(cx - side * 0.5, cy - 46.0 - side * 0.5, side, side),
+            icon_color,
+        );
+    }
+
+    let mut title_style = text_token_style(theme, theme.text.lg, theme.surfaces.text_muted);
+    title_style.weight = FontWeight::SEMIBOLD;
+    paint_centered_text(ctx, paint.title, title_style, cx, cy + 4.0);
+
+    let description_style = text_token_style(theme, theme.text.sm, theme.surfaces.text_faint);
+    paint_centered_text(ctx, paint.description, description_style, cx, cy + 30.0);
+
+    if let Some(detail) = paint.detail {
+        let mut detail_style = text_token_style(theme, theme.text.xs, theme.surfaces.text_muted);
+        detail_style.weight = FontWeight::MEDIUM;
+        paint_centered_text(ctx, detail, detail_style, cx, cy + 48.0);
+    }
+}
+
+pub struct EmptyState {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: Option<String>,
+    icon: Option<IconGlyph>,
+    title: String,
+    description: String,
+    detail: Option<String>,
+    action: Option<SingleChild>,
+    action_height: f32,
+    action_max_width: f32,
+    background: Option<Color>,
+}
+
+impl EmptyState {
+    pub fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: None,
+            icon: None,
+            title: title.into(),
+            description: description.into(),
+            detail: None,
+            action: None,
+            action_height: 32.0,
+            action_max_width: 360.0,
+            background: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.action = Some(SingleChild::new(action));
+        self
+    }
+
+    pub fn action_height(mut self, height: f32) -> Self {
+        self.action_height = height.max(32.0);
+        self
+    }
+
+    pub fn action_max_width(mut self, width: f32) -> Self {
+        self.action_max_width = width.max(0.0);
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub fn transparent(mut self) -> Self {
+        self.background = Some(Color::TRANSPARENT);
+        self
+    }
+
+    pub fn action_child(&self) -> Option<&WidgetPod> {
+        self.action.as_ref().map(SingleChild::child)
+    }
+
+    pub fn action_child_mut(&mut self) -> Option<&mut WidgetPod> {
+        self.action.as_mut().map(SingleChild::child_mut)
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| (*self.theme).clone())
+    }
+
+    fn action_rect(&self, bounds: Rect) -> Rect {
+        let width = self.action_max_width.min((bounds.width() - 32.0).max(0.0));
+        let cx = bounds.x() + bounds.width() * 0.5;
+        let cy = bounds.y() + bounds.height() * 0.5 - 18.0;
+        Rect::new(cx - width * 0.5, cy + 54.0, width, self.action_height)
+    }
+}
+
+impl Widget for EmptyState {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width
+        } else {
+            constraints.min.width.max(self.action_max_width + 32.0)
+        };
+        let action_height = if let Some(action) = &mut self.action {
+            let action_width = self.action_max_width.min((width - 32.0).max(0.0));
+            action.measure(
+                ctx,
+                Constraints::tight(Size::new(action_width, self.action_height)),
+            );
+            self.action_height
+        } else {
+            0.0
+        };
+        let height = if constraints.max.height.is_finite() {
+            constraints.max.height
+        } else {
+            constraints
+                .min
+                .height
+                .max(142.0 + action_height + if action_height > 0.0 { 12.0 } else { 0.0 })
+        };
+        constraints.clamp(Size::new(width, height))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let action_rect = self.action_rect(bounds);
+        if let Some(action) = &mut self.action {
+            action.arrange(ctx, action_rect);
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let bounds = ctx.bounds();
+        let mut paint = EmptyStatePaint::new(&self.title, &self.description)
+            .background(self.background.unwrap_or(theme.surfaces.window))
+            .reserve_action_space(self.action.is_some());
+        if let Some(icon) = self.icon {
+            paint = paint.icon(icon);
+        }
+        if let Some(detail) = self.detail.as_deref() {
+            paint = paint.detail(detail);
+        }
+        paint_empty_state(ctx, &theme, bounds, paint);
+
+        if let Some(action) = &self.action {
+            action.paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(self.name.clone().unwrap_or_else(|| self.title.clone()));
+        node.description = Some(match &self.detail {
+            Some(detail)
+                if matches!(
+                    self.description.chars().last(),
+                    Some('.') | Some('!') | Some('?')
+                ) =>
+            {
+                format!("{} {}", self.description, detail)
+            }
+            Some(detail) => format!("{}. {}", self.description, detail),
+            None => self.description.clone(),
+        });
+        ctx.push(node);
+        if let Some(action) = &self.action {
+            action.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(action) = &self.action {
+            action.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(action) = &mut self.action {
+            action.visit_children_mut(visitor);
+        }
+    }
+}
+
 pub struct PresetStrip {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -4936,6 +5682,8 @@ pub struct StatusBar {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
+    description: Option<String>,
+    description_reader: Option<Box<dyn Fn() -> String>>,
     height: Option<f32>,
     segments: Vec<StatusBarSegment>,
     measured_widths: Vec<f32>,
@@ -4947,6 +5695,8 @@ impl StatusBar {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: None,
+            description: None,
+            description_reader: None,
             height: None,
             segments: Vec::new(),
             measured_widths: Vec::new(),
@@ -4969,6 +5719,20 @@ impl StatusBar {
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self.description_reader = None;
+        self
+    }
+
+    pub fn description_when<F>(mut self, description: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.description_reader = Some(Box::new(description));
         self
     }
 
@@ -5007,6 +5771,13 @@ impl StatusBar {
 
     fn resolved_height(&self, metrics: ControlMetrics) -> f32 {
         self.height.unwrap_or(metrics.status_bar_height)
+    }
+
+    fn description_text(&self) -> Option<String> {
+        self.description_reader
+            .as_ref()
+            .map(|reader| reader())
+            .or_else(|| self.description.clone())
     }
 
     fn resolved_segment_min_width(segment: &StatusBarSegment, metrics: ControlMetrics) -> f32 {
@@ -5278,6 +6049,10 @@ impl Widget for StatusBar {
             ctx.bounds(),
         );
         node.name = self.name.clone();
+        if let Some(description) = self.description_text() {
+            node.value = Some(SemanticsValue::Text(description.clone()));
+            node.description = Some(description);
+        }
         ctx.push(node);
 
         for (index, (segment, rect)) in self
@@ -5311,6 +6086,2061 @@ fn status_bar_segment_id(parent: WidgetId, index: usize) -> WidgetId {
             .wrapping_add(index as u64 + 1)
             & LOW_MASK),
     )
+}
+
+type SegmentedControlChange = Box<dyn FnMut(usize, String)>;
+type SegmentedControlContextChange = Box<dyn FnMut(usize, String, &mut EventCtx)>;
+
+fn segmented_control_item_id(parent: WidgetId, index: usize) -> WidgetId {
+    const TAG: u64 = 3_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
+
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(269)
+            .wrapping_add(index as u64 + 1)
+            & LOW_MASK),
+    )
+}
+
+pub struct StatusBadge {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
+    icon: Option<IconGlyph>,
+    tone: SemanticTone,
+    tone_reader: Option<Box<dyn Fn() -> SemanticTone>>,
+    min_width: Option<f32>,
+}
+
+impl StatusBadge {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            label: label.into(),
+            label_reader: None,
+            icon: None,
+            tone: SemanticTone::Neutral,
+            tone_reader: None,
+            min_width: None,
+        }
+    }
+
+    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        Self {
+            label: fallback.into(),
+            label_reader: Some(Box::new(reader)),
+            ..Self::new("")
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self.tone_reader = None;
+        self
+    }
+
+    pub fn tone_when<F>(mut self, tone: F) -> Self
+    where
+        F: Fn() -> SemanticTone + 'static,
+    {
+        self.tone_reader = Some(Box::new(tone));
+        self
+    }
+
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = Some(min_width.max(0.0));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn label(&self) -> String {
+        self.label_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.label.clone())
+    }
+
+    fn resolved_tone(&self) -> SemanticTone {
+        self.tone_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.tone)
+    }
+
+    fn text_style(&self, theme: &DefaultTheme, label: &str, tone: SemanticTone) -> TextStyle {
+        let (_, tone_text) = theme.semantic_tone_colors(tone);
+        let mut style = text_token_style(theme, theme.text.sm, tone_text);
+        style.weight = FontWeight::SEMIBOLD;
+        numeric_text_style_if_numeric(label, style)
+    }
+
+    fn metrics(&self, theme: &DefaultTheme) -> (f32, f32, f32, f32) {
+        let height = (theme.metrics.min_height - 2.0).max(22.0);
+        let icon_size = (height - 13.0).clamp(11.0, 15.0);
+        let gap = theme.metrics.icon_label_gap.max(4.0);
+        let padding = theme.metrics.button_padding.left.max(8.0);
+        (height, icon_size, gap, padding)
+    }
+}
+
+pub fn paint_status_badge(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    label: &str,
+    icon: Option<IconGlyph>,
+    tone: SemanticTone,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let (tone_color, tone_text) = theme.semantic_tone_colors(tone);
+    let icon_size = (rect.height() - 13.0).clamp(11.0, 15.0);
+    let gap = theme.metrics.icon_label_gap.max(4.0);
+    let padding = theme.metrics.button_padding.left.max(8.0);
+    let radius = (rect.height() * 0.5).min(theme.radius._4xl);
+
+    ctx.fill(rounded_rect_path(rect, radius), tone_color.with_alpha(0.12));
+    ctx.stroke(
+        rounded_rect_path(rect, radius),
+        tone_color.with_alpha(0.52),
+        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+    );
+
+    let mut x = rect.x() + padding.min(rect.width() * 0.5);
+    if let Some(icon) = icon {
+        let icon_rect = Rect::new(
+            x,
+            rect.y() + (rect.height() - icon_size) * 0.5,
+            icon_size,
+            icon_size,
+        );
+        draw_icon_glyph(ctx, icon, icon_rect, tone_text);
+        x = icon_rect.max_x() + gap;
+    }
+    let content_rect = Rect::new(
+        x,
+        rect.y(),
+        (rect.max_x() - x - padding * 0.5).max(0.0),
+        rect.height(),
+    );
+    if content_rect.width() <= 0.0 {
+        return;
+    }
+
+    let mut style = text_token_style(theme, theme.text.sm, tone_text);
+    style.weight = FontWeight::SEMIBOLD;
+    let style = numeric_text_style_if_numeric(label, style);
+    ctx.push_clip_rect(content_rect);
+    paint_aligned_text(ctx, content_rect, label, &style, style.line_height, 0.0);
+    ctx.pop_clip();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandButtonFill {
+    Surface,
+    Filled,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommandButtonPaint {
+    pub tone: SemanticTone,
+    pub icon_tone: Option<SemanticTone>,
+    pub fill: CommandButtonFill,
+    pub hovered: bool,
+    pub pressed: bool,
+}
+
+impl CommandButtonPaint {
+    pub const fn neutral() -> Self {
+        Self {
+            tone: SemanticTone::Neutral,
+            icon_tone: None,
+            fill: CommandButtonFill::Surface,
+            hovered: false,
+            pressed: false,
+        }
+    }
+
+    pub const fn tonal(tone: SemanticTone) -> Self {
+        Self {
+            tone,
+            icon_tone: None,
+            fill: CommandButtonFill::Surface,
+            hovered: false,
+            pressed: false,
+        }
+    }
+
+    pub const fn filled(tone: SemanticTone) -> Self {
+        Self {
+            tone,
+            icon_tone: None,
+            fill: CommandButtonFill::Filled,
+            hovered: false,
+            pressed: false,
+        }
+    }
+
+    pub const fn icon_tone(mut self, tone: SemanticTone) -> Self {
+        self.icon_tone = Some(tone);
+        self
+    }
+
+    pub const fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    pub const fn pressed(mut self, pressed: bool) -> Self {
+        self.pressed = pressed;
+        self
+    }
+}
+
+impl Default for CommandButtonPaint {
+    fn default() -> Self {
+        Self::neutral()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisclosureButtonPaint {
+    pub command: CommandButtonPaint,
+}
+
+impl DisclosureButtonPaint {
+    pub const fn new() -> Self {
+        Self {
+            command: CommandButtonPaint::tonal(SemanticTone::Accent)
+                .icon_tone(SemanticTone::Accent),
+        }
+    }
+
+    pub const fn command(mut self, command: CommandButtonPaint) -> Self {
+        self.command = command;
+        self
+    }
+
+    pub const fn tone(mut self, tone: SemanticTone) -> Self {
+        self.command = CommandButtonPaint::tonal(tone).icon_tone(tone);
+        self
+    }
+
+    pub const fn hovered(mut self, hovered: bool) -> Self {
+        self.command = self.command.hovered(hovered);
+        self
+    }
+
+    pub const fn pressed(mut self, pressed: bool) -> Self {
+        self.command = self.command.pressed(pressed);
+        self
+    }
+}
+
+impl Default for DisclosureButtonPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn paint_command_button(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    icon: Option<IconGlyph>,
+    style: CommandButtonPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let (tone_color, tone_text) = theme.semantic_tone_colors(style.tone);
+    let (base_fill, border, label_color) = match style.fill {
+        CommandButtonFill::Surface => {
+            let label_color = if style.tone == SemanticTone::Neutral {
+                theme.palette.text
+            } else {
+                tone_color
+            };
+            let border = if style.tone == SemanticTone::Neutral {
+                theme.palette.border
+            } else {
+                tone_color.with_alpha(0.72)
+            };
+            (theme.surfaces.field, border, label_color)
+        }
+        CommandButtonFill::Filled => (tone_color, tone_color, tone_text),
+    };
+    let fill = match style.fill {
+        CommandButtonFill::Surface if style.pressed => theme.palette.control_active,
+        CommandButtonFill::Surface if style.hovered => theme.palette.control_hover,
+        CommandButtonFill::Filled
+            if style.pressed && matches!(style.tone, SemanticTone::Accent) =>
+        {
+            theme.palette.accent_pressed
+        }
+        CommandButtonFill::Filled
+            if style.hovered && matches!(style.tone, SemanticTone::Accent) =>
+        {
+            theme.palette.accent_hover
+        }
+        _ => base_fill,
+    };
+    let icon_color = style
+        .icon_tone
+        .map(|tone| {
+            if style.fill == CommandButtonFill::Filled && tone == style.tone {
+                theme.semantic_tone_text_color(tone)
+            } else if tone == SemanticTone::Neutral {
+                theme.palette.text_muted
+            } else {
+                theme.semantic_tone_color(tone)
+            }
+        })
+        .unwrap_or_else(|| match style.fill {
+            CommandButtonFill::Surface => {
+                if style.tone == SemanticTone::Neutral {
+                    theme.palette.text_muted
+                } else {
+                    tone_color
+                }
+            }
+            CommandButtonFill::Filled => tone_text,
+        });
+
+    let radius = theme
+        .metrics
+        .corner_radius
+        .min(rect.height() * 0.35)
+        .max(0.0);
+    ctx.fill(rounded_rect_path(rect, radius), fill);
+    ctx.stroke(
+        rounded_rect_path(rect, radius),
+        border,
+        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+    );
+
+    let icon_size = (rect.height() - 14.0).clamp(12.0, 16.0);
+    let padding = theme
+        .metrics
+        .button_padding
+        .left
+        .max(8.0)
+        .min(rect.width() * 0.4);
+    let gap = theme.metrics.icon_label_gap.max(5.0);
+    let mut text_x = rect.x() + padding;
+    if let Some(icon) = icon {
+        let icon_rect = Rect::new(
+            rect.x() + padding,
+            rect.y() + (rect.height() - icon_size) * 0.5,
+            icon_size,
+            icon_size,
+        );
+        draw_icon_glyph(ctx, icon, icon_rect, icon_color);
+        text_x = icon_rect.max_x() + gap;
+    }
+
+    let label_rect = Rect::new(
+        text_x,
+        rect.y(),
+        (rect.max_x() - text_x - padding * 0.75).max(0.0),
+        rect.height(),
+    );
+    if label_rect.width() <= 0.0 {
+        return;
+    }
+
+    let mut text_style = text_token_style(theme, theme.text.sm, label_color);
+    text_style.weight = FontWeight::SEMIBOLD;
+    let text_style = fit_command_button_label_style(ctx, label, text_style, label_rect.width());
+    let text_style = numeric_text_style_if_numeric(label, text_style);
+    ctx.push_clip_rect(label_rect);
+    paint_aligned_text(
+        ctx,
+        label_rect,
+        label,
+        &text_style,
+        text_style.line_height,
+        0.0,
+    );
+    ctx.pop_clip();
+}
+
+pub fn paint_disclosure_button(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    expanded: bool,
+    paint: DisclosureButtonPaint,
+) {
+    paint_command_button(
+        ctx,
+        theme,
+        rect,
+        label,
+        Some(if expanded {
+            IconGlyph::ChevronUp
+        } else {
+            IconGlyph::ChevronDown
+        }),
+        paint.command,
+    );
+}
+
+fn fit_command_button_label_style(
+    ctx: &PaintCtx,
+    label: &str,
+    mut style: TextStyle,
+    max_width: f32,
+) -> TextStyle {
+    if label.is_empty() || max_width <= 0.0 || style.font_size <= 0.0 {
+        return style;
+    }
+
+    let measured_width = ctx
+        .measure_text(label.to_string(), style.clone())
+        .ok()
+        .map(|measurement| measurement.width)
+        .unwrap_or_else(|| label.chars().count() as f32 * style.font_size * 0.56);
+    if measured_width <= max_width || measured_width <= 0.0 {
+        return style;
+    }
+
+    let min_font_size = 10.0_f32.min(style.font_size);
+    let scale = ((max_width * 0.98) / measured_width).clamp(min_font_size / style.font_size, 1.0);
+    style.font_size = (style.font_size * scale).max(min_font_size);
+    style.line_height = (style.line_height * scale).max(min_font_size + 2.0);
+    style
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActionTilePaint {
+    pub tone: SemanticTone,
+    pub highlighted: bool,
+    pub hovered: bool,
+    pub pressed: bool,
+    pub enabled: bool,
+    pub background: Option<Color>,
+    pub border: Option<Color>,
+    pub title_color: Option<Color>,
+    pub subtitle_color: Option<Color>,
+    pub icon_color: Option<Color>,
+    pub leading_tone_dot: Option<SemanticTone>,
+    pub radius: Option<f32>,
+    pub padding_x: Option<f32>,
+    pub leading_width: f32,
+    pub trailing_width: f32,
+}
+
+impl ActionTilePaint {
+    pub const fn neutral() -> Self {
+        Self {
+            tone: SemanticTone::Neutral,
+            highlighted: false,
+            hovered: false,
+            pressed: false,
+            enabled: true,
+            background: None,
+            border: None,
+            title_color: None,
+            subtitle_color: None,
+            icon_color: None,
+            leading_tone_dot: None,
+            radius: None,
+            padding_x: None,
+            leading_width: 0.0,
+            trailing_width: 0.0,
+        }
+    }
+
+    pub const fn tonal(tone: SemanticTone) -> Self {
+        Self {
+            tone,
+            highlighted: true,
+            hovered: false,
+            pressed: false,
+            enabled: true,
+            background: None,
+            border: None,
+            title_color: None,
+            subtitle_color: None,
+            icon_color: None,
+            leading_tone_dot: None,
+            radius: None,
+            padding_x: None,
+            leading_width: 0.0,
+            trailing_width: 0.0,
+        }
+    }
+
+    pub const fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
+        self
+    }
+
+    pub const fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    pub const fn pressed(mut self, pressed: bool) -> Self {
+        self.pressed = pressed;
+        self
+    }
+
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub const fn background(mut self, background: Color) -> Self {
+        self.background = Some(background);
+        self
+    }
+
+    pub const fn border(mut self, border: Color) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    pub const fn title_color(mut self, title_color: Color) -> Self {
+        self.title_color = Some(title_color);
+        self
+    }
+
+    pub const fn subtitle_color(mut self, subtitle_color: Color) -> Self {
+        self.subtitle_color = Some(subtitle_color);
+        self
+    }
+
+    pub const fn icon_color(mut self, icon_color: Color) -> Self {
+        self.icon_color = Some(icon_color);
+        self
+    }
+
+    pub const fn leading_tone_dot(mut self, tone: SemanticTone) -> Self {
+        self.leading_tone_dot = Some(tone);
+        self
+    }
+
+    pub const fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
+    pub const fn padding_x(mut self, padding_x: f32) -> Self {
+        self.padding_x = Some(padding_x);
+        self
+    }
+
+    pub const fn leading_width(mut self, leading_width: f32) -> Self {
+        self.leading_width = leading_width;
+        self
+    }
+
+    pub const fn trailing_width(mut self, trailing_width: f32) -> Self {
+        self.trailing_width = trailing_width;
+        self
+    }
+}
+
+impl Default for ActionTilePaint {
+    fn default() -> Self {
+        Self::neutral()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CalloutPaint {
+    pub tone: SemanticTone,
+    pub fill: Option<Color>,
+    pub border: Option<Color>,
+    pub rail_color: Option<Color>,
+    pub icon_color: Option<Color>,
+    pub title_color: Option<Color>,
+    pub body_color: Option<Color>,
+    pub radius: Option<f32>,
+    pub padding: Insets,
+    pub icon_size: f32,
+    pub icon_gap: f32,
+    pub rail_width: f32,
+    pub reserved_bottom: f32,
+}
+
+impl CalloutPaint {
+    pub const fn new(tone: SemanticTone) -> Self {
+        Self {
+            tone,
+            fill: None,
+            border: None,
+            rail_color: None,
+            icon_color: None,
+            title_color: None,
+            body_color: None,
+            radius: None,
+            padding: Insets {
+                left: 12.0,
+                top: 10.0,
+                right: 12.0,
+                bottom: 10.0,
+            },
+            icon_size: 15.0,
+            icon_gap: 9.0,
+            rail_width: 2.0,
+            reserved_bottom: 0.0,
+        }
+    }
+
+    pub const fn fill(mut self, fill: Color) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    pub const fn border(mut self, border: Color) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    pub const fn rail_color(mut self, rail_color: Color) -> Self {
+        self.rail_color = Some(rail_color);
+        self
+    }
+
+    pub const fn icon_color(mut self, icon_color: Color) -> Self {
+        self.icon_color = Some(icon_color);
+        self
+    }
+
+    pub const fn title_color(mut self, title_color: Color) -> Self {
+        self.title_color = Some(title_color);
+        self
+    }
+
+    pub const fn body_color(mut self, body_color: Color) -> Self {
+        self.body_color = Some(body_color);
+        self
+    }
+
+    pub const fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
+    pub const fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub const fn icon_size(mut self, icon_size: f32) -> Self {
+        self.icon_size = icon_size;
+        self
+    }
+
+    pub const fn icon_gap(mut self, icon_gap: f32) -> Self {
+        self.icon_gap = icon_gap;
+        self
+    }
+
+    pub const fn rail_width(mut self, rail_width: f32) -> Self {
+        self.rail_width = rail_width;
+        self
+    }
+
+    pub const fn reserved_bottom(mut self, reserved_bottom: f32) -> Self {
+        self.reserved_bottom = reserved_bottom;
+        self
+    }
+}
+
+impl Default for CalloutPaint {
+    fn default() -> Self {
+        Self::new(SemanticTone::Info)
+    }
+}
+
+pub fn paint_callout(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    icon: Option<IconGlyph>,
+    title: Option<&str>,
+    body: &str,
+    style: CalloutPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let palette = theme.palette;
+    let (tone_color, tone_text) = theme.semantic_tone_colors(style.tone);
+    let fill = style.fill.unwrap_or_else(|| tone_color.with_alpha(0.12));
+    let border = style.border.unwrap_or_else(|| palette.border);
+    let rail = style.rail_color.unwrap_or(tone_color);
+    let radius = style.radius.unwrap_or(theme.radius.sm).max(0.0);
+
+    ctx.fill(rounded_rect_path(rect, radius), fill);
+    ctx.stroke(
+        rounded_rect_path(rect, radius),
+        border,
+        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+    );
+
+    let rail_width = style.rail_width.max(0.0).min(rect.width());
+    if rail_width > 0.0 {
+        let rail_rect = Rect::new(rect.x(), rect.y(), rail_width, rect.height());
+        ctx.fill(rounded_rect_path(rail_rect, rail_width * 0.5), rail);
+    }
+
+    let padding = style.padding;
+    let content_bottom = (rect.max_y() - padding.bottom.max(0.0) - style.reserved_bottom.max(0.0))
+        .max(rect.y() + padding.top.max(0.0));
+    let content = Rect::new(
+        rect.x() + padding.left.max(0.0),
+        rect.y() + padding.top.max(0.0),
+        (rect.width() - padding.left.max(0.0) - padding.right.max(0.0)).max(0.0),
+        (content_bottom - rect.y() - padding.top.max(0.0)).max(0.0),
+    );
+    if content.width() <= 0.0 || content.height() <= 0.0 {
+        return;
+    }
+
+    let icon_size = style
+        .icon_size
+        .max(0.0)
+        .min(content.height())
+        .min(content.width());
+    let mut text_x = content.x();
+    if let Some(icon) = icon.filter(|_| icon_size > 0.0) {
+        let icon_rect = Rect::new(
+            content.x(),
+            content.y() + 2.0_f32.min((content.height() - icon_size).max(0.0)),
+            icon_size,
+            icon_size,
+        );
+        draw_icon_glyph(ctx, icon, icon_rect, style.icon_color.unwrap_or(tone_text));
+        text_x = icon_rect.max_x() + style.icon_gap.max(0.0);
+    }
+
+    let text_rect = Rect::new(
+        text_x,
+        content.y(),
+        (content.max_x() - text_x).max(0.0),
+        content.height(),
+    );
+    if text_rect.width() <= 0.0 || text_rect.height() <= 0.0 {
+        return;
+    }
+
+    let title_line = if title.is_some() {
+        theme.text.sm.line_height
+    } else {
+        0.0
+    };
+    if let Some(title) = title {
+        let mut title_style = text_token_style(
+            theme,
+            theme.text.sm,
+            style.title_color.unwrap_or(palette.text),
+        );
+        title_style.weight = FontWeight::SEMIBOLD;
+        let title_rect = Rect::new(text_rect.x(), text_rect.y(), text_rect.width(), title_line);
+        ctx.push_clip_rect(title_rect);
+        paint_single_line_aligned_text(
+            ctx,
+            title_rect,
+            title,
+            &title_style,
+            title_style.line_height,
+            0.0,
+        );
+        ctx.pop_clip();
+    }
+
+    if body.trim().is_empty() {
+        return;
+    }
+    let body_y = text_rect.y() + title_line + if title.is_some() { 4.0 } else { 0.0 };
+    let body_rect = Rect::new(
+        text_rect.x(),
+        body_y,
+        text_rect.width(),
+        (text_rect.max_y() - body_y).max(0.0),
+    );
+    if body_rect.width() <= 0.0 || body_rect.height() <= 0.0 {
+        return;
+    }
+
+    let color = style.body_color.unwrap_or(palette.text_muted);
+    let mut layout_style = text_token_style(theme, theme.text.sm, color);
+    layout_style.color = Color::WHITE;
+    let mut document = TextDocument::from_plain_text(body.to_string(), layout_style);
+    for paragraph in &mut document.paragraphs {
+        paragraph.style.align = TextAlign::Start;
+        paragraph.style.wrap = TextWrap::Word;
+    }
+
+    ctx.push_clip_rect(body_rect);
+    if let Ok(layout) = ctx.layout_text_document(TextLayoutRequest::new(document).with_box_size(
+        Size::new(body_rect.width().max(1.0), body_rect.height().max(1.0)),
+    )) {
+        ctx.draw_text_layout_with_color(body_rect.origin, &layout, color);
+    } else {
+        let fallback_style = text_token_style(theme, theme.text.sm, color);
+        ctx.draw_text(body_rect, body.to_string(), fallback_style);
+    }
+    ctx.pop_clip();
+}
+
+pub fn paint_action_tile(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    title: &str,
+    subtitle: Option<&str>,
+    icon: Option<IconGlyph>,
+    style: ActionTilePaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let palette = theme.palette;
+    let tone_color = theme.semantic_tone_color(style.tone);
+    let effective_tone = if style.tone == SemanticTone::Neutral {
+        palette.text_muted
+    } else {
+        tone_color
+    };
+    let base_background = if !style.enabled {
+        mix_color(palette.control, palette.surface, 0.68).with_alpha(0.82)
+    } else if style.pressed {
+        palette.control_active
+    } else if style.hovered {
+        palette.control_hover
+    } else {
+        palette.control
+    };
+    let background = style.background.unwrap_or(base_background);
+    let base_border = if !style.enabled {
+        palette.border.with_alpha(0.55)
+    } else if style.highlighted {
+        effective_tone.with_alpha(0.84)
+    } else if style.hovered {
+        palette.border_hover
+    } else {
+        palette.border
+    };
+    let border = style.border.unwrap_or(base_border);
+    let radius = theme
+        .metrics
+        .corner_radius
+        .min(rect.height() * 0.28)
+        .max(0.0);
+    let radius = style.radius.unwrap_or(radius).max(0.0);
+    ctx.fill(rounded_rect_path(rect, radius), background);
+    ctx.stroke(
+        rounded_rect_path(rect, radius),
+        border,
+        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+    );
+
+    let padding_x = style
+        .padding_x
+        .unwrap_or_else(|| theme.metrics.button_padding.left.max(10.0))
+        .max(0.0)
+        .min(rect.width() * 0.45);
+    let compact = rect.height() <= 46.0 || subtitle.is_none();
+    let base_icon_side: f32 = if compact { 14.0 } else { 17.0 };
+    let icon_side = base_icon_side
+        .min((rect.height() - 14.0).max(10.0))
+        .max(0.0);
+    let icon_y = if compact {
+        rect.y() + (rect.height() - icon_side) * 0.5
+    } else {
+        rect.y() + 12.0
+    };
+    let mut text_x = rect.x() + padding_x;
+    if let Some(icon) = icon {
+        let icon_rect = Rect::new(rect.x() + padding_x, icon_y, icon_side, icon_side);
+        let icon_color = style.icon_color.unwrap_or_else(|| {
+            if style.enabled {
+                if style.highlighted || style.hovered {
+                    effective_tone
+                } else {
+                    palette.text_muted
+                }
+            } else {
+                palette.text.with_alpha(0.34)
+            }
+        });
+        draw_icon_glyph(ctx, icon, icon_rect, icon_color);
+        text_x = icon_rect.max_x() + theme.metrics.icon_label_gap.max(7.0);
+    } else if let Some(dot_tone) = style.leading_tone_dot {
+        let dot_side = 8.0_f32.min((rect.height() - 12.0).max(4.0)).max(4.0);
+        let leading_width = style
+            .leading_width
+            .max(dot_side + theme.metrics.icon_label_gap.max(7.0));
+        let dot_rect = Rect::new(
+            rect.x() + padding_x,
+            if compact {
+                rect.y() + (rect.height() - dot_side) * 0.5
+            } else {
+                rect.y() + 15.0_f32.min((rect.height() - dot_side).max(0.0))
+            },
+            dot_side,
+            dot_side,
+        );
+        ctx.fill(
+            rounded_rect_path(dot_rect, dot_side * 0.5),
+            theme.semantic_tone_color(dot_tone),
+        );
+        text_x += leading_width;
+    } else if style.leading_width > 0.0 {
+        text_x += style.leading_width;
+    }
+
+    let text_width = (rect.max_x() - text_x - padding_x - style.trailing_width.max(0.0)).max(0.0);
+    if text_width <= 0.0 {
+        return;
+    }
+
+    let title_color = style.title_color.unwrap_or_else(|| {
+        if !style.enabled {
+            palette.text.with_alpha(0.42)
+        } else if style.highlighted {
+            palette.text
+        } else {
+            palette.text_muted
+        }
+    });
+    let subtitle_color = style.subtitle_color.unwrap_or_else(|| {
+        if !style.enabled {
+            palette.text.with_alpha(0.32)
+        } else {
+            palette.placeholder
+        }
+    });
+    let mut title_style = text_token_style(theme, theme.text.sm, title_color);
+    title_style.weight = FontWeight::SEMIBOLD;
+    let title_style = numeric_text_style_if_numeric(title, title_style);
+    let subtitle_style = text_token_style(theme, theme.text.xs, subtitle_color);
+
+    if compact {
+        let title_rect = Rect::new(text_x, rect.y(), text_width, rect.height());
+        ctx.push_clip_rect(title_rect);
+        paint_aligned_text(
+            ctx,
+            title_rect,
+            title,
+            &title_style,
+            title_style.line_height,
+            0.0,
+        );
+        ctx.pop_clip();
+        return;
+    }
+
+    let title_rect = Rect::new(text_x, rect.y() + 8.0, text_width, title_style.line_height);
+    ctx.push_clip_rect(title_rect);
+    paint_single_line_aligned_text(
+        ctx,
+        title_rect,
+        title,
+        &title_style,
+        title_style.line_height,
+        0.0,
+    );
+    ctx.pop_clip();
+
+    if let Some(subtitle) = subtitle {
+        let subtitle_rect = Rect::new(
+            text_x,
+            title_rect.max_y() + theme.metrics.action_card_text_gap.min(3.0),
+            text_width,
+            subtitle_style.line_height,
+        );
+        ctx.push_clip_rect(subtitle_rect);
+        paint_single_line_aligned_text(
+            ctx,
+            subtitle_rect,
+            subtitle,
+            &subtitle_style,
+            subtitle_style.line_height,
+            0.0,
+        );
+        ctx.pop_clip();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodePanelPaint {
+    pub fill: Option<Color>,
+    pub border: Option<Color>,
+    pub header_fill: Option<Color>,
+    pub label_color: Option<Color>,
+    pub radius: Option<f32>,
+    pub header_height: f32,
+    pub content_padding: Insets,
+    pub label_inset_x: f32,
+}
+
+impl CodePanelPaint {
+    pub const fn new() -> Self {
+        Self {
+            fill: None,
+            border: None,
+            header_fill: None,
+            label_color: None,
+            radius: None,
+            header_height: 24.0,
+            content_padding: Insets {
+                left: 8.0,
+                top: 6.0,
+                right: 8.0,
+                bottom: 4.0,
+            },
+            label_inset_x: 10.0,
+        }
+    }
+
+    pub const fn fill(mut self, fill: Color) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    pub const fn border(mut self, border: Color) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    pub const fn header_fill(mut self, header_fill: Color) -> Self {
+        self.header_fill = Some(header_fill);
+        self
+    }
+
+    pub const fn label_color(mut self, label_color: Color) -> Self {
+        self.label_color = Some(label_color);
+        self
+    }
+
+    pub const fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
+    pub const fn header_height(mut self, header_height: f32) -> Self {
+        self.header_height = header_height;
+        self
+    }
+
+    pub const fn content_padding(mut self, content_padding: Insets) -> Self {
+        self.content_padding = content_padding;
+        self
+    }
+
+    pub const fn label_inset_x(mut self, label_inset_x: f32) -> Self {
+        self.label_inset_x = label_inset_x;
+        self
+    }
+}
+
+impl Default for CodePanelPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodeTextSpan<'a> {
+    pub text: &'a str,
+    pub color: Option<Color>,
+}
+
+impl<'a> CodeTextSpan<'a> {
+    pub const fn new(text: &'a str) -> Self {
+        Self { text, color: None }
+    }
+
+    pub const fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodeTextLine<'a> {
+    pub spans: &'a [CodeTextSpan<'a>],
+    pub background: Option<Color>,
+    pub fallback_color: Option<Color>,
+}
+
+impl<'a> CodeTextLine<'a> {
+    pub const fn new(spans: &'a [CodeTextSpan<'a>]) -> Self {
+        Self {
+            spans,
+            background: None,
+            fallback_color: None,
+        }
+    }
+
+    pub const fn background(mut self, background: Color) -> Self {
+        self.background = Some(background);
+        self
+    }
+
+    pub const fn fallback_color(mut self, color: Color) -> Self {
+        self.fallback_color = Some(color);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodeTextPaint {
+    pub color: Option<Color>,
+    pub font_size: f32,
+    pub line_height: f32,
+    pub x_padding: f32,
+    pub weight: FontWeight,
+}
+
+impl CodeTextPaint {
+    pub const fn new() -> Self {
+        Self {
+            color: None,
+            font_size: 12.0,
+            line_height: 17.0,
+            x_padding: 2.0,
+            weight: FontWeight::NORMAL,
+        }
+    }
+
+    pub const fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub const fn font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    pub const fn line_height(mut self, line_height: f32) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    pub const fn x_padding(mut self, x_padding: f32) -> Self {
+        self.x_padding = x_padding;
+        self
+    }
+
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
+        self
+    }
+}
+
+impl Default for CodeTextPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn paint_code_lines(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    lines: &[CodeTextLine<'_>],
+    style: CodeTextPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 || lines.is_empty() {
+        return;
+    }
+
+    let mut base_style = TextStyle {
+        font_size: style.font_size.max(1.0),
+        line_height: style.line_height.max(1.0),
+        color: style.color.unwrap_or(theme.palette.text),
+        ..theme.body_text_style()
+    };
+    base_style.weight = style.weight;
+
+    let line_height = base_style.line_height;
+    let mut y = rect.y();
+    ctx.push_clip_rect(rect);
+    for line in lines {
+        if y + line_height > rect.max_y() {
+            break;
+        }
+        if let Some(background) = line.background {
+            ctx.fill_rect(
+                Rect::new(rect.x(), y, rect.width(), line_height),
+                background,
+            );
+        }
+
+        let mut x = rect.x() + style.x_padding.max(0.0);
+        for span in line.spans {
+            if span.text.is_empty() || x > rect.max_x() {
+                continue;
+            }
+            let mut span_style = base_style.clone();
+            span_style.color = span
+                .color
+                .or(line.fallback_color)
+                .unwrap_or(base_style.color);
+            let width = ctx
+                .measure_text(span.text.to_string(), span_style.clone())
+                .ok()
+                .map(|measurement| measurement.width)
+                .unwrap_or(0.0);
+            ctx.draw_text(
+                Rect::new(x, y, (rect.max_x() - x).max(0.0), line_height),
+                span.text,
+                span_style,
+            );
+            x += width;
+        }
+        y += line_height;
+    }
+    ctx.pop_clip();
+}
+
+pub fn paint_code_panel(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    style: CodePanelPaint,
+) -> Rect {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return Rect::ZERO;
+    }
+
+    let fill = style.fill.unwrap_or(theme.surfaces.field);
+    let border = style.border.unwrap_or(theme.surfaces.border);
+    let header_fill = style.header_fill.unwrap_or(theme.surfaces.titlebar);
+    let label_color = style.label_color.unwrap_or(theme.surfaces.text_faint);
+    let radius = style
+        .radius
+        .unwrap_or(theme.radius.xl)
+        .min(rect.width().min(rect.height()) * 0.5)
+        .max(0.0);
+    let border_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
+
+    let panel_shape = rounded_rect_path(rect, radius);
+    ctx.fill(panel_shape.clone(), fill);
+
+    let header_height = style.header_height.clamp(0.0, rect.height());
+    if header_height > 0.0 {
+        let header_rect = Rect::new(rect.x(), rect.y(), rect.width(), header_height);
+        let header_radius = radius.min(header_height * 0.5);
+        ctx.fill(rounded_rect_path(header_rect, header_radius), header_fill);
+        if header_height > header_radius {
+            ctx.fill_rect(
+                Rect::new(
+                    header_rect.x(),
+                    (header_rect.max_y() - header_radius).max(header_rect.y()),
+                    header_rect.width(),
+                    header_radius,
+                ),
+                header_fill,
+            );
+        }
+
+        let mut label_style = text_token_style(theme, theme.text.xs, label_color);
+        label_style.weight = FontWeight::SEMIBOLD;
+        let label_x = rect.x() + style.label_inset_x.max(0.0);
+        let label_rect = Rect::new(
+            label_x,
+            rect.y() + ((header_height - label_style.line_height) * 0.5).max(0.0),
+            (rect.max_x() - label_x - style.label_inset_x.max(0.0)).max(0.0),
+            label_style.line_height,
+        );
+        if label_rect.width() > 0.0 {
+            ctx.push_clip_rect(label_rect);
+            paint_single_line_aligned_text(
+                ctx,
+                label_rect,
+                label,
+                &label_style,
+                label_style.line_height,
+                0.0,
+            );
+            ctx.pop_clip();
+        }
+    }
+
+    ctx.stroke(panel_shape, border, StrokeStyle::new(border_width));
+
+    Rect::new(
+        rect.x() + style.content_padding.left,
+        rect.y() + header_height + style.content_padding.top,
+        (rect.width() - style.content_padding.left - style.content_padding.right).max(0.0),
+        (rect.height() - header_height - style.content_padding.top - style.content_padding.bottom)
+            .max(0.0),
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SectionPanelPaint {
+    pub fill: Option<Color>,
+    pub border: Option<Color>,
+    pub title_color: Option<Color>,
+    pub radius: Option<f32>,
+    pub header_height: f32,
+    pub content_padding: Insets,
+    pub title_inset_x: f32,
+    pub trailing_width: f32,
+    pub title_token: Option<ThemeTextToken>,
+    pub title_weight: FontWeight,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SectionPanelGeometry {
+    pub panel_rect: Rect,
+    pub header_rect: Rect,
+    pub title_rect: Rect,
+    pub content_rect: Rect,
+}
+
+impl SectionPanelPaint {
+    pub const fn new() -> Self {
+        Self {
+            fill: None,
+            border: None,
+            title_color: None,
+            radius: None,
+            header_height: 34.0,
+            content_padding: Insets {
+                left: 12.0,
+                top: 0.0,
+                right: 12.0,
+                bottom: 8.0,
+            },
+            title_inset_x: 12.0,
+            trailing_width: 0.0,
+            title_token: None,
+            title_weight: FontWeight::SEMIBOLD,
+        }
+    }
+
+    pub const fn fill(mut self, fill: Color) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    pub const fn border(mut self, border: Color) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    pub const fn title_color(mut self, title_color: Color) -> Self {
+        self.title_color = Some(title_color);
+        self
+    }
+
+    pub const fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
+    pub const fn header_height(mut self, header_height: f32) -> Self {
+        self.header_height = header_height;
+        self
+    }
+
+    pub const fn content_padding(mut self, content_padding: Insets) -> Self {
+        self.content_padding = content_padding;
+        self
+    }
+
+    pub const fn title_inset_x(mut self, title_inset_x: f32) -> Self {
+        self.title_inset_x = title_inset_x;
+        self
+    }
+
+    pub const fn trailing_width(mut self, trailing_width: f32) -> Self {
+        self.trailing_width = trailing_width;
+        self
+    }
+
+    pub const fn title_token(mut self, title_token: ThemeTextToken) -> Self {
+        self.title_token = Some(title_token);
+        self
+    }
+
+    pub const fn title_weight(mut self, title_weight: FontWeight) -> Self {
+        self.title_weight = title_weight;
+        self
+    }
+}
+
+impl Default for SectionPanelPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn paint_section_panel(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    title: &str,
+    style: SectionPanelPaint,
+) -> SectionPanelGeometry {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return SectionPanelGeometry {
+            panel_rect: Rect::ZERO,
+            header_rect: Rect::ZERO,
+            title_rect: Rect::ZERO,
+            content_rect: Rect::ZERO,
+        };
+    }
+
+    let fill = style.fill.unwrap_or(theme.surfaces.panel);
+    let border = style.border.unwrap_or(theme.surfaces.border);
+    let title_color = style.title_color.unwrap_or(theme.surfaces.text);
+    let radius = style
+        .radius
+        .unwrap_or(theme.radius.lg)
+        .min(rect.width().min(rect.height()) * 0.5)
+        .max(0.0);
+    let header_height = style.header_height.clamp(0.0, rect.height());
+    let shape = rounded_rect_path(rect, radius);
+    ctx.fill(shape.clone(), fill);
+    ctx.stroke(
+        shape,
+        border,
+        StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
+    );
+
+    let header_rect = Rect::new(rect.x(), rect.y(), rect.width(), header_height);
+    let mut title_style = text_token_style(
+        theme,
+        style.title_token.unwrap_or(theme.text.sm),
+        title_color,
+    );
+    title_style.weight = style.title_weight;
+    let title_x = rect.x() + style.title_inset_x.max(0.0);
+    let title_rect = Rect::new(
+        title_x,
+        rect.y() + ((header_height - title_style.line_height) * 0.5).max(0.0),
+        (rect.max_x() - title_x - style.title_inset_x.max(0.0) - style.trailing_width.max(0.0))
+            .max(0.0),
+        title_style.line_height,
+    );
+    if title_rect.width() > 0.0 && !title.is_empty() {
+        ctx.push_clip_rect(title_rect);
+        paint_single_line_aligned_text(
+            ctx,
+            title_rect,
+            title,
+            &title_style,
+            title_style.line_height,
+            0.0,
+        );
+        ctx.pop_clip();
+    }
+
+    let content_rect = Rect::new(
+        rect.x() + style.content_padding.left,
+        rect.y() + header_height + style.content_padding.top,
+        (rect.width() - style.content_padding.left - style.content_padding.right).max(0.0),
+        (rect.height() - header_height - style.content_padding.top - style.content_padding.bottom)
+            .max(0.0),
+    );
+
+    SectionPanelGeometry {
+        panel_rect: rect,
+        header_rect,
+        title_rect,
+        content_rect,
+    }
+}
+
+impl Widget for StatusBadge {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let (height, icon_size, gap, padding) = self.metrics(&theme);
+        let label = self.label();
+        let tone = self.resolved_tone();
+        let text = measure_text(ctx, &label, &self.text_style(&theme, &label, tone));
+        let icon_w = self.icon.map(|_| icon_size + gap).unwrap_or(0.0);
+        let natural_w = text.width.ceil() + icon_w + padding * 2.0;
+        constraints.clamp(Size::new(
+            self.min_width.unwrap_or(0.0).max(natural_w),
+            height,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let label = self.label();
+        let tone = self.resolved_tone();
+        paint_status_badge(ctx, ctx.bounds(), &theme, &label, self.icon, tone);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let label = self.label();
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
+        node.name = Some(label.clone());
+        node.value = Some(SemanticsValue::Text(label));
+        ctx.push(node);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CoverageDotsConfig {
+    pub current: usize,
+    pub target: usize,
+    pub tone: SemanticTone,
+    pub max_dots: usize,
+    pub show_label: bool,
+}
+
+impl CoverageDotsConfig {
+    pub fn new(current: usize, target: usize) -> Self {
+        Self {
+            current,
+            target,
+            tone: SemanticTone::Neutral,
+            max_dots: 4,
+            show_label: true,
+        }
+    }
+
+    fn normalized_target(self) -> usize {
+        self.target.max(self.current)
+    }
+
+    fn normalized_max_dots(self) -> usize {
+        self.max_dots.max(1)
+    }
+
+    fn label(self) -> String {
+        format!("{}/{}", self.current, self.normalized_target())
+    }
+}
+
+pub fn paint_coverage_dots(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    current: usize,
+    target: usize,
+    tone: SemanticTone,
+) {
+    let mut config = CoverageDotsConfig::new(current, target);
+    config.tone = tone;
+    paint_coverage_dots_with_config(ctx, theme, rect, config);
+}
+
+pub fn paint_coverage_dots_with_config(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    config: CoverageDotsConfig,
+) {
+    let target = config.normalized_target();
+    if target == 0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let (dot, gap, label_gap) = coverage_dot_metrics(theme);
+    let shown = target.min(config.normalized_max_dots());
+    let dots_width = shown as f32 * dot + shown.saturating_sub(1) as f32 * gap;
+    let label = config.label();
+    let label_width = if config.show_label {
+        (label.len() as f32 * theme.text.xs.size * 0.56).min(34.0)
+    } else {
+        0.0
+    };
+    let total_width = dots_width
+        + if config.show_label {
+            label_gap + label_width
+        } else {
+            0.0
+        };
+    let mut x = rect.x() + ((rect.width() - total_width) * 0.5).max(0.0);
+    let y = rect.y() + (rect.height() - dot) * 0.5;
+    let (tone_color, _) = theme.semantic_tone_colors(config.tone);
+    for index in 0..shown {
+        let dot_rect = Rect::new(x, y, dot, dot);
+        if index < config.current.min(shown) {
+            ctx.fill(rounded_rect_path(dot_rect, dot * 0.5), tone_color);
+        } else {
+            ctx.stroke(
+                rounded_rect_path(dot_rect, dot * 0.5),
+                theme.palette.border,
+                StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+            );
+        }
+        x += dot + gap;
+    }
+
+    if config.show_label {
+        let label_rect = Rect::new(
+            x + (label_gap - gap).max(0.0),
+            rect.y(),
+            (rect.max_x() - x).max(0.0),
+            rect.height(),
+        );
+        let text_style = numeric_text_style(text_token_style(
+            theme,
+            theme.text.xs,
+            theme.palette.text_muted,
+        ));
+        ctx.push_clip_rect(label_rect);
+        paint_aligned_text(
+            ctx,
+            label_rect,
+            &label,
+            &text_style,
+            text_style.line_height,
+            0.0,
+        );
+        ctx.pop_clip();
+    }
+}
+
+fn coverage_dot_metrics(theme: &DefaultTheme) -> (f32, f32, f32) {
+    let dot = (theme.text.xs.size * 0.42).clamp(4.0, 6.0);
+    let gap = (dot * 0.65).clamp(2.0, 4.0);
+    let label_gap = (theme.metrics.icon_label_gap * 0.7).max(4.0);
+    (dot, gap, label_gap)
+}
+
+pub struct CoverageDots {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: String,
+    config: CoverageDotsConfig,
+    min_width: Option<f32>,
+}
+
+impl CoverageDots {
+    pub fn new(name: impl Into<String>, current: usize, target: usize) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: name.into(),
+            config: CoverageDotsConfig::new(current, target),
+            min_width: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.config.tone = tone;
+        self
+    }
+
+    pub fn max_dots(mut self, max_dots: usize) -> Self {
+        self.config.max_dots = max_dots;
+        self
+    }
+
+    pub fn show_label(mut self, show_label: bool) -> Self {
+        self.config.show_label = show_label;
+        self
+    }
+
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = Some(min_width.max(0.0));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+}
+
+impl Widget for CoverageDots {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let target = self.config.normalized_target();
+        if target == 0 {
+            return constraints.clamp(Size::ZERO);
+        }
+        let (dot, gap, label_gap) = coverage_dot_metrics(&theme);
+        let shown = target.min(self.config.normalized_max_dots());
+        let dots_width = shown as f32 * dot + shown.saturating_sub(1) as f32 * gap;
+        let label_width = if self.config.show_label {
+            measure_text(
+                ctx,
+                &self.config.label(),
+                &numeric_text_style(text_token_style(
+                    &theme,
+                    theme.text.xs,
+                    theme.palette.text_muted,
+                )),
+            )
+            .width
+                + label_gap
+        } else {
+            0.0
+        };
+        constraints.clamp(Size::new(
+            self.min_width.unwrap_or(0.0).max(dots_width + label_width),
+            theme
+                .text
+                .xs
+                .line_height
+                .max(dot + 2.0)
+                .max(theme.metrics.min_height * 0.55),
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        paint_coverage_dots_with_config(ctx, &self.resolved_theme(), ctx.bounds(), self.config);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let target = self.config.normalized_target();
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
+        node.name = Some(self.name.clone());
+        node.value = Some(SemanticsValue::Text(self.config.label()));
+        node.description = Some(format!(
+            "{} of {} covered",
+            self.config.current.min(target),
+            target
+        ));
+        ctx.push(node);
+    }
+}
+
+pub struct PlacementBadge {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
+    icon: Option<IconGlyph>,
+    tone: SemanticTone,
+    tone_reader: Option<Box<dyn Fn() -> SemanticTone>>,
+    coverage: Option<(usize, usize)>,
+    coverage_reader: Option<Box<dyn Fn() -> Option<(usize, usize)>>>,
+    min_width: Option<f32>,
+}
+
+impl PlacementBadge {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            label: label.into(),
+            label_reader: None,
+            icon: None,
+            tone: SemanticTone::Neutral,
+            tone_reader: None,
+            coverage: None,
+            coverage_reader: None,
+            min_width: None,
+        }
+    }
+
+    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        let mut badge = Self::new(fallback);
+        badge.label_reader = Some(Box::new(reader));
+        badge
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self.tone_reader = None;
+        self
+    }
+
+    pub fn tone_when<F>(mut self, tone: F) -> Self
+    where
+        F: Fn() -> SemanticTone + 'static,
+    {
+        self.tone_reader = Some(Box::new(tone));
+        self
+    }
+
+    pub fn coverage(mut self, current: usize, target: usize) -> Self {
+        self.coverage = Some((current, target));
+        self.coverage_reader = None;
+        self
+    }
+
+    pub fn coverage_when<F>(mut self, coverage: F) -> Self
+    where
+        F: Fn() -> Option<(usize, usize)> + 'static,
+    {
+        self.coverage_reader = Some(Box::new(coverage));
+        self
+    }
+
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = Some(min_width.max(0.0));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn label(&self) -> String {
+        self.label_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.label.clone())
+    }
+
+    fn resolved_tone(&self) -> SemanticTone {
+        self.tone_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.tone)
+    }
+
+    fn resolved_coverage(&self) -> Option<(usize, usize)> {
+        self.coverage_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.coverage)
+            .filter(|(_, target)| *target > 0)
+    }
+
+    fn metrics(theme: &DefaultTheme) -> (f32, f32, f32) {
+        let height = (theme.metrics.min_height - 2.0).max(22.0);
+        let coverage_width = 50.0;
+        let gap = theme.metrics.icon_label_gap.max(6.0);
+        (height, coverage_width, gap)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacementBadgePaint {
+    pub padding: Insets,
+}
+
+impl PlacementBadgePaint {
+    pub const fn new() -> Self {
+        Self {
+            padding: Insets::ZERO,
+        }
+    }
+
+    pub const fn padding(mut self, left: f32, top: f32, right: f32, bottom: f32) -> Self {
+        self.padding = Insets {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        self
+    }
+
+    fn content_rect(self, rect: Rect) -> Rect {
+        Rect::new(
+            rect.x() + self.padding.left,
+            rect.y() + self.padding.top,
+            (rect.width() - self.padding.left - self.padding.right).max(0.0),
+            (rect.height() - self.padding.top - self.padding.bottom).max(0.0),
+        )
+    }
+}
+
+impl Default for PlacementBadgePaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn paint_placement_badge(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    icon: Option<IconGlyph>,
+    tone: SemanticTone,
+    coverage: Option<(usize, usize)>,
+) {
+    paint_placement_badge_with(
+        ctx,
+        theme,
+        rect,
+        label,
+        icon,
+        tone,
+        coverage,
+        PlacementBadgePaint::new(),
+    );
+}
+
+pub fn paint_placement_badge_with(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    label: &str,
+    icon: Option<IconGlyph>,
+    tone: SemanticTone,
+    coverage: Option<(usize, usize)>,
+    paint: PlacementBadgePaint,
+) {
+    let rect = paint.content_rect(rect);
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let (_, coverage_width, gap) = PlacementBadge::metrics(theme);
+    let show_coverage = coverage.is_some() && rect.width() >= 118.0;
+    let coverage_slot = if show_coverage { coverage_width } else { 0.0 };
+    let slot_gap = if show_coverage { gap } else { 0.0 };
+    let badge_rect = Rect::new(
+        rect.x(),
+        rect.y(),
+        (rect.width() - coverage_slot - slot_gap).clamp(48.0, 86.0),
+        rect.height(),
+    );
+    paint_status_badge(ctx, badge_rect, theme, label, icon, tone);
+
+    if show_coverage && let Some((current, target)) = coverage {
+        let dots_rect = Rect::new(
+            badge_rect.max_x() + slot_gap,
+            rect.y(),
+            (rect.max_x() - badge_rect.max_x() - slot_gap).max(0.0),
+            rect.height(),
+        );
+        paint_coverage_dots(ctx, theme, dots_rect, current, target, tone);
+    }
+}
+
+impl Widget for PlacementBadge {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let (height, coverage_width, gap) = Self::metrics(&theme);
+        let label = self.label();
+        let tone = self.resolved_tone();
+        let icon_w = self
+            .icon
+            .map(|_| (height - 13.0).clamp(11.0, 15.0) + theme.metrics.icon_label_gap.max(4.0))
+            .unwrap_or(0.0);
+        let text = measure_text(
+            ctx,
+            &label,
+            &StatusBadge::new(&label).text_style(&theme, &label, tone),
+        );
+        let badge_width =
+            (text.width.ceil() + icon_w + theme.metrics.button_padding.left.max(8.0) * 2.0)
+                .clamp(48.0, 86.0);
+        let coverage_width = if self.resolved_coverage().is_some() {
+            coverage_width + gap
+        } else {
+            0.0
+        };
+        constraints.clamp(Size::new(
+            self.min_width
+                .unwrap_or(0.0)
+                .max(badge_width + coverage_width),
+            height,
+        ))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        paint_placement_badge(
+            ctx,
+            &theme,
+            ctx.bounds(),
+            &self.label(),
+            self.icon,
+            self.resolved_tone(),
+            self.resolved_coverage(),
+        );
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let label = self.label();
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
+        node.name = Some(label.clone());
+        node.value = Some(SemanticsValue::Text(label.clone()));
+        if let Some((current, target)) = self.resolved_coverage() {
+            let target = target.max(current);
+            node.description = Some(format!("{current} of {target} replicas available"));
+        }
+        ctx.push(node);
+    }
 }
 
 pub struct TabBar {
@@ -5658,7 +8488,7 @@ impl Widget for TabBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let style = theme.body_text_style();
+        let style = text_token_style(&theme, theme.text.sm, theme.palette.text);
         let padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .tabs
@@ -5685,11 +8515,8 @@ impl Widget for TabBar {
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
-        let label_style = theme.body_text_style();
-        let selected_label_style = TextStyle {
-            color: palette.text,
-            ..label_style.clone()
-        };
+        let label_style = text_token_style(&theme, theme.text.sm, palette.text_muted);
+        let selected_label_style = text_token_style(&theme, theme.text.sm, palette.text);
 
         ctx.fill(
             rounded_rect_path(ctx.bounds(), metrics.corner_radius),
@@ -5780,6 +8607,559 @@ impl Widget for TabBar {
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
+pub struct SegmentedControl {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: String,
+    segments: Vec<SegmentedControlItem>,
+    selected: usize,
+    selection_from: usize,
+    selection_animation: AnimatedScalar,
+    hovered: Option<usize>,
+    hover_visual: Option<usize>,
+    pressed: Option<usize>,
+    press_visual: Option<usize>,
+    hover_animation: AnimatedScalar,
+    press_animation: AnimatedScalar,
+    focus_animation: AnimatedScalar,
+    label_measurements: Vec<TextMeasurement>,
+    on_change: Option<SegmentedControlChange>,
+    on_change_with_ctx: Option<SegmentedControlContextChange>,
+}
+
+pub struct SegmentedControlItem {
+    label: String,
+    semantic_name: Option<String>,
+    description: Option<String>,
+    disabled: bool,
+}
+
+impl SegmentedControlItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            semantic_name: None,
+            description: None,
+            disabled: false,
+        }
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
+        self
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+impl SegmentedControl {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: name.into(),
+            segments: Vec::new(),
+            selected: 0,
+            selection_from: 0,
+            selection_animation: AnimatedScalar::new(1.0),
+            hovered: None,
+            hover_visual: None,
+            pressed: None,
+            press_visual: None,
+            hover_animation: AnimatedScalar::new(0.0),
+            press_animation: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
+            label_measurements: Vec::new(),
+            on_change: None,
+            on_change_with_ctx: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn item(mut self, item: SegmentedControlItem) -> Self {
+        self.segments.push(item);
+        self
+    }
+
+    pub fn items<I>(mut self, items: I) -> Self
+    where
+        I: IntoIterator<Item = SegmentedControlItem>,
+    {
+        self.segments.extend(items);
+        self
+    }
+
+    pub fn segments<I, S>(mut self, labels: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.segments
+            .extend(labels.into_iter().map(SegmentedControlItem::new));
+        self
+    }
+
+    pub fn selected(mut self, index: usize) -> Self {
+        self.selected = index;
+        self.selection_from = index;
+        self.selection_animation = AnimatedScalar::new(1.0);
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize, String) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize, String, &mut EventCtx) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn selected_index(&self) -> usize {
+        self.normalized_selected()
+    }
+
+    fn normalized_selected(&self) -> usize {
+        if self.segments.is_empty() {
+            0
+        } else {
+            self.selected.min(self.segments.len() - 1)
+        }
+    }
+
+    fn segment_height(&self) -> f32 {
+        self.resolved_theme().metrics.tab_height
+    }
+
+    fn segment_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        if index >= self.segments.len() {
+            return None;
+        }
+        let count = self.segments.len().max(1);
+        let width = bounds.width() / count as f32;
+        let x = bounds.x() + width * index as f32;
+        let width = if index + 1 == count {
+            bounds.max_x() - x
+        } else {
+            width
+        };
+        Some(Rect::new(
+            x,
+            bounds.y(),
+            width.max(0.0),
+            bounds.height().max(0.0),
+        ))
+    }
+
+    fn segment_at(&self, bounds: Rect, position: Point) -> Option<usize> {
+        if !bounds.contains(position) || self.segments.is_empty() {
+            return None;
+        }
+        let slot_width = (bounds.width() / self.segments.len() as f32).max(1.0);
+        let index = ((position.x - bounds.x()) / slot_width).floor() as usize;
+        Some(index.min(self.segments.len() - 1))
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn activate(&mut self, index: usize, ctx: &mut EventCtx) {
+        let Some(segment) = self.segments.get(index) else {
+            return;
+        };
+        if segment.disabled {
+            return;
+        }
+
+        let index = index.min(self.segments.len() - 1);
+        if self.selected != index {
+            let theme = self.resolved_theme();
+            self.selection_from = self.normalized_selected();
+            self.selected = index;
+            self.selection_animation = AnimatedScalar::new(0.0);
+            self.selection_animation.set_target_event(
+                1.0,
+                theme.motion.tab_switch_duration(),
+                theme.motion.tab_switch_easing(),
+                ctx,
+            );
+            let label = self.segments[index].label.clone();
+            if let Some(on_change) = &mut self.on_change {
+                on_change(index, label.clone());
+            }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(index, label, ctx);
+            }
+        }
+    }
+
+    fn move_selection(&mut self, delta: isize, ctx: &mut EventCtx) {
+        if self.segments.is_empty() {
+            return;
+        }
+        let selected = self.normalized_selected() as isize;
+        let last = self.segments.len() as isize - 1;
+        let next = (selected + delta).clamp(0, last) as usize;
+        self.activate(next, ctx);
+        self.set_hovered(Some(next), ctx);
+    }
+
+    fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.hovered = hovered;
+        if let Some(index) = hovered {
+            self.hover_visual = Some(index);
+            self.hover_animation = AnimatedScalar::new(0.0);
+            set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
+        } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
+            self.hover_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+        if self.pressed == pressed {
+            return;
+        }
+        let theme = self.resolved_theme();
+        self.pressed = pressed;
+        if let Some(index) = pressed {
+            self.press_visual = Some(index);
+            self.press_animation = AnimatedScalar::new(0.0);
+            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
+        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_visual = None;
+        }
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn hover_amount_for(&self, index: usize) -> f32 {
+        if self.hover_visual == Some(index) {
+            self.hover_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn press_amount_for(&self, index: usize) -> f32 {
+        if self.press_visual == Some(index) {
+            self.press_animation.value
+        } else {
+            0.0
+        }
+    }
+
+    fn advance_animations(&mut self, time: f64) -> bool {
+        let selection_animating = self.selection_animation.advance(time);
+        let hover_animating = self.hover_animation.advance(time);
+        if !hover_animating
+            && self.hovered.is_none()
+            && self.hover_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.hover_visual = None;
+        }
+        let press_animating = self.press_animation.advance(time);
+        if !press_animating
+            && self.pressed.is_none()
+            && self.press_animation.value <= AnimatedScalar::EPSILON
+        {
+            self.press_visual = None;
+        }
+        let focus_animating = self.focus_animation.advance(time);
+        selection_animating | hover_animating | press_animating | focus_animating
+    }
+}
+
+impl Widget for SegmentedControl {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                self.set_hovered(self.segment_at(ctx.bounds(), pointer.position), ctx);
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Leave
+                    || pointer.kind == PointerEventKind::Cancel =>
+            {
+                if pointer.kind == PointerEventKind::Cancel && self.pressed.is_some() {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+                self.set_pressed(None, ctx);
+                self.set_hovered(None, ctx);
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = self.segment_at(ctx.bounds(), pointer.position);
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(hovered, ctx);
+                ctx.request_focus();
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                let hovered = self.segment_at(ctx.bounds(), pointer.position);
+                if let Some(index) = self
+                    .pressed
+                    .zip(hovered)
+                    .filter(|(left, right)| left == right)
+                    .map(|(index, _)| index)
+                {
+                    self.activate(index, ctx);
+                }
+                self.set_hovered(hovered, ctx);
+                self.set_pressed(None, ctx);
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                match key.key.as_str() {
+                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1, ctx),
+                    "ArrowRight" | "ArrowDown" => self.move_selection(1, ctx),
+                    "Home" => self.activate(0, ctx),
+                    "End" if !self.segments.is_empty() => {
+                        self.activate(self.segments.len() - 1, ctx)
+                    }
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.advance_animations(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.resolved_theme();
+        let style = theme.body_text_style();
+        let padding = theme.metrics.tab_padding;
+        self.label_measurements = self
+            .segments
+            .iter()
+            .map(|segment| measure_text(ctx, &segment.label, &style))
+            .collect();
+        let widest = self
+            .label_measurements
+            .iter()
+            .map(|measurement| measurement.width + padding.left + padding.right)
+            .fold(theme.metrics.tab_min_width, f32::max);
+        let width = widest * self.segments.len().max(1) as f32;
+        constraints.clamp(Size::new(width.max(160.0), self.segment_height()))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
+        let interaction = theme.interaction;
+        let padding = metrics.tab_padding;
+        let label_style = TextStyle {
+            font_size: theme.text.xs.size,
+            line_height: theme.text.xs.line_height,
+            weight: sui_text::FontWeight(theme.font_weights.semibold),
+            color: palette.text_muted,
+            ..theme.body_text_style()
+        };
+        let selected_label_style = TextStyle {
+            color: palette.accent,
+            ..label_style.clone()
+        };
+        let radius = metrics.corner_radius;
+
+        ctx.fill(rounded_rect_path(ctx.bounds(), radius), palette.control);
+
+        if !self.segments.is_empty() {
+            let from = self.selection_from.min(self.segments.len() - 1);
+            let selected = self.normalized_selected();
+            if let Some(thumb) = tab_indicator_rect(
+                |index| self.segment_rect(ctx.bounds(), index),
+                from,
+                selected,
+                self.selection_animation.value,
+                Insets::all(2.0),
+                (ctx.bounds().height() - 4.0).max(0.0),
+            ) {
+                draw_control_shape(
+                    ctx,
+                    thumb,
+                    (thumb.height() * 0.5).min(radius),
+                    physical_pixels(ctx, metrics.border_width),
+                    palette.selection,
+                    palette.accent.with_alpha(0.36),
+                );
+            }
+        }
+
+        let focus_progress = self.focus_animation.value;
+        for (index, segment) in self.segments.iter().enumerate() {
+            let Some(rect) = self.segment_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let selected = self.normalized_selected() == index;
+            let hovered = self.hovered == Some(index);
+            let pressed = self.pressed == Some(index);
+            let hover_amount = self.hover_amount_for(index);
+            let press_amount = self.press_amount_for(index);
+
+            if !selected
+                && let Some((background, border)) =
+                    tab_state_visuals(&theme, false, hovered, pressed, hover_amount, press_amount)
+            {
+                draw_control_shape(
+                    ctx,
+                    rect.inflate(-1.0, -1.0),
+                    radius,
+                    physical_pixels(ctx, metrics.border_width),
+                    background,
+                    border,
+                );
+            }
+
+            if selected && focus_progress > AnimatedScalar::EPSILON {
+                draw_focus_ring_frame(
+                    ctx,
+                    rect.inflate(-1.0, -1.0),
+                    radius,
+                    metrics,
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
+                );
+            }
+
+            let text_style = if selected {
+                selected_label_style.clone()
+            } else {
+                label_style.clone()
+            };
+            let text_slot = inset_rect(rect, padding);
+            let pressed_offset = press_amount * interaction.pressed_offset;
+            ctx.push_clip_rect(text_slot);
+            paint_aligned_text(
+                ctx,
+                text_slot.translate(Vector::new(0.0, pressed_offset)),
+                &segment.label,
+                &text_style,
+                text_style.line_height,
+                0.5,
+            );
+            ctx.pop_clip();
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let selected = self.normalized_selected();
+        let value = self
+            .segments
+            .get(selected)
+            .map(|segment| segment.label.clone());
+        let mut group =
+            SemanticsNode::new(ctx.widget_id(), SemanticsRole::RadioGroup, ctx.bounds());
+        group.name = Some(self.name.clone());
+        group.value = value.map(SemanticsValue::Text);
+        group.state.focused = ctx.is_focused();
+        group.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(group);
+
+        for (index, segment) in self.segments.iter().enumerate() {
+            let Some(bounds) = self.segment_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let mut node = SemanticsNode::new(
+                segmented_control_item_id(ctx.widget_id(), index),
+                SemanticsRole::RadioButton,
+                bounds,
+            );
+            node.parent = Some(ctx.widget_id());
+            node.name = Some(
+                segment
+                    .semantic_name
+                    .clone()
+                    .unwrap_or_else(|| segment.label.clone()),
+            );
+            node.description = segment.description.clone();
+            node.value = Some(SemanticsValue::Text(segment.label.clone()));
+            node.actions = if segment.disabled {
+                Vec::new()
+            } else {
+                vec![SemanticsAction::Activate]
+            };
+            node.state.disabled = segment.disabled;
+            node.state.hovered = self.hovered == Some(index);
+            node.state.selected = selected == index;
+            node.state.checked = Some(if selected == index {
+                sui_core::ToggleState::Checked
+            } else {
+                sui_core::ToggleState::Unchecked
+            });
+            ctx.push(node);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -6144,7 +9524,7 @@ impl Widget for Tabs {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let text_style = theme.body_text_style();
+        let text_style = text_token_style(&theme, theme.text.sm, theme.palette.text);
         let tab_padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .labels
@@ -6236,11 +9616,8 @@ impl Widget for Tabs {
         let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
         let header = self.header_rect(ctx.bounds());
-        let label_style = theme.body_text_style();
-        let selected_label_style = TextStyle {
-            color: palette.text,
-            ..label_style.clone()
-        };
+        let label_style = text_token_style(&theme, theme.text.sm, palette.text_muted);
+        let selected_label_style = text_token_style(&theme, theme.text.sm, palette.text);
 
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
@@ -7022,7 +10399,11 @@ impl Widget for TooltipOverlay {
         );
         let tail = tooltip_tail(state.trigger_bounds, bubble, state.placement);
         ctx.fill(tail, state.theme.surfaces.tooltip);
-        let text_style = state.theme.text_style(state.theme.surfaces.tooltip_text);
+        let text_style = text_token_style(
+            &state.theme,
+            state.theme.text.sm,
+            state.theme.surfaces.tooltip_text,
+        );
         let text_slot = inset_rect(bubble, metrics.tooltip_padding);
         ctx.push_clip_rect(text_slot);
         paint_aligned_text(
@@ -7163,7 +10544,11 @@ impl Widget for Tooltip {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let mut state = self.state.borrow_mut();
-        let text_style = state.theme.text_style(state.theme.surfaces.tooltip_text);
+        let text_style = text_token_style(
+            &state.theme,
+            state.theme.text.sm,
+            state.theme.surfaces.tooltip_text,
+        );
         state.measurement = Some(measure_text(ctx, &state.text, &text_style));
         drop(state);
         self.child.measure(ctx, constraints)
@@ -9384,6 +12769,40 @@ impl ProgressBar {
     }
 }
 
+pub fn paint_progress_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    fraction: f32,
+    tone: SemanticTone,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let metrics = theme.metrics;
+    let palette = theme.palette;
+    let (tone, _) = theme.semantic_tone_colors(tone);
+    draw_control_shape(
+        ctx,
+        rect,
+        metrics.corner_radius,
+        physical_pixels(ctx, metrics.border_width).min(rect.height() * 0.5),
+        palette.control,
+        palette.border,
+    );
+
+    let fill = Rect::new(
+        rect.x(),
+        rect.y(),
+        rect.width() * fraction.clamp(0.0, 1.0),
+        rect.height(),
+    );
+    if fill.width() > 0.0 {
+        ctx.fill(rounded_rect_path(fill, metrics.corner_radius), tone);
+    }
+}
+
 impl Widget for ProgressBar {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
@@ -9393,7 +12812,7 @@ impl Widget for ProgressBar {
         } else if self.show_value {
             metrics
                 .progress_bar_value_height
-                .max(theme.body_text_style().line_height)
+                .max(text_token_style(&theme, theme.text.sm, theme.palette.text).line_height)
         } else {
             metrics.progress_bar_height
         };
@@ -9406,28 +12825,11 @@ impl Widget for ProgressBar {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
-        let palette = theme.palette;
-        let (tone, tone_text) = theme.semantic_tone_colors(self.tone);
-        draw_control_shape(
-            ctx,
-            ctx.bounds(),
-            metrics.corner_radius,
-            physical_pixels(ctx, metrics.border_width),
-            palette.control,
-            palette.border,
-        );
-        let fill = Rect::new(
-            ctx.bounds().x(),
-            ctx.bounds().y(),
-            ctx.bounds().width() * self.fraction(),
-            ctx.bounds().height(),
-        );
-        if fill.width() > 0.0 {
-            ctx.fill(rounded_rect_path(fill, metrics.corner_radius), tone);
-        }
+        let (_, tone_text) = theme.semantic_tone_colors(self.tone);
+        paint_progress_bar(ctx, ctx.bounds(), &theme, self.fraction(), self.tone);
         if self.show_value {
             let label = format!("{:.0}%", self.fraction() * 100.0);
-            let text_style = numeric_text_style(theme.text_style(tone_text));
+            let text_style = numeric_text_style(text_token_style(&theme, theme.text.sm, tone_text));
             let label_padding = Insets {
                 top: 0.0,
                 bottom: 0.0,
@@ -9523,7 +12925,7 @@ impl Spinner {
 impl Widget for Spinner {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let text_style = theme.body_text_style();
+        let text_style = text_token_style(&theme, theme.text.sm, theme.palette.text);
         let label_measurement = self
             .label
             .as_ref()
@@ -9564,7 +12966,7 @@ impl Widget for Spinner {
         }
 
         if let Some(label) = &self.label {
-            let text_style = theme.body_text_style();
+            let text_style = text_token_style(&theme, theme.text.sm, palette.text);
             let text_slot = Rect::new(
                 indicator.max_x() + 12.0,
                 ctx.bounds().y(),
@@ -9897,14 +13299,23 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     use super::Tabs;
     use super::{
-        ActionCard, CommandGroup, ContextMenu, Dialog, DockPanel, FieldGroup, FormRow, FormSection,
-        Menu, MenuItem, PanelSection, Popover, PresetStrip, ProgressBar, PropertyRow,
-        PropertyRowLayout, Spinner, StatusBar, StatusBarHost, StatusBarSegment, TabBar,
-        ToolPalette, ToolPaletteItem, Toolbar,
+        ActionCard, ActionTilePaint, CalloutPaint, CodePanelPaint, CodeTextLine, CodeTextPaint,
+        CodeTextSpan, CommandButtonPaint, CommandGroup, ContextMenu, CoverageDots, DetailRow,
+        Dialog, DisclosureButtonPaint, DockPanel, EmptyState, FieldGroup, FormRow, FormSection,
+        HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge, PlacementBadgePaint, Popover,
+        PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
+        SectionPanelPaint, SegmentedControl, SegmentedControlItem, Spinner, StatusBadge, StatusBar,
+        StatusBarHost, StatusBarSegment, TabBar, ToolPalette, ToolPaletteItem, Toolbar,
+        paint_action_tile, paint_border, paint_callout, paint_code_lines, paint_code_panel,
+        paint_command_button, paint_disclosure_button, paint_hairline, paint_placement_badge_with,
+        paint_rounded_panel, paint_section_label, paint_section_label_detail, paint_section_panel,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone, ThemeTextToken};
@@ -9921,7 +13332,7 @@ mod tests {
     use sui_scene::{
         Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor, SceneLayerUpdateKind,
     };
-    use sui_text::{FontFeature, FontRegistry, TextSystem};
+    use sui_text::{FontFeature, FontRegistry, FontWeight, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -10021,6 +13432,130 @@ mod tests {
                 .viewport
                 .height
         );
+        assert!(
+            render(
+                SegmentedControl::new("View")
+                    .theme(compact)
+                    .segments(["All", "Chats", "Channels"])
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    SegmentedControl::new("View")
+                        .theme(touch)
+                        .segments(["All", "Chats", "Channels"])
+                )
+                .frame
+                .viewport
+                .height
+        );
+    }
+
+    #[test]
+    fn segmented_control_click_updates_radio_semantics() -> Result<(), String> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new().width(260.0).height(28.0).with_child(
+                SegmentedControl::new("Conversation view")
+                    .items([
+                        SegmentedControlItem::new("All 2").semantic_name("Show all conversations"),
+                        SegmentedControlItem::new("Chats 1").semantic_name("Show chats only"),
+                        SegmentedControlItem::new("Channels 1")
+                            .semantic_name("Show channels only")
+                            .description("1 visible conversation(s)"),
+                    ])
+                    .on_change(move |index, label| on_change.borrow_mut().push((index, label))),
+            ),
+        );
+
+        let _ = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(220.0, 14.0), true),
+            )
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, Point::new(220.0, 14.0), false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &[(2, "Channels 1".to_string())]
+        );
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let group = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioGroup)
+            .expect("radio group semantics present");
+        assert_eq!(group.name.as_deref(), Some("Conversation view"));
+        assert_eq!(
+            group.value,
+            Some(SemanticsValue::Text("Channels 1".to_string()))
+        );
+        let channel = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::RadioButton
+                    && node.name.as_deref() == Some("Show channels only")
+            })
+            .expect("selected segment semantics present");
+        assert_eq!(channel.parent, Some(group.id));
+        assert_eq!(
+            channel.description.as_deref(),
+            Some("1 visible conversation(s)")
+        );
+        assert!(channel.state.selected);
+        assert_eq!(channel.state.checked, Some(sui_core::ToggleState::Checked));
+        assert!(channel.actions.contains(&SemanticsAction::Activate));
+        Ok(())
+    }
+
+    #[test]
+    fn segmented_control_keyboard_changes_selection() -> Result<(), String> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SegmentedControl::new("Conversation view")
+                .segments(["All", "Chats", "Channels"])
+                .on_change_with_ctx(move |index, label, ctx| {
+                    on_change.borrow_mut().push((index, label));
+                    ctx.request_measure();
+                    ctx.request_arrange();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }),
+        );
+
+        let _ = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+            )
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowRight", KeyState::Pressed)),
+            )
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(changes.borrow().as_slice(), &[(1, "Chats".to_string())]);
+        Ok(())
     }
 
     #[test]
@@ -10357,6 +13892,44 @@ mod tests {
         );
         assert!(
             render(
+                StatusBadge::new("Synced")
+                    .theme(compact)
+                    .tone(SemanticTone::Success)
+                    .icon(crate::IconGlyph::Storage)
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    StatusBadge::new("Synced")
+                        .theme(touch)
+                        .tone(SemanticTone::Success)
+                        .icon(crate::IconGlyph::Storage)
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
+                CoverageDots::new("Replicas", 2, 3)
+                    .theme(compact)
+                    .tone(SemanticTone::Success)
+            )
+            .frame
+            .viewport
+            .height
+                < render(
+                    CoverageDots::new("Replicas", 2, 3)
+                        .theme(touch)
+                        .tone(SemanticTone::Success)
+                )
+                .frame
+                .viewport
+                .height
+        );
+        assert!(
+            render(
                 ProgressBar::new("Export progress")
                     .theme(compact)
                     .value(0.42)
@@ -10509,6 +14082,242 @@ mod tests {
     }
 
     #[test]
+    fn detail_row_wraps_metadata_and_exposes_value_semantics() {
+        let theme = DefaultTheme::default();
+        let value = "replicated across atlas, keep, and wren with one pending repair";
+        let narrow = render(
+            crate::SizedBox::new()
+                .width(140.0)
+                .with_child(DetailRow::new("Placement", value).theme(theme)),
+        );
+        let wide = render(
+            crate::SizedBox::new()
+                .width(360.0)
+                .with_child(DetailRow::new("Placement", value).theme(theme)),
+        );
+
+        assert!(
+            narrow.frame.viewport.height > wide.frame.viewport.height,
+            "narrow detail rows should wrap their metadata value"
+        );
+        let label = text_run_for(&wide, "PLACEMENT");
+        assert_eq!(label.style.color, theme.palette.text_muted);
+        let node = wide
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Placement"))
+            .expect("detail row semantics should exist");
+        assert_eq!(node.value, Some(SemanticsValue::Text(value.to_string())));
+    }
+
+    struct DetailRowHeightProbe {
+        theme: DefaultTheme,
+        measured: Rc<Cell<f32>>,
+        painted: Rc<Cell<f32>>,
+    }
+
+    impl Widget for DetailRowHeightProbe {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(140.0, 96.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            let value = "replicated across atlas, keep, and wren with one pending repair";
+            self.measured.set(super::detail_row_height_for_value(
+                ctx,
+                &self.theme,
+                ctx.bounds().width(),
+                value,
+                Some(2),
+            ));
+            self.painted.set(super::paint_detail_row_at(
+                ctx,
+                &self.theme,
+                Point::new(ctx.bounds().x(), ctx.bounds().y()),
+                ctx.bounds().width(),
+                "Placement",
+                value,
+                Some(2),
+            ));
+        }
+    }
+
+    #[test]
+    fn detail_row_height_helper_matches_painter() {
+        let measured = Rc::new(Cell::new(0.0));
+        let painted = Rc::new(Cell::new(0.0));
+        let _ = render(DetailRowHeightProbe {
+            theme: DefaultTheme::default(),
+            measured: Rc::clone(&measured),
+            painted: Rc::clone(&painted),
+        });
+
+        assert!(measured.get() > 0.0);
+        assert!((measured.get() - painted.get()).abs() < 0.01);
+    }
+
+    #[test]
+    fn section_label_uses_micro_label_token_and_text_semantics() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new().width(120.0).height(18.0).with_child(
+                SectionLabel::new("file tasks")
+                    .semantic_name("File tasks")
+                    .theme(theme),
+            ),
+        );
+
+        let label = text_run_for(&output, "FILE TASKS");
+        assert_text_run_uses_token(&label, theme.text.xs);
+        assert_eq!(label.style.color, theme.surfaces.text_faint);
+        assert_eq!(label.style.weight, FontWeight::SEMIBOLD);
+
+        let node = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("File tasks"))
+            .expect("section label semantics should exist");
+        assert_eq!(node.role, SemanticsRole::Text);
+        assert_eq!(
+            node.value,
+            Some(SemanticsValue::Text("File tasks".to_string()))
+        );
+    }
+
+    struct SectionLabelPaintFixture {
+        theme: DefaultTheme,
+        color: Color,
+    }
+
+    impl Widget for SectionLabelPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 18.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_section_label(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "placement",
+                SectionLabelPaint::new().color(self.color),
+            );
+        }
+    }
+
+    #[test]
+    fn section_label_paint_matches_widget_style_with_color_override() {
+        let theme = DefaultTheme::default();
+        let color = theme.palette.warning;
+        let output = render(SectionLabelPaintFixture { theme, color });
+
+        let label = text_run_for(&output, "PLACEMENT");
+        assert_text_run_uses_token(&label, theme.text.xs);
+        assert_eq!(label.style.color, color);
+        assert_eq!(label.style.weight, FontWeight::SEMIBOLD);
+    }
+
+    struct SectionLabelDetailPaintFixture {
+        theme: DefaultTheme,
+        color: Color,
+    }
+
+    impl Widget for SectionLabelDetailPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(180.0, 18.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_section_label_detail(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "input",
+                "command payload",
+                SectionLabelPaint::new().color(self.color),
+            );
+        }
+    }
+
+    #[test]
+    fn section_label_detail_paint_preserves_detail_text() {
+        let theme = DefaultTheme::default();
+        let color = theme.palette.warning;
+        let output = render(SectionLabelDetailPaintFixture { theme, color });
+
+        let label = text_run_for(&output, "INPUT · command payload");
+        assert_text_run_uses_token(&label, theme.text.xs);
+        assert_eq!(label.style.color, color);
+        assert_eq!(label.style.weight, FontWeight::SEMIBOLD);
+    }
+
+    struct GenericPaintPrimitiveFixture {
+        fill: Color,
+        panel_border: Color,
+        right_hairline: Color,
+        full_border: Color,
+    }
+
+    impl Widget for GenericPaintPrimitiveFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(96.0, 64.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_rounded_panel(
+                ctx,
+                Rect::new(4.0, 4.0, 36.0, 20.0),
+                self.fill,
+                self.panel_border,
+                0.0,
+            );
+            paint_hairline(
+                ctx,
+                Rect::new(50.0, 6.0, 24.0, 18.0),
+                HairlineEdge::Right,
+                self.right_hairline,
+            );
+            paint_border(ctx, Rect::new(10.0, 34.0, 18.0, 12.0), self.full_border);
+        }
+    }
+
+    #[test]
+    fn generic_paint_primitives_emit_expected_rects() {
+        let fill = Color::rgba(0.1, 0.2, 0.3, 1.0);
+        let panel_border = Color::rgba(0.4, 0.5, 0.6, 1.0);
+        let right_hairline = Color::rgba(0.7, 0.2, 0.1, 1.0);
+        let full_border = Color::rgba(0.2, 0.8, 0.4, 1.0);
+        let output = render(GenericPaintPrimitiveFixture {
+            fill,
+            panel_border,
+            right_hairline,
+            full_border,
+        });
+
+        assert_eq!(
+            solid_fill_rects_for_color(&output, fill),
+            vec![Rect::new(5.0, 5.0, 34.0, 18.0)]
+        );
+        assert_eq!(
+            solid_fill_rects_for_color(&output, panel_border),
+            vec![Rect::new(4.0, 4.0, 36.0, 20.0)]
+        );
+        assert_eq!(
+            solid_fill_rects_for_color(&output, right_hairline),
+            vec![Rect::new(73.0, 6.0, 1.0, 18.0)]
+        );
+        assert_eq!(
+            solid_fill_rects_for_color(&output, full_border),
+            vec![
+                Rect::new(10.0, 34.0, 18.0, 1.0),
+                Rect::new(27.0, 34.0, 1.0, 12.0),
+                Rect::new(10.0, 45.0, 18.0, 1.0),
+                Rect::new(10.0, 34.0, 1.0, 12.0),
+            ]
+        );
+    }
+
+    #[test]
     fn semantic_tones_drive_composite_status_colors() {
         let theme = DefaultTheme::default();
 
@@ -10526,6 +14335,15 @@ mod tests {
         );
         assert!(solid_fill_colors(&status_bar).contains(&theme.palette.warning.with_alpha(0.12)));
 
+        let badge = render(
+            StatusBadge::new("Replicated")
+                .theme(theme)
+                .tone(SemanticTone::Success)
+                .icon(crate::IconGlyph::Storage),
+        );
+        assert!(solid_fill_colors(&badge).contains(&theme.palette.success.with_alpha(0.12)));
+        assert!(solid_stroke_colors(&badge).contains(&theme.palette.success.with_alpha(0.52)));
+
         let progress_bar = render(
             ProgressBar::new("Delete progress")
                 .theme(theme)
@@ -10533,6 +14351,583 @@ mod tests {
                 .value(0.5),
         );
         assert!(solid_fill_colors(&progress_bar).contains(&theme.palette.danger));
+    }
+
+    struct CommandButtonPaintFixture {
+        theme: DefaultTheme,
+        style: CommandButtonPaint,
+    }
+
+    impl Widget for CommandButtonPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(150.0, 28.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_command_button(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "Repair",
+                Some(crate::IconGlyph::Storage),
+                self.style,
+            );
+        }
+    }
+
+    #[test]
+    fn command_button_paint_uses_theme_surfaces_and_tones() {
+        let theme = DefaultTheme::default();
+
+        let neutral = render(CommandButtonPaintFixture {
+            theme,
+            style: CommandButtonPaint::neutral().icon_tone(SemanticTone::Accent),
+        });
+        assert!(solid_fill_colors(&neutral).contains(&theme.surfaces.field));
+        assert!(solid_stroke_colors(&neutral).contains(&theme.palette.border));
+
+        let hovered = render(CommandButtonPaintFixture {
+            theme,
+            style: CommandButtonPaint::neutral()
+                .icon_tone(SemanticTone::Accent)
+                .hovered(true),
+        });
+        assert!(solid_fill_colors(&hovered).contains(&theme.palette.control_hover));
+
+        let accent = render(CommandButtonPaintFixture {
+            theme,
+            style: CommandButtonPaint::filled(SemanticTone::Accent),
+        });
+        assert!(solid_fill_colors(&accent).contains(&theme.palette.accent));
+        assert!(solid_stroke_colors(&accent).contains(&theme.palette.accent));
+
+        let pressed = render(CommandButtonPaintFixture {
+            theme,
+            style: CommandButtonPaint::filled(SemanticTone::Accent).pressed(true),
+        });
+        assert!(solid_fill_colors(&pressed).contains(&theme.palette.accent_pressed));
+
+        let danger = render(CommandButtonPaintFixture {
+            theme,
+            style: CommandButtonPaint::tonal(SemanticTone::Danger),
+        });
+        assert!(solid_fill_colors(&danger).contains(&theme.surfaces.field));
+        assert!(solid_stroke_colors(&danger).contains(&theme.palette.danger.with_alpha(0.72)));
+    }
+
+    struct DisclosureButtonPaintFixture {
+        theme: DefaultTheme,
+        expanded: bool,
+    }
+
+    impl Widget for DisclosureButtonPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(126.0, 24.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_disclosure_button(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                if self.expanded {
+                    "Show less"
+                } else {
+                    "Show more"
+                },
+                self.expanded,
+                DisclosureButtonPaint::new(),
+            );
+        }
+    }
+
+    #[test]
+    fn disclosure_button_paint_uses_accent_command_button_style() {
+        let theme = DefaultTheme::default();
+        let collapsed = render(DisclosureButtonPaintFixture {
+            theme,
+            expanded: false,
+        });
+        let expanded = render(DisclosureButtonPaintFixture {
+            theme,
+            expanded: true,
+        });
+
+        assert!(solid_fill_colors(&collapsed).contains(&theme.surfaces.field));
+        assert!(solid_stroke_colors(&collapsed).contains(&theme.palette.accent.with_alpha(0.72)));
+        assert_eq!(
+            text_run_for(&collapsed, "Show more").style.color,
+            theme.palette.accent
+        );
+        assert_eq!(
+            text_run_for(&expanded, "Show less").style.color,
+            theme.palette.accent
+        );
+    }
+
+    struct CompactCommandButtonPaintFixture {
+        theme: DefaultTheme,
+    }
+
+    impl Widget for CompactCommandButtonPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(104.0, 24.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_command_button(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "Hide details",
+                Some(crate::IconGlyph::ChevronUp),
+                CommandButtonPaint::tonal(SemanticTone::Accent).icon_tone(SemanticTone::Accent),
+            );
+        }
+    }
+
+    #[test]
+    fn command_button_paint_scales_label_in_compact_slots() {
+        let theme = DefaultTheme::default();
+        let output = render(CompactCommandButtonPaintFixture { theme });
+        let label = text_run_for(&output, "Hide details");
+        let estimated_label_width =
+            label.text.chars().count() as f32 * label.style.font_size * 0.56;
+
+        assert!(
+            label.style.font_size < theme.text.sm.size,
+            "compact command button should reduce label font size"
+        );
+        assert!(label.style.font_size >= 10.0);
+        assert!(
+            estimated_label_width <= label.rect.width() + 0.75,
+            "compact command button label should fit its slot: estimated={estimated_label_width} rect={:?}",
+            label.rect
+        );
+    }
+
+    struct ActionTilePaintFixture {
+        theme: DefaultTheme,
+        style: ActionTilePaint,
+    }
+
+    impl Widget for ActionTilePaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(178.0, 58.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_action_tile(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "Check cluster",
+                Some("background-agent"),
+                Some(crate::IconGlyph::Storage),
+                self.style,
+            );
+        }
+    }
+
+    struct ActionTileReservedSlotFixture {
+        theme: DefaultTheme,
+        style: ActionTilePaint,
+    }
+
+    impl Widget for ActionTileReservedSlotFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(178.0, 58.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_action_tile(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "Check cluster",
+                Some("background-agent"),
+                None,
+                self.style,
+            );
+        }
+    }
+
+    #[test]
+    fn action_tile_paint_supports_highlight_hover_and_press_states() {
+        let theme = DefaultTheme::default();
+
+        let neutral = render(ActionTilePaintFixture {
+            theme,
+            style: ActionTilePaint::neutral(),
+        });
+        assert!(solid_fill_colors(&neutral).contains(&theme.palette.control));
+        assert!(solid_stroke_colors(&neutral).contains(&theme.palette.border));
+
+        let highlighted = render(ActionTilePaintFixture {
+            theme,
+            style: ActionTilePaint::tonal(SemanticTone::Accent),
+        });
+        assert!(solid_stroke_colors(&highlighted).contains(&theme.palette.accent.with_alpha(0.84)));
+
+        let hovered = render(ActionTilePaintFixture {
+            theme,
+            style: ActionTilePaint::neutral().hovered(true),
+        });
+        assert!(solid_fill_colors(&hovered).contains(&theme.palette.control_hover));
+
+        let pressed = render(ActionTilePaintFixture {
+            theme,
+            style: ActionTilePaint::neutral().pressed(true),
+        });
+        assert!(solid_fill_colors(&pressed).contains(&theme.palette.control_active));
+    }
+
+    #[test]
+    fn action_tile_paint_supports_surface_overrides_and_reserved_slots() {
+        let theme = DefaultTheme::default();
+        let output = render(ActionTileReservedSlotFixture {
+            theme,
+            style: ActionTilePaint::neutral()
+                .background(theme.surfaces.panel)
+                .border(theme.palette.warning)
+                .title_color(theme.palette.text)
+                .subtitle_color(theme.surfaces.text_faint)
+                .icon_color(theme.palette.accent)
+                .radius(theme.radius.xl)
+                .padding_x(12.0)
+                .leading_width(18.0)
+                .trailing_width(48.0),
+        });
+
+        assert!(solid_fill_colors(&output).contains(&theme.surfaces.panel));
+        assert!(solid_stroke_colors(&output).contains(&theme.palette.warning));
+
+        let title = text_run_for(&output, "Check cluster");
+        let subtitle = text_run_for(&output, "background-agent");
+        assert_eq!(title.style.color, theme.palette.text);
+        assert_eq!(subtitle.style.color, theme.surfaces.text_faint);
+        assert!(
+            title.rect.x() >= 30.0,
+            "reserved leading slot should move title after the status slot: {:?}",
+            title.rect
+        );
+        let title_clip = clip_rect_for_text(&output, "Check cluster");
+        assert!(
+            title_clip.max_x() <= 118.0,
+            "reserved trailing slot should keep title clip clear of action area: {:?}",
+            title_clip
+        );
+    }
+
+    #[test]
+    fn action_tile_paint_supports_leading_semantic_status_dot() {
+        let theme = DefaultTheme::default();
+        let output = render(ActionTileReservedSlotFixture {
+            theme,
+            style: ActionTilePaint::neutral()
+                .padding_x(12.0)
+                .leading_tone_dot(SemanticTone::Success)
+                .leading_width(18.0),
+        });
+
+        assert!(
+            solid_fill_colors(&output).contains(&theme.semantic_tone_color(SemanticTone::Success)),
+            "leading status dot should use semantic tone color"
+        );
+        let title = text_run_for(&output, "Check cluster");
+        assert!(
+            title.rect.x() >= 30.0,
+            "leading status dot should reserve the standard leading slot: {:?}",
+            title.rect
+        );
+    }
+
+    struct CalloutPaintFixture {
+        theme: DefaultTheme,
+    }
+
+    impl Widget for CalloutPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(260.0, 104.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_callout(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                Some(crate::IconGlyph::Alert),
+                Some("Conflict"),
+                "notes.md changed on two devices while offline. Resolve before syncing.",
+                CalloutPaint::new(SemanticTone::Warning).reserved_bottom(24.0),
+            );
+        }
+    }
+
+    #[test]
+    fn callout_paint_uses_tone_rail_wrapped_text_and_reserved_bottom() {
+        let theme = DefaultTheme::default();
+        let (tone, _) = theme.semantic_tone_colors(SemanticTone::Warning);
+        let output = render(CalloutPaintFixture { theme });
+
+        assert!(solid_fill_colors(&output).contains(&tone.with_alpha(0.12)));
+        assert!(solid_fill_colors(&output).contains(&tone));
+        assert!(solid_stroke_colors(&output).contains(&theme.palette.border));
+
+        let title = text_run_for(&output, "Conflict");
+        assert_text_run_uses_token(&title, theme.text.sm);
+        assert_eq!(title.style.color, theme.palette.text);
+        assert_eq!(title.style.weight, FontWeight::SEMIBOLD);
+
+        let body_text = "notes.md changed on two devices while offline. Resolve before syncing.";
+        let body = text_run_for(&output, body_text);
+        assert_text_run_uses_token(&body, theme.text.sm);
+        assert_eq!(body.style.color, theme.palette.text_muted);
+        let body_clip = clip_rect_for_text(&output, body_text);
+        assert!(body_clip.height() <= 104.0 - 20.0 - 24.0 + 0.01);
+    }
+
+    struct CodePanelPaintFixture {
+        theme: DefaultTheme,
+        style: CodePanelPaint,
+        content: Rc<Cell<Rect>>,
+    }
+
+    impl Widget for CodePanelPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(180.0, 84.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            let content = paint_code_panel(ctx, &self.theme, ctx.bounds(), "rust", self.style);
+            self.content.set(content);
+            ctx.fill_rect(content, self.theme.palette.accent.with_alpha(0.08));
+        }
+    }
+
+    #[test]
+    fn code_panel_paint_uses_compact_header_and_returns_content_rect() {
+        let theme = DefaultTheme::default();
+        let content = Rc::new(Cell::new(Rect::ZERO));
+        let output = render(CodePanelPaintFixture {
+            theme,
+            style: CodePanelPaint::new(),
+            content: Rc::clone(&content),
+        });
+
+        assert!(solid_fill_colors(&output).contains(&theme.surfaces.field));
+        assert!(solid_fill_colors(&output).contains(&theme.surfaces.titlebar));
+        assert!(solid_stroke_colors(&output).contains(&theme.surfaces.border));
+
+        let label = text_run_for(&output, "rust");
+        assert_text_run_uses_token(&label, theme.text.xs);
+        assert_eq!(label.style.color, theme.surfaces.text_faint);
+        assert_eq!(label.style.weight, FontWeight::SEMIBOLD);
+
+        let content = content.get();
+        assert!((content.x() - 8.0).abs() < 0.01);
+        assert!((content.y() - 30.0).abs() < 0.01);
+        assert!((content.width() - 164.0).abs() < 0.01);
+        assert!(content.height() > 0.0);
+    }
+
+    struct CodeLinesPaintFixture {
+        theme: DefaultTheme,
+    }
+
+    impl Widget for CodeLinesPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(180.0, 46.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            let first_spans = [
+                CodeTextSpan::new("let").color(self.theme.palette.accent),
+                CodeTextSpan::new(" value"),
+            ];
+            let second_spans = [CodeTextSpan::new("+ added").color(self.theme.palette.success)];
+            let lines = [
+                CodeTextLine::new(&first_spans),
+                CodeTextLine::new(&second_spans)
+                    .background(self.theme.palette.success.with_alpha(0.12)),
+            ];
+            paint_code_lines(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                &lines,
+                CodeTextPaint::new()
+                    .color(self.theme.palette.text)
+                    .line_height(18.0),
+            );
+        }
+    }
+
+    #[test]
+    fn code_lines_paint_supports_span_colors_and_line_backgrounds() {
+        let theme = DefaultTheme::default();
+        let output = render(CodeLinesPaintFixture { theme });
+
+        assert!(
+            solid_fill_colors(&output).contains(&theme.palette.success.with_alpha(0.12)),
+            "line background should be drawn before text"
+        );
+        let keyword = text_run_for(&output, "let");
+        assert_eq!(keyword.style.color, theme.palette.accent);
+        let fallback = text_run_for(&output, " value");
+        assert_eq!(fallback.style.color, theme.palette.text);
+        let added = text_run_for(&output, "+ added");
+        assert_eq!(added.style.color, theme.palette.success);
+    }
+
+    struct SectionPanelPaintFixture {
+        theme: DefaultTheme,
+        content: Rc<Cell<Rect>>,
+        title: Rc<Cell<Rect>>,
+    }
+
+    impl Widget for SectionPanelPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(220.0, 90.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            let geometry = paint_section_panel(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "Metadata",
+                SectionPanelPaint::new()
+                    .header_height(38.0)
+                    .title_token(self.theme.text.base)
+                    .trailing_width(42.0),
+            );
+            self.content.set(geometry.content_rect);
+            self.title.set(geometry.title_rect);
+            ctx.fill_rect(
+                geometry.content_rect,
+                self.theme.palette.accent.with_alpha(0.08),
+            );
+        }
+    }
+
+    #[test]
+    fn section_panel_paint_reserves_header_action_space_and_returns_content_rect() {
+        let theme = DefaultTheme::default();
+        let content = Rc::new(Cell::new(Rect::ZERO));
+        let title_rect = Rc::new(Cell::new(Rect::ZERO));
+        let output = render(SectionPanelPaintFixture {
+            theme,
+            content: Rc::clone(&content),
+            title: Rc::clone(&title_rect),
+        });
+
+        assert!(solid_fill_colors(&output).contains(&theme.surfaces.panel));
+        assert!(solid_stroke_colors(&output).contains(&theme.surfaces.border));
+
+        let title = text_run_for(&output, "Metadata");
+        assert_text_run_uses_token(&title, theme.text.base);
+        assert_eq!(title.style.color, theme.surfaces.text);
+        assert_eq!(title.style.weight, FontWeight::SEMIBOLD);
+
+        let title_rect = title_rect.get();
+        assert!((title_rect.x() - 12.0).abs() < 0.01);
+        assert!((title_rect.width() - 154.0).abs() < 0.01);
+
+        let content = content.get();
+        assert!((content.x() - 12.0).abs() < 0.01);
+        assert!((content.y() - 38.0).abs() < 0.01);
+        assert!((content.width() - 196.0).abs() < 0.01);
+        assert!(content.height() > 0.0);
+    }
+
+    #[test]
+    fn placement_badge_combines_status_and_replica_coverage() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            PlacementBadge::new("synced")
+                .theme(theme)
+                .icon(crate::IconGlyph::Storage)
+                .tone(SemanticTone::Success)
+                .coverage(2, 3)
+                .min_width(136.0),
+        );
+
+        assert!(solid_fill_colors(&output).contains(&theme.palette.success.with_alpha(0.12)));
+        assert!(
+            solid_fill_colors(&output)
+                .iter()
+                .filter(|color| **color == theme.palette.success)
+                .count()
+                >= 2,
+            "coverage dots should paint filled replica dots"
+        );
+        let node = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("synced"))
+            .expect("placement badge semantics should exist");
+        assert_eq!(
+            node.description.as_deref(),
+            Some("2 of 3 replicas available")
+        );
+    }
+
+    struct PlacementBadgePaintFixture {
+        theme: DefaultTheme,
+    }
+
+    impl Widget for PlacementBadgePaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(156.0, 34.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_placement_badge_with(
+                ctx,
+                &self.theme,
+                ctx.bounds(),
+                "synced",
+                Some(crate::IconGlyph::Storage),
+                SemanticTone::Success,
+                Some((2, 3)),
+                PlacementBadgePaint::new().padding(8.0, 5.0, 8.0, 5.0),
+            );
+        }
+    }
+
+    #[test]
+    fn placement_badge_paint_applies_cell_padding() {
+        let theme = DefaultTheme::default();
+        let output = render(PlacementBadgePaintFixture { theme });
+
+        let status = text_run_for(&output, "synced");
+        assert!(
+            status.rect.x() >= 8.0,
+            "status label should stay inside left padding: {:?}",
+            status.rect
+        );
+        assert!(
+            status.rect.y() >= 5.0,
+            "status label should stay inside top padding: {:?}",
+            status.rect
+        );
+        assert!(
+            status.rect.max_x() <= 148.0,
+            "status label should stay inside right padding: {:?}",
+            status.rect
+        );
+
+        let coverage = text_run_for(&output, "2/3");
+        assert!(
+            coverage.rect.max_x() <= 148.0,
+            "coverage label should stay inside right padding: {:?}",
+            coverage.rect
+        );
+        assert!(
+            solid_fill_colors(&output).contains(&theme.palette.success.with_alpha(0.12)),
+            "padded placement badge should still paint the status fill"
+        );
     }
 
     #[test]
@@ -11102,6 +15497,7 @@ mod tests {
 
     #[test]
     fn status_bar_exposes_dynamic_segment_semantics() {
+        let theme = DefaultTheme::default();
         let zoom = Rc::new(RefCell::new("Zoom 35%".to_string()));
         let zoom_reader = Rc::clone(&zoom);
         let output = render(
@@ -11122,10 +15518,90 @@ mod tests {
                     && node.name.as_deref() == Some("Editor status")
             })
             .expect("status bar container semantics should exist");
-        assert_eq!(status.bounds.height(), 28.0);
+        assert_eq!(status.bounds.height(), theme.metrics.status_bar_height);
         assert!(output.semantics.iter().any(|node| {
             node.role == SemanticsRole::Text && node.name.as_deref() == Some("Zoom 35%")
         }));
+    }
+
+    #[test]
+    fn status_bar_description_is_exposed_to_semantics() {
+        let summary = Rc::new(RefCell::new(
+            "SIFS online | Path /services | idle".to_string(),
+        ));
+        let summary_reader = Rc::clone(&summary);
+        let output = render(
+            StatusBar::new()
+                .name("Files status")
+                .description_when(move || summary_reader.borrow().clone())
+                .segment(StatusBarSegment::new("Path /services").expand(true)),
+        );
+
+        let status = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Files status")
+            })
+            .expect("status bar container semantics should exist");
+        assert_eq!(
+            status.value,
+            Some(SemanticsValue::Text(
+                "SIFS online | Path /services | idle".to_string(),
+            ))
+        );
+        assert_eq!(
+            status.description.as_deref(),
+            Some("SIFS online | Path /services | idle")
+        );
+    }
+
+    #[test]
+    fn status_badge_publishes_text_semantics_and_theme_token_text() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            StatusBadge::new("Primary on atlas")
+                .theme(theme)
+                .tone(SemanticTone::Accent)
+                .icon(crate::IconGlyph::Storage),
+        );
+        let node = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Primary on atlas")
+            })
+            .expect("status badge should publish text semantics");
+        assert_eq!(
+            node.value,
+            Some(SemanticsValue::Text("Primary on atlas".to_string()))
+        );
+        assert_text_run_uses_token(&text_run_for(&output, "Primary on atlas"), theme.text.sm);
+    }
+
+    #[test]
+    fn coverage_dots_publish_replica_like_coverage_semantics_and_token_text() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            CoverageDots::new("Replicas", 2, 3)
+                .theme(theme)
+                .tone(SemanticTone::Warning),
+        );
+        let node = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Replicas")
+            })
+            .expect("coverage dots should publish text semantics");
+        assert_eq!(node.value, Some(SemanticsValue::Text("2/3".to_string())));
+        assert_eq!(node.description.as_deref(), Some("2 of 3 covered"));
+        assert_text_run_uses_token(&text_run_for(&output, "2/3"), theme.text.xs);
+        assert!(contains_approx_color(
+            &solid_fill_colors(&output),
+            theme.semantic_tone_colors(SemanticTone::Warning).0,
+        ));
     }
 
     #[test]
@@ -11306,6 +15782,7 @@ mod tests {
 
     #[test]
     fn command_group_keeps_natural_size_and_exposes_group_semantics() {
+        let theme = DefaultTheme::default();
         let output = render(
             crate::SizedBox::new()
                 .size(Size::new(320.0, 48.0))
@@ -11335,8 +15812,15 @@ mod tests {
                     && node.name.as_deref() == Some("History commands")
             })
             .expect("command group semantics should exist");
-        assert_eq!(group.bounds.width(), 63.0);
-        assert_eq!(group.bounds.height(), 32.0);
+        let expected_width = 28.0 * 2.0
+            + theme.metrics.command_group_spacing
+            + theme.metrics.command_group_padding.left
+            + theme.metrics.command_group_padding.right;
+        let expected_height = 28.0
+            + theme.metrics.command_group_padding.top
+            + theme.metrics.command_group_padding.bottom;
+        assert!((group.bounds.width() - expected_width).abs() < 0.01);
+        assert!((group.bounds.height() - expected_height).abs() < 0.01);
 
         for name in ["Undo", "Redo"] {
             let button = output
@@ -11666,6 +16150,7 @@ mod tests {
 
     #[test]
     fn property_row_inline_arranges_control_after_label() {
+        let theme = DefaultTheme::default();
         let output = render(
             crate::SizedBox::new()
                 .size(Size::new(320.0, 36.0))
@@ -11691,7 +16176,8 @@ mod tests {
             })
             .expect("inline property control semantics should exist");
         assert!(control.bounds.x() > label.bounds.max_x());
-        assert_eq!(control.bounds.width(), 216.0);
+        let expected_width = 320.0 - 96.0 - theme.metrics.property_row_inline_gap;
+        assert!((control.bounds.width() - expected_width).abs() < 0.01);
     }
 
     #[test]
@@ -12426,8 +16912,58 @@ mod tests {
             })
             .expect("dock panel child semantics should exist");
 
-        assert!(title.bounds.max_y() <= 34.0);
-        assert!(child.bounds.y() >= 42.0);
+        let theme = DefaultTheme::default();
+        assert!(title.bounds.max_y() <= theme.metrics.dock_panel_header_height);
+        assert!(
+            child.bounds.y()
+                >= theme.metrics.dock_panel_header_height + theme.metrics.dock_panel_padding.top
+        );
+    }
+
+    #[test]
+    fn empty_state_exposes_content_and_action_semantics() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 220.0))
+                .with_child(
+                    EmptyState::new("Empty directory", "Nothing here yet.")
+                        .theme(theme.clone())
+                        .icon(crate::IconGlyph::Folder)
+                        .detail("No files matched the active filter.")
+                        .action(crate::Button::new("Create file").theme(theme.clone())),
+                ),
+        );
+
+        let state = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Empty directory")
+            })
+            .expect("empty-state semantics should exist");
+        assert_eq!(
+            state.description.as_deref(),
+            Some("Nothing here yet. No files matched the active filter.")
+        );
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Button && node.name.as_deref() == Some("Create file")
+        }));
+        assert_eq!(
+            text_run_for(&output, "Empty directory").style.color,
+            theme.surfaces.text_muted
+        );
+        assert_eq!(
+            text_run_for(&output, "Nothing here yet.").style.color,
+            theme.surfaces.text_faint
+        );
+        assert_eq!(
+            text_run_for(&output, "No files matched the active filter.")
+                .style
+                .color,
+            theme.surfaces.text_muted
+        );
     }
 
     #[test]
@@ -12551,7 +17087,16 @@ mod tests {
             })
             .expect("status bar container semantics should exist");
 
-        assert_eq!(status.bounds, Rect::new(0.0, 132.0, 320.0, 28.0));
+        let theme = DefaultTheme::default();
+        assert_eq!(
+            status.bounds,
+            Rect::new(
+                0.0,
+                160.0 - theme.metrics.status_bar_height,
+                320.0,
+                theme.metrics.status_bar_height,
+            )
+        );
     }
 
     #[test]
@@ -12909,6 +17454,21 @@ mod tests {
         colors
     }
 
+    fn solid_fill_rects_for_color(output: &RenderOutput, expected: Color) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    rect,
+                    brush: Brush::Solid(color),
+                } if *color == expected => rects.push(*rect),
+                _ => {}
+            });
+        rects
+    }
+
     fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
         let mut colors = Vec::new();
         output
@@ -13241,19 +17801,16 @@ mod tests {
     #[test]
     fn tab_widgets_share_pressed_tab_border() -> Result<(), String> {
         let theme = DefaultTheme::default();
-        let press_point = Point::new(
-            theme.metrics.tab_min_width + theme.metrics.tab_gap + 72.0,
-            theme.metrics.tab_height * 0.5,
-        );
 
         let (mut runtime, window_id) = build_runtime(
             TabBar::new("Main tabs")
                 .theme(theme)
                 .tabs(["Design", "Inspect"]),
         );
-        runtime
+        let initial_tab_bar = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
+        let press_point = super::rect_center(text_run_for(&initial_tab_bar, "Inspect").rect);
         runtime
             .handle_event(
                 window_id,
@@ -13263,7 +17820,10 @@ mod tests {
         let tab_bar = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
-        assert!(solid_stroke_colors(&tab_bar).contains(&theme.palette.border_hover));
+        assert!(contains_approx_color(
+            &solid_stroke_colors(&tab_bar),
+            theme.palette.border_hover,
+        ));
 
         let (mut runtime, window_id) = build_runtime(
             Tabs::new("Main tabs")
@@ -13271,9 +17831,10 @@ mod tests {
                 .tab("Design", crate::Label::new("Design"))
                 .tab("Inspect", crate::Label::new("Inspect")),
         );
-        runtime
+        let initial_tabs = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
+        let press_point = super::rect_center(text_run_for(&initial_tabs, "Inspect").rect);
         runtime
             .handle_event(
                 window_id,
@@ -13283,7 +17844,10 @@ mod tests {
         let tabs = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
-        assert!(solid_stroke_colors(&tabs).contains(&theme.palette.border_hover));
+        assert!(contains_approx_color(
+            &solid_stroke_colors(&tabs),
+            theme.palette.border_hover,
+        ));
 
         Ok(())
     }

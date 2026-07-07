@@ -51,10 +51,7 @@ impl TestApp {
         F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        let harness = Rc::new(RefCell::new(Harness::new_live(move || {
-            build().into_test_runtime()
-        })?));
-        Ok(Self { harness })
+        Self::new_with_options(build, true, false)
     }
 
     pub fn new_with_vsync<F, A>(build: F, vsync_enabled: bool) -> Result<Self>
@@ -62,11 +59,7 @@ impl TestApp {
         F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        let harness = Rc::new(RefCell::new(Harness::new_live_with_vsync(
-            move || build().into_test_runtime(),
-            vsync_enabled,
-        )?));
-        Ok(Self { harness })
+        Self::new_with_options(build, vsync_enabled, false)
     }
 
     pub fn new_with_options<F, A>(build: F, vsync_enabled: bool, visible: bool) -> Result<Self>
@@ -74,11 +67,16 @@ impl TestApp {
         F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        let harness = Rc::new(RefCell::new(Harness::new_live_with_options(
-            move || build().into_test_runtime(),
-            vsync_enabled,
-            visible,
-        )?));
+        let harness = if live_backend_available() {
+            Harness::new_live_with_options(
+                move || build().into_test_runtime(),
+                vsync_enabled,
+                visible,
+            )?
+        } else {
+            Harness::new_headless_with_timeout(build().into_test_runtime()?, 30.0)?
+        };
+        let harness = Rc::new(RefCell::new(harness));
         Ok(Self { harness })
     }
 
@@ -162,5 +160,18 @@ impl TestApp {
             .window_id_by_title(title)
             .ok_or_else(|| Error::new(format!("no test window found with title \"{title}\"")))?;
         Ok(TestWindow::new(Rc::clone(&self.harness), window_id))
+    }
+}
+
+fn live_backend_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var_os("WAYLAND_SOCKET").is_some()
+            || std::env::var_os("DISPLAY").is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
     }
 }

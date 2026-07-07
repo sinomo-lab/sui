@@ -3,7 +3,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
     PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId,
+    SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexStyle, FlexWrap,
@@ -20,6 +20,8 @@ use crate::{DefaultTheme, MotionScalar};
 
 pub struct Padding {
     insets: Insets,
+    fill_child_width: bool,
+    fill_child_height: bool,
     child: SingleChild,
 }
 
@@ -30,6 +32,8 @@ impl Padding {
     {
         Self {
             insets,
+            fill_child_width: false,
+            fill_child_height: false,
             child: SingleChild::new(child),
         }
     }
@@ -41,8 +45,71 @@ impl Padding {
         Self::new(Insets::all(value), child)
     }
 
+    pub fn horizontal<W>(value: f32, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let value = value.max(0.0);
+        Self::new(
+            Insets {
+                left: value,
+                top: 0.0,
+                right: value,
+                bottom: 0.0,
+            },
+            child,
+        )
+    }
+
+    pub fn vertical<W>(value: f32, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let value = value.max(0.0);
+        Self::new(
+            Insets {
+                left: 0.0,
+                top: value,
+                right: 0.0,
+                bottom: value,
+            },
+            child,
+        )
+    }
+
+    pub fn symmetric<W>(horizontal: f32, vertical: f32, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self::new(
+            Insets {
+                left: horizontal.max(0.0),
+                top: vertical.max(0.0),
+                right: horizontal.max(0.0),
+                bottom: vertical.max(0.0),
+            },
+            child,
+        )
+    }
+
     pub fn insets(&self) -> Insets {
         self.insets
+    }
+
+    pub fn fill_child_width(mut self) -> Self {
+        self.fill_child_width = true;
+        self
+    }
+
+    pub fn fill_child_height(mut self) -> Self {
+        self.fill_child_height = true;
+        self
+    }
+
+    pub fn fill_child(mut self) -> Self {
+        self.fill_child_width = true;
+        self.fill_child_height = true;
+        self
     }
 
     pub fn child(&self) -> &WidgetPod {
@@ -66,8 +133,16 @@ impl Widget for Padding {
         let content = inset_rect(bounds, self.insets);
         let measured = self.child.child().measured_size();
         let child_size = Size::new(
-            measured.width.min(content.width()),
-            measured.height.min(content.height()),
+            if self.fill_child_width {
+                content.width()
+            } else {
+                measured.width.min(content.width())
+            },
+            if self.fill_child_height {
+                content.height()
+            } else {
+                measured.height.min(content.height())
+            },
         );
         self.child
             .arrange(ctx, Rect::from_origin_size(content.origin, child_size));
@@ -222,6 +297,110 @@ impl Widget for Background {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+pub struct SemanticRegion {
+    name: String,
+    name_reader: Option<Box<dyn Fn() -> String>>,
+    description: Option<String>,
+    description_reader: Option<Box<dyn Fn() -> String>>,
+    role: SemanticsRole,
+    child: SingleChild,
+}
+
+impl SemanticRegion {
+    pub fn new<W>(name: impl Into<String>, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            name: name.into(),
+            name_reader: None,
+            description: None,
+            description_reader: None,
+            role: SemanticsRole::GenericContainer,
+            child: SingleChild::new(child),
+        }
+    }
+
+    pub fn name_when<F>(mut self, name: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.name_reader = Some(Box::new(name));
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self.description_reader = None;
+        self
+    }
+
+    pub fn description_when<F>(mut self, description: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.description_reader = Some(Box::new(description));
+        self
+    }
+
+    pub fn role(mut self, role: SemanticsRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    pub fn child(&self) -> &WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn name_text(&self) -> String {
+        self.name_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.name.clone())
+    }
+
+    fn description_text(&self) -> Option<String> {
+        self.description_reader
+            .as_ref()
+            .map(|reader| reader())
+            .or_else(|| self.description.clone())
+    }
+}
+
+impl Widget for SemanticRegion {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), self.role.clone(), ctx.bounds());
+        node.name = Some(self.name_text());
+        node.description = self.description_text();
+        ctx.push(node);
         self.child.semantics(ctx);
     }
 
@@ -464,6 +643,670 @@ impl Widget for Stack {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.children.visit_children_mut(visitor);
+    }
+}
+
+pub struct TrailingSlotRow {
+    body: SingleChild,
+    trailing: SingleChild,
+    trailing_width: f32,
+    trailing_height: f32,
+    gap: f32,
+}
+
+impl TrailingSlotRow {
+    pub fn new<B, T>(body: B, trailing: T) -> Self
+    where
+        B: Widget + 'static,
+        T: Widget + 'static,
+    {
+        Self {
+            body: SingleChild::new(body),
+            trailing: SingleChild::new(trailing),
+            trailing_width: 0.0,
+            trailing_height: 0.0,
+            gap: 0.0,
+        }
+    }
+
+    pub fn trailing_width(mut self, width: f32) -> Self {
+        self.trailing_width = width.max(0.0);
+        self
+    }
+
+    pub fn trailing_height(mut self, height: f32) -> Self {
+        self.trailing_height = height.max(0.0);
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap.max(0.0);
+        self
+    }
+
+    pub fn body(&self) -> &WidgetPod {
+        self.body.child()
+    }
+
+    pub fn body_mut(&mut self) -> &mut WidgetPod {
+        self.body.child_mut()
+    }
+
+    pub fn trailing(&self) -> &WidgetPod {
+        self.trailing.child()
+    }
+
+    pub fn trailing_mut(&mut self) -> &mut WidgetPod {
+        self.trailing.child_mut()
+    }
+
+    fn layout_rects(&self, bounds: Rect) -> (Rect, Rect) {
+        let trailing_height = self
+            .trailing_height
+            .min(bounds.width())
+            .min(bounds.height())
+            .max(0.0);
+        let trailing_width = self.trailing_width.min(bounds.width()).max(0.0);
+        let gap = if trailing_width > 0.0 && bounds.width() > trailing_width {
+            self.gap.min(bounds.width() - trailing_width).max(0.0)
+        } else {
+            0.0
+        };
+        let body_width = (bounds.width() - trailing_width - gap).max(0.0);
+        let body = Rect::new(bounds.x(), bounds.y(), body_width, bounds.height());
+        let trailing = Rect::new(
+            bounds.x() + body_width + gap,
+            bounds.y() + ((bounds.height() - trailing_height) * 0.5).max(0.0),
+            trailing_width,
+            trailing_height,
+        );
+        (body, trailing)
+    }
+}
+
+impl Widget for TrailingSlotRow {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width
+        } else {
+            constraints.min.width.max(self.trailing_width)
+        };
+        if !constraints.max.height.is_finite() {
+            let provisional_height = constraints.min.height.max(self.trailing_height);
+            let bounds = Rect::new(0.0, 0.0, width, provisional_height);
+            let (body, trailing) = self.layout_rects(bounds);
+            let body_size = self.body.measure(
+                ctx,
+                Constraints::new(
+                    Size::new(body.width(), 0.0),
+                    Size::new(body.width(), f32::INFINITY),
+                ),
+            );
+            self.trailing.measure(
+                ctx,
+                Constraints::tight(Size::new(trailing.width(), self.trailing_height)),
+            );
+            let height = body_size
+                .height
+                .max(self.trailing_height)
+                .max(constraints.min.height);
+            return constraints.clamp(Size::new(width, height));
+        }
+
+        let height = constraints.max.height.max(constraints.min.height);
+        let bounds = Rect::new(0.0, 0.0, width, height);
+        let (body, trailing) = self.layout_rects(bounds);
+        self.body.measure(
+            ctx,
+            Constraints::tight(Size::new(body.width(), body.height())),
+        );
+        self.trailing.measure(
+            ctx,
+            Constraints::tight(Size::new(trailing.width(), trailing.height())),
+        );
+        constraints.clamp(Size::new(width, height))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let (body, trailing) = self.layout_rects(bounds);
+        self.body.arrange(ctx, body);
+        self.trailing.arrange(ctx, trailing);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.body.paint(ctx);
+        self.trailing.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.body.semantics(ctx);
+        self.trailing.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.body.visit_children(visitor);
+        self.trailing.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.body.visit_children_mut(visitor);
+        self.trailing.visit_children_mut(visitor);
+    }
+}
+
+/// Vertical dock layout with optional fixed-height top and bottom slots.
+///
+/// The body fills the remaining height. This is a layout primitive, not a themed panel: callers
+/// provide their own surfaces, separators, status bars, and scroll views.
+pub struct Dock {
+    top: Option<SingleChild>,
+    bottom: Option<SingleChild>,
+    body: SingleChild,
+    top_height: f32,
+    bottom_height: f32,
+    fallback_width: f32,
+    fallback_body_height: f32,
+}
+
+impl Dock {
+    pub fn new<W>(body: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            top: None,
+            bottom: None,
+            body: SingleChild::new(body),
+            top_height: 0.0,
+            bottom_height: 0.0,
+            fallback_width: 320.0,
+            fallback_body_height: 240.0,
+        }
+    }
+
+    pub fn top<W>(mut self, height: f32, widget: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.top = Some(SingleChild::new(widget));
+        self.top_height = height.max(0.0);
+        self
+    }
+
+    pub fn bottom<W>(mut self, height: f32, widget: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.bottom = Some(SingleChild::new(widget));
+        self.bottom_height = height.max(0.0);
+        self
+    }
+
+    pub fn fallback_width(mut self, width: f32) -> Self {
+        self.fallback_width = width.max(0.0);
+        self
+    }
+
+    pub fn fallback_body_height(mut self, height: f32) -> Self {
+        self.fallback_body_height = height.max(0.0);
+        self
+    }
+
+    pub fn top_child(&self) -> Option<&WidgetPod> {
+        self.top.as_ref().map(SingleChild::child)
+    }
+
+    pub fn top_child_mut(&mut self) -> Option<&mut WidgetPod> {
+        self.top.as_mut().map(SingleChild::child_mut)
+    }
+
+    pub fn body(&self) -> &WidgetPod {
+        self.body.child()
+    }
+
+    pub fn body_mut(&mut self) -> &mut WidgetPod {
+        self.body.child_mut()
+    }
+
+    pub fn bottom_child(&self) -> Option<&WidgetPod> {
+        self.bottom.as_ref().map(SingleChild::child)
+    }
+
+    pub fn bottom_child_mut(&mut self) -> Option<&mut WidgetPod> {
+        self.bottom.as_mut().map(SingleChild::child_mut)
+    }
+
+    fn width_for_measure(&self, constraints: Constraints) -> f32 {
+        if constraints.max.width.is_finite() {
+            constraints.max.width
+        } else {
+            constraints.min.width.max(self.fallback_width)
+        }
+    }
+}
+
+impl Widget for Dock {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let width = self.width_for_measure(constraints);
+        let top_h = self.top_height.max(0.0);
+        let bottom_h = self.bottom_height.max(0.0);
+
+        let top_size = if let Some(top) = &mut self.top {
+            top.measure(ctx, Constraints::tight(Size::new(width, top_h)))
+        } else {
+            Size::ZERO
+        };
+        let bottom_size = if let Some(bottom) = &mut self.bottom {
+            bottom.measure(ctx, Constraints::tight(Size::new(width, bottom_h)))
+        } else {
+            Size::ZERO
+        };
+
+        let available_body_h = if constraints.max.height.is_finite() {
+            (constraints.max.height - top_h - bottom_h).max(0.0)
+        } else {
+            self.fallback_body_height
+        };
+        let body_size = self.body.measure(
+            ctx,
+            Constraints::new(
+                Size::new(width, 0.0),
+                Size::new(width, available_body_h.max(0.0)),
+            ),
+        );
+
+        let height = if constraints.max.height.is_finite() {
+            constraints.max.height
+        } else {
+            top_h + body_size.height + bottom_h
+        };
+        let width = width
+            .max(top_size.width)
+            .max(body_size.width)
+            .max(bottom_size.width);
+        constraints.clamp(Size::new(width, height))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let top_h = self.top_height.min(bounds.height()).max(0.0);
+        let bottom_h = self
+            .bottom_height
+            .min((bounds.height() - top_h).max(0.0))
+            .max(0.0);
+        let body_h = (bounds.height() - top_h - bottom_h).max(0.0);
+
+        if let Some(top) = &mut self.top {
+            top.arrange(
+                ctx,
+                Rect::new(bounds.x(), bounds.y(), bounds.width(), top_h),
+            );
+        }
+        self.body.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y() + top_h, bounds.width(), body_h),
+        );
+        if let Some(bottom) = &mut self.bottom {
+            bottom.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x(),
+                    bounds.max_y() - bottom_h,
+                    bounds.width(),
+                    bottom_h,
+                ),
+            );
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.body.paint(ctx);
+        if let Some(top) = &self.top {
+            top.paint(ctx);
+        }
+        if let Some(bottom) = &self.bottom {
+            bottom.paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if let Some(top) = &self.top {
+            top.semantics(ctx);
+        }
+        self.body.semantics(ctx);
+        if let Some(bottom) = &self.bottom {
+            bottom.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(top) = &self.top {
+            top.visit_children(visitor);
+        }
+        self.body.visit_children(visitor);
+        if let Some(bottom) = &self.bottom {
+            bottom.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(top) = &mut self.top {
+            top.visit_children_mut(visitor);
+        }
+        self.body.visit_children_mut(visitor);
+        if let Some(bottom) = &mut self.bottom {
+            bottom.visit_children_mut(visitor);
+        }
+    }
+}
+
+/// Vertical dock layout where the bottom child is measured to its natural height.
+///
+/// This is useful for composer/status panels that grow with content while the body takes whatever
+/// height remains above them.
+pub struct MeasuredBottomDock {
+    body: SingleChild,
+    bottom: SingleChild,
+    fallback_size: Size,
+}
+
+impl MeasuredBottomDock {
+    pub fn new<B, T>(body: B, bottom: T) -> Self
+    where
+        B: Widget + 'static,
+        T: Widget + 'static,
+    {
+        Self {
+            body: SingleChild::new(body),
+            bottom: SingleChild::new(bottom),
+            fallback_size: Size::new(640.0, 640.0),
+        }
+    }
+
+    pub fn fallback_size(mut self, size: Size) -> Self {
+        self.fallback_size = Size::new(size.width.max(0.0), size.height.max(0.0));
+        self
+    }
+
+    pub fn body(&self) -> &WidgetPod {
+        self.body.child()
+    }
+
+    pub fn body_mut(&mut self) -> &mut WidgetPod {
+        self.body.child_mut()
+    }
+
+    pub fn bottom(&self) -> &WidgetPod {
+        self.bottom.child()
+    }
+
+    pub fn bottom_mut(&mut self) -> &mut WidgetPod {
+        self.bottom.child_mut()
+    }
+}
+
+impl Widget for MeasuredBottomDock {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width
+        } else {
+            constraints.min.width.max(self.fallback_size.width)
+        };
+        let height = if constraints.max.height.is_finite() {
+            constraints.max.height
+        } else {
+            constraints.min.height.max(self.fallback_size.height)
+        };
+        let bottom_size = self.bottom.measure(
+            ctx,
+            Constraints::new(Size::new(width, 0.0), Size::new(width, height)),
+        );
+        let bottom_h = bottom_size.height.min(height).max(0.0);
+        let body_h = (height - bottom_h).max(0.0);
+        self.body
+            .measure(ctx, Constraints::tight(Size::new(width, body_h)));
+        constraints.clamp(Size::new(width, body_h + bottom_h))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let bottom_h = self
+            .bottom
+            .child()
+            .measured_size()
+            .height
+            .min(bounds.height())
+            .max(0.0);
+        let body_h = (bounds.height() - bottom_h).max(0.0);
+        self.body.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y(), bounds.width(), body_h),
+        );
+        self.bottom.arrange(
+            ctx,
+            Rect::new(
+                bounds.x(),
+                bounds.max_y() - bottom_h,
+                bounds.width(),
+                bottom_h,
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.body.paint(ctx);
+        self.bottom.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.body.semantics(ctx);
+        self.bottom.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.body.visit_children(visitor);
+        self.bottom.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.body.visit_children_mut(visitor);
+        self.bottom.visit_children_mut(visitor);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FixedPane {
+    First,
+    Second,
+}
+
+pub struct FixedPaneSplit {
+    axis: Axis,
+    fixed_pane: FixedPane,
+    fixed_extent: f32,
+    divider_extent: f32,
+    fallback_flexible_extent: f32,
+    first: SingleChild,
+    divider: SingleChild,
+    second: SingleChild,
+}
+
+impl FixedPaneSplit {
+    pub fn new<F, D, S>(axis: Axis, first: F, divider: D, second: S) -> Self
+    where
+        F: Widget + 'static,
+        D: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self {
+            axis,
+            fixed_pane: FixedPane::First,
+            fixed_extent: 0.0,
+            divider_extent: 1.0,
+            fallback_flexible_extent: 320.0,
+            first: SingleChild::new(first),
+            divider: SingleChild::new(divider),
+            second: SingleChild::new(second),
+        }
+    }
+
+    pub fn horizontal<F, D, S>(first: F, divider: D, second: S) -> Self
+    where
+        F: Widget + 'static,
+        D: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self::new(Axis::Horizontal, first, divider, second)
+    }
+
+    pub fn vertical<F, D, S>(first: F, divider: D, second: S) -> Self
+    where
+        F: Widget + 'static,
+        D: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self::new(Axis::Vertical, first, divider, second)
+    }
+
+    pub fn fixed_first(mut self, extent: f32) -> Self {
+        self.fixed_pane = FixedPane::First;
+        self.fixed_extent = extent.max(0.0);
+        self
+    }
+
+    pub fn fixed_second(mut self, extent: f32) -> Self {
+        self.fixed_pane = FixedPane::Second;
+        self.fixed_extent = extent.max(0.0);
+        self
+    }
+
+    pub fn divider_extent(mut self, extent: f32) -> Self {
+        self.divider_extent = extent.max(0.0);
+        self
+    }
+
+    pub fn fallback_flexible_extent(mut self, extent: f32) -> Self {
+        self.fallback_flexible_extent = extent.max(0.0);
+        self
+    }
+
+    pub fn first(&self) -> &WidgetPod {
+        self.first.child()
+    }
+
+    pub fn first_mut(&mut self) -> &mut WidgetPod {
+        self.first.child_mut()
+    }
+
+    pub fn divider(&self) -> &WidgetPod {
+        self.divider.child()
+    }
+
+    pub fn divider_mut(&mut self) -> &mut WidgetPod {
+        self.divider.child_mut()
+    }
+
+    pub fn second(&self) -> &WidgetPod {
+        self.second.child()
+    }
+
+    pub fn second_mut(&mut self) -> &mut WidgetPod {
+        self.second.child_mut()
+    }
+
+    fn split_extents(&self, total_main: f32) -> (f32, f32, f32) {
+        let divider = self.divider_extent.min(total_main).max(0.0);
+        let available = (total_main - divider).max(0.0);
+        match self.fixed_pane {
+            FixedPane::First => {
+                let first = self.fixed_extent.min(available).max(0.0);
+                (first, divider, (available - first).max(0.0))
+            }
+            FixedPane::Second => {
+                let second = self.fixed_extent.min(available).max(0.0);
+                ((available - second).max(0.0), divider, second)
+            }
+        }
+    }
+
+    fn child_constraints(&self, main: f32, cross: Option<f32>) -> Constraints {
+        Constraints::new(
+            axis_size(self.axis, main, cross.unwrap_or(0.0)),
+            axis_size(self.axis, main, cross.unwrap_or(f32::INFINITY)),
+        )
+    }
+
+    fn child_rect(&self, bounds: Rect, main_offset: f32, main: f32) -> Rect {
+        Rect::from_origin_size(
+            bounds.origin + axis_point(self.axis, main_offset, 0.0).to_vector(),
+            axis_size(self.axis, main, axis_cross(self.axis, bounds.size)),
+        )
+    }
+}
+
+impl Widget for FixedPaneSplit {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let total_main = if axis_main(self.axis, constraints.max).is_finite() {
+            axis_main(self.axis, constraints.max)
+        } else {
+            self.fixed_extent + self.divider_extent + self.fallback_flexible_extent
+        };
+        let cross_max = axis_cross(self.axis, constraints.max);
+        let tight_cross = cross_max.is_finite().then_some(cross_max);
+        let (first_main, divider_main, second_main) = self.split_extents(total_main);
+
+        let first_size = self
+            .first
+            .measure(ctx, self.child_constraints(first_main, tight_cross));
+        let divider_size = self
+            .divider
+            .measure(ctx, self.child_constraints(divider_main, tight_cross));
+        let second_size = self
+            .second
+            .measure(ctx, self.child_constraints(second_main, tight_cross));
+
+        let cross = tight_cross.unwrap_or_else(|| {
+            axis_cross(self.axis, first_size)
+                .max(axis_cross(self.axis, divider_size))
+                .max(axis_cross(self.axis, second_size))
+                .max(axis_cross(self.axis, constraints.min))
+        });
+        constraints.clamp(axis_size(self.axis, total_main, cross))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let (first_main, divider_main, second_main) =
+            self.split_extents(axis_main(self.axis, bounds.size));
+        self.first
+            .arrange(ctx, self.child_rect(bounds, 0.0, first_main));
+        self.divider
+            .arrange(ctx, self.child_rect(bounds, first_main, divider_main));
+        self.second.arrange(
+            ctx,
+            self.child_rect(bounds, first_main + divider_main, second_main),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.first.paint(ctx);
+        self.divider.paint(ctx);
+        self.second.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.first.semantics(ctx);
+        self.divider.semantics(ctx);
+        self.second.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.first.visit_children(visitor);
+        self.divider.visit_children(visitor);
+        self.second.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.first.visit_children_mut(visitor);
+        self.divider.visit_children_mut(visitor);
+        self.second.visit_children_mut(visitor);
     }
 }
 
@@ -764,6 +1607,188 @@ impl Widget for SwitchView {
         if let Some(index) = self.active_index() {
             visitor.visit(&mut self.children.as_mut_slice()[index]);
         }
+    }
+}
+
+/// Hosts a child subtree that is rebuilt whenever a caller-supplied key changes.
+///
+/// This is useful for composed widgets whose child list is fixed at construction time, such as
+/// segmented views, breadcrumbs, and virtualized tables. The container checks the key during
+/// measure, on pointer release, and on redraw. When the key changes it replaces the child pod and
+/// requests a fresh layout/paint pass.
+pub struct RebuildOnChange<K: PartialEq + Clone> {
+    key_fn: Box<dyn Fn() -> K>,
+    build: Box<dyn Fn(&K) -> WidgetPod>,
+    last_key: K,
+    child: WidgetPod,
+}
+
+impl<K: PartialEq + Clone> RebuildOnChange<K> {
+    pub fn new<KF, BF>(key_fn: KF, build: BF) -> Self
+    where
+        KF: Fn() -> K + 'static,
+        BF: Fn(&K) -> WidgetPod + 'static,
+    {
+        let last_key = key_fn();
+        let child = build(&last_key);
+        Self {
+            key_fn: Box::new(key_fn),
+            build: Box::new(build),
+            last_key,
+            child,
+        }
+    }
+
+    pub fn refresh(&mut self) -> bool {
+        let key = (self.key_fn)();
+        if key != self.last_key {
+            self.child = (self.build)(&key);
+            self.last_key = key;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn child(&self) -> &WidgetPod {
+        &self.child
+    }
+
+    pub fn child_mut(&mut self) -> &mut WidgetPod {
+        &mut self.child
+    }
+}
+
+impl<K: PartialEq + Clone + 'static> Widget for RebuildOnChange<K> {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let pointer_up = matches!(
+            event,
+            Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Up)
+        );
+        let redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
+        if (pointer_up || redraw) && self.refresh() {
+            ctx.request_measure();
+            ctx.request_arrange();
+            ctx.request_paint();
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.refresh();
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        visitor.visit(&self.child);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        visitor.visit(&mut self.child);
+    }
+}
+
+/// Hosts a child subtree that is rebuilt whenever layout constraints resolve to a new key.
+///
+/// This is useful for breakpoint-driven layouts where the available width or height changes which
+/// control set should be mounted. The container owns the child replacement and invalidation; the
+/// caller only provides the key derivation and child builder.
+pub struct RebuildOnConstraints<K: PartialEq + Clone> {
+    key_fn: Box<dyn Fn(Constraints) -> K>,
+    build: Box<dyn Fn(&K) -> WidgetPod>,
+    last_key: K,
+    child: WidgetPod,
+}
+
+impl<K: PartialEq + Clone> RebuildOnConstraints<K> {
+    pub fn new<KF, BF>(initial_key: K, key_fn: KF, build: BF) -> Self
+    where
+        KF: Fn(Constraints) -> K + 'static,
+        BF: Fn(&K) -> WidgetPod + 'static,
+    {
+        let child = build(&initial_key);
+        Self {
+            key_fn: Box::new(key_fn),
+            build: Box::new(build),
+            last_key: initial_key,
+            child,
+        }
+    }
+
+    pub fn refresh_for_constraints(&mut self, constraints: Constraints) -> bool {
+        let key = (self.key_fn)(constraints);
+        if key != self.last_key {
+            self.child = (self.build)(&key);
+            self.last_key = key;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn child(&self) -> &WidgetPod {
+        &self.child
+    }
+
+    pub fn child_mut(&mut self) -> &mut WidgetPod {
+        &mut self.child
+    }
+}
+
+impl<K: PartialEq + Clone + 'static> Widget for RebuildOnConstraints<K> {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let pointer_up = matches!(
+            event,
+            Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Up)
+        );
+        let redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
+        let bounds = ctx.bounds();
+        if (pointer_up || redraw)
+            && self.refresh_for_constraints(Constraints::tight(Size::new(
+                bounds.width(),
+                bounds.height(),
+            )))
+        {
+            ctx.request_measure();
+            ctx.request_arrange();
+            ctx.request_paint();
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.refresh_for_constraints(constraints);
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        visitor.visit(&self.child);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        visitor.visit(&mut self.child);
     }
 }
 
@@ -2724,11 +3749,15 @@ fn stack_child_constraints(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     use super::{
-        Align, Background, Flex, Overflow, Padding, ScrollAxes, ScrollBar, ScrollState, ScrollView,
-        SizedBox, Stack, SwitchView, VirtualScrollView,
+        Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,
+        RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
+        SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
     };
     use crate::{DefaultTheme, SplitView};
     use sui_core::{
@@ -2740,7 +3769,7 @@ mod tests {
     use sui_runtime::{
         Application, ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
         PaintCtx, RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
-        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
+        WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
 
@@ -2771,6 +3800,60 @@ mod tests {
                 ctx.bounds(),
             ));
         }
+    }
+
+    #[test]
+    fn rebuild_on_change_rebuilds_child_only_when_key_changes() {
+        let key = Rc::new(Cell::new(1usize));
+        let builds = Rc::new(RefCell::new(Vec::new()));
+        let key_reader = Rc::clone(&key);
+        let build_log = Rc::clone(&builds);
+
+        let mut host = RebuildOnChange::new(
+            move || key_reader.get(),
+            move |value| {
+                build_log.borrow_mut().push(*value);
+                WidgetPod::new(FixedBox::new(
+                    Size::new(*value as f32, 10.0),
+                    Color::srgba(0.0, 0.0, 0.0, 1.0),
+                ))
+            },
+        );
+
+        assert_eq!(*builds.borrow(), vec![1]);
+        assert!(!host.refresh());
+        assert_eq!(*builds.borrow(), vec![1]);
+
+        key.set(2);
+        assert!(host.refresh());
+        assert_eq!(*builds.borrow(), vec![1, 2]);
+    }
+
+    #[test]
+    fn rebuild_on_constraints_rebuilds_child_when_breakpoint_changes() {
+        let builds = Rc::new(RefCell::new(Vec::new()));
+        let build_log = Rc::clone(&builds);
+        let mut host = RebuildOnConstraints::new(
+            false,
+            |constraints| constraints.max.width >= 420.0,
+            move |wide| {
+                build_log.borrow_mut().push(*wide);
+                let width = if *wide { 24.0 } else { 12.0 };
+                WidgetPod::new(FixedBox::new(
+                    Size::new(width, 10.0),
+                    Color::srgba(0.0, 0.0, 0.0, 1.0),
+                ))
+            },
+        );
+
+        assert_eq!(*builds.borrow(), vec![false]);
+        let constraints = Constraints::tight(Size::new(520.0, 80.0));
+        assert!(host.refresh_for_constraints(constraints));
+        assert_eq!(*builds.borrow(), vec![false, true]);
+
+        let constraints = Constraints::tight(Size::new(560.0, 80.0));
+        assert!(!host.refresh_for_constraints(constraints));
+        assert_eq!(*builds.borrow(), vec![false, true]);
     }
 
     struct OverflowingBox {
@@ -3184,6 +4267,37 @@ mod tests {
         (runtime, window_id)
     }
 
+    fn scroll_view_content_with_height<'a>(
+        graph: &'a WidgetGraphSnapshot,
+        content_height: f32,
+    ) -> &'a WidgetNodeSnapshot {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                (node.measured_size.height - content_height).abs() <= 0.5
+                    && node
+                        .parent
+                        .and_then(|parent_id| {
+                            graph.nodes.iter().find(|parent| parent.id == parent_id)
+                        })
+                        .is_some_and(|parent| parent.paint_boundary == PaintBoundaryMode::Explicit)
+            })
+            .expect("scroll content present")
+    }
+
+    fn parent_node<'a>(
+        graph: &'a WidgetGraphSnapshot,
+        node: &WidgetNodeSnapshot,
+    ) -> &'a WidgetNodeSnapshot {
+        let parent_id = node.parent.expect("node has parent");
+        graph
+            .nodes
+            .iter()
+            .find(|parent| parent.id == parent_id)
+            .expect("parent node present")
+    }
+
     fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
         let mut colors = Vec::new();
         output
@@ -3320,6 +4434,37 @@ mod tests {
     }
 
     #[test]
+    fn padding_horizontal_constructor_offsets_x_only() {
+        let (output, graph) = render_root(Padding::horizontal(
+            9.0,
+            FixedBox::new(Size::new(40.0, 20.0), Color::rgba(0.2, 0.3, 0.4, 1.0)),
+        ));
+
+        assert_eq!(output.frame.viewport, Size::new(58.0, 20.0));
+        assert_eq!(graph.nodes[1].bounds, Rect::new(9.0, 0.0, 40.0, 20.0));
+    }
+
+    #[test]
+    fn padding_can_stretch_child_to_arranged_content_height() {
+        let (_output, graph) = render_root(
+            SizedBox::new().size(Size::new(100.0, 80.0)).with_child(
+                Padding::new(
+                    Insets {
+                        left: 8.0,
+                        top: 5.0,
+                        right: 12.0,
+                        bottom: 7.0,
+                    },
+                    FixedBox::new(Size::new(20.0, 10.0), Color::rgba(0.2, 0.3, 0.4, 1.0)),
+                )
+                .fill_child_height(),
+            ),
+        );
+
+        assert_eq!(graph.nodes[2].bounds, Rect::new(8.0, 5.0, 80.0, 68.0));
+    }
+
+    #[test]
     fn align_centers_child_within_available_space() {
         let (output, graph) = render_root(SizedBox::new().size(Size::new(100.0, 60.0)).with_child(
             Align::center(FixedBox::new(
@@ -3340,6 +4485,105 @@ mod tests {
 
         assert_eq!(output.frame.viewport, Size::new(40.0, 24.0));
         assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 40.0, 24.0));
+    }
+
+    #[test]
+    fn trailing_slot_row_places_fixed_trailing_slot() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(200.0, 80.0)).with_child(
+                TrailingSlotRow::new(
+                    FixedBox::new(Size::new(120.0, 64.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
+                    FixedBox::new(Size::new(40.0, 40.0), Color::rgba(0.7, 0.2, 0.2, 1.0)),
+                )
+                .trailing_width(50.0)
+                .trailing_height(40.0)
+                .gap(8.0),
+            ),
+        );
+
+        assert_eq!(output.frame.viewport, Size::new(200.0, 80.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 142.0, 80.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(150.0, 20.0, 50.0, 40.0));
+    }
+
+    #[test]
+    fn dock_places_fixed_top_bottom_and_fills_body() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(200.0, 120.0)).with_child(
+                Dock::new(FixedBox::new(
+                    Size::new(50.0, 50.0),
+                    Color::rgba(0.1, 0.7, 0.2, 1.0),
+                ))
+                .top(
+                    24.0,
+                    FixedBox::new(Size::new(200.0, 24.0), Color::rgba(0.2, 0.2, 0.8, 1.0)),
+                )
+                .bottom(
+                    18.0,
+                    FixedBox::new(Size::new(200.0, 18.0), Color::rgba(0.8, 0.2, 0.2, 1.0)),
+                ),
+            ),
+        );
+
+        assert_eq!(output.frame.viewport, Size::new(200.0, 120.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 200.0, 24.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(0.0, 24.0, 200.0, 78.0));
+        assert_eq!(graph.nodes[4].bounds, Rect::new(0.0, 102.0, 200.0, 18.0));
+    }
+
+    #[test]
+    fn measured_bottom_dock_places_natural_bottom_at_bottom_edge() {
+        let (output, graph) =
+            render_root(SizedBox::new().size(Size::new(200.0, 120.0)).with_child(
+                MeasuredBottomDock::new(
+                    FixedBox::new(Size::new(50.0, 50.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
+                    FixedBox::new(Size::new(60.0, 26.0), Color::rgba(0.8, 0.2, 0.2, 1.0)),
+                ),
+            ));
+
+        assert_eq!(output.frame.viewport, Size::new(200.0, 120.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 200.0, 94.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(0.0, 94.0, 200.0, 26.0));
+    }
+
+    #[test]
+    fn fixed_pane_split_preserves_fixed_first_and_stretches_cross_axis() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(200.0, 80.0)).with_child(
+                FixedPaneSplit::horizontal(
+                    FixedBox::new(Size::new(80.0, 12.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
+                    FixedBox::new(Size::new(1.0, 80.0), Color::rgba(0.7, 0.7, 0.7, 1.0)),
+                    FixedBox::new(Size::new(120.0, 12.0), Color::rgba(0.7, 0.2, 0.2, 1.0)),
+                )
+                .fixed_first(64.0)
+                .divider_extent(1.0),
+            ),
+        );
+
+        assert_eq!(output.frame.viewport, Size::new(200.0, 80.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 64.0, 80.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(64.0, 0.0, 1.0, 80.0));
+        assert_eq!(graph.nodes[4].bounds, Rect::new(65.0, 0.0, 135.0, 80.0));
+    }
+
+    #[test]
+    fn fixed_pane_split_preserves_fixed_second_and_shrinks_to_fit() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(90.0, 40.0)).with_child(
+                FixedPaneSplit::horizontal(
+                    FixedBox::new(Size::new(80.0, 12.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
+                    FixedBox::new(Size::new(1.0, 40.0), Color::rgba(0.7, 0.7, 0.7, 1.0)),
+                    FixedBox::new(Size::new(120.0, 12.0), Color::rgba(0.7, 0.2, 0.2, 1.0)),
+                )
+                .fixed_second(120.0)
+                .divider_extent(1.0),
+            ),
+        );
+
+        assert_eq!(output.frame.viewport, Size::new(90.0, 40.0));
+        assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 0.0, 40.0));
+        assert_eq!(graph.nodes[3].bounds, Rect::new(0.0, 0.0, 1.0, 40.0));
+        assert_eq!(graph.nodes[4].bounds, Rect::new(1.0, 0.0, 89.0, 40.0));
     }
 
     #[test]
@@ -3474,6 +4718,31 @@ mod tests {
                 brush: Brush::Solid(Color::rgba(0.9, 0.2, 0.1, 1.0)),
             }
         );
+    }
+
+    #[test]
+    fn semantic_region_wraps_child_with_accessible_summary() {
+        let description = Rc::new(RefCell::new("4 active tasks".to_string()));
+        let description_reader = Rc::clone(&description);
+        let (output, graph) = render_root(
+            SemanticRegion::new(
+                "File task strip",
+                FixedBox::new(Size::new(96.0, 28.0), Color::rgba(0.2, 0.4, 0.6, 1.0)),
+            )
+            .role(SemanticsRole::Text)
+            .description_when(move || description_reader.borrow().clone()),
+        );
+
+        let region = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("File task strip")
+            })
+            .expect("semantic region node should exist");
+        assert_eq!(region.description.as_deref(), Some("4 active tasks"));
+        assert_eq!(graph.nodes[0].bounds, Rect::new(0.0, 0.0, 96.0, 28.0));
+        assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 96.0, 28.0));
     }
 
     #[test]
@@ -4088,12 +5357,12 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
 
-        let content = graph
-            .nodes
-            .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
-            .expect("scroll content present");
-        assert_eq!(content.bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+        let content = scroll_view_content_with_height(&graph, 120.0);
+        let scroll_view = parent_node(&graph, content);
+        assert_eq!(
+            content.bounds,
+            Rect::new(0.0, -32.0, scroll_view.bounds.width(), 120.0)
+        );
         let scroll_bar = output
             .semantics
             .iter()
@@ -4356,11 +5625,11 @@ mod tests {
         let _ = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
 
-        let content = graph
-            .nodes
-            .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
-            .expect("scroll content present");
-        assert_eq!(content.bounds, Rect::new(0.0, -80.0, 80.0, 120.0));
+        let content = scroll_view_content_with_height(&graph, 120.0);
+        let scroll_view = parent_node(&graph, content);
+        assert_eq!(
+            content.bounds,
+            Rect::new(0.0, -80.0, scroll_view.bounds.width(), 120.0)
+        );
     }
 }

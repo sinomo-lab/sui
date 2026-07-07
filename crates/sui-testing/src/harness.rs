@@ -48,6 +48,8 @@ const REDRAW_FLUSH_LIMIT: usize = 256;
 const LIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 // This is a failure timeout; normal live commands return as soon as the event loop replies.
 const LIVE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const HEADLESS_IDLE_TIMEOUT_CONTEXT: &str = "headless harness idle";
+const HEADLESS_PUMP_TIMEOUT_CONTEXT: &str = "headless harness frame pump";
 
 fn map_window_color_management_for_harness(
     mode: WindowColorManagementMode,
@@ -223,12 +225,19 @@ static LIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 impl Harness {
     pub(crate) fn new_headless(runtime: Runtime) -> Result<Self> {
+        Self::new_headless_with_timeout(runtime, 5.0)
+    }
+
+    pub(crate) fn new_headless_with_timeout(
+        runtime: Runtime,
+        default_timeout: f64,
+    ) -> Result<Self> {
         let mut harness = Self {
             backend: HarnessBackend::Headless(HeadlessHarness {
                 runtime,
                 platform: HeadlessPlatform::new(),
             }),
-            default_timeout: 5.0,
+            default_timeout,
         };
         harness.run_until_idle()?;
         Ok(harness)
@@ -249,6 +258,7 @@ impl Harness {
         Ok(harness)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn new_live<F>(build_runtime: F) -> Result<Self>
     where
         F: FnOnce() -> Result<Runtime> + Send + 'static,
@@ -256,6 +266,7 @@ impl Harness {
         Self::new_live_with_options(build_runtime, true, false)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn new_live_with_vsync<F>(build_runtime: F, vsync_enabled: bool) -> Result<Self>
     where
         F: FnOnce() -> Result<Runtime> + Send + 'static,
@@ -357,9 +368,15 @@ impl Harness {
     }
 
     pub(crate) fn run_until_idle(&mut self) -> Result<()> {
+        let timeout = Duration::from_secs_f64(self.default_timeout.max(0.0));
+        let deadline = Instant::now() + timeout;
         match &mut self.backend {
             HarnessBackend::Headless(harness) => {
-                while harness.platform.pump(&mut harness.runtime)? {}
+                while harness.platform.pump(&mut harness.runtime)? {
+                    if Instant::now() >= deadline {
+                        return Err(timeout_error(HEADLESS_IDLE_TIMEOUT_CONTEXT, timeout));
+                    }
+                }
                 Ok(())
             }
             HarnessBackend::Live(harness) => harness.flush(),
@@ -371,7 +388,12 @@ impl Harness {
 
         match &mut self.backend {
             HarnessBackend::Headless(harness) => {
+                let timeout = Duration::from_secs_f64(self.default_timeout.max(0.0));
+                let deadline = Instant::now() + timeout;
                 for _ in 0..frames {
+                    if Instant::now() >= deadline {
+                        return Err(timeout_error(HEADLESS_PUMP_TIMEOUT_CONTEXT, timeout));
+                    }
                     harness.platform.advance_time(FRAME_DELTA);
                     harness.platform.pump(&mut harness.runtime)?;
                 }
@@ -486,9 +508,14 @@ impl Harness {
     }
 
     pub(crate) fn performance_snapshot(
-        &self,
+        &mut self,
         window_id: WindowId,
     ) -> Result<WindowPerformanceSnapshot> {
+        if let Some(snapshot) = window_performance_snapshot(window_id) {
+            return Ok(snapshot);
+        }
+
+        self.pump_frames(2)?;
         window_performance_snapshot(window_id).ok_or_else(|| {
             Error::new(format!(
                 "window {} does not have a performance snapshot yet",
@@ -548,6 +575,13 @@ impl Harness {
             }
         }
     }
+}
+
+fn timeout_error(context: &str, timeout: Duration) -> Error {
+    Error::new(format!(
+        "{context} did not complete within {:.3}s",
+        timeout.as_secs_f64()
+    ))
 }
 
 impl LiveHarness {

@@ -235,6 +235,47 @@ pub(crate) fn paint_single_line_aligned_text(
     ctx.draw_text(fallback_rect, text.to_string(), style.clone());
 }
 
+/// Greedy word-wrap `text` to `max_width`, using `measure` for run widths.
+///
+/// Explicit newlines are preserved. Words longer than `max_width` are kept on
+/// their own line rather than split, which matches common UI metadata wrapping.
+pub fn wrap_text_lines(
+    text: &str,
+    max_width: f32,
+    mut measure: impl FnMut(&str) -> f32,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let space_width = measure(" ");
+
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+
+        let mut current = String::new();
+        let mut current_width = 0.0_f32;
+        for word in paragraph.split(' ') {
+            let word_width = measure(word);
+            if current.is_empty() {
+                current.push_str(word);
+                current_width = word_width;
+            } else if current_width + space_width + word_width <= max_width {
+                current.push(' ');
+                current.push_str(word);
+                current_width += space_width + word_width;
+            } else {
+                lines.push(std::mem::take(&mut current));
+                current.push_str(word);
+                current_width = word_width;
+            }
+        }
+        lines.push(current);
+    }
+
+    lines
+}
+
 fn paragraph_alignment(
     horizontal_alignment: f32,
     horizontal_mode: HorizontalTextAlignmentMode,
@@ -348,4 +389,25 @@ fn visual_center(ctx: &PaintCtx, measurement: TextMeasurement) -> f32 {
         measurement.descent
     };
     (top + bottom) * 0.5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_text_lines;
+
+    #[test]
+    fn wrap_text_lines_preserves_newlines_and_keeps_long_words() {
+        let lines = wrap_text_lines("alpha beta\nsuperlongword gamma", 10.0, |text| {
+            text.chars().count() as f32
+        });
+
+        assert_eq!(
+            lines,
+            vec![
+                "alpha beta".to_string(),
+                "superlongword".to_string(),
+                "gamma".to_string(),
+            ]
+        );
+    }
 }

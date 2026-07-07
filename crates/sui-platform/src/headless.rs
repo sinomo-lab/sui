@@ -2,16 +2,18 @@ use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
 use sui_render_wgpu::{
-    DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, RgbaImage, WgpuRenderer,
+    DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, OutputStrategy, RgbaImage,
+    WgpuRenderer,
 };
 use sui_runtime::{
-    PresentationLatencyDiagnostics, Runtime, window_render_options,
+    PresentationLatencyDiagnostics, Runtime, WindowRenderOptions, window_render_options,
     window_scene_statistics_detail_mode,
 };
 
 use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, map_window_stem_darkening,
-    map_window_text_coverage_policy, map_window_text_hinting,
+    AccessibilityBridge, AccessibilitySnapshot, WindowOutputDiagnostics, map_window_stem_darkening,
+    map_window_text_coverage_policy, map_window_text_hinting, publish_window_output_diagnostics,
+    resolve_sdr_content_brightness_nits,
 };
 
 #[derive(Debug, Clone)]
@@ -33,7 +35,6 @@ impl HeadlessPlatform {
     const DEFAULT_WINDOW_SIZE: Size = Size::new(1280.0, 720.0);
 
     pub fn new() -> Self {
-        crate::reset_window_performance_store();
         Self::default()
     }
 
@@ -343,7 +344,49 @@ impl HeadlessPlatform {
                         map_window_text_coverage_policy(options.text_coverage_policy)
                     }),
                 );
+                let active_render_options =
+                    render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+                let display_capabilities_for_brightness = self
+                    .renderer
+                    .window_display_capabilities(window_id)
+                    .unwrap_or_default();
+                let sdr_content_brightness_nits = resolve_sdr_content_brightness_nits(
+                    active_render_options.sdr_content_brightness_nits,
+                    active_render_options.use_system_sdr_content_brightness,
+                    &display_capabilities_for_brightness,
+                );
                 self.renderer.render(&output.frame)?;
+                let mut display_capabilities = self
+                    .renderer
+                    .window_display_capabilities(window_id)
+                    .unwrap_or_default();
+                if !display_capabilities.notes.is_empty() {
+                    display_capabilities.notes.push(' ');
+                }
+                display_capabilities
+                    .notes
+                    .push_str("Headless offscreen renderer.");
+                let system_sdr_content_brightness_nits = display_capabilities.sdr_white_nits;
+                publish_window_output_diagnostics(
+                    window_id,
+                    WindowOutputDiagnostics {
+                        display_capabilities,
+                        requested_color_management_mode: active_render_options
+                            .color_management_mode,
+                        requested_output_primaries: active_render_options.output_color_primaries,
+                        requested_dynamic_range_mode: active_render_options.dynamic_range_mode,
+                        requested_tone_mapping_mode: active_render_options.tone_mapping_mode,
+                        requested_sdr_content_brightness_nits: sdr_content_brightness_nits,
+                        configured_sdr_content_brightness_nits: active_render_options
+                            .sdr_content_brightness_nits,
+                        system_sdr_content_brightness_nits,
+                        use_system_sdr_content_brightness: active_render_options
+                            .use_system_sdr_content_brightness,
+                        active_output_strategy: OutputStrategy::SdrSurface {
+                            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                        },
+                    },
+                );
                 let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
                 let presented_at_ms = self.current_time() * 1000.0;
                 presentation_latency.event_to_present_ms = self.windows[window_index]

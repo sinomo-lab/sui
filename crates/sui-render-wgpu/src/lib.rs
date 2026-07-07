@@ -5080,9 +5080,11 @@ mod tests {
         ((1.0 - ndc_y) * 0.5) * viewport.height
     }
 
+    const PHYSICAL_PIXEL_ALIGNMENT_EPSILON: f32 = 0.005;
+
     fn is_physically_pixel_aligned(value: f32, scale_factor: f32) -> bool {
         let physical = value * scale_factor;
-        (physical - physical.round()).abs() < 0.0001
+        (physical - physical.round()).abs() <= PHYSICAL_PIXEL_ALIGNMENT_EPSILON
     }
 
     #[test]

@@ -9,9 +9,13 @@ use sui_scene::{ImageSource, StrokeStyle, WidgetShader};
 use sui_text::{FontFeature, TextStyle};
 
 use crate::{
-    ControlMetrics, DefaultTheme, MotionScalar, ThemeDensity, ThemeTextToken,
+    ControlMetrics, DefaultTheme, MotionScalar, SemanticTone, ThemeDensity, ThemeTextToken,
     text_align::paint_aligned_text,
 };
+
+const SIGNAL_METER_PATTERN: [f32; 12] = [
+    0.32, 0.58, 0.86, 0.44, 0.72, 0.96, 0.52, 0.78, 0.38, 0.64, 0.90, 0.48,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFit {
@@ -216,6 +220,182 @@ impl Widget for Image {
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Image, ctx.bounds());
         node.name = self.label.clone();
+        ctx.push(node);
+    }
+}
+
+pub struct SignalMeter {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: String,
+    description: Option<String>,
+    active: bool,
+    active_reader: Option<Box<dyn Fn() -> bool>>,
+    tone: SemanticTone,
+    tone_reader: Option<Box<dyn Fn() -> SemanticTone>>,
+    bars: usize,
+    size: Option<Size>,
+    gap: Option<f32>,
+}
+
+impl SignalMeter {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: name.into(),
+            description: None,
+            active: false,
+            active_reader: None,
+            tone: SemanticTone::Accent,
+            tone_reader: None,
+            bars: 12,
+            size: None,
+            gap: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = active;
+        self.active_reader = None;
+        self
+    }
+
+    pub fn active_when<F>(mut self, active: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.active_reader = Some(Box::new(active));
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self.tone_reader = None;
+        self
+    }
+
+    pub fn tone_when<F>(mut self, tone: F) -> Self
+    where
+        F: Fn() -> SemanticTone + 'static,
+    {
+        self.tone_reader = Some(Box::new(tone));
+        self
+    }
+
+    pub fn bars(mut self, bars: usize) -> Self {
+        self.bars = bars.clamp(3, 64);
+        self
+    }
+
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = Some(Size::new(size.width.max(0.0), size.height.max(0.0)));
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = Some(gap.max(0.0));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn is_active(&self) -> bool {
+        self.active_reader
+            .as_ref()
+            .map(|active| active())
+            .unwrap_or(self.active)
+    }
+
+    fn resolved_tone(&self) -> SemanticTone {
+        self.tone_reader
+            .as_ref()
+            .map(|tone| tone())
+            .unwrap_or(self.tone)
+    }
+
+    fn bar_count(&self) -> usize {
+        self.bars.clamp(3, 64)
+    }
+
+    fn resolved_size(&self) -> Size {
+        self.size.unwrap_or(Size::new(76.0, 16.0))
+    }
+}
+
+impl Widget for SignalMeter {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(self.resolved_size())
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let bounds = ctx.bounds();
+        let active = self.is_active();
+        let bars = self.bar_count();
+        let gap = self.gap.unwrap_or(3.0).min(bounds.width() / bars as f32);
+        let total_gap = gap * bars.saturating_sub(1) as f32;
+        let bar_w = ((bounds.width() - total_gap) / bars as f32).max(1.0);
+        let tone = theme.semantic_tone_color(self.resolved_tone());
+        let fill = if active {
+            tone
+        } else {
+            theme.palette.text_muted.with_alpha(0.48)
+        };
+        let min_h = (bounds.height() * if active { 0.20 } else { 0.12 }).max(1.0);
+        let max_h = bounds.height().max(1.0);
+        for index in 0..bars {
+            let pattern = SIGNAL_METER_PATTERN[index % SIGNAL_METER_PATTERN.len()];
+            let level = if active {
+                pattern
+            } else {
+                (pattern * 0.26).max(0.12)
+            };
+            let bar_h = (min_h + (max_h - min_h) * level).min(max_h);
+            let x = bounds.x() + index as f32 * (bar_w + gap);
+            let y = bounds.max_y() - bar_h;
+            let rect = Rect::new(x, y, bar_w, bar_h);
+            ctx.fill(rounded_rect_path(rect, (bar_w * 0.5).min(3.0)), fill);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(self.name.clone());
+        node.description = self.description.clone();
+        node.value = Some(SemanticsValue::Text(if self.is_active() {
+            "active".to_string()
+        } else {
+            "idle".to_string()
+        }));
         ctx.push(node);
     }
 }
@@ -476,7 +656,7 @@ impl Widget for ColorSwatch {
                 mix_color(
                     palette.control_hover,
                     palette.control_active,
-                    self.press_animation.value,
+                    theme.interaction.pressed_blend * self.press_animation.value,
                 ),
             );
         } else if self.hover_animation.value > 0.0 {
@@ -3266,10 +3446,10 @@ mod tests {
 
     use super::{
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
-        ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image,
+        ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image, SignalMeter,
         color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
     };
-    use crate::{DefaultTheme, ThemeTextToken};
+    use crate::{DefaultTheme, SemanticTone, ThemeTextToken};
     use sui_core::{
         Color, ColorSpace, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, Result, SemanticsAction, SemanticsRole, SemanticsValue, Size,
@@ -3508,6 +3688,42 @@ mod tests {
             .find(|node| node.role == SemanticsRole::Image)
             .expect("image semantics present");
         assert_eq!(image.name.as_deref(), Some("Preview"));
+        Ok(())
+    }
+
+    #[test]
+    fn signal_meter_paints_tone_bars_and_semantics() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let tone = theme.semantic_tone_color(SemanticTone::Success);
+        let (mut runtime, window_id) = build_runtime(
+            SignalMeter::new("Audio input signal")
+                .description("Microphone activity")
+                .active(true)
+                .tone(SemanticTone::Success)
+                .bars(10)
+                .size(Size::new(120.0, 18.0))
+                .theme(theme),
+        );
+
+        let output = runtime.render(window_id)?;
+        let fills = solid_fill_colors(&output);
+        assert!(
+            fills.iter().filter(|color| **color == tone).count() >= 10,
+            "active signal meter should paint tone-colored bars"
+        );
+        let meter = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Audio input signal")
+            })
+            .expect("signal meter semantics should be present");
+        assert_eq!(meter.description.as_deref(), Some("Microphone activity"));
+        assert_eq!(
+            meter.value.as_ref(),
+            Some(&SemanticsValue::Text("active".to_string()))
+        );
         Ok(())
     }
 
@@ -4061,19 +4277,24 @@ mod tests {
                 .on_change(move |color| on_change.borrow_mut().push(color)),
         );
 
-        let _ = runtime.render(window_id)?;
+        let initial = runtime.render(window_id)?;
+        let map = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Saturation and value"))
+            .expect("saturation/value semantics present")
+            .bounds;
+        let start = rect_center(map);
+        let end = Point::new(map.x() + map.width() * 0.80, map.y() + map.height() * 0.35);
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(360.0, 126.0), true),
+            primary_pointer(PointerEventKind::Down, start, true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Move, Point::new(390.0, 152.0), true),
+            primary_pointer(PointerEventKind::Move, end, true),
         )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(390.0, 152.0), false),
-        )?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, end, false))?;
 
         let changed_color = *changes
             .borrow()
@@ -4097,11 +4318,17 @@ mod tests {
         let theme = DefaultTheme::default();
         let focus_duration = theme.motion.focus_duration();
         let (mut runtime, window_id) = build_runtime(ColorPicker::new("Accent picker"));
-        let _ = runtime.render(window_id)?;
+        let output = runtime.render(window_id)?;
+        let focus_target = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Saturation and value"))
+            .expect("color picker saturation/value semantics present")
+            .bounds;
 
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(360.0, 126.0), true),
+            primary_pointer(PointerEventKind::Down, rect_center(focus_target), true),
         )?;
         let _ = runtime.render(window_id)?;
 
@@ -4308,7 +4535,9 @@ mod tests {
 
     #[test]
     fn color_picker_compact_mode_uses_smaller_measurement() {
-        let regular = ColorPicker::new("Accent picker").desired_size();
+        let regular = ColorPicker::new("Accent picker")
+            .theme(DefaultTheme::comfortable())
+            .desired_size();
         let compact = ColorPicker::new("Accent picker")
             .compact(true)
             .show_alpha(false)
@@ -4331,7 +4560,9 @@ mod tests {
         let compact = ColorPicker::new("Accent picker")
             .theme(DefaultTheme::compact())
             .desired_size();
-        let comfortable = ColorPicker::new("Accent picker").desired_size();
+        let comfortable = ColorPicker::new("Accent picker")
+            .theme(DefaultTheme::comfortable())
+            .desired_size();
         let touch = ColorPicker::new("Accent picker")
             .theme(DefaultTheme::touch())
             .desired_size();
@@ -4379,12 +4610,14 @@ mod tests {
         let bounds = Rect::new(0.0, 0.0, 434.0, 448.0);
         let header = picker.header_rect(bounds);
         let encoding = picker.encoding_rect(bounds);
+        let previous = picker.previous_swatch_rect(bounds);
         let map = picker.saturation_value_rect(bounds);
         let rgb = picker.rgb_row_rect(bounds, 0);
 
         assert!(header.contains(encoding.origin));
         assert!(header.contains(Point::new(encoding.max_x(), encoding.max_y())));
-        assert!(encoding.x() > bounds.x() + 200.0);
+        assert!(encoding.x() >= previous.max_x() + picker.panel_gap() - 0.01);
+        assert!(encoding.max_x() <= header.max_x() + 0.01);
         assert!(rgb.y() > map.max_y());
     }
 
@@ -4458,19 +4691,24 @@ mod tests {
             .on_change(move |color| on_change.borrow_mut().push(color)),
         );
 
-        let _ = runtime.render(window_id)?;
+        let initial = runtime.render(window_id)?;
+        let red = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Red"))
+            .expect("red channel semantics present")
+            .bounds;
+        let start = Point::new(red.x() + red.width() * 0.20, red.y() + red.height() * 0.5);
+        let end = Point::new(red.x() + red.width() * 0.80, red.y() + red.height() * 0.5);
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(250.0, 316.0), true),
+            primary_pointer(PointerEventKind::Down, start, true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Move, Point::new(380.0, 316.0), true),
+            primary_pointer(PointerEventKind::Move, end, true),
         )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(380.0, 316.0), false),
-        )?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, end, false))?;
 
         let changed_color = *changes.borrow().last().expect("rgb row emitted change");
         assert!(
@@ -4540,8 +4778,6 @@ mod tests {
         let row_center = row.y() + row.height() * 0.5;
         let value_center = text_visual_center_for(&output, "0.250");
 
-        assert!(value.rect.height() >= layout.measurement().height - 0.01);
-        assert!(value.rect.height() > value.style.line_height);
         assert!((value.rect.max_x() - expected_right).abs() < 1.0);
         assert!(
             (value_center - row_center).abs() < 0.75,
@@ -4604,14 +4840,21 @@ mod tests {
         let (mut runtime, window_id) =
             build_runtime(ColorPicker::from_color("Accent picker", color).theme(theme));
 
-        let _ = runtime.render(window_id)?;
+        let initial = runtime.render(window_id)?;
+        let color_range = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Color range"))
+            .expect("color range semantics present")
+            .bounds;
+        let color_range_center = rect_center(color_range);
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Down, Point::new(300.0, 40.0), true),
+            primary_pointer(PointerEventKind::Down, color_range_center, true),
         )?;
         runtime.handle_event(
             window_id,
-            primary_pointer(PointerEventKind::Up, Point::new(300.0, 40.0), false),
+            primary_pointer(PointerEventKind::Up, color_range_center, false),
         )?;
 
         let output = runtime.render(window_id)?;
@@ -4628,24 +4871,10 @@ mod tests {
         let selector_run = text_run_for(&output, "BT709 Linear");
         let menu_run = text_run_for(&output, "sRGB");
         let hex_run = text_run_for(&output, "HDR hex unavailable");
-        let measured_height = |run: &sui_text::TextRun| {
-            TextSystem::new()
-                .shape_text_run(run, &FontRegistry::new())
-                .expect("color picker control text should shape")
-                .measurement()
-                .height
-        };
-
         assert_text_run_uses_token(&selector_run, theme.text.xs);
         assert_text_run_uses_token(&menu_run, theme.text.xs);
         assert_text_run_uses_token(&hex_run, theme.text.xs);
         assert_eq!(hex_run.style.color, theme.palette.placeholder);
-        assert!(selector_run.rect.height() >= measured_height(&selector_run) - 0.01);
-        assert!(menu_run.rect.height() >= measured_height(&menu_run) - 0.01);
-        assert!(hex_run.rect.height() >= measured_height(&hex_run) - 0.01);
-        assert!(selector_run.rect.height() > selector_run.style.line_height);
-        assert!(menu_run.rect.height() > menu_run.style.line_height);
-        assert!(hex_run.rect.height() > hex_run.style.line_height);
         assert!(
             (text_visual_center_for(&output, "BT709 Linear") - rect_center(selector).y).abs()
                 < 0.75

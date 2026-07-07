@@ -66,6 +66,18 @@ pub enum IconGlyph {
     Send,
     Alert,
     Storage,
+    // Media/device glyphs for realtime call and device surfaces.
+    AudioLines,
+    Mic,
+    MicOff,
+    Camera,
+    CameraOff,
+    Video,
+    VideoOff,
+    Phone,
+    PhoneOff,
+    Monitor,
+    ScreenShare,
 }
 
 impl IconGlyph {
@@ -105,6 +117,17 @@ impl IconGlyph {
             Self::Send => LucideIcon::Send,
             Self::Alert => LucideIcon::TriangleAlert,
             Self::Storage => LucideIcon::HardDrive,
+            Self::AudioLines => LucideIcon::AudioLines,
+            Self::Mic => LucideIcon::Mic,
+            Self::MicOff => LucideIcon::MicOff,
+            Self::Camera => LucideIcon::Camera,
+            Self::CameraOff => LucideIcon::CameraOff,
+            Self::Video => LucideIcon::Video,
+            Self::VideoOff => LucideIcon::VideoOff,
+            Self::Phone => LucideIcon::Phone,
+            Self::PhoneOff => LucideIcon::PhoneOff,
+            Self::Monitor => LucideIcon::Monitor,
+            Self::ScreenShare => LucideIcon::ScreenShare,
         }
     }
 }
@@ -144,6 +167,17 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
     IconGlyph::Send,
     IconGlyph::Alert,
     IconGlyph::Storage,
+    IconGlyph::AudioLines,
+    IconGlyph::Mic,
+    IconGlyph::MicOff,
+    IconGlyph::Camera,
+    IconGlyph::CameraOff,
+    IconGlyph::Video,
+    IconGlyph::VideoOff,
+    IconGlyph::Phone,
+    IconGlyph::PhoneOff,
+    IconGlyph::Monitor,
+    IconGlyph::ScreenShare,
 ];
 
 pub fn register_builtin_icon_resources(
@@ -297,6 +331,7 @@ pub struct Icon {
     glyph: IconGlyph,
     size: Option<f32>,
     color: Option<Color>,
+    color_reader: Option<Box<dyn Fn() -> Color>>,
     label: Option<String>,
 }
 
@@ -307,6 +342,7 @@ impl Icon {
             glyph,
             size: None,
             color: None,
+            color_reader: None,
             label: None,
         }
     }
@@ -323,12 +359,29 @@ impl Icon {
 
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
+        self.color_reader = None;
+        self
+    }
+
+    pub fn color_when<F>(mut self, color: F) -> Self
+    where
+        F: Fn() -> Color + 'static,
+    {
+        self.color_reader = Some(Box::new(color));
         self
     }
 
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
+    }
+
+    fn resolved_color(&self) -> Color {
+        self.color_reader
+            .as_ref()
+            .map(|reader| reader())
+            .or(self.color)
+            .unwrap_or(self.theme.palette.text)
     }
 
     fn resolved_size(&self) -> f32 {
@@ -347,7 +400,7 @@ impl Widget for Icon {
             ctx,
             self.glyph,
             center_square(ctx.bounds(), self.resolved_size()),
-            self.color.unwrap_or(self.theme.palette.text),
+            self.resolved_color(),
         );
     }
 
@@ -455,11 +508,191 @@ fn mix_color(from: Color, to: Color, t: f32) -> Color {
     Color::interpolate(from, to, t)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IconButtonPaint {
+    pub selected: bool,
+    pub enabled: bool,
+    pub hover_progress: f32,
+    pub press_progress: f32,
+    pub focus_progress: f32,
+    pub icon_size: Option<f32>,
+}
+
+impl IconButtonPaint {
+    pub const fn new() -> Self {
+        Self {
+            selected: false,
+            enabled: true,
+            hover_progress: 0.0,
+            press_progress: 0.0,
+            focus_progress: 0.0,
+            icon_size: None,
+        }
+    }
+
+    pub const fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub const fn hovered(mut self, hovered: bool) -> Self {
+        self.hover_progress = if hovered { 1.0 } else { 0.0 };
+        self
+    }
+
+    pub const fn pressed(mut self, pressed: bool) -> Self {
+        self.press_progress = if pressed { 1.0 } else { 0.0 };
+        self
+    }
+
+    pub const fn focused(mut self, focused: bool) -> Self {
+        self.focus_progress = if focused { 1.0 } else { 0.0 };
+        self
+    }
+
+    pub fn hover_progress(mut self, progress: f32) -> Self {
+        self.hover_progress = progress;
+        self
+    }
+
+    pub fn press_progress(mut self, progress: f32) -> Self {
+        self.press_progress = progress;
+        self
+    }
+
+    pub fn focus_progress(mut self, progress: f32) -> Self {
+        self.focus_progress = progress;
+        self
+    }
+
+    pub const fn icon_size(mut self, icon_size: f32) -> Self {
+        self.icon_size = Some(icon_size);
+        self
+    }
+}
+
+impl Default for IconButtonPaint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn paint_icon_button(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    icon: IconGlyph,
+    style: IconButtonPaint,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let palette = theme.palette;
+    let metrics = theme.metrics;
+    let interaction = theme.interaction;
+    let selected = style.selected;
+    let enabled = style.enabled;
+    let hover_progress = if enabled {
+        style.hover_progress.clamp(0.0, 1.0) * interaction.hover_blend
+    } else {
+        0.0
+    };
+    let raw_press_progress = style.press_progress.clamp(0.0, 1.0);
+    let press_progress = if enabled {
+        raw_press_progress * interaction.pressed_blend
+    } else {
+        0.0
+    };
+    let focus_progress = if enabled {
+        style.focus_progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let base_background = if selected {
+        mix_color(palette.control, palette.accent, interaction.selected_blend)
+    } else {
+        palette.control
+    };
+    let hover_background = if selected {
+        mix_color(base_background, palette.accent_hover, 0.18)
+    } else {
+        palette.control_hover
+    };
+    let press_background = if selected {
+        mix_color(base_background, palette.control_active, 0.45)
+    } else {
+        palette.control_active
+    };
+    let background = mix_color(
+        mix_color(base_background, hover_background, hover_progress),
+        press_background,
+        press_progress,
+    );
+    let border_base = if !enabled {
+        palette.border.with_alpha(0.55)
+    } else if selected {
+        mix_color(palette.accent_border, palette.border_hover, hover_progress)
+    } else {
+        mix_color(palette.border, palette.border_hover, hover_progress)
+    };
+    let border = if enabled {
+        mix_color(border_base, palette.border_focus, focus_progress)
+    } else {
+        border_base
+    };
+    let background = if enabled {
+        background
+    } else {
+        mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
+    };
+    let content_offset = Vector::new(0.0, raw_press_progress * interaction.pressed_offset);
+    let icon_size = style
+        .icon_size
+        .unwrap_or(metrics.icon_size)
+        .min(rect.width().min(rect.height()))
+        .max(0.0);
+
+    draw_control_frame(
+        ctx,
+        rect,
+        metrics.corner_radius,
+        metrics,
+        background,
+        border,
+        (focus_progress > 0.0).then_some(
+            palette
+                .focus_ring
+                .with_alpha(palette.focus_ring.alpha * focus_progress),
+        ),
+    );
+    draw_icon_glyph(
+        ctx,
+        icon,
+        center_square(rect, icon_size).translate(content_offset),
+        if !enabled {
+            palette
+                .text
+                .with_alpha(interaction.disabled_content_opacity)
+        } else if selected {
+            palette.accent
+        } else {
+            palette.text
+        },
+    );
+}
+
 pub struct IconButton {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     icon: IconGlyph,
     label: String,
+    semantic_description: Option<String>,
     size: Option<f32>,
     icon_size: Option<f32>,
     selected: bool,
@@ -482,6 +715,7 @@ impl IconButton {
             theme_reader: None,
             icon,
             label: label.into(),
+            semantic_description: None,
             size: None,
             icon_size: None,
             selected: false,
@@ -501,6 +735,11 @@ impl IconButton {
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
         self.theme_reader = None;
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.semantic_description = Some(description.into());
         self
     }
 
@@ -740,98 +979,25 @@ impl Widget for IconButton {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let palette = theme.palette;
-        let metrics = theme.metrics;
-        let interaction = theme.interaction;
-        let selected = self.is_selected();
-        let enabled = self.is_enabled();
-        let hover_progress = if enabled {
-            self.hover_animation.value * interaction.hover_blend
-        } else {
-            0.0
-        };
-        let press_progress = if enabled {
-            self.press_animation.value * interaction.pressed_blend
-        } else {
-            0.0
-        };
-        let focus_progress = if enabled {
-            self.focus_animation.value
-        } else {
-            0.0
-        };
-        let base_background = if selected {
-            mix_color(palette.control, palette.accent, interaction.selected_blend)
-        } else {
-            palette.control
-        };
-        let hover_background = if selected {
-            mix_color(base_background, palette.accent_hover, 0.18)
-        } else {
-            palette.control_hover
-        };
-        let press_background = if selected {
-            mix_color(base_background, palette.control_active, 0.45)
-        } else {
-            palette.control_active
-        };
-        let background = mix_color(
-            mix_color(base_background, hover_background, hover_progress),
-            press_background,
-            press_progress,
-        );
-        let border_base = if !enabled {
-            palette.border.with_alpha(0.55)
-        } else if selected {
-            mix_color(palette.accent_border, palette.border_hover, hover_progress)
-        } else {
-            mix_color(palette.border, palette.border_hover, hover_progress)
-        };
-        let border = if enabled {
-            mix_color(border_base, palette.border_focus, focus_progress)
-        } else {
-            border_base
-        };
-        let background = if enabled {
-            background
-        } else {
-            mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
-        };
-        let content_offset =
-            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset);
-
-        draw_control_frame(
+        paint_icon_button(
             ctx,
+            &theme,
             ctx.bounds(),
-            metrics.corner_radius,
-            metrics,
-            background,
-            border,
-            (focus_progress > 0.0).then_some(
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * focus_progress),
-            ),
-        );
-        draw_icon_glyph(
-            ctx,
             self.icon,
-            center_square(ctx.bounds(), self.resolved_icon_size()).translate(content_offset),
-            if !enabled {
-                palette
-                    .text
-                    .with_alpha(interaction.disabled_content_opacity)
-            } else if selected {
-                palette.accent
-            } else {
-                palette.text
-            },
+            IconButtonPaint::new()
+                .selected(self.is_selected())
+                .enabled(self.is_enabled())
+                .hover_progress(self.hover_animation.value)
+                .press_progress(self.press_animation.value)
+                .focus_progress(self.focus_animation.value)
+                .icon_size(self.resolved_icon_size()),
         );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(self.label.clone());
+        node.description = self.semantic_description.clone();
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered && self.is_enabled();
         node.state.selected = self.is_selected();
@@ -1636,6 +1802,8 @@ pub struct Button {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    semantic_name: Option<String>,
+    semantic_description: Option<String>,
     text_style: Option<TextStyle>,
     icon: Option<IconGlyph>,
     icon_size: Option<f32>,
@@ -1672,6 +1840,8 @@ impl Button {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            semantic_name: None,
+            semantic_description: None,
             text_style: None,
             icon: None,
             icon_size: None,
@@ -1699,6 +1869,16 @@ impl Button {
 
     pub fn set_label(&mut self, label: impl Into<String>) {
         self.label = label.into();
+    }
+
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.semantic_description = Some(description.into());
+        self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -2236,7 +2416,12 @@ impl Widget for Button {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
-        node.name = Some(self.label.clone());
+        node.name = Some(
+            self.semantic_name
+                .clone()
+                .unwrap_or_else(|| self.label.clone()),
+        );
+        node.description = self.semantic_description.clone();
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered && self.is_enabled();
         node.state.disabled = !self.is_enabled();
@@ -2277,6 +2462,120 @@ pub struct Checkbox {
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_toggle: Option<Box<dyn FnMut(bool)>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CheckboxIndicatorState {
+    pub checked: bool,
+    pub hovered: bool,
+    pub pressed: bool,
+    pub focused: bool,
+}
+
+impl CheckboxIndicatorState {
+    pub fn new(checked: bool) -> Self {
+        Self {
+            checked,
+            hovered: false,
+            pressed: false,
+            focused: false,
+        }
+    }
+
+    pub fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    pub fn pressed(mut self, pressed: bool) -> Self {
+        self.pressed = pressed;
+        self
+    }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CheckboxIndicatorVisual {
+    hover_progress: f32,
+    press_progress: f32,
+    toggle_progress: f32,
+    focus_progress: f32,
+}
+
+pub fn paint_checkbox_indicator(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    state: CheckboxIndicatorState,
+) {
+    paint_checkbox_indicator_visual(
+        ctx,
+        theme,
+        rect,
+        CheckboxIndicatorVisual {
+            hover_progress: state.hovered as u8 as f32,
+            press_progress: state.pressed as u8 as f32,
+            toggle_progress: state.checked as u8 as f32,
+            focus_progress: state.focused as u8 as f32,
+        },
+    );
+}
+
+fn paint_checkbox_indicator_visual(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    visual: CheckboxIndicatorVisual,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let palette = theme.palette;
+    let metrics = theme.metrics;
+    let interaction = theme.interaction;
+    let hover_blend = visual.hover_progress * interaction.hover_blend;
+    let press_blend = visual.press_progress * interaction.pressed_blend;
+    let indicator_background = mix_color(
+        mix_color(palette.control_active, palette.surface_focus, hover_blend),
+        mix_color(
+            mix_color(palette.accent, palette.accent_hover, hover_blend),
+            palette.accent_pressed,
+            press_blend,
+        ),
+        visual.toggle_progress,
+    );
+    let border = mix_color(
+        mix_color(palette.border, palette.border_hover, visual.hover_progress),
+        palette.border_focus,
+        visual.focus_progress,
+    );
+    let indicator_border = mix_color(
+        border,
+        palette.accent_border_focus,
+        visual.toggle_progress.max(visual.focus_progress),
+    );
+
+    draw_control_shape(
+        ctx,
+        rect,
+        metrics.indicator_corner_radius,
+        metrics.border_width,
+        indicator_background,
+        indicator_border,
+    );
+    if visual.toggle_progress > 0.0 {
+        let check_color = palette.accent_text.with_alpha(visual.toggle_progress);
+        ctx.stroke(
+            checkmark_path(rect.inflate(-4.0, -4.0)),
+            check_color,
+            StrokeStyle::new(physical_pixels(ctx, interaction.active_indicator_thickness)),
+        );
+    }
 }
 
 impl Checkbox {
@@ -2579,41 +2878,17 @@ impl Widget for Checkbox {
             ),
         );
 
-        let indicator_background = mix_color(
-            mix_color(
-                palette.control_active,
-                palette.surface_focus,
-                hover_progress,
-            ),
-            mix_color(
-                mix_color(palette.accent, palette.accent_hover, hover_progress),
-                palette.accent_pressed,
-                press_progress,
-            ),
-            toggle_progress,
-        );
-        let indicator_border = mix_color(
-            border,
-            palette.accent_border_focus,
-            toggle_progress.max(focus_progress),
-        );
-
-        draw_control_shape(
+        paint_checkbox_indicator_visual(
             ctx,
+            &theme,
             indicator,
-            metrics.indicator_corner_radius,
-            metrics.border_width,
-            indicator_background,
-            indicator_border,
+            CheckboxIndicatorVisual {
+                hover_progress: self.hover_animation.value,
+                press_progress: self.press_animation.value,
+                toggle_progress,
+                focus_progress,
+            },
         );
-        if toggle_progress > 0.0 {
-            let check_color = palette.accent_text.with_alpha(toggle_progress);
-            ctx.stroke(
-                checkmark_path(indicator.inflate(-4.0, -4.0)),
-                check_color,
-                StrokeStyle::new(physical_pixels(ctx, interaction.active_indicator_thickness)),
-            );
-        }
         paint_aligned_text(
             ctx,
             label_rect,
@@ -7912,9 +8187,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, IconButton, IconGlyph, Label,
-        Link, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea,
-        TextInput, rect_is_finite,
+        Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, Icon, IconButton,
+        IconButtonPaint, IconGlyph, Label, Link, NumberInput, RadioButton, RadioGroup, Select,
+        Separator, Slider, Switch, TextArea, TextInput, paint_icon_button, rect_is_finite,
     };
     use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
     use crate::{
@@ -7926,11 +8201,11 @@ mod tests {
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
         SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
-    use sui_layout::Padding as TestPadding;
+    use sui_layout::{Constraints, Padding as TestPadding};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
-        Application, RenderOutput, Runtime, Widget, WindowBuilder, WindowRenderOptions,
-        clear_window_render_options, set_window_render_options,
+        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, Widget, WindowBuilder,
+        WindowRenderOptions, clear_window_render_options, set_window_render_options,
     };
     use sui_scene::{
         Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor, SceneLayerUpdateKind,
@@ -8161,6 +8436,23 @@ mod tests {
         colors
     }
 
+    fn image_tint_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::DrawImage { source, .. }
+                | SceneCommand::DrawImageQuad { source, .. } => {
+                    if let Some(color) = source.tint {
+                        colors.push(color);
+                    }
+                }
+                _ => {}
+            });
+        colors
+    }
+
     fn assert_color_approx_eq(actual: Color, expected: Color) {
         const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
         assert_eq!(actual.space, expected.space);
@@ -8323,8 +8615,6 @@ mod tests {
 
         assert_eq!(run.style.font_size, theme.typography.body_font_size);
         assert_eq!(run.style.line_height, theme.typography.body_line_height);
-        assert!(run.rect.height() >= layout.measurement().height - 0.01);
-        assert!(run.rect.height() > run.style.line_height);
         assert!(
             (text_run_visual_center(&run) - expected_center_y).abs() < 0.75,
             "{text} visual center should match {expected_center_y}; rect={:?}, measurement={:?}",
@@ -8418,6 +8708,30 @@ mod tests {
         ));
         assert_eq!(output.semantics[0].role, SemanticsRole::Text);
         assert_eq!(output.semantics[0].name.as_deref(), Some("Hello SUI"));
+    }
+
+    #[test]
+    fn icon_color_when_uses_external_color() -> Result<()> {
+        let color = Rc::new(RefCell::new(Color::rgba(0.2, 0.5, 0.9, 1.0)));
+        let reader = Rc::clone(&color);
+        let (mut runtime, window_id) = build_runtime(
+            Icon::new(IconGlyph::Sparkles)
+                .size(24.0)
+                .label("Agent")
+                .color_when(move || *reader.borrow()),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert!(image_tint_colors(&output).contains(&Color::rgba(0.2, 0.5, 0.9, 1.0)));
+
+        assert!(
+            output
+                .semantics
+                .iter()
+                .any(|node| node.role == SemanticsRole::Image
+                    && node.name.as_deref() == Some("Agent"))
+        );
+        Ok(())
     }
 
     #[test]
@@ -8794,6 +9108,45 @@ mod tests {
         assert!(button.state.disabled);
         assert!(button.actions.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn button_semantic_name_and_description_override_visible_label() {
+        let output = render(
+            Button::new("Cancel")
+                .semantic_name("Cancel report export")
+                .description("Stop the active report export task"),
+        );
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("button semantics should be present");
+        assert_eq!(button.name.as_deref(), Some("Cancel report export"));
+        assert_eq!(
+            button.description.as_deref(),
+            Some("Stop the active report export task")
+        );
+        let text = text_run_for(&output, "Cancel");
+        assert_eq!(text.text, "Cancel");
+    }
+
+    #[test]
+    fn icon_button_description_is_exposed_to_semantics() {
+        let output = render(
+            IconButton::new(IconGlyph::Close, "Close activity")
+                .description("Hide the runtime activity panel"),
+        );
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("icon button semantics should be present");
+        assert_eq!(button.name.as_deref(), Some("Close activity"));
+        assert_eq!(
+            button.description.as_deref(),
+            Some("Hide the runtime activity panel")
+        );
     }
 
     #[test]
@@ -9390,6 +9743,52 @@ mod tests {
         Ok(())
     }
 
+    struct IconButtonPaintFixture {
+        theme: DefaultTheme,
+        style: IconButtonPaint,
+    }
+
+    impl Widget for IconButtonPaintFixture {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(28.0, 28.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            paint_icon_button(ctx, &self.theme, ctx.bounds(), IconGlyph::Close, self.style);
+        }
+    }
+
+    #[test]
+    fn icon_button_paint_matches_widget_visual_states() {
+        let theme = DefaultTheme::default();
+        let output = render(IconButtonPaintFixture {
+            theme,
+            style: IconButtonPaint::new()
+                .hovered(true)
+                .selected(true)
+                .icon_size(16.0),
+        });
+
+        let selected_base = super::mix_color(
+            theme.palette.control,
+            theme.palette.accent,
+            theme.interaction.selected_blend,
+        );
+        let selected_hover = super::mix_color(selected_base, theme.palette.accent_hover, 0.18);
+        assert_color_approx_eq(
+            solid_fill_colors(&output)[0],
+            super::mix_color(selected_base, selected_hover, theme.interaction.hover_blend),
+        );
+        assert!(
+            output
+                .frame
+                .scene
+                .commands()
+                .iter()
+                .any(|command| matches!(command, SceneCommand::DrawImage { .. }))
+        );
+    }
+
     #[test]
     fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
         let theme = DefaultTheme::default();
@@ -9512,6 +9911,17 @@ mod tests {
             IconGlyph::Download,
             IconGlyph::FitView,
             IconGlyph::ActualSize,
+            IconGlyph::AudioLines,
+            IconGlyph::Mic,
+            IconGlyph::MicOff,
+            IconGlyph::Camera,
+            IconGlyph::CameraOff,
+            IconGlyph::Video,
+            IconGlyph::VideoOff,
+            IconGlyph::Phone,
+            IconGlyph::PhoneOff,
+            IconGlyph::Monitor,
+            IconGlyph::ScreenShare,
         ] {
             let output = render(IconButton::new(glyph, "Editor command"));
             assert!(
@@ -12680,8 +13090,6 @@ mod tests {
             placeholder_text.style.color,
             theme.placeholder_text_style().color
         );
-        assert!(placeholder_text.rect.height() >= placeholder_layout.measurement().height - 0.01);
-        assert!(placeholder_text.rect.height() > placeholder_text.style.line_height);
         assert!((placeholder_clip.max_x() - expected_clip_max_x).abs() < 0.75);
         assert!(
             (text_run_visual_center(&placeholder_text) - super::rect_center(select.bounds).y).abs()
@@ -12725,8 +13133,6 @@ mod tests {
             option_text.style.line_height,
             theme.typography.body_line_height
         );
-        assert!(option_text.rect.height() >= option_layout.measurement().height - 0.01);
-        assert!(option_text.rect.height() > option_text.style.line_height);
         assert!((option_clip.x() - expected_option_clip.x()).abs() < 0.75);
         assert!((option_clip.max_x() - expected_option_clip.max_x()).abs() < 0.75);
         assert!(

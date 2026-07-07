@@ -96,7 +96,7 @@ pub struct HdrColorRoles {
 
 impl HdrColorRoles {
     pub fn from_colors(colors: ThemeColors) -> Self {
-        Self {
+        let mut roles = Self {
             surface: SemanticColorToken::from_sdr(colors.base_100),
             surface_elevated: SemanticColorToken::from_sdr(colors.base_200),
             surface_outline: SemanticColorToken::from_sdr(colors.base_300),
@@ -109,7 +109,9 @@ impl HdrColorRoles {
             success: SemanticColorToken::from_sdr(colors.success),
             warning: SemanticColorToken::from_sdr(colors.warning),
             danger: SemanticColorToken::from_sdr(colors.error),
-        }
+        };
+        roles.apply_mesh_display_variants(colors);
+        roles
     }
 
     pub fn from_default_theme(theme: DefaultTheme) -> Self {
@@ -117,19 +119,59 @@ impl HdrColorRoles {
     }
 
     pub fn sync_sdr_from_colors(&mut self, colors: ThemeColors) {
-        let derived = Self::from_colors(colors);
-        self.surface.sdr = derived.surface.sdr;
-        self.surface_elevated.sdr = derived.surface_elevated.sdr;
-        self.surface_outline.sdr = derived.surface_outline.sdr;
-        self.text.sdr = derived.text.sdr;
-        self.text_muted.sdr = derived.text_muted.sdr;
-        self.accent.sdr = derived.accent.sdr;
-        self.accent_text.sdr = derived.accent_text.sdr;
-        self.secondary.sdr = derived.secondary.sdr;
-        self.info.sdr = derived.info.sdr;
-        self.success.sdr = derived.success.sdr;
-        self.warning.sdr = derived.warning.sdr;
-        self.danger.sdr = derived.danger.sdr;
+        *self = Self::from_colors(colors);
+    }
+
+    fn apply_mesh_display_variants(&mut self, colors: ThemeColors) {
+        match colors.scheme {
+            crate::theme::ThemeColorScheme::Light => {
+                self.accent = self
+                    .accent
+                    .with_wide_gamut(Color::display_p3(0.02, 0.47, 0.63, 1.0))
+                    .with_hdr(Color::linear_display_p3(0.03, 0.55, 0.78, 1.0));
+                self.secondary = self
+                    .secondary
+                    .with_wide_gamut(Color::display_p3(0.55, 0.48, 1.0, 1.0));
+                self.info = self
+                    .info
+                    .with_wide_gamut(Color::display_p3(0.14, 0.42, 1.0, 1.0));
+            }
+            crate::theme::ThemeColorScheme::Dark => {
+                self.accent = self
+                    .accent
+                    .with_wide_gamut(Color::display_p3(0.13, 0.84, 0.95, 1.0))
+                    .with_hdr(Color::linear_display_p3(0.16, 0.95, 1.10, 1.0));
+                self.accent_text = self
+                    .accent_text
+                    .with_wide_gamut(Color::display_p3(0.28, 0.86, 0.95, 1.0));
+                self.secondary = self
+                    .secondary
+                    .with_wide_gamut(Color::display_p3(0.55, 0.48, 1.0, 1.0))
+                    .with_hdr(Color::linear_display_p3(0.62, 0.54, 1.12, 1.0));
+                self.info = self
+                    .info
+                    .with_wide_gamut(Color::display_p3(0.42, 0.58, 1.0, 1.0));
+                self.warning = self
+                    .warning
+                    .with_wide_gamut(Color::display_p3(0.98, 0.67, 0.12, 1.0));
+                self.danger = self
+                    .danger
+                    .with_wide_gamut(Color::display_p3(0.94, 0.32, 0.35, 1.0));
+            }
+            crate::theme::ThemeColorScheme::HighContrast => {
+                self.accent = self
+                    .accent
+                    .with_wide_gamut(Color::display_p3(0.05, 0.79, 0.91, 1.0))
+                    .with_hdr(Color::linear_display_p3(0.07, 0.86, 0.98, 1.0));
+                self.accent_text = self
+                    .accent_text
+                    .with_wide_gamut(Color::display_p3(0.20, 0.81, 0.92, 1.0));
+                self.secondary = self
+                    .secondary
+                    .with_wide_gamut(Color::display_p3(0.55, 0.48, 1.0, 1.0))
+                    .with_hdr(Color::linear_display_p3(0.56, 0.49, 1.04, 1.0));
+            }
+        }
     }
 
     pub fn for_widget_role(self, role: WidgetColorRole) -> SemanticColorToken {
@@ -538,6 +580,27 @@ mod tests {
         assert_eq!(roles.success.sdr, theme.colors.success);
         assert_eq!(roles.warning.sdr, theme.colors.warning);
         assert_eq!(roles.danger.sdr, theme.colors.error);
+    }
+
+    #[test]
+    fn mesh_theme_color_roles_include_p3_and_hdr_signal_variants() {
+        let dark = DefaultTheme::dark();
+        let roles = HdrColorRoles::from_default_theme(dark);
+
+        assert_eq!(
+            roles.accent.wide_gamut,
+            Some(Color::display_p3(0.13, 0.84, 0.95, 1.0))
+        );
+        assert_eq!(
+            roles.accent.hdr,
+            Some(Color::linear_display_p3(0.16, 0.95, 1.10, 1.0))
+        );
+        assert_eq!(
+            roles.secondary.hdr,
+            Some(Color::linear_display_p3(0.62, 0.54, 1.12, 1.0))
+        );
+        assert_eq!(roles.surface.wide_gamut, None);
+        assert_eq!(roles.surface.hdr, None);
     }
 
     #[test]

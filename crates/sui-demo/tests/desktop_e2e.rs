@@ -51,6 +51,29 @@ const REDRAW_FLUSH_LIMIT: usize = 256;
 
 static DESKTOP_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+fn desktop_display_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var_os("WAYLAND_SOCKET").is_some()
+            || std::env::var_os("DISPLAY").is_some()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+fn skip_without_desktop_display(test_name: &str) -> bool {
+    if desktop_display_available() {
+        return false;
+    }
+
+    eprintln!("skipping {test_name}: no desktop display server is available");
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapturedFrame {
     width: u32,
@@ -3519,6 +3542,12 @@ fn node_is_mostly_visible(
 
 #[test]
 fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Result<()> {
+    if skip_without_desktop_display(
+        "desktop_widget_book_repaints_and_updates_metrics_from_platform_events",
+    ) {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3646,6 +3675,12 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
 
 #[test]
 fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Result<()> {
+    if skip_without_desktop_display(
+        "desktop_widget_book_repaints_when_scrolling_with_split_view_visible",
+    ) {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3739,6 +3774,10 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
 
 #[test]
 fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
+    if skip_without_desktop_display("desktop_split_view_table_scroll_repaints_frame") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3802,6 +3841,10 @@ fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
 
 #[test]
 fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
+    if skip_without_desktop_display("desktop_split_view_scroll_view_scroll_repaints_frame") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3869,6 +3912,12 @@ fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
 
 #[test]
 fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Result<()> {
+    if skip_without_desktop_display(
+        "desktop_virtual_scroll_render_is_history_independent_for_same_offset",
+    ) {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3961,6 +4010,10 @@ fn virtual_scroll_runtime_scene_is_history_independent_for_same_offset() -> Resu
 
 #[test]
 fn widget_book_scroll_fps_benchmark() -> Result<()> {
+    if skip_without_desktop_display("widget_book_scroll_fps_benchmark") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3973,6 +4026,10 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
 #[test]
 #[ignore = "diagnostic benchmark for isolating live-overlay cost"]
 fn widget_book_scroll_fps_benchmark_without_live_overlay() -> Result<()> {
+    if skip_without_desktop_display("widget_book_scroll_fps_benchmark_without_live_overlay") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3985,6 +4042,10 @@ fn widget_book_scroll_fps_benchmark_without_live_overlay() -> Result<()> {
 #[test]
 #[ignore = "diagnostic benchmark for cache-invalid repaint cost in overlay-free widget-book gallery"]
 fn widget_book_dialog_repaint_benchmark_without_live_overlay() -> Result<()> {
+    if skip_without_desktop_display("widget_book_dialog_repaint_benchmark_without_live_overlay") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3997,6 +4058,10 @@ fn widget_book_dialog_repaint_benchmark_without_live_overlay() -> Result<()> {
 #[test]
 #[ignore = "diagnostic benchmark for text-heavy retained scroll upload cost"]
 fn desktop_retained_text_scroll_upload_benchmark() -> Result<()> {
+    if skip_without_desktop_display("desktop_retained_text_scroll_upload_benchmark") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -4006,6 +4071,10 @@ fn desktop_retained_text_scroll_upload_benchmark() -> Result<()> {
 
 #[test]
 fn desktop_text_editing_benchmark_reports_frame_samples() -> Result<()> {
+    if skip_without_desktop_display("desktop_text_editing_benchmark_reports_frame_samples") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -4015,6 +4084,10 @@ fn desktop_text_editing_benchmark_reports_frame_samples() -> Result<()> {
 
 #[test]
 fn desktop_widget_book_overlay_publishes_detailed_scene_stats() -> Result<()> {
+    if skip_without_desktop_display("desktop_widget_book_overlay_publishes_detailed_scene_stats") {
+        return Ok(());
+    }
+
     let _guard = DESKTOP_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

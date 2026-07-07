@@ -6,8 +6,16 @@ use crate::{
 use sui_core::{Color, FontHandle, Point, Size};
 
 fn load_test_font() -> RegisteredFont {
-    load_system_font_for_family(fontdb::Family::SansSerif)
-        .expect("system sans-serif font available for text tests")
+    RegisteredFont::from_bytes(include_bytes!("../assets/NotoSans-Regular.ttf").to_vec())
+}
+
+fn assert_same_font_data(actual: std::sync::Arc<[u8]>, expected: std::sync::Arc<[u8]>) {
+    assert!(
+        actual.as_ref() == expected.as_ref(),
+        "font bytes differ: actual_len={}, expected_len={}",
+        actual.len(),
+        expected.len()
+    );
 }
 
 fn load_system_font_for_family(family: fontdb::Family<'static>) -> Option<RegisteredFont> {
@@ -219,9 +227,9 @@ fn text_system_uses_registered_font_handles() {
         layout.run_face(0).face_index(),
         fonts.get(handle).unwrap().face_index()
     );
-    assert_eq!(
+    assert_same_font_data(
         layout.run_face(0).shared_bytes(),
-        fonts.get(handle).unwrap().shared_bytes()
+        fonts.get(handle).unwrap().shared_bytes(),
     );
 }
 
@@ -260,11 +268,11 @@ fn registered_face_cache_is_scoped_per_font_registry() {
         )
         .unwrap();
 
-    assert_eq!(first.run_face(0).shared_bytes(), first_font.shared_bytes());
+    assert_same_font_data(first.run_face(0).shared_bytes(), first_font.shared_bytes());
     assert_eq!(first.run_face(0).face_index(), first_font.face_index());
-    assert_eq!(
+    assert_same_font_data(
         second.run_face(0).shared_bytes(),
-        second_font.shared_bytes()
+        second_font.shared_bytes(),
     );
     assert_eq!(second.run_face(0).face_index(), second_font.face_index());
 }
@@ -472,9 +480,9 @@ fn text_system_reuses_cached_registered_font_layouts_across_color_changes() {
     assert_eq!(second.id(), layout.id());
     assert_eq!(second.version(), layout.version());
     assert_eq!(second.glyphs(), layout.glyphs());
-    assert_eq!(
+    assert_same_font_data(
         second.run_face(0).shared_bytes(),
-        layout.run_face(0).shared_bytes()
+        layout.run_face(0).shared_bytes(),
     );
 }
 

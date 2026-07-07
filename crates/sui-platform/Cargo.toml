@@ -9,6 +9,7 @@ rust-version.workspace = true
 sui-core = { workspace = true }
 sui-render-wgpu = { workspace = true }
 sui-runtime = { workspace = true }
+wgpu = { workspace = true }
 js-sys = { workspace = true }
 winit = { workspace = true }
 wasm-bindgen = { workspace = true }
