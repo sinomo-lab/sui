@@ -3011,13 +3011,15 @@ fn web_validation_report(mode: &WebLaunchMode) -> String {
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn web_window_render_options(mode: &WebLaunchMode) -> WindowRenderOptions {
-    WindowRenderOptions::new(true, 1.0)
-        .with_color_management_mode(mode.color_management_mode)
-        .with_output_color_primaries(web_output_primaries_for_mode(mode))
-        .with_dynamic_range_mode(mode.dynamic_range)
-        .with_tone_mapping_mode(mode.tone_mapping)
-        .with_sdr_content_brightness_nits(mode.sdr_content_brightness_nits)
-        .with_system_sdr_content_brightness_enabled(mode.use_system_sdr_content_brightness)
+    app::apply_demo_small_text_rendering_profile(
+        WindowRenderOptions::new(true, 1.0)
+            .with_color_management_mode(mode.color_management_mode)
+            .with_output_color_primaries(web_output_primaries_for_mode(mode))
+            .with_dynamic_range_mode(mode.dynamic_range)
+            .with_tone_mapping_mode(mode.tone_mapping)
+            .with_sdr_content_brightness_nits(mode.sdr_content_brightness_nits)
+            .with_system_sdr_content_brightness_enabled(mode.use_system_sdr_content_brightness),
+    )
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -3366,6 +3368,14 @@ mod tests {
         assert_eq!(options.tone_mapping_mode, WindowToneMappingMode::Clamp);
         assert_eq!(options.sdr_content_brightness_nits, 180.0);
         assert!(!options.use_system_sdr_content_brightness);
+        assert!(matches!(
+            options.stem_darkening.normalized(),
+            sui::WindowStemDarkening::Enabled { max_ppem, amount }
+                if (max_ppem - app::DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM).abs()
+                    < f32::EPSILON
+                    && (amount - app::DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT).abs()
+                        < f32::EPSILON
+        ));
     }
 
     #[test]
