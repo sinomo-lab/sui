@@ -83,8 +83,8 @@ const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
 const STEM_DARKENING_AMOUNT_NAME: &str = "Stem darkening amount";
 const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
 const DEMO_TEXT_HINTING_MAX_PPEM_LIMIT: f32 = 96.0;
-pub(crate) const DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM: f32 = 18.0;
-pub(crate) const DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT: f32 = 0.08;
+const DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM: f32 = 18.0;
+const DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT: f32 = 0.08;
 const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
 const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
@@ -136,15 +136,6 @@ const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
 const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
 const DEV_SHELL_PICKER_TITLE: &str = "SUI Demo";
-
-pub(crate) fn apply_demo_small_text_rendering_profile(
-    options: WindowRenderOptions,
-) -> WindowRenderOptions {
-    options.with_stem_darkening(WindowStemDarkening::Enabled {
-        max_ppem: DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM,
-        amount: DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT,
-    })
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -2462,13 +2453,11 @@ struct RenderSettingsTab {
 impl RenderSettingsTab {
     fn default_options() -> WindowRenderOptions {
         let renderer = WgpuRenderer::new();
-        apply_demo_small_text_rendering_profile(
-            WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
-                .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
-                .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
-                    renderer.text_coverage_policy(),
-                )),
-        )
+        WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
+            .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
+            .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
+                renderer.text_coverage_policy(),
+            ))
     }
 
     fn with_initial_options(
@@ -3127,7 +3116,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_demo_defaults_enable_small_text_quality_profile() {
+    fn dev_demo_defaults_use_perceptual_text_coverage() {
         let options = RenderSettingsTab::default_options();
 
         assert!(matches!(
@@ -3135,15 +3124,13 @@ mod tests {
             WindowTextHinting::Slight { max_ppem }
                 if (max_ppem - DEMO_TEXT_HINTING_MAX_PPEM_LIMIT).abs() < f32::EPSILON
         ));
-        assert!(matches!(
+        assert_eq!(
             options.stem_darkening.normalized(),
-            WindowStemDarkening::Enabled { max_ppem, amount }
-                if (max_ppem - DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM).abs() < f32::EPSILON
-                    && (amount - DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT).abs() < f32::EPSILON
-        ));
+            WindowStemDarkening::None
+        );
         assert_eq!(
             options.text_coverage_policy.normalized(),
-            WindowTextCoveragePolicy::Linear
+            WindowTextCoveragePolicy::Perceptual
         );
     }
 
@@ -3154,12 +3141,14 @@ mod tests {
             .initial_window_render_options()
             .expect("dev application should publish initial render options");
 
-        assert!(matches!(
+        assert_eq!(
             options.stem_darkening.normalized(),
-            WindowStemDarkening::Enabled { max_ppem, amount }
-                if (max_ppem - DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM).abs() < f32::EPSILON
-                    && (amount - DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT).abs() < f32::EPSILON
-        ));
+            WindowStemDarkening::None
+        );
+        assert_eq!(
+            options.text_coverage_policy.normalized(),
+            WindowTextCoveragePolicy::Perceptual
+        );
     }
 
     fn primary_pointer_event(
