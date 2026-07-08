@@ -635,6 +635,8 @@ fn command_kind(command: &SceneCommand) -> &'static str {
         SceneCommand::PopClip => "PopClip",
         SceneCommand::PushTransform { .. } => "PushTransform",
         SceneCommand::PopTransform => "PopTransform",
+        SceneCommand::PushTextRenderPolicy { .. } => "PushTextRenderPolicy",
+        SceneCommand::PopTextRenderPolicy => "PopTextRenderPolicy",
         SceneCommand::Layer(_) => "Layer",
         SceneCommand::FillRoundedRect { .. } => "FillRoundedRect",
         SceneCommand::Label { .. } => "Label",

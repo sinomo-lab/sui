@@ -145,6 +145,114 @@ pub enum WidgetShader {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextRenderHinting {
+    None,
+    Slight { max_ppem: f32 },
+}
+
+impl TextRenderHinting {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Slight { max_ppem } if max_ppem.is_finite() && max_ppem > 0.0 => {
+                Self::Slight { max_ppem }
+            }
+            Self::Slight { .. } => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextRenderStemDarkening {
+    None,
+    Enabled { max_ppem: f32, amount: f32 },
+}
+
+impl TextRenderStemDarkening {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Enabled { max_ppem, amount }
+                if max_ppem.is_finite() && max_ppem > 0.0 && amount.is_finite() && amount > 0.0 =>
+            {
+                Self::Enabled {
+                    max_ppem,
+                    amount: amount.clamp(0.0, 1.0),
+                }
+            }
+            Self::Enabled { .. } => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextRenderCoveragePolicy {
+    Perceptual,
+    Linear,
+    Gamma(f32),
+    CoverageBoost(f32),
+    TwoCoverageMinusCoverageSq,
+}
+
+impl TextRenderCoveragePolicy {
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::Perceptual => Self::Perceptual,
+            Self::Linear => Self::Linear,
+            Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
+            Self::Gamma(_) => Self::Linear,
+            Self::CoverageBoost(amount) if amount.is_finite() && amount > 0.0 => {
+                Self::CoverageBoost(amount.clamp(0.0, 1.0))
+            }
+            Self::CoverageBoost(_) => Self::Linear,
+            Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TextRenderPolicy {
+    pub hinting: Option<TextRenderHinting>,
+    pub stem_darkening: Option<TextRenderStemDarkening>,
+    pub coverage_policy: Option<TextRenderCoveragePolicy>,
+}
+
+impl TextRenderPolicy {
+    pub const fn new() -> Self {
+        Self {
+            hinting: None,
+            stem_darkening: None,
+            coverage_policy: None,
+        }
+    }
+
+    pub const fn with_hinting(mut self, hinting: TextRenderHinting) -> Self {
+        self.hinting = Some(hinting);
+        self
+    }
+
+    pub const fn with_stem_darkening(mut self, darkening: TextRenderStemDarkening) -> Self {
+        self.stem_darkening = Some(darkening);
+        self
+    }
+
+    pub const fn with_coverage_policy(mut self, policy: TextRenderCoveragePolicy) -> Self {
+        self.coverage_policy = Some(policy);
+        self
+    }
+
+    pub fn normalized(self) -> Self {
+        Self {
+            hinting: self.hinting.map(TextRenderHinting::normalized),
+            stem_darkening: self.stem_darkening.map(TextRenderStemDarkening::normalized),
+            coverage_policy: self
+                .coverage_policy
+                .map(TextRenderCoveragePolicy::normalized),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayerProperties {
     pub opacity: f32,
     pub translation: Vector,
@@ -461,6 +569,10 @@ pub enum SceneCommand {
         transform: Transform,
     },
     PopTransform,
+    PushTextRenderPolicy {
+        policy: TextRenderPolicy,
+    },
+    PopTextRenderPolicy,
     Layer(SceneLayer),
     FillRoundedRect {
         rect: Rect,
@@ -721,6 +833,7 @@ impl SceneBoundsState {
                 self.transform = self.transform_stack.pop().unwrap_or_default();
                 None
             }
+            SceneCommand::PushTextRenderPolicy { .. } | SceneCommand::PopTextRenderPolicy => None,
             SceneCommand::Layer(layer) => self.apply_rect(
                 if clipped {
                     layer.descriptor.paint_bounds
@@ -792,7 +905,11 @@ impl SceneLayer {
 
 fn translate_command(command: &mut SceneCommand, delta: Vector) {
     match command {
-        SceneCommand::Clear(_) | SceneCommand::PopClip | SceneCommand::PopTransform => {}
+        SceneCommand::Clear(_)
+        | SceneCommand::PopClip
+        | SceneCommand::PopTransform
+        | SceneCommand::PushTextRenderPolicy { .. }
+        | SceneCommand::PopTextRenderPolicy => {}
         SceneCommand::FillRect { rect, .. }
         | SceneCommand::StrokeRect { rect, .. }
         | SceneCommand::DrawImage { rect, .. }
@@ -1071,7 +1188,8 @@ mod tests {
     use super::{
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
         RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
-        SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle, WidgetShader,
+        SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
+        TextRenderCoveragePolicy, TextRenderPolicy, WidgetShader,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -1140,6 +1258,10 @@ mod tests {
         let transform = SceneCommand::PushTransform {
             transform: Transform::translation(3.0, 5.0),
         };
+        let text_policy = SceneCommand::PushTextRenderPolicy {
+            policy: TextRenderPolicy::new()
+                .with_coverage_policy(TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq),
+        };
         let layer = SceneCommand::Layer(SceneLayer::new(
             WidgetId::new(9),
             Rect::new(1.0, 2.0, 30.0, 12.0),
@@ -1158,6 +1280,10 @@ mod tests {
         assert!(matches!(path_fill, SceneCommand::FillPath { .. }));
         assert!(matches!(clip_path, SceneCommand::PushClipPath { .. }));
         assert!(matches!(transform, SceneCommand::PushTransform { .. }));
+        assert!(matches!(
+            text_policy,
+            SceneCommand::PushTextRenderPolicy { .. }
+        ));
         assert!(matches!(layer, SceneCommand::Layer(_)));
     }
 

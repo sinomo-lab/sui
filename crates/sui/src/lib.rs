@@ -89,6 +89,7 @@ pub use sui_runtime::{
 pub use sui_scene::{
     Border, Brush, GradientStop, ImageRegistry, ImageSource, RegisteredImage,
     RegisteredImageFormat, Scene, SceneCommand, SceneFrame, ShadowParams, StrokeStyle,
+    TextRenderCoveragePolicy, TextRenderHinting, TextRenderPolicy, TextRenderStemDarkening,
     WidgetShader,
 };
 pub use sui_text::{
@@ -566,6 +567,7 @@ pub mod prelude {
         SurfaceElevation, SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, Table,
         TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea, TextBlockPaint, TextCellPaint,
         TextDocument, TextInput, TextLayout, TextMeasurement, TextParagraph, TextParagraphStyle,
+        TextRenderCoveragePolicy, TextRenderHinting, TextRenderPolicy, TextRenderStemDarkening,
         TextSelectionInfo, TextSpan, TextSpanId, TextStyle, TextWrap, Theme, ThemeAspectRatios,
         ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
         ThemeDensity, ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack,

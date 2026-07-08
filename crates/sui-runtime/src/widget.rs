@@ -19,7 +19,7 @@ use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
     Border, Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
     RegisteredImage, Scene, SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId,
-    ShadowParams, StrokeStyle, WidgetShader,
+    ShadowParams, StrokeStyle, TextRenderPolicy, WidgetShader,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
@@ -1697,6 +1697,16 @@ impl PaintCtx {
 
     pub fn label(&mut self, rect: Rect, text: impl Into<String>, color: Color) {
         self.draw_text(rect, text, TextStyle::new(color));
+    }
+
+    pub fn push_text_render_policy(&mut self, policy: TextRenderPolicy) {
+        self.scene.push(SceneCommand::PushTextRenderPolicy {
+            policy: policy.normalized(),
+        });
+    }
+
+    pub fn pop_text_render_policy(&mut self) {
+        self.scene.push(SceneCommand::PopTextRenderPolicy);
     }
 
     pub fn draw_image(&mut self, rect: Rect, image: sui_core::ImageHandle) {

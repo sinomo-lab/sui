@@ -734,6 +734,8 @@ impl RetainedCompositorState {
             | SceneCommand::DrawShaderRect { .. }
             | SceneCommand::Layer(_)
             | SceneCommand::FillRoundedRect { .. }
+            | SceneCommand::PushTextRenderPolicy { .. }
+            | SceneCommand::PopTextRenderPolicy
             | SceneCommand::Label { .. } => {}
         }
     }
@@ -1710,6 +1712,13 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
         SceneCommand::PopTransform => {
             12u8.hash(hasher);
         }
+        SceneCommand::PushTextRenderPolicy { policy } => {
+            19u8.hash(hasher);
+            hash_text_render_policy(*policy, hasher);
+        }
+        SceneCommand::PopTextRenderPolicy => {
+            20u8.hash(hasher);
+        }
         SceneCommand::Layer(layer) => {
             13u8.hash(hasher);
             layer.layer_id().get().hash(hasher);
@@ -1812,6 +1821,52 @@ fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHash
             channel.hash(hasher);
             max_value.to_bits().hash(hasher);
         }
+    }
+}
+
+fn hash_text_render_policy(policy: sui_scene::TextRenderPolicy, hasher: &mut DefaultHasher) {
+    match policy.hinting {
+        Some(sui_scene::TextRenderHinting::None) => {
+            1u8.hash(hasher);
+        }
+        Some(sui_scene::TextRenderHinting::Slight { max_ppem }) => {
+            2u8.hash(hasher);
+            max_ppem.to_bits().hash(hasher);
+        }
+        None => 0u8.hash(hasher),
+    }
+
+    match policy.stem_darkening {
+        Some(sui_scene::TextRenderStemDarkening::None) => {
+            1u8.hash(hasher);
+        }
+        Some(sui_scene::TextRenderStemDarkening::Enabled { max_ppem, amount }) => {
+            2u8.hash(hasher);
+            max_ppem.to_bits().hash(hasher);
+            amount.to_bits().hash(hasher);
+        }
+        None => 0u8.hash(hasher),
+    }
+
+    match policy.coverage_policy {
+        Some(sui_scene::TextRenderCoveragePolicy::Perceptual) => {
+            1u8.hash(hasher);
+        }
+        Some(sui_scene::TextRenderCoveragePolicy::Linear) => {
+            2u8.hash(hasher);
+        }
+        Some(sui_scene::TextRenderCoveragePolicy::Gamma(gamma)) => {
+            3u8.hash(hasher);
+            gamma.to_bits().hash(hasher);
+        }
+        Some(sui_scene::TextRenderCoveragePolicy::CoverageBoost(amount)) => {
+            4u8.hash(hasher);
+            amount.to_bits().hash(hasher);
+        }
+        Some(sui_scene::TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq) => {
+            5u8.hash(hasher);
+        }
+        None => 0u8.hash(hasher),
     }
 }
 

@@ -14,9 +14,8 @@ use sui::{
     SemanticsRole, SemanticsValue, SignalMeter, StatusBadge, TextDirection, TextStyle, TextSurface,
     TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap, ThemeDensity,
     Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot, WindowStemDarkening,
-    WindowTextCoveragePolicy, WindowTextHinting, resolve_semantic_color, resolve_widget_hdr_style,
-    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot, resolve_semantic_color,
+    resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
@@ -246,60 +245,65 @@ struct TextRenderingModeSpec {
     title: &'static str,
     subtitle: &'static str,
     notes: &'static str,
-    options: WindowRenderOptions,
+    setting: &'static str,
+    policy: TextRenderPolicy,
 }
 
 const TEXT_RENDERING_MODE_DATA: [TextRenderingModeSpec; 7] = [
     TextRenderingModeSpec {
         title: "Linear coverage",
         subtitle: "Coverage sampled without perceptual compensation.",
-        notes: "Use as the control. Thin stems and edge pixels should look visibly lighter than the perceptual default.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::Linear),
+        notes: "Use as a control when art direction needs literal glyph coverage and no perceptual weight compensation.",
+        setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::Linear)",
+        policy: TextRenderPolicy::new().with_coverage_policy(TextRenderCoveragePolicy::Linear),
     },
     TextRenderingModeSpec {
         title: "Perceptual coverage",
         subtitle: "Default SUI policy with color-aware coverage boost.",
-        notes: "This is the current default. Small text should read closer to browser weight on both light and dark surfaces.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::Perceptual),
+        notes: "This is the default text weight model and the best starting point for normal UI labels.",
+        setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)",
+        policy: TextRenderPolicy::new().with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
     },
     TextRenderingModeSpec {
         title: "Perceptual no hinting",
         subtitle: "Default coverage without small-text grid fitting.",
-        notes: "Compare with the default sample to isolate hinting from the perceptual coverage curve.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_hinting(WindowTextHinting::None)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::Perceptual),
+        notes: "Use for canvas-like tools when free positioning matters more than pixel-grid stability.",
+        setting: "TextRenderPolicy::new()\n    .with_hinting(TextRenderHinting::None)\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)",
+        policy: TextRenderPolicy::new()
+            .with_hinting(TextRenderHinting::None)
+            .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
     },
     TextRenderingModeSpec {
         title: "Gamma 1.8 coverage",
         subtitle: "Diagnostic curve that lightens mid-coverage edges.",
-        notes: "This intentionally makes antialiasing weaker so the comparison exposes the effect of coverage remapping.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::Gamma(1.8)),
+        notes: "Use as a diagnostic option when comparing lighter antialiasing against perceptual coverage.",
+        setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::Gamma(1.8))",
+        policy: TextRenderPolicy::new().with_coverage_policy(TextRenderCoveragePolicy::Gamma(1.8)),
     },
     TextRenderingModeSpec {
         title: "Coverage boost 0.50",
         subtitle: "Fixed boost independent of foreground color.",
-        notes: "Compare against perceptual coverage to see why the default uses text color instead of one global amount.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::CoverageBoost(0.50)),
+        notes: "Use when a graphics surface needs a repeatable fixed coverage curve across all foreground colors.",
+        setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::CoverageBoost(0.50))",
+        policy: TextRenderPolicy::new()
+            .with_coverage_policy(TextRenderCoveragePolicy::CoverageBoost(0.50)),
     },
     TextRenderingModeSpec {
         title: "2c - c*c coverage",
         subtitle: "Maximum built-in boost curve for coverage pixels.",
-        notes: "This is the assertive diagnostic sample; it should look heavier than the perceptual default.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq),
+        notes: "Use as an assertive diagnostic or for deliberately heavier small text in dense overlays.",
+        setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq)",
+        policy: TextRenderPolicy::new()
+            .with_coverage_policy(TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq),
     },
     TextRenderingModeSpec {
         title: "Perceptual + stem darkening",
         subtitle: "Default coverage plus restrained small-text stem weight.",
-        notes: "Stem darkening is isolated here so weight changes are not mistaken for a different coverage curve.",
-        options: WindowRenderOptions::new(true, 1.0)
-            .with_text_coverage_policy(WindowTextCoveragePolicy::Perceptual)
-            .with_stem_darkening(WindowStemDarkening::Enabled {
+        notes: "Use for tiny labels that need extra stem weight without changing layout or font weight.",
+        setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)\n    .with_stem_darkening(TextRenderStemDarkening::Enabled { max_ppem: 18.0, amount: 0.20 })",
+        policy: TextRenderPolicy::new()
+            .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)
+            .with_stem_darkening(TextRenderStemDarkening::Enabled {
                 max_ppem: 18.0,
                 amount: 0.20,
             }),
@@ -5212,8 +5216,8 @@ pub fn build_text_rendering_comparison_surface() -> impl Widget {
                 .spacing(14.0)
                 .alignment(Alignment::Stretch)
                 .with_child(panel(
-                    "Text rendering matrix",
-                    "A compact visual QA surface for comparing small UI text policies across light and dark surfaces.",
+                    "Text rendering options",
+                    "Direct-rendered samples showing per-text TextRenderPolicy overrides for graphics tools, inspectors, and dense UI surfaces.",
                     Stack::horizontal()
                         .spacing(12.0)
                         .alignment(Alignment::Center)
@@ -5225,7 +5229,7 @@ pub fn build_text_rendering_comparison_surface() -> impl Widget {
                         .with_child(build_text_rendering_summary_metric(
                             "Pairs",
                             "2",
-                            "light and dark contrast checks",
+                            "light and dark direct text",
                         ))
                         .with_child(build_text_rendering_summary_metric(
                             "Stress",
@@ -5256,7 +5260,7 @@ pub fn build_text_rendering_comparison_application() -> Application {
         .window(Window::new(TEXT_RENDERING_COMPARISON_TITLE).root(
             LivePerformanceRoot::new(
                 TEXT_RENDERING_COMPARISON_TITLE,
-                "Side-by-side validation surface for perceptual coverage, diagnostic coverage curves, hinting, and stem darkening.",
+                "Reference surface for applying per-text perceptual coverage, diagnostic coverage curves, hinting, and stem darkening overrides.",
                 build_text_rendering_comparison_surface(),
             ),
         ))
@@ -5518,6 +5522,7 @@ fn build_text_rendering_mode_card(spec: TextRenderingModeSpec) -> impl Widget {
                                 .line_height(16.0)
                                 .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
                         ))
+                        .with_child(build_text_rendering_policy_snippet(spec.setting))
                         .with_child(
                             Stack::horizontal()
                                 .spacing(10.0)
@@ -5577,27 +5582,31 @@ fn build_text_rendering_summary_metric(
     ))
 }
 
+fn build_text_rendering_policy_snippet(setting: &'static str) -> impl Widget {
+    Background::new(
+        Color::rgba(0.94, 0.955, 0.975, 1.0),
+        Padding::all(
+            8.0,
+            Label::new(setting)
+                .font_size(11.0)
+                .line_height(15.0)
+                .color(Color::rgba(0.20, 0.25, 0.32, 1.0)),
+        ),
+    )
+}
+
 fn text_rendering_sample_name(title: &'static str, dark: bool) -> String {
     let surface = if dark { "dark" } else { "light" };
     format!("{title} {surface} sample")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-struct TextRenderingSamplePreviewCache {
-    scale_factor_bits: u32,
-    image: std::result::Result<RegisteredImage, String>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 struct TextRenderingSampleTile {
     name: String,
     label: &'static str,
     dark: bool,
     spec: TextRenderingModeSpec,
-    preview: RefCell<Option<TextRenderingSamplePreviewCache>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl TextRenderingSampleTile {
     fn new(name: String, label: &'static str, dark: bool, spec: TextRenderingModeSpec) -> Self {
         Self {
@@ -5605,12 +5614,10 @@ impl TextRenderingSampleTile {
             label,
             dark,
             spec,
-            preview: RefCell::new(None),
         }
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Widget for TextRenderingSampleTile {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(Size::new(
@@ -5620,75 +5627,9 @@ impl Widget for TextRenderingSampleTile {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let scale_factor = ctx.dpi().scale_factor.max(0.01);
-        let scale_factor_bits = scale_factor.to_bits();
-        let preview = {
-            let mut cache = self.preview.borrow_mut();
-            if cache
-                .as_ref()
-                .is_none_or(|cache| cache.scale_factor_bits != scale_factor_bits)
-            {
-                *cache = Some(TextRenderingSamplePreviewCache {
-                    scale_factor_bits,
-                    image: render_text_rendering_sample_image(
-                        self.spec,
-                        self.name.clone(),
-                        self.label,
-                        self.dark,
-                        scale_factor,
-                    ),
-                });
-            }
-            cache
-                .as_ref()
-                .expect("text rendering preview cache should be initialized")
-                .image
-                .clone()
-        };
-
-        match preview {
-            Ok(image) => {
-                let handle = ctx.widget_image_handle(0);
-                ctx.register_image(handle, image);
-                ctx.draw_image(ctx.bounds(), handle);
-            }
-            Err(_) => paint_text_rendering_sample(ctx, ctx.bounds(), self.label, self.dark),
-        }
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(
-            ctx.widget_id(),
-            SemanticsRole::GenericContainer,
-            ctx.bounds(),
-        );
-        node.name = Some(self.name.clone());
-        ctx.push(node);
-    }
-}
-
-struct TextRenderingSamplePaint {
-    name: String,
-    label: &'static str,
-    dark: bool,
-}
-
-impl TextRenderingSamplePaint {
-    fn new(name: String, label: &'static str, dark: bool) -> Self {
-        Self { name, label, dark }
-    }
-}
-
-impl Widget for TextRenderingSamplePaint {
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(
-            TEXT_RENDERING_SAMPLE_TILE_WIDTH,
-            TEXT_RENDERING_SAMPLE_TILE_HEIGHT,
-        ))
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.push_text_render_policy(self.spec.policy);
         paint_text_rendering_sample(ctx, ctx.bounds(), self.label, self.dark);
+        ctx.pop_text_render_policy();
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -5708,27 +5649,7 @@ fn build_text_rendering_sample_tile(
     dark: bool,
     spec: TextRenderingModeSpec,
 ) -> impl Widget {
-    build_text_rendering_native_sample_tile(name, label, dark, spec)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn build_text_rendering_native_sample_tile(
-    name: String,
-    label: &'static str,
-    dark: bool,
-    spec: TextRenderingModeSpec,
-) -> impl Widget {
     TextRenderingSampleTile::new(name, label, dark, spec)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn build_text_rendering_native_sample_tile(
-    name: String,
-    label: &'static str,
-    dark: bool,
-    _spec: TextRenderingModeSpec,
-) -> impl Widget {
-    TextRenderingSamplePaint::new(name, label, dark)
 }
 
 fn paint_text_rendering_sample(ctx: &mut PaintCtx, bounds: Rect, label: &'static str, dark: bool) {
@@ -5812,75 +5733,6 @@ fn draw_text_rendering_sample_line(
     style.font_size = font_size;
     style.line_height = line_height;
     ctx.draw_text(rect, text, style);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn render_text_rendering_sample_image(
-    spec: TextRenderingModeSpec,
-    name: String,
-    label: &'static str,
-    dark: bool,
-    scale_factor: f32,
-) -> std::result::Result<RegisteredImage, String> {
-    let runtime = Application::new()
-        .window(
-            WindowBuilder::new()
-                .title("SUI text comparison sample")
-                .root(TextRenderingSamplePaint::new(name.clone(), label, dark)),
-        )
-        .build()
-        .map_err(|error| format!("failed to build text rendering preview runtime: {error}"))?;
-    let window_id = runtime
-        .window_ids()
-        .into_iter()
-        .next()
-        .ok_or_else(|| "text rendering preview runtime did not create a window".to_string())?;
-    set_window_render_options(window_id, spec.options);
-
-    let app = sui_testing::TestApp::from_runtime(runtime)
-        .map_err(|error| format!("failed to create text rendering preview app: {error}"))?;
-    let window = app
-        .main_window()
-        .map_err(|error| format!("failed to get text rendering preview window: {error}"))?;
-    set_text_rendering_preview_scale_factor(&window, scale_factor)?;
-    let screenshot = window
-        .get_by_role(SemanticsRole::GenericContainer)
-        .with_name(name.as_str())
-        .capture_screenshot()
-        .map_err(|error| format!("failed to capture text rendering preview: {error}"))?;
-
-    RegisteredImage::from_rgba8(
-        screenshot.width(),
-        screenshot.height(),
-        screenshot.pixels().to_vec(),
-    )
-    .map_err(|error| format!("failed to register text rendering preview image: {error}"))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn set_text_rendering_preview_scale_factor(
-    window: &sui_testing::TestWindow,
-    scale_factor: f32,
-) -> std::result::Result<(), String> {
-    let viewport = Size::new(
-        TEXT_RENDERING_SAMPLE_TILE_WIDTH,
-        TEXT_RENDERING_SAMPLE_TILE_HEIGHT,
-    );
-    window
-        .root()
-        .dispatch_event(Event::Window(WindowEvent::ScaleFactorChanged {
-            scale_factor: scale_factor as f64,
-            raw_dpi: Some(scale_factor * 96.0),
-            suggested_size: Some(viewport),
-        }))
-        .map_err(|error| format!("failed to set preview scale factor: {error}"))?;
-    window
-        .root()
-        .dispatch_event(Event::Window(WindowEvent::Resized(viewport)))
-        .map_err(|error| format!("failed to resize preview window: {error}"))?;
-    window
-        .run_until_idle()
-        .map_err(|error| format!("failed to settle preview window: {error}"))
 }
 
 pub fn build_text_validation_surface() -> impl Widget {
@@ -8525,24 +8377,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "artifacts")]
-    fn capture_text_rendering_sample(
-        window: &TestWindow,
-        title: &'static str,
-        dark: bool,
-    ) -> Result<sui_testing::Screenshot> {
-        let name = super::text_rendering_sample_name(title, dark);
-        window
-            .get_by_role(SemanticsRole::GenericContainer)
-            .with_name(name.as_str())
-            .capture_screenshot()
-            .map_err(|error| {
-                sui::Error::new(format!(
-                    "failed to capture text rendering sample {name}: {error}"
-                ))
-            })
-    }
-
     #[test]
     fn text_rendering_comparison_surface_exposes_all_render_modes() {
         let mut runtime =
@@ -8582,50 +8416,47 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "artifacts")]
     #[test]
-    fn text_rendering_comparison_surface_renders_distinct_policy_tiles() -> Result<()> {
-        let viewport = Size::new(super::TEXT_RENDERING_COMPARISON_MIN_WIDTH + 64.0, 1400.0);
-        let app = TestApp::from_runtime(
-            Application::new()
-                .window(
-                    WindowBuilder::new()
-                        .title(TEXT_RENDERING_COMPARISON_TITLE)
-                        .root(
-                            SizedBox::new()
-                                .size(viewport)
-                                .with_child(super::build_text_rendering_comparison_surface()),
-                        ),
-                )
-                .build()?,
-        )?;
-        let window = app.main_window()?;
-        window
-            .root()
-            .dispatch_event(Event::Window(WindowEvent::Resized(viewport)))?;
-        window.run_until_idle()?;
+    fn text_rendering_comparison_surface_uses_direct_policy_overrides() {
+        let mut runtime =
+            build_text_rendering_comparison_runtime().expect("comparison runtime should build");
+        let window_id = runtime.window_ids()[0];
+        let output = runtime
+            .render(window_id)
+            .expect("comparison surface should render");
 
-        let gamma = capture_text_rendering_sample(&window, "Gamma 1.8 coverage", false)?;
-        let assertive = capture_text_rendering_sample(&window, "2c - c*c coverage", false)?;
-        let (gamma, assertive) = normalize_screenshot_pair(&gamma, &assertive)?;
-        let strong_policy_diff = screenshot_diff_count(&gamma, &assertive);
+        let mut image_commands = 0usize;
+        let mut push_policy_commands = 0usize;
+        let mut pop_policy_commands = 0usize;
+        let mut text_commands = 0usize;
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => {
+                    image_commands += 1;
+                }
+                SceneCommand::PushTextRenderPolicy { .. } => {
+                    push_policy_commands += 1;
+                }
+                SceneCommand::PopTextRenderPolicy => {
+                    pop_policy_commands += 1;
+                }
+                SceneCommand::DrawText(_)
+                | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawShapedTextWindow(_) => {
+                    text_commands += 1;
+                }
+                _ => {}
+            });
 
-        assert!(
-            strong_policy_diff > 32,
-            "diagnostic coverage policies should render visibly different tiles; only {strong_policy_diff} pixels differed",
+        assert_eq!(image_commands, 0);
+        assert_eq!(
+            push_policy_commands,
+            super::TEXT_RENDERING_MODE_DATA.len() * 2
         );
-
-        let linear = capture_text_rendering_sample(&window, "Linear coverage", false)?;
-        let perceptual = capture_text_rendering_sample(&window, "Perceptual coverage", false)?;
-        let (linear, perceptual) = normalize_screenshot_pair(&linear, &perceptual)?;
-        let default_policy_diff = screenshot_diff_count(&linear, &perceptual);
-
-        assert!(
-            default_policy_diff > 16,
-            "linear and perceptual/default coverage should not collapse to the same tile; only {default_policy_diff} pixels differed",
-        );
-
-        Ok(())
+        assert_eq!(pop_policy_commands, push_policy_commands);
+        assert!(text_commands > push_policy_commands);
     }
 
     #[test]

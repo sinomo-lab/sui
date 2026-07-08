@@ -26,7 +26,8 @@ use sui_core::{
 };
 use sui_scene::{
     Brush, ImageSampling, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame,
-    SceneLayer, SceneLayerId, SceneLayerUpdateKind, StrokeStyle,
+    SceneLayer, SceneLayerId, SceneLayerUpdateKind, StrokeStyle, TextRenderCoveragePolicy,
+    TextRenderHinting, TextRenderPolicy, TextRenderStemDarkening,
 };
 use sui_text::{
     FontRegistry, ResolvedTextFace, ShapedGlyph as SceneShapedGlyph, ShapedText, TextLayout,
@@ -4331,7 +4332,7 @@ mod tests {
         Border, Brush, GradientStop, ImageRegistry, ImageSampling, ImageSource,
         LayerCompositionMode, RegisteredImage, Scene, SceneCommand, SceneFrame, SceneLayer,
         SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, ShadowParams,
-        StrokeStyle, WidgetShader,
+        StrokeStyle, TextRenderCoveragePolicy, TextRenderPolicy, WidgetShader,
     };
     use sui_text::{
         FontRegistry, RegisteredFont, ShapedGlyph, ShapedText, ShapedTextWindow,
@@ -6430,6 +6431,62 @@ mod tests {
             dark_stats.2 > linear_stats.2,
             "switching policy should add distinct cache entries"
         );
+    }
+
+    #[test]
+    fn text_render_policy_scope_overrides_and_restores_glyph_cache_policy() {
+        let handle = FontHandle::new(36);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let text_style = TextStyle {
+            font: Some(handle),
+            font_size: 24.0,
+            line_height: 28.0,
+            color: Color::WHITE,
+            ..TextStyle::default()
+        };
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(204),
+            viewport: Size::new(120.0, 120.0),
+            surface_size: Size::new(120.0, 120.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 8.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style.clone(),
+                }));
+                scene.push(SceneCommand::PushTextRenderPolicy {
+                    policy: TextRenderPolicy::new()
+                        .with_coverage_policy(TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq),
+                });
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 44.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style.clone(),
+                }));
+                scene.push(SceneCommand::PopTextRenderPolicy);
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 80.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style,
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.set_text_coverage_policy(TextCoveragePolicy::Linear);
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+
+        assert_eq!(text_engine.glyph_cache_stats(), (2, 1, 2));
     }
 
     #[test]

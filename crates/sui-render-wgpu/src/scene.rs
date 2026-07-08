@@ -1326,6 +1326,14 @@ impl SceneDrawOpBuilder<'_> {
                 state.pop_transform();
                 Ok(())
             }
+            SceneCommand::PushTextRenderPolicy { policy } => {
+                state.push_text_render_policy(*policy);
+                Ok(())
+            }
+            SceneCommand::PopTextRenderPolicy => {
+                state.pop_text_render_policy();
+                Ok(())
+            }
             SceneCommand::Layer(layer) => Err(Error::new(format!(
                 "retained direct packet compiler encountered nested layer {}",
                 layer.layer_id().get()
@@ -1455,6 +1463,8 @@ impl SceneDrawOpBuilder<'_> {
             SceneCommand::PopClip
             | SceneCommand::PushTransform { .. }
             | SceneCommand::PopTransform
+            | SceneCommand::PushTextRenderPolicy { .. }
+            | SceneCommand::PopTextRenderPolicy
             | SceneCommand::Layer(_) => {}
         }
 
@@ -1468,6 +1478,8 @@ pub(crate) struct SceneRasterState {
     pub(crate) pixel_snap_offset: Vector,
     pub(crate) transform_stack: Vec<Transform>,
     clip_stack: Vec<ClipPrimitive>,
+    text_render_policy: Option<TextRenderPolicy>,
+    text_render_policy_stack: Vec<Option<TextRenderPolicy>>,
     pub(crate) path_clip_state_id: u64,
     pub(crate) active_path_clips: Vec<PreparedVertices>,
     pub(crate) clip_state_index: usize,
@@ -1481,6 +1493,8 @@ impl SceneRasterState {
             pixel_snap_offset: Vector::ZERO,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
+            text_render_policy: None,
+            text_render_policy_stack: Vec::new(),
             path_clip_state_id: 0,
             active_path_clips: Vec::new(),
             clip_state_index,
@@ -1496,6 +1510,8 @@ impl SceneRasterState {
         state.current_transform = resolved.current_transform;
         state.pixel_snap_offset = resolved.pixel_snap_offset;
         state.transform_stack.clear();
+        state.text_render_policy = None;
+        state.text_render_policy_stack.clear();
         state.path_clip_state_id = 0;
         state.active_path_clips.clear();
         state.clip_stack.clear();
@@ -1586,6 +1602,19 @@ impl SceneRasterState {
 
     pub(crate) fn pop_transform(&mut self) {
         self.current_transform = self.transform_stack.pop().unwrap_or(Transform::IDENTITY);
+    }
+
+    pub(crate) fn push_text_render_policy(&mut self, policy: TextRenderPolicy) {
+        self.text_render_policy_stack.push(self.text_render_policy);
+        self.text_render_policy = Some(policy.normalized());
+    }
+
+    pub(crate) fn pop_text_render_policy(&mut self) {
+        self.text_render_policy = self.text_render_policy_stack.pop().unwrap_or(None);
+    }
+
+    pub(crate) fn active_text_render_policy(&self) -> Option<TextRenderPolicy> {
+        self.text_render_policy
     }
 
     pub(crate) fn current_clip_bounds(&self) -> Option<Rect> {
@@ -1769,6 +1798,43 @@ impl Default for TextEngine {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ResolvedTextRenderPolicy {
+    hinting: TextHinting,
+    stem_darkening: StemDarkening,
+    coverage_policy: TextCoveragePolicy,
+}
+
+fn map_text_render_hinting(hinting: TextRenderHinting) -> TextHinting {
+    match hinting.normalized() {
+        TextRenderHinting::None => TextHinting::None,
+        TextRenderHinting::Slight { max_ppem } => TextHinting::Slight { max_ppem },
+    }
+}
+
+fn map_text_render_stem_darkening(darkening: TextRenderStemDarkening) -> StemDarkening {
+    match darkening.normalized() {
+        TextRenderStemDarkening::None => StemDarkening::None,
+        TextRenderStemDarkening::Enabled { max_ppem, amount } => {
+            StemDarkening::Enabled { max_ppem, amount }
+        }
+    }
+}
+
+fn map_text_render_coverage_policy(policy: TextRenderCoveragePolicy) -> TextCoveragePolicy {
+    match policy.normalized() {
+        TextRenderCoveragePolicy::Perceptual => TextCoveragePolicy::Perceptual,
+        TextRenderCoveragePolicy::Linear => TextCoveragePolicy::Linear,
+        TextRenderCoveragePolicy::Gamma(gamma) => TextCoveragePolicy::Gamma(gamma),
+        TextRenderCoveragePolicy::CoverageBoost(amount) => {
+            TextCoveragePolicy::CoverageBoost(amount)
+        }
+        TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq => {
+            TextCoveragePolicy::TwoCoverageMinusCoverageSq
+        }
+    }
+}
+
 impl TextEngine {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self::default())
@@ -1805,6 +1871,34 @@ impl TextEngine {
 
     pub(crate) fn frame_stats(&self) -> TextFrameStats {
         self.frame_stats
+    }
+
+    fn resolved_text_render_policy(
+        &self,
+        override_policy: Option<TextRenderPolicy>,
+    ) -> ResolvedTextRenderPolicy {
+        let Some(policy) = override_policy.map(TextRenderPolicy::normalized) else {
+            return ResolvedTextRenderPolicy {
+                hinting: self.text_hinting,
+                stem_darkening: self.stem_darkening,
+                coverage_policy: self.coverage_policy,
+            };
+        };
+
+        ResolvedTextRenderPolicy {
+            hinting: policy
+                .hinting
+                .map(map_text_render_hinting)
+                .unwrap_or(self.text_hinting),
+            stem_darkening: policy
+                .stem_darkening
+                .map(map_text_render_stem_darkening)
+                .unwrap_or(self.stem_darkening),
+            coverage_policy: policy
+                .coverage_policy
+                .map(map_text_render_coverage_policy)
+                .unwrap_or(self.coverage_policy),
+        }
     }
 
     pub(crate) fn append_text_run(
@@ -1978,6 +2072,7 @@ impl TextEngine {
     {
         let mut active_face_index = None;
         let mut swash_face = None;
+        let text_policy = self.resolved_text_render_policy(state.active_text_render_policy());
         for glyph in glyphs {
             let face_index = glyph.glyph.face_index;
             if active_face_index != Some(face_index) {
@@ -1989,7 +2084,9 @@ impl TextEngine {
             let face_key = GlyphFaceCacheKey::new(glyph_face);
             let glyph_style = glyph.style;
             let glyph_color = color_override.unwrap_or(glyph_style.color);
-            let coverage_policy = self.coverage_policy.resolved_for_text_color(glyph_color);
+            let coverage_policy = text_policy
+                .coverage_policy
+                .resolved_for_text_color(glyph_color);
             let mut translated_glyph = glyph.glyph.clone();
             translated_glyph.origin_x += origin.x;
             translated_glyph.origin_y += origin.y;
@@ -2010,6 +2107,8 @@ impl TextEngine {
                     &translated_glyph,
                     raster_scale_factor,
                 ),
+                text_policy.hinting,
+                text_policy.stem_darkening,
                 coverage_policy,
                 glyph_style.weight.value(),
             )? {
@@ -2051,6 +2150,8 @@ impl TextEngine {
         glyph_scale: f32,
         raster_scale_factor: f32,
         subpixel_offset: GlyphSubpixelOffsetKey,
+        text_hinting: TextHinting,
+        stem_darkening: StemDarkening,
         coverage_policy: TextCoveragePolicy,
         weight: u16,
     ) -> Result<Option<&CachedGlyphAtlas>> {
@@ -2062,8 +2163,8 @@ impl TextEngine {
             scale_bucket,
             subpixel_offset,
             self.text_render_mode,
-            self.text_hinting,
-            self.stem_darkening,
+            text_hinting,
+            stem_darkening,
             coverage_policy,
             weight,
         );
@@ -2104,8 +2205,8 @@ impl TextEngine {
             bucketed_logical_scale,
             subpixel_offset,
             self.text_render_mode,
-            self.text_hinting,
-            self.stem_darkening,
+            text_hinting,
+            stem_darkening,
             coverage_policy,
             weight,
             self.frame_counter,
