@@ -1,0 +1,494 @@
+# Common SUI binding API spec.
+
+descriptor TextSpan
+  core_descriptor BindingTextSpan
+  python class
+  js class
+  ts class
+    constructor(text: string, color?: Color, fontSize?: number, lineHeight?: number, font?: FontHandle, weight?: number, style?: FontStyle, stretch?: FontStretch);
+    readonly text: string;
+  endts
+  docs TextSpan
+end
+
+descriptor StatusBarSegment
+  core_descriptor BindingStatusBarSegment
+  python class
+  js class
+  ts class
+    constructor(text: State | BindingValue, tone?: SemanticTone | string, minWidth?: number, expand?: boolean);
+  endts
+  docs StatusBarSegment
+end
+
+descriptor SegmentedControlItem
+  core_descriptor BindingSegmentedControlItem
+  python class
+  js class
+  ts class
+    constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
+  endts
+  docs SegmentedControlItem
+end
+
+descriptor TableColumn
+  core_descriptor BindingTableColumn
+  python class
+  js class
+  ts class
+    constructor(title: string, width?: number, minWidth?: number, alignment?: "start" | "center" | "end" | "left" | "right", numeric?: boolean);
+  endts
+  docs TableColumn
+end
+
+descriptor TableRow
+  core_descriptor BindingTableRow
+  python class
+  js class
+  ts class
+    constructor(cells: string[]);
+  endts
+  docs TableRow
+end
+
+widget Label
+  core_kind Label
+  core_constructor label
+  python function py_label
+  js function js_label
+  ts function Label(value: State | BindingValue): Widget;
+  docs Label
+  compat
+end
+
+widget Button
+  core_kind Button
+  core_constructor button
+  python function py_button
+  js function js_button
+  ts function Button(label: State | BindingValue, onPress?: () => void): Widget;
+  docs Button
+  compat
+end
+
+widget Icon
+  core_kind Icon
+  core_constructor icon
+  python function py_icon
+  js function js_icon
+  ts function Icon(glyph: IconGlyph | string, label?: string, size?: number, color?: Color): Widget;
+  docs Icon
+  compat
+end
+
+widget IconButton
+  core_kind IconButton
+  core_constructor icon_button
+  python function py_icon_button
+  js function js_icon_button
+  ts function IconButton(glyph: IconGlyph | string, label: State | BindingValue, selected?: State | boolean | number, enabled?: State | boolean | number, size?: number, iconSize?: number, description?: string, onPress?: () => void): Widget;
+  docs IconButton
+  compat
+end
+
+widget Link
+  core_kind Link
+  core_constructor link
+  python function py_link
+  js function js_link
+  ts function Link(label: State | BindingValue, url: State | BindingValue, semanticName?: string, enabled?: State | boolean | number, onOpen?: (url: string) => void): Widget;
+  docs Link
+  compat
+end
+
+widget Checkbox
+  core_kind Checkbox
+  core_constructor checkbox
+  python function py_checkbox
+  js function js_checkbox
+  ts function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onToggle?: (checked: boolean) => void): Widget;
+  docs Checkbox
+  compat
+end
+
+widget Switch
+  core_kind Switch
+  core_constructor switch
+  python function py_switch
+  js function js_switch
+  ts function Switch(label: State | BindingValue, on?: State | boolean | number, onToggle?: (on: boolean) => void): Widget;
+  docs Switch
+  compat
+end
+
+widget RadioButton
+  core_kind RadioButton
+  core_constructor radio_button
+  python function py_radio_button
+  js function js_radio_button
+  ts function RadioButton(label: State | BindingValue, selected?: State | boolean | number, onSelect?: () => void): Widget;
+  docs RadioButton
+  compat
+end
+
+widget RadioGroup
+  core_kind RadioGroup
+  core_constructor radio_group
+  python function py_radio_group
+  js function js_radio_group
+  ts function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs RadioGroup
+  compat
+end
+
+widget SegmentedControl
+  core_kind SegmentedControl
+  core_constructor segmented_control
+  python function py_segmented_control
+  js function js_segmented_control
+  ts function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs SegmentedControl
+  compat
+end
+
+widget Breadcrumb
+  core_kind Breadcrumb
+  core_constructor breadcrumb
+  python function py_breadcrumb
+  js function js_breadcrumb
+  ts function Breadcrumb(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+  docs Breadcrumb
+  compat
+end
+
+alias PathBar
+  python function py_path_bar
+  js function js_path_bar
+  ts function PathBar(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+  docs PathBar
+end
+
+widget ListView
+  core_kind ListView
+  core_constructor list_view
+  python function py_list_view
+  js function js_list_view
+  ts function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs ListView
+  compat
+end
+
+widget Table
+  core_kind Table
+  core_constructor table
+  python function py_table
+  js function js_table
+  ts function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs Table
+  compat
+end
+
+alias DataGrid
+  python function py_data_grid
+  js function js_data_grid
+  ts function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs DataGrid
+end
+
+widget Slider
+  core_kind Slider
+  core_constructor slider
+  python function py_slider
+  js function js_slider
+  ts function Slider(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, onChange?: (value: number) => void): Widget;
+  docs Slider
+  compat
+end
+
+widget NumberInput
+  core_kind NumberInput
+  core_constructor number_input
+  python function py_number_input
+  js function js_number_input
+  ts function NumberInput(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, precision?: number, onChange?: (value: number) => void): Widget;
+  docs NumberInput
+  compat
+end
+
+widget Select
+  core_kind Select
+  core_constructor select
+  python function py_select
+  js function js_select
+  ts function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: number, value: string) => void): Widget;
+  docs Select
+  compat
+end
+
+widget ProgressBar
+  core_kind ProgressBar
+  core_constructor progress_bar
+  python function py_progress_bar
+  js function js_progress_bar
+  ts function ProgressBar(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, showValue?: boolean): Widget;
+  docs ProgressBar
+  compat
+end
+
+widget SignalMeter
+  core_kind SignalMeter
+  core_constructor signal_meter
+  python function py_signal_meter
+  js function js_signal_meter
+  ts function SignalMeter(name: State | BindingValue, active?: State | boolean | number, description?: string, bars?: number, size?: Size): Widget;
+  docs SignalMeter
+  compat
+end
+
+widget StatusBadge
+  core_kind StatusBadge
+  core_constructor status_badge
+  python function py_status_badge
+  js function js_status_badge
+  ts function StatusBadge(label: State | BindingValue, tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number): Widget;
+  docs StatusBadge
+  compat
+end
+
+widget StatusBar
+  core_kind StatusBar
+  core_constructor status_bar
+  python function py_status_bar
+  js function js_status_bar
+  ts function StatusBar(segments: StatusBarSegment[], name?: string, description?: State | BindingValue, height?: number): Widget;
+  docs StatusBar
+  compat
+end
+
+widget DetailRow
+  core_kind DetailRow
+  core_constructor detail_row
+  python function py_detail_row
+  js function js_detail_row
+  ts function DetailRow(label: State | BindingValue, value: State | BindingValue, maxValueLines?: number): Widget;
+  docs DetailRow
+  compat
+end
+
+widget BusyIndicator
+  core_kind BusyIndicator
+  core_constructor busy_indicator
+  python function py_busy_indicator
+  js function js_busy_indicator
+  ts function BusyIndicator(name: State | BindingValue, label?: State | BindingValue, size?: number): Widget;
+  docs BusyIndicator
+  compat
+end
+
+widget TextInput
+  core_kind TextInput
+  core_constructor text_input
+  python function py_text_input
+  js function js_text_input
+  ts function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  docs TextInput
+  compat
+end
+
+widget TextArea
+  core_kind TextArea
+  core_constructor text_area
+  python function py_text_area
+  js function js_text_area
+  ts function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  docs TextArea
+  compat
+end
+
+widget RichText
+  core_kind RichText
+  core_constructor rich_text
+  python function py_rich_text
+  js function js_rich_text
+  ts function RichText(spans: TextSpan[], semanticName?: string, minWidth?: number, minHeight?: number): Widget;
+  docs RichText
+  compat
+end
+
+widget Image
+  core_kind Image
+  core_constructor image
+  python function py_image
+  js function js_image
+  ts function Image(image: ImageHandle, label?: string, fit?: ImageFit, size?: Size): Widget;
+  docs Image
+end
+
+widget ColorSwatch
+  core_kind ColorSwatch
+  core_constructor color_swatch
+  python function py_color_swatch
+  js function js_color_swatch
+  ts function ColorSwatch(name: string, color: Color, size?: Size, readOnly?: boolean, onPress?: () => void): Widget;
+  docs ColorSwatch
+  compat
+end
+
+widget Separator
+  core_kind Separator
+  core_constructor separator
+  python function py_separator
+  js function js_separator
+  ts function Separator(axis?: Axis, name?: string, inset?: number, thickness?: number, length?: number): Widget;
+  docs Separator
+  compat
+end
+
+widget EmptyState
+  core_kind EmptyState
+  core_constructor empty_state
+  python function py_empty_state
+  js function js_empty_state
+  ts function EmptyState(title: string, description: string, name?: string, detail?: string, icon?: IconGlyph | string, action?: Widget, background?: Color, transparent?: boolean): Widget;
+  docs EmptyState
+  compat
+end
+
+widget Surface
+  core_kind Surface
+  core_constructor surface
+  python function py_surface
+  js function js_surface
+  ts function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, radius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
+  docs Surface
+  compat
+end
+
+widget Toolbar
+  core_kind Toolbar
+  core_constructor toolbar
+  python function py_toolbar
+  js function js_toolbar
+  ts function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, spacing?: number, background?: Color, divider?: boolean): Widget;
+  docs Toolbar
+  compat
+end
+
+layout Column
+  core_constructor column
+  python function py_column
+  js function js_column
+  ts function Column(children: Widget[], gap?: number): Widget;
+  docs Column
+end
+
+layout Row
+  core_constructor row
+  python function py_row
+  js function js_row
+  ts function Row(children: Widget[], gap?: number): Widget;
+  docs Row
+end
+
+widget ScrollView
+  core_kind ScrollView
+  core_constructor scroll_view
+  python function py_scroll_view
+  js function js_scroll_view
+  ts function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
+  docs ScrollView
+  compat
+end
+
+interop-widget ExternalSurface
+  core_kind ExternalSurface
+  core_constructor external_surface
+  python function py_external_surface
+  js function js_external_surface
+  ts function ExternalSurface(texture: ExternalTextureDescriptor, desiredSize?: Size, name?: string): Widget;
+  docs ExternalSurface
+end
+
+descriptor TreeItem
+  core_descriptor BindingTreeItem
+  python class
+  js class
+  ts class
+    constructor(label: string, detail?: string, expanded?: boolean, disabled?: boolean, children?: TreeItem[]);
+  endts
+  docs TreeItem
+end
+
+widget TreeView
+  core_kind TreeView
+  core_constructor tree_view
+  python function py_tree_view
+  js function js_tree_view
+  ts function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs TreeView
+end
+
+descriptor LayerListItem
+  core_descriptor BindingLayerListItem
+  python class
+  js class
+  ts class
+    constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, disabled?: boolean);
+  endts
+  docs LayerListItem
+end
+
+widget LayerList
+  core_kind LayerList
+  core_constructor layer_list
+  python function py_layer_list
+  js function js_layer_list
+  ts function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs LayerList
+end
+
+descriptor MenuItem
+  core_descriptor BindingMenuItem
+  python class
+  js class
+  ts class
+    constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean);
+  endts
+  docs MenuItem
+end
+
+widget Menu
+  core_kind Menu
+  core_constructor menu
+  python function py_menu
+  js function js_menu
+  ts function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+  docs Menu
+end
+
+widget TabBar
+  core_kind TabBar
+  core_constructor tab_bar
+  python function py_tab_bar
+  js function js_tab_bar
+  ts function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  docs TabBar
+end
+
+widget Tabs
+  core_kind Tabs
+  core_constructor tabs
+  python function py_tabs
+  js function js_tabs
+  ts function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
+  docs Tabs
+end
+
+widget Dialog
+  core_kind Dialog
+  core_constructor dialog
+  python function py_dialog
+  js function js_dialog
+  ts function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
+  docs Dialog
+end

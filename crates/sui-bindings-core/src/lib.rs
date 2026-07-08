@@ -13,20 +13,21 @@ use std::{
 
 use sui::{
     ArrangeCtx, Axis, Border, Breadcrumb, BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox,
-    Color, ColorSpace, ColorSwatch, Constraints, CustomEvent, DetailRow, DpiInfo,
+    Color, ColorSpace, ColorSwatch, Constraints, CustomEvent, DetailRow, Dialog, DpiInfo,
     EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase, Flex, FontHandle, Icon,
     IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
-    Link, ListItem, ListView, MeasureCtx, Modifiers, NumberInput, PaintCtx, Path, Point,
-    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, ProgressBar,
-    RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage, RichText, Runtime,
-    SceneCommand, ScrollDelta, ScrollView, SegmentedControl, SegmentedControlItem, Select,
-    SemanticTone, SemanticsCtx, SemanticsNode, SemanticsRole, SemanticsValue, Separator,
-    ShadowParams, SignalMeter, Size, Slider, StatusBadge, StatusBar, StatusBarSegment, StrokeStyle,
-    Surface, SurfaceBorder, SurfaceElevation, SurfaceRole, Switch, Table, TableColumn,
-    TableColumnAlignment, TableRow, TextArea, TextInput, TextSpan, TextStyle, TimerToken,
-    ToggleState, Toolbar, Transform, Vector, Widget, WidgetId, WidgetPod, WidgetPodMutVisitor,
-    WidgetPodVisitor, WidgetShader, WindowBuilder, WindowEvent, WindowId,
+    LayerList, LayerListItem, Link, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modifiers,
+    NumberInput, PaintCtx, Path, Point, PointerButton, PointerButtons, PointerEvent,
+    PointerEventKind, PointerKind, ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont,
+    RegisteredImage, RichText, Runtime, SceneCommand, ScrollDelta, ScrollView, SegmentedControl,
+    SegmentedControlItem, Select, SemanticTone, SemanticsCtx, SemanticsNode, SemanticsRole,
+    SemanticsValue, Separator, ShadowParams, SignalMeter, Size, Slider, StatusBadge, StatusBar,
+    StatusBarSegment, StrokeStyle, Surface, SurfaceBorder, SurfaceElevation, SurfaceRole, Switch,
+    TabBar, Table, TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea, TextInput,
+    TextSpan, TextStyle, TimerToken, ToggleState, Toolbar, Transform, TreeItem, TreeView, Vector,
+    Widget, WidgetId, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WidgetShader,
+    WindowBuilder, WindowEvent, WindowId,
 };
 
 #[cfg(feature = "desktop")]
@@ -816,6 +817,128 @@ impl BindingTableRow {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BindingTreeItem {
+    label: String,
+    detail: Option<String>,
+    expanded: bool,
+    disabled: bool,
+    children: Vec<BindingTreeItem>,
+}
+
+impl BindingTreeItem {
+    pub fn new(
+        label: impl Into<String>,
+        detail: Option<String>,
+        expanded: bool,
+        disabled: bool,
+        children: impl IntoIterator<Item = BindingTreeItem>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            detail,
+            expanded,
+            disabled,
+            children: children.into_iter().collect(),
+        }
+    }
+
+    fn into_sui(&self) -> TreeItem {
+        let mut item = TreeItem::new(self.label.clone()).expanded(self.expanded);
+        if let Some(detail) = &self.detail {
+            item = item.detail(detail.clone());
+        }
+        if self.disabled {
+            item = item.disabled();
+        }
+        item.children(self.children.iter().map(BindingTreeItem::into_sui))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingLayerListItem {
+    label: String,
+    detail: Option<String>,
+    visible: bool,
+    locked: bool,
+    disabled: bool,
+}
+
+impl BindingLayerListItem {
+    pub fn new(
+        label: impl Into<String>,
+        detail: Option<String>,
+        visible: bool,
+        locked: bool,
+        disabled: bool,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            detail,
+            visible,
+            locked,
+            disabled,
+        }
+    }
+
+    fn into_sui(&self) -> LayerListItem {
+        let mut item = LayerListItem::new(self.label.clone())
+            .visible(self.visible)
+            .locked(self.locked);
+        if let Some(detail) = &self.detail {
+            item = item.detail(detail.clone());
+        }
+        if self.disabled {
+            item = item.disabled();
+        }
+        item
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingMenuItem {
+    label: String,
+    shortcut: Option<String>,
+    disabled: bool,
+    destructive: bool,
+    separator_before: bool,
+}
+
+impl BindingMenuItem {
+    pub fn new(
+        label: impl Into<String>,
+        shortcut: Option<String>,
+        disabled: bool,
+        destructive: bool,
+        separator_before: bool,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            shortcut,
+            disabled,
+            destructive,
+            separator_before,
+        }
+    }
+
+    fn into_sui(&self) -> MenuItem {
+        let mut item = MenuItem::new(self.label.clone());
+        if let Some(shortcut) = &self.shortcut {
+            item = item.shortcut(shortcut.clone());
+        }
+        if self.disabled {
+            item = item.disabled();
+        }
+        if self.destructive {
+            item = item.destructive();
+        }
+        if self.separator_before {
+            item = item.separator_before();
+        }
+        item
+    }
+}
+
 fn binding_number_to_index(value: f64) -> Option<usize> {
     if value.is_finite() && value >= 0.0 {
         Some(value.floor() as usize)
@@ -1066,6 +1189,31 @@ impl fmt::Debug for BindingWidget {
                 .field("columns", columns)
                 .field("rows", rows)
                 .finish(),
+            BindingWidgetKind::TreeView { items, .. } => f
+                .debug_struct("BindingWidget::TreeView")
+                .field("items", items)
+                .finish(),
+            BindingWidgetKind::LayerList { items, .. } => f
+                .debug_struct("BindingWidget::LayerList")
+                .field("items", items)
+                .finish(),
+            BindingWidgetKind::Menu { items, .. } => f
+                .debug_struct("BindingWidget::Menu")
+                .field("items", items)
+                .finish(),
+            BindingWidgetKind::TabBar { tabs, .. } => f
+                .debug_struct("BindingWidget::TabBar")
+                .field("tabs", tabs)
+                .finish(),
+            BindingWidgetKind::Tabs { tabs, .. } => f
+                .debug_struct("BindingWidget::Tabs")
+                .field("tabs", tabs)
+                .finish(),
+            BindingWidgetKind::Dialog { title, content, .. } => f
+                .debug_struct("BindingWidget::Dialog")
+                .field("title", title)
+                .field("content", content)
+                .finish(),
             BindingWidgetKind::SignalMeter { .. } => {
                 f.debug_tuple("BindingWidget::SignalMeter").finish()
             }
@@ -1221,6 +1369,40 @@ enum BindingWidgetKind {
         rows: Vec<BindingTableRow>,
         selected: Option<BindingNumber>,
         action: Option<BindingSelectAction>,
+    },
+    TreeView {
+        name: BindingText,
+        items: Vec<BindingTreeItem>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    LayerList {
+        name: BindingText,
+        items: Vec<BindingLayerListItem>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    Menu {
+        name: BindingText,
+        items: Vec<BindingMenuItem>,
+        highlighted: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    TabBar {
+        name: BindingText,
+        tabs: Vec<String>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    },
+    Tabs {
+        name: BindingText,
+        tabs: Vec<String>,
+        selected: Option<BindingNumber>,
+    },
+    Dialog {
+        title: BindingText,
+        content: BindingWidget,
+        shown: BindingBool,
     },
     SignalMeter {
         name: BindingText,
@@ -1545,6 +1727,86 @@ impl BindingWidget {
             rows: rows.into_iter().collect(),
             selected,
             action,
+        })
+    }
+
+    pub fn tree_view(
+        name: impl Into<BindingText>,
+        items: impl IntoIterator<Item = BindingTreeItem>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::TreeView {
+            name: name.into(),
+            items: items.into_iter().collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn layer_list(
+        name: impl Into<BindingText>,
+        items: impl IntoIterator<Item = BindingLayerListItem>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::LayerList {
+            name: name.into(),
+            items: items.into_iter().collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn menu(
+        name: impl Into<BindingText>,
+        items: impl IntoIterator<Item = BindingMenuItem>,
+        highlighted: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Menu {
+            name: name.into(),
+            items: items.into_iter().collect(),
+            highlighted,
+            action,
+        })
+    }
+
+    pub fn tab_bar(
+        name: impl Into<BindingText>,
+        tabs: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::TabBar {
+            name: name.into(),
+            tabs: tabs.into_iter().map(Into::into).collect(),
+            selected,
+            action,
+        })
+    }
+
+    pub fn tabs(
+        name: impl Into<BindingText>,
+        tabs: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Tabs {
+            name: name.into(),
+            tabs: tabs.into_iter().map(Into::into).collect(),
+            selected,
+        })
+    }
+
+    pub fn dialog(
+        title: impl Into<BindingText>,
+        content: BindingWidget,
+        shown: impl Into<BindingBool>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Dialog {
+            title: title.into(),
+            content,
+            shown: shown.into(),
         })
     }
 
@@ -1964,6 +2226,47 @@ impl BindingWidget {
                 if let Some(selected) = selected {
                     selected.bind_ui_handle(handle);
                 }
+            }
+            BindingWidgetKind::TreeView { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::LayerList { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Menu {
+                name, highlighted, ..
+            } => {
+                name.bind_ui_handle(handle);
+                if let Some(highlighted) = highlighted {
+                    highlighted.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::TabBar { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Tabs { name, selected, .. } => {
+                name.bind_ui_handle(handle);
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Dialog {
+                title,
+                content,
+                shown,
+            } => {
+                title.bind_ui_handle(handle);
+                content.bind_ui_handle(handle);
+                shown.bind_ui_handle(handle);
             }
             BindingWidgetKind::SignalMeter { name, active, .. } => {
                 name.bind_ui_handle(handle);
@@ -2465,6 +2768,176 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(table)
             }
+            BindingWidgetKind::TreeView {
+                name,
+                items,
+                selected,
+                action,
+            } => {
+                let mut tree_view = TreeView::new(name.resolve())
+                    .items(items.iter().map(BindingTreeItem::into_sui));
+                if let Some(selected) = selected
+                    && let Some(index) = binding_number_to_index(selected.resolve())
+                {
+                    tree_view = tree_view.selected(index);
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    tree_view = tree_view.on_change(move |path, value| {
+                        let index = path.first().copied().unwrap_or(0);
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(tree_view)
+            }
+            BindingWidgetKind::LayerList {
+                name,
+                items,
+                selected,
+                action,
+            } => {
+                let mut layer_list = LayerList::new(name.resolve())
+                    .layers(items.iter().map(BindingLayerListItem::into_sui));
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        layer_list = layer_list.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        layer_list = layer_list
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    layer_list = layer_list.on_select(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(layer_list)
+            }
+            BindingWidgetKind::Menu {
+                name,
+                items,
+                highlighted,
+                action,
+            } => {
+                let mut menu =
+                    Menu::new(name.resolve()).items(items.iter().map(BindingMenuItem::into_sui));
+                if let Some(highlighted) = highlighted
+                    && let Some(index) = binding_number_to_index(highlighted.resolve())
+                {
+                    menu = menu.highlighted(index);
+                }
+                let state = highlighted.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    menu = menu.on_activate(move |index, item| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, item.label().to_string())
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(menu)
+            }
+            BindingWidgetKind::TabBar {
+                name,
+                tabs,
+                selected,
+                action,
+            } => {
+                let mut tab_bar = TabBar::new(name.resolve()).tabs(tabs.clone());
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        tab_bar = tab_bar.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        tab_bar = tab_bar
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    tab_bar = tab_bar.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(tab_bar)
+            }
+            BindingWidgetKind::Tabs {
+                name,
+                tabs,
+                selected,
+            } => {
+                let mut tab_widget = Tabs::new(name.resolve());
+                if let Some(selected) = selected
+                    && let Some(index) = binding_number_to_index(selected.resolve())
+                {
+                    tab_widget = tab_widget.selected(index);
+                }
+                for label in tabs {
+                    tab_widget = tab_widget.tab(label.clone(), Label::new(label.clone()));
+                }
+                BindingRuntimeWidget::new(tab_widget)
+            }
+            BindingWidgetKind::Dialog {
+                title,
+                content,
+                shown,
+            } => BindingRuntimeWidget::new(
+                Dialog::new(title.resolve(), content.into_runtime_widget(errors.clone()))
+                    .shown(shown.resolve()),
+            ),
             BindingWidgetKind::SignalMeter {
                 name,
                 active,

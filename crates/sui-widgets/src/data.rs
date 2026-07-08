@@ -2201,6 +2201,11 @@ impl TreeView {
         self
     }
 
+    pub fn selected(mut self, index: usize) -> Self {
+        self.selected = Some(vec![index]);
+        self
+    }
+
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(Vec<usize>, String) + 'static,

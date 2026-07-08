@@ -333,46 +333,10 @@ export class FontHandle {
   readonly id: string;
 }
 
-export class TextSpan {
-  constructor(
-    text: string,
-    color?: Color,
-    fontSize?: number,
-    lineHeight?: number,
-    font?: FontHandle,
-    weight?: number,
-    style?: FontStyle,
-    stretch?: FontStretch
-  );
-  readonly text: string;
-}
 
-export class StatusBarSegment {
-  constructor(
-    text: State | BindingValue,
-    tone?: SemanticTone | string,
-    minWidth?: number,
-    expand?: boolean
-  );
-}
 
-export class SegmentedControlItem {
-  constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
-}
 
-export class TableColumn {
-  constructor(
-    title: string,
-    width?: number,
-    minWidth?: number,
-    alignment?: "start" | "center" | "end" | "left" | "right",
-    numeric?: boolean
-  );
-}
 
-export class TableRow {
-  constructor(cells: string[]);
-}
 
 export class ImageHandle {
   constructor(id: string);
@@ -541,225 +505,129 @@ export class RenderSnapshot {
   readonly registeredImageCount: number;
 }
 
-export function Label(value: State | BindingValue): Widget;
-export function Button(label: State | BindingValue, onPress?: () => void): Widget;
-export function Icon(
-  glyph: IconGlyph | string,
-  label?: string,
-  size?: number,
-  color?: Color
-): Widget;
-export function IconButton(
-  glyph: IconGlyph | string,
-  label: State | BindingValue,
-  selected?: State | boolean | number,
-  enabled?: State | boolean | number,
-  size?: number,
-  iconSize?: number,
-  description?: string,
-  onPress?: () => void
-): Widget;
-export function Link(
-  label: State | BindingValue,
-  url: State | BindingValue,
-  semanticName?: string,
-  enabled?: State | boolean | number,
-  onOpen?: (url: string) => void
-): Widget;
-export function Checkbox(
-  label: State | BindingValue,
-  checked?: State | boolean | number,
-  onToggle?: (checked: boolean) => void
-): Widget;
-export function Switch(
-  label: State | BindingValue,
-  on?: State | boolean | number,
-  onToggle?: (on: boolean) => void
-): Widget;
-export function RadioButton(
-  label: State | BindingValue,
-  selected?: State | boolean | number,
-  onSelect?: () => void
-): Widget;
-export function RadioGroup(
-  name: State | BindingValue,
-  options: string[],
-  selected?: State | number | boolean,
-  onChange?: (index: number, value: string) => void
-): Widget;
-export function SegmentedControl(
-  name: State | BindingValue,
-  items: SegmentedControlItem[],
-  selected?: State | number | boolean,
-  onChange?: (index: number, value: string) => void
-): Widget;
-export function Breadcrumb(
-  name: State | BindingValue,
-  items: string[],
-  current?: State | number | boolean,
-  onActivate?: (index: number, value: string) => void
-): Widget;
-export function PathBar(
-  name: State | BindingValue,
-  items: string[],
-  current?: State | number | boolean,
-  onActivate?: (index: number, value: string) => void
-): Widget;
-export function ListView(
-  name: State | BindingValue,
-  items: string[],
-  selected?: State | number | boolean,
-  onChange?: (index: number, value: string) => void
-): Widget;
-export function Table(
-  name: State | BindingValue,
-  columns: TableColumn[],
-  rows: TableRow[],
-  selected?: State | number | boolean,
-  onChange?: (index: number, value: string) => void
-): Widget;
-export function DataGrid(
-  name: State | BindingValue,
-  columns: TableColumn[],
-  rows: TableRow[],
-  selected?: State | number | boolean,
-  onChange?: (index: number, value: string) => void
-): Widget;
-export function Slider(
-  name: State | BindingValue,
-  value?: State | number | boolean,
-  min?: number,
-  max?: number,
-  step?: number,
-  onChange?: (value: number) => void
-): Widget;
-export function NumberInput(
-  name: State | BindingValue,
-  value?: State | number | boolean,
-  min?: number,
-  max?: number,
-  step?: number,
-  precision?: number,
-  onChange?: (value: number) => void
-): Widget;
-export function Select(
-  name: State | BindingValue,
-  options: string[],
-  selected?: State | number | boolean,
-  placeholder?: string,
-  onChange?: (index: number, value: string) => void
-): Widget;
-export function ProgressBar(
-  name: State | BindingValue,
-  value?: State | number | boolean,
-  min?: number,
-  max?: number,
-  showValue?: boolean
-): Widget;
-export function SignalMeter(
-  name: State | BindingValue,
-  active?: State | boolean | number,
-  description?: string,
-  bars?: number,
-  size?: Size
-): Widget;
-export function StatusBadge(
-  label: State | BindingValue,
-  tone?: SemanticTone | string,
-  icon?: IconGlyph | string,
-  minWidth?: number
-): Widget;
-export function StatusBar(
-  segments: StatusBarSegment[],
-  name?: string,
-  description?: State | BindingValue,
-  height?: number
-): Widget;
-export function DetailRow(
-  label: State | BindingValue,
-  value: State | BindingValue,
-  maxValueLines?: number
-): Widget;
-export function BusyIndicator(
-  name: State | BindingValue,
-  label?: State | BindingValue,
-  size?: number
-): Widget;
-export function TextInput(
-  name: State | BindingValue,
-  value?: State | BindingValue,
-  placeholder?: string,
-  onChange?: (value: string) => void
-): Widget;
-export function TextArea(
-  name: State | BindingValue,
-  value?: State | BindingValue,
-  placeholder?: string,
-  onChange?: (value: string) => void
-): Widget;
-export function RichText(
-  spans: TextSpan[],
-  semanticName?: string,
-  minWidth?: number,
-  minHeight?: number
-): Widget;
-export function Image(
-  image: ImageHandle,
-  label?: string,
-  fit?: ImageFit,
-  size?: Size
-): Widget;
-export function ColorSwatch(
-  name: string,
-  color: Color,
-  size?: Size,
-  readOnly?: boolean,
-  onPress?: () => void
-): Widget;
-export function Separator(
-  axis?: Axis,
-  name?: string,
-  inset?: number,
-  thickness?: number,
-  length?: number
-): Widget;
-export function EmptyState(
-  title: string,
-  description: string,
-  name?: string,
-  detail?: string,
-  icon?: IconGlyph | string,
-  action?: Widget,
-  background?: Color,
-  transparent?: boolean
-): Widget;
-export function Surface(
-  child: Widget,
-  role?: SurfaceRole | string,
-  name?: string,
-  border?: SurfaceBorder | string,
-  elevation?: SurfaceElevation | string,
-  radius?: number,
-  padding?: number,
-  fillWidth?: boolean,
-  fillHeight?: boolean
-): Widget;
-export function Toolbar(
-  children: Widget[],
-  axis?: Axis,
-  name?: string,
-  extent?: number,
-  padding?: number,
-  spacing?: number,
-  background?: Color,
-  divider?: boolean
-): Widget;
-export function Column(children: Widget[], gap?: number): Widget;
-export function Row(children: Widget[], gap?: number): Widget;
-export function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
-export function ExternalSurface(
-  texture: ExternalTextureDescriptor,
-  desiredSize?: Size,
-  name?: string
-): Widget;
 export function renderWidget(widget: Widget, event?: Event): RenderSnapshot;
+
+// BEGIN GENERATED SUI WIDGET BINDINGS
+// Generated by `cargo xtask bindings generate` from bindings/widgets.sui.
+// Do not edit this section by hand.
+
+export class TextSpan {
+  constructor(text: string, color?: Color, fontSize?: number, lineHeight?: number, font?: FontHandle, weight?: number, style?: FontStyle, stretch?: FontStretch);
+  readonly text: string;
+}
+
+export class StatusBarSegment {
+  constructor(text: State | BindingValue, tone?: SemanticTone | string, minWidth?: number, expand?: boolean);
+}
+
+export class SegmentedControlItem {
+  constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
+}
+
+export class TableColumn {
+  constructor(title: string, width?: number, minWidth?: number, alignment?: "start" | "center" | "end" | "left" | "right", numeric?: boolean);
+}
+
+export class TableRow {
+  constructor(cells: string[]);
+}
+
+export function Label(value: State | BindingValue): Widget;
+
+export function Button(label: State | BindingValue, onPress?: () => void): Widget;
+
+export function Icon(glyph: IconGlyph | string, label?: string, size?: number, color?: Color): Widget;
+
+export function IconButton(glyph: IconGlyph | string, label: State | BindingValue, selected?: State | boolean | number, enabled?: State | boolean | number, size?: number, iconSize?: number, description?: string, onPress?: () => void): Widget;
+
+export function Link(label: State | BindingValue, url: State | BindingValue, semanticName?: string, enabled?: State | boolean | number, onOpen?: (url: string) => void): Widget;
+
+export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onToggle?: (checked: boolean) => void): Widget;
+
+export function Switch(label: State | BindingValue, on?: State | boolean | number, onToggle?: (on: boolean) => void): Widget;
+
+export function RadioButton(label: State | BindingValue, selected?: State | boolean | number, onSelect?: () => void): Widget;
+
+export function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export function Breadcrumb(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+
+export function PathBar(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+
+export function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export function Slider(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, onChange?: (value: number) => void): Widget;
+
+export function NumberInput(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, precision?: number, onChange?: (value: number) => void): Widget;
+
+export function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: number, value: string) => void): Widget;
+
+export function ProgressBar(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, showValue?: boolean): Widget;
+
+export function SignalMeter(name: State | BindingValue, active?: State | boolean | number, description?: string, bars?: number, size?: Size): Widget;
+
+export function StatusBadge(label: State | BindingValue, tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number): Widget;
+
+export function StatusBar(segments: StatusBarSegment[], name?: string, description?: State | BindingValue, height?: number): Widget;
+
+export function DetailRow(label: State | BindingValue, value: State | BindingValue, maxValueLines?: number): Widget;
+
+export function BusyIndicator(name: State | BindingValue, label?: State | BindingValue, size?: number): Widget;
+
+export function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+
+export function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+
+export function RichText(spans: TextSpan[], semanticName?: string, minWidth?: number, minHeight?: number): Widget;
+
+export function Image(image: ImageHandle, label?: string, fit?: ImageFit, size?: Size): Widget;
+
+export function ColorSwatch(name: string, color: Color, size?: Size, readOnly?: boolean, onPress?: () => void): Widget;
+
+export function Separator(axis?: Axis, name?: string, inset?: number, thickness?: number, length?: number): Widget;
+
+export function EmptyState(title: string, description: string, name?: string, detail?: string, icon?: IconGlyph | string, action?: Widget, background?: Color, transparent?: boolean): Widget;
+
+export function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, radius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
+
+export function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, spacing?: number, background?: Color, divider?: boolean): Widget;
+
+export function Column(children: Widget[], gap?: number): Widget;
+
+export function Row(children: Widget[], gap?: number): Widget;
+
+export function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
+
+export function ExternalSurface(texture: ExternalTextureDescriptor, desiredSize?: Size, name?: string): Widget;
+
+export class TreeItem {
+  constructor(label: string, detail?: string, expanded?: boolean, disabled?: boolean, children?: TreeItem[]);
+}
+
+export function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export class LayerListItem {
+  constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, disabled?: boolean);
+}
+
+export function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export class MenuItem {
+  constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean);
+}
+
+export function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+
+export function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+
+export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
+
+export function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
+
+// END GENERATED SUI WIDGET BINDINGS
