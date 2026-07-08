@@ -16,7 +16,7 @@ const outputDir =
   path.join(repoRoot, 'target', 'text-rendering-compare');
 const width = 480;
 const height = 260;
-const coveragePolicy = process.env.SUI_TEXT_COMPARE_COVERAGE ?? 'browser-like';
+const coveragePolicy = process.env.SUI_TEXT_COMPARE_COVERAGE ?? 'perceptual';
 const dpiScale = Number.parseFloat(process.env.SUI_TEXT_COMPARE_DPI_SCALE ?? '1');
 if (!Number.isFinite(dpiScale) || dpiScale <= 0) {
   throw new Error(`invalid SUI_TEXT_COMPARE_DPI_SCALE: ${process.env.SUI_TEXT_COMPARE_DPI_SCALE}`);

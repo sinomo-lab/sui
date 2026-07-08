@@ -98,7 +98,7 @@ const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
 const DYNAMIC_RANGE_MODE_OPTIONS: [&str; 3] = ["Automatic", "SDR", "HDR"];
 const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
 const TEXT_COVERAGE_POLICY_OPTIONS: [&str; 5] = [
-    "Browser-like",
+    "Perceptual",
     "Linear",
     "Gamma",
     "Coverage boost",
@@ -1820,7 +1820,7 @@ fn window_text_coverage_policy_from_renderer(
     policy: TextCoveragePolicy,
 ) -> WindowTextCoveragePolicy {
     match policy.normalized() {
-        TextCoveragePolicy::BrowserLike => WindowTextCoveragePolicy::BrowserLike,
+        TextCoveragePolicy::Perceptual => WindowTextCoveragePolicy::Perceptual,
         TextCoveragePolicy::Linear => WindowTextCoveragePolicy::Linear,
         TextCoveragePolicy::Gamma(gamma) => WindowTextCoveragePolicy::Gamma(gamma),
         TextCoveragePolicy::CoverageBoost(amount) => {
@@ -1834,7 +1834,7 @@ fn window_text_coverage_policy_from_renderer(
 
 fn text_coverage_policy_selected_index(policy: WindowTextCoveragePolicy) -> usize {
     match policy.normalized() {
-        WindowTextCoveragePolicy::BrowserLike => 0,
+        WindowTextCoveragePolicy::Perceptual => 0,
         WindowTextCoveragePolicy::Linear => 1,
         WindowTextCoveragePolicy::Gamma(_) => 2,
         WindowTextCoveragePolicy::CoverageBoost(_) => 3,
@@ -1844,7 +1844,7 @@ fn text_coverage_policy_selected_index(policy: WindowTextCoveragePolicy) -> usiz
 
 fn update_text_coverage_policy_selection(state: &mut WindowRenderOptions, index: usize) {
     state.text_coverage_policy = match index {
-        0 => WindowTextCoveragePolicy::BrowserLike,
+        0 => WindowTextCoveragePolicy::Perceptual,
         1 => WindowTextCoveragePolicy::Linear,
         2 => WindowTextCoveragePolicy::Gamma(match state.text_coverage_policy.normalized() {
             WindowTextCoveragePolicy::Gamma(gamma) => gamma,
@@ -2805,7 +2805,7 @@ impl RenderSettingsTab {
                     .with_child(OutputDiagnosticsPanel::new(Rc::clone(&theme_reader)))
                     .with_child(
                         Label::new(
-                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The default browser-like text coverage policy applies a luminance-aware coverage curve to atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
+                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The default perceptual text coverage policy applies a luminance-aware coverage curve to atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)

@@ -65,7 +65,7 @@ pub(crate) fn map_window_text_coverage_policy(
     policy: WindowTextCoveragePolicy,
 ) -> TextCoveragePolicy {
     match policy.normalized() {
-        WindowTextCoveragePolicy::BrowserLike => TextCoveragePolicy::BrowserLike,
+        WindowTextCoveragePolicy::Perceptual => TextCoveragePolicy::Perceptual,
         WindowTextCoveragePolicy::Linear => TextCoveragePolicy::Linear,
         WindowTextCoveragePolicy::Gamma(gamma) => TextCoveragePolicy::Gamma(gamma),
         WindowTextCoveragePolicy::CoverageBoost(amount) => {

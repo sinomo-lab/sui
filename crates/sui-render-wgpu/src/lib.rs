@@ -364,7 +364,7 @@ impl StemDarkening {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextCoveragePolicy {
-    BrowserLike,
+    Perceptual,
     Linear,
     Gamma(f32),
     CoverageBoost(f32),
@@ -373,14 +373,14 @@ pub enum TextCoveragePolicy {
 
 impl Default for TextCoveragePolicy {
     fn default() -> Self {
-        Self::BrowserLike
+        Self::Perceptual
     }
 }
 
 impl TextCoveragePolicy {
     pub fn normalized(self) -> Self {
         match self {
-            Self::BrowserLike => Self::BrowserLike,
+            Self::Perceptual => Self::Perceptual,
             Self::Linear => Self::Linear,
             Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
             Self::Gamma(_) => Self::Linear,
@@ -394,7 +394,7 @@ impl TextCoveragePolicy {
 
     pub fn resolved_for_text_color(self, color: Color) -> Self {
         match self.normalized() {
-            Self::BrowserLike => Self::CoverageBoost(browser_like_text_coverage_boost(color)),
+            Self::Perceptual => Self::CoverageBoost(perceptual_text_coverage_boost(color)),
             policy => policy,
         }
     }
@@ -402,8 +402,8 @@ impl TextCoveragePolicy {
     pub fn apply(self, coverage: f32) -> f32 {
         let coverage = coverage.clamp(0.0, 1.0);
         match self.normalized() {
-            Self::BrowserLike => {
-                apply_coverage_boost(coverage, browser_like_text_coverage_boost(Color::BLACK))
+            Self::Perceptual => {
+                apply_coverage_boost(coverage, perceptual_text_coverage_boost(Color::BLACK))
             }
             Self::Linear => coverage,
             Self::Gamma(gamma) => coverage.powf(gamma),
@@ -413,7 +413,7 @@ impl TextCoveragePolicy {
     }
 }
 
-fn browser_like_text_coverage_boost(color: Color) -> f32 {
+fn perceptual_text_coverage_boost(color: Color) -> f32 {
     let luminance = encoded_srgb_luminance(color);
     (1.0 - luminance).clamp(0.45, 0.92)
 }
@@ -6014,21 +6014,21 @@ mod tests {
     }
 
     #[test]
-    fn text_coverage_policy_defaults_to_browser_like_luminance_curve() {
+    fn text_coverage_policy_defaults_to_perceptual_luminance_curve() {
         assert_eq!(
             TextCoveragePolicy::default(),
-            TextCoveragePolicy::BrowserLike
+            TextCoveragePolicy::Perceptual
         );
 
         let TextCoveragePolicy::CoverageBoost(black_boost) =
             TextCoveragePolicy::default().resolved_for_text_color(Color::BLACK)
         else {
-            panic!("browser-like coverage should resolve to a coverage boost policy");
+            panic!("perceptual coverage should resolve to a coverage boost policy");
         };
         let TextCoveragePolicy::CoverageBoost(white_boost) =
             TextCoveragePolicy::default().resolved_for_text_color(Color::WHITE)
         else {
-            panic!("browser-like coverage should resolve to a coverage boost policy");
+            panic!("perceptual coverage should resolve to a coverage boost policy");
         };
 
         assert!((black_boost - 0.92).abs() < 0.0001);

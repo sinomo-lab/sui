@@ -152,10 +152,11 @@ fn render_options() -> WindowRenderOptions {
     }
 
     if let Ok(value) = env::var("SUI_TEXT_COMPARE_COVERAGE") {
-        let policy = if value.eq_ignore_ascii_case("browser")
+        let policy = if value.eq_ignore_ascii_case("perceptual")
+            || value.eq_ignore_ascii_case("browser")
             || value.eq_ignore_ascii_case("browser-like")
         {
-            Some(WindowTextCoveragePolicy::BrowserLike)
+            Some(WindowTextCoveragePolicy::Perceptual)
         } else if value.eq_ignore_ascii_case("linear") {
             Some(WindowTextCoveragePolicy::Linear)
         } else if value.eq_ignore_ascii_case("two") {

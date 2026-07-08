@@ -620,7 +620,7 @@ impl WindowStemDarkening {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowTextCoveragePolicy {
-    BrowserLike,
+    Perceptual,
     Linear,
     Gamma(f32),
     CoverageBoost(f32),
@@ -629,14 +629,14 @@ pub enum WindowTextCoveragePolicy {
 
 impl Default for WindowTextCoveragePolicy {
     fn default() -> Self {
-        Self::BrowserLike
+        Self::Perceptual
     }
 }
 
 impl WindowTextCoveragePolicy {
     pub fn normalized(self) -> Self {
         match self {
-            Self::BrowserLike => Self::BrowserLike,
+            Self::Perceptual => Self::Perceptual,
             Self::Linear => Self::Linear,
             Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
             Self::Gamma(_) => Self::Linear,
@@ -710,7 +710,7 @@ impl WindowRenderOptions {
                 max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM,
             },
             stem_darkening: WindowStemDarkening::None,
-            text_coverage_policy: WindowTextCoveragePolicy::BrowserLike,
+            text_coverage_policy: WindowTextCoveragePolicy::Perceptual,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
             dynamic_range_mode: WindowDynamicRangeMode::Automatic,
             tone_mapping_mode: WindowToneMappingMode::Automatic,
@@ -1820,7 +1820,7 @@ mod tests {
         );
         assert_eq!(
             options.text_coverage_policy,
-            WindowTextCoveragePolicy::BrowserLike
+            WindowTextCoveragePolicy::Perceptual
         );
     }
 }
