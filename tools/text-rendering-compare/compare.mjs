@@ -16,6 +16,11 @@ const outputDir =
   path.join(repoRoot, 'target', 'text-rendering-compare');
 const width = 480;
 const height = 260;
+const coveragePolicy = process.env.SUI_TEXT_COMPARE_COVERAGE ?? 'browser-like';
+const dpiScale = Number.parseFloat(process.env.SUI_TEXT_COMPARE_DPI_SCALE ?? '1');
+if (!Number.isFinite(dpiScale) || dpiScale <= 0) {
+  throw new Error(`invalid SUI_TEXT_COMPARE_DPI_SCALE: ${process.env.SUI_TEXT_COMPARE_DPI_SCALE}`);
+}
 const fontPath = path.join(repoRoot, 'crates', 'sui-text', 'assets', 'NotoSans-Regular.ttf');
 
 const samples = [
@@ -106,16 +111,71 @@ function channelDeltaStats(a, b) {
   };
 }
 
+function luminance(data, index) {
+  return 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
+}
+
+function darkness(data, index) {
+  return Math.max(0, 255 - luminance(data, index));
+}
+
+function rowInkStats(sui, browser) {
+  return samples.map((sample) => {
+    const top = Math.max(0, Math.floor((sample.y - 6) * dpiScale));
+    const bottom = Math.min(
+      sui.height,
+      Math.ceil((sample.y + sample.lineHeight + 6) * dpiScale)
+    );
+    let unionPixels = 0;
+    let differingInkPixels = 0;
+    let suiInkMass = 0;
+    let browserInkMass = 0;
+
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = 0; x < sui.width; x += 1) {
+        const index = (y * sui.width + x) * 4;
+        const suiDarkness = darkness(sui.data, index);
+        const browserDarkness = darkness(browser.data, index);
+        if (suiDarkness <= 2 && browserDarkness <= 2) {
+          continue;
+        }
+
+        unionPixels += 1;
+        suiInkMass += suiDarkness;
+        browserInkMass += browserDarkness;
+        if (Math.abs(suiDarkness - browserDarkness) > 12) {
+          differingInkPixels += 1;
+        }
+      }
+    }
+
+    return {
+      text: sample.text,
+      unionPixels,
+      differingInkPixels,
+      differingInkRatio: unionPixels === 0 ? 0 : differingInkPixels / unionPixels,
+      suiInkMass: Math.round(suiInkMass),
+      browserInkMass: Math.round(browserInkMass),
+      inkMassRatio: browserInkMass <= 0 ? 1 : suiInkMass / browserInkMass
+    };
+  });
+}
+
 function comparisonSummary(sui, browser, diffPixels) {
   const stats = channelDeltaStats(sui, browser);
   const totalPixels = sui.width * sui.height;
   return {
+    dpiScale,
+    coveragePolicy,
+    cssWidth: width,
+    cssHeight: height,
     width: sui.width,
     height: sui.height,
     totalPixels,
     diffPixels,
     diffRatio: diffPixels / totalPixels,
-    ...stats
+    ...stats,
+    rowInkStats: rowInkStats(sui, browser)
   };
 }
 
@@ -176,7 +236,7 @@ async function writeBrowserReference() {
   const browser = await chromium.launch();
   const page = await browser.newPage({
     viewport: { width, height },
-    deviceScaleFactor: 1
+    deviceScaleFactor: dpiScale
   });
   await page.setContent(html, { waitUntil: 'load' });
   await page.evaluate(async () => {

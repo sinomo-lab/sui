@@ -364,38 +364,78 @@ impl StemDarkening {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextCoveragePolicy {
+    BrowserLike,
     Linear,
     Gamma(f32),
+    CoverageBoost(f32),
     TwoCoverageMinusCoverageSq,
 }
 
 impl Default for TextCoveragePolicy {
     fn default() -> Self {
-        Self::Linear
+        Self::BrowserLike
     }
 }
 
 impl TextCoveragePolicy {
     pub fn normalized(self) -> Self {
         match self {
+            Self::BrowserLike => Self::BrowserLike,
             Self::Linear => Self::Linear,
             Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
             Self::Gamma(_) => Self::Linear,
+            Self::CoverageBoost(amount) if amount.is_finite() && amount > 0.0 => {
+                Self::CoverageBoost(amount.clamp(0.0, 1.0))
+            }
+            Self::CoverageBoost(_) => Self::Linear,
             Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
         }
     }
 
-    pub fn resolved_for_text_color(self, _color: Color) -> Self {
-        self.normalized()
+    pub fn resolved_for_text_color(self, color: Color) -> Self {
+        match self.normalized() {
+            Self::BrowserLike => Self::CoverageBoost(browser_like_text_coverage_boost(color)),
+            policy => policy,
+        }
     }
 
     pub fn apply(self, coverage: f32) -> f32 {
         let coverage = coverage.clamp(0.0, 1.0);
         match self.normalized() {
+            Self::BrowserLike => {
+                apply_coverage_boost(coverage, browser_like_text_coverage_boost(Color::BLACK))
+            }
             Self::Linear => coverage,
             Self::Gamma(gamma) => coverage.powf(gamma),
+            Self::CoverageBoost(amount) => apply_coverage_boost(coverage, amount),
             Self::TwoCoverageMinusCoverageSq => (2.0 * coverage) - (coverage * coverage),
         }
+    }
+}
+
+fn browser_like_text_coverage_boost(color: Color) -> f32 {
+    let luminance = encoded_srgb_luminance(color);
+    (1.0 - luminance).clamp(0.45, 0.92)
+}
+
+fn apply_coverage_boost(coverage: f32, amount: f32) -> f32 {
+    coverage + (coverage * (1.0 - coverage) * amount.clamp(0.0, 1.0))
+}
+
+fn encoded_srgb_luminance(color: Color) -> f32 {
+    let linear = color.to_linear_srgb();
+    let red = linear_srgb_to_encoded_unit(linear.red);
+    let green = linear_srgb_to_encoded_unit(linear.green);
+    let blue = linear_srgb_to_encoded_unit(linear.blue);
+    ((0.2126 * red) + (0.7152 * green) + (0.0722 * blue)).clamp(0.0, 1.0)
+}
+
+fn linear_srgb_to_encoded_unit(channel: f32) -> f32 {
+    let value = channel.clamp(0.0, 1.0);
+    if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        (1.055 * value.powf(1.0 / 2.4)) - 0.055
     }
 }
 
@@ -5969,20 +6009,31 @@ mod tests {
     fn text_coverage_policy_matches_egui_reference_formulas() {
         assert!((TextCoveragePolicy::Linear.apply(0.5) - 0.5).abs() < 0.0001);
         assert!((TextCoveragePolicy::Gamma(2.0).apply(0.5) - 0.25).abs() < 0.0001);
+        assert!((TextCoveragePolicy::CoverageBoost(0.5).apply(0.5) - 0.625).abs() < 0.0001);
         assert!((TextCoveragePolicy::TwoCoverageMinusCoverageSq.apply(0.5) - 0.75).abs() < 0.0001);
     }
 
     #[test]
-    fn text_coverage_policy_defaults_to_linear_for_all_text_luminance() {
-        assert_eq!(TextCoveragePolicy::default(), TextCoveragePolicy::Linear);
+    fn text_coverage_policy_defaults_to_browser_like_luminance_curve() {
         assert_eq!(
-            TextCoveragePolicy::default().resolved_for_text_color(Color::BLACK),
-            TextCoveragePolicy::Linear
+            TextCoveragePolicy::default(),
+            TextCoveragePolicy::BrowserLike
         );
-        assert_eq!(
-            TextCoveragePolicy::default().resolved_for_text_color(Color::WHITE),
-            TextCoveragePolicy::Linear
-        );
+
+        let TextCoveragePolicy::CoverageBoost(black_boost) =
+            TextCoveragePolicy::default().resolved_for_text_color(Color::BLACK)
+        else {
+            panic!("browser-like coverage should resolve to a coverage boost policy");
+        };
+        let TextCoveragePolicy::CoverageBoost(white_boost) =
+            TextCoveragePolicy::default().resolved_for_text_color(Color::WHITE)
+        else {
+            panic!("browser-like coverage should resolve to a coverage boost policy");
+        };
+
+        assert!((black_boost - 0.92).abs() < 0.0001);
+        assert!((white_boost - 0.45).abs() < 0.0001);
+        assert!(black_boost > white_boost);
     }
 
     #[test]
@@ -6382,7 +6433,7 @@ mod tests {
     }
 
     #[test]
-    fn default_text_coverage_policy_shares_glyph_cache_entries_for_light_and_dark_text() {
+    fn linear_text_coverage_policy_shares_glyph_cache_entries_for_light_and_dark_text() {
         let handle = FontHandle::new(34);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -6426,9 +6477,60 @@ mod tests {
         };
 
         let mut text_engine = TextEngine::new().unwrap();
+        text_engine.set_text_coverage_policy(TextCoveragePolicy::Linear);
         let _ = build_vertices(&frame, &mut text_engine).unwrap();
 
         assert_eq!(text_engine.glyph_cache_stats(), (1, 1, 1));
+    }
+
+    #[test]
+    fn default_text_coverage_policy_caches_distinct_luminance_resolutions() {
+        let handle = FontHandle::new(35);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(203),
+            viewport: Size::new(240.0, 96.0),
+            surface_size: Size::new(240.0, 96.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 8.0, 100.0, 32.0),
+                    text: "I".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 24.0,
+                        line_height: 28.0,
+                        color: Color::BLACK,
+                        ..TextStyle::default()
+                    },
+                }));
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 48.0, 100.0, 32.0),
+                    text: "I".to_string(),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 24.0,
+                        line_height: 28.0,
+                        color: Color::WHITE,
+                        ..TextStyle::default()
+                    },
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+
+        assert_eq!(text_engine.glyph_cache_stats(), (2, 0, 2));
     }
 
     #[test]

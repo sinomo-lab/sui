@@ -1,9 +1,10 @@
 use std::{env, path::PathBuf};
 
 use sui::{
-    Application, Color, Constraints, FontHandle, MeasureCtx, PaintCtx, Point, Rect, SemanticsCtx,
-    SemanticsNode, SemanticsRole, Size, TextStyle, Widget, WindowBuilder, WindowRenderOptions,
-    WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, set_window_render_options,
+    Application, Color, Constraints, Event, FontHandle, MeasureCtx, PaintCtx, Point, Rect,
+    SemanticsCtx, SemanticsNode, SemanticsRole, Size, TextStyle, Widget, WindowBuilder,
+    WindowEvent, WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy,
+    WindowTextHinting, set_window_render_options,
 };
 use sui_testing::TestApp;
 
@@ -122,6 +123,14 @@ fn output_dir() -> PathBuf {
     PathBuf::from("target/text-rendering-compare")
 }
 
+fn dpi_scale() -> f64 {
+    env::var("SUI_TEXT_COMPARE_DPI_SCALE")
+        .ok()
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or(1.0)
+}
+
 fn render_options() -> WindowRenderOptions {
     let mut options =
         WindowRenderOptions::new(true, 1.0).with_text_hinting(WindowTextHinting::default());
@@ -143,13 +152,24 @@ fn render_options() -> WindowRenderOptions {
     }
 
     if let Ok(value) = env::var("SUI_TEXT_COMPARE_COVERAGE") {
-        let policy = if value.eq_ignore_ascii_case("two") {
+        let policy = if value.eq_ignore_ascii_case("browser")
+            || value.eq_ignore_ascii_case("browser-like")
+        {
+            Some(WindowTextCoveragePolicy::BrowserLike)
+        } else if value.eq_ignore_ascii_case("linear") {
+            Some(WindowTextCoveragePolicy::Linear)
+        } else if value.eq_ignore_ascii_case("two") {
             Some(WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq)
         } else if let Some(gamma) = value
             .strip_prefix("gamma:")
             .and_then(|raw| raw.parse::<f32>().ok())
         {
             Some(WindowTextCoveragePolicy::Gamma(gamma))
+        } else if let Some(amount) = value
+            .strip_prefix("boost:")
+            .and_then(|raw| raw.parse::<f32>().ok())
+        {
+            Some(WindowTextCoveragePolicy::CoverageBoost(amount))
         } else {
             None
         };
@@ -184,11 +204,27 @@ fn main() -> sui::Result<()> {
         set_window_render_options(window_id, options);
     }
     let window = TestApp::from_runtime(runtime)?.main_window()?;
+    let scale = dpi_scale();
+    if (scale - 1.0).abs() > f64::EPSILON {
+        let viewport = Size::new(WIDTH, HEIGHT);
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::ScaleFactorChanged {
+                scale_factor: scale,
+                raw_dpi: Some((96.0 * scale) as f32),
+                suggested_size: Some(viewport),
+            }))?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::Resized(viewport)))?;
+        window.run_until_idle()?;
+    }
     let screenshot = window.capture_screenshot()?;
-    let screenshot = screenshot.crop(Rect::from_origin_size(
-        Point::ZERO,
-        Size::new(WIDTH, HEIGHT),
-    ))?;
+    let physical_size = Size::new(
+        (WIDTH * scale as f32).round().max(1.0),
+        (HEIGHT * scale as f32).round().max(1.0),
+    );
+    let screenshot = screenshot.crop(Rect::from_origin_size(Point::ZERO, physical_size))?;
     let path = output_dir.join("sui.png");
     screenshot.write_png(&path)?;
 

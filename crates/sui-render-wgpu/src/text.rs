@@ -139,17 +139,23 @@ impl From<StemDarkening> for StemDarkeningCacheKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TextCoverageCacheKey {
+    BrowserLike,
     Linear,
     Gamma { gamma_bits: u32 },
+    CoverageBoost { amount_bits: u32 },
     TwoCoverageMinusCoverageSq,
 }
 
 impl From<TextCoveragePolicy> for TextCoverageCacheKey {
     fn from(value: TextCoveragePolicy) -> Self {
         match value.normalized() {
+            TextCoveragePolicy::BrowserLike => Self::BrowserLike,
             TextCoveragePolicy::Linear => Self::Linear,
             TextCoveragePolicy::Gamma(gamma) => Self::Gamma {
                 gamma_bits: gamma.to_bits(),
+            },
+            TextCoveragePolicy::CoverageBoost(amount) => Self::CoverageBoost {
+                amount_bits: amount.to_bits(),
             },
             TextCoveragePolicy::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
         }

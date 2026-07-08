@@ -620,23 +620,30 @@ impl WindowStemDarkening {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowTextCoveragePolicy {
+    BrowserLike,
     Linear,
     Gamma(f32),
+    CoverageBoost(f32),
     TwoCoverageMinusCoverageSq,
 }
 
 impl Default for WindowTextCoveragePolicy {
     fn default() -> Self {
-        Self::Linear
+        Self::BrowserLike
     }
 }
 
 impl WindowTextCoveragePolicy {
     pub fn normalized(self) -> Self {
         match self {
+            Self::BrowserLike => Self::BrowserLike,
             Self::Linear => Self::Linear,
             Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
             Self::Gamma(_) => Self::Linear,
+            Self::CoverageBoost(amount) if amount.is_finite() && amount > 0.0 => {
+                Self::CoverageBoost(amount.clamp(0.0, 1.0))
+            }
+            Self::CoverageBoost(_) => Self::Linear,
             Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
         }
     }
@@ -703,7 +710,7 @@ impl WindowRenderOptions {
                 max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM,
             },
             stem_darkening: WindowStemDarkening::None,
-            text_coverage_policy: WindowTextCoveragePolicy::Linear,
+            text_coverage_policy: WindowTextCoveragePolicy::BrowserLike,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
             dynamic_range_mode: WindowDynamicRangeMode::Automatic,
             tone_mapping_mode: WindowToneMappingMode::Automatic,
@@ -1804,11 +1811,16 @@ mod tests {
 
     #[test]
     fn window_render_options_default_to_slight_text_hinting() {
+        let options = WindowRenderOptions::new(true, 1.0);
         assert_eq!(
-            WindowRenderOptions::new(true, 1.0).text_hinting,
+            options.text_hinting,
             WindowTextHinting::Slight {
                 max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM
             }
+        );
+        assert_eq!(
+            options.text_coverage_policy,
+            WindowTextCoveragePolicy::BrowserLike
         );
     }
 }

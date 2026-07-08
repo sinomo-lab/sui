@@ -97,7 +97,13 @@ const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
 const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
 const DYNAMIC_RANGE_MODE_OPTIONS: [&str; 3] = ["Automatic", "SDR", "HDR"];
 const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
-const TEXT_COVERAGE_POLICY_OPTIONS: [&str; 3] = ["Linear", "Gamma", "2c - c^2"];
+const TEXT_COVERAGE_POLICY_OPTIONS: [&str; 5] = [
+    "Browser-like",
+    "Linear",
+    "Gamma",
+    "Coverage boost",
+    "2c - c^2",
+];
 const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
     "Disabled (SDR baseline)",
     "Wide-gamut only",
@@ -1814,8 +1820,12 @@ fn window_text_coverage_policy_from_renderer(
     policy: TextCoveragePolicy,
 ) -> WindowTextCoveragePolicy {
     match policy.normalized() {
+        TextCoveragePolicy::BrowserLike => WindowTextCoveragePolicy::BrowserLike,
         TextCoveragePolicy::Linear => WindowTextCoveragePolicy::Linear,
         TextCoveragePolicy::Gamma(gamma) => WindowTextCoveragePolicy::Gamma(gamma),
+        TextCoveragePolicy::CoverageBoost(amount) => {
+            WindowTextCoveragePolicy::CoverageBoost(amount)
+        }
         TextCoveragePolicy::TwoCoverageMinusCoverageSq => {
             WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq
         }
@@ -1824,20 +1834,29 @@ fn window_text_coverage_policy_from_renderer(
 
 fn text_coverage_policy_selected_index(policy: WindowTextCoveragePolicy) -> usize {
     match policy.normalized() {
-        WindowTextCoveragePolicy::Linear => 0,
-        WindowTextCoveragePolicy::Gamma(_) => 1,
-        WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => 2,
+        WindowTextCoveragePolicy::BrowserLike => 0,
+        WindowTextCoveragePolicy::Linear => 1,
+        WindowTextCoveragePolicy::Gamma(_) => 2,
+        WindowTextCoveragePolicy::CoverageBoost(_) => 3,
+        WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => 4,
     }
 }
 
 fn update_text_coverage_policy_selection(state: &mut WindowRenderOptions, index: usize) {
     state.text_coverage_policy = match index {
-        0 => WindowTextCoveragePolicy::Linear,
-        1 => WindowTextCoveragePolicy::Gamma(match state.text_coverage_policy.normalized() {
+        0 => WindowTextCoveragePolicy::BrowserLike,
+        1 => WindowTextCoveragePolicy::Linear,
+        2 => WindowTextCoveragePolicy::Gamma(match state.text_coverage_policy.normalized() {
             WindowTextCoveragePolicy::Gamma(gamma) => gamma,
             _ => 1.6,
         }),
-        2 => WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq,
+        3 => {
+            WindowTextCoveragePolicy::CoverageBoost(match state.text_coverage_policy.normalized() {
+                WindowTextCoveragePolicy::CoverageBoost(amount) => amount,
+                _ => 0.75,
+            })
+        }
+        4 => WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq,
         _ => state.text_coverage_policy,
     };
 }
@@ -2786,7 +2805,7 @@ impl RenderSettingsTab {
                     .with_child(OutputDiagnosticsPanel::new(Rc::clone(&theme_reader)))
                     .with_child(
                         Label::new(
-                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The text coverage policy applies to both atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
+                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The default browser-like text coverage policy applies a luminance-aware coverage curve to atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
                         .font_size(13.0)
                         .line_height(18.0)
