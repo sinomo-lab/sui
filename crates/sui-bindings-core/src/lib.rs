@@ -11,23 +11,27 @@ use std::{
     },
 };
 
+use sui::containers::Padding as PaddingWidget;
 use sui::{
-    ArrangeCtx, Axis, Border, Breadcrumb, BreadcrumbItem, Brush, BusyIndicator, Button, Checkbox,
-    Color, ColorSpace, ColorSwatch, Constraints, CustomEvent, DetailRow, Dialog, DpiInfo,
-    EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase, Flex, FontHandle, Icon,
-    IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
-    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
-    LayerList, LayerListItem, Link, ListItem, ListView, MeasureCtx, Menu, MenuItem, Modifiers,
-    NumberInput, PaintCtx, Path, Point, PointerButton, PointerButtons, PointerEvent,
-    PointerEventKind, PointerKind, ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont,
-    RegisteredImage, RichText, Runtime, SceneCommand, ScrollDelta, ScrollView, SegmentedControl,
-    SegmentedControlItem, Select, SemanticTone, SemanticsCtx, SemanticsNode, SemanticsRole,
-    SemanticsValue, Separator, ShadowParams, SignalMeter, Size, Slider, StatusBadge, StatusBar,
-    StatusBarSegment, StrokeStyle, Surface, SurfaceBorder, SurfaceElevation, SurfaceRole, Switch,
-    TabBar, Table, TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea, TextInput,
-    TextSpan, TextStyle, TimerToken, ToggleState, Toolbar, Transform, TreeItem, TreeView, Vector,
-    Widget, WidgetId, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WidgetShader,
-    WindowBuilder, WindowEvent, WindowId,
+    Align, Alignment, ArrangeCtx, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
+    BrowserTabBar, Brush, BusyIndicator, Button, Checkbox, Color, ColorPalette, ColorPaletteSwatch,
+    ColorPicker, ColorSpace, ColorSwatch, Constraints, ContextMenu, CustomEvent, DetailRow, Dialog,
+    DockPanel, DpiInfo, EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase, FieldGroup,
+    Flex, FontHandle, FormRow, FormSection, Icon, IconButton, IconGlyph, Image, ImageFit,
+    ImageHandle, ImageSource, ImeEvent, Insets, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, KeyState, KeyboardEvent, Label, LayerList, LayerListItem, Link, ListItem,
+    ListView, MeasureCtx, Menu, MenuItem, Modifiers, NumberInput, PaintCtx, PanelSection, Path,
+    Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Popover,
+    PresetStrip, ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage,
+    RichText, Runtime, SceneCommand, ScrollDelta, ScrollView, SegmentedControl,
+    SegmentedControlItem, Select, SemanticRegion, SemanticTone, SemanticsCtx, SemanticsNode,
+    SemanticsRole, SemanticsValue, Separator, ShadowParams, SignalMeter, Size, SizedBox, Slider,
+    Stack, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle, Surface,
+    SurfaceBorder, SurfaceElevation, SurfaceRole, Switch, TabBar, Table, TableColumn,
+    TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextSpan, TextStyle, TimerToken,
+    ToggleState, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, Transform,
+    TreeItem, TreeView, Vector, Widget, WidgetId, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    WidgetShader, WindowBuilder, WindowEvent, WindowId,
 };
 
 #[cfg(feature = "desktop")]
@@ -519,6 +523,58 @@ impl fmt::Debug for BindingSelectAction {
     }
 }
 
+#[derive(Clone)]
+pub struct BindingColorAction {
+    callback: Arc<dyn Fn(Color) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingColorAction {
+    pub fn new(
+        callback: impl Fn(Color) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, color: Color) -> ForeignCallbackResult<()> {
+        (self.callback)(color)
+    }
+}
+
+impl fmt::Debug for BindingColorAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingColorAction").finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone)]
+pub struct BindingColorSelectAction {
+    callback:
+        Arc<dyn Fn(usize, String, Color) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingColorSelectAction {
+    pub fn new(
+        callback: impl Fn(usize, String, Color) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, index: usize, name: String, color: Color) -> ForeignCallbackResult<()> {
+        (self.callback)(index, name, color)
+    }
+}
+
+impl fmt::Debug for BindingColorSelectAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingColorSelectAction")
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum BindingText {
     Static(String),
@@ -939,6 +995,55 @@ impl BindingMenuItem {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BindingToolPaletteItem {
+    icon: IconGlyph,
+    label: String,
+    disabled: bool,
+}
+
+impl BindingToolPaletteItem {
+    pub fn new(icon: IconGlyph, label: impl Into<String>, disabled: bool) -> Self {
+        Self {
+            icon,
+            label: label.into(),
+            disabled,
+        }
+    }
+
+    fn into_sui(&self) -> ToolPaletteItem {
+        let item = ToolPaletteItem::new(self.icon, self.label.clone());
+        if self.disabled { item.disabled() } else { item }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingColorPaletteSwatch {
+    name: String,
+    color: Color,
+}
+
+impl BindingColorPaletteSwatch {
+    pub fn new(name: impl Into<String>, color: Color) -> Self {
+        Self {
+            name: name.into(),
+            color,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn color(&self) -> Color {
+        self.color
+    }
+
+    fn into_sui(&self) -> ColorPaletteSwatch {
+        ColorPaletteSwatch::new(self.name.clone(), self.color)
+    }
+}
+
 fn binding_number_to_index(value: f64) -> Option<usize> {
     if value.is_finite() && value >= 0.0 {
         Some(value.floor() as usize)
@@ -1099,6 +1204,24 @@ pub fn binding_surface_elevation_from_name(value: &str) -> Option<SurfaceElevati
     }
 }
 
+pub fn binding_alignment_from_name(value: &str) -> Option<Alignment> {
+    match normalize_binding_name(value).as_str() {
+        "start" | "left" | "top" => Some(Alignment::Start),
+        "center" | "centre" | "middle" => Some(Alignment::Center),
+        "end" | "right" | "bottom" => Some(Alignment::End),
+        "stretch" | "fill" => Some(Alignment::Stretch),
+        _ => None,
+    }
+}
+
+pub fn binding_tooltip_placement_from_name(value: &str) -> Option<TooltipPlacement> {
+    match normalize_binding_name(value).as_str() {
+        "above" | "top" => Some(TooltipPlacement::Above),
+        "below" | "bottom" => Some(TooltipPlacement::Below),
+        _ => None,
+    }
+}
+
 pub fn binding_semantic_tone_from_name(value: &str) -> Option<SemanticTone> {
     match normalize_binding_name(value).as_str() {
         "neutral" => Some(SemanticTone::Neutral),
@@ -1201,6 +1324,11 @@ impl fmt::Debug for BindingWidget {
                 .debug_struct("BindingWidget::Menu")
                 .field("items", items)
                 .finish(),
+            BindingWidgetKind::ContextMenu { items, trigger, .. } => f
+                .debug_struct("BindingWidget::ContextMenu")
+                .field("items", items)
+                .field("trigger", trigger)
+                .finish(),
             BindingWidgetKind::TabBar { tabs, .. } => f
                 .debug_struct("BindingWidget::TabBar")
                 .field("tabs", tabs)
@@ -1250,6 +1378,13 @@ impl fmt::Debug for BindingWidget {
             BindingWidgetKind::ColorSwatch { .. } => {
                 f.debug_tuple("BindingWidget::ColorSwatch").finish()
             }
+            BindingWidgetKind::ColorPalette { swatches, .. } => f
+                .debug_struct("BindingWidget::ColorPalette")
+                .field("swatches", swatches)
+                .finish(),
+            BindingWidgetKind::ColorPicker { .. } => {
+                f.debug_tuple("BindingWidget::ColorPicker").finish()
+            }
             BindingWidgetKind::Separator { .. } => {
                 f.debug_tuple("BindingWidget::Separator").finish()
             }
@@ -1271,6 +1406,105 @@ impl fmt::Debug for BindingWidget {
                 .debug_struct("BindingWidget::Toolbar")
                 .field("axis", axis)
                 .field("children", children)
+                .finish(),
+            BindingWidgetKind::Padding { child, insets, .. } => f
+                .debug_struct("BindingWidget::Padding")
+                .field("child", child)
+                .field("insets", insets)
+                .finish(),
+            BindingWidgetKind::Align {
+                child,
+                horizontal,
+                vertical,
+            } => f
+                .debug_struct("BindingWidget::Align")
+                .field("child", child)
+                .field("horizontal", horizontal)
+                .field("vertical", vertical)
+                .finish(),
+            BindingWidgetKind::Background { child, .. } => f
+                .debug_struct("BindingWidget::Background")
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::SizedBox {
+                child,
+                width,
+                height,
+            } => f
+                .debug_struct("BindingWidget::SizedBox")
+                .field("child", child)
+                .field("width", width)
+                .field("height", height)
+                .finish(),
+            BindingWidgetKind::Stack { axis, children, .. } => f
+                .debug_struct("BindingWidget::Stack")
+                .field("axis", axis)
+                .field("children", children)
+                .finish(),
+            BindingWidgetKind::SemanticRegion { name, child, .. } => f
+                .debug_struct("BindingWidget::SemanticRegion")
+                .field("name", name)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::FormRow { label, control, .. } => f
+                .debug_struct("BindingWidget::FormRow")
+                .field("label", label)
+                .field("control", control)
+                .finish(),
+            BindingWidgetKind::FieldGroup { children, .. } => f
+                .debug_struct("BindingWidget::FieldGroup")
+                .field("children", children)
+                .finish(),
+            BindingWidgetKind::FormSection { title, child, .. } => f
+                .debug_struct("BindingWidget::FormSection")
+                .field("title", title)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::PanelSection { title, child, .. } => f
+                .debug_struct("BindingWidget::PanelSection")
+                .field("title", title)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::DockPanel { title, child, .. } => f
+                .debug_struct("BindingWidget::DockPanel")
+                .field("title", title)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::StatusBarHost {
+                content,
+                status_bar,
+            } => f
+                .debug_struct("BindingWidget::StatusBarHost")
+                .field("content", content)
+                .field("status_bar", status_bar)
+                .finish(),
+            BindingWidgetKind::Tooltip { text, child, .. } => f
+                .debug_struct("BindingWidget::Tooltip")
+                .field("text", text)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::Popover {
+                name,
+                trigger,
+                content,
+                ..
+            } => f
+                .debug_struct("BindingWidget::Popover")
+                .field("name", name)
+                .field("trigger", trigger)
+                .field("content", content)
+                .finish(),
+            BindingWidgetKind::ToolPalette { items, .. } => f
+                .debug_struct("BindingWidget::ToolPalette")
+                .field("items", items)
+                .finish(),
+            BindingWidgetKind::PresetStrip { presets, .. } => f
+                .debug_struct("BindingWidget::PresetStrip")
+                .field("presets", presets)
+                .finish(),
+            BindingWidgetKind::BrowserTabBar { tabs, .. } => f
+                .debug_struct("BindingWidget::BrowserTabBar")
+                .field("tabs", tabs)
                 .finish(),
             BindingWidgetKind::ScrollView { axes, child, .. } => f
                 .debug_struct("BindingWidget::ScrollView")
@@ -1388,6 +1622,12 @@ enum BindingWidgetKind {
         highlighted: Option<BindingNumber>,
         action: Option<BindingSelectAction>,
     },
+    ContextMenu {
+        name: String,
+        trigger: BindingWidget,
+        items: Vec<BindingMenuItem>,
+        action: Option<BindingSelectAction>,
+    },
     TabBar {
         name: BindingText,
         tabs: Vec<String>,
@@ -1495,6 +1735,22 @@ enum BindingWidgetKind {
         read_only: bool,
         action: Option<BindingAction>,
     },
+    ColorPalette {
+        name: String,
+        swatches: Vec<BindingColorPaletteSwatch>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingColorSelectAction>,
+        columns: Option<usize>,
+        swatch_size: Option<f32>,
+        gap: Option<f32>,
+    },
+    ColorPicker {
+        name: String,
+        color: Option<Color>,
+        action: Option<BindingColorAction>,
+        show_alpha: bool,
+        compact: bool,
+    },
     Separator {
         axis: Axis,
         name: Option<String>,
@@ -1538,6 +1794,129 @@ enum BindingWidgetKind {
         spacing: Option<f32>,
         background: Option<Color>,
         divider: bool,
+    },
+    Padding {
+        child: BindingWidget,
+        insets: Insets,
+        fill_child_width: bool,
+        fill_child_height: bool,
+    },
+    Align {
+        child: BindingWidget,
+        horizontal: Alignment,
+        vertical: Alignment,
+    },
+    Background {
+        child: BindingWidget,
+        color: Color,
+    },
+    SizedBox {
+        child: Option<BindingWidget>,
+        width: Option<f32>,
+        height: Option<f32>,
+    },
+    Stack {
+        children: Vec<BindingWidget>,
+        axis: Axis,
+        spacing: f32,
+        alignment: Alignment,
+    },
+    SemanticRegion {
+        name: BindingText,
+        child: BindingWidget,
+        description: Option<BindingText>,
+        role: SemanticsRole,
+    },
+    FormRow {
+        label: String,
+        control: BindingWidget,
+        stacked: bool,
+        label_width: Option<f32>,
+        control_width: Option<f32>,
+        gap: Option<f32>,
+    },
+    FieldGroup {
+        children: Vec<BindingWidget>,
+        spacing: Option<f32>,
+        padding: Option<f32>,
+        max_width: Option<f32>,
+        fill_width: bool,
+    },
+    FormSection {
+        title: String,
+        child: BindingWidget,
+        description: Option<String>,
+        header_action: Option<BindingWidget>,
+        padding: Option<f32>,
+        body_gap: Option<f32>,
+        header_gap: Option<f32>,
+        max_width: Option<f32>,
+        fill_width: bool,
+        radius: Option<f32>,
+        elevation: Option<SurfaceElevation>,
+    },
+    PanelSection {
+        title: String,
+        child: BindingWidget,
+        header_action: Option<BindingWidget>,
+        gap: Option<f32>,
+        action_gap: Option<f32>,
+        collapsible: bool,
+        expanded: bool,
+    },
+    DockPanel {
+        title: String,
+        child: BindingWidget,
+        name: Option<String>,
+        header_height: Option<f32>,
+        padding: Option<f32>,
+        background: Option<Color>,
+        header_background: Option<Color>,
+    },
+    StatusBarHost {
+        content: BindingWidget,
+        status_bar: BindingWidget,
+    },
+    Tooltip {
+        text: String,
+        child: BindingWidget,
+        placement: TooltipPlacement,
+    },
+    Popover {
+        name: String,
+        trigger: BindingWidget,
+        content: BindingWidget,
+        open: bool,
+    },
+    ToolPalette {
+        name: String,
+        items: Vec<BindingToolPaletteItem>,
+        selected: Option<BindingNumber>,
+        axis: Axis,
+        action: Option<BindingSelectAction>,
+        extent: Option<f32>,
+        padding: Option<f32>,
+        spacing: Option<f32>,
+        item_size: Option<f32>,
+        icon_size: Option<f32>,
+        background: Option<Color>,
+        divider: bool,
+    },
+    PresetStrip {
+        name: String,
+        presets: Vec<String>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+        item_width: Option<f32>,
+        item_height: Option<f32>,
+        gap: Option<f32>,
+    },
+    BrowserTabBar {
+        name: String,
+        tabs: Vec<String>,
+        selected: Option<BindingNumber>,
+        on_change: Option<BindingSelectAction>,
+        on_close: Option<BindingSelectAction>,
     },
     ScrollView {
         child: BindingWidget,
@@ -1768,6 +2147,20 @@ impl BindingWidget {
             name: name.into(),
             items: items.into_iter().collect(),
             highlighted,
+            action,
+        })
+    }
+
+    pub fn context_menu(
+        name: impl Into<String>,
+        trigger: BindingWidget,
+        items: impl IntoIterator<Item = BindingMenuItem>,
+        action: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ContextMenu {
+            name: name.into(),
+            trigger,
+            items: items.into_iter().collect(),
             action,
         })
     }
@@ -2020,6 +2413,42 @@ impl BindingWidget {
         })
     }
 
+    pub fn color_palette(
+        name: impl Into<String>,
+        swatches: impl IntoIterator<Item = BindingColorPaletteSwatch>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingColorSelectAction>,
+        columns: Option<usize>,
+        swatch_size: Option<f32>,
+        gap: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ColorPalette {
+            name: name.into(),
+            swatches: swatches.into_iter().collect(),
+            selected,
+            action,
+            columns,
+            swatch_size,
+            gap,
+        })
+    }
+
+    pub fn color_picker(
+        name: impl Into<String>,
+        color: Option<Color>,
+        action: Option<BindingColorAction>,
+        show_alpha: bool,
+        compact: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ColorPicker {
+            name: name.into(),
+            color,
+            action,
+            show_alpha,
+            compact,
+        })
+    }
+
     pub fn separator(
         axis: Axis,
         name: Option<String>,
@@ -2117,6 +2546,276 @@ impl BindingWidget {
             spacing,
             background,
             divider,
+        })
+    }
+
+    pub fn padding(
+        child: BindingWidget,
+        insets: Insets,
+        fill_child_width: bool,
+        fill_child_height: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Padding {
+            child,
+            insets,
+            fill_child_width,
+            fill_child_height,
+        })
+    }
+
+    pub fn align(child: BindingWidget, horizontal: Alignment, vertical: Alignment) -> Self {
+        Self::from_kind(BindingWidgetKind::Align {
+            child,
+            horizontal,
+            vertical,
+        })
+    }
+
+    pub fn background(child: BindingWidget, color: Color) -> Self {
+        Self::from_kind(BindingWidgetKind::Background { child, color })
+    }
+
+    pub fn sized_box(
+        child: Option<BindingWidget>,
+        width: Option<f32>,
+        height: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SizedBox {
+            child,
+            width,
+            height,
+        })
+    }
+
+    pub fn stack(
+        children: impl IntoIterator<Item = BindingWidget>,
+        axis: Axis,
+        spacing: f32,
+        alignment: Alignment,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Stack {
+            children: children.into_iter().collect(),
+            axis,
+            spacing,
+            alignment,
+        })
+    }
+
+    pub fn semantic_region(
+        name: impl Into<BindingText>,
+        child: BindingWidget,
+        description: Option<BindingText>,
+        role: SemanticsRole,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SemanticRegion {
+            name: name.into(),
+            child,
+            description,
+            role,
+        })
+    }
+
+    pub fn form_row(
+        label: impl Into<String>,
+        control: BindingWidget,
+        stacked: bool,
+        label_width: Option<f32>,
+        control_width: Option<f32>,
+        gap: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::FormRow {
+            label: label.into(),
+            control,
+            stacked,
+            label_width,
+            control_width,
+            gap,
+        })
+    }
+
+    pub fn field_group(
+        children: impl IntoIterator<Item = BindingWidget>,
+        spacing: Option<f32>,
+        padding: Option<f32>,
+        max_width: Option<f32>,
+        fill_width: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::FieldGroup {
+            children: children.into_iter().collect(),
+            spacing,
+            padding,
+            max_width,
+            fill_width,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn form_section(
+        title: impl Into<String>,
+        child: BindingWidget,
+        description: Option<String>,
+        header_action: Option<BindingWidget>,
+        padding: Option<f32>,
+        body_gap: Option<f32>,
+        header_gap: Option<f32>,
+        max_width: Option<f32>,
+        fill_width: bool,
+        radius: Option<f32>,
+        elevation: Option<SurfaceElevation>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::FormSection {
+            title: title.into(),
+            child,
+            description,
+            header_action,
+            padding,
+            body_gap,
+            header_gap,
+            max_width,
+            fill_width,
+            radius,
+            elevation,
+        })
+    }
+
+    pub fn panel_section(
+        title: impl Into<String>,
+        child: BindingWidget,
+        header_action: Option<BindingWidget>,
+        gap: Option<f32>,
+        action_gap: Option<f32>,
+        collapsible: bool,
+        expanded: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::PanelSection {
+            title: title.into(),
+            child,
+            header_action,
+            gap,
+            action_gap,
+            collapsible,
+            expanded,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn dock_panel(
+        title: impl Into<String>,
+        child: BindingWidget,
+        name: Option<String>,
+        header_height: Option<f32>,
+        padding: Option<f32>,
+        background: Option<Color>,
+        header_background: Option<Color>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::DockPanel {
+            title: title.into(),
+            child,
+            name,
+            header_height,
+            padding,
+            background,
+            header_background,
+        })
+    }
+
+    pub fn status_bar_host(content: BindingWidget, status_bar: BindingWidget) -> Self {
+        Self::from_kind(BindingWidgetKind::StatusBarHost {
+            content,
+            status_bar,
+        })
+    }
+
+    pub fn tooltip(
+        text: impl Into<String>,
+        child: BindingWidget,
+        placement: TooltipPlacement,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Tooltip {
+            text: text.into(),
+            child,
+            placement,
+        })
+    }
+
+    pub fn popover(
+        name: impl Into<String>,
+        trigger: BindingWidget,
+        content: BindingWidget,
+        open: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Popover {
+            name: name.into(),
+            trigger,
+            content,
+            open,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn tool_palette(
+        name: impl Into<String>,
+        items: impl IntoIterator<Item = BindingToolPaletteItem>,
+        selected: Option<BindingNumber>,
+        axis: Axis,
+        action: Option<BindingSelectAction>,
+        extent: Option<f32>,
+        padding: Option<f32>,
+        spacing: Option<f32>,
+        item_size: Option<f32>,
+        icon_size: Option<f32>,
+        background: Option<Color>,
+        divider: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ToolPalette {
+            name: name.into(),
+            items: items.into_iter().collect(),
+            selected,
+            axis,
+            action,
+            extent,
+            padding,
+            spacing,
+            item_size,
+            icon_size,
+            background,
+            divider,
+        })
+    }
+
+    pub fn preset_strip(
+        name: impl Into<String>,
+        presets: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+        action: Option<BindingSelectAction>,
+        item_width: Option<f32>,
+        item_height: Option<f32>,
+        gap: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::PresetStrip {
+            name: name.into(),
+            presets: presets.into_iter().map(Into::into).collect(),
+            selected,
+            action,
+            item_width,
+            item_height,
+            gap,
+        })
+    }
+
+    pub fn browser_tab_bar(
+        name: impl Into<String>,
+        tabs: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+        on_change: Option<BindingSelectAction>,
+        on_close: Option<BindingSelectAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::BrowserTabBar {
+            name: name.into(),
+            tabs: tabs.into_iter().map(Into::into).collect(),
+            selected,
+            on_change,
+            on_close,
         })
     }
 
@@ -2247,6 +2946,9 @@ impl BindingWidget {
                     highlighted.bind_ui_handle(handle);
                 }
             }
+            BindingWidgetKind::ContextMenu { trigger, .. } => {
+                trigger.bind_ui_handle(handle);
+            }
             BindingWidgetKind::TabBar { name, selected, .. } => {
                 name.bind_ui_handle(handle);
                 if let Some(selected) = selected {
@@ -2324,6 +3026,12 @@ impl BindingWidget {
             BindingWidgetKind::RichText { .. } => {}
             BindingWidgetKind::Image { .. } => {}
             BindingWidgetKind::ColorSwatch { .. } => {}
+            BindingWidgetKind::ColorPalette { selected, .. } => {
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::ColorPicker { .. } => {}
             BindingWidgetKind::Separator { .. } => {}
             BindingWidgetKind::EmptyState { action, .. } => {
                 if let Some(action) = action {
@@ -2335,6 +3043,72 @@ impl BindingWidget {
             BindingWidgetKind::Toolbar { children, .. } => {
                 for child in children {
                     child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Padding { child, .. }
+            | BindingWidgetKind::Align { child, .. }
+            | BindingWidgetKind::Background { child, .. }
+            | BindingWidgetKind::DockPanel { child, .. }
+            | BindingWidgetKind::Tooltip { child, .. } => {
+                child.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::SizedBox { child, .. } => {
+                if let Some(child) = child {
+                    child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::Stack { children, .. }
+            | BindingWidgetKind::FieldGroup { children, .. } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::SemanticRegion {
+                name,
+                child,
+                description,
+                ..
+            } => {
+                name.bind_ui_handle(handle);
+                child.bind_ui_handle(handle);
+                if let Some(description) = description {
+                    description.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::FormRow { control, .. } => control.bind_ui_handle(handle),
+            BindingWidgetKind::FormSection {
+                child,
+                header_action,
+                ..
+            }
+            | BindingWidgetKind::PanelSection {
+                child,
+                header_action,
+                ..
+            } => {
+                child.bind_ui_handle(handle);
+                if let Some(header_action) = header_action {
+                    header_action.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::StatusBarHost {
+                content,
+                status_bar,
+            } => {
+                content.bind_ui_handle(handle);
+                status_bar.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::Popover {
+                trigger, content, ..
+            } => {
+                trigger.bind_ui_handle(handle);
+                content.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::ToolPalette { selected, .. }
+            | BindingWidgetKind::PresetStrip { selected, .. }
+            | BindingWidgetKind::BrowserTabBar { selected, .. } => {
+                if let Some(selected) = selected {
+                    selected.bind_ui_handle(handle);
                 }
             }
             BindingWidgetKind::ScrollView { child, .. } => child.bind_ui_handle(handle),
@@ -2876,6 +3650,29 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(menu)
             }
+            BindingWidgetKind::ContextMenu {
+                name,
+                trigger,
+                items,
+                action,
+            } => {
+                let mut menu =
+                    ContextMenu::new(name.clone(), trigger.into_runtime_widget(errors.clone()))
+                        .items(items.iter().map(BindingMenuItem::into_sui));
+                if let Some(action) = action.clone() {
+                    let errors = errors.clone();
+                    menu = menu.on_activate(move |index, item| {
+                        if let Err(error) = action.run(index, item.label().to_string()) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(menu)
+            }
             BindingWidgetKind::TabBar {
                 name,
                 tabs,
@@ -3295,6 +4092,85 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(swatch)
             }
+            BindingWidgetKind::ColorPalette {
+                name,
+                swatches,
+                selected,
+                action,
+                columns,
+                swatch_size,
+                gap,
+            } => {
+                let mut palette = ColorPalette::new(name.clone())
+                    .swatches(swatches.iter().map(BindingColorPaletteSwatch::into_sui));
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        palette = palette.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        palette = palette
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                if let Some(columns) = columns {
+                    palette = palette.columns(*columns);
+                }
+                if let Some(swatch_size) = swatch_size {
+                    palette = palette.swatch_size(*swatch_size);
+                }
+                if let Some(gap) = gap {
+                    palette = palette.gap(*gap);
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    palette = palette.on_change(move |index, name, color| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, name, color)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(palette)
+            }
+            BindingWidgetKind::ColorPicker {
+                name,
+                color,
+                action,
+                show_alpha,
+                compact,
+            } => {
+                let mut picker = if let Some(color) = color {
+                    ColorPicker::from_color(name.clone(), *color)
+                } else {
+                    ColorPicker::new(name.clone())
+                }
+                .show_alpha(*show_alpha)
+                .compact(*compact);
+                if let Some(action) = action.clone() {
+                    let errors = errors.clone();
+                    picker = picker.on_change(move |color| {
+                        if let Err(error) = action.run(color) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(picker)
+            }
             BindingWidgetKind::Separator {
                 axis,
                 name,
@@ -3427,6 +4303,427 @@ impl BindingWidget {
                     toolbar = toolbar.with_child(child.into_runtime_widget(errors.clone()));
                 }
                 BindingRuntimeWidget::new(toolbar)
+            }
+            BindingWidgetKind::Padding {
+                child,
+                insets,
+                fill_child_width,
+                fill_child_height,
+            } => {
+                let mut padding =
+                    PaddingWidget::new(*insets, child.into_runtime_widget(errors.clone()));
+                if *fill_child_width && *fill_child_height {
+                    padding = padding.fill_child();
+                } else if *fill_child_width {
+                    padding = padding.fill_child_width();
+                } else if *fill_child_height {
+                    padding = padding.fill_child_height();
+                }
+                BindingRuntimeWidget::new(padding)
+            }
+            BindingWidgetKind::Align {
+                child,
+                horizontal,
+                vertical,
+            } => BindingRuntimeWidget::new(Align::new(
+                *horizontal,
+                *vertical,
+                child.into_runtime_widget(errors.clone()),
+            )),
+            BindingWidgetKind::Background { child, color } => BindingRuntimeWidget::new(
+                Background::new(*color, child.into_runtime_widget(errors.clone())),
+            ),
+            BindingWidgetKind::SizedBox {
+                child,
+                width,
+                height,
+            } => {
+                let mut sized_box = SizedBox::new();
+                if let Some(width) = width {
+                    sized_box = sized_box.width(*width);
+                }
+                if let Some(height) = height {
+                    sized_box = sized_box.height(*height);
+                }
+                if let Some(child) = child {
+                    sized_box = sized_box.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(sized_box)
+            }
+            BindingWidgetKind::Stack {
+                children,
+                axis,
+                spacing,
+                alignment,
+            } => {
+                let mut stack = Stack::new(*axis).spacing(*spacing).alignment(*alignment);
+                for child in children {
+                    stack = stack.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(stack)
+            }
+            BindingWidgetKind::SemanticRegion {
+                name,
+                child,
+                description,
+                role,
+            } => {
+                let mut region =
+                    SemanticRegion::new(name.resolve(), child.into_runtime_widget(errors.clone()))
+                        .role(role.clone());
+                if matches!(name, BindingText::State(_)) {
+                    let name = name.clone();
+                    region = region.name_when(move || name.resolve());
+                }
+                if let Some(description) = description {
+                    region = region.description(description.resolve());
+                    if matches!(description, BindingText::State(_)) {
+                        let description = description.clone();
+                        region = region.description_when(move || description.resolve());
+                    }
+                }
+                BindingRuntimeWidget::new(region)
+            }
+            BindingWidgetKind::FormRow {
+                label,
+                control,
+                stacked,
+                label_width,
+                control_width,
+                gap,
+            } => {
+                let mut row =
+                    FormRow::new(label.clone(), control.into_runtime_widget(errors.clone()));
+                if *stacked {
+                    row = row.stacked();
+                }
+                if let Some(label_width) = label_width {
+                    row = row.label_width(*label_width);
+                }
+                if let Some(control_width) = control_width {
+                    row = row.control_width(*control_width);
+                }
+                if let Some(gap) = gap {
+                    row = row.gap(*gap);
+                }
+                BindingRuntimeWidget::new(row)
+            }
+            BindingWidgetKind::FieldGroup {
+                children,
+                spacing,
+                padding,
+                max_width,
+                fill_width,
+            } => {
+                let mut group = FieldGroup::new();
+                if let Some(spacing) = spacing {
+                    group = group.spacing(*spacing);
+                }
+                if let Some(padding) = padding {
+                    group = group.padding(Insets::all(padding.max(0.0)));
+                }
+                if let Some(max_width) = max_width {
+                    group = group.max_width(*max_width);
+                }
+                if *fill_width {
+                    group = group.fill_width();
+                }
+                for child in children {
+                    group = group.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(group)
+            }
+            BindingWidgetKind::FormSection {
+                title,
+                child,
+                description,
+                header_action,
+                padding,
+                body_gap,
+                header_gap,
+                max_width,
+                fill_width,
+                radius,
+                elevation,
+            } => {
+                let mut section =
+                    FormSection::new(title.clone(), child.into_runtime_widget(errors.clone()));
+                if let Some(description) = description {
+                    section = section.description(description.clone());
+                }
+                if let Some(header_action) = header_action {
+                    section =
+                        section.header_action(header_action.into_runtime_widget(errors.clone()));
+                }
+                if let Some(padding) = padding {
+                    section = section.padding(Insets::all(padding.max(0.0)));
+                }
+                if let Some(body_gap) = body_gap {
+                    section = section.body_gap(*body_gap);
+                }
+                if let Some(header_gap) = header_gap {
+                    section = section.header_gap(*header_gap);
+                }
+                if let Some(max_width) = max_width {
+                    section = section.max_width(*max_width);
+                }
+                if *fill_width {
+                    section = section.fill_width();
+                }
+                if let Some(radius) = radius {
+                    section = section.radius(*radius);
+                }
+                if let Some(elevation) = elevation {
+                    section = section.elevation(*elevation);
+                }
+                BindingRuntimeWidget::new(section)
+            }
+            BindingWidgetKind::PanelSection {
+                title,
+                child,
+                header_action,
+                gap,
+                action_gap,
+                collapsible,
+                expanded,
+            } => {
+                let mut section =
+                    PanelSection::new(title.clone(), child.into_runtime_widget(errors.clone()))
+                        .collapsible(*collapsible)
+                        .expanded(*expanded);
+                if let Some(header_action) = header_action {
+                    section =
+                        section.header_action(header_action.into_runtime_widget(errors.clone()));
+                }
+                if let Some(gap) = gap {
+                    section = section.gap(*gap);
+                }
+                if let Some(action_gap) = action_gap {
+                    section = section.action_gap(*action_gap);
+                }
+                BindingRuntimeWidget::new(section)
+            }
+            BindingWidgetKind::DockPanel {
+                title,
+                child,
+                name,
+                header_height,
+                padding,
+                background,
+                header_background,
+            } => {
+                let mut panel =
+                    DockPanel::new(title.clone(), child.into_runtime_widget(errors.clone()));
+                if let Some(name) = name {
+                    panel = panel.name(name.clone());
+                }
+                if let Some(header_height) = header_height {
+                    panel = panel.header_height(*header_height);
+                }
+                if let Some(padding) = padding {
+                    panel = panel.padding(Insets::all(padding.max(0.0)));
+                }
+                if let Some(background) = background {
+                    panel = panel.background(*background);
+                }
+                if let Some(header_background) = header_background {
+                    panel = panel.header_background(*header_background);
+                }
+                BindingRuntimeWidget::new(panel)
+            }
+            BindingWidgetKind::StatusBarHost {
+                content,
+                status_bar,
+            } => BindingRuntimeWidget::new(StatusBarHost::new(
+                content.into_runtime_widget(errors.clone()),
+                status_bar.into_runtime_widget(errors.clone()),
+            )),
+            BindingWidgetKind::Tooltip {
+                text,
+                child,
+                placement,
+            } => BindingRuntimeWidget::new(
+                Tooltip::new(text.clone(), child.into_runtime_widget(errors.clone()))
+                    .placement(*placement),
+            ),
+            BindingWidgetKind::Popover {
+                name,
+                trigger,
+                content,
+                open,
+            } => BindingRuntimeWidget::new(
+                Popover::new(
+                    name.clone(),
+                    trigger.into_runtime_widget(errors.clone()),
+                    content.into_runtime_widget(errors.clone()),
+                )
+                .open(*open),
+            ),
+            BindingWidgetKind::ToolPalette {
+                name,
+                items,
+                selected,
+                axis,
+                action,
+                extent,
+                padding,
+                spacing,
+                item_size,
+                icon_size,
+                background,
+                divider,
+            } => {
+                let mut palette = ToolPalette::new(*axis, name.clone())
+                    .items(items.iter().map(BindingToolPaletteItem::into_sui))
+                    .divider(*divider);
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        palette = palette.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        palette = palette
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                if let Some(extent) = extent {
+                    palette = palette.extent(*extent);
+                }
+                if let Some(padding) = padding {
+                    palette = palette.padding(Insets::all(padding.max(0.0)));
+                }
+                if let Some(spacing) = spacing {
+                    palette = palette.spacing(*spacing);
+                }
+                if let Some(item_size) = item_size {
+                    palette = palette.item_size(*item_size);
+                }
+                if let Some(icon_size) = icon_size {
+                    palette = palette.icon_size(*icon_size);
+                }
+                if let Some(background) = background {
+                    palette = palette.background(*background);
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    palette = palette.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(palette)
+            }
+            BindingWidgetKind::PresetStrip {
+                name,
+                presets,
+                selected,
+                action,
+                item_width,
+                item_height,
+                gap,
+            } => {
+                let mut strip = PresetStrip::new(name.clone()).presets(presets.clone());
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        strip = strip.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        strip = strip
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                if let Some(item_width) = item_width {
+                    strip = strip.item_width(*item_width);
+                }
+                if let Some(item_height) = item_height {
+                    strip = strip.item_height(*item_height);
+                }
+                if let Some(gap) = gap {
+                    strip = strip.gap(*gap);
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    strip = strip.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(strip)
+            }
+            BindingWidgetKind::BrowserTabBar {
+                name,
+                tabs,
+                selected,
+                on_change,
+                on_close,
+            } => {
+                let mut tab_bar = BrowserTabBar::new(name.clone()).tabs(tabs.clone());
+                if let Some(selected) = selected {
+                    let index = binding_number_to_index(selected.resolve());
+                    tab_bar = tab_bar.selected(index);
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        tab_bar = tab_bar
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || on_change.is_some() {
+                    let action = on_change.clone();
+                    let errors = errors.clone();
+                    tab_bar = tab_bar.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as f64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_close.clone() {
+                    let errors = errors.clone();
+                    tab_bar = tab_bar.on_close(move |index, value| {
+                        if let Err(error) = action.run(index, value) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(tab_bar)
             }
             BindingWidgetKind::ScrollView { child, axes, name } => {
                 let child = child.into_runtime_widget(errors.clone());

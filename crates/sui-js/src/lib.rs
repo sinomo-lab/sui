@@ -7,20 +7,22 @@ use ::sui as sui_crate;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use sui_bindings_core::{
-    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingCustomEvent, BindingEvent,
+    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingColorAction,
+    BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent, BindingEvent,
     BindingFontHandle, BindingImageFit, BindingImageHandle, BindingImeEvent, BindingKeyState,
     BindingKeyboardEvent, BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber,
     BindingNumberAction, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
     BindingPointerKind, BindingRenderSnapshot, BindingRuntime, BindingScrollAxes,
     BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingShader,
     BindingState, BindingStatusBarSegment, BindingStringAction, BindingTableColumn,
-    BindingTableRow, BindingText, BindingTextSpan, BindingTreeItem, BindingUiHandle, BindingValue,
-    BindingWidget, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
-    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
-    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
-    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
-    NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
-    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_icon_glyph_from_name,
+    BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
+    BindingUiHandle, BindingValue, BindingWidget, BindingWindow, BindingWindowEvent,
+    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignCallbackFailure,
+    ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx, ForeignPaintCtx,
+    ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks, NativeGraphicsBackend,
+    PaintCommand, PaintCommandBuilder, PaintValidationError, RendererInteropCapabilities,
+    RendererInteropTier, UiTaskQueue, binding_alignment_from_name, binding_icon_glyph_from_name,
     binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
     binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
@@ -29,7 +31,7 @@ use sui_bindings_core::{
     binding_semantics_values, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
-    resolve_binding_image_slots,
+    binding_tooltip_placement_from_name, resolve_binding_image_slots,
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
@@ -804,6 +806,17 @@ impl From<JsColor> for Color {
             value.green as f32,
             value.blue as f32,
             value.alpha as f32,
+        )
+    }
+}
+
+impl From<Color> for JsColor {
+    fn from(value: Color) -> Self {
+        Self::new(
+            f64::from(value.red),
+            f64::from(value.green),
+            f64::from(value.blue),
+            Some(f64::from(value.alpha)),
         )
     }
 }
@@ -2571,6 +2584,21 @@ fn surface_elevation_from_js(value: &str) -> Result<sui_crate::SurfaceElevation>
         .ok_or_else(|| napi_invalid_arg(format!("unknown surface elevation '{value}'")))
 }
 
+fn alignment_from_js(value: &str) -> Result<sui_crate::Alignment> {
+    binding_alignment_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown alignment '{value}'")))
+}
+
+fn tooltip_placement_from_js(value: &str) -> Result<sui_crate::TooltipPlacement> {
+    binding_tooltip_placement_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown tooltip placement '{value}'")))
+}
+
+fn semantics_role_from_js(value: &str) -> Result<sui_crate::SemanticsRole> {
+    binding_semantics_role_from_name(value)
+        .ok_or_else(|| napi_invalid_arg(format!("unknown semantics role '{value}'")))
+}
+
 fn js_axis(value: &str) -> Result<Axis> {
     match value {
         "horizontal" | "x" | "row" => Ok(Axis::Horizontal),
@@ -3018,6 +3046,32 @@ fn extract_menu_items(items: &Array<'_>) -> Result<Vec<BindingMenuItem>> {
             .get::<ClassInstance<'_, JsMenuItem>>(index)?
             .ok_or_else(|| napi_invalid_arg(format!("menu item {index} is out of range")))?;
         out.push(item.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_tool_palette_items(items: &Array<'_>) -> Result<Vec<BindingToolPaletteItem>> {
+    let mut out = Vec::with_capacity(items.len() as usize);
+    for index in 0..items.len() {
+        let item = items
+            .get::<ClassInstance<'_, JsToolPaletteItem>>(index)?
+            .ok_or_else(|| {
+                napi_invalid_arg(format!("tool palette item {index} is out of range"))
+            })?;
+        out.push(item.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_color_palette_swatches(swatches: &Array<'_>) -> Result<Vec<BindingColorPaletteSwatch>> {
+    let mut out = Vec::with_capacity(swatches.len() as usize);
+    for index in 0..swatches.len() {
+        let swatch = swatches
+            .get::<ClassInstance<'_, JsColorPaletteSwatch>>(index)?
+            .ok_or_else(|| {
+                napi_invalid_arg(format!("color palette swatch {index} is out of range"))
+            })?;
+        out.push(swatch.inner.clone());
     }
     Ok(out)
 }

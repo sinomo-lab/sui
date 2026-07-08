@@ -229,6 +229,52 @@ impl JsMenuItem {
     }
 }
 
+#[napi(js_name = "ToolPaletteItem")]
+#[derive(Debug, Clone)]
+pub struct JsToolPaletteItem {
+    inner: BindingToolPaletteItem,
+}
+
+#[napi]
+impl JsToolPaletteItem {
+    #[napi(constructor)]
+    pub fn new(icon: String, label: String, disabled: Option<bool>) -> Result<Self> {
+        Ok(Self {
+            inner: BindingToolPaletteItem::new(
+                icon_glyph_from_js(&icon)?,
+                label,
+                disabled.unwrap_or(false),
+            ),
+        })
+    }
+}
+
+#[napi(js_name = "ColorPaletteSwatch")]
+#[derive(Debug, Clone)]
+pub struct JsColorPaletteSwatch {
+    inner: BindingColorPaletteSwatch,
+}
+
+#[napi]
+impl JsColorPaletteSwatch {
+    #[napi(constructor)]
+    pub fn new(name: String, color: &JsColor) -> Self {
+        Self {
+            inner: BindingColorPaletteSwatch::new(name, (*color).into()),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+
+    #[napi(getter)]
+    pub fn color(&self) -> JsColor {
+        self.inner.color().into()
+    }
+}
+
 #[napi(js_name = "Label")]
 pub fn js_label(value: Either4<ClassInstance<'_, JsState>, String, f64, bool>) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::label(
@@ -1265,5 +1311,485 @@ pub fn js_dialog(
         shown
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
+    )))
+}
+
+#[napi(js_name = "Padding")]
+pub fn js_padding(
+    child: ClassInstance<'_, JsWidget>,
+    padding: Option<f64>,
+    top: Option<f64>,
+    right: Option<f64>,
+    bottom: Option<f64>,
+    fill_child_width: Option<bool>,
+    fill_child_height: Option<bool>,
+) -> Result<JsWidget> {
+    let padding = padding.unwrap_or(0.0) as f32;
+    let top = top.map(|value| value as f32);
+    let right = right.map(|value| value as f32);
+    let bottom = bottom.map(|value| value as f32);
+    let insets = sui_crate::Insets {
+        left: padding.max(0.0),
+        top: top.unwrap_or(padding).max(0.0),
+        right: right.unwrap_or(padding).max(0.0),
+        bottom: bottom.unwrap_or(top.unwrap_or(padding)).max(0.0),
+    };
+    Ok(JsWidget::from_binding(BindingWidget::padding(
+        child.binding_widget()?,
+        insets,
+        fill_child_width.unwrap_or(false),
+        fill_child_height.unwrap_or(false),
+    )))
+}
+
+#[napi(js_name = "Align")]
+pub fn js_align(
+    child: ClassInstance<'_, JsWidget>,
+    horizontal: Option<String>,
+    vertical: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::align(
+        child.binding_widget()?,
+        alignment_from_js(horizontal.as_deref().unwrap_or("center"))?,
+        alignment_from_js(vertical.as_deref().unwrap_or("center"))?,
+    )))
+}
+
+#[napi(js_name = "Background")]
+pub fn js_background(child: ClassInstance<'_, JsWidget>, color: &JsColor) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::background(
+        child.binding_widget()?,
+        (*color).into(),
+    )))
+}
+
+#[napi(js_name = "SizedBox")]
+pub fn js_sized_box(
+    child: Option<ClassInstance<'_, JsWidget>>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::sized_box(
+        child.map(|widget| widget.binding_widget()).transpose()?,
+        width.map(|value| value as f32),
+        height.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "Stack")]
+pub fn js_stack(
+    children: Array<'_>,
+    axis: Option<String>,
+    spacing: Option<f64>,
+    alignment: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::stack(
+        extract_binding_widgets(&children)?,
+        js_axis(axis.as_deref().unwrap_or("vertical"))?,
+        spacing.unwrap_or(0.0) as f32,
+        alignment_from_js(alignment.as_deref().unwrap_or("start"))?,
+    )))
+}
+
+#[napi(js_name = "SemanticRegion")]
+pub fn js_semantic_region(
+    name: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
+    child: ClassInstance<'_, JsWidget>,
+    description: Option<Either4<ClassInstance<'_, JsState>, String, f64, bool>>,
+    role: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::semantic_region(
+        binding_text_from_js(name),
+        child.binding_widget()?,
+        description.map(binding_text_from_js),
+        semantics_role_from_js(role.as_deref().unwrap_or("generic_container"))?,
+    )))
+}
+
+#[napi(js_name = "FormRow")]
+pub fn js_form_row(
+    label: String,
+    control: ClassInstance<'_, JsWidget>,
+    stacked: Option<bool>,
+    label_width: Option<f64>,
+    control_width: Option<f64>,
+    gap: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::form_row(
+        label,
+        control.binding_widget()?,
+        stacked.unwrap_or(false),
+        label_width.map(|value| value as f32),
+        control_width.map(|value| value as f32),
+        gap.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "FieldGroup")]
+pub fn js_field_group(
+    children: Array<'_>,
+    spacing: Option<f64>,
+    padding: Option<f64>,
+    max_width: Option<f64>,
+    fill_width: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::field_group(
+        extract_binding_widgets(&children)?,
+        spacing.map(|value| value as f32),
+        padding.map(|value| value as f32),
+        max_width.map(|value| value as f32),
+        fill_width.unwrap_or(false),
+    )))
+}
+
+#[napi(js_name = "FormSection")]
+pub fn js_form_section(
+    title: String,
+    child: ClassInstance<'_, JsWidget>,
+    description: Option<String>,
+    header_action: Option<ClassInstance<'_, JsWidget>>,
+    padding: Option<f64>,
+    body_gap: Option<f64>,
+    header_gap: Option<f64>,
+    max_width: Option<f64>,
+    fill_width: Option<bool>,
+    radius: Option<f64>,
+    elevation: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::form_section(
+        title,
+        child.binding_widget()?,
+        description,
+        header_action
+            .map(|widget| widget.binding_widget())
+            .transpose()?,
+        padding.map(|value| value as f32),
+        body_gap.map(|value| value as f32),
+        header_gap.map(|value| value as f32),
+        max_width.map(|value| value as f32),
+        fill_width.unwrap_or(false),
+        radius.map(|value| value as f32),
+        elevation
+            .as_deref()
+            .map(surface_elevation_from_js)
+            .transpose()?,
+    )))
+}
+
+#[napi(js_name = "PanelSection")]
+pub fn js_panel_section(
+    title: String,
+    child: ClassInstance<'_, JsWidget>,
+    header_action: Option<ClassInstance<'_, JsWidget>>,
+    gap: Option<f64>,
+    action_gap: Option<f64>,
+    collapsible: Option<bool>,
+    expanded: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::panel_section(
+        title,
+        child.binding_widget()?,
+        header_action
+            .map(|widget| widget.binding_widget())
+            .transpose()?,
+        gap.map(|value| value as f32),
+        action_gap.map(|value| value as f32),
+        collapsible.unwrap_or(false),
+        expanded.unwrap_or(true),
+    )))
+}
+
+#[napi(js_name = "DockPanel")]
+pub fn js_dock_panel(
+    title: String,
+    child: ClassInstance<'_, JsWidget>,
+    name: Option<String>,
+    header_height: Option<f64>,
+    padding: Option<f64>,
+    background: Option<&JsColor>,
+    header_background: Option<&JsColor>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::dock_panel(
+        title,
+        child.binding_widget()?,
+        name,
+        header_height.map(|value| value as f32),
+        padding.map(|value| value as f32),
+        background.map(|value| (*value).into()),
+        header_background.map(|value| (*value).into()),
+    )))
+}
+
+#[napi(js_name = "StatusBarHost")]
+pub fn js_status_bar_host(
+    content: ClassInstance<'_, JsWidget>,
+    status_bar: ClassInstance<'_, JsWidget>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::status_bar_host(
+        content.binding_widget()?,
+        status_bar.binding_widget()?,
+    )))
+}
+
+#[napi(js_name = "Tooltip")]
+pub fn js_tooltip(
+    text: String,
+    child: ClassInstance<'_, JsWidget>,
+    placement: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::tooltip(
+        text,
+        child.binding_widget()?,
+        tooltip_placement_from_js(placement.as_deref().unwrap_or("above"))?,
+    )))
+}
+
+#[napi(js_name = "Popover")]
+pub fn js_popover(
+    name: String,
+    trigger: ClassInstance<'_, JsWidget>,
+    content: ClassInstance<'_, JsWidget>,
+    open: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::popover(
+        name,
+        trigger.binding_widget()?,
+        content.binding_widget()?,
+        open.unwrap_or(false),
+    )))
+}
+
+#[napi(js_name = "ContextMenu")]
+pub fn js_context_menu(
+    env: Env,
+    name: String,
+    trigger: ClassInstance<'_, JsWidget>,
+    items: Array<'_>,
+    on_activate: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let action = on_activate
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::context_menu(
+        name,
+        trigger.binding_widget()?,
+        extract_menu_items(&items)?,
+        action,
+    )))
+}
+
+#[napi(js_name = "ToolPalette")]
+pub fn js_tool_palette(
+    env: Env,
+    name: String,
+    items: Array<'_>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    axis: Option<String>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+    extent: Option<f64>,
+    padding: Option<f64>,
+    spacing: Option<f64>,
+    item_size: Option<f64>,
+    icon_size: Option<f64>,
+    background: Option<&JsColor>,
+    divider: Option<bool>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::tool_palette(
+        name,
+        extract_tool_palette_items(&items)?,
+        selected.map(binding_number_from_js),
+        js_axis(axis.as_deref().unwrap_or("vertical"))?,
+        action,
+        extent.map(|value| value as f32),
+        padding.map(|value| value as f32),
+        spacing.map(|value| value as f32),
+        item_size.map(|value| value as f32),
+        icon_size.map(|value| value as f32),
+        background.map(|value| (*value).into()),
+        divider.unwrap_or(true),
+    )))
+}
+
+#[napi(js_name = "PresetStrip")]
+pub fn js_preset_strip(
+    env: Env,
+    name: String,
+    presets: Vec<String>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+    item_width: Option<f64>,
+    item_height: Option<f64>,
+    gap: Option<f64>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::preset_strip(
+        name,
+        presets,
+        selected.map(binding_number_from_js),
+        action,
+        item_width.map(|value| value as f32),
+        item_height.map(|value| value as f32),
+        gap.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "BrowserTabBar")]
+pub fn js_browser_tab_bar(
+    env: Env,
+    name: String,
+    tabs: Vec<String>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String), ()>>,
+    on_close: Option<Function<'_, (u32, String), ()>>,
+) -> Result<JsWidget> {
+    let on_change = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    let on_close = on_close
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((index as u32, value))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::browser_tab_bar(
+        name,
+        tabs,
+        selected.map(binding_number_from_js),
+        on_change,
+        on_close,
+    )))
+}
+
+#[napi(js_name = "ColorPalette")]
+pub fn js_color_palette(
+    env: Env,
+    name: String,
+    swatches: Array<'_>,
+    selected: Option<Either3<ClassInstance<'_, JsState>, f64, bool>>,
+    on_change: Option<Function<'_, (u32, String, JsColor), ()>>,
+    columns: Option<u32>,
+    swatch_size: Option<f64>,
+    gap: Option<f64>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingColorSelectAction::new(
+                move |index, name, color| {
+                    let env = env.to_env();
+                    let callback = callback
+                        .borrow_back(&env)
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                    callback
+                        .call((index as u32, name, JsColor::from(color)))
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                },
+            ))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::color_palette(
+        name,
+        extract_color_palette_swatches(&swatches)?,
+        selected.map(binding_number_from_js),
+        action,
+        columns.map(|value| value as usize),
+        swatch_size.map(|value| value as f32),
+        gap.map(|value| value as f32),
+    )))
+}
+
+#[napi(js_name = "ColorPicker")]
+pub fn js_color_picker(
+    env: Env,
+    name: String,
+    color: Option<&JsColor>,
+    on_change: Option<Function<'_, (JsColor,), ()>>,
+    show_alpha: Option<bool>,
+    compact: Option<bool>,
+) -> Result<JsWidget> {
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingColorAction::new(move |color| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call((JsColor::from(color),))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::color_picker(
+        name,
+        color.map(|value| (*value).into()),
+        action,
+        show_alpha.unwrap_or(true),
+        compact.unwrap_or(false),
     )))
 }
