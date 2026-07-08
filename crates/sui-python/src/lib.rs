@@ -14,20 +14,22 @@ use pyo3::{
     types::PyModule,
 };
 use sui_bindings_core::{
-    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingCustomEvent, BindingEvent,
+    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingColorAction,
+    BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent, BindingEvent,
     BindingFontHandle, BindingImageFit, BindingImageHandle, BindingImeEvent, BindingKeyState,
     BindingKeyboardEvent, BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber,
     BindingNumberAction, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
     BindingPointerKind, BindingRenderSnapshot, BindingRuntime, BindingScrollAxes,
     BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingShader,
     BindingState, BindingStatusBarSegment, BindingStringAction, BindingTableColumn,
-    BindingTableRow, BindingText, BindingTextSpan, BindingTreeItem, BindingUiHandle, BindingValue,
-    BindingWidget, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
-    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
-    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
-    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
-    NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
-    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_icon_glyph_from_name,
+    BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
+    BindingUiHandle, BindingValue, BindingWidget, BindingWindow, BindingWindowEvent,
+    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignCallbackFailure,
+    ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx, ForeignPaintCtx,
+    ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks, NativeGraphicsBackend,
+    PaintCommand, PaintCommandBuilder, PaintValidationError, RendererInteropCapabilities,
+    RendererInteropTier, UiTaskQueue, binding_alignment_from_name, binding_icon_glyph_from_name,
     binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
     binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
@@ -36,7 +38,7 @@ use sui_bindings_core::{
     binding_semantics_values, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
-    resolve_binding_image_slots,
+    binding_tooltip_placement_from_name, resolve_binding_image_slots,
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
@@ -836,6 +838,12 @@ impl PyColor {
 impl From<PyColor> for Color {
     fn from(value: PyColor) -> Self {
         Self::rgba(value.red, value.green, value.blue, value.alpha)
+    }
+}
+
+impl From<Color> for PyColor {
+    fn from(value: Color) -> Self {
+        Self::new(value.red, value.green, value.blue, value.alpha)
     }
 }
 
@@ -2434,6 +2442,8 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTreeItem>()?;
     m.add_class::<PyLayerListItem>()?;
     m.add_class::<PyMenuItem>()?;
+    m.add_class::<PyToolPaletteItem>()?;
+    m.add_class::<PyColorPaletteSwatch>()?;
     m.add_function(wrap_pyfunction!(py_label, m)?)?;
     m.add_function(wrap_pyfunction!(py_button, m)?)?;
     m.add_function(wrap_pyfunction!(py_icon, m)?)?;
@@ -2474,9 +2484,29 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_tree_view, m)?)?;
     m.add_function(wrap_pyfunction!(py_layer_list, m)?)?;
     m.add_function(wrap_pyfunction!(py_menu, m)?)?;
+    m.add_function(wrap_pyfunction!(py_context_menu, m)?)?;
     m.add_function(wrap_pyfunction!(py_tab_bar, m)?)?;
     m.add_function(wrap_pyfunction!(py_tabs, m)?)?;
     m.add_function(wrap_pyfunction!(py_dialog, m)?)?;
+    m.add_function(wrap_pyfunction!(py_padding, m)?)?;
+    m.add_function(wrap_pyfunction!(py_align, m)?)?;
+    m.add_function(wrap_pyfunction!(py_background, m)?)?;
+    m.add_function(wrap_pyfunction!(py_sized_box, m)?)?;
+    m.add_function(wrap_pyfunction!(py_stack, m)?)?;
+    m.add_function(wrap_pyfunction!(py_semantic_region, m)?)?;
+    m.add_function(wrap_pyfunction!(py_form_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_field_group, m)?)?;
+    m.add_function(wrap_pyfunction!(py_form_section, m)?)?;
+    m.add_function(wrap_pyfunction!(py_panel_section, m)?)?;
+    m.add_function(wrap_pyfunction!(py_dock_panel, m)?)?;
+    m.add_function(wrap_pyfunction!(py_status_bar_host, m)?)?;
+    m.add_function(wrap_pyfunction!(py_tooltip, m)?)?;
+    m.add_function(wrap_pyfunction!(py_popover, m)?)?;
+    m.add_function(wrap_pyfunction!(py_tool_palette, m)?)?;
+    m.add_function(wrap_pyfunction!(py_preset_strip, m)?)?;
+    m.add_function(wrap_pyfunction!(py_browser_tab_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_color_palette, m)?)?;
+    m.add_function(wrap_pyfunction!(py_color_picker, m)?)?;
     m.add_function(wrap_pyfunction!(render_widget, m)?)?;
     Ok(())
 }
@@ -2579,6 +2609,21 @@ fn py_surface_elevation(value: &str) -> PyResult<sui_crate::SurfaceElevation> {
         .ok_or_else(|| PyValueError::new_err(format!("unknown surface elevation '{value}'")))
 }
 
+fn py_alignment(value: &str) -> PyResult<sui_crate::Alignment> {
+    binding_alignment_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown alignment '{value}'")))
+}
+
+fn py_tooltip_placement(value: &str) -> PyResult<sui_crate::TooltipPlacement> {
+    binding_tooltip_placement_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown tooltip placement '{value}'")))
+}
+
+fn py_semantics_role(value: &str) -> PyResult<sui_crate::SemanticsRole> {
+    binding_semantics_role_from_name(value)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown semantics role '{value}'")))
+}
+
 fn py_axis(value: &str) -> PyResult<Axis> {
     match value {
         "horizontal" | "x" | "row" => Ok(Axis::Horizontal),
@@ -2673,6 +2718,24 @@ fn extract_menu_items(items: &Bound<'_, PyAny>) -> PyResult<Vec<BindingMenuItem>
         .extract::<Vec<PyRef<'_, PyMenuItem>>>()?
         .iter()
         .map(|item| item.inner.clone())
+        .collect())
+}
+
+fn extract_tool_palette_items(items: &Bound<'_, PyAny>) -> PyResult<Vec<BindingToolPaletteItem>> {
+    Ok(items
+        .extract::<Vec<PyRef<'_, PyToolPaletteItem>>>()?
+        .iter()
+        .map(|item| item.inner.clone())
+        .collect())
+}
+
+fn extract_color_palette_swatches(
+    swatches: &Bound<'_, PyAny>,
+) -> PyResult<Vec<BindingColorPaletteSwatch>> {
+    Ok(swatches
+        .extract::<Vec<PyRef<'_, PyColorPaletteSwatch>>>()?
+        .iter()
+        .map(|swatch| swatch.inner.clone())
         .collect())
 }
 

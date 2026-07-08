@@ -567,6 +567,24 @@ ts_kind = "class"
 docs = ["MenuItem"]
 
 [[item]]
+name = "ToolPaletteItem"
+kind = "descriptor"
+core_descriptor = "BindingToolPaletteItem"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["ToolPaletteItem"]
+
+[[item]]
+name = "ColorPaletteSwatch"
+kind = "descriptor"
+core_descriptor = "BindingColorPaletteSwatch"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["ColorPaletteSwatch"]
+
+[[item]]
 name = "Menu"
 kind = "widget"
 core_kind = "Menu"
@@ -577,6 +595,18 @@ js_kind = "function"
 js_rust = "js_menu"
 ts_kind = "function"
 docs = ["Menu"]
+
+[[item]]
+name = "ContextMenu"
+kind = "widget"
+core_kind = "ContextMenu"
+core_constructor = "context_menu"
+python_kind = "function"
+python_rust = "py_context_menu"
+js_kind = "function"
+js_rust = "js_context_menu"
+ts_kind = "function"
+docs = ["ContextMenu"]
 
 [[item]]
 name = "TabBar"
@@ -613,3 +643,231 @@ js_kind = "function"
 js_rust = "js_dialog"
 ts_kind = "function"
 docs = ["Dialog"]
+
+[[item]]
+name = "Padding"
+kind = "widget"
+core_kind = "Padding"
+core_constructor = "padding"
+python_kind = "function"
+python_rust = "py_padding"
+js_kind = "function"
+js_rust = "js_padding"
+ts_kind = "function"
+docs = ["Padding"]
+
+[[item]]
+name = "Align"
+kind = "widget"
+core_kind = "Align"
+core_constructor = "align"
+python_kind = "function"
+python_rust = "py_align"
+js_kind = "function"
+js_rust = "js_align"
+ts_kind = "function"
+docs = ["Align"]
+
+[[item]]
+name = "Background"
+kind = "widget"
+core_kind = "Background"
+core_constructor = "background"
+python_kind = "function"
+python_rust = "py_background"
+js_kind = "function"
+js_rust = "js_background"
+ts_kind = "function"
+docs = ["Background"]
+
+[[item]]
+name = "SizedBox"
+kind = "widget"
+core_kind = "SizedBox"
+core_constructor = "sized_box"
+python_kind = "function"
+python_rust = "py_sized_box"
+js_kind = "function"
+js_rust = "js_sized_box"
+ts_kind = "function"
+docs = ["SizedBox"]
+
+[[item]]
+name = "Stack"
+kind = "widget"
+core_kind = "Stack"
+core_constructor = "stack"
+python_kind = "function"
+python_rust = "py_stack"
+js_kind = "function"
+js_rust = "js_stack"
+ts_kind = "function"
+docs = ["Stack"]
+
+[[item]]
+name = "SemanticRegion"
+kind = "widget"
+core_kind = "SemanticRegion"
+core_constructor = "semantic_region"
+python_kind = "function"
+python_rust = "py_semantic_region"
+js_kind = "function"
+js_rust = "js_semantic_region"
+ts_kind = "function"
+docs = ["SemanticRegion"]
+
+[[item]]
+name = "FormRow"
+kind = "widget"
+core_kind = "FormRow"
+core_constructor = "form_row"
+python_kind = "function"
+python_rust = "py_form_row"
+js_kind = "function"
+js_rust = "js_form_row"
+ts_kind = "function"
+docs = ["FormRow"]
+
+[[item]]
+name = "FieldGroup"
+kind = "widget"
+core_kind = "FieldGroup"
+core_constructor = "field_group"
+python_kind = "function"
+python_rust = "py_field_group"
+js_kind = "function"
+js_rust = "js_field_group"
+ts_kind = "function"
+docs = ["FieldGroup"]
+
+[[item]]
+name = "FormSection"
+kind = "widget"
+core_kind = "FormSection"
+core_constructor = "form_section"
+python_kind = "function"
+python_rust = "py_form_section"
+js_kind = "function"
+js_rust = "js_form_section"
+ts_kind = "function"
+docs = ["FormSection"]
+
+[[item]]
+name = "PanelSection"
+kind = "widget"
+core_kind = "PanelSection"
+core_constructor = "panel_section"
+python_kind = "function"
+python_rust = "py_panel_section"
+js_kind = "function"
+js_rust = "js_panel_section"
+ts_kind = "function"
+docs = ["PanelSection"]
+
+[[item]]
+name = "DockPanel"
+kind = "widget"
+core_kind = "DockPanel"
+core_constructor = "dock_panel"
+python_kind = "function"
+python_rust = "py_dock_panel"
+js_kind = "function"
+js_rust = "js_dock_panel"
+ts_kind = "function"
+docs = ["DockPanel"]
+
+[[item]]
+name = "StatusBarHost"
+kind = "widget"
+core_kind = "StatusBarHost"
+core_constructor = "status_bar_host"
+python_kind = "function"
+python_rust = "py_status_bar_host"
+js_kind = "function"
+js_rust = "js_status_bar_host"
+ts_kind = "function"
+docs = ["StatusBarHost"]
+
+[[item]]
+name = "Tooltip"
+kind = "widget"
+core_kind = "Tooltip"
+core_constructor = "tooltip"
+python_kind = "function"
+python_rust = "py_tooltip"
+js_kind = "function"
+js_rust = "js_tooltip"
+ts_kind = "function"
+docs = ["Tooltip"]
+
+[[item]]
+name = "Popover"
+kind = "widget"
+core_kind = "Popover"
+core_constructor = "popover"
+python_kind = "function"
+python_rust = "py_popover"
+js_kind = "function"
+js_rust = "js_popover"
+ts_kind = "function"
+docs = ["Popover"]
+
+[[item]]
+name = "ToolPalette"
+kind = "widget"
+core_kind = "ToolPalette"
+core_constructor = "tool_palette"
+python_kind = "function"
+python_rust = "py_tool_palette"
+js_kind = "function"
+js_rust = "js_tool_palette"
+ts_kind = "function"
+docs = ["ToolPalette"]
+
+[[item]]
+name = "PresetStrip"
+kind = "widget"
+core_kind = "PresetStrip"
+core_constructor = "preset_strip"
+python_kind = "function"
+python_rust = "py_preset_strip"
+js_kind = "function"
+js_rust = "js_preset_strip"
+ts_kind = "function"
+docs = ["PresetStrip"]
+
+[[item]]
+name = "BrowserTabBar"
+kind = "widget"
+core_kind = "BrowserTabBar"
+core_constructor = "browser_tab_bar"
+python_kind = "function"
+python_rust = "py_browser_tab_bar"
+js_kind = "function"
+js_rust = "js_browser_tab_bar"
+ts_kind = "function"
+docs = ["BrowserTabBar"]
+
+[[item]]
+name = "ColorPalette"
+kind = "widget"
+core_kind = "ColorPalette"
+core_constructor = "color_palette"
+python_kind = "function"
+python_rust = "py_color_palette"
+js_kind = "function"
+js_rust = "js_color_palette"
+ts_kind = "function"
+docs = ["ColorPalette"]
+
+[[item]]
+name = "ColorPicker"
+kind = "widget"
+core_kind = "ColorPicker"
+core_constructor = "color_picker"
+python_kind = "function"
+python_rust = "py_color_picker"
+js_kind = "function"
+js_rust = "js_color_picker"
+ts_kind = "function"
+docs = ["ColorPicker"]

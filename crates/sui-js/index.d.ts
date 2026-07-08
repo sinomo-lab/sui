@@ -622,12 +622,62 @@ export class MenuItem {
   constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean);
 }
 
+export class ToolPaletteItem {
+  constructor(icon: IconGlyph | string, label: string, disabled?: boolean);
+}
+
+export class ColorPaletteSwatch {
+  constructor(name: string, color: Color);
+  readonly name: string;
+  readonly color: Color;
+}
+
 export function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+
+export function ContextMenu(name: string, trigger: Widget, items: MenuItem[], onActivate?: (index: number, value: string) => void): Widget;
 
 export function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
 
 export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
 
 export function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
+
+export function Padding(child: Widget, padding?: number, top?: number, right?: number, bottom?: number, fillChildWidth?: boolean, fillChildHeight?: boolean): Widget;
+
+export function Align(child: Widget, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+
+export function Background(child: Widget, color: Color): Widget;
+
+export function SizedBox(child?: Widget, width?: number, height?: number): Widget;
+
+export function Stack(children: Widget[], axis?: Axis, spacing?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
+
+export function SemanticRegion(name: State | BindingValue, child: Widget, description?: State | BindingValue, role?: string): Widget;
+
+export function FormRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
+
+export function FieldGroup(children: Widget[], spacing?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
+
+export function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, radius?: number, elevation?: SurfaceElevation | string): Widget;
+
+export function PanelSection(title: string, child: Widget, headerAction?: Widget, gap?: number, actionGap?: number, collapsible?: boolean, expanded?: boolean): Widget;
+
+export function DockPanel(title: string, child: Widget, name?: string, headerHeight?: number, padding?: number, background?: Color, headerBackground?: Color): Widget;
+
+export function StatusBarHost(content: Widget, statusBar: Widget): Widget;
+
+export function Tooltip(text: string, child: Widget, placement?: "above" | "below"): Widget;
+
+export function Popover(name: string, trigger: Widget, content: Widget, open?: boolean): Widget;
+
+export function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, spacing?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+
+export function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number): Widget;
+
+export function BrowserTabBar(name: string, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, onClose?: (index: number, value: string) => void): Widget;
+
+export function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number): Widget;
+
+export function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
 
 // END GENERATED SUI WIDGET BINDINGS

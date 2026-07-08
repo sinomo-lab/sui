@@ -457,6 +457,28 @@ descriptor MenuItem
   docs MenuItem
 end
 
+descriptor ToolPaletteItem
+  core_descriptor BindingToolPaletteItem
+  python class
+  js class
+  ts class
+    constructor(icon: IconGlyph | string, label: string, disabled?: boolean);
+  endts
+  docs ToolPaletteItem
+end
+
+descriptor ColorPaletteSwatch
+  core_descriptor BindingColorPaletteSwatch
+  python class
+  js class
+  ts class
+    constructor(name: string, color: Color);
+    readonly name: string;
+    readonly color: Color;
+  endts
+  docs ColorPaletteSwatch
+end
+
 widget Menu
   core_kind Menu
   core_constructor menu
@@ -464,6 +486,15 @@ widget Menu
   js function js_menu
   ts function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
   docs Menu
+end
+
+widget ContextMenu
+  core_kind ContextMenu
+  core_constructor context_menu
+  python function py_context_menu
+  js function js_context_menu
+  ts function ContextMenu(name: string, trigger: Widget, items: MenuItem[], onActivate?: (index: number, value: string) => void): Widget;
+  docs ContextMenu
 end
 
 widget TabBar
@@ -491,4 +522,175 @@ widget Dialog
   js function js_dialog
   ts function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
   docs Dialog
+end
+
+widget Padding
+  core_kind Padding
+  core_constructor padding
+  python function py_padding
+  js function js_padding
+  ts function Padding(child: Widget, padding?: number, top?: number, right?: number, bottom?: number, fillChildWidth?: boolean, fillChildHeight?: boolean): Widget;
+  docs Padding
+end
+
+widget Align
+  core_kind Align
+  core_constructor align
+  python function py_align
+  js function js_align
+  ts function Align(child: Widget, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+  docs Align
+end
+
+widget Background
+  core_kind Background
+  core_constructor background
+  python function py_background
+  js function js_background
+  ts function Background(child: Widget, color: Color): Widget;
+  docs Background
+end
+
+widget SizedBox
+  core_kind SizedBox
+  core_constructor sized_box
+  python function py_sized_box
+  js function js_sized_box
+  ts function SizedBox(child?: Widget, width?: number, height?: number): Widget;
+  docs SizedBox
+end
+
+widget Stack
+  core_kind Stack
+  core_constructor stack
+  python function py_stack
+  js function js_stack
+  ts function Stack(children: Widget[], axis?: Axis, spacing?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
+  docs Stack
+end
+
+widget SemanticRegion
+  core_kind SemanticRegion
+  core_constructor semantic_region
+  python function py_semantic_region
+  js function js_semantic_region
+  ts function SemanticRegion(name: State | BindingValue, child: Widget, description?: State | BindingValue, role?: string): Widget;
+  docs SemanticRegion
+end
+
+widget FormRow
+  core_kind FormRow
+  core_constructor form_row
+  python function py_form_row
+  js function js_form_row
+  ts function FormRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
+  docs FormRow
+end
+
+widget FieldGroup
+  core_kind FieldGroup
+  core_constructor field_group
+  python function py_field_group
+  js function js_field_group
+  ts function FieldGroup(children: Widget[], spacing?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
+  docs FieldGroup
+end
+
+widget FormSection
+  core_kind FormSection
+  core_constructor form_section
+  python function py_form_section
+  js function js_form_section
+  ts function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, radius?: number, elevation?: SurfaceElevation | string): Widget;
+  docs FormSection
+end
+
+widget PanelSection
+  core_kind PanelSection
+  core_constructor panel_section
+  python function py_panel_section
+  js function js_panel_section
+  ts function PanelSection(title: string, child: Widget, headerAction?: Widget, gap?: number, actionGap?: number, collapsible?: boolean, expanded?: boolean): Widget;
+  docs PanelSection
+end
+
+widget DockPanel
+  core_kind DockPanel
+  core_constructor dock_panel
+  python function py_dock_panel
+  js function js_dock_panel
+  ts function DockPanel(title: string, child: Widget, name?: string, headerHeight?: number, padding?: number, background?: Color, headerBackground?: Color): Widget;
+  docs DockPanel
+end
+
+widget StatusBarHost
+  core_kind StatusBarHost
+  core_constructor status_bar_host
+  python function py_status_bar_host
+  js function js_status_bar_host
+  ts function StatusBarHost(content: Widget, statusBar: Widget): Widget;
+  docs StatusBarHost
+end
+
+widget Tooltip
+  core_kind Tooltip
+  core_constructor tooltip
+  python function py_tooltip
+  js function js_tooltip
+  ts function Tooltip(text: string, child: Widget, placement?: "above" | "below"): Widget;
+  docs Tooltip
+end
+
+widget Popover
+  core_kind Popover
+  core_constructor popover
+  python function py_popover
+  js function js_popover
+  ts function Popover(name: string, trigger: Widget, content: Widget, open?: boolean): Widget;
+  docs Popover
+end
+
+widget ToolPalette
+  core_kind ToolPalette
+  core_constructor tool_palette
+  python function py_tool_palette
+  js function js_tool_palette
+  ts function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, spacing?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+  docs ToolPalette
+end
+
+widget PresetStrip
+  core_kind PresetStrip
+  core_constructor preset_strip
+  python function py_preset_strip
+  js function js_preset_strip
+  ts function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number): Widget;
+  docs PresetStrip
+end
+
+widget BrowserTabBar
+  core_kind BrowserTabBar
+  core_constructor browser_tab_bar
+  python function py_browser_tab_bar
+  js function js_browser_tab_bar
+  ts function BrowserTabBar(name: string, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, onClose?: (index: number, value: string) => void): Widget;
+  docs BrowserTabBar
+end
+
+widget ColorPalette
+  core_kind ColorPalette
+  core_constructor color_palette
+  python function py_color_palette
+  js function js_color_palette
+  ts function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number): Widget;
+  docs ColorPalette
+end
+
+widget ColorPicker
+  core_kind ColorPicker
+  core_constructor color_picker
+  python function py_color_picker
+  js function js_color_picker
+  ts function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+  docs ColorPicker
 end

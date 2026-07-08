@@ -22,9 +22,9 @@ The first binding foundation is now in the workspace:
   capability and external texture types with CPU fallback validation. The
   shared high-level binding model now covers `BindingApp`, `BindingWindow`,
   thread-safe `BindingState`, binding actions, labels, buttons, icons, icon buttons, links,
-  checkboxes, switches, radio buttons, radio groups, segmented controls, breadcrumbs/path bars, list views, tables/data grids, tree views, layer lists, menus, tab bars, tabs, dialogs, signal meters, status badges, status bars, detail rows, sliders, number inputs, selects,
+  checkboxes, switches, radio buttons, radio groups, segmented controls, breadcrumbs/path bars, list views, tables/data grids, tree views, layer lists, menus, context menus, tab bars, tabs, dialogs, signal meters, status badges, status bars, status bar hosts, detail rows, sliders, number inputs, selects,
   progress bars, busy indicators, single-line and multiline text inputs, rich
-  text, images, color swatches, separators, empty states, surfaces, toolbars, scroll views, row/column flex layouts, render snapshots,
+  text, images, color swatches, color palettes, color pickers, separators, empty states, surfaces, toolbars, tool palettes, preset strips, browser tab bars, scroll views, row/column flex layouts, padding, alignment, background, sized boxes, stacks, semantic regions, form rows, field groups, form sections, panel sections, dock panels, tooltips, popovers, render snapshots,
   `BindingRuntime`,
   `BindingWindowId`, and binding `UiHandle` integration.
   Declarative binding trees can now contain
@@ -58,9 +58,9 @@ The first binding foundation is now in the workspace:
 - `crates/sui-python` exposes the first PyO3 surface: geometry, color,
   constraints, `Paint`, custom `Widget(callbacks)`, `UiTaskQueue`, `State`,
   `App`, `Window`, `RunningApp`, `UiHandle`, `WindowHandle`, `Label`,
-  `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`, `Switch`, `RadioButton`, `RadioGroup`, `SegmentedControlItem`, `SegmentedControl`, `Breadcrumb`, `PathBar`, `ListView`, `TableColumn`, `TableRow`, `Table`, `DataGrid`, `TreeItem`, `TreeView`, `LayerListItem`, `LayerList`, `MenuItem`, `Menu`, `TabBar`, `Tabs`, `Dialog`, `SignalMeter`, `StatusBadge`, `StatusBarSegment`, `StatusBar`, `DetailRow`, `Slider`,
+  `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`, `Switch`, `RadioButton`, `RadioGroup`, `SegmentedControlItem`, `SegmentedControl`, `Breadcrumb`, `PathBar`, `ListView`, `TableColumn`, `TableRow`, `Table`, `DataGrid`, `TreeItem`, `TreeView`, `LayerListItem`, `LayerList`, `MenuItem`, `ToolPaletteItem`, `ColorPaletteSwatch`, `Menu`, `ContextMenu`, `TabBar`, `Tabs`, `Dialog`, `SignalMeter`, `StatusBadge`, `StatusBarSegment`, `StatusBar`, `StatusBarHost`, `DetailRow`, `Slider`,
   `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`, `TextArea`,
-  `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `EmptyState`, `Surface`, `Toolbar`, `ScrollView`, `Column`, `Row`, `FontHandle`,
+  `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `ColorPalette`, `ColorPicker`, `Separator`, `EmptyState`, `Surface`, `Toolbar`, `ToolPalette`, `PresetStrip`, `BrowserTabBar`, `ScrollView`, `Padding`, `Align`, `Background`, `SizedBox`, `Stack`, `SemanticRegion`, `FormRow`, `FieldGroup`, `FormSection`, `PanelSection`, `DockPanel`, `Tooltip`, `Popover`, `Column`, `Row`, `FontHandle`,
   `ImageHandle`, app-level `App.font_bytes` /
   `App.font_file`, `App.rgba_image` / `App.png_image` / `App.png_file` /
   `App.svg_image` / `App.svg_file` helpers, built-in `Shader` factories,
@@ -79,8 +79,8 @@ The first binding foundation is now in the workspace:
   geometry, color, constraints, `Paint`, custom `Widget(callbacks)`,
   `UiTaskQueue`, `State`, `App`, `Window`, `RunningApp`, `UiHandle`,
   `WindowHandle`, `Label`, `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`, `Switch`, `Slider`,
-  `RadioButton`, `RadioGroup`, `SegmentedControlItem`, `SegmentedControl`, `Breadcrumb`, `PathBar`, `ListView`, `TableColumn`, `TableRow`, `Table`, `DataGrid`, `TreeItem`, `TreeView`, `LayerListItem`, `LayerList`, `MenuItem`, `Menu`, `TabBar`, `Tabs`, `Dialog`, `SignalMeter`, `StatusBadge`, `StatusBarSegment`, `StatusBar`, `DetailRow`, `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
-  `TextArea`, `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `Separator`, `EmptyState`, `Surface`, `Toolbar`, `ScrollView`, `Column`, `Row`,
+  `RadioButton`, `RadioGroup`, `SegmentedControlItem`, `SegmentedControl`, `Breadcrumb`, `PathBar`, `ListView`, `TableColumn`, `TableRow`, `Table`, `DataGrid`, `TreeItem`, `TreeView`, `LayerListItem`, `LayerList`, `MenuItem`, `ToolPaletteItem`, `ColorPaletteSwatch`, `Menu`, `ContextMenu`, `TabBar`, `Tabs`, `Dialog`, `SignalMeter`, `StatusBadge`, `StatusBarSegment`, `StatusBar`, `StatusBarHost`, `DetailRow`, `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
+  `TextArea`, `TextSpan`, `RichText`, `Image`, `ColorSwatch`, `ColorPalette`, `ColorPicker`, `Separator`, `EmptyState`, `Surface`, `Toolbar`, `ToolPalette`, `PresetStrip`, `BrowserTabBar`, `ScrollView`, `Padding`, `Align`, `Background`, `SizedBox`, `Stack`, `SemanticRegion`, `FormRow`, `FieldGroup`, `FormSection`, `PanelSection`, `DockPanel`, `Tooltip`, `Popover`, `Column`, `Row`,
   `FontHandle`, `ImageHandle`, app-level
   `App.fontBytes` / `App.fontFile`, `App.rgbaImage` / `App.pngImage` /
   `App.pngFile` / `App.svgImage` / `App.svgFile` helpers, built-in

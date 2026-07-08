@@ -12,12 +12,12 @@ for an external texture descriptor and renders CPU RGBA descriptors through
 SUI's image path.
 Fonts, PNG images, and SVG images can be registered from bytes or local files.
 The initial high-level widget set includes labels, buttons, icons, icon buttons, links, checkboxes,
-switches, radio buttons, radio groups, segmented controls, breadcrumbs/path bars, list views, tables/data grids, tree views, layer lists, menus, tab bars, tabs, dialogs, signal meters, status badges, status bars, detail rows, sliders, number inputs, selects, progress bars, busy indicators,
-single-line text inputs, multiline text areas, rich text, images, color swatches,
-separators, empty states, surfaces, toolbars, scroll views, rows, and columns.
+switches, radio buttons, radio groups, segmented controls, breadcrumbs/path bars, list views, tables/data grids, tree views, layer lists, menus, context menus, tab bars, tabs, dialogs, signal meters, status badges, status bars, status bar hosts, detail rows, sliders, number inputs, selects, progress bars, busy indicators,
+single-line text inputs, multiline text areas, rich text, images, color swatches, color palettes, color pickers,
+separators, empty states, surfaces, toolbars, tool palettes, preset strips, browser tab bars, scroll views, padding, alignment, backgrounds, sized boxes, stacks, semantic regions, form rows, field groups, form sections, panel sections, dock panels, tooltips, popovers, rows, and columns.
 Descriptor classes include `TextSpan`, `StatusBarSegment`,
 `SegmentedControlItem`, `TableColumn`, `TableRow`, `TreeItem`,
-`LayerListItem`, and `MenuItem`.
+`LayerListItem`, `MenuItem`, `ToolPaletteItem`, and `ColorPaletteSwatch`.
 
 Custom widget paint callbacks can call `paint.draw_text(rect, text, color,
 font_size=..., line_height=..., font=..., weight=..., style=...,
