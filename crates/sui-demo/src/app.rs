@@ -82,6 +82,9 @@ const TEXT_COVERAGE_GAMMA_NAME: &str = "Text coverage gamma";
 const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
 const STEM_DARKENING_AMOUNT_NAME: &str = "Stem darkening amount";
 const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
+const DEMO_TEXT_HINTING_MAX_PPEM_LIMIT: f32 = 96.0;
+pub(crate) const DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM: f32 = 18.0;
+pub(crate) const DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT: f32 = 0.08;
 const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
 const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
 const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
@@ -133,6 +136,16 @@ const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
 const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
 const DEV_SHELL_PICKER_TITLE: &str = "SUI Demo";
+
+pub(crate) fn apply_demo_small_text_rendering_profile(
+    options: WindowRenderOptions,
+) -> WindowRenderOptions {
+    options.with_stem_darkening(WindowStemDarkening::Enabled {
+        max_ppem: DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM,
+        amount: DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(not(target_arch = "wasm32"))]
 pub enum DesktopAutomationMode {
@@ -1807,15 +1820,6 @@ fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting 
     }
 }
 
-fn window_stem_darkening_from_renderer(darkening: sui::StemDarkening) -> WindowStemDarkening {
-    match darkening.normalized() {
-        sui::StemDarkening::None => WindowStemDarkening::None,
-        sui::StemDarkening::Enabled { max_ppem, amount } => {
-            WindowStemDarkening::Enabled { max_ppem, amount }
-        }
-    }
-}
-
 fn window_text_coverage_policy_from_renderer(
     policy: TextCoveragePolicy,
 ) -> WindowTextCoveragePolicy {
@@ -2458,14 +2462,13 @@ struct RenderSettingsTab {
 impl RenderSettingsTab {
     fn default_options() -> WindowRenderOptions {
         let renderer = WgpuRenderer::new();
-        WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
-            .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
-            .with_stem_darkening(window_stem_darkening_from_renderer(
-                renderer.stem_darkening(),
-            ))
-            .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
-                renderer.text_coverage_policy(),
-            ))
+        apply_demo_small_text_rendering_profile(
+            WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
+                .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
+                .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
+                    renderer.text_coverage_policy(),
+                )),
+        )
     }
 
     fn with_initial_options(
@@ -2600,7 +2603,9 @@ impl RenderSettingsTab {
                                             WindowTextHinting::Slight { max_ppem }
                                         }
                                         WindowTextHinting::None => {
-                                            WindowTextHinting::Slight { max_ppem: 18.0 }
+                                            WindowTextHinting::Slight {
+                                                max_ppem: DEMO_TEXT_HINTING_MAX_PPEM_LIMIT,
+                                            }
                                         }
                                     }
                                 } else {
@@ -2614,15 +2619,16 @@ impl RenderSettingsTab {
                         220.0,
                         NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
                             .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .range(1.0, 64.0)
+                            .range(1.0, DEMO_TEXT_HINTING_MAX_PPEM_LIMIT as f64)
                             .step(0.5)
                             .precision(1)
                             .value(match initial.text_hinting.normalized() {
                                 WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
-                                WindowTextHinting::None => 18.0,
+                                WindowTextHinting::None => DEMO_TEXT_HINTING_MAX_PPEM_LIMIT as f64,
                             })
                             .on_change(move |value| {
-                                let max_ppem = value.clamp(1.0, 64.0) as f32;
+                                let max_ppem =
+                                    value.clamp(1.0, DEMO_TEXT_HINTING_MAX_PPEM_LIMIT as f64) as f32;
                                 hinting_max_ppem_state.borrow_mut().text_hinting =
                                     WindowTextHinting::Slight { max_ppem };
                             }),
@@ -2640,8 +2646,8 @@ impl RenderSettingsTab {
                                         }
                                         WindowStemDarkening::None => {
                                             WindowStemDarkening::Enabled {
-                                                max_ppem: 18.0,
-                                                amount: 0.08,
+                                                max_ppem: DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM,
+                                                amount: DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT,
                                             }
                                         }
                                     }
@@ -2661,7 +2667,9 @@ impl RenderSettingsTab {
                             .precision(2)
                             .value(match initial.stem_darkening.normalized() {
                                 WindowStemDarkening::Enabled { amount, .. } => amount as f64,
-                                WindowStemDarkening::None => 0.08,
+                                WindowStemDarkening::None => {
+                                    DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT as f64
+                                }
                             })
                             .on_change(move |value| {
                                 let amount = value.clamp(0.0, 1.0) as f32;
@@ -2671,7 +2679,9 @@ impl RenderSettingsTab {
                                     .normalized()
                                 {
                                     WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
-                                    WindowStemDarkening::None => 18.0,
+                                    WindowStemDarkening::None => {
+                                        DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM
+                                    }
                                 };
                                 stem_darkening_amount_state.borrow_mut().stem_darkening =
                                     WindowStemDarkening::Enabled { max_ppem, amount };
@@ -2688,7 +2698,9 @@ impl RenderSettingsTab {
                             .precision(1)
                             .value(match initial.stem_darkening.normalized() {
                                 WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
-                                WindowStemDarkening::None => 18.0,
+                                WindowStemDarkening::None => {
+                                    DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM as f64
+                                }
                             })
                             .on_change(move |value| {
                                 let max_ppem = value.clamp(1.0, 64.0) as f32;
@@ -2698,7 +2710,9 @@ impl RenderSettingsTab {
                                     .normalized()
                                 {
                                     WindowStemDarkening::Enabled { amount, .. } => amount,
-                                    WindowStemDarkening::None => 0.08,
+                                    WindowStemDarkening::None => {
+                                        DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT
+                                    }
                                 };
                                 stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
                                     WindowStemDarkening::Enabled { max_ppem, amount };
@@ -2900,6 +2914,7 @@ pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
     let shell = DevBrowserShell::new(render_options);
     let performance_overlay_reader = shell.performance_overlay_reader();
     finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
+        .with_window_render_options(render_options)
 }
 
 pub(crate) fn build_dev_application_with_initial_demo_and_render_options(
@@ -2909,6 +2924,7 @@ pub(crate) fn build_dev_application_with_initial_demo_and_render_options(
     let shell = DevBrowserShell::with_initial_demo(render_options, initial_demo);
     let performance_overlay_reader = shell.performance_overlay_reader();
     finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
+        .with_window_render_options(render_options)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2922,6 +2938,7 @@ fn build_dev_application_with_render_options_and_automation(
     let shell = DevBrowserShell::with_initial_demo(render_options, initial_demo);
     let performance_overlay_reader = shell.performance_overlay_reader();
     finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
+        .with_window_render_options(render_options)
 }
 
 #[cfg(test)]
@@ -3107,6 +3124,42 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("temporary HDR debug directory created");
         dir
+    }
+
+    #[test]
+    fn dev_demo_defaults_enable_small_text_quality_profile() {
+        let options = RenderSettingsTab::default_options();
+
+        assert!(matches!(
+            options.text_hinting.normalized(),
+            WindowTextHinting::Slight { max_ppem }
+                if (max_ppem - DEMO_TEXT_HINTING_MAX_PPEM_LIMIT).abs() < f32::EPSILON
+        ));
+        assert!(matches!(
+            options.stem_darkening.normalized(),
+            WindowStemDarkening::Enabled { max_ppem, amount }
+                if (max_ppem - DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM).abs() < f32::EPSILON
+                    && (amount - DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT).abs() < f32::EPSILON
+        ));
+        assert_eq!(
+            options.text_coverage_policy.normalized(),
+            WindowTextCoveragePolicy::Linear
+        );
+    }
+
+    #[test]
+    fn dev_application_attaches_default_render_options() {
+        let app = build_dev_application();
+        let options = app
+            .initial_window_render_options()
+            .expect("dev application should publish initial render options");
+
+        assert!(matches!(
+            options.stem_darkening.normalized(),
+            WindowStemDarkening::Enabled { max_ppem, amount }
+                if (max_ppem - DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM).abs() < f32::EPSILON
+                    && (amount - DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT).abs() < f32::EPSILON
+        ));
     }
 
     fn primary_pointer_event(
