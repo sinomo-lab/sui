@@ -515,7 +515,12 @@ impl WidgetPod {
         self.widget.accepts_focus()
     }
 
-    pub(crate) fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+    /// Visit this pod's direct children. Public so container widgets can walk
+    /// their own subtree (e.g. to derive a focus-within visual by comparing
+    /// descendant ids against the focused widget id — sui has no focus-within
+    /// event, and any focus change repaints every window, so polling at paint
+    /// time stays correct).
+    pub fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.widget.visit_children(visitor);
     }
 

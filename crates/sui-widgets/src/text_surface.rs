@@ -1691,15 +1691,6 @@ fn draw_surface_frame(
     focus_ring_width: f32,
     focus_ring_outset: f32,
 ) {
-    if let Some(focus_ring) = focus_ring {
-        let outset = physical_pixels(ctx, focus_ring_outset);
-        ctx.stroke(
-            Path::rounded_rect(bounds.inflate(outset, outset), radius + outset),
-            focus_ring,
-            StrokeStyle::new(physical_pixels(ctx, focus_ring_width)),
-        );
-    }
-
     let fill = Path::rounded_rect(bounds, radius);
     ctx.fill(fill, background);
 
@@ -1710,6 +1701,15 @@ fn draw_surface_frame(
             Path::rounded_rect(bounds.inflate(-inset, -inset), (radius - inset).max(0.0)),
             border,
             StrokeStyle::new(width),
+        );
+    }
+
+    if let Some(focus_ring) = focus_ring {
+        let outset = physical_pixels(ctx, focus_ring_outset);
+        ctx.stroke(
+            Path::rounded_rect(bounds.inflate(outset, outset), radius + outset),
+            focus_ring,
+            StrokeStyle::new(physical_pixels(ctx, focus_ring_width)),
         );
     }
 }

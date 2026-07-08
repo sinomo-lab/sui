@@ -4018,6 +4018,7 @@ mod tests {
         runtime
             .handle_event(window_id, Event::Pointer(down))
             .expect("tab focus pointer event should be handled");
+        settle_runtime_animations(&mut runtime, window_id);
 
         let focused = runtime
             .render(window_id)

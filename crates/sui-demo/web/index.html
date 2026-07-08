@@ -835,12 +835,19 @@
             padding: "0",
             border: debugEnabled ? "1px solid #ff4d8d" : "0",
             borderRadius: "0",
+            outline: "0",
+            outlineOffset: "0",
             background: "transparent",
             color: debugEnabled ? "#ff4d8d" : "transparent",
+            caretColor: "transparent",
             opacity: debugEnabled ? "1" : "0",
             font: "inherit",
             overflow: "hidden",
             resize: "none",
+            appearance: "none",
+            WebkitAppearance: "none",
+            MozAppearance: "none",
+            userSelect: "none",
           });
           for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) {
             element.addEventListener(

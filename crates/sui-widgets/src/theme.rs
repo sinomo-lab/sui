@@ -3080,7 +3080,7 @@ impl ControlMetrics {
             indicator_corner_radius: radius.sm + 1.0,
             border_width: 1.0,
             focus_ring_width: 2.0,
-            focus_ring_outset: 2.0,
+            focus_ring_outset: 0.0,
             caret_width: 2.0,
         }
     }

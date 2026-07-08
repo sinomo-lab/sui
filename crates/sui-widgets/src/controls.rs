@@ -62,8 +62,13 @@ pub enum IconGlyph {
     History,
     Folder,
     File,
+    FileText,
     Link,
     Send,
+    ArrowUp,
+    Stop,
+    Attach,
+    Hourglass,
     Alert,
     Storage,
     // Media/device glyphs for realtime call and device surfaces.
@@ -113,8 +118,13 @@ impl IconGlyph {
             Self::History => LucideIcon::History,
             Self::Folder => LucideIcon::Folder,
             Self::File => LucideIcon::File,
+            Self::FileText => LucideIcon::FileText,
             Self::Link => LucideIcon::Link,
             Self::Send => LucideIcon::Send,
+            Self::ArrowUp => LucideIcon::ArrowUp,
+            Self::Stop => LucideIcon::Square,
+            Self::Attach => LucideIcon::Paperclip,
+            Self::Hourglass => LucideIcon::Hourglass,
             Self::Alert => LucideIcon::TriangleAlert,
             Self::Storage => LucideIcon::HardDrive,
             Self::AudioLines => LucideIcon::AudioLines,
@@ -163,8 +173,13 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
     IconGlyph::History,
     IconGlyph::Folder,
     IconGlyph::File,
+    IconGlyph::FileText,
     IconGlyph::Link,
     IconGlyph::Send,
+    IconGlyph::ArrowUp,
+    IconGlyph::Stop,
+    IconGlyph::Attach,
+    IconGlyph::Hourglass,
     IconGlyph::Alert,
     IconGlyph::Storage,
     IconGlyph::AudioLines,
@@ -8043,6 +8058,15 @@ fn draw_control_frame(
     border: Color,
     focus_ring: Option<Color>,
 ) {
+    draw_control_shape(
+        ctx,
+        bounds,
+        radius,
+        physical_pixels(ctx, metrics.border_width),
+        background,
+        border,
+    );
+
     if let Some(focus_ring) = focus_ring {
         let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
         ctx.stroke(
@@ -8054,15 +8078,6 @@ fn draw_control_frame(
             StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
         );
     }
-
-    draw_control_shape(
-        ctx,
-        bounds,
-        radius,
-        physical_pixels(ctx, metrics.border_width),
-        background,
-        border,
-    );
 }
 
 fn draw_control_shape(
@@ -8457,6 +8472,33 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn solid_stroke_path_bounds(output: &RenderOutput, expected_color: Color) -> Vec<Rect> {
+        let mut bounds = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokePath {
+                path,
+                brush: Brush::Solid(color),
+                ..
+            } = command
+                && *color == expected_color
+            {
+                bounds.push(path.bounds());
+            }
+        });
+        bounds
+    }
+
+    fn assert_rect_approx_eq(actual: Rect, expected: Rect) {
+        const TOLERANCE: f32 = 0.01;
+        assert!(
+            (actual.x() - expected.x()).abs() <= TOLERANCE
+                && (actual.y() - expected.y()).abs() <= TOLERANCE
+                && (actual.width() - expected.width()).abs() <= TOLERANCE
+                && (actual.height() - expected.height()).abs() <= TOLERANCE,
+            "rect mismatch: actual={actual:?}, expected={expected:?}"
+        );
     }
 
     fn image_tint_colors(output: &RenderOutput) -> Vec<Color> {
@@ -10019,6 +10061,36 @@ mod tests {
             solid_stroke_colors(&settled_focus).contains(&theme.palette.border_focus),
             "checkbox focus border should settle to the theme focus border color"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn focused_control_ring_path_matches_control_bounds() -> Result<()> {
+        let theme = DefaultTheme::default();
+        assert_eq!(theme.metrics.focus_ring_outset, 0.0);
+        let (mut runtime, window_id) = build_runtime(Button::new("Save").theme(theme));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(16.0, 16.0), true),
+        )?;
+        runtime.tick(focus_duration());
+        assert!(handle_ready_events(&mut runtime)? >= 1);
+
+        let output = runtime.render(window_id)?;
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Save"))
+            .expect("focused button semantics present");
+        let focus_bounds = solid_stroke_path_bounds(&output, theme.palette.focus_ring);
+
+        assert!(
+            focus_bounds.len() == 1,
+            "expected one focused control ring, got {focus_bounds:?}"
+        );
+        assert_rect_approx_eq(focus_bounds[0], button.bounds);
         Ok(())
     }
 

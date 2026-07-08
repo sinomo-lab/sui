@@ -13983,10 +13983,6 @@ fn draw_control_frame(
     border: Color,
     focus_ring: Option<Color>,
 ) {
-    if let Some(focus_ring) = focus_ring {
-        draw_focus_ring_frame(ctx, bounds, radius, metrics, focus_ring);
-    }
-
     draw_control_shape(
         ctx,
         bounds,
@@ -13995,6 +13991,10 @@ fn draw_control_frame(
         background,
         border,
     );
+
+    if let Some(focus_ring) = focus_ring {
+        draw_focus_ring_frame(ctx, bounds, radius, metrics, focus_ring);
+    }
 }
 
 fn draw_focus_ring_frame(
