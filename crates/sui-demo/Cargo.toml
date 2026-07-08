@@ -29,6 +29,11 @@ name = "sui-demo-artifacts"
 path = "src/artifacts.rs"
 required-features = ["artifacts"]
 
+[[bin]]
+name = "sui-text-render-snapshot"
+path = "src/text_render_snapshot.rs"
+required-features = ["native", "artifacts"]
+
 [dependencies]
 sui = { path = "../sui", default-features = false }
 sui-debug = { workspace = true }

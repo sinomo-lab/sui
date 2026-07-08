@@ -567,9 +567,13 @@ pub enum WindowTextHinting {
     Slight { max_ppem: f32 },
 }
 
+pub const DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM: f32 = 96.0;
+
 impl Default for WindowTextHinting {
     fn default() -> Self {
-        Self::None
+        Self::Slight {
+            max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM,
+        }
     }
 }
 
@@ -695,7 +699,9 @@ impl WindowRenderOptions {
             feathering_enabled,
             feather_width,
             optical_vertical_text_alignment_enabled: true,
-            text_hinting: WindowTextHinting::None,
+            text_hinting: WindowTextHinting::Slight {
+                max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM,
+            },
             stem_darkening: WindowStemDarkening::None,
             text_coverage_policy: WindowTextCoveragePolicy::Linear,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
@@ -1324,13 +1330,13 @@ fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheMetrics, FramePhase, FramePhaseSample, RendererSubmissionDiagnostics,
-        RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
-        TextCacheDeltaDiagnostics, TextCacheDiagnostics, WindowColorManagementMode,
-        WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-        WindowRenderOptions, WindowTextCoveragePolicy, WindowToneMappingMode,
-        clear_window_performance_snapshot, set_window_render_options,
-        set_window_scene_statistics_detail_mode, window_render_options,
+        CacheMetrics, DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM, FramePhase, FramePhaseSample,
+        RendererSubmissionDiagnostics, RetainedPacketRebuildDiagnostics, SceneStatistics,
+        SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+        WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+        WindowPerformanceSnapshot, WindowRenderOptions, WindowTextCoveragePolicy,
+        WindowTextHinting, WindowToneMappingMode, clear_window_performance_snapshot,
+        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
     use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WidgetId, WindowId};
@@ -1794,5 +1800,15 @@ mod tests {
         clear_window_performance_snapshot(window_id);
 
         assert_eq!(window_render_options(window_id), None);
+    }
+
+    #[test]
+    fn window_render_options_default_to_slight_text_hinting() {
+        assert_eq!(
+            WindowRenderOptions::new(true, 1.0).text_hinting,
+            WindowTextHinting::Slight {
+                max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM
+            }
+        );
     }
 }
