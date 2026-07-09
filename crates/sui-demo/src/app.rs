@@ -147,7 +147,8 @@ pub(crate) type DevThemeReader = Rc<dyn Fn() -> DefaultTheme>;
 
 #[cfg(test)]
 pub(crate) fn default_dev_theme_reader() -> DevThemeReader {
-    Rc::new(DefaultTheme::default)
+    let theme = DefaultTheme::default();
+    Rc::new(move || theme)
 }
 
 pub(crate) fn clone_dev_theme_reader(
@@ -173,6 +174,14 @@ fn next_dev_theme_scheme(scheme: ThemeColorScheme) -> ThemeColorScheme {
         ThemeColorScheme::Light => ThemeColorScheme::Dark,
         ThemeColorScheme::Dark => ThemeColorScheme::HighContrast,
         ThemeColorScheme::HighContrast => ThemeColorScheme::Light,
+    }
+}
+
+fn dev_theme_for_scheme(scheme: ThemeColorScheme) -> DefaultTheme {
+    match scheme {
+        ThemeColorScheme::Light => DefaultTheme::default(),
+        ThemeColorScheme::Dark => DefaultTheme::dark(),
+        ThemeColorScheme::HighContrast => DefaultTheme::high_contrast(),
     }
 }
 
@@ -210,6 +219,7 @@ struct DevShellStateInner {
     active_tab: Option<usize>,
     picker_open: bool,
     theme_scheme: ThemeColorScheme,
+    theme: DefaultTheme,
     performance_overlay_visible: bool,
     settings_visible: bool,
     settings_bounds: Rect,
@@ -224,6 +234,7 @@ impl DevShellState {
                 active_tab: None,
                 picker_open: true,
                 theme_scheme: ThemeColorScheme::Light,
+                theme: dev_theme_for_scheme(ThemeColorScheme::Light),
                 performance_overlay_visible: false,
                 settings_visible: false,
                 settings_bounds: Rect::new(
@@ -238,11 +249,7 @@ impl DevShellState {
     }
 
     fn theme(&self) -> DefaultTheme {
-        match self.theme_scheme() {
-            ThemeColorScheme::Light => DefaultTheme::default(),
-            ThemeColorScheme::Dark => DefaultTheme::dark(),
-            ThemeColorScheme::HighContrast => DefaultTheme::high_contrast(),
-        }
+        self.inner.borrow().theme
     }
 
     fn theme_reader(&self) -> DevThemeReader {
@@ -269,6 +276,7 @@ impl DevShellState {
     fn cycle_theme(&self) -> ThemeColorScheme {
         let mut inner = self.inner.borrow_mut();
         inner.theme_scheme = next_dev_theme_scheme(inner.theme_scheme);
+        inner.theme = dev_theme_for_scheme(inner.theme_scheme);
         inner.theme_scheme
     }
 

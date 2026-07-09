@@ -212,7 +212,8 @@ const TEXT_VALIDATION_PROBE_CARD_WIDTH: f32 = 320.0;
 pub type WidgetBookThemeReader = Rc<dyn Fn() -> DefaultTheme>;
 
 fn default_widget_book_theme_reader() -> WidgetBookThemeReader {
-    Rc::new(DefaultTheme::default)
+    let theme = DefaultTheme::default();
+    Rc::new(move || theme)
 }
 
 fn clone_widget_book_theme_reader(

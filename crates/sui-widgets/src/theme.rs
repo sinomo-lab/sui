@@ -3195,8 +3195,14 @@ impl DefaultTheme {
 
     pub fn with_density(mut self, density: ThemeDensity) -> Self {
         self.density = density;
-        self.sync_derived_fields();
+        self.sync_density_fields();
         self
+    }
+
+    fn sync_density_fields(&mut self) {
+        self.typography = ControlTypography::for_density(&self.text, self.density);
+        self.interaction = ControlStateMetrics::for_density(self.density);
+        self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius, self.density);
     }
 
     pub fn sync_derived_fields(&mut self) {
@@ -3205,9 +3211,7 @@ impl DefaultTheme {
         self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
         self.shadows = ThemeShadows::for_scheme(self.colors.scheme);
         self.glows = ThemeGlows::for_scheme(self.colors.scheme);
-        self.typography = ControlTypography::for_density(&self.text, self.density);
-        self.interaction = ControlStateMetrics::for_density(self.density);
-        self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius, self.density);
+        self.sync_density_fields();
     }
 
     pub fn text_style(&self, color: Color) -> TextStyle {
