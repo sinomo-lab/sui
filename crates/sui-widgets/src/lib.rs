@@ -87,7 +87,7 @@ pub use panes::{
     FloatingWorkspaceState, ResizablePane, SplitView,
 };
 pub use reorderable::{ReorderableList, ReorderableListChange};
-pub use rich_text::RichText;
+pub use rich_text::{RichText, RichTextSourceMap, RichTextSourceSpan};
 pub use selection::{
     SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
     SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,

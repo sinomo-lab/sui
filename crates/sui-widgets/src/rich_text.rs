@@ -1,11 +1,163 @@
-use sui_core::{Point, Rect, SemanticsNode, SemanticsRole, SemanticsValue, Size};
+use std::ops::Range;
+
+use sui_core::{
+    Color, Event, KeyState, Point, PointerButton, PointerEventKind, Rect, SemanticsNode,
+    SemanticsRole, SemanticsValue, Size,
+};
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_text::{
-    PersistentTextLayout, TextDocument, TextLayoutRequest, TextParagraph, TextSpan, TextStyle,
+    PersistentTextLayout, TextCursor, TextDocument, TextLayoutRequest, TextParagraph,
+    TextSelection, TextSpan, TextStyle,
 };
 
-use crate::DefaultTheme;
+use crate::{DefaultTheme, SelectionScope, TextCommand};
+
+/// Maps byte ranges in rendered rich text back to the original source.
+///
+/// A span has a visible `display_range`, the source bytes that produced the
+/// visible content (`content_source_range`), and a wider `source_range` that
+/// may include invisible syntax such as Markdown emphasis markers or code
+/// fences. Copying a complete visible span includes that surrounding syntax;
+/// copying part of it maps into the content bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RichTextSourceSpan {
+    pub display_range: Range<usize>,
+    pub source_range: Range<usize>,
+    pub content_source_range: Range<usize>,
+}
+
+impl RichTextSourceSpan {
+    pub fn new(
+        display_range: Range<usize>,
+        source_range: Range<usize>,
+        content_source_range: Range<usize>,
+    ) -> Self {
+        Self {
+            display_range,
+            source_range,
+            content_source_range,
+        }
+    }
+}
+
+/// Original source plus the mapping needed to copy source-preserving rich-text
+/// selections.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RichTextSourceMap {
+    source: String,
+    rendered: String,
+    spans: Vec<RichTextSourceSpan>,
+}
+
+impl RichTextSourceMap {
+    pub fn new(
+        source: impl Into<String>,
+        rendered: impl Into<String>,
+        mut spans: Vec<RichTextSourceSpan>,
+    ) -> Self {
+        spans.sort_by_key(|span| (span.display_range.start, span.display_range.end));
+        Self {
+            source: source.into(),
+            rendered: rendered.into(),
+            spans,
+        }
+    }
+
+    pub fn identity(text: impl Into<String>) -> Self {
+        let text = text.into();
+        let len = text.len();
+        Self::new(
+            text.clone(),
+            text,
+            vec![RichTextSourceSpan::new(0..len, 0..len, 0..len)],
+        )
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn rendered(&self) -> &str {
+        &self.rendered
+    }
+
+    pub fn spans(&self) -> &[RichTextSourceSpan] {
+        &self.spans
+    }
+
+    /// Return the original source represented by a rendered byte range.
+    pub fn copy_range(&self, range: Range<usize>) -> String {
+        let range = normalized_range(range, self.rendered.len());
+        if range.is_empty() {
+            return String::new();
+        }
+
+        let Some(first) = self
+            .spans
+            .iter()
+            .find(|span| ranges_overlap(&span.display_range, &range))
+        else {
+            return self.rendered.get(range).unwrap_or_default().to_string();
+        };
+        let last = self
+            .spans
+            .iter()
+            .rev()
+            .find(|span| ranges_overlap(&span.display_range, &range))
+            .unwrap_or(first);
+
+        let start = self.source_boundary(first, range.start, false);
+        let end = self.source_boundary(last, range.end, true);
+        self.source
+            .get(start.min(end)..end.max(start))
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn source_boundary(&self, span: &RichTextSourceSpan, offset: usize, end: bool) -> usize {
+        let display = clamp_range(&span.display_range, self.rendered.len());
+        let source = clamp_range(&span.source_range, self.source.len());
+        let content = clamp_range(&span.content_source_range, self.source.len());
+        if offset <= display.start {
+            return if end { content.start } else { source.start };
+        }
+        if offset >= display.end {
+            return if end { source.end } else { content.end };
+        }
+
+        let display_text = self.rendered.get(display.clone()).unwrap_or_default();
+        let content_text = self.source.get(content.clone()).unwrap_or_default();
+        let relative = offset.saturating_sub(display.start).min(display.len());
+        let char_index = display_text
+            .get(..relative)
+            .map(str::chars)
+            .map(Iterator::count)
+            .unwrap_or(0);
+        content.start + nth_char_boundary(content_text, char_index)
+    }
+}
+
+fn normalized_range(range: Range<usize>, len: usize) -> Range<usize> {
+    let start = range.start.min(len);
+    let end = range.end.min(len);
+    start.min(end)..start.max(end)
+}
+
+fn clamp_range(range: &Range<usize>, len: usize) -> Range<usize> {
+    normalized_range(range.clone(), len)
+}
+
+fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
+}
+
+fn nth_char_boundary(text: &str, index: usize) -> usize {
+    text.char_indices()
+        .map(|(offset, _)| offset)
+        .nth(index)
+        .unwrap_or(text.len())
+}
 
 pub struct RichText {
     document: TextDocument,
@@ -15,6 +167,11 @@ pub struct RichText {
     min_width: f32,
     min_height: f32,
     layout: Option<PersistentTextLayout>,
+    selection_scope: Option<SelectionScope>,
+    source_map: Option<RichTextSourceMap>,
+    selection: TextSelection,
+    selection_color: Color,
+    dragging_selection: bool,
 }
 
 impl RichText {
@@ -27,6 +184,11 @@ impl RichText {
             min_width: 0.0,
             min_height: 0.0,
             layout: None,
+            selection_scope: None,
+            source_map: None,
+            selection: TextSelection::new(TextCursor::default(), TextCursor::default()),
+            selection_color: Color::rgba(0.18, 0.62, 0.86, 0.32),
+            dragging_selection: false,
         }
     }
 
@@ -59,6 +221,9 @@ impl RichText {
         self.document = document;
         self.document_reader = None;
         self.layout = None;
+        self.source_map = None;
+        self.selection = TextSelection::new(TextCursor::default(), TextCursor::default());
+        self.dragging_selection = false;
     }
 
     pub fn document_when<F>(mut self, reader: F) -> Self
@@ -86,6 +251,23 @@ impl RichText {
 
     pub fn min_height(mut self, height: f32) -> Self {
         self.min_height = height.max(0.0);
+        self
+    }
+
+    /// Enable character-level selection and publish it through `scope`.
+    pub fn selectable(mut self, scope: SelectionScope) -> Self {
+        self.selection_scope = Some(scope);
+        self
+    }
+
+    /// Map copied rendered text back to an original source representation.
+    pub fn source_map(mut self, source_map: RichTextSourceMap) -> Self {
+        self.source_map = Some(source_map);
+        self
+    }
+
+    pub fn selection_color(mut self, color: Color) -> Self {
+        self.selection_color = color;
         self
     }
 
@@ -131,6 +313,78 @@ impl RichText {
             (content_size.height + self.padding.top + self.padding.bottom).max(self.min_height),
         )
     }
+
+    fn text(&self) -> String {
+        self.current_document().plain_text()
+    }
+
+    fn selection_range(&self, text_len: usize) -> Range<usize> {
+        normalized_range(
+            self.selection.anchor.utf8_offset..self.selection.focus.utf8_offset,
+            text_len,
+        )
+    }
+
+    fn selected_text(&self, text: &str) -> String {
+        let range = self.selection_range(text.len());
+        if range.is_empty() {
+            return String::new();
+        }
+        self.source_map
+            .as_ref()
+            .map(|map| map.copy_range(range.clone()))
+            .unwrap_or_else(|| text.get(range).unwrap_or_default().to_string())
+    }
+
+    fn layout_origin(&self, bounds: Rect) -> Option<Point> {
+        let layout = self.layout.as_ref()?;
+        let content = self.content_rect(bounds);
+        let layout_bounds = layout.measurement().bounds;
+        Some(Point::new(content.x() - layout_bounds.x(), content.y()))
+    }
+
+    fn point_to_cursor(&self, bounds: Rect, point: Point) -> Option<TextCursor> {
+        let layout = self.layout.as_ref()?;
+        let origin = self.layout_origin(bounds)?;
+        Some(layout.hit_test_point(Point::new(point.x - origin.x, point.y - origin.y)))
+    }
+
+    fn publish_selection(&self, ctx: &mut EventCtx, text: &str) {
+        let Some(scope) = &self.selection_scope else {
+            return;
+        };
+        let owner = ctx.widget_id();
+        let range = self.selection_range(text.len());
+        let selected = self.selected_text(text);
+        if range.is_empty() || selected.is_empty() {
+            scope.clear_owner(owner);
+        } else {
+            scope.replace_text(owner, owner, range, text.len(), selected);
+        }
+        ctx.request_semantics();
+    }
+
+    fn set_selection(&mut self, ctx: &mut EventCtx, anchor: usize, focus: usize) {
+        let text = self.text();
+        let anchor = anchor.min(text.len());
+        let focus = focus.min(text.len());
+        let next = TextSelection::new(TextCursor::new(anchor), TextCursor::new(focus));
+        if self.selection == next {
+            return;
+        }
+        self.selection = next;
+        self.publish_selection(ctx, &text);
+        ctx.request_paint();
+    }
+
+    fn copy_selection(&self, ctx: &mut EventCtx) -> bool {
+        let selected = self.selected_text(&self.text());
+        if selected.is_empty() {
+            return false;
+        }
+        ctx.set_clipboard_text(selected);
+        true
+    }
 }
 
 impl Default for RichText {
@@ -140,6 +394,106 @@ impl Default for RichText {
 }
 
 impl Widget for RichText {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.selection_scope.is_none() {
+            return;
+        }
+        match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                if let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position) {
+                    let anchor = if pointer.modifiers.shift {
+                        self.selection.anchor.utf8_offset
+                    } else {
+                        cursor.utf8_offset
+                    };
+                    self.set_selection(ctx, anchor, cursor.utf8_offset);
+                    self.dragging_selection = true;
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Move
+                    && self.dragging_selection
+                    && ctx.phase() != EventPhase::Capture
+                    && pointer.buttons.contains(PointerButton::Primary) =>
+            {
+                if let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position) {
+                    self.set_selection(ctx, self.selection.anchor.utf8_offset, cursor.utf8_offset);
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.dragging_selection =>
+            {
+                self.dragging_selection = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.dragging_selection {
+                    self.dragging_selection = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Secondary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                ctx.request_focus();
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let command = key.modifiers.control || key.modifiers.meta;
+                match key.key.as_str() {
+                    "a" | "A" if command => {
+                        let len = self.text().len();
+                        self.set_selection(ctx, 0, len);
+                        ctx.set_handled();
+                    }
+                    "c" | "C" if command => {
+                        if self.copy_selection(ctx) {
+                            ctx.set_handled();
+                        }
+                    }
+                    "Escape" => {
+                        self.set_selection(ctx, 0, 0);
+                        ctx.set_handled();
+                    }
+                    _ => {}
+                }
+            }
+            Event::Custom(custom) => {
+                if let Some(command) = TextCommand::from_custom_event(custom) {
+                    match command {
+                        TextCommand::Copy => {
+                            if self.copy_selection(ctx) {
+                                ctx.set_handled();
+                            }
+                        }
+                        TextCommand::SelectAll => {
+                            let len = self.text().len();
+                            self.set_selection(ctx, 0, len);
+                            ctx.set_handled();
+                        }
+                        TextCommand::Cut | TextCommand::Paste => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let document = self.current_document();
         let content_constraints = self.content_constraints(constraints);
@@ -166,10 +520,29 @@ impl Widget for RichText {
         let Some(layout) = &self.layout else {
             return;
         };
-        let content = self.content_rect(ctx.bounds());
-        let layout_bounds = layout.measurement().bounds;
-        let origin = Point::new(content.x() - layout_bounds.x(), content.y());
+        let Some(origin) = self.layout_origin(ctx.bounds()) else {
+            return;
+        };
+        let text_len = layout.text().len();
+        let selection = self.selection_range(text_len);
+        if !selection.is_empty() {
+            for rect in layout.selection_rects(selection) {
+                ctx.fill_rect(
+                    Rect::new(
+                        origin.x + rect.x(),
+                        origin.y + rect.y(),
+                        rect.width(),
+                        rect.height(),
+                    ),
+                    self.selection_color,
+                );
+            }
+        }
         ctx.draw_persistent_text_layout(origin, layout);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.selection_scope.is_some()
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -185,7 +558,7 @@ impl Widget for RichText {
 
 #[cfg(test)]
 mod tests {
-    use super::RichText;
+    use super::{RichText, RichTextSourceMap, RichTextSourceSpan};
     use crate::SizedBox;
     use sui_core::{Color, SemanticsRole, SemanticsValue};
     use sui_runtime::{Application, RenderOutput, Widget, WindowBuilder};
@@ -281,5 +654,27 @@ mod tests {
         });
 
         assert!(line_count > 1, "expected constrained rich text to wrap");
+    }
+
+    #[test]
+    fn source_map_copies_complete_markdown_syntax_and_partial_content() {
+        let source = "Use **strong** and `code`.";
+        let rendered = "Use strong and code.";
+        let map = RichTextSourceMap::new(
+            source,
+            rendered,
+            vec![
+                RichTextSourceSpan::new(0..4, 0..4, 0..4),
+                RichTextSourceSpan::new(4..10, 4..14, 6..12),
+                RichTextSourceSpan::new(10..15, 14..19, 14..19),
+                RichTextSourceSpan::new(15..19, 19..25, 20..24),
+                RichTextSourceSpan::new(19..20, 25..26, 25..26),
+            ],
+        );
+
+        assert_eq!(map.copy_range(4..10), "**strong**");
+        assert_eq!(map.copy_range(6..9), "ron");
+        assert_eq!(map.copy_range(15..19), "`code`");
+        assert_eq!(map.copy_range(4..19), "**strong** and `code`");
     }
 }
