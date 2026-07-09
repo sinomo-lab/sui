@@ -3399,10 +3399,28 @@ impl WgpuRenderer {
     }
 }
 
+/// Build the renderer's wgpu instance with the GL backend left out unless the
+/// environment explicitly asks for it (`WGPU_BACKEND=gl`).
+///
+/// Initializing the GL/WGL backend spins up a device thread per instance, and
+/// concurrent initialization — one renderer per test in the headless harness —
+/// deadlocks inside some Windows OpenGL drivers (observed as all test threads
+/// parked on `wgl::create_instance_device` results while the creator threads
+/// sat inside `nvoglv64.dll`; the same churn also produces access-violation
+/// crashes). The primary native backends (Vulkan/Metal/DX12) cover every
+/// platform SUI supports, so GL is opt-in rather than eagerly probed.
+fn default_wgpu_instance() -> wgpu::Instance {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    if std::env::var_os("WGPU_BACKEND").is_none() {
+        descriptor.backends -= wgpu::Backends::GL;
+    }
+    wgpu::Instance::new(descriptor)
+}
+
 impl Default for WgpuRenderer {
     fn default() -> Self {
         Self {
-            instance: wgpu::Instance::default(),
+            instance: default_wgpu_instance(),
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
             text_render_mode: TextRenderMode::default(),
