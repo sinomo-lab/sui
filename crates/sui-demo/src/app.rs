@@ -7534,26 +7534,30 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    #[ignore = "diagnostic benchmark for dragging the large widget-book floating view in the full dev workspace"]
-    fn dev_workspace_widget_book_drag_live_no_vsync_benchmark() -> Result<()> {
+    #[ignore = "diagnostic benchmark for dragging the widget-book gallery scroll bar in the full dev workspace"]
+    fn dev_workspace_widget_book_scrollbar_drag_live_no_vsync_benchmark() -> Result<()> {
         const DRAG_STEPS: usize = 42;
         const WARMUP_SAMPLES: usize = 6;
 
         let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
         let window = app.main_window()?;
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
 
         let initial_snapshot = window.snapshot()?;
-        let widget_book_view = find_named_node(
+        let scroll_bar = find_named_node(
             &initial_snapshot,
-            SemanticsRole::Window,
-            WIDGET_BOOK_TAB_LABEL,
+            SemanticsRole::Slider,
+            crate::widget_book::GALLERY_SCROLL_BAR_NAME,
         );
         let drag_start = Point::new(
-            widget_book_view.bounds.x() + 64.0,
-            widget_book_view.bounds.y() + 18.0,
+            scroll_bar.bounds.x() + scroll_bar.bounds.width() * 0.5,
+            scroll_bar.bounds.y() + 24.0,
         );
-        let drag_end = Point::new(drag_start.x + 280.0, drag_start.y + 140.0);
+        let drag_end = Point::new(
+            drag_start.x,
+            (drag_start.y + 360.0).min(scroll_bar.bounds.max_y() - 24.0),
+        );
 
         let frame_samples = drag_pointer_with_samples(&window, drag_start, drag_end, DRAG_STEPS)?;
         let measured_samples = frame_samples
@@ -7707,7 +7711,7 @@ final_max_luminance={final_max_luminance}
             .sum::<f64>()
             / valid_count as f64;
 
-        println!("\n=== SUI Demo Visible No-Vsync Widget-Book Drag Benchmark ===");
+        println!("\n=== SUI Demo Visible No-Vsync Widget-Book Scroll-Bar Drag Benchmark ===");
         println!("frames measured:   {valid_count}");
         println!(
             "avg frame time:    {avg_ms:.3} ms ({:.0} fps)",
@@ -7809,10 +7813,9 @@ final_max_luminance={final_max_luminance}
         let app = TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
         let window = app.main_window()?;
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
 
         let gallery = window
-            .get_by_role(SemanticsRole::Window)
-            .with_name(WIDGET_BOOK_TAB_LABEL)
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(crate::widget_book::GALLERY_SCROLL_NAME);
 
@@ -8044,6 +8047,7 @@ final_max_luminance={final_max_luminance}
         let window = app.main_window()?;
         set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
         ensure_live_overlay_detail_mode(&window)?;
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
 
         let root = window.root();
         root.dispatch_event(Event::Window(WindowEvent::Focused(true)))?;
