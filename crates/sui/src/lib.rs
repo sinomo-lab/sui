@@ -42,14 +42,14 @@ pub use controls::{
     draw_glyph, paint_checkbox_indicator, paint_icon_button, register_builtin_icon_resources,
 };
 pub use sui_core::{
-    AsyncWakeToken, Color, ColorSpace, CustomEvent, DirtyRegion, DpiInfo, DragDropScope, DragEvent,
-    DragEventKind, DragOutcome, DragPayload, DragPreview, DragScopeId, DragSessionId, DropEffect,
-    Error, Event, FontHandle, ImageHandle, ImeEvent, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, KeyState, KeyboardEvent, Modifiers, Path, PathBuilder, PathElement, Point,
-    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result,
-    ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsState, SemanticsValue,
-    Size, SurfaceId, TimerToken, ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent,
-    WindowId,
+    AsyncWakeToken, Clipboard, ClipboardBackend, Color, ColorSpace, CustomEvent, DirtyRegion,
+    DpiInfo, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview,
+    DragScopeId, DragSessionId, DropEffect, Error, Event, FontHandle, ImageHandle, ImeEvent,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent,
+    LocalClipboardBackend, Modifiers, Path, PathBuilder, PathElement, Point, PointerButton,
+    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta,
+    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsState, SemanticsValue, Size, SurfaceId,
+    TimerToken, ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{
@@ -129,10 +129,11 @@ pub use sui_widgets::{
     ResizablePane, ResolvedEffectStyle, ResolvedHdrStyle, ResolvedMaterialStyle, RichText,
     SegmentedControl, SegmentedControlItem, SelectionChange, SelectionEntry, SelectionIntent,
     SelectionOrder, SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope,
-    SemanticColorToken, SemanticTone, SplitView, StatusBadge, SurfacePalette, Table, TableColumn,
-    TableColumnAlignment, TableRow, TextBlockPaint, TextCellPaint, TextSelectionInfo, TextSurface,
-    TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, ThemeAspectRatios,
-    ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
+    SemanticColorToken, SemanticTone, SplitView, StatusBadge, SurfacePalette,
+    TEXT_COMMAND_EVENT_KIND, Table, TableColumn, TableColumnAlignment, TableRow, TextBlockPaint,
+    TextCellPaint, TextCommand, TextSelectionInfo, TextSurface, TextSurfaceOverlayKind,
+    TextSurfaceStyleOverlay, TextSurfaceStyleSpan, ThemeAspectRatios, ThemeBlurScale,
+    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
     ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion,
     ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale,
     ThemeTextToken, ThemeTracking, TreeItem, TreeView, VirtualTable, VirtualTableColumn,

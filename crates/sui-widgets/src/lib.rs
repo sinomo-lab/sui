@@ -15,6 +15,7 @@ pub mod reorderable;
 pub mod rich_text;
 pub mod selection;
 mod text_align;
+pub mod text_command;
 pub mod text_surface;
 pub mod theme;
 
@@ -92,6 +93,7 @@ pub use selection::{
     SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
 };
 pub use text_align::wrap_text_lines;
+pub use text_command::{TEXT_COMMAND_EVENT_KIND, TextCommand};
 pub use text_surface::{
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
 };

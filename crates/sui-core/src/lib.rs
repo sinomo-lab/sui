@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod clipboard;
 mod color;
 mod dpi;
 mod drag;
@@ -10,6 +11,7 @@ mod id;
 mod invalidation;
 mod semantics;
 
+pub use clipboard::{Clipboard, ClipboardBackend, LocalClipboardBackend};
 pub use color::{Color, ColorSpace};
 pub use dpi::DpiInfo;
 pub use drag::{

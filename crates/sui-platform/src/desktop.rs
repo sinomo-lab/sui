@@ -426,6 +426,9 @@ impl DesktopApp {
         renderer: WgpuRenderer,
         automation: Option<DesktopAutomationConfig>,
     ) -> Self {
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
+
         Self {
             runtime,
             renderer,

@@ -4,6 +4,8 @@ mod accessibility;
 mod desktop;
 mod display_capabilities;
 mod headless;
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+mod os_clipboard;
 #[cfg(any(target_arch = "wasm32", test))]
 mod web_interop;
 
@@ -39,6 +41,8 @@ pub use display_capabilities::{
     resolve_sdr_content_brightness_nits, window_output_diagnostics,
 };
 pub use headless::{HeadlessPlatform, PlatformWindow};
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+pub use os_clipboard::OsClipboardBackend;
 
 pub(crate) fn reset_window_performance_store() {
     clear_window_performance_snapshots();

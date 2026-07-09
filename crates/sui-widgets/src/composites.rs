@@ -7,9 +7,9 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
-    WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPod,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
@@ -12352,6 +12352,7 @@ pub struct ContextMenu {
     name: String,
     trigger: SingleChild,
     items: Vec<MenuItem>,
+    items_provider: Option<Box<dyn Fn() -> Vec<MenuItem>>>,
     open: bool,
     highlighted: Option<usize>,
     highlight_visual: Option<usize>,
@@ -12364,6 +12365,8 @@ pub struct ContextMenu {
     focus_surface: SingleChild,
     surface_state: Rc<RefCell<ContextMenuPresentationState>>,
     activation_button: PointerButton,
+    anchor_to_pointer: Option<bool>,
+    open_position: Option<Point>,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
     on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, MenuItem)>>,
 }
@@ -12380,6 +12383,7 @@ impl ContextMenu {
             name: name.into(),
             trigger: SingleChild::new(trigger),
             items: Vec::new(),
+            items_provider: None,
             open: false,
             highlighted: None,
             highlight_visual: None,
@@ -12394,6 +12398,8 @@ impl ContextMenu {
             ))),
             surface_state,
             activation_button: PointerButton::Secondary,
+            anchor_to_pointer: None,
+            open_position: None,
             on_activate: None,
             on_activate_with_ctx: None,
         }
@@ -12426,6 +12432,23 @@ impl ContextMenu {
         self
     }
 
+    /// Rebuild the item list every time the menu opens, so per-item enabled
+    /// state can reflect current application state (selection, clipboard, …).
+    pub fn items_when<F>(mut self, provider: F) -> Self
+    where
+        F: Fn() -> Vec<MenuItem> + 'static,
+    {
+        self.items_provider = Some(Box::new(provider));
+        self
+    }
+
+    /// Widget id of the wrapped trigger. Menu activations can route commands
+    /// back to it via `EventCtx::post_event` — for example the standard text
+    /// editing commands (`TextCommand`) understood by the text widgets.
+    pub fn trigger_id(&self) -> WidgetId {
+        self.trigger.child().id()
+    }
+
     pub fn on_activate<F>(mut self, on_activate: F) -> Self
     where
         F: FnMut(usize, MenuItem) + 'static,
@@ -12445,6 +12468,20 @@ impl ContextMenu {
     pub fn activation_button(mut self, activation_button: PointerButton) -> Self {
         self.activation_button = activation_button;
         self
+    }
+
+    /// Whether the menu opens at the press position instead of dropping below
+    /// the trigger. Defaults by activation button: right-click menus anchor to
+    /// the pointer (standard context-menu behavior, and the only sensible
+    /// placement for large triggers), other buttons keep the dropdown layout.
+    pub fn anchor_to_pointer(mut self, anchor_to_pointer: bool) -> Self {
+        self.anchor_to_pointer = Some(anchor_to_pointer);
+        self
+    }
+
+    fn anchors_to_pointer(&self) -> bool {
+        self.anchor_to_pointer
+            .unwrap_or(self.activation_button == PointerButton::Secondary)
     }
 
     fn row_height(&self) -> f32 {
@@ -12609,6 +12646,13 @@ impl ContextMenu {
             return;
         }
 
+        if open && let Some(provider) = &self.items_provider {
+            self.items = provider();
+        }
+        if !open {
+            self.open_position = None;
+        }
+
         self.open = open;
         self.highlighted = if open {
             self.items.iter().position(|item| item.enabled)
@@ -12686,9 +12730,18 @@ impl Widget for ContextMenu {
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(self.activation_button)
+                    && ctx.phase() != EventPhase::Capture
                     && self.trigger_rect().contains(pointer.position) =>
             {
-                self.set_open(ctx, !self.open);
+                // Target/Bubble only: the trigger widget sees the press first
+                // (to focus itself or record the press position) before the
+                // menu opens and takes keyboard focus.
+                let open = !self.open;
+                self.open_position = (open && self.anchors_to_pointer()).then(|| {
+                    let origin = ctx.bounds().origin;
+                    Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y)
+                });
+                self.set_open(ctx, open);
                 ctx.request_focus();
                 ctx.set_handled();
             }
@@ -12827,10 +12880,18 @@ impl Widget for ContextMenu {
         let mut size = trigger_size;
         if self.open {
             let theme = self.resolved_theme();
-            let width = self.measured_menu_width(ctx).max(trigger_size.width);
+            let pointer_anchored = self.open_position.is_some();
+            let width = if pointer_anchored {
+                self.measured_menu_width(ctx)
+            } else {
+                self.measured_menu_width(ctx).max(trigger_size.width)
+            };
             let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
             let gap = theme.metrics.popover_gap;
-            self.frame_rect = Rect::new(0.0, trigger_size.height + gap, width, height);
+            self.frame_rect = match self.open_position {
+                Some(position) => Rect::new(position.x, position.y, width, height),
+                None => Rect::new(0.0, trigger_size.height + gap, width, height),
+            };
             {
                 let mut state = self.surface_state.borrow_mut();
                 state.theme = theme;
@@ -12848,10 +12909,12 @@ impl Widget for ContextMenu {
                 .measure(ctx, Constraints::tight(self.frame_rect.size));
             self.focus_surface
                 .measure(ctx, Constraints::tight(self.frame_rect.size));
-            size = Size::new(
-                width.max(trigger_size.width),
-                trigger_size.height + gap + height,
-            );
+            if !pointer_anchored {
+                size = Size::new(
+                    width.max(trigger_size.width),
+                    trigger_size.height + gap + height,
+                );
+            }
         } else {
             self.frame_rect = Rect::ZERO;
         }
@@ -12863,6 +12926,20 @@ impl Widget for ContextMenu {
             ctx,
             Rect::from_origin_size(bounds.origin, self.trigger.child().measured_size()),
         );
+        if self.open && self.open_position.is_some() {
+            // Pointer-anchored menus stay inside the trigger bounds instead of
+            // spilling past the window edge.
+            let size = self.frame_rect.size;
+            let max_x = (bounds.width() - size.width).max(0.0);
+            let max_y = (bounds.height() - size.height).max(0.0);
+            self.frame_rect = Rect::from_origin_size(
+                Point::new(
+                    self.frame_rect.x().clamp(0.0, max_x),
+                    self.frame_rect.y().clamp(0.0, max_y),
+                ),
+                size,
+            );
+        }
         self.sync_surface_state(bounds);
         let state = self.surface_state.borrow();
         let surface_bounds = if state.is_presented() {
@@ -19309,8 +19386,11 @@ mod tests {
 
     #[test]
     fn context_menu_row_label_visual_center_matches_row_center() -> Result<(), String> {
+        // Dropdown anchoring keeps the row geometry derivable from the
+        // trigger bounds; pointer anchoring is covered separately.
         let (mut runtime, window_id) = build_runtime(
             ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .anchor_to_pointer(false)
                 .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
         );
 
@@ -19368,10 +19448,67 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_opens_at_the_right_click_position() -> Result<(), String> {
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new(
+                "Surface menu",
+                crate::containers::SizedBox::new()
+                    .width(600.0)
+                    .height(400.0),
+            )
+            .items([MenuItem::new("Copy"), MenuItem::new("Select All")]),
+        );
+
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let press = Point::new(220.0, 140.0);
+        let mut down = PointerEvent::new(PointerEventKind::Down, press);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let first_item = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Copy")
+            })
+            .expect("menu item semantics present");
+        let theme = DefaultTheme::default();
+        let padding = theme.metrics.menu_padding;
+        assert!(
+            (first_item.bounds.x() - (press.x + padding.left)).abs() < 1.0,
+            "menu should open at the press x, got item at {:?}",
+            first_item.bounds
+        );
+        assert!(
+            (first_item.bounds.y() - (press.y + padding.top)).abs() < 1.0,
+            "menu should open at the press y, got item at {:?}",
+            first_item.bounds
+        );
+
+        // The menu must also actually paint at the anchored position.
+        let label = text_run_for(&output, "Copy");
+        assert!(
+            (label.rect.y() - press.y).abs() < theme.metrics.menu_padding.top + 16.0,
+            "menu label should paint near the press position, got {:?}",
+            label.rect
+        );
+        Ok(())
+    }
+
+    #[test]
     fn context_menu_shortcut_aligns_to_trailing_edge() -> Result<(), String> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
             ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .anchor_to_pointer(false)
                 .items([MenuItem::new("Rename").shortcut("F2")]),
         );
 

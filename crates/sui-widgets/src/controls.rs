@@ -10,6 +10,8 @@ use crate::{
         aligned_text_rect_for_layout_with_mode, aligned_text_rect_for_text, paint_aligned_text,
         paint_single_line_aligned_text,
     },
+    text_command::TextCommand,
+    text_surface::paste_command,
 };
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 use sui_core::{
@@ -21,8 +23,8 @@ use sui_core::{
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{ImageSource, LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
@@ -5291,7 +5293,6 @@ pub struct TextArea {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     editor: EditorState,
-    clipboard: String,
     placeholder: String,
     read_only: bool,
     text_style: Option<TextStyle>,
@@ -5300,6 +5301,7 @@ pub struct TextArea {
     min_height: Option<f32>,
     hovered: bool,
     focused: bool,
+    dragging_selection: bool,
     hover_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
     caret_blink: Blink,
@@ -5320,7 +5322,6 @@ impl TextArea {
             theme_reader: None,
             name: name.into(),
             editor: EditorState::new(),
-            clipboard: String::new(),
             placeholder: String::new(),
             read_only: false,
             text_style: None,
@@ -5329,6 +5330,7 @@ impl TextArea {
             min_height: None,
             hovered: false,
             focused: false,
+            dragging_selection: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
             caret_blink: Blink::new(CARET_BLINK_PERIOD_SECONDS),
@@ -5503,9 +5505,9 @@ impl TextArea {
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let copied_to_local_clipboard = result.clipboard_text.is_some();
+        let copied_to_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
-            self.clipboard = text;
+            ctx.set_clipboard_text(text);
         }
         if result.text_changed {
             self.commit_text_change(ctx);
@@ -5524,7 +5526,7 @@ impl TextArea {
             if self.focused {
                 self.reset_caret_blink(ctx);
             }
-            if !(copied_to_local_clipboard && self.selection_scope.is_some()) {
+            if !(copied_to_clipboard && self.selection_scope.is_some()) {
                 ctx.set_handled();
             }
         }
@@ -5535,10 +5537,54 @@ impl TextArea {
         self.apply_editor_result(ctx, result);
     }
 
-    fn set_caret_from_position(&mut self, bounds: Rect, position: Point, ctx: &mut EventCtx) {
+    /// Select the entire document.
+    pub fn select_all(&mut self, ctx: &mut EventCtx) {
+        self.execute_editor_command(ctx, EditorCommand::SelectAll);
+    }
+
+    /// Copy the current selection to the clipboard. No-op when the selection
+    /// is collapsed.
+    pub fn copy(&mut self, ctx: &mut EventCtx) {
+        self.execute_editor_command(ctx, EditorCommand::Copy);
+    }
+
+    /// Copy the current selection to the clipboard and delete it. No-op when
+    /// read-only or the selection is collapsed.
+    pub fn cut(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            return;
+        }
+        self.execute_editor_command(ctx, EditorCommand::Cut);
+    }
+
+    /// Replace the current selection with the clipboard text. No-op when
+    /// read-only or the clipboard has no text.
+    pub fn paste(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            return;
+        }
+        let command = paste_command(ctx);
+        self.execute_editor_command(ctx, command);
+    }
+
+    /// Currently selected document text (empty when the selection is
+    /// collapsed).
+    pub fn selected_text(&self) -> &str {
+        self.editor.selected_text()
+    }
+
+    fn apply_text_command(&mut self, ctx: &mut EventCtx, command: TextCommand) {
+        match command {
+            TextCommand::SelectAll => self.select_all(ctx),
+            TextCommand::Copy => self.copy(ctx),
+            TextCommand::Cut => self.cut(ctx),
+            TextCommand::Paste => self.paste(ctx),
+        }
+    }
+
+    fn text_offset_at_position(&self, bounds: Rect, position: Point) -> usize {
         let content = inset_rect(bounds, self.resolved_padding());
-        let offset = self
-            .input_layout
+        self.input_layout
             .as_ref()
             .map(|layout| {
                 layout
@@ -5548,11 +5594,29 @@ impl TextArea {
                     ))
                     .utf8_offset
             })
-            .unwrap_or(self.editor.document().len());
-        let result = self.editor.execute(EditorCommand::MoveTo {
-            offset,
-            extend: false,
-        });
+            .unwrap_or(self.editor.document().len())
+    }
+
+    fn set_caret_from_position(
+        &mut self,
+        bounds: Rect,
+        position: Point,
+        extend: bool,
+        ctx: &mut EventCtx,
+    ) {
+        let offset = self.text_offset_at_position(bounds, position);
+        let command = if extend {
+            EditorCommand::SetSelection {
+                anchor: self.editor.selection().anchor.utf8_offset,
+                focus: offset,
+            }
+        } else {
+            EditorCommand::MoveTo {
+                offset,
+                extend: false,
+            }
+        };
+        let result = self.editor.execute(command);
         self.apply_editor_result(ctx, result);
     }
 
@@ -5607,6 +5671,17 @@ impl Widget for TextArea {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+                if self.dragging_selection
+                    && ctx.phase() != EventPhase::Capture
+                    && pointer.buttons.contains(PointerButton::Primary)
+                {
+                    let offset = self.text_offset_at_position(ctx.bounds(), pointer.position);
+                    let result = self.editor.execute(EditorCommand::SetSelection {
+                        anchor: self.editor.selection().anchor.utf8_offset,
+                        focus: offset,
+                    });
+                    self.apply_editor_result(ctx, result);
+                }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -5622,11 +5697,57 @@ impl Widget for TextArea {
                 if self.focused {
                     self.reset_caret_blink(ctx);
                 }
-                self.set_caret_from_position(ctx.bounds(), pointer.position, ctx);
+                self.set_caret_from_position(
+                    ctx.bounds(),
+                    pointer.position,
+                    pointer.modifiers.shift,
+                    ctx,
+                );
+                self.dragging_selection = true;
+                ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.dragging_selection =>
+            {
+                self.dragging_selection = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.dragging_selection {
+                    self.dragging_selection = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Secondary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                // Focus on right-click (keeping the selection intact) so
+                // follow-up clipboard commands land here. Deliberately not
+                // handled: wrapping context menus react to the same press.
+                self.set_hovered(true, ctx);
+                if !ctx.is_focused() {
+                    ctx.request_focus();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Custom(custom) => {
+                if let Some(command) = TextCommand::from_custom_event(custom) {
+                    if !ctx.is_focused() {
+                        ctx.request_focus();
+                    }
+                    self.apply_text_command(ctx, command);
+                }
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
                 if !self.read_only {
@@ -5698,9 +5819,7 @@ impl Widget for TextArea {
                     "a" | "A" if command_modifier => EditorCommand::SelectAll,
                     "c" | "C" if command_modifier => EditorCommand::Copy,
                     "x" | "X" if command_modifier && !self.read_only => EditorCommand::Cut,
-                    "v" | "V" if command_modifier && !self.read_only => {
-                        EditorCommand::Paste(self.clipboard.clone())
-                    }
+                    "v" | "V" if command_modifier && !self.read_only => paste_command(ctx),
                     "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
                         EditorCommand::Redo
                     }
@@ -7023,7 +7142,6 @@ pub struct TextInput {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     editor: EditorState,
-    clipboard: String,
     placeholder: String,
     leading_icon: Option<IconGlyph>,
     read_only: bool,
@@ -7033,6 +7151,7 @@ pub struct TextInput {
     min_height: Option<f32>,
     hovered: bool,
     focused: bool,
+    dragging_selection: bool,
     hover_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
     caret_blink: Blink,
@@ -7054,7 +7173,6 @@ impl TextInput {
             theme_reader: None,
             name: name.into(),
             editor: EditorState::new(),
-            clipboard: String::new(),
             placeholder: String::new(),
             leading_icon: None,
             read_only: false,
@@ -7064,6 +7182,7 @@ impl TextInput {
             min_height: None,
             hovered: false,
             focused: false,
+            dragging_selection: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
             caret_blink: Blink::new(CARET_BLINK_PERIOD_SECONDS),
@@ -7210,9 +7329,9 @@ impl TextInput {
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let copied_to_local_clipboard = result.clipboard_text.is_some();
+        let copied_to_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
-            self.clipboard = text;
+            ctx.set_clipboard_text(text);
         }
         if result.text_changed {
             self.commit_text_change(ctx);
@@ -7231,7 +7350,7 @@ impl TextInput {
             if self.focused {
                 self.reset_caret_blink(ctx);
             }
-            if !(copied_to_local_clipboard && self.selection_scope.is_some()) {
+            if !(copied_to_clipboard && self.selection_scope.is_some()) {
                 ctx.set_handled();
             }
         }
@@ -7242,10 +7361,57 @@ impl TextInput {
         self.apply_editor_result(ctx, result);
     }
 
-    fn set_caret_from_position(&mut self, bounds: Rect, position: Point, ctx: &mut EventCtx) {
+    /// Select the entire document.
+    pub fn select_all(&mut self, ctx: &mut EventCtx) {
+        self.execute_editor_command(ctx, EditorCommand::SelectAll);
+    }
+
+    /// Copy the current selection to the clipboard. No-op when the selection
+    /// is collapsed.
+    pub fn copy(&mut self, ctx: &mut EventCtx) {
+        self.execute_editor_command(ctx, EditorCommand::Copy);
+    }
+
+    /// Copy the current selection to the clipboard and delete it. No-op when
+    /// read-only or the selection is collapsed.
+    pub fn cut(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            return;
+        }
+        self.execute_editor_command(ctx, EditorCommand::Cut);
+    }
+
+    /// Replace the current selection with the clipboard text (coerced to a
+    /// single line). No-op when read-only or the clipboard has no text.
+    pub fn paste(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            return;
+        }
+        let command = match paste_command(ctx) {
+            EditorCommand::Paste(text) => EditorCommand::Paste(single_line_text(text)),
+            command => command,
+        };
+        self.execute_editor_command(ctx, command);
+    }
+
+    /// Currently selected document text (empty when the selection is
+    /// collapsed).
+    pub fn selected_text(&self) -> &str {
+        self.editor.selected_text()
+    }
+
+    fn apply_text_command(&mut self, ctx: &mut EventCtx, command: TextCommand) {
+        match command {
+            TextCommand::SelectAll => self.select_all(ctx),
+            TextCommand::Copy => self.copy(ctx),
+            TextCommand::Cut => self.cut(ctx),
+            TextCommand::Paste => self.paste(ctx),
+        }
+    }
+
+    fn text_offset_at_position(&self, bounds: Rect, position: Point) -> usize {
         let content = self.text_content_rect(bounds);
-        let offset = self
-            .input_layout
+        self.input_layout
             .as_ref()
             .map(|layout| {
                 layout
@@ -7255,11 +7421,29 @@ impl TextInput {
                     ))
                     .utf8_offset
             })
-            .unwrap_or(self.editor.document().len());
-        let result = self.editor.execute(EditorCommand::MoveTo {
-            offset,
-            extend: false,
-        });
+            .unwrap_or(self.editor.document().len())
+    }
+
+    fn set_caret_from_position(
+        &mut self,
+        bounds: Rect,
+        position: Point,
+        extend: bool,
+        ctx: &mut EventCtx,
+    ) {
+        let offset = self.text_offset_at_position(bounds, position);
+        let command = if extend {
+            EditorCommand::SetSelection {
+                anchor: self.editor.selection().anchor.utf8_offset,
+                focus: offset,
+            }
+        } else {
+            EditorCommand::MoveTo {
+                offset,
+                extend: false,
+            }
+        };
+        let result = self.editor.execute(command);
         self.apply_editor_result(ctx, result);
         self.reset_caret_blink(ctx);
     }
@@ -7381,6 +7565,17 @@ impl Widget for TextInput {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+                if self.dragging_selection
+                    && ctx.phase() != EventPhase::Capture
+                    && pointer.buttons.contains(PointerButton::Primary)
+                {
+                    let offset = self.text_offset_at_position(ctx.bounds(), pointer.position);
+                    let result = self.editor.execute(EditorCommand::SetSelection {
+                        anchor: self.editor.selection().anchor.utf8_offset,
+                        focus: offset,
+                    });
+                    self.apply_editor_result(ctx, result);
+                }
             }
             Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
                 self.set_hovered(true, ctx);
@@ -7393,11 +7588,57 @@ impl Widget for TextInput {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 self.set_hovered(true, ctx);
-                self.set_caret_from_position(ctx.bounds(), pointer.position, ctx);
+                self.set_caret_from_position(
+                    ctx.bounds(),
+                    pointer.position,
+                    pointer.modifiers.shift,
+                    ctx,
+                );
+                self.dragging_selection = true;
+                ctx.request_pointer_capture(pointer.pointer_id);
                 ctx.request_focus();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.dragging_selection =>
+            {
+                self.dragging_selection = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.dragging_selection {
+                    self.dragging_selection = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Secondary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                // Focus on right-click (keeping the selection intact) so
+                // follow-up clipboard commands land here. Deliberately not
+                // handled: wrapping context menus react to the same press.
+                self.set_hovered(true, ctx);
+                if !ctx.is_focused() {
+                    ctx.request_focus();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+            }
+            Event::Custom(custom) => {
+                if let Some(command) = TextCommand::from_custom_event(custom) {
+                    if !ctx.is_focused() {
+                        ctx.request_focus();
+                    }
+                    self.apply_text_command(ctx, command);
+                }
             }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
                 if !self.read_only {
@@ -7504,9 +7745,10 @@ impl Widget for TextInput {
                     "a" | "A" if command_modifier => EditorCommand::SelectAll,
                     "c" | "C" if command_modifier => EditorCommand::Copy,
                     "x" | "X" if command_modifier && !self.read_only => EditorCommand::Cut,
-                    "v" | "V" if command_modifier && !self.read_only => {
-                        EditorCommand::Paste(self.clipboard.clone())
-                    }
+                    "v" | "V" if command_modifier && !self.read_only => match paste_command(ctx) {
+                        EditorCommand::Paste(text) => EditorCommand::Paste(single_line_text(text)),
+                        command => command,
+                    },
                     "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
                         EditorCommand::Redo
                     }
@@ -8233,6 +8475,7 @@ mod tests {
     use crate::{
         containers::{SizedBox, Stack},
         selection::SelectionScope,
+        text_command::TextCommand,
     };
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
@@ -10490,6 +10733,134 @@ mod tests {
             selection.selected_text().as_deref(),
             Some("first line\nsecond line")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_copy_and_paste_use_runtime_clipboard() -> Result<()> {
+        let value = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada Lovelace")
+                .on_change(move |text| *captured.borrow_mut() = text),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("c"))?;
+
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("Ada Lovelace"));
+
+        runtime.clipboard().set_text("Grace\nHopper");
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("v"))?;
+
+        // Pasted text is coerced to a single line.
+        assert_eq!(value.borrow().as_str(), "GraceHopper");
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_paste_with_empty_clipboard_preserves_selection() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(TextArea::new("Notes").value("alpha"));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("v"))?;
+        runtime.handle_event(window_id, command_key("c"))?;
+
+        // An empty clipboard paste must not delete the selection, so the
+        // follow-up copy still captures the full document.
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("alpha"));
+        Ok(())
+    }
+
+    #[test]
+    fn text_area_mouse_drag_selects_text() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Notes")
+                .value("alpha beta gamma")
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(360.0, 8.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(360.0, 8.0), false),
+        )?;
+
+        let selected = selection.selected_text().unwrap_or_default();
+        assert!(
+            selected.starts_with("alpha"),
+            "drag from the line start should select leading text, got {selected:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_mouse_drag_selects_text() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("hello world")
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(360.0, 8.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(360.0, 8.0), false),
+        )?;
+
+        let selected = selection.selected_text().unwrap_or_default();
+        assert!(
+            selected.starts_with("hello"),
+            "drag from the field start should select leading text, got {selected:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_command_events_drive_clipboard_actions() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(TextArea::new("Notes").value("alpha"));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(window_id, TextCommand::SelectAll.into_event())?;
+        runtime.handle_event(window_id, TextCommand::Copy.into_event())?;
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("alpha"));
+
+        runtime.clipboard().set_text("beta");
+        runtime.handle_event(window_id, TextCommand::SelectAll.into_event())?;
+        runtime.handle_event(window_id, TextCommand::Paste.into_event())?;
+        runtime.handle_event(window_id, TextCommand::SelectAll.into_event())?;
+        runtime.handle_event(window_id, TextCommand::Copy.into_event())?;
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("beta"));
         Ok(())
     }
 

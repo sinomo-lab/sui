@@ -25,6 +25,7 @@ use crate::{
     },
     selection::{SelectionChange, SelectionOwnerId, SelectionScope},
     text_align::paint_aligned_text,
+    text_command::TextCommand,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +69,6 @@ pub struct TextSurface {
     placeholder: String,
     read_only: bool,
     editor: EditorState,
-    clipboard: String,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -102,7 +102,6 @@ impl TextSurface {
             placeholder: String::new(),
             read_only: false,
             editor: EditorState::new(),
-            clipboard: String::new(),
             text_style: None,
             padding: None,
             min_width: None,
@@ -354,9 +353,9 @@ impl TextSurface {
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let copied_to_local_clipboard = result.clipboard_text.is_some();
+        let copied_to_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
-            self.clipboard = text;
+            ctx.set_clipboard_text(text);
         }
         if result.text_changed {
             self.commit_text_change();
@@ -372,7 +371,7 @@ impl TextSurface {
             ctx.request_semantics();
         }
         if result.handled {
-            if !(copied_to_local_clipboard && self.selection_scope.is_some()) {
+            if !(copied_to_clipboard && self.selection_scope.is_some()) {
                 ctx.set_handled();
             }
         }
@@ -386,6 +385,51 @@ impl TextSurface {
         let result = self.editor.execute(command);
         self.apply_editor_result(ctx, result.clone());
         result
+    }
+
+    /// Select the entire document.
+    pub fn select_all(&mut self, ctx: &mut EventCtx) {
+        self.execute_editor_command(ctx, EditorCommand::SelectAll);
+    }
+
+    /// Copy the current selection to the clipboard. No-op when the selection
+    /// is collapsed.
+    pub fn copy(&mut self, ctx: &mut EventCtx) {
+        self.execute_editor_command(ctx, EditorCommand::Copy);
+    }
+
+    /// Copy the current selection to the clipboard and delete it. No-op when
+    /// read-only or the selection is collapsed.
+    pub fn cut(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            return;
+        }
+        self.execute_editor_command(ctx, EditorCommand::Cut);
+    }
+
+    /// Replace the current selection with the clipboard text. No-op when
+    /// read-only or the clipboard has no text.
+    pub fn paste(&mut self, ctx: &mut EventCtx) {
+        if self.read_only {
+            return;
+        }
+        let command = paste_command(ctx);
+        self.execute_editor_command(ctx, command);
+    }
+
+    /// Currently selected document text (empty when the selection is
+    /// collapsed).
+    pub fn selected_text(&self) -> &str {
+        self.editor.selected_text()
+    }
+
+    fn apply_text_command(&mut self, ctx: &mut EventCtx, command: TextCommand) {
+        match command {
+            TextCommand::SelectAll => self.select_all(ctx),
+            TextCommand::Copy => self.copy(ctx),
+            TextCommand::Cut => self.cut(ctx),
+            TextCommand::Paste => self.paste(ctx),
+        }
     }
 
     fn move_line_boundary(&mut self, to_start: bool, extend: bool) -> EditorCommandResult {
@@ -1038,6 +1082,22 @@ impl Widget for TextSurface {
                 }
             }
             Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Secondary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                // Focus on right-click (keeping the selection intact) so
+                // follow-up clipboard commands land here. Deliberately not
+                // handled: wrapping context menus react to the same press.
+                self.update_hovered(true, ctx);
+                if !ctx.is_focused() {
+                    ctx.request_focus();
+                    self.request_after_overlay_change(ctx);
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
                     && ctx.phase() != EventPhase::Capture
                     && ctx.bounds().contains(pointer.position) =>
@@ -1081,9 +1141,10 @@ impl Widget for TextSurface {
                     "x" | "X" if command_modifier && !self.read_only => {
                         self.editor.execute(EditorCommand::Cut)
                     }
-                    "v" | "V" if command_modifier && !self.read_only => self
-                        .editor
-                        .execute(EditorCommand::Paste(self.clipboard.clone())),
+                    "v" | "V" if command_modifier && !self.read_only => {
+                        let command = paste_command(ctx);
+                        self.editor.execute(command)
+                    }
                     "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
                         self.editor.execute(EditorCommand::Redo)
                     }
@@ -1163,6 +1224,14 @@ impl Widget for TextSurface {
                     _ => self.editor.execute(EditorCommand::Noop),
                 };
                 self.apply_editor_result(ctx, result);
+            }
+            Event::Custom(custom) => {
+                if let Some(command) = TextCommand::from_custom_event(custom) {
+                    if !ctx.is_focused() {
+                        ctx.request_focus();
+                    }
+                    self.apply_text_command(ctx, command);
+                }
             }
             Event::Window(WindowEvent::Focused(false)) => {
                 let result = self.editor.execute(EditorCommand::ClearComposition);
@@ -1777,6 +1846,15 @@ fn request_selection_change(ctx: &mut EventCtx, change: SelectionChange) {
             InvalidationKind::Semantics,
         ));
     }
+}
+
+/// Paste command carrying the clipboard text, or `Noop` when the clipboard is
+/// empty so an empty paste cannot delete the current selection.
+pub(crate) fn paste_command(ctx: &EventCtx) -> EditorCommand {
+    ctx.clipboard_text()
+        .filter(|text| !text.is_empty())
+        .map(EditorCommand::Paste)
+        .unwrap_or(EditorCommand::Noop)
 }
 
 fn sync_editor_selection_scope(

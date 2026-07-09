@@ -13,11 +13,11 @@ use std::{
 };
 
 use sui_core::{
-    AsyncWakeToken, CustomEvent, DirtyRegion, DragEvent, DragEventKind, DragOutcome, DragPayload,
-    DragScopeId, DragSessionId, DropEffect, Error, Event, FontHandle, ImageHandle,
-    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point, PointerEvent,
-    PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId,
-    WindowEvent, WindowId,
+    AsyncWakeToken, Clipboard, ClipboardBackend, CustomEvent, DirtyRegion, DragEvent,
+    DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect, Error, Event,
+    FontHandle, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
+    Point, PointerEvent, PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken, Vector,
+    WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -404,6 +404,7 @@ pub struct Runtime {
     font_registry: Arc<FontRegistry>,
     image_registry: Arc<ImageRegistry>,
     text_system: Arc<TextSystem>,
+    clipboard: Clipboard,
     windows: Vec<WindowState>,
 }
 
@@ -429,15 +430,28 @@ impl Runtime {
             font_registry,
             image_registry,
             text_system: Arc::new(TextSystem::new()),
+            clipboard: Clipboard::new(),
             windows: Vec::new(),
         }
     }
 
     pub fn add_window(&mut self, builder: WindowBuilder) -> Result<WindowId> {
         let window_id = self.alloc_window_id();
-        let window = builder.build(window_id)?;
+        let mut window = builder.build(window_id)?;
+        window.clipboard = self.clipboard.clone();
         self.windows.push(window);
         Ok(window_id)
+    }
+
+    /// Shared clipboard handle used by every window in this runtime.
+    pub fn clipboard(&self) -> Clipboard {
+        self.clipboard.clone()
+    }
+
+    /// Install a clipboard storage driver (for example an OS-clipboard bridge
+    /// provided by the platform). Existing windows pick it up immediately.
+    pub fn set_clipboard_backend(&self, backend: impl ClipboardBackend + 'static) {
+        self.clipboard.set_backend(backend);
     }
 
     pub fn remove_window(&mut self, window_id: WindowId) -> Result<()> {
@@ -995,6 +1009,7 @@ struct WindowState {
     pending_animation_wake_count: usize,
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
+    clipboard: Clipboard,
 }
 
 impl WindowState {
@@ -1034,6 +1049,7 @@ impl WindowState {
             pending_animation_wake_count: 0,
             ime_composition_rect: None,
             last_tick_time: 0.0,
+            clipboard: Clipboard::new(),
         }
     }
 
@@ -1221,6 +1237,7 @@ impl WindowState {
                 self.last_tick_time,
                 EventPhase::Target,
                 self.focus.focused_widget,
+                &self.clipboard,
                 event,
             )
             .or_else(|| {
@@ -1231,6 +1248,7 @@ impl WindowState {
                     self.last_tick_time,
                     EventPhase::Target,
                     self.focus.focused_widget,
+                    &self.clipboard,
                     event,
                 )
             })
@@ -1563,6 +1581,39 @@ impl WindowState {
         self.apply_wake_requests(effects.wake_requests);
         self.apply_pointer_capture_requests(effects.pointer_capture_requests);
         self.apply_drag_requests(effects.drag_requests, invalidations);
+        self.apply_posted_events(effects.posted_events, invalidations);
+    }
+
+    /// Deliver widget-posted events (see `EventCtx::post_event`) directly to
+    /// their targets. Posted events may post follow-ups; rounds are capped so
+    /// two widgets posting at each other cannot wedge the event loop.
+    fn apply_posted_events(
+        &mut self,
+        mut posted: Vec<widget::PostedEventRequest>,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
+        const MAX_POSTED_EVENT_ROUNDS: usize = 8;
+
+        let mut rounds = 0;
+        while !posted.is_empty() && rounds < MAX_POSTED_EVENT_ROUNDS {
+            rounds += 1;
+            for request in std::mem::take(&mut posted) {
+                let dispatch = self.dispatch_direct_event(request.target, &request.event);
+                invalidations.extend(dispatch.invalidations);
+                self.apply_wake_requests(dispatch.wake_requests);
+                self.apply_pointer_capture_requests(dispatch.pointer_capture_requests);
+                self.apply_drag_requests(dispatch.drag_requests, invalidations);
+                posted.extend(dispatch.posted_events);
+                if let Some(request) = dispatch.focus_request {
+                    let focus_effects = self.apply_focus_request(request);
+                    invalidations.extend(focus_effects.invalidations);
+                    self.apply_wake_requests(focus_effects.wake_requests);
+                    self.apply_pointer_capture_requests(focus_effects.pointer_capture_requests);
+                    self.apply_drag_requests(focus_effects.drag_requests, invalidations);
+                    posted.extend(focus_effects.posted_events);
+                }
+            }
+        }
     }
 
     fn apply_drag_requests(
@@ -1841,6 +1892,7 @@ impl WindowState {
                         self.last_tick_time,
                         EventPhase::Capture,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         event,
                     )
                     .unwrap_or_else(|| empty_dispatch());
@@ -1867,6 +1919,7 @@ impl WindowState {
                     self.last_tick_time,
                     EventPhase::Target,
                     self.focus.focused_widget,
+                    &self.clipboard,
                     event,
                 )
                 .or_else(|| {
@@ -1877,6 +1930,7 @@ impl WindowState {
                         self.last_tick_time,
                         EventPhase::Target,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         event,
                     )
                 })
@@ -1901,6 +1955,7 @@ impl WindowState {
                         self.last_tick_time,
                         EventPhase::Bubble,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         event,
                     )
                     .unwrap_or_else(|| empty_dispatch());
@@ -1999,6 +2054,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         false,
                     )
                 })
@@ -2009,6 +2065,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         false,
                     )
                 });
@@ -2031,6 +2088,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         true,
                     )
                 })
@@ -2041,6 +2099,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
+                        &self.clipboard,
                         true,
                     )
                 });
@@ -3525,6 +3584,7 @@ struct EventEffects {
     pointer_capture_requests: Vec<PointerCaptureRequest>,
     drag_requests: Vec<DragRequest>,
     drop_acceptances: Vec<DropAcceptanceRequest>,
+    posted_events: Vec<widget::PostedEventRequest>,
 }
 
 impl EventEffects {
@@ -3535,6 +3595,7 @@ impl EventEffects {
             .extend(dispatch.pointer_capture_requests);
         self.drag_requests.extend(dispatch.drag_requests);
         self.drop_acceptances.extend(dispatch.drop_acceptances);
+        self.posted_events.extend(dispatch.posted_events);
     }
 
     fn merge(&mut self, effects: EventEffects) {
@@ -3544,6 +3605,7 @@ impl EventEffects {
             .extend(effects.pointer_capture_requests);
         self.drag_requests.extend(effects.drag_requests);
         self.drop_acceptances.extend(effects.drop_acceptances);
+        self.posted_events.extend(effects.posted_events);
     }
 }
 
@@ -3556,6 +3618,7 @@ fn empty_dispatch() -> widget::EventDispatch {
         pointer_capture_requests: Vec::new(),
         drag_requests: Vec::new(),
         drop_acceptances: Vec::new(),
+        posted_events: Vec::new(),
     }
 }
 
@@ -5497,6 +5560,64 @@ mod tests {
 
         let _ = runtime.render(window_id).unwrap();
         assert_eq!(local.borrow().paints, 2);
+    }
+
+    struct EventPoster {
+        log: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Widget for EventPoster {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event {
+                self.log.borrow_mut().push(custom.kind.clone());
+                if custom.kind == "posted-trigger" {
+                    ctx.post_event(
+                        ctx.widget_id(),
+                        Event::Custom(CustomEvent::new("posted-response")),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn posted_events_are_delivered_after_the_current_dispatch() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Posted").root(EventPoster {
+                log: Rc::clone(&log),
+            }))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(window_id, Event::Custom(CustomEvent::new("posted-trigger")))
+            .unwrap();
+
+        assert_eq!(
+            log.borrow().as_slice(),
+            ["posted-trigger".to_string(), "posted-response".to_string()]
+        );
+    }
+
+    #[test]
+    fn runtime_clipboard_is_shared_with_window_event_contexts() {
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Clipboard").root(FocusLeaf {
+                counters: Rc::new(RefCell::new(Counters::default())),
+            }))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime.clipboard().set_text("shared");
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("shared"));
+
+        runtime.set_clipboard_backend(sui_core::LocalClipboardBackend::new());
+        assert_eq!(runtime.clipboard().text(), None);
     }
 
     #[test]

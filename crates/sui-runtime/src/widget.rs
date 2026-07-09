@@ -11,9 +11,9 @@ use std::{
 use crate::diagnostics::{WidgetTimingPhase, record_widget_timing};
 
 use sui_core::{
-    AsyncWakeToken, Color, DpiInfo, DragPayload, DragScopeId, DragSessionId, DropEffect, Event,
-    ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, Path, Point, Rect,
-    SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
+    AsyncWakeToken, Clipboard, Color, DpiInfo, DragPayload, DragScopeId, DragSessionId, DropEffect,
+    Event, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, Path, Point,
+    Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
@@ -528,6 +528,7 @@ impl WidgetPod {
         self.widget.visit_children_mut(visitor);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn dispatch_event_for_path(
         &mut self,
         path: &[WidgetId],
@@ -536,6 +537,7 @@ impl WidgetPod {
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
         event: &Event,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
@@ -545,11 +547,13 @@ impl WidgetPod {
                 current_time,
                 phase,
                 focused_widget,
+                clipboard,
                 event,
             )
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn dispatch_event_for(
         &mut self,
         target: WidgetId,
@@ -558,6 +562,7 @@ impl WidgetPod {
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
         event: &Event,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
@@ -567,11 +572,13 @@ impl WidgetPod {
                 current_time,
                 phase,
                 focused_widget,
+                clipboard,
                 event,
             )
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn notify_focus_change_for(
         &mut self,
         target: WidgetId,
@@ -579,13 +586,22 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
-            pod.focus_changed(window_id, dpi_info, current_time, focused_widget, focused)
+            pod.focus_changed(
+                window_id,
+                dpi_info,
+                current_time,
+                focused_widget,
+                clipboard,
+                focused,
+            )
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn notify_focus_change_for_path(
         &mut self,
         path: &[WidgetId],
@@ -593,13 +609,22 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
-            pod.focus_changed(window_id, dpi_info, current_time, focused_widget, focused)
+            pod.focus_changed(
+                window_id,
+                dpi_info,
+                current_time,
+                focused_widget,
+                clipboard,
+                focused,
+            )
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_event(
         &mut self,
         window_id: WindowId,
@@ -607,6 +632,7 @@ impl WidgetPod {
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
         event: &Event,
     ) -> EventDispatch {
         let mut ctx = EventCtx::new(
@@ -617,6 +643,7 @@ impl WidgetPod {
             current_time,
             phase,
             focused_widget,
+            clipboard.clone(),
         );
         self.widget.event(&mut ctx, event);
         EventDispatch {
@@ -627,6 +654,7 @@ impl WidgetPod {
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
             drag_requests: ctx.take_drag_requests(),
             drop_acceptances: ctx.take_drop_acceptances(),
+            posted_events: ctx.take_posted_events(),
         }
     }
 
@@ -636,6 +664,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
         focused: bool,
     ) -> EventDispatch {
         let mut ctx = EventCtx::new(
@@ -646,6 +675,7 @@ impl WidgetPod {
             current_time,
             EventPhase::Target,
             focused_widget,
+            clipboard.clone(),
         );
         self.widget.focus_changed(&mut ctx, focused);
         EventDispatch {
@@ -656,6 +686,7 @@ impl WidgetPod {
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
             drag_requests: ctx.take_drag_requests(),
             drop_acceptances: ctx.take_drop_acceptances(),
+            posted_events: ctx.take_posted_events(),
         }
     }
 
@@ -876,6 +907,14 @@ pub(crate) struct DropAcceptanceRequest {
     pub effect: DropEffect,
 }
 
+/// An event queued by a widget for delivery to another widget once the
+/// current dispatch finishes.
+#[derive(Debug, Clone)]
+pub(crate) struct PostedEventRequest {
+    pub target: WidgetId,
+    pub event: Event,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct EventDispatch {
     pub handled: bool,
@@ -885,6 +924,7 @@ pub(crate) struct EventDispatch {
     pub pointer_capture_requests: Vec<PointerCaptureRequest>,
     pub drag_requests: Vec<DragRequest>,
     pub drop_acceptances: Vec<DropAcceptanceRequest>,
+    pub posted_events: Vec<PostedEventRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -896,6 +936,7 @@ pub struct EventCtx {
     current_time: f64,
     phase: EventPhase,
     focused_widget_id: Option<WidgetId>,
+    clipboard: Clipboard,
     handled: bool,
     invalidations: Vec<InvalidationRequest>,
     focus_request: Option<FocusRequest>,
@@ -903,9 +944,11 @@ pub struct EventCtx {
     pointer_capture_requests: Vec<PointerCaptureRequest>,
     drag_requests: Vec<DragRequest>,
     drop_acceptances: Vec<DropAcceptanceRequest>,
+    posted_events: Vec<PostedEventRequest>,
 }
 
 impl EventCtx {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,
@@ -914,6 +957,7 @@ impl EventCtx {
         current_time: f64,
         phase: EventPhase,
         focused_widget_id: Option<WidgetId>,
+        clipboard: Clipboard,
     ) -> Self {
         Self {
             window_id,
@@ -923,6 +967,7 @@ impl EventCtx {
             current_time,
             phase,
             focused_widget_id,
+            clipboard,
             handled: false,
             invalidations: Vec::new(),
             focus_request: None,
@@ -930,6 +975,7 @@ impl EventCtx {
             pointer_capture_requests: Vec::new(),
             drag_requests: Vec::new(),
             drop_acceptances: Vec::new(),
+            posted_events: Vec::new(),
         }
     }
 
@@ -971,6 +1017,30 @@ impl EventCtx {
 
     pub fn set_handled(&mut self) {
         self.handled = true;
+    }
+
+    /// Shared clipboard service for this window. Backed by the OS clipboard
+    /// when the platform installed a native backend, otherwise by in-process
+    /// storage shared across the runtime.
+    pub fn clipboard(&self) -> &Clipboard {
+        &self.clipboard
+    }
+
+    pub fn clipboard_text(&self) -> Option<String> {
+        self.clipboard.text()
+    }
+
+    pub fn set_clipboard_text(&mut self, text: impl AsRef<str>) {
+        self.clipboard.set_text(text);
+    }
+
+    /// Queue an event for delivery to `target` after the current dispatch
+    /// completes. Used to route commands (for example clipboard actions from
+    /// a context menu) to a specific widget outside the normal hit-test or
+    /// focus routing.
+    pub fn post_event(&mut self, target: WidgetId, event: Event) {
+        self.posted_events
+            .push(PostedEventRequest { target, event });
     }
 
     pub fn request_focus(&mut self) {
@@ -1150,6 +1220,10 @@ impl EventCtx {
 
     pub(crate) fn take_drop_acceptances(&mut self) -> Vec<DropAcceptanceRequest> {
         std::mem::take(&mut self.drop_acceptances)
+    }
+
+    pub(crate) fn take_posted_events(&mut self) -> Vec<PostedEventRequest> {
+        std::mem::take(&mut self.posted_events)
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {
@@ -2036,8 +2110,8 @@ mod tests {
     use std::collections::HashSet;
     use std::rc::Rc;
     use sui_core::{
-        Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole,
-        Size, Vector, WidgetId, WindowId,
+        Clipboard, Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode,
+        SemanticsRole, Size, Vector, WidgetId, WindowId,
     };
     use sui_layout::{Constraints, LayoutContext};
     use sui_scene::{ImageRegistry, RegisteredImage, SceneCommand, StrokeStyle};
@@ -2125,6 +2199,7 @@ mod tests {
             0.0,
             EventPhase::Target,
             None,
+            Clipboard::new(),
         );
 
         assert_eq!(measure.dpi(), dpi);
@@ -2162,6 +2237,7 @@ mod tests {
             0.0,
             EventPhase::Target,
             None,
+            Clipboard::new(),
         );
 
         ctx.request_measure();
@@ -2202,6 +2278,7 @@ mod tests {
             16.0,
             EventPhase::Target,
             None,
+            Clipboard::new(),
         );
 
         ctx.request_animation_frame();
