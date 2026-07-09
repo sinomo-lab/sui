@@ -926,7 +926,7 @@ impl HdrRgbaImage {
 }
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
-const DEFAULT_FEATHER_WIDTH: f32 = 1.0;
+const DEFAULT_FEATHER_WIDTH: f32 = 0.0;
 
 /// Bind group layout for the multi-page glyph atlas: a filtering sampler plus a
 /// `texture_2d_array` (one layer per atlas page). Distinct from the image layout, which is `D2`.
@@ -3456,7 +3456,7 @@ impl Default for WgpuRenderer {
     fn default() -> Self {
         Self {
             instance: default_wgpu_instance(),
-            feathering_enabled: true,
+            feathering_enabled: false,
             feather_width: DEFAULT_FEATHER_WIDTH,
             text_render_mode: TextRenderMode::default(),
             text_subpixel_order: TextSubpixelOrder::default(),
@@ -4294,13 +4294,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let signed_distance = select(min_distance, -min_distance, inside);
         coverage = clamp(0.5 - (signed_distance / max(feather, 1e-4)), 0.0, 1.0);
     } else {
-        let inner_radius = max(0.0, 0.5 * path_meta.stroke_width);
-        let outer_radius = inner_radius + (0.5 * path_meta.feather_width);
-        coverage = select(
-            clamp((outer_radius - min_distance) / max(outer_radius - inner_radius, 1e-4), 0.0, 1.0),
-            1.0,
-            min_distance <= inner_radius,
-        );
+        let half_width = max(0.0, 0.5 * path_meta.stroke_width);
+        let edge_distance = min_distance - half_width;
+        coverage = clamp(0.5 - (edge_distance / max(feather, 1e-4)), 0.0, 1.0);
     }
 
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
@@ -5264,8 +5260,8 @@ mod tests {
         )
         .unwrap();
 
-        let expected_min = to_ndc(13.5, 7.5, Size::new(100.0, 100.0));
-        let expected_max = to_ndc(26.5, 17.5, Size::new(100.0, 100.0));
+        let expected_min = to_ndc(13.0, 7.0, Size::new(100.0, 100.0));
+        let expected_max = to_ndc(26.0, 17.0, Size::new(100.0, 100.0));
 
         assert_eq!(vertices.len(), 6);
         assert!(
@@ -5281,17 +5277,17 @@ mod tests {
         assert!(
             vertices
                 .iter()
-                .all(|vertex| vertex.shader_params == [12.0, 9.0, DEFAULT_FEATHER_WIDTH, 0.0])
+                .all(|vertex| vertex.shader_params == [10.0, 5.0, 0.0, DEFAULT_FEATHER_WIDTH])
         );
         assert!(
             vertices
                 .iter()
-                .any(|vertex| vertex.tex_coords == [-0.5, -0.5])
+                .any(|vertex| vertex.tex_coords == [-11.0, -6.0])
         );
         assert!(
             vertices
                 .iter()
-                .any(|vertex| vertex.tex_coords == [12.5, 9.5])
+                .any(|vertex| vertex.tex_coords == [2.0, 4.0])
         );
     }
 
@@ -11381,7 +11377,7 @@ mod tests {
     }
 
     #[test]
-    fn feathered_stroke_rect_renders_at_fractional_scale() {
+    fn analytic_stroke_rect_renders_at_fractional_scale() {
         let frame = SceneFrame {
             window_id: WindowId::new(97),
             viewport: Size::new(220.0, 64.0),
@@ -11425,12 +11421,12 @@ mod tests {
 
         assert!(
             changed_pixels > 500,
-            "feathered stroke rect disappeared at fractional scale (changed_pixels={changed_pixels})"
+            "analytic stroke rect disappeared at fractional scale (changed_pixels={changed_pixels})"
         );
     }
 
     #[test]
-    fn feathered_stroke_path_keeps_nominal_line_thickness() {
+    fn analytic_stroke_path_keeps_nominal_line_thickness() {
         let mut builder = PathBuilder::new();
         builder
             .move_to(Point::new(24.0, 32.0))
@@ -11468,12 +11464,12 @@ mod tests {
 
         assert!(
             visible_rows <= 3,
-            "feathered one-pixel stroke expanded across too many rows (visible_rows={visible_rows})"
+            "analytic one-pixel stroke expanded across too many rows (visible_rows={visible_rows})"
         );
     }
 
     #[test]
-    fn feathered_rounded_border_retains_most_ink_at_fractional_scale() {
+    fn soft_rounded_border_retains_most_ink_when_feathering_is_enabled() {
         let build_frame = || {
             let mut scene = Scene::new();
             scene.push(SceneCommand::FillRect {
@@ -11506,7 +11502,9 @@ mod tests {
 
         let frame = build_frame();
 
-        let mut feathered = WgpuRenderer::default();
+        let mut feathered = WgpuRenderer::default()
+            .with_feathering_enabled(true)
+            .with_feather_width(1.0);
         feathered.render(&frame).unwrap();
         let feathered_pixels = feathered.capture_last_frame_rgba(frame.window_id).unwrap();
 
@@ -11525,7 +11523,7 @@ mod tests {
     }
 
     #[test]
-    fn feathered_control_border_and_chevrons_retain_visible_ink() {
+    fn soft_control_border_and_chevrons_retain_visible_ink_when_feathering_is_enabled() {
         fn line_path(start: Point, end: Point) -> Path {
             let mut builder = PathBuilder::new();
             builder.move_to(start).line_to(end);
@@ -11617,7 +11615,9 @@ mod tests {
 
         let frame = build_frame();
 
-        let mut feathered = WgpuRenderer::default();
+        let mut feathered = WgpuRenderer::default()
+            .with_feathering_enabled(true)
+            .with_feather_width(1.0);
         feathered.render(&frame).unwrap();
         let feathered_pixels = feathered.capture_last_frame_rgba(frame.window_id).unwrap();
 
@@ -11643,7 +11643,7 @@ mod tests {
     }
 
     #[test]
-    fn feathered_splitter_rects_stay_at_divider_location() {
+    fn analytic_splitter_rects_stay_at_divider_location() {
         let divider = Rect::new(140.0, 10.0, 12.0, 84.0);
         let handle = Rect::new(144.0, 38.0, 4.0, 28.0);
         let mut scene = Scene::new();
@@ -11688,7 +11688,7 @@ mod tests {
 
         assert_eq!(
             misplaced_left_pixels, 0,
-            "splitter feathering rendered away from the divider"
+            "splitter coverage rendered away from the divider"
         );
         assert!(
             divider_pixels > 250,
@@ -11697,7 +11697,7 @@ mod tests {
     }
 
     #[test]
-    fn transformed_layer_keeps_feathered_path_at_translated_location() {
+    fn transformed_layer_keeps_analytic_path_at_translated_location() {
         let layer_id = WidgetId::new(104);
         let window_id = WindowId::new(104);
         let build_layer = |x: f32| {
@@ -12495,6 +12495,10 @@ mod tests {
         let mut renderer = WgpuRenderer::new().with_feather_width(2.5);
 
         assert_eq!(renderer.feather_width(), 2.5);
+        assert!(!renderer.feathering_enabled());
+
+        renderer.set_feathering_enabled(true);
+
         assert!(renderer.feathering_enabled());
 
         renderer.set_feather_width(-3.0);

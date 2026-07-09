@@ -1028,6 +1028,12 @@ enum FillPathRenderMode {
     SolidPlusAnalytic { id: u64 },
 }
 
+const ANALYTIC_AA_OUTSET: f32 = 1.0;
+
+fn analytic_coverage_outset(soft_width: f32) -> f32 {
+    (soft_width.max(0.0) * 0.5).max(ANALYTIC_AA_OUTSET)
+}
+
 impl SceneDrawOpBuilder<'_> {
     fn build_scene(
         &mut self,
@@ -1071,15 +1077,22 @@ impl SceneDrawOpBuilder<'_> {
                 self.scratch_vertices.clear();
                 match brush {
                     Brush::Solid(color) => {
-                        append_painted_rect(
+                        append_rounded_rect_fill(
                             &mut self.scratch_vertices,
                             state,
                             *rect,
+                            [0.0; 4],
                             *color,
+                            None,
                             viewport,
                             self.feather_width,
                         );
-                        push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                        push_draw_op(
+                            draw_ops,
+                            DrawOpKind::RoundedRect,
+                            &self.scratch_vertices,
+                            state,
+                        );
                     }
                     Brush::LinearGradient { start, end, stops } => {
                         let stop0 = stops.first().map(|s| s.color).unwrap_or(Color::TRANSPARENT);
@@ -1114,16 +1127,25 @@ impl SceneDrawOpBuilder<'_> {
             } => {
                 let color = brush_fallback_color(brush);
                 self.scratch_vertices.clear();
-                append_stroke_rect(
+                append_rounded_rect_fill(
                     &mut self.scratch_vertices,
                     state,
                     *rect,
-                    color,
-                    *stroke,
+                    [0.0; 4],
+                    Color::TRANSPARENT,
+                    Some(sui_scene::Border {
+                        width: stroke.width,
+                        color,
+                    }),
                     viewport,
                     self.feather_width,
                 );
-                push_draw_op(draw_ops, DrawOpKind::Solid, &self.scratch_vertices, state);
+                push_draw_op(
+                    draw_ops,
+                    DrawOpKind::RoundedRect,
+                    &self.scratch_vertices,
+                    state,
+                );
                 diagnostics.rect_command_count += 1;
                 Ok(())
             }
@@ -3117,18 +3139,22 @@ fn append_painted_path(
         return Ok(FillPathRenderMode::SolidOnly);
     }
 
-    if state.visible_rect(path.bounds()).is_none() {
+    let coverage_outset = analytic_coverage_outset(feather_width);
+    if state
+        .visible_rect(path.bounds().inflate(coverage_outset, coverage_outset))
+        .is_none()
+    {
         return Ok(FillPathRenderMode::SolidOnly);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    if feather_width > 0.0 {
+    {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
             append_analytic_path_quad(
                 overlay_vertices,
-                transformed_bounds.inflate(feather_width, feather_width),
+                transformed_bounds.inflate(coverage_outset, coverage_outset),
                 color,
                 viewport,
             );
@@ -3159,27 +3185,23 @@ fn append_stroked_path(
     }
 
     let line_width = stroke.width.max(1.0);
+    let coverage_outset = analytic_coverage_outset(feather_width);
+    let stroke_outset = (line_width * 0.5) + coverage_outset;
     if state
-        .visible_rect(path.bounds().inflate(
-            (line_width + feather_width) * 0.5,
-            (line_width + feather_width) * 0.5,
-        ))
+        .visible_rect(path.bounds().inflate(stroke_outset, stroke_outset))
         .is_none()
     {
         return Ok(None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    if feather_width > 0.0 {
+    {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
         if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
             append_analytic_path_quad(
                 overlay_vertices,
-                transformed_bounds.inflate(
-                    (line_width + feather_width) * 0.5,
-                    (line_width + feather_width) * 0.5,
-                ),
+                transformed_bounds.inflate(stroke_outset, stroke_outset),
                 color,
                 viewport,
             );
@@ -3249,7 +3271,7 @@ fn build_analytic_fill_path_data(
 
     Some(AnalyticPathCpuData::new(
         AnalyticPathMode::Fill,
-        feather_width.max(0.5),
+        feather_width.max(0.0),
         0.0,
         contour_data,
         point_data,
@@ -3303,7 +3325,7 @@ fn build_analytic_stroke_path_data(
 
     Some(AnalyticPathCpuData::new(
         AnalyticPathMode::Stroke,
-        feather_width.max(0.5),
+        feather_width.max(0.0),
         line_width.max(0.5),
         contour_data,
         point_data,
@@ -3710,6 +3732,13 @@ fn append_rounded_rect_quad(
     ]);
 }
 
+fn clipped_screen_quad(state: &SceneRasterState, rect: Rect) -> Option<Rect> {
+    match state.current_clip_bounds() {
+        Some(clip) => rect.intersection(clip),
+        None => Some(rect),
+    }
+}
+
 /// Clamp per-corner radii to half the smaller rect dimension so the SDF stays valid.
 fn clamp_radii(radii: [f32; 4], half_w: f32, half_h: f32) -> [f32; 4] {
     let limit = half_w.min(half_h).max(0.0);
@@ -3743,8 +3772,10 @@ fn append_rounded_rect_fill(
     let half_w = transformed.width() * 0.5;
     let half_h = transformed.height() * 0.5;
     let center = Point::new(transformed.x() + half_w, transformed.y() + half_h);
-    let fringe = (feather * 0.5).max(0.0);
-    let screen_quad = transformed.inflate(fringe, fringe);
+    let fringe = analytic_coverage_outset(feather);
+    let Some(screen_quad) = clipped_screen_quad(state, transformed.inflate(fringe, fringe)) else {
+        return;
+    };
     let radii = clamp_radii(radii, half_w, half_h);
 
     let (border_w, border_color) = match border {
@@ -3797,9 +3828,14 @@ fn append_rounded_rect_shadow(
     // The shadow's rounded box is the fill box grown by `spread`; coverage is sampled in
     // the same center-origin local space, offset by the shadow displacement.
     let radii = clamp_radii(radii, half_w + spread, half_h + spread);
-    let screen_quad = transformed
-        .inflate(ext, ext)
-        .translate(Vector::new(shadow.offset_x, shadow.offset_y));
+    let Some(screen_quad) = clipped_screen_quad(
+        state,
+        transformed
+            .inflate(ext, ext)
+            .translate(Vector::new(shadow.offset_x, shadow.offset_y)),
+    ) else {
+        return;
+    };
 
     append_rounded_rect_quad(
         vertices,
@@ -3842,8 +3878,10 @@ fn append_gradient_rect(
     let half_w = transformed.width() * 0.5;
     let half_h = transformed.height() * 0.5;
     let center = Point::new(transformed.x() + half_w, transformed.y() + half_h);
-    let fringe = (feather * 0.5).max(0.0);
-    let screen_quad = transformed.inflate(fringe, fringe);
+    let fringe = analytic_coverage_outset(feather);
+    let Some(screen_quad) = clipped_screen_quad(state, transformed.inflate(fringe, fringe)) else {
+        return;
+    };
     let radii = clamp_radii(radii, half_w, half_h);
 
     // Gradient axis end-points in center-origin local space (matching the SDF space).
@@ -3936,37 +3974,6 @@ fn shader_color_space(space: ColorSpace) -> f32 {
         ColorSpace::DisplayP3 => 2.0,
         ColorSpace::LinearDisplayP3 => 3.0,
     }
-}
-
-fn append_stroke_rect(
-    vertices: &mut Vec<Vertex>,
-    state: &SceneRasterState,
-    rect: Rect,
-    color: Color,
-    stroke: StrokeStyle,
-    viewport: Size,
-    feather_width: f32,
-) {
-    feathering::append_stroke_rect(
-        vertices,
-        state,
-        rect,
-        color,
-        stroke,
-        viewport,
-        feather_width,
-    );
-}
-
-fn append_painted_rect(
-    vertices: &mut Vec<Vertex>,
-    state: &SceneRasterState,
-    rect: Rect,
-    color: Color,
-    viewport: Size,
-    feather_width: f32,
-) {
-    feathering::append_painted_rect(vertices, state, rect, color, viewport, feather_width);
 }
 
 pub(crate) fn append_rect(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: Size) {

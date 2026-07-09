@@ -97,6 +97,12 @@ The steady-state goal is reuse. On a good frame, the renderer should mostly repo
 
 Today, the main remaining source of overhead is no longer default wrapper-driven layerization. Instead, cost is concentrated in the smaller set of real retained boundaries plus the direct packets and rebuild work they drive. That makes layer counts, packet rebuild reasons, and direct-packet churn the most useful indicators when evaluating current renderer changes.
 
+## Vector And Shape Coverage
+
+Common UI shapes use analytic coverage rather than a global feather by default. Solid rectangles, rounded rectangles, rounded borders, gradient rectangles, and native path fills/strokes reserve a small shader-evaluation margin and derive their visible antialiasing from the local distance field and `fwidth`.
+
+`feather_width` is still available as an explicit soft-edge setting, but its default effective width is zero. Normal UI strokes should therefore stay close to their requested width; the antialiasing ramp should cover edge pixels instead of expanding every primitive as a global blur.
+
 ## Text And Image Flow
 
 ### Text
@@ -112,7 +118,7 @@ There are two important caches today:
 - `TextSystem` caches shaped layouts by text and layout inputs.
 - the renderer caches glyph-related data for repeated draws.
 
-The renderer also owns a grayscale text coverage policy for glyph alpha generation. It defaults to linear coverage for all text colors, and `WindowRenderOptions` can override it for an active window. The resolved policy is applied when rasterizing atlas glyphs and when emitting analytic text fallback coverage, which makes text-edge tuning a renderer/runtime concern rather than a widget or layout concern.
+The renderer also owns a grayscale text coverage policy for glyph alpha generation. It defaults to perceptual coverage, and `WindowRenderOptions` can override it for an active window. The resolved policy is applied when sampling atlas glyphs, which makes text-edge tuning a renderer/runtime concern rather than a widget or layout concern.
 
 This split keeps text measurement and shaping out of renderer internals while still letting widgets and the runtime share those utilities and letting the renderer optimize repeated output.
 

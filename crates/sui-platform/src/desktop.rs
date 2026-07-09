@@ -816,7 +816,7 @@ impl DesktopApp {
                 .map(|options| map_window_text_subpixel_order(options.text_subpixel_order)),
         );
         let active_render_options =
-            render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
+            render_options.unwrap_or_else(|| WindowRenderOptions::new(false, 0.0));
         let display_capabilities_for_brightness = self
             .renderer
             .window_display_capabilities(window_id)

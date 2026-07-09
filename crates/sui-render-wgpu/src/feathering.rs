@@ -47,59 +47,6 @@ pub(super) fn build_local_stroke_mesh(
     Ok(mesh)
 }
 
-pub(super) fn append_stroke_rect(
-    vertices: &mut Vec<Vertex>,
-    state: &SceneRasterState,
-    rect: Rect,
-    color: Color,
-    stroke: StrokeStyle,
-    viewport: Size,
-    feather_width: f32,
-) {
-    if rect.is_empty() {
-        return;
-    }
-
-    let thickness = stroke
-        .width
-        .max(1.0)
-        .min((rect.width() * 0.5).max(1.0))
-        .min((rect.height() * 0.5).max(1.0));
-
-    let top = Rect::new(rect.x(), rect.y(), rect.width(), thickness);
-    let bottom = Rect::new(rect.x(), rect.max_y() - thickness, rect.width(), thickness);
-    let left = Rect::new(
-        rect.x(),
-        rect.y() + thickness,
-        thickness,
-        (rect.height() - (thickness * 2.0)).max(0.0),
-    );
-    let right = Rect::new(
-        rect.max_x() - thickness,
-        rect.y() + thickness,
-        thickness,
-        (rect.height() - (thickness * 2.0)).max(0.0),
-    );
-
-    append_painted_rect(vertices, state, top, color, viewport, feather_width);
-    append_painted_rect(vertices, state, bottom, color, viewport, feather_width);
-    append_painted_rect(vertices, state, left, color, viewport, feather_width);
-    append_painted_rect(vertices, state, right, color, viewport, feather_width);
-}
-
-pub(super) fn append_painted_rect(
-    vertices: &mut Vec<Vertex>,
-    state: &SceneRasterState,
-    rect: Rect,
-    color: Color,
-    viewport: Size,
-    feather_width: f32,
-) {
-    if let Some(visible) = state.visible_rect(rect) {
-        append_feathered_rect(vertices, visible, color, viewport, feather_width);
-    }
-}
-
 fn append_local_hard_stroked_lyon_path(
     mesh: &mut CachedGlyphMesh,
     path: &LyonPath,
@@ -121,43 +68,6 @@ fn append_local_hard_stroked_lyon_path(
     }
     mesh.indices.extend(buffers.indices.iter().copied());
     Ok(())
-}
-
-fn append_feathered_rect(
-    vertices: &mut Vec<Vertex>,
-    rect: Rect,
-    color: Color,
-    viewport: Size,
-    feather_width: f32,
-) {
-    if feather_width <= 0.0 {
-        append_rect(vertices, rect, color, viewport);
-        return;
-    }
-
-    let fringe_radius = feather_width * 0.5;
-    let expanded = rect.inflate(fringe_radius, fringe_radius);
-    if expanded.is_empty() || viewport.is_empty() {
-        return;
-    }
-
-    let min = to_ndc(expanded.x(), expanded.y(), viewport);
-    let max = to_ndc(expanded.max_x(), expanded.max_y(), viewport);
-    let rgba = shader_color(color);
-    let params = [rect.width(), rect.height(), feather_width, 0.0];
-    let left = -fringe_radius;
-    let top = -fringe_radius;
-    let right = rect.width() + fringe_radius;
-    let bottom = rect.height() + fringe_radius;
-
-    vertices.extend_from_slice(&[
-        Vertex::basic([min[0], min[1]], rgba, [left, top], params),
-        Vertex::basic([max[0], min[1]], rgba, [right, top], params),
-        Vertex::basic([min[0], max[1]], rgba, [left, bottom], params),
-        Vertex::basic([min[0], max[1]], rgba, [left, bottom], params),
-        Vertex::basic([max[0], min[1]], rgba, [right, top], params),
-        Vertex::basic([max[0], max[1]], rgba, [right, bottom], params),
-    ]);
 }
 
 pub(super) fn flatten_path_contours(path: &LyonPath) -> Vec<FlattenedContour> {

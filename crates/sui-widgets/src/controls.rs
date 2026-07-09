@@ -8324,7 +8324,11 @@ mod tests {
     {
         let (mut runtime, window_id) = build_runtime(root);
         let output = runtime.render(window_id).unwrap();
-        let mut renderer = WgpuRenderer::default().with_feathering_enabled(feathering_enabled);
+        let mut renderer = WgpuRenderer::default();
+        if feathering_enabled {
+            renderer.set_feather_width(1.0);
+            renderer.set_feathering_enabled(true);
+        }
         renderer.render(&output.frame).unwrap();
         let image = renderer.capture_last_frame_rgba(window_id).unwrap();
         (output, image)
