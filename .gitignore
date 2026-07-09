@@ -1,5 +1,6 @@
 /target
 /node_modules
+/.codegraph/
 /.playwright-cli
 /crates/sui-demo/web/dist
 /output
