@@ -24,6 +24,7 @@ use sui_core::{
     Color, ColorSpace, Error, ImageHandle, Path as ScenePath, PathElement, Point, Rect, Result,
     Size, Transform, Vector, WindowId,
 };
+pub use sui_scene::TextSubpixelOrder;
 use sui_scene::{
     Brush, ImageSampling, RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame,
     SceneLayer, SceneLayerId, SceneLayerUpdateKind, StrokeStyle, TextRenderCoveragePolicy,
@@ -747,11 +748,13 @@ pub struct WgpuRenderer {
     feathering_enabled: bool,
     feather_width: f32,
     text_render_mode: TextRenderMode,
+    text_subpixel_order: TextSubpixelOrder,
     text_hinting: TextHinting,
     stem_darkening: StemDarkening,
     text_coverage_policy: TextCoveragePolicy,
     vsync_enabled: bool,
     runtime_feathering_override: Option<FeatheringOptions>,
+    runtime_text_subpixel_order_override: Option<TextSubpixelOrder>,
     runtime_text_hinting_override: Option<TextHinting>,
     runtime_stem_darkening_override: Option<StemDarkening>,
     runtime_text_coverage_policy_override: Option<TextCoveragePolicy>,
@@ -1119,6 +1122,11 @@ impl WgpuRenderer {
         self
     }
 
+    pub fn with_text_subpixel_order(mut self, order: TextSubpixelOrder) -> Self {
+        self.set_text_subpixel_order(order);
+        self
+    }
+
     pub fn with_text_hinting(mut self, hinting: TextHinting) -> Self {
         self.set_text_hinting(hinting);
         self
@@ -1163,6 +1171,10 @@ impl WgpuRenderer {
         self.text_render_mode
     }
 
+    pub fn text_subpixel_order(&self) -> TextSubpixelOrder {
+        self.text_subpixel_order
+    }
+
     pub fn text_hinting(&self) -> TextHinting {
         self.text_hinting
     }
@@ -1202,6 +1214,18 @@ impl WgpuRenderer {
         self.text_render_mode = mode;
         if let Some(text_engine) = self.text_engine.as_mut() {
             text_engine.set_text_render_mode(mode);
+        }
+        self.invalidate_text_render_state();
+    }
+
+    pub fn set_text_subpixel_order(&mut self, order: TextSubpixelOrder) {
+        if self.text_subpixel_order == order {
+            return;
+        }
+
+        self.text_subpixel_order = order;
+        if let Some(text_engine) = self.text_engine.as_mut() {
+            text_engine.set_text_subpixel_order(order);
         }
         self.invalidate_text_render_state();
     }
@@ -1288,6 +1312,10 @@ impl WgpuRenderer {
         self.runtime_feathering_override = feathering.map(FeatheringOptions::clamped);
     }
 
+    pub fn set_runtime_text_subpixel_order_override(&mut self, order: Option<TextSubpixelOrder>) {
+        self.runtime_text_subpixel_order_override = order;
+    }
+
     pub fn set_runtime_text_hinting_override(&mut self, hinting: Option<TextHinting>) {
         self.runtime_text_hinting_override = hinting.map(TextHinting::normalized);
     }
@@ -1323,6 +1351,11 @@ impl WgpuRenderer {
         self.runtime_text_hinting_override
             .unwrap_or(self.text_hinting)
             .normalized()
+    }
+
+    fn active_text_subpixel_order(&self) -> TextSubpixelOrder {
+        self.runtime_text_subpixel_order_override
+            .unwrap_or(self.text_subpixel_order)
     }
 
     fn active_stem_darkening(&self) -> StemDarkening {
@@ -2450,6 +2483,7 @@ impl WgpuRenderer {
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
         let text_render_mode = self.text_render_mode();
+        let text_subpixel_order = self.active_text_subpixel_order();
         let text_hinting = self.active_text_hinting();
         let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();
@@ -2465,6 +2499,7 @@ impl WgpuRenderer {
                 .as_mut()
                 .expect("text engine initialized before draw-op construction");
             text_engine.set_text_render_mode(text_render_mode);
+            text_engine.set_text_subpixel_order(text_subpixel_order);
             text_engine.set_text_hinting(text_hinting);
             text_engine.set_stem_darkening(stem_darkening);
             text_engine.set_text_coverage_policy(text_coverage_policy);
@@ -3424,11 +3459,13 @@ impl Default for WgpuRenderer {
             feathering_enabled: true,
             feather_width: DEFAULT_FEATHER_WIDTH,
             text_render_mode: TextRenderMode::default(),
+            text_subpixel_order: TextSubpixelOrder::default(),
             text_hinting: TextHinting::default(),
             stem_darkening: StemDarkening::default(),
             text_coverage_policy: TextCoveragePolicy::default(),
             vsync_enabled: true,
             runtime_feathering_override: None,
+            runtime_text_subpixel_order_override: None,
             runtime_text_hinting_override: None,
             runtime_stem_darkening_override: None,
             runtime_text_coverage_policy_override: None,
@@ -3852,7 +3889,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let mode = in.p0.z; let feather = in.p0.w;
     let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
     let p = in.local;
-    let derivative_width = length(vec2<f32>(fwidth(p.x), fwidth(p.y)));
     if (mode == RR_MODE_SHADOW) {
         let sigma = in.p2.y;
         let pp = p - vec2<f32>(in.p2.z, in.p2.w);
@@ -3860,7 +3896,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(in.color.rgb, in.color.a * cov);
     }
     let d = sd_round_box(p, half, radii);
-    let aa = max(feather, derivative_width);
+    let aa = max(feather, fwidth(d));
     let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
     let bw = in.p2.x;
     if (bw > 0.0) {
@@ -3909,7 +3945,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let feather = in.p0.w;
     let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
     let p = in.local; let d = sd_round_box(p, half, radii);
-    let aa = max(feather, length(vec2<f32>(fwidth(p.x), fwidth(p.y))));
+    let aa = max(feather, fwidth(d));
     let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
     let a = in.axis.xy; let b = in.axis.zw;
     let ab = b - a; let denom = max(dot(ab, ab), 1e-6);
@@ -3924,7 +3960,7 @@ struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
-    @location(2) metadata: vec2<f32>,
+    @location(2) metadata: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
@@ -3945,7 +3981,7 @@ fn vs_main(
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
-    @location(7) metadata: vec2<f32>,
+    @location(7) metadata: vec4<f32>,
     @location(8) layer: u32,
 ) -> VsOut {
     var out: VsOut;
@@ -3965,6 +4001,24 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.04045));
 }
 
+fn apply_text_coverage(coverage: f32, policy: f32, parameter: f32) -> f32 {
+    let c = clamp(coverage, 0.0, 1.0);
+    if policy < 0.5 {
+        return c;
+    }
+    if policy < 1.5 {
+        return pow(c, max(parameter, 1e-4));
+    }
+    if policy < 2.5 {
+        let amount = clamp(parameter, 0.0, 1.0);
+        return c + (c * (1.0 - c) * amount);
+    }
+    if policy < 3.5 {
+        return (2.0 * c) - (c * c);
+    }
+    return c;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
@@ -3980,19 +4034,27 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     if in.metadata.x > 0.5 {
-        let coverage = sampled.rgb;
+        let coverage = vec3<f32>(
+            apply_text_coverage(sampled.r, in.metadata.z, in.metadata.w),
+            apply_text_coverage(sampled.g, in.metadata.z, in.metadata.w),
+            apply_text_coverage(sampled.b, in.metadata.z, in.metadata.w),
+        );
         let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
         let premul = in.color.rgb * coverage * in.color.a;
         return vec4<f32>(premul, in.color.a * max_coverage);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
+        let coverage = apply_text_coverage(
+            (sampled.r + sampled.g + sampled.b) / 3.0,
+            in.metadata.z,
+            in.metadata.w,
+        );
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);
     }
 
-    let coverage = sampled.a;
+    let coverage = apply_text_coverage(sampled.a, in.metadata.z, in.metadata.w);
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
 }
@@ -4005,7 +4067,7 @@ struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
-    @location(2) metadata: vec2<f32>,
+    @location(2) metadata: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
@@ -4031,7 +4093,7 @@ fn vs_main(
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
-    @location(7) metadata: vec2<f32>,
+    @location(7) metadata: vec4<f32>,
     @location(8) layer: u32,
 ) -> VsOut {
     var out: VsOut;
@@ -4049,6 +4111,24 @@ fn srgb_to_linear(color: vec3<f32>) -> vec3<f32> {
     let low = color / 12.92;
     let high = pow((color + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
     return select(high, low, color <= vec3<f32>(0.04045));
+}
+
+fn apply_text_coverage(coverage: f32, policy: f32, parameter: f32) -> f32 {
+    let c = clamp(coverage, 0.0, 1.0);
+    if policy < 0.5 {
+        return c;
+    }
+    if policy < 1.5 {
+        return pow(c, max(parameter, 1e-4));
+    }
+    if policy < 2.5 {
+        let amount = clamp(parameter, 0.0, 1.0);
+        return c + (c * (1.0 - c) * amount);
+    }
+    if policy < 3.5 {
+        return (2.0 * c) - (c * c);
+    }
+    return c;
 }
 
 fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
@@ -4074,16 +4154,24 @@ fn fs_main(in: VsOut) -> FragmentOutput {
     }
 
     if in.metadata.x > 0.5 {
-        let coverage = sampled.rgb;
+        let coverage = vec3<f32>(
+            apply_text_coverage(sampled.r, in.metadata.z, in.metadata.w),
+            apply_text_coverage(sampled.g, in.metadata.z, in.metadata.w),
+            apply_text_coverage(sampled.b, in.metadata.z, in.metadata.w),
+        );
         return dual_source(in.color.rgb, coverage * in.color.a);
     }
 
     if in.metadata.y > 0.5 {
-        let coverage = (sampled.r + sampled.g + sampled.b) / 3.0;
+        let coverage = apply_text_coverage(
+            (sampled.r + sampled.g + sampled.b) / 3.0,
+            in.metadata.z,
+            in.metadata.w,
+        );
         return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
     }
 
-    let coverage = sampled.a;
+    let coverage = apply_text_coverage(sampled.a, in.metadata.z, in.metadata.w);
     return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
 }
 "#;
@@ -4203,11 +4291,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var coverage = 0.0;
 
     if path_meta.mode == ANALYTIC_PATH_MODE_FILL {
-        coverage = select(
-            clamp(1.0 - (min_distance / max(feather, 1e-4)), 0.0, 1.0),
-            1.0,
-            inside,
-        );
+        let signed_distance = select(min_distance, -min_distance, inside);
+        coverage = clamp(0.5 - (signed_distance / max(feather, 1e-4)), 0.0, 1.0);
     } else {
         let inner_radius = max(0.0, 0.5 * path_meta.stroke_width);
         let outer_radius = inner_radius + (0.5 * path_meta.feather_width);
@@ -4317,21 +4402,22 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CachedGlyphAtlas, CachedGlyphMesh, ClipState, ColorManagementMode, CompositionContainerId,
-        DEFAULT_FEATHER_WIDTH, DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest,
-        DebugCaptureStage, DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries,
-        DisplayTransferFunction, DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, GlyphCacheKey,
-        GlyphFaceCacheKey, GlyphSubpixelOffsetKey, HdrRgbaImage, OutputStrategy,
-        PacketRebuildReason, PreparedClipPath, PreparedDrawBatch, PreparedDrawKind,
-        PreparedFrameBatches, PreparedPassBatch, PreparedVertices, RendererFrameStats,
-        RequestedColorManagementMode, RequestedDynamicRangeMode, RequestedOutputColorPrimaries,
-        RequestedToneMappingMode, RetainedCompositorFrameStats, RetainedCompositorState,
-        RetainedPacketId, RetainedPacketRebuildStats, ScissorRect, StemDarkening,
-        SwashImageContent, SwashSource, SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE,
-        TEXT_ATLAS_SHADER_SOURCE, TextAtlasColorMode, TextAtlasPages, TextCoveragePolicy,
-        TextEngine, TextHinting, TextRenderMode, VERTEX_SIZE, Vertex, WgpuRenderer,
-        append_cached_path_mesh, batch_draw_ops, build_vertices, decode_rgba16f_pixels,
-        encode_hdr_debug_artifact, hdr_image_to_sdr_rgba, prepare_frame_batches,
+        ANALYTIC_PATH_SHADER_SOURCE, CachedGlyphAtlas, CachedGlyphMesh, ClipState,
+        ColorManagementMode, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DebugCaptureArtifact,
+        DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage, DebugSdrVisualization,
+        DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction, DrawOp, DrawOpArena,
+        DrawOpKind, DynamicRangeMode, GlyphCacheKey, GlyphFaceCacheKey, GlyphSubpixelOffsetKey,
+        HdrRgbaImage, OutputStrategy, PacketRebuildReason, PreparedClipPath, PreparedDrawBatch,
+        PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
+        RendererFrameStats, RequestedColorManagementMode, RequestedDynamicRangeMode,
+        RequestedOutputColorPrimaries, RequestedToneMappingMode, RetainedCompositorFrameStats,
+        RetainedCompositorState, RetainedPacketId, RetainedPacketRebuildStats, RgbaImage,
+        ScissorRect, StemDarkening, SwashImageContent, SwashSource, SwashStrikeWith,
+        TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_SHADER_SOURCE, TextAtlasColorMode,
+        TextAtlasPages, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
+        TextSubpixelOrder, VERTEX_SIZE, Vertex, WgpuRenderer, append_cached_path_mesh,
+        batch_draw_ops, build_vertices, decode_rgba16f_pixels, encode_hdr_debug_artifact,
+        hdr_image_to_sdr_rgba, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
@@ -5960,8 +6046,8 @@ mod tests {
             &image,
             14.0,
             TextRenderMode::Grayscale,
+            TextSubpixelOrder::None,
             StemDarkening::None,
-            TextCoveragePolicy::Linear,
         )
         .expect("color glyph should convert into atlas pixels");
 
@@ -6061,6 +6147,15 @@ mod tests {
     }
 
     #[test]
+    fn text_subpixel_order_defaults_to_none() {
+        assert_eq!(TextSubpixelOrder::default(), TextSubpixelOrder::None);
+        assert_eq!(
+            WgpuRenderer::new().text_subpixel_order(),
+            TextSubpixelOrder::None
+        );
+    }
+
+    #[test]
     fn slight_hinting_enables_below_threshold() {
         let config = TextHinting::Slight { max_ppem: 18.0 };
         assert!(config.should_hint(14.0));
@@ -6107,10 +6202,32 @@ mod tests {
         let converted = convert_subpixel_texel_for_mode(
             [255, 128, 32, 255],
             TextRenderMode::LcdSubpixel,
+            TextSubpixelOrder::Rgb,
             0.0,
-            TextCoveragePolicy::Linear,
         );
         assert_rgba_channels_near(&converted, [32, 128, 255, 255], RGBA_CHANNEL_TOLERANCE);
+    }
+
+    #[test]
+    fn subpixel_mask_can_reverse_physical_order_for_bgr_lcd() {
+        let converted = convert_subpixel_texel_for_mode(
+            [255, 128, 32, 255],
+            TextRenderMode::LcdSubpixel,
+            TextSubpixelOrder::Bgr,
+            0.0,
+        );
+        assert_rgba_channels_near(&converted, [255, 128, 32, 255], RGBA_CHANNEL_TOLERANCE);
+    }
+
+    #[test]
+    fn subpixel_mask_uses_grayscale_when_subpixel_order_is_none() {
+        let converted = convert_subpixel_texel_for_mode(
+            [255, 128, 32, 255],
+            TextRenderMode::LcdSubpixel,
+            TextSubpixelOrder::None,
+            0.0,
+        );
+        assert_rgba_channels_near(&converted, [255, 255, 255, 138], RGBA_CHANNEL_TOLERANCE);
     }
 
     #[test]
@@ -6189,9 +6306,9 @@ mod tests {
             1024,
             GlyphSubpixelOffsetKey::new(0, 0),
             TextRenderMode::Grayscale,
+            TextSubpixelOrder::None,
             TextHinting::None,
             StemDarkening::None,
-            TextCoveragePolicy::Linear,
             400,
         );
         let second = GlyphCacheKey::new(
@@ -6200,9 +6317,9 @@ mod tests {
             1024,
             GlyphSubpixelOffsetKey::new(1, 0),
             TextRenderMode::Grayscale,
+            TextSubpixelOrder::None,
             TextHinting::None,
             StemDarkening::None,
-            TextCoveragePolicy::Linear,
             400,
         );
         assert_ne!(first, second);
@@ -6222,9 +6339,9 @@ mod tests {
                 1024,
                 GlyphSubpixelOffsetKey::new(0, 0),
                 TextRenderMode::Grayscale,
+                TextSubpixelOrder::None,
                 TextHinting::None,
                 StemDarkening::None,
-                TextCoveragePolicy::Linear,
                 weight,
             )
         };
@@ -6234,16 +6351,39 @@ mod tests {
     }
 
     #[test]
+    fn glyph_cache_key_includes_subpixel_order() {
+        let face = GlyphFaceCacheKey {
+            data_ptr: 0x1000,
+            data_len: 128,
+            face_index: 0,
+        };
+        let key = |order| {
+            GlyphCacheKey::new(
+                face,
+                7,
+                1024,
+                GlyphSubpixelOffsetKey::new(0, 0),
+                TextRenderMode::LcdSubpixel,
+                order,
+                TextHinting::None,
+                StemDarkening::None,
+                400,
+            )
+        };
+        assert_ne!(key(TextSubpixelOrder::Rgb), key(TextSubpixelOrder::Bgr));
+        assert_eq!(key(TextSubpixelOrder::None), key(TextSubpixelOrder::None));
+    }
+
+    #[test]
     fn text_atlas_shaders_use_sampled_coverage_and_dual_source_blending() {
-        assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("apply_contrast_and_gamma_correction"));
-        assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("correct_coverage"));
+        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("fn apply_text_coverage"));
+        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("apply_text_coverage(sampled.a"));
         assert!(!TEXT_ATLAS_SHADER_SOURCE.contains("TEXT_COVERAGE_GAMMA"));
-        assert!(TEXT_ATLAS_SHADER_SOURCE.contains("let coverage = sampled.a;"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(0)"));
         assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("@blend_src(1)"));
-        assert!(!TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("correct_coverage"));
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("fn apply_text_coverage"));
+        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("apply_text_coverage(sampled.a"));
         assert!(!TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("TEXT_COVERAGE_GAMMA"));
-        assert!(TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE.contains("let coverage = sampled.a;"));
     }
 
     #[test]
@@ -6254,6 +6394,13 @@ mod tests {
         )));
         assert!(!allows_lcd_text(Transform::scale(-1.0, 1.0)));
         assert!(!allows_lcd_text(Transform::rotation(std::f32::consts::PI)));
+    }
+
+    #[test]
+    fn analytic_path_fill_shader_uses_symmetric_signed_distance() {
+        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("let signed_distance"));
+        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("0.5 - (signed_distance"));
+        assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("1.0 - (min_distance"));
     }
 
     #[test]
@@ -6391,7 +6538,7 @@ mod tests {
     }
 
     #[test]
-    fn renderer_text_coverage_policy_keeps_separate_cache_entries_for_explicit_policies() {
+    fn renderer_text_coverage_policy_shares_glyph_cache_entries_for_explicit_policies() {
         let handle = FontHandle::new(33);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -6444,11 +6591,12 @@ mod tests {
             linear_stats.2 > 0,
             "first pass should record glyph cache misses"
         );
-        assert!(dark_stats.0 > linear_stats.0);
         assert!(
-            dark_stats.2 > linear_stats.2,
-            "switching policy should add distinct cache entries"
+            dark_stats.1 > linear_stats.1,
+            "switching policy should reuse existing glyph cache entries"
         );
+        assert_eq!(dark_stats.0, linear_stats.0);
+        assert_eq!(dark_stats.2, linear_stats.2);
     }
 
     #[test]
@@ -6504,7 +6652,120 @@ mod tests {
         text_engine.set_text_coverage_policy(TextCoveragePolicy::Linear);
         let _ = build_vertices(&frame, &mut text_engine).unwrap();
 
+        assert_eq!(text_engine.glyph_cache_stats(), (1, 2, 1));
+    }
+
+    #[test]
+    fn text_render_policy_scope_overrides_and_restores_render_mode() {
+        let handle = FontHandle::new(37);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let text_style = TextStyle {
+            font: Some(handle),
+            font_size: 24.0,
+            line_height: 28.0,
+            color: Color::WHITE,
+            ..TextStyle::default()
+        };
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(205),
+            viewport: Size::new(120.0, 120.0),
+            surface_size: Size::new(120.0, 120.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 8.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style.clone(),
+                }));
+                scene.push(SceneCommand::PushTextRenderPolicy {
+                    policy: TextRenderPolicy::new()
+                        .with_render_mode(sui_scene::TextRenderMode::LcdSubpixel)
+                        .with_subpixel_order(TextSubpixelOrder::Rgb),
+                });
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 44.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style.clone(),
+                }));
+                scene.push(SceneCommand::PopTextRenderPolicy);
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 80.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style,
+                }));
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.set_text_render_mode(TextRenderMode::Grayscale);
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+
         assert_eq!(text_engine.glyph_cache_stats(), (2, 1, 2));
+    }
+
+    #[test]
+    fn unsafe_lcd_text_transform_uses_grayscale_glyph_cache_entry() {
+        let handle = FontHandle::new(38);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let text_style = TextStyle {
+            font: Some(handle),
+            font_size: 24.0,
+            line_height: 28.0,
+            color: Color::WHITE,
+            ..TextStyle::default()
+        };
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(206),
+            viewport: Size::new(160.0, 120.0),
+            surface_size: Size::new(160.0, 120.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(8.0, 8.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style.clone(),
+                }));
+                scene.push(SceneCommand::PushTextRenderPolicy {
+                    policy: TextRenderPolicy::new()
+                        .with_render_mode(sui_scene::TextRenderMode::LcdSubpixel)
+                        .with_subpixel_order(TextSubpixelOrder::Rgb),
+                });
+                scene.push(SceneCommand::PushTransform {
+                    transform: Transform::rotation(0.25),
+                });
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(20.0, 20.0, 80.0, 28.0),
+                    text: "I".to_string(),
+                    style: text_style,
+                }));
+                scene.push(SceneCommand::PopTransform);
+                scene.push(SceneCommand::PopTextRenderPolicy);
+                scene
+            },
+            font_registry: Arc::new(fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        text_engine.set_text_render_mode(TextRenderMode::Grayscale);
+        let _ = build_vertices(&frame, &mut text_engine).unwrap();
+
+        assert_eq!(text_engine.glyph_cache_stats(), (1, 1, 1));
     }
 
     #[test]
@@ -6559,7 +6820,7 @@ mod tests {
     }
 
     #[test]
-    fn default_text_coverage_policy_caches_distinct_luminance_resolutions() {
+    fn default_text_coverage_policy_shares_glyph_cache_entries_across_text_colors() {
         let handle = FontHandle::new(35);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -6605,7 +6866,7 @@ mod tests {
         let mut text_engine = TextEngine::new().unwrap();
         let _ = build_vertices(&frame, &mut text_engine).unwrap();
 
-        assert_eq!(text_engine.glyph_cache_stats(), (2, 0, 2));
+        assert_eq!(text_engine.glyph_cache_stats(), (1, 1, 1));
     }
 
     #[test]
@@ -12426,13 +12687,188 @@ mod tests {
         eprintln!("wrote capture PNG to {}", path.display());
     }
 
-    /// Renders a body-text + small-label sample on a LIGHT surface (dark text) and a DARK
-    /// surface (light text), then writes PNGs to the workspace target dir. The filenames use
-    /// the active shader coverage behavior so captures can be compared across policy changes.
+    /// Diagnostic microbenchmark for text policy cache behavior. It measures CPU-side scene
+    /// preparation through the real text engine and reports cache behavior across coverage,
+    /// color, LCD, and unsafe-LCD fallback scenarios. Run with `--ignored --nocapture`.
     #[test]
-    fn text_coverage_linear_capture() {
-        let suffix = "linear";
+    #[ignore = "diagnostic benchmark for text render policy cache and atlas behavior"]
+    fn text_render_policy_cache_benchmark() {
+        let handle = FontHandle::new(7101);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, load_test_font());
+        let fonts = Arc::new(fonts);
+        let images = Arc::new(ImageRegistry::new());
+        let layouts = Arc::new(TextLayoutRegistry::default());
+        let viewport = Size::new(640.0, 760.0);
 
+        let frame = |window_id: u64,
+                     policy: TextRenderPolicy,
+                     color: Color,
+                     transform: Option<Transform>|
+         -> SceneFrame {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::PushTextRenderPolicy { policy });
+            if let Some(transform) = transform {
+                scene.push(SceneCommand::PushTransform { transform });
+            }
+            for row in 0..44 {
+                scene.push(SceneCommand::DrawText(TextRun {
+                    rect: Rect::new(18.0, 12.0 + row as f32 * 16.0, 600.0, 17.0),
+                    text: format!(
+                        "Atlas policy benchmark row {row:02}: minimum ill glyphs 1234567890"
+                    ),
+                    style: TextStyle {
+                        font: Some(handle),
+                        font_size: 12.0,
+                        line_height: 16.0,
+                        color,
+                        ..TextStyle::default()
+                    },
+                }));
+            }
+            if transform.is_some() {
+                scene.push(SceneCommand::PopTransform);
+            }
+            scene.push(SceneCommand::PopTextRenderPolicy);
+            SceneFrame {
+                window_id: WindowId::new(window_id),
+                viewport,
+                surface_size: viewport,
+                scale_factor: 1.0,
+                dirty_regions: Vec::new(),
+                layer_updates: Vec::new(),
+                scene,
+                font_registry: Arc::clone(&fonts),
+                image_registry: Arc::clone(&images),
+                text_layout_registry: Arc::clone(&layouts),
+            }
+        };
+
+        let scenarios = [
+            (
+                "grayscale-perceptual",
+                frame(
+                    7201,
+                    TextRenderPolicy::new()
+                        .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    None,
+                ),
+            ),
+            (
+                "coverage-linear",
+                frame(
+                    7202,
+                    TextRenderPolicy::new().with_coverage_policy(TextRenderCoveragePolicy::Linear),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    None,
+                ),
+            ),
+            (
+                "coverage-boost",
+                frame(
+                    7203,
+                    TextRenderPolicy::new()
+                        .with_coverage_policy(TextRenderCoveragePolicy::CoverageBoost(0.55)),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    None,
+                ),
+            ),
+            (
+                "coverage-gamma",
+                frame(
+                    7204,
+                    TextRenderPolicy::new()
+                        .with_coverage_policy(TextRenderCoveragePolicy::Gamma(1.8)),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    None,
+                ),
+            ),
+            (
+                "color-churn-light",
+                frame(
+                    7205,
+                    TextRenderPolicy::new()
+                        .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
+                    Color::rgba(0.88, 0.90, 0.94, 1.0),
+                    None,
+                ),
+            ),
+            (
+                "lcd-rgb",
+                frame(
+                    7206,
+                    TextRenderPolicy::new()
+                        .with_render_mode(sui_scene::TextRenderMode::LcdSubpixel)
+                        .with_subpixel_order(TextSubpixelOrder::Rgb)
+                        .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    None,
+                ),
+            ),
+            (
+                "grayscale-rotated",
+                frame(
+                    7207,
+                    TextRenderPolicy::new()
+                        .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    Some(Transform::rotation(0.08)),
+                ),
+            ),
+            (
+                "unsafe-lcd-fallback",
+                frame(
+                    7208,
+                    TextRenderPolicy::new()
+                        .with_render_mode(sui_scene::TextRenderMode::LcdSubpixel)
+                        .with_subpixel_order(TextSubpixelOrder::Rgb)
+                        .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
+                    Color::rgba(0.08, 0.10, 0.14, 1.0),
+                    Some(Transform::rotation(0.08)),
+                ),
+            ),
+        ];
+
+        let mut text_engine = TextEngine::new().expect("text engine should initialize");
+        println!("\n=== Text Render Policy Cache Benchmark ===");
+        for (name, frame) in scenarios {
+            let before = text_engine.glyph_cache_stats();
+            let first_start = std::time::Instant::now();
+            let vertices = build_vertices(&frame, &mut text_engine)
+                .expect("benchmark frame should build")
+                .len();
+            let first_us = first_start.elapsed().as_secs_f64() * 1_000_000.0;
+            let after_first = text_engine.glyph_cache_stats();
+
+            let warm_repeats = 12usize;
+            let warm_start = std::time::Instant::now();
+            for _ in 0..warm_repeats {
+                let _ = build_vertices(&frame, &mut text_engine)
+                    .expect("warm benchmark frame should build");
+            }
+            let warm_avg_us =
+                warm_start.elapsed().as_secs_f64() * 1_000_000.0 / warm_repeats as f64;
+            let after_warm = text_engine.glyph_cache_stats();
+
+            println!(
+                "{name:22} first={first_us:8.1}us warm_avg={warm_avg_us:8.1}us vertices={vertices:5} entries={} (+{}) hits=+{} misses=+{} first_misses=+{}",
+                after_warm.0,
+                after_warm.0.saturating_sub(before.0),
+                after_warm.1.saturating_sub(before.1),
+                after_warm.2.saturating_sub(before.2),
+                after_first.2.saturating_sub(before.2),
+            );
+        }
+        println!("==========================================\n");
+    }
+
+    /// Renders a body-text + small-label sample across DPR, light/dark surfaces, and coverage
+    /// policies. The validation reports core stem luma plus an edge-coverage ratio instead of raw
+    /// pixel diffs, because small-text quality changes are perceptual and do not track total
+    /// changed-pixel percentages well.
+    #[test]
+    fn text_coverage_quality_matrix_capture() {
         let handle = FontHandle::new(7001);
         let mut fonts = FontRegistry::new();
         fonts.insert(handle, load_test_font());
@@ -12451,8 +12887,50 @@ mod tests {
             ("settings  ·  profile  ·  sign out", 11.0, 118.0),
         ];
 
-        let render_sample = |bg: Color, fg: Color| -> super::RgbaImage {
-            let window_id = WindowId::new(7100 + suffix.len() as u64);
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum MatrixPolicy {
+            Linear,
+            Perceptual,
+            LcdRgb,
+        }
+
+        impl MatrixPolicy {
+            fn name(self) -> &'static str {
+                match self {
+                    Self::Linear => "linear",
+                    Self::Perceptual => "perceptual",
+                    Self::LcdRgb => "lcd-rgb",
+                }
+            }
+
+            fn configure(self, renderer: &mut WgpuRenderer) {
+                match self {
+                    Self::Linear => {
+                        renderer.set_text_render_mode(TextRenderMode::Grayscale);
+                        renderer.set_text_subpixel_order(TextSubpixelOrder::None);
+                        renderer.set_text_coverage_policy(TextCoveragePolicy::Linear);
+                    }
+                    Self::Perceptual => {
+                        renderer.set_text_render_mode(TextRenderMode::Grayscale);
+                        renderer.set_text_subpixel_order(TextSubpixelOrder::None);
+                        renderer.set_text_coverage_policy(TextCoveragePolicy::Perceptual);
+                    }
+                    Self::LcdRgb => {
+                        renderer.set_text_render_mode(TextRenderMode::LcdSubpixel);
+                        renderer.set_text_subpixel_order(TextSubpixelOrder::Rgb);
+                        renderer.set_text_coverage_policy(TextCoveragePolicy::Perceptual);
+                    }
+                }
+            }
+        }
+
+        let render_sample = |policy: MatrixPolicy, scale: f32, bg: Color, fg: Color| -> RgbaImage {
+            let policy_id = match policy {
+                MatrixPolicy::Linear => 1,
+                MatrixPolicy::Perceptual => 2,
+                MatrixPolicy::LcdRgb => 3,
+            };
+            let window_id = WindowId::new(7100 + policy_id + (scale * 10.0) as u64);
             let viewport = Size::new(420.0, 140.0);
             let mut scene = Scene::new();
             scene.push(SceneCommand::Clear(bg));
@@ -12472,8 +12950,8 @@ mod tests {
             let frame = SceneFrame {
                 window_id,
                 viewport,
-                surface_size: viewport,
-                scale_factor: 1.0,
+                surface_size: Size::new(viewport.width * scale, viewport.height * scale),
+                scale_factor: scale,
                 dirty_regions: Vec::new(),
                 layer_updates: Vec::new(),
                 scene,
@@ -12482,6 +12960,7 @@ mod tests {
                 text_layout_registry: Arc::new(TextLayoutRegistry::default()),
             };
             let mut renderer = WgpuRenderer::new();
+            policy.configure(&mut renderer);
             renderer
                 .render(&frame)
                 .expect("headless text render should succeed");
@@ -12490,31 +12969,52 @@ mod tests {
                 .expect("capture of rendered text frame should succeed")
         };
 
-        // Two robust weight signals over the inked pixels (those differing from the surface):
-        //  - `mean`: average luma of all inked pixels (includes AA fringe).
-        //  - `core`: average luma of the darkest 25% (light mode) / brightest 25% (dark mode)
-        //    of inked pixels, i.e. the glyph CORE, which best reflects perceived stem weight.
-        // For light mode, lower numbers = darker/heavier text. For dark mode the polarity is
-        // inverted (higher core luma = brighter text), so we report core as deviation toward fg.
-        fn ink_stats(image: &super::RgbaImage, bg: [u8; 3], dark_text: bool) -> (f32, f32, u64) {
+        #[derive(Debug, Clone, Copy)]
+        struct InkStats {
+            mean_luma: f32,
+            core_luma: f32,
+            foreground_weight: f32,
+            edge_ratio: f32,
+            inked_pixels: u64,
+        }
+
+        fn luma(rgb: [u8; 3]) -> f32 {
+            0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32
+        }
+
+        fn ink_stats(image: &RgbaImage, bg: [u8; 3], fg: [u8; 3], dark_text: bool) -> InkStats {
+            let bg_luma = luma(bg);
+            let fg_luma = luma(fg);
+            let contrast = (fg_luma - bg_luma).abs().max(1.0);
             let mut lumas: Vec<f32> = Vec::new();
+            let mut edge_pixels = 0u64;
+            let mut core_pixels = 0u64;
             for px in image.pixels().chunks_exact(4) {
                 let d = (px[0] as i32 - bg[0] as i32).abs()
                     + (px[1] as i32 - bg[1] as i32).abs()
                     + (px[2] as i32 - bg[2] as i32).abs();
                 if d > 10 {
-                    lumas.push(
-                        0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32,
-                    );
+                    let pixel_luma = luma([px[0], px[1], px[2]]);
+                    let coverage = ((pixel_luma - bg_luma).abs() / contrast).clamp(0.0, 1.0);
+                    if coverage >= 0.85 {
+                        core_pixels += 1;
+                    } else if coverage >= 0.10 {
+                        edge_pixels += 1;
+                    }
+                    lumas.push(pixel_luma);
                 }
             }
             let count = lumas.len() as u64;
             if count == 0 {
-                return (0.0, 0.0, 0);
+                return InkStats {
+                    mean_luma: 0.0,
+                    core_luma: 0.0,
+                    foreground_weight: 0.0,
+                    edge_ratio: 0.0,
+                    inked_pixels: 0,
+                };
             }
             let mean = lumas.iter().sum::<f32>() / count as f32;
-            // Glyph core: for dark text the core is the darkest pixels (ascending), for light
-            // text on dark the core is the brightest pixels (descending).
             if dark_text {
                 lumas.sort_by(|a, b| a.partial_cmp(b).unwrap());
             } else {
@@ -12522,34 +13022,108 @@ mod tests {
             }
             let q = (lumas.len() / 4).max(1);
             let core = lumas[..q].iter().sum::<f32>() / q as f32;
-            (mean, core, count)
+            let foreground_weight = if dark_text {
+                bg_luma - core
+            } else {
+                core - bg_luma
+            };
+            InkStats {
+                mean_luma: mean,
+                core_luma: core,
+                foreground_weight,
+                edge_ratio: edge_pixels as f32 / core_pixels.max(1) as f32,
+                inked_pixels: count,
+            }
         }
 
         let light_bg = Color::rgba(0.98, 0.98, 0.99, 1.0);
         let dark_bg = Color::rgba(0.08, 0.09, 0.11, 1.0);
-        let light = render_sample(light_bg, Color::rgba(0.05, 0.05, 0.06, 1.0));
-        let dark = render_sample(dark_bg, Color::rgba(0.95, 0.95, 0.96, 1.0));
-
         let light_bg8 = [250u8, 250, 252];
         let dark_bg8 = [22u8, 24, 28];
-        let (light_mean, light_core, light_n) = ink_stats(&light, light_bg8, true);
-        let (dark_mean, dark_core, dark_n) = ink_stats(&dark, dark_bg8, false);
-        eprintln!(
-            "[text-coverage-{suffix}] LIGHT mode (dark text): mean ink luma = {light_mean:.1}, core(darkest 25%) = {light_core:.1} [n={light_n}] (lower = heavier)"
-        );
-        eprintln!(
-            "[text-coverage-{suffix}] DARK mode (light text): mean ink luma = {dark_mean:.1}, core(brightest 25%) = {dark_core:.1} [n={dark_n}] (should be ~unchanged)"
-        );
+        let light_fg = Color::rgba(0.05, 0.05, 0.06, 1.0);
+        let dark_fg = Color::rgba(0.95, 0.95, 0.96, 1.0);
+        let light_fg8 = [13u8, 13, 15];
+        let dark_fg8 = [242u8, 242, 245];
+        let policies = [
+            MatrixPolicy::Linear,
+            MatrixPolicy::Perceptual,
+            MatrixPolicy::LcdRgb,
+        ];
+        let scales = [1.0f32, 1.5, 2.0];
+        let mut write_dir = None;
+        if std::env::var_os("SUI_TEXT_COVERAGE_WRITE_PNGS").is_some() {
+            let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            dir.push("../../target/text-coverage-matrix");
+            std::fs::create_dir_all(&dir).expect("creating text coverage capture dir should work");
+            write_dir = Some(dir);
+        }
 
-        let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        dir.push("../../target");
-        let _ = std::fs::create_dir_all(&dir);
-        for (image, name) in [(&light, "text-light"), (&dark, "text-dark")] {
-            let png = encode_png_rgba8(image.width(), image.height(), image.pixels());
-            let mut path = dir.clone();
-            path.push(format!("{name}-{suffix}.png"));
-            std::fs::write(&path, &png).expect("writing text capture PNG should succeed");
-            eprintln!("wrote {}", path.display());
+        for scale in scales {
+            let mut linear_light_weight = None;
+            let mut perceptual_light_weight = None;
+            let mut linear_dark_weight = None;
+            let mut perceptual_dark_weight = None;
+
+            for policy in policies {
+                let light = render_sample(policy, scale, light_bg, light_fg);
+                let dark = render_sample(policy, scale, dark_bg, dark_fg);
+                let light_stats = ink_stats(&light, light_bg8, light_fg8, true);
+                let dark_stats = ink_stats(&dark, dark_bg8, dark_fg8, false);
+                assert!(light_stats.inked_pixels > 200);
+                assert!(dark_stats.inked_pixels > 200);
+                assert!(light_stats.edge_ratio.is_finite());
+                assert!(dark_stats.edge_ratio.is_finite());
+
+                eprintln!(
+                    "[text-quality {policy} @{scale:.1}x light] mean={:.1} core={:.1} weight={:.1} edge/core={:.2} n={}",
+                    light_stats.mean_luma,
+                    light_stats.core_luma,
+                    light_stats.foreground_weight,
+                    light_stats.edge_ratio,
+                    light_stats.inked_pixels,
+                    policy = policy.name(),
+                );
+                eprintln!(
+                    "[text-quality {policy} @{scale:.1}x dark] mean={:.1} core={:.1} weight={:.1} edge/core={:.2} n={}",
+                    dark_stats.mean_luma,
+                    dark_stats.core_luma,
+                    dark_stats.foreground_weight,
+                    dark_stats.edge_ratio,
+                    dark_stats.inked_pixels,
+                    policy = policy.name(),
+                );
+
+                match policy {
+                    MatrixPolicy::Linear => {
+                        linear_light_weight = Some(light_stats.foreground_weight);
+                        linear_dark_weight = Some(dark_stats.foreground_weight);
+                    }
+                    MatrixPolicy::Perceptual => {
+                        perceptual_light_weight = Some(light_stats.foreground_weight);
+                        perceptual_dark_weight = Some(dark_stats.foreground_weight);
+                    }
+                    MatrixPolicy::LcdRgb => {}
+                }
+
+                if let Some(dir) = write_dir.as_ref() {
+                    for (image, surface) in [(&light, "light"), (&dark, "dark")] {
+                        let png = encode_png_rgba8(image.width(), image.height(), image.pixels());
+                        let mut path = dir.clone();
+                        path.push(format!("text-{surface}-{}-{scale:.1}x.png", policy.name()));
+                        std::fs::write(&path, &png)
+                            .expect("writing text capture PNG should succeed");
+                    }
+                }
+            }
+
+            assert!(
+                perceptual_light_weight.expect("perceptual light stats")
+                    >= linear_light_weight.expect("linear light stats") * 0.98
+            );
+            assert!(
+                perceptual_dark_weight.expect("perceptual dark stats")
+                    >= linear_dark_weight.expect("linear dark stats") * 0.98
+            );
         }
     }
 }

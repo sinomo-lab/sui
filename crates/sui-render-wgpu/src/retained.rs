@@ -1825,6 +1825,29 @@ fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHash
 }
 
 fn hash_text_render_policy(policy: sui_scene::TextRenderPolicy, hasher: &mut DefaultHasher) {
+    match policy.render_mode {
+        Some(sui_scene::TextRenderMode::Grayscale) => {
+            1u8.hash(hasher);
+        }
+        Some(sui_scene::TextRenderMode::LcdSubpixel) => {
+            2u8.hash(hasher);
+        }
+        None => 0u8.hash(hasher),
+    }
+
+    match policy.subpixel_order {
+        Some(sui_scene::TextSubpixelOrder::None) => {
+            1u8.hash(hasher);
+        }
+        Some(sui_scene::TextSubpixelOrder::Rgb) => {
+            2u8.hash(hasher);
+        }
+        Some(sui_scene::TextSubpixelOrder::Bgr) => {
+            3u8.hash(hasher);
+        }
+        None => 0u8.hash(hasher),
+    }
+
     match policy.hinting {
         Some(sui_scene::TextRenderHinting::None) => {
             1u8.hash(hasher);

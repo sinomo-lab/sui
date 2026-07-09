@@ -144,6 +144,20 @@ pub enum WidgetShader {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextRenderMode {
+    Grayscale,
+    LcdSubpixel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextSubpixelOrder {
+    #[default]
+    None,
+    Rgb,
+    Bgr,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextRenderHinting {
     None,
@@ -212,6 +226,8 @@ impl TextRenderCoveragePolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TextRenderPolicy {
+    pub render_mode: Option<TextRenderMode>,
+    pub subpixel_order: Option<TextSubpixelOrder>,
     pub hinting: Option<TextRenderHinting>,
     pub stem_darkening: Option<TextRenderStemDarkening>,
     pub coverage_policy: Option<TextRenderCoveragePolicy>,
@@ -220,10 +236,22 @@ pub struct TextRenderPolicy {
 impl TextRenderPolicy {
     pub const fn new() -> Self {
         Self {
+            render_mode: None,
+            subpixel_order: None,
             hinting: None,
             stem_darkening: None,
             coverage_policy: None,
         }
+    }
+
+    pub const fn with_render_mode(mut self, mode: TextRenderMode) -> Self {
+        self.render_mode = Some(mode);
+        self
+    }
+
+    pub const fn with_subpixel_order(mut self, order: TextSubpixelOrder) -> Self {
+        self.subpixel_order = Some(order);
+        self
     }
 
     pub const fn with_hinting(mut self, hinting: TextRenderHinting) -> Self {
@@ -243,6 +271,8 @@ impl TextRenderPolicy {
 
     pub fn normalized(self) -> Self {
         Self {
+            render_mode: self.render_mode,
+            subpixel_order: self.subpixel_order,
             hinting: self.hinting.map(TextRenderHinting::normalized),
             stem_darkening: self.stem_darkening.map(TextRenderStemDarkening::normalized),
             coverage_policy: self
@@ -1189,7 +1219,8 @@ mod tests {
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
         RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
         SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
-        TextRenderCoveragePolicy, TextRenderPolicy, WidgetShader,
+        TextRenderCoveragePolicy, TextRenderMode, TextRenderPolicy, TextSubpixelOrder,
+        WidgetShader,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -1260,6 +1291,8 @@ mod tests {
         };
         let text_policy = SceneCommand::PushTextRenderPolicy {
             policy: TextRenderPolicy::new()
+                .with_render_mode(TextRenderMode::LcdSubpixel)
+                .with_subpixel_order(TextSubpixelOrder::Rgb)
                 .with_coverage_policy(TextRenderCoveragePolicy::TwoCoverageMinusCoverageSq),
         };
         let layer = SceneCommand::Layer(SceneLayer::new(

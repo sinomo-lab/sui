@@ -12,8 +12,8 @@ use sui_runtime::{
 
 use crate::{
     AccessibilityBridge, AccessibilitySnapshot, WindowOutputDiagnostics, map_window_stem_darkening,
-    map_window_text_coverage_policy, map_window_text_hinting, publish_window_output_diagnostics,
-    resolve_sdr_content_brightness_nits,
+    map_window_text_coverage_policy, map_window_text_hinting, map_window_text_subpixel_order,
+    publish_window_output_diagnostics, resolve_sdr_content_brightness_nits,
 };
 
 #[derive(Debug, Clone)]
@@ -344,6 +344,10 @@ impl HeadlessPlatform {
                         map_window_text_coverage_policy(options.text_coverage_policy)
                     }),
                 );
+                self.renderer
+                    .set_runtime_text_subpixel_order_override(render_options.map(|options| {
+                        map_window_text_subpixel_order(options.text_subpixel_order)
+                    }));
                 let active_render_options =
                     render_options.unwrap_or_else(|| WindowRenderOptions::new(true, 1.0));
                 let display_capabilities_for_brightness = self

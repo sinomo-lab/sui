@@ -650,6 +650,14 @@ impl WindowTextCoveragePolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowTextSubpixelOrder {
+    #[default]
+    None,
+    Rgb,
+    Bgr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowOutputColorPrimaries {
     #[default]
     Automatic,
@@ -692,6 +700,7 @@ pub struct WindowRenderOptions {
     pub text_hinting: WindowTextHinting,
     pub stem_darkening: WindowStemDarkening,
     pub text_coverage_policy: WindowTextCoveragePolicy,
+    pub text_subpixel_order: WindowTextSubpixelOrder,
     pub output_color_primaries: WindowOutputColorPrimaries,
     pub dynamic_range_mode: WindowDynamicRangeMode,
     pub tone_mapping_mode: WindowToneMappingMode,
@@ -711,6 +720,7 @@ impl WindowRenderOptions {
             },
             stem_darkening: WindowStemDarkening::None,
             text_coverage_policy: WindowTextCoveragePolicy::Perceptual,
+            text_subpixel_order: WindowTextSubpixelOrder::None,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
             dynamic_range_mode: WindowDynamicRangeMode::Automatic,
             tone_mapping_mode: WindowToneMappingMode::Automatic,
@@ -737,6 +747,11 @@ impl WindowRenderOptions {
 
     pub const fn with_text_coverage_policy(mut self, policy: WindowTextCoveragePolicy) -> Self {
         self.text_coverage_policy = policy;
+        self
+    }
+
+    pub const fn with_text_subpixel_order(mut self, order: WindowTextSubpixelOrder) -> Self {
+        self.text_subpixel_order = order;
         self
     }
 
@@ -781,6 +796,7 @@ impl WindowRenderOptions {
             text_hinting: self.text_hinting.normalized(),
             stem_darkening: self.stem_darkening.normalized(),
             text_coverage_policy: self.text_coverage_policy.normalized(),
+            text_subpixel_order: self.text_subpixel_order,
             output_color_primaries: self.output_color_primaries,
             dynamic_range_mode: self.dynamic_range_mode,
             tone_mapping_mode: self.tone_mapping_mode,
@@ -1346,8 +1362,9 @@ mod tests {
         SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
         WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
         WindowPerformanceSnapshot, WindowRenderOptions, WindowTextCoveragePolicy,
-        WindowTextHinting, WindowToneMappingMode, clear_window_performance_snapshot,
-        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
+        WindowTextHinting, WindowTextSubpixelOrder, WindowToneMappingMode,
+        clear_window_performance_snapshot, set_window_render_options,
+        set_window_scene_statistics_detail_mode, window_render_options,
         window_scene_statistics_detail_mode,
     };
     use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, Size, WidgetId, WindowId};
@@ -1766,6 +1783,7 @@ mod tests {
                 .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
                 .with_color_management_mode(WindowColorManagementMode::PreferHdr)
                 .with_text_coverage_policy(WindowTextCoveragePolicy::Gamma(-2.0))
+                .with_text_subpixel_order(WindowTextSubpixelOrder::Bgr)
                 .with_sdr_content_brightness_nits(-25.0),
         );
 
@@ -1778,6 +1796,7 @@ mod tests {
                     .with_tone_mapping_mode(WindowToneMappingMode::Reinhard)
                     .with_color_management_mode(WindowColorManagementMode::PreferHdr)
                     .with_text_coverage_policy(WindowTextCoveragePolicy::Linear)
+                    .with_text_subpixel_order(WindowTextSubpixelOrder::Bgr)
                     .with_sdr_content_brightness_nits(203.0)
             )
         );
@@ -1826,5 +1845,6 @@ mod tests {
             options.text_coverage_policy,
             WindowTextCoveragePolicy::Perceptual
         );
+        assert_eq!(options.text_subpixel_order, WindowTextSubpixelOrder::None);
     }
 }

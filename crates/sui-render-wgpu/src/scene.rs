@@ -1727,6 +1727,7 @@ pub(crate) struct TextEngine {
     pub(crate) atlas: TextAtlasPages,
     swash_scale_context: SwashScaleContext,
     pub(crate) text_render_mode: TextRenderMode,
+    pub(crate) text_subpixel_order: TextSubpixelOrder,
     pub(crate) text_hinting: TextHinting,
     pub(crate) stem_darkening: StemDarkening,
     pub(crate) coverage_policy: TextCoveragePolicy,
@@ -1784,6 +1785,7 @@ impl Default for TextEngine {
             atlas: TextAtlasPages::new(TEXT_ATLAS_WIDTH, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_MAX_PAGES),
             swash_scale_context: SwashScaleContext::new(),
             text_render_mode: TextRenderMode::default(),
+            text_subpixel_order: TextSubpixelOrder::default(),
             text_hinting: TextHinting::default(),
             stem_darkening: StemDarkening::default(),
             coverage_policy: TextCoveragePolicy::default(),
@@ -1800,9 +1802,26 @@ impl Default for TextEngine {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ResolvedTextRenderPolicy {
+    render_mode: TextRenderMode,
+    subpixel_order: TextSubpixelOrder,
     hinting: TextHinting,
     stem_darkening: StemDarkening,
     coverage_policy: TextCoveragePolicy,
+}
+
+fn map_scene_text_render_mode(mode: sui_scene::TextRenderMode) -> TextRenderMode {
+    match mode {
+        sui_scene::TextRenderMode::Grayscale => TextRenderMode::Grayscale,
+        sui_scene::TextRenderMode::LcdSubpixel => TextRenderMode::LcdSubpixel,
+    }
+}
+
+fn map_scene_text_subpixel_order(order: sui_scene::TextSubpixelOrder) -> TextSubpixelOrder {
+    match order {
+        sui_scene::TextSubpixelOrder::None => TextSubpixelOrder::None,
+        sui_scene::TextSubpixelOrder::Rgb => TextSubpixelOrder::Rgb,
+        sui_scene::TextSubpixelOrder::Bgr => TextSubpixelOrder::Bgr,
+    }
 }
 
 fn map_text_render_hinting(hinting: TextRenderHinting) -> TextHinting {
@@ -1851,6 +1870,10 @@ impl TextEngine {
         self.text_render_mode = mode;
     }
 
+    pub(crate) fn set_text_subpixel_order(&mut self, order: TextSubpixelOrder) {
+        self.text_subpixel_order = order;
+    }
+
     pub(crate) fn set_text_hinting(&mut self, hinting: TextHinting) {
         self.text_hinting = hinting.normalized();
     }
@@ -1879,6 +1902,8 @@ impl TextEngine {
     ) -> ResolvedTextRenderPolicy {
         let Some(policy) = override_policy.map(TextRenderPolicy::normalized) else {
             return ResolvedTextRenderPolicy {
+                render_mode: self.text_render_mode,
+                subpixel_order: self.text_subpixel_order,
                 hinting: self.text_hinting,
                 stem_darkening: self.stem_darkening,
                 coverage_policy: self.coverage_policy,
@@ -1886,6 +1911,14 @@ impl TextEngine {
         };
 
         ResolvedTextRenderPolicy {
+            render_mode: policy
+                .render_mode
+                .map(map_scene_text_render_mode)
+                .unwrap_or(self.text_render_mode),
+            subpixel_order: policy
+                .subpixel_order
+                .map(map_scene_text_subpixel_order)
+                .unwrap_or(self.text_subpixel_order),
             hinting: policy
                 .hinting
                 .map(map_text_render_hinting)
@@ -2087,6 +2120,21 @@ impl TextEngine {
             let coverage_policy = text_policy
                 .coverage_policy
                 .resolved_for_text_color(glyph_color);
+            let render_mode = if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
+                && matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
+            {
+                TextRenderMode::Grayscale
+            } else if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
+                && !allows_lcd_text(state.current_transform)
+            {
+                TextRenderMode::Grayscale
+            } else {
+                text_policy.render_mode
+            };
+            let subpixel_order = match render_mode {
+                TextRenderMode::Grayscale => TextSubpixelOrder::None,
+                TextRenderMode::LcdSubpixel => text_policy.subpixel_order,
+            };
             let mut translated_glyph = glyph.glyph.clone();
             translated_glyph.origin_x += origin.x;
             translated_glyph.origin_y += origin.y;
@@ -2107,15 +2155,17 @@ impl TextEngine {
                     &translated_glyph,
                     raster_scale_factor,
                 ),
+                render_mode,
+                subpixel_order,
                 text_policy.hinting,
                 text_policy.stem_darkening,
-                coverage_policy,
                 glyph_style.weight.value(),
             )? {
                 if let Some(instance) = build_text_atlas_instance(
                     atlas,
                     &translated_glyph,
                     glyph_color,
+                    coverage_policy,
                     state.current_transform,
                     state.pixel_snap_offset,
                     viewport,
@@ -2150,9 +2200,10 @@ impl TextEngine {
         glyph_scale: f32,
         raster_scale_factor: f32,
         subpixel_offset: GlyphSubpixelOffsetKey,
+        text_render_mode: TextRenderMode,
+        text_subpixel_order: TextSubpixelOrder,
         text_hinting: TextHinting,
         stem_darkening: StemDarkening,
-        coverage_policy: TextCoveragePolicy,
         weight: u16,
     ) -> Result<Option<&CachedGlyphAtlas>> {
         let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
@@ -2162,10 +2213,10 @@ impl TextEngine {
             glyph_id,
             scale_bucket,
             subpixel_offset,
-            self.text_render_mode,
+            text_render_mode,
+            text_subpixel_order,
             text_hinting,
             stem_darkening,
-            coverage_policy,
             weight,
         );
         // Hit: stamp the glyph's page as used this frame (for LRU) and return the cached entry.
@@ -2204,10 +2255,10 @@ impl TextEngine {
             raster_scale_factor.max(1.0),
             bucketed_logical_scale,
             subpixel_offset,
-            self.text_render_mode,
+            text_render_mode,
+            text_subpixel_order,
             text_hinting,
             stem_darkening,
-            coverage_policy,
             weight,
             self.frame_counter,
         )?;
@@ -2270,9 +2321,9 @@ fn build_cached_glyph_atlas(
     glyph_scale_logical: f32,
     subpixel_offset: GlyphSubpixelOffsetKey,
     text_render_mode: TextRenderMode,
+    text_subpixel_order: TextSubpixelOrder,
     text_hinting: TextHinting,
     stem_darkening: StemDarkening,
-    coverage_policy: TextCoveragePolicy,
     weight: u16,
     frame: u64,
 ) -> Result<Option<(CachedGlyphAtlas, Option<usize>)>> {
@@ -2311,7 +2362,7 @@ fn build_cached_glyph_atlas(
         && matches!(image.content, SwashImageContent::Mask)
         && pixel_count > 0
         && image.data.len() >= pixel_count
-        && is_binary_coverage(&image.data[..pixel_count]);
+        && coverage_needs_oversampling(&image.data[..pixel_count], font_size_physical);
 
     let rasterized = if needs_oversample {
         let placement = image.placement;
@@ -2329,7 +2380,6 @@ fn build_cached_glyph_atlas(
             pixels: mask_coverage_to_rgba(
                 &coverage,
                 stem_darkening.effective_amount(font_size_physical),
-                coverage_policy,
             ),
             is_color: false,
         });
@@ -2338,8 +2388,8 @@ fn build_cached_glyph_atlas(
                 &image,
                 font_size_physical,
                 text_render_mode,
+                text_subpixel_order,
                 stem_darkening,
-                coverage_policy,
             )
         }) {
             Some(rasterized) => rasterized,
@@ -2350,8 +2400,8 @@ fn build_cached_glyph_atlas(
             &image,
             font_size_physical,
             text_render_mode,
+            text_subpixel_order,
             stem_darkening,
-            coverage_policy,
         ) {
             Some(rasterized) => rasterized,
             None => return Ok(None),
@@ -2427,8 +2477,8 @@ pub(crate) fn swash_image_to_rgba(
     image: &swash::scale::image::Image,
     ppem: f32,
     text_render_mode: TextRenderMode,
+    text_subpixel_order: TextSubpixelOrder,
     stem_darkening: StemDarkening,
-    coverage_policy: TextCoveragePolicy,
 ) -> Option<SwashRasterizedGlyph> {
     let width = usize::try_from(image.placement.width).ok()?;
     let height = usize::try_from(image.placement.height).ok()?;
@@ -2444,11 +2494,7 @@ pub(crate) fn swash_image_to_rgba(
             // Coverage is already anti-aliased here; the binary-mask case is intercepted earlier
             // (build_cached_glyph_atlas) and re-rendered with oversampling for true coverage.
             Some(SwashRasterizedGlyph {
-                pixels: mask_coverage_to_rgba(
-                    &image.data[..pixel_count],
-                    stem_darkening_amount,
-                    coverage_policy,
-                ),
+                pixels: mask_coverage_to_rgba(&image.data[..pixel_count], stem_darkening_amount),
                 is_color: false,
             })
         }
@@ -2462,8 +2508,8 @@ pub(crate) fn swash_image_to_rgba(
                 pixel.copy_from_slice(&convert_subpixel_texel_for_mode(
                     [source[0], source[1], source[2], source[3]],
                     text_render_mode,
+                    text_subpixel_order,
                     stem_darkening_amount,
-                    coverage_policy,
                 ));
             }
 
@@ -2490,24 +2536,32 @@ pub(crate) fn swash_image_to_rgba(
 pub(crate) fn convert_subpixel_texel_for_mode(
     source: [u8; 4],
     text_render_mode: TextRenderMode,
+    text_subpixel_order: TextSubpixelOrder,
     stem_darkening_amount: f32,
-    coverage_policy: TextCoveragePolicy,
 ) -> [u8; 4] {
     match text_render_mode {
         TextRenderMode::Grayscale => {
             let coverage =
                 ((u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3) as u8;
             let coverage = apply_stem_darkening_to_coverage(coverage, stem_darkening_amount);
-            let alpha = (coverage_policy.apply(coverage as f32 / 255.0) * 255.0).round() as u8;
-            [255, 255, 255, alpha]
+            [255, 255, 255, coverage]
         }
         TextRenderMode::LcdSubpixel => {
-            let red = apply_stem_darkening_to_coverage(source[2], stem_darkening_amount);
-            let green = apply_stem_darkening_to_coverage(source[1], stem_darkening_amount);
-            let blue = apply_stem_darkening_to_coverage(source[0], stem_darkening_amount);
-            let red = (coverage_policy.apply(red as f32 / 255.0) * 255.0).round() as u8;
-            let green = (coverage_policy.apply(green as f32 / 255.0) * 255.0).round() as u8;
-            let blue = (coverage_policy.apply(blue as f32 / 255.0) * 255.0).round() as u8;
+            let [red_source, green_source, blue_source] = match text_subpixel_order {
+                TextSubpixelOrder::None => {
+                    let coverage =
+                        ((u16::from(source[0]) + u16::from(source[1]) + u16::from(source[2])) / 3)
+                            as u8;
+                    let coverage =
+                        apply_stem_darkening_to_coverage(coverage, stem_darkening_amount);
+                    return [255, 255, 255, coverage];
+                }
+                TextSubpixelOrder::Rgb => [source[2], source[1], source[0]],
+                TextSubpixelOrder::Bgr => [source[0], source[1], source[2]],
+            };
+            let red = apply_stem_darkening_to_coverage(red_source, stem_darkening_amount);
+            let green = apply_stem_darkening_to_coverage(green_source, stem_darkening_amount);
+            let blue = apply_stem_darkening_to_coverage(blue_source, stem_darkening_amount);
             let alpha = red.max(green).max(blue);
             [red, green, blue, alpha]
         }
@@ -2531,25 +2585,52 @@ pub(crate) fn apply_stem_darkening_to_coverage(coverage: u8, amount: f32) -> u8 
     (darkened.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-fn mask_coverage_to_rgba(
-    coverage: &[u8],
-    stem_darkening_amount: f32,
-    coverage_policy: TextCoveragePolicy,
-) -> Vec<u8> {
+fn mask_coverage_to_rgba(coverage: &[u8], stem_darkening_amount: f32) -> Vec<u8> {
     let mut pixels = vec![0u8; coverage.len() * 4];
     for (value, pixel) in coverage.iter().zip(pixels.chunks_exact_mut(4)) {
         let value = apply_stem_darkening_to_coverage(*value, stem_darkening_amount);
-        let alpha = (coverage_policy.apply(value as f32 / 255.0) * 255.0).round() as u8;
         pixel[0] = 255;
         pixel[1] = 255;
         pixel[2] = 255;
-        pixel[3] = alpha;
+        pixel[3] = value;
     }
     pixels
 }
 
 fn is_binary_coverage(data: &[u8]) -> bool {
     !data.is_empty() && data.iter().all(|&value| value == 0 || value == 255)
+}
+
+fn coverage_needs_oversampling(data: &[u8], ppem: f32) -> bool {
+    if is_binary_coverage(data) {
+        return true;
+    }
+    if data.is_empty() || !ppem.is_finite() || ppem > 18.0 {
+        return false;
+    }
+
+    let mut partial_values = [false; 256];
+    let mut partial_value_count = 0usize;
+    let mut partial_pixel_count = 0usize;
+    let mut covered_pixel_count = 0usize;
+    for &value in data {
+        if value > 0 {
+            covered_pixel_count += 1;
+        }
+        if value > 0 && value < 255 {
+            partial_pixel_count += 1;
+            let slot = &mut partial_values[value as usize];
+            if !*slot {
+                *slot = true;
+                partial_value_count += 1;
+            }
+        }
+    }
+
+    covered_pixel_count >= 4
+        && partial_pixel_count > 0
+        && partial_value_count <= 2
+        && partial_pixel_count * 5 <= covered_pixel_count * 2
 }
 
 /// Area-average a `factor`x oversampled coverage mask (`src`) down onto the 1x pixel grid defined
@@ -2697,6 +2778,30 @@ mod coverage_tests {
         assert!(!is_binary_coverage(&[0, 128, 255]));
         assert!(!is_binary_coverage(&[]));
     }
+
+    #[test]
+    fn oversampling_detection_includes_sparse_small_ppem_partial_masks() {
+        assert!(coverage_needs_oversampling(
+            &[0, 255, 255, 255, 64, 255, 0, 0],
+            12.0
+        ));
+    }
+
+    #[test]
+    fn oversampling_detection_keeps_rich_antialiasing_direct() {
+        assert!(!coverage_needs_oversampling(
+            &[0, 32, 64, 96, 128, 160, 192, 224, 255],
+            12.0
+        ));
+    }
+
+    #[test]
+    fn oversampling_detection_keeps_large_ppem_partial_masks_direct() {
+        assert!(!coverage_needs_oversampling(
+            &[0, 255, 255, 255, 64, 255, 0, 0],
+            24.0
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -2751,6 +2856,7 @@ pub(crate) fn append_cached_glyph_atlas(
         atlas,
         glyph,
         color,
+        TextCoveragePolicy::Linear,
         transform,
         Vector::ZERO,
         viewport,
@@ -2764,6 +2870,7 @@ fn build_text_atlas_instance(
     atlas: &CachedGlyphAtlas,
     glyph: &SceneShapedGlyph,
     color: Color,
+    coverage_policy: TextCoveragePolicy,
     transform: Transform,
     pixel_snap_offset: Vector,
     viewport: Size,
@@ -2797,6 +2904,8 @@ fn build_text_atlas_instance(
     let _bottom_right = to_ndc(bottom_right.x, bottom_right.y, viewport);
 
     let atlas_contains_lcd_subpixels = matches!(atlas.color_mode, TextAtlasColorMode::LcdSubpixel);
+    let (coverage_policy_kind, coverage_policy_parameter) =
+        coverage_policy_shader_metadata(coverage_policy);
 
     Some(TextAtlasInstance {
         top_left,
@@ -2808,9 +2917,23 @@ fn build_text_atlas_instance(
         metadata: [
             (atlas_contains_lcd_subpixels && allows_lcd_text(transform)) as u8 as f32,
             atlas_contains_lcd_subpixels as u8 as f32,
+            coverage_policy_kind,
+            coverage_policy_parameter,
         ],
         layer: atlas.page_index as u32,
     })
+}
+
+fn coverage_policy_shader_metadata(policy: TextCoveragePolicy) -> (f32, f32) {
+    match policy.normalized() {
+        TextCoveragePolicy::Perceptual => coverage_policy_shader_metadata(
+            TextCoveragePolicy::CoverageBoost(perceptual_text_coverage_boost(Color::BLACK)),
+        ),
+        TextCoveragePolicy::Linear => (0.0, 0.0),
+        TextCoveragePolicy::Gamma(gamma) => (1.0, gamma),
+        TextCoveragePolicy::CoverageBoost(amount) => (2.0, amount),
+        TextCoveragePolicy::TwoCoverageMinusCoverageSq => (3.0, 0.0),
+    }
 }
 
 pub(crate) fn allows_lcd_text(transform: Transform) -> bool {

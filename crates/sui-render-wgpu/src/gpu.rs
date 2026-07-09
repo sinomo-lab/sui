@@ -605,7 +605,7 @@ pub(crate) struct TextAtlasInstance {
     pub(crate) uv_min: [f32; 2],
     pub(crate) uv_max: [f32; 2],
     pub(crate) color: [f32; 4],
-    pub(crate) metadata: [f32; 2],
+    pub(crate) metadata: [f32; 4],
     /// Atlas page == texture-array layer this glyph lives on. Sampled in the fragment shader
     /// once the multi-page texture array goes live (Phase 3).
     pub(crate) layer: u32,
@@ -619,7 +619,7 @@ impl TextAtlasInstance {
         4 => Float32x2,
         5 => Float32x2,
         6 => Float32x4,
-        7 => Float32x2,
+        7 => Float32x4,
         8 => Uint32
     ];
 

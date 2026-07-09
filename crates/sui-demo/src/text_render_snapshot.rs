@@ -4,7 +4,7 @@ use sui::{
     Application, Color, Constraints, Event, FontHandle, MeasureCtx, PaintCtx, Point, Rect,
     SemanticsCtx, SemanticsNode, SemanticsRole, Size, TextStyle, Widget, WindowBuilder,
     WindowEvent, WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy,
-    WindowTextHinting, set_window_render_options,
+    WindowTextHinting, WindowTextSubpixelOrder, set_window_render_options,
 };
 use sui_testing::TestApp;
 
@@ -176,6 +176,21 @@ fn render_options() -> WindowRenderOptions {
         };
         if let Some(policy) = policy {
             options = options.with_text_coverage_policy(policy);
+        }
+    }
+
+    if let Ok(value) = env::var("SUI_TEXT_COMPARE_SUBPIXEL_ORDER") {
+        let order = if value.eq_ignore_ascii_case("rgb") {
+            Some(WindowTextSubpixelOrder::Rgb)
+        } else if value.eq_ignore_ascii_case("bgr") {
+            Some(WindowTextSubpixelOrder::Bgr)
+        } else if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") {
+            Some(WindowTextSubpixelOrder::None)
+        } else {
+            None
+        };
+        if let Some(order) = order {
+            options = options.with_text_subpixel_order(order);
         }
     }
 

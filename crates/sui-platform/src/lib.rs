@@ -13,7 +13,7 @@ use sui_core::WindowId;
 use sui_render_wgpu::{
     ColorManagementMode, RendererFrameStats, RequestedColorManagementMode,
     RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
-    StemDarkening, TextCoveragePolicy, TextHinting, WgpuRenderer,
+    StemDarkening, TextCoveragePolicy, TextHinting, TextSubpixelOrder, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
@@ -21,9 +21,9 @@ use sui_runtime::{
     RetainedPacketRebuildDiagnostics, SceneStatistics, TextCacheDiagnostics,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowPerformanceSnapshot, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
-    WindowToneMappingMode, clear_window_performance_snapshot, clear_window_performance_snapshots,
-    publish_window_performance_snapshot, window_performance_text_caches,
-    window_scene_statistics_detail_mode,
+    WindowTextSubpixelOrder, WindowToneMappingMode, clear_window_performance_snapshot,
+    clear_window_performance_snapshots, publish_window_performance_snapshot,
+    window_performance_text_caches, window_scene_statistics_detail_mode,
 };
 
 pub(crate) use accessibility::AccessibilityBridge;
@@ -74,6 +74,14 @@ pub(crate) fn map_window_text_coverage_policy(
         WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => {
             TextCoveragePolicy::TwoCoverageMinusCoverageSq
         }
+    }
+}
+
+pub(crate) fn map_window_text_subpixel_order(order: WindowTextSubpixelOrder) -> TextSubpixelOrder {
+    match order {
+        WindowTextSubpixelOrder::None => TextSubpixelOrder::None,
+        WindowTextSubpixelOrder::Rgb => TextSubpixelOrder::Rgb,
+        WindowTextSubpixelOrder::Bgr => TextSubpixelOrder::Bgr,
     }
 }
 

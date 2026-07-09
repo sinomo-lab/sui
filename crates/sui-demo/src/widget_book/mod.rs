@@ -249,7 +249,7 @@ struct TextRenderingModeSpec {
     policy: TextRenderPolicy,
 }
 
-const TEXT_RENDERING_MODE_DATA: [TextRenderingModeSpec; 7] = [
+const TEXT_RENDERING_MODE_DATA: [TextRenderingModeSpec; 9] = [
     TextRenderingModeSpec {
         title: "Linear coverage",
         subtitle: "Coverage sampled without perceptual compensation.",
@@ -271,6 +271,16 @@ const TEXT_RENDERING_MODE_DATA: [TextRenderingModeSpec; 7] = [
         setting: "TextRenderPolicy::new()\n    .with_hinting(TextRenderHinting::None)\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)",
         policy: TextRenderPolicy::new()
             .with_hinting(TextRenderHinting::None)
+            .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
+    },
+    TextRenderingModeSpec {
+        title: "LCD subpixel",
+        subtitle: "Per-channel atlas coverage for pixel-aligned text.",
+        notes: "Use for dense UI text on LCD-safe axis-aligned output; transformed text falls back to grayscale glyph coverage.",
+        setting: "TextRenderPolicy::new()\n    .with_render_mode(TextRenderMode::LcdSubpixel)\n    .with_subpixel_order(TextSubpixelOrder::Rgb)\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)",
+        policy: TextRenderPolicy::new()
+            .with_render_mode(TextRenderMode::LcdSubpixel)
+            .with_subpixel_order(TextSubpixelOrder::Rgb)
             .with_coverage_policy(TextRenderCoveragePolicy::Perceptual),
     },
     TextRenderingModeSpec {
@@ -302,6 +312,20 @@ const TEXT_RENDERING_MODE_DATA: [TextRenderingModeSpec; 7] = [
         notes: "Use for tiny labels that need extra stem weight without changing layout or font weight.",
         setting: "TextRenderPolicy::new()\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)\n    .with_stem_darkening(TextRenderStemDarkening::Enabled { max_ppem: 18.0, amount: 0.20 })",
         policy: TextRenderPolicy::new()
+            .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)
+            .with_stem_darkening(TextRenderStemDarkening::Enabled {
+                max_ppem: 18.0,
+                amount: 0.20,
+            }),
+    },
+    TextRenderingModeSpec {
+        title: "LCD + stem darkening",
+        subtitle: "Subpixel rendering plus small-text stem weight.",
+        notes: "Use for dense desktop surfaces after checking that the target display path preserves physical RGB subpixels.",
+        setting: "TextRenderPolicy::new()\n    .with_render_mode(TextRenderMode::LcdSubpixel)\n    .with_subpixel_order(TextSubpixelOrder::Rgb)\n    .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)\n    .with_stem_darkening(TextRenderStemDarkening::Enabled { max_ppem: 18.0, amount: 0.20 })",
+        policy: TextRenderPolicy::new()
+            .with_render_mode(TextRenderMode::LcdSubpixel)
+            .with_subpixel_order(TextSubpixelOrder::Rgb)
             .with_coverage_policy(TextRenderCoveragePolicy::Perceptual)
             .with_stem_darkening(TextRenderStemDarkening::Enabled {
                 max_ppem: 18.0,

@@ -271,35 +271,40 @@ The sections above describe the long-term direction. The current implementation 
 
 The active window carries a `WindowRenderOptions` bundle with the text-related controls that the dev workspace and validation surfaces expose:
 
-- `text_hinting`, which defaults to `None` in `WindowRenderOptions`
+- `text_hinting`, which defaults to `WindowTextHinting::Slight { max_ppem: 96.0 }`
 - `stem_darkening`, which defaults to `None`
-- `text_coverage_policy`, which defaults to `WindowTextCoveragePolicy::Linear`
+- `text_coverage_policy`, which defaults to `WindowTextCoveragePolicy::Perceptual`
+- `text_subpixel_order`, which defaults to `WindowTextSubpixelOrder::None`
 
-These controls are window-scoped runtime presentation settings. They are not currently independent per sample card inside the comparison surface.
+These controls are window-scoped runtime presentation settings. Individual widgets can also override text rendering with `PaintCtx::push_text_render_policy` / `pop_text_render_policy`; the comparison surface uses those scoped commands directly for each sample.
 
 Text coverage policy can also be configured as a renderer default on `WgpuRenderer`; the window runtime option overrides that default for the active window.
 
 ### Grayscale coverage vs LCD/subpixel rendering
 
-SUI now distinguishes between two separate concerns:
+SUI now distinguishes between three separate concerns:
 
 1. **Text render mode** — grayscale atlas rendering versus LCD/subpixel atlas rendering
-2. **Text coverage policy** — how grayscale coverage is mapped into final alpha
+2. **Text subpixel order** — whether LCD is disabled, RGB, or BGR for the target display
+3. **Text coverage policy** — how grayscale coverage is mapped into final alpha
 
-`TextRenderMode` currently defaults to `Grayscale`. LCD/subpixel rendering is available through `TextRenderMode::LcdSubpixel`, but it is intentionally conservative.
+`TextRenderMode` currently defaults to `Grayscale`. LCD/subpixel rendering is available through `TextRenderMode::LcdSubpixel`, but it is intentionally conservative: `TextSubpixelOrder` defaults to `None`, so callers must explicitly opt into `Rgb` or `Bgr` for a known LCD-safe display path.
 
-`TextCoveragePolicy::Linear` is the default grayscale coverage policy for all text colors. It maps rasterized coverage directly to atlas alpha, and the text shaders sample that coverage without an additional gamma or luminance remap. Dark-on-light and light-on-dark UI text therefore share the same coverage curve unless a caller explicitly selects a different renderer or window coverage policy.
+`TextCoveragePolicy::Perceptual` is the default grayscale coverage policy. It resolves to a color-aware coverage boost so dark-on-light and light-on-dark UI text can use different perceptual compensation while retaining one linear glyph atlas entry. `TextCoveragePolicy::Linear` remains available as a control when callers need literal rasterized coverage.
+
+Coverage remapping is applied by the text shaders from per-instance metadata. The glyph atlas stores linear coverage after hinting and stem-darkening decisions, so coverage policies can change without creating duplicate glyph cache entries.
 
 ### When LCD/subpixel text is allowed
 
 LCD/subpixel text is only considered safe when the path stays compatible with physical subpixel layout. The current renderer requires:
 
+- `TextSubpixelOrder::Rgb` or `TextSubpixelOrder::Bgr`
 - an axis-aligned transform
 - positive X and Y scale components
 
 Atlas glyph quads are always snapped to the physical pixel grid. Fractional glyph phase is represented by quarter-pixel raster variants in the glyph cache instead of by drawing the atlas sprite at fractional screen coordinates.
 
-In practice, rotated, mirrored, or otherwise non-LCD-safe transforms fall back to grayscale expectations instead of trying to preserve LCD sampling through an unsafe transform.
+In practice, rotated, mirrored, or otherwise non-LCD-safe transforms fall back to grayscale glyph cache entries instead of sampling LCD atlas coverage as grayscale through an unsafe transform.
 
 ### Hinting and stem darkening thresholds
 
@@ -324,15 +329,19 @@ The widget-book comparison surface is meant to make text behavior legible at a g
 - grayscale baseline
 - grayscale + hinting
 - grayscale + stem darkening
-- LCD subpixel
-- LCD subpixel + hinting
-- LCD subpixel + hinting + stem darkening
+- explicit RGB LCD subpixel
+- explicit RGB LCD subpixel + hinting
+- explicit RGB LCD subpixel + hinting + stem darkening
 
-That surface is a visual checklist for dark-on-light text, light-on-dark text, repeated stems, mixed scripts, and contrast-sensitive UI labels. The mode cards are reference views; the actual runtime renderer settings remain window-level.
+That surface is a visual checklist for dark-on-light text, light-on-dark text, repeated stems, mixed scripts, and contrast-sensitive UI labels. The mode cards use scoped `TextRenderPolicy` overrides, so they exercise the same direct text rendering path available to application code.
+
+Renderer tests also keep a compact perceptual quality matrix for 1x, 1.5x, and 2x DPR across light/dark surfaces and linear/perceptual/LCD policies. The matrix reports core stem luma and edge-to-core coverage ratio so small perceptual changes are not reduced to raw changed-pixel percentages.
 
 ## Validation And Benchmark Workflow
 
 The current validation workflow for the text rendering model should cover both native and wasm entry points.
+
+For the full performance and quality benchmark plan, including DPR matrices, policy-cache benchmarks, and reporting templates, see [text-rendering-benchmarks.md](text-rendering-benchmarks.md).
 
 ### Native checks
 
@@ -376,6 +385,7 @@ The `text-comparison` and `comparison-surface` aliases should launch the side-by
 The current model is intentionally conservative. A few follow-up directions remain important:
 
 - keep the grayscale fallback rules conservative for transforms that are not LCD-safe
+- use platform/display information to choose RGB, BGR, or disabled LCD defaults where available
 - continue benchmarking native and wasm text-heavy surfaces as renderer work lands
 - make the dedicated text surface path cheaper for editor-style workloads
 - add an optional analytic or vector-oriented path for large transformed text, where LCD atlas sampling is not the right fit

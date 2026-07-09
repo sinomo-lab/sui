@@ -39,9 +39,9 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) scale_bucket: u32,
     pub(crate) subpixel_offset: GlyphSubpixelOffsetKey,
     pub(crate) atlas_color_mode: TextAtlasColorMode,
+    pub(crate) subpixel_order: TextSubpixelOrderCacheKey,
     pub(crate) text_hinting: TextHintingCacheKey,
     pub(crate) stem_darkening: StemDarkeningCacheKey,
-    pub(crate) coverage_policy: TextCoverageCacheKey,
     /// Requested `wght` axis value — different weights of a variable font rasterize to distinct
     /// outlines and must cache separately. (Static fonts ignore the axis, so this is constant.)
     pub(crate) weight: u16,
@@ -55,9 +55,9 @@ impl GlyphCacheKey {
         scale_bucket: u32,
         subpixel_offset: GlyphSubpixelOffsetKey,
         text_render_mode: TextRenderMode,
+        text_subpixel_order: TextSubpixelOrder,
         text_hinting: TextHinting,
         stem_darkening: StemDarkening,
-        coverage_policy: TextCoveragePolicy,
         weight: u16,
     ) -> Self {
         Self {
@@ -66,10 +66,27 @@ impl GlyphCacheKey {
             scale_bucket,
             subpixel_offset,
             atlas_color_mode: TextAtlasColorMode::from(text_render_mode),
+            subpixel_order: TextSubpixelOrderCacheKey::from(text_subpixel_order),
             text_hinting: TextHintingCacheKey::from(text_hinting),
             stem_darkening: StemDarkeningCacheKey::from(stem_darkening),
-            coverage_policy: TextCoverageCacheKey::from(coverage_policy),
             weight,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TextSubpixelOrderCacheKey {
+    None,
+    Rgb,
+    Bgr,
+}
+
+impl From<TextSubpixelOrder> for TextSubpixelOrderCacheKey {
+    fn from(value: TextSubpixelOrder) -> Self {
+        match value {
+            TextSubpixelOrder::None => Self::None,
+            TextSubpixelOrder::Rgb => Self::Rgb,
+            TextSubpixelOrder::Bgr => Self::Bgr,
         }
     }
 }
@@ -133,31 +150,6 @@ impl From<StemDarkening> for StemDarkeningCacheKey {
                 max_ppem_bits: max_ppem.to_bits(),
                 amount_bits: amount.to_bits(),
             },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum TextCoverageCacheKey {
-    Perceptual,
-    Linear,
-    Gamma { gamma_bits: u32 },
-    CoverageBoost { amount_bits: u32 },
-    TwoCoverageMinusCoverageSq,
-}
-
-impl From<TextCoveragePolicy> for TextCoverageCacheKey {
-    fn from(value: TextCoveragePolicy) -> Self {
-        match value.normalized() {
-            TextCoveragePolicy::Perceptual => Self::Perceptual,
-            TextCoveragePolicy::Linear => Self::Linear,
-            TextCoveragePolicy::Gamma(gamma) => Self::Gamma {
-                gamma_bits: gamma.to_bits(),
-            },
-            TextCoveragePolicy::CoverageBoost(amount) => Self::CoverageBoost {
-                amount_bits: amount.to_bits(),
-            },
-            TextCoveragePolicy::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
         }
     }
 }
