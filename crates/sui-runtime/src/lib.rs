@@ -2224,14 +2224,24 @@ impl WindowState {
                     repaint_layers.push(widget_id);
                 }
             }
-            dirty_layers.sort_by_key(|widget_id| {
-                (
-                    self.graph
-                        .path_to(*widget_id)
-                        .map_or(usize::MAX, |path| path.len()),
-                    widget_id.get(),
-                )
-            });
+
+            // A freshly repainted descendant is already painted at its new
+            // absolute bounds. Translating its retained ancestor afterward
+            // would move that replacement twice, so promote the mixed update
+            // to a content repaint of the retained ancestor.
+            let mixed_update_roots = composition_only_transforms
+                .iter()
+                .filter(|translation| {
+                    dirty_layers.iter().any(|dirty_widget| {
+                        self.widget_is_ancestor_of(translation.widget_id, *dirty_widget)
+                    })
+                })
+                .map(|translation| translation.widget_id)
+                .collect::<Vec<_>>();
+            repaint_layers.extend(mixed_update_roots.iter().copied());
+            dirty_layers.extend(mixed_update_roots);
+            self.minimize_layer_roots(&mut repaint_layers);
+            self.minimize_layer_roots(&mut dirty_layers);
 
             composition_only_transforms.retain(|translation| {
                 !dirty_layers.iter().any(|dirty_widget| {
@@ -2273,9 +2283,9 @@ impl WindowState {
             let (
                 scene,
                 paint_images,
-                paint_bounds_by_widget,
+                mut paint_bounds_by_widget,
                 paint_invalidations,
-                ime_composition_rect,
+                mut ime_composition_rect,
             ) = if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
                 self.paint_full_scene(
                     dpi_info,
@@ -2307,6 +2317,38 @@ impl WindowState {
             let mut scene = scene;
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
+                for widget_id in self.graph.subtree_ids(translation.widget_id) {
+                    if let Some(bounds) = paint_bounds_by_widget.get_mut(&widget_id) {
+                        *bounds = bounds.translate(translation.delta);
+                    }
+                }
+                if let Some(moved_bounds) =
+                    paint_bounds_by_widget.get(&translation.widget_id).copied()
+                {
+                    // Flat ancestors can derive their paint bounds from this
+                    // explicit child. Without repainting we cannot separate an
+                    // ancestor's own ink from its old child contribution, so
+                    // conservatively include the moved bounds. This prevents
+                    // later damage from missing the child's new location.
+                    let mut ancestor = self
+                        .graph
+                        .node(translation.widget_id)
+                        .and_then(|node| node.parent);
+                    while let Some(widget_id) = ancestor {
+                        paint_bounds_by_widget
+                            .entry(widget_id)
+                            .and_modify(|bounds| *bounds = bounds.union(moved_bounds))
+                            .or_insert(moved_bounds);
+                        ancestor = self.graph.node(widget_id).and_then(|node| node.parent);
+                    }
+                }
+                if focused_path.as_ref().is_some_and(|path| {
+                    path.iter()
+                        .any(|widget_id| *widget_id == translation.widget_id)
+                }) {
+                    ime_composition_rect =
+                        ime_composition_rect.map(|rect| rect.translate(translation.delta));
+                }
             }
             for refresh in &layer_descriptor_refreshes {
                 let _ =
@@ -2673,6 +2715,20 @@ impl WindowState {
                                 widget_id: current_node.id,
                                 delta,
                             });
+                        } else if current_nodes
+                            .get(&resolved_boundary)
+                            .zip(previous_nodes.get(&resolved_boundary))
+                            .is_some_and(|(current_boundary, previous_boundary)| {
+                                current_boundary.paint_boundary == PaintBoundaryMode::Explicit
+                                    && current_boundary.geometry.layout_bounds.origin
+                                        - previous_boundary.geometry.layout_bounds.origin
+                                        == delta
+                            })
+                        {
+                            // A descendant that moved by exactly the same delta as its
+                            // explicit paint boundary is covered by that boundary's
+                            // composition-only transform. Treating each flat descendant
+                            // as an independent move would unnecessarily repaint the layer.
                         } else {
                             repaint_candidates.insert(resolved_boundary);
                         }
@@ -2843,9 +2899,23 @@ impl WindowState {
     }
 
     fn widget_depth(&self, widget_id: WidgetId) -> usize {
-        self.graph
-            .path_to(widget_id)
-            .map_or(usize::MAX, |path| path.len())
+        self.graph.depth(widget_id).unwrap_or(usize::MAX)
+    }
+
+    fn minimize_layer_roots(&self, candidates: &mut Vec<WidgetId>) {
+        candidates.sort_by_key(|widget_id| (self.widget_depth(*widget_id), widget_id.get()));
+        candidates.dedup();
+        let mut minimized = Vec::with_capacity(candidates.len());
+        for widget_id in candidates.iter().copied() {
+            if minimized
+                .iter()
+                .any(|ancestor| self.widget_is_ancestor_of(*ancestor, widget_id))
+            {
+                continue;
+            }
+            minimized.push(widget_id);
+        }
+        *candidates = minimized;
     }
 
     fn default_dirty_region_for_request(
@@ -2979,11 +3049,7 @@ impl WindowState {
     }
 
     fn widget_is_ancestor_of(&self, ancestor: WidgetId, widget_id: WidgetId) -> bool {
-        self.graph.path_to(widget_id).is_some_and(|path| {
-            path.iter()
-                .take(path.len().saturating_sub(1))
-                .any(|candidate| *candidate == ancestor)
-        })
+        self.graph.is_ancestor_of(ancestor, widget_id)
     }
 
     /// Build the measure scope for this pass from the pending invalidations.
@@ -3023,9 +3089,8 @@ impl WindowState {
 
         let mut dirty: HashSet<WidgetId> = HashSet::new();
         for widget_id in &subtree_roots {
-            match self.graph.path_to(*widget_id) {
-                Some(path) => dirty.extend(path),
-                None => return Rc::new(MeasureScope::force_all()),
+            if !self.graph.extend_ancestors(*widget_id, &mut dirty) {
+                return Rc::new(MeasureScope::force_all());
             }
         }
 
@@ -3202,12 +3267,14 @@ impl WindowState {
             return Some(parent);
         }
 
-        self.graph.path_to(widget_id).and_then(|path| {
-            path.into_iter()
-                .rev()
-                .skip(1)
-                .find(|candidate| semantic_ids.contains(candidate))
-        })
+        let mut current = self.graph.node(widget_id).and_then(|node| node.parent);
+        while let Some(candidate) = current {
+            if semantic_ids.contains(&candidate) {
+                return Some(candidate);
+            }
+            current = self.graph.node(candidate).and_then(|node| node.parent);
+        }
+        None
     }
 }
 
@@ -3343,15 +3410,65 @@ impl WidgetGraph {
         Some(path)
     }
 
+    fn depth(&self, target: WidgetId) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut current = Some(target);
+        while let Some(widget_id) = current {
+            let node = self.node(widget_id)?;
+            depth += 1;
+            current = node.parent;
+        }
+        Some(depth)
+    }
+
+    fn is_ancestor_of(&self, ancestor: WidgetId, target: WidgetId) -> bool {
+        let mut current = self.node(target).and_then(|node| node.parent);
+        while let Some(widget_id) = current {
+            if widget_id == ancestor {
+                return true;
+            }
+            current = self.node(widget_id).and_then(|node| node.parent);
+        }
+        false
+    }
+
+    fn extend_ancestors(&self, target: WidgetId, ancestors: &mut HashSet<WidgetId>) -> bool {
+        let mut current = Some(target);
+        while let Some(widget_id) = current {
+            let Some(node) = self.node(widget_id) else {
+                return false;
+            };
+            ancestors.insert(widget_id);
+            current = node.parent;
+        }
+        true
+    }
+
+    fn subtree_ids(&self, root: WidgetId) -> Vec<WidgetId> {
+        let mut subtree = Vec::new();
+        let mut pending = vec![root];
+        while let Some(widget_id) = pending.pop() {
+            let Some(node) = self.node(widget_id) else {
+                continue;
+            };
+            subtree.push(widget_id);
+            pending.extend(node.children.iter().copied());
+        }
+        subtree
+    }
+
     fn nearest_paint_boundary_ancestor_or_root(&self, widget_id: WidgetId) -> WidgetId {
-        self.path_to(widget_id)
-            .and_then(|path| {
-                path.into_iter().rev().find(|candidate| {
-                    self.node(*candidate)
-                        .is_some_and(|node| node.paint_boundary == PaintBoundaryMode::Explicit)
-                })
-            })
-            .unwrap_or(self.root)
+        let mut current = Some(widget_id);
+        while let Some(candidate) = current {
+            let Some(node) = self.node(candidate) else {
+                break;
+            };
+            if node.paint_boundary == PaintBoundaryMode::Explicit {
+                return candidate;
+            }
+            current = node.parent;
+        }
+        self.root
     }
 
     fn next_focusable(&self, current: Option<WidgetId>, backwards: bool) -> Option<WidgetId> {
@@ -4412,6 +4529,7 @@ mod tests {
         child: SingleChild,
         presentation: Rc<RefCell<CachedLayerPresentation>>,
         offset_x: f32,
+        paint_background: bool,
     }
 
     impl Widget for CachedMoveRoot {
@@ -4457,7 +4575,9 @@ mod tests {
 
         fn paint(&self, ctx: &mut PaintCtx) {
             self.counters.borrow_mut().paint += 1;
-            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            if self.paint_background {
+                ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            }
             self.child.paint(ctx);
         }
 
@@ -5246,6 +5366,7 @@ mod tests {
                         }),
                         presentation,
                         offset_x: 0.0,
+                        paint_background: true,
                     }),
             )
             .build()
@@ -5861,7 +5982,9 @@ mod tests {
         let (mut runtime, window_id, root_counters, leaf_counters) = build_cached_move_runtime();
 
         let first = runtime.render(window_id).unwrap();
-        let layer_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+        let first_graph = runtime.widget_graph(window_id).unwrap();
+        let initial_graph_bounds = graph_child(&first_graph).geometry.paint_bounds;
+        let layer_id = graph_child(&first_graph).id;
         let root_paint_before = root_counters.borrow().paint;
         let leaf_paint_before = leaf_counters.borrow().paint;
         let initial_bounds = first
@@ -5903,6 +6026,125 @@ mod tests {
 
         assert_eq!(translated_bounds.x(), initial_bounds.x() + 48.0);
         assert_eq!(translated_bounds.y(), initial_bounds.y());
+        let translated_graph_bounds = graph_child(&runtime.widget_graph(window_id).unwrap())
+            .geometry
+            .paint_bounds;
+        assert_eq!(
+            translated_graph_bounds,
+            initial_graph_bounds.translate(Vector::new(48.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn composition_only_translation_keeps_ancestor_paint_bounds_conservative() {
+        let root_counters = Rc::new(RefCell::new(Counters::default()));
+        let leaf_counters = Rc::new(RefCell::new(Counters::default()));
+        let presentation = Rc::new(RefCell::new(CachedLayerPresentation::default()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Bare cached move")
+                    .root(CachedMoveRoot {
+                        counters: Rc::clone(&root_counters),
+                        child: SingleChild::new(CachedMoveLeaf {
+                            counters: Rc::clone(&leaf_counters),
+                            presentation: Rc::clone(&presentation),
+                        }),
+                        presentation,
+                        offset_x: 0.0,
+                        paint_background: false,
+                    }),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let _ = runtime.render(window_id).unwrap();
+        let initial_graph = runtime.widget_graph(window_id).unwrap();
+        let initial_root_paint = initial_graph.nodes[0].geometry.paint_bounds;
+        let initial_child_paint = graph_child(&initial_graph).geometry.paint_bounds;
+        let root_paint_before = root_counters.borrow().paint;
+        let leaf_paint_before = leaf_counters.borrow().paint;
+
+        runtime
+            .handle_event(window_id, Event::Custom(CustomEvent::new("shift-cached")))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+        let shifted_graph = runtime.widget_graph(window_id).unwrap();
+        let shifted_child_paint = graph_child(&shifted_graph).geometry.paint_bounds;
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(leaf_counters.borrow().paint, leaf_paint_before);
+        assert_eq!(
+            shifted_graph.nodes[0].geometry.paint_bounds,
+            initial_root_paint.union(shifted_child_paint)
+        );
+        assert_eq!(
+            shifted_child_paint,
+            initial_child_paint.translate(Vector::new(48.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn composition_only_translation_updates_focused_ime_rect() {
+        let root_counters = Rc::new(RefCell::new(Counters::default()));
+        let presentation = Rc::new(RefCell::new(CachedLayerPresentation::default()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Cached IME move")
+                    .root(CachedMoveRoot {
+                        counters: Rc::clone(&root_counters),
+                        child: SingleChild::new_with_paint_boundary(TextImeLeaf {
+                            layout: RefCell::new(None),
+                        }),
+                        presentation,
+                        offset_x: 0.0,
+                        paint_background: true,
+                    }),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut pointer = PointerEvent::new(PointerEventKind::Down, Point::new(40.0, 40.0));
+        pointer.button = Some(PointerButton::Primary);
+        pointer.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(pointer))
+            .unwrap();
+        let focused = runtime.render(window_id).unwrap();
+        let initial_ime = focused
+            .ime_composition_rect
+            .expect("focused text layer should publish an IME rectangle");
+        let initial_paint_bounds = graph_child(&runtime.widget_graph(window_id).unwrap())
+            .geometry
+            .paint_bounds;
+        let root_paint_before = root_counters.borrow().paint;
+
+        runtime
+            .handle_event(window_id, Event::Custom(CustomEvent::new("shift-cached")))
+            .unwrap();
+        let shifted = runtime.render(window_id).unwrap();
+
+        assert_eq!(root_counters.borrow().paint, root_paint_before);
+        assert_eq!(
+            shifted.ime_composition_rect,
+            Some(initial_ime.translate(Vector::new(48.0, 0.0)))
+        );
+        assert_eq!(
+            graph_child(&runtime.widget_graph(window_id).unwrap())
+                .geometry
+                .paint_bounds,
+            initial_paint_bounds.translate(Vector::new(48.0, 0.0))
+        );
+        assert!(
+            shifted
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| { update.kind == SceneLayerUpdateKind::Transform })
+        );
     }
 
     #[test]

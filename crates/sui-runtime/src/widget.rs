@@ -179,6 +179,27 @@ impl SingleChild {
         Self::from_pod(WidgetPod::new(child))
     }
 
+    /// Creates a child whose scene is retained behind an explicit paint boundary.
+    ///
+    /// This is useful for containers that move their complete child subtree as a
+    /// unit. The child's own composition mode and layer properties are preserved;
+    /// only a flat paint boundary is promoted to an explicit one.
+    pub fn new_with_paint_boundary<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let mut child = WidgetPod::new(child);
+        child.force_paint_boundary = true;
+        Self::from_pod(child)
+    }
+
+    /// Returns this child wrapper with an explicit paint boundary forced on.
+    /// The consuming form keeps layer-topology changes in builder flows.
+    pub fn with_paint_boundary(mut self) -> Self {
+        self.child.force_paint_boundary = true;
+        self
+    }
+
     pub fn from_pod(child: WidgetPod) -> Self {
         Self { child }
     }
@@ -311,6 +332,7 @@ impl WidgetChildren {
 pub struct WidgetPod {
     id: WidgetId,
     layout_state: LayoutState,
+    force_paint_boundary: bool,
     widget: Box<dyn Widget>,
 }
 
@@ -343,6 +365,7 @@ impl WidgetPod {
         Self {
             id: WidgetId::new(NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)),
             layout_state: LayoutState::default(),
+            force_paint_boundary: false,
             widget: Box::new(widget),
         }
     }
@@ -771,7 +794,11 @@ impl WidgetPod {
     }
 
     pub(crate) fn current_layer_options(&self) -> LayerOptions {
-        self.widget.layer_options()
+        let mut options = self.widget.layer_options();
+        if self.force_paint_boundary {
+            options.paint_boundary = PaintBoundaryMode::Explicit;
+        }
+        options
     }
 
     pub(crate) fn current_layer_properties(&self) -> LayerProperties {
@@ -2227,6 +2254,73 @@ mod tests {
         }
     }
 
+    struct BoundsLeaf;
+
+    impl Widget for BoundsLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.max
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_rect(
+                Rect::new(10.0, 10.0, 80.0, 50.0),
+                Color::rgba(0.2, 0.3, 0.4, 1.0),
+            );
+        }
+    }
+
+    struct BoundsWrapper {
+        child: WidgetPod,
+        clip: Option<Rect>,
+        translation: Vector,
+    }
+
+    impl BoundsWrapper {
+        fn new(child: impl Widget + 'static, clip: Option<Rect>, translation: Vector) -> Self {
+            Self {
+                child: WidgetPod::new(child),
+                clip,
+                translation,
+            }
+        }
+    }
+
+    impl Widget for BoundsWrapper {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.child.measure(ctx, constraints)
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(ctx, bounds);
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            if let Some(clip) = self.clip {
+                ctx.push_clip_rect(clip);
+            }
+            if self.translation != Vector::ZERO {
+                ctx.translate(self.translation);
+            }
+
+            self.child.paint(ctx);
+
+            if self.translation != Vector::ZERO {
+                ctx.pop_transform();
+            }
+            if self.clip.is_some() {
+                ctx.pop_clip();
+            }
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            visitor.visit(&self.child);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            visitor.visit(&mut self.child);
+        }
+    }
+
     #[test]
     fn event_ctx_tracks_widget_scoped_invalidations_and_focus() {
         let mut ctx = EventCtx::new(
@@ -2512,6 +2606,55 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert_eq!(paint.scene().commands().len(), 2);
         assert_eq!(semantics.nodes().len(), 2);
+    }
+
+    #[test]
+    fn nested_paint_wrappers_preserve_content_and_clipped_paint_bounds() {
+        let inner = BoundsWrapper::new(
+            BoundsLeaf,
+            Some(Rect::new(0.0, 0.0, 60.0, 60.0)),
+            Vector::new(0.0, 7.0),
+        );
+        let outer = BoundsWrapper::new(
+            inner,
+            Some(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Vector::new(5.0, 0.0),
+        );
+        // This pass-through level exercises the balanced Scene::append summary path
+        // after the clipped/transformed child stream has returned to identity state.
+        let mut root = WidgetPod::new(BoundsWrapper::new(outer, None, Vector::ZERO));
+        let window_id = WindowId::new(17);
+        let root_id = WidgetId::new(18);
+        let bounds = Rect::new(0.0, 0.0, 120.0, 100.0);
+        let mut measure = measure_ctx(window_id, root_id);
+        root.measure(&mut measure, Constraints::tight(bounds.size));
+        let mut arrange = ArrangeCtx::new(window_id, root_id, DpiInfo::default());
+        root.arrange(&mut arrange, bounds);
+
+        let mut paint = PaintCtx::new(
+            window_id,
+            root_id,
+            bounds,
+            None,
+            DpiInfo::default(),
+            Arc::new(TextSystem::new()),
+            Arc::new(FontRegistry::new()),
+            Arc::new(ImageRegistry::new()),
+        );
+        root.paint(&mut paint);
+
+        assert_eq!(
+            paint.scene().content_bounds(),
+            Some(Rect::new(15.0, 17.0, 80.0, 50.0))
+        );
+        assert_eq!(
+            paint.scene().paint_bounds(),
+            Some(Rect::new(15.0, 17.0, 50.0, 43.0))
+        );
+        assert_eq!(
+            paint.scene().paint_bounds(),
+            paint.scene().clone().paint_bounds()
+        );
     }
 
     #[test]

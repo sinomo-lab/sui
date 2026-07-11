@@ -9,6 +9,7 @@ pub(crate) struct EditorDocument {
     line_starts: Vec<usize>,
     revision: u64,
     dirty_line_range: Range<usize>,
+    line_offsets_dirty_from: Option<usize>,
 }
 
 impl EditorDocument {
@@ -21,6 +22,7 @@ impl EditorDocument {
             line_starts,
             revision: 0,
             dirty_line_range: 0..line_count,
+            line_offsets_dirty_from: Some(0),
         }
     }
 
@@ -67,23 +69,75 @@ impl EditorDocument {
         self.dirty_line_range.clone()
     }
 
+    pub(crate) fn line_offsets_dirty_from(&self) -> Option<usize> {
+        self.line_offsets_dirty_from
+    }
+
     pub(crate) fn clear_dirty(&mut self) {
         let line_index = self.line_index_for_offset(self.text.len());
         self.dirty_line_range = line_index..line_index;
+        self.line_offsets_dirty_from = None;
     }
 
     fn replace_range(&mut self, range: Range<usize>, replacement: &str) {
+        let old_line_count = self.line_count();
+        let pending_dirty = self.dirty_line_range.clone();
         let start_line = self.line_index_for_offset(range.start);
         let old_end_line = self.line_index_for_offset(range.end);
+        let retained_prefix_end = start_line + 1;
+        let shifted_suffix_start = self
+            .line_starts
+            .partition_point(|line_start| *line_start <= range.end);
+        let replacement_line_starts = replacement
+            .bytes()
+            .enumerate()
+            .filter_map(|(index, byte)| (byte == b'\n').then_some(range.start + index + 1))
+            .collect::<Vec<_>>();
+        let removed_len = range.end - range.start;
+
         self.text.replace_range(range.clone(), replacement);
-        self.line_starts = line_starts_for(&self.text);
+        self.line_starts.splice(
+            retained_prefix_end..shifted_suffix_start,
+            replacement_line_starts.iter().copied(),
+        );
+        let shifted_suffix_start = retained_prefix_end + replacement_line_starts.len();
+        if replacement.len() >= removed_len {
+            let delta = replacement.len() - removed_len;
+            for line_start in &mut self.line_starts[shifted_suffix_start..] {
+                *line_start += delta;
+            }
+        } else {
+            let delta = removed_len - replacement.len();
+            for line_start in &mut self.line_starts[shifted_suffix_start..] {
+                *line_start -= delta;
+            }
+        }
         self.revision = self.revision.saturating_add(1);
 
         let replacement_end = range.start + replacement.len();
         let new_end_line = self.line_index_for_offset(replacement_end);
         let dirty_start = start_line.min(self.line_count().saturating_sub(1));
         let dirty_end = old_end_line.max(new_end_line).saturating_add(1);
-        self.dirty_line_range = dirty_start..dirty_end.min(self.line_count());
+        let edit_dirty = dirty_start..dirty_end.min(self.line_count());
+        let shifted_suffix_start = edit_dirty.end;
+        self.dirty_line_range = if pending_dirty.is_empty() {
+            edit_dirty
+        } else if old_line_count == self.line_count() {
+            pending_dirty.start.min(edit_dirty.start)..pending_dirty.end.max(edit_dirty.end)
+        } else {
+            // Pending dirty indices after a line-count-changing edit are costly to
+            // remap precisely. Conservatively retain every line from the earliest
+            // affected line until the next successful measure clears the state.
+            pending_dirty.start.min(edit_dirty.start)..self.line_count()
+        };
+        if replacement.len() != removed_len && old_line_count == self.line_count() {
+            self.line_offsets_dirty_from = Some(
+                self.line_offsets_dirty_from
+                    .map_or(shifted_suffix_start, |pending| {
+                        pending.min(shifted_suffix_start)
+                    }),
+            );
+        }
     }
 }
 
@@ -722,6 +776,76 @@ mod tests {
         assert_eq!(document.line_count(), 4);
         assert_eq!(document.line_index_for_offset(17), 2);
         assert_eq!(document.dirty_line_range(), 1..3);
+    }
+
+    #[test]
+    fn document_accumulates_dirty_coverage_until_cleared() {
+        let mut document = EditorDocument::from_text("alpha\nbeta\ngamma");
+        document.clear_dirty();
+
+        document.replace_range(1..1, "XYZ");
+        assert_eq!(document.dirty_line_range(), 0..1);
+        assert_eq!(document.line_offsets_dirty_from(), Some(1));
+
+        let gamma = document.line_range(2);
+        document.replace_range(gamma.start..gamma.start + 1, "G");
+        assert_eq!(document.dirty_line_range(), 0..3);
+        assert_eq!(document.line_offsets_dirty_from(), Some(1));
+
+        document.clear_dirty();
+        assert!(document.dirty_line_range().is_empty());
+        assert_eq!(document.line_offsets_dirty_from(), None);
+    }
+
+    #[test]
+    fn batched_line_count_changes_keep_conservative_dirty_coverage() {
+        let mut document = EditorDocument::from_text("alpha\nbeta\ngamma");
+        document.clear_dirty();
+
+        let gamma = document.line_range(2);
+        document.replace_range(gamma.start..gamma.start + 1, "G");
+        assert_eq!(document.line_offsets_dirty_from(), None);
+        document.replace_range(1..1, "one\ntwo\n");
+
+        assert_eq!(document.dirty_line_range(), 0..document.line_count());
+        assert_eq!(document.line_offsets_dirty_from(), None);
+    }
+
+    #[test]
+    fn incremental_line_index_matches_full_rebuild_across_boundary_edits() {
+        let mut document = EditorDocument::from_text("alpha\nbeta\ngamma\ndelta");
+        let edits = [(8..8, "X\nY"), (5..12, "\nreplacement\n"), (0..5, "α")];
+
+        for (range, replacement) in edits {
+            document.replace_range(range, replacement);
+            assert_eq!(document.line_starts, line_starts_for(document.text()));
+            for line_index in 0..document.line_count() {
+                let range = document.line_range(line_index);
+                assert!(document.text().is_char_boundary(range.start));
+                assert!(document.text().is_char_boundary(range.end));
+            }
+        }
+
+        let end = document.len();
+        document.replace_range(end..end, "\n終端");
+        assert_eq!(document.line_starts, line_starts_for(document.text()));
+    }
+
+    #[test]
+    fn incremental_line_index_stays_correct_for_large_documents() {
+        let text = (0..4_096)
+            .map(|index| format!("line-{index:04}-{}", "x".repeat(index % 31)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut document = EditorDocument::from_text(text);
+
+        for replacement in ["候補", "候補\nsecond line", ""] {
+            let line = 3_900;
+            let range = document.line_range(line);
+            let edit_start = range.start + (range.len() / 2);
+            document.replace_range(edit_start..edit_start, replacement);
+            assert_eq!(document.line_starts, line_starts_for(document.text()));
+        }
     }
 
     #[test]

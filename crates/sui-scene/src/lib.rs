@@ -618,9 +618,25 @@ pub enum SceneCommand {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, Default)]
 pub struct Scene {
     commands: Vec<SceneCommand>,
+    bounds: SceneBoundsSummary,
+}
+
+impl std::fmt::Debug for Scene {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Scene")
+            .field("commands", &self.commands)
+            .finish()
+    }
+}
+
+impl PartialEq for Scene {
+    fn eq(&self, other: &Self) -> bool {
+        self.commands == other.commands
+    }
 }
 
 impl Scene {
@@ -629,11 +645,24 @@ impl Scene {
     }
 
     pub fn push(&mut self, command: SceneCommand) {
+        self.bounds.push(&command);
         self.commands.push(command);
     }
 
     pub fn append(&mut self, mut scene: Scene) {
+        if self.bounds.state.is_balanced() && scene.bounds.state.is_balanced() {
+            self.bounds.extend(&scene.bounds);
+        } else {
+            for command in &scene.commands {
+                self.bounds.push(command);
+            }
+        }
         self.commands.append(&mut scene.commands);
+    }
+
+    pub fn clear(&mut self) {
+        self.commands.clear();
+        self.bounds = SceneBoundsSummary::default();
     }
 
     pub fn commands(&self) -> &[SceneCommand] {
@@ -665,58 +694,75 @@ impl Scene {
                 layer.scene.visit_layers_mut(visitor);
             }
         }
+        self.rebuild_bounds();
     }
 
     pub fn content_bounds(&self) -> Option<Rect> {
-        self.compute_bounds(false)
+        self.bounds.content
     }
 
     pub fn paint_bounds(&self) -> Option<Rect> {
-        self.compute_bounds(true)
+        self.bounds.paint
     }
 
     pub fn replace_layer(&mut self, widget_id: WidgetId, replacement: SceneLayer) -> bool {
+        let mut replaced = false;
         for command in &mut self.commands {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     *command = SceneCommand::Layer(replacement);
-                    return true;
+                    replaced = true;
+                    break;
                 }
                 SceneCommand::Layer(layer) => {
                     if layer.scene.replace_layer(widget_id, replacement.clone()) {
-                        return true;
+                        replaced = true;
+                        break;
                     }
                 }
                 _ => {}
             }
         }
 
-        false
+        if replaced {
+            self.rebuild_bounds();
+        }
+        replaced
     }
 
     pub fn translate(&mut self, delta: Vector) {
+        if delta == Vector::ZERO {
+            return;
+        }
         for command in &mut self.commands {
             translate_command(command, delta);
         }
+        self.rebuild_bounds();
     }
 
     pub fn translate_layer(&mut self, widget_id: WidgetId, delta: Vector) -> bool {
+        let mut translated = false;
         for command in &mut self.commands {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     layer.translate(delta);
-                    return true;
+                    translated = true;
+                    break;
                 }
                 SceneCommand::Layer(layer) => {
                     if layer.scene.translate_layer(widget_id, delta) {
-                        return true;
+                        translated = true;
+                        break;
                     }
                 }
                 _ => {}
             }
         }
 
-        false
+        if translated {
+            self.rebuild_bounds();
+        }
+        translated
     }
 
     pub fn replace_layer_descriptor(
@@ -724,25 +770,31 @@ impl Scene {
         widget_id: WidgetId,
         descriptor: SceneLayerDescriptor,
     ) -> bool {
+        let mut replaced = false;
         for command in &mut self.commands {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     layer.descriptor = descriptor;
-                    return true;
+                    replaced = true;
+                    break;
                 }
                 SceneCommand::Layer(layer) => {
                     if layer
                         .scene
                         .replace_layer_descriptor(widget_id, descriptor.clone())
                     {
-                        return true;
+                        replaced = true;
+                        break;
                     }
                 }
                 _ => {}
             }
         }
 
-        false
+        if replaced {
+            self.rebuild_bounds();
+        }
+        replaced
     }
 
     pub fn layer_scene(&self, widget_id: WidgetId) -> Option<&Scene> {
@@ -789,26 +841,55 @@ impl Scene {
                 }
             }
         }
+        self.rebuild_bounds();
     }
 
-    fn compute_bounds(&self, clipped: bool) -> Option<Rect> {
-        let mut state = SceneBoundsState::default();
-        let mut bounds: Option<Rect> = None;
-
-        for command in &self.commands {
-            if let Some(command_bounds) = state.command_bounds(command, clipped) {
-                bounds = Some(match bounds {
-                    Some(existing) => existing.union(command_bounds),
-                    None => command_bounds,
-                });
-            }
-        }
-
-        bounds
+    fn rebuild_bounds(&mut self) {
+        self.bounds = SceneBoundsSummary::from_commands(&self.commands);
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SceneBoundsSummary {
+    state: SceneBoundsState,
+    content: Option<Rect>,
+    paint: Option<Rect>,
+}
+
+impl SceneBoundsSummary {
+    fn from_commands(commands: &[SceneCommand]) -> Self {
+        let mut summary = Self::default();
+        for command in commands {
+            summary.push(command);
+        }
+        summary
+    }
+
+    fn push(&mut self, command: &SceneCommand) {
+        let (content, paint) = self.state.command_bounds(command);
+        Self::include(&mut self.content, content);
+        Self::include(&mut self.paint, paint);
+    }
+
+    fn extend(&mut self, other: &Self) {
+        debug_assert!(self.state.is_balanced());
+        debug_assert!(other.state.is_balanced());
+        Self::include(&mut self.content, other.content);
+        Self::include(&mut self.paint, other.paint);
+    }
+
+    fn include(bounds: &mut Option<Rect>, additional: Option<Rect>) {
+        let Some(additional) = additional else {
+            return;
+        };
+        *bounds = Some(match *bounds {
+            Some(existing) => existing.union(additional),
+            None => additional,
+        });
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
 struct SceneBoundsState {
     transform: Transform,
     transform_stack: Vec<Transform>,
@@ -816,61 +897,62 @@ struct SceneBoundsState {
 }
 
 impl SceneBoundsState {
-    fn command_bounds(&mut self, command: &SceneCommand, clipped: bool) -> Option<Rect> {
+    fn is_balanced(&self) -> bool {
+        self.transform.is_identity()
+            && self.transform_stack.is_empty()
+            && self.clip_stack.is_empty()
+    }
+
+    fn command_bounds(&mut self, command: &SceneCommand) -> (Option<Rect>, Option<Rect>) {
         match command {
-            SceneCommand::Clear(_) => self.current_clip(),
-            SceneCommand::FillRect { rect, .. } => self.apply_rect(*rect, clipped),
-            SceneCommand::StrokeRect { rect, stroke, .. } => self.apply_rect(
-                rect.inflate(stroke.width * 0.5, stroke.width * 0.5),
-                clipped,
-            ),
-            SceneCommand::FillPath { path, .. } => self.apply_rect(path.bounds(), clipped),
+            SceneCommand::Clear(_) => {
+                let clip = self.current_clip();
+                (clip, clip)
+            }
+            SceneCommand::FillRect { rect, .. } => self.apply_rect(*rect),
+            SceneCommand::StrokeRect { rect, stroke, .. } => {
+                self.apply_rect(rect.inflate(stroke.width * 0.5, stroke.width * 0.5))
+            }
+            SceneCommand::FillPath { path, .. } => self.apply_rect(path.bounds()),
             SceneCommand::StrokePath { path, stroke, .. } => self.apply_rect(
                 path.bounds()
                     .inflate(stroke.width * 0.5, stroke.width * 0.5),
-                clipped,
             ),
-            SceneCommand::DrawText(text) => self.apply_rect(text.rect, clipped),
-            SceneCommand::DrawShapedText(text) => {
-                self.apply_rect(text.translated_bounds(), clipped)
-            }
-            SceneCommand::DrawShapedTextWindow(text) => {
-                self.apply_rect(text.translated_bounds(), clipped)
-            }
-            SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect, clipped),
-            SceneCommand::DrawImageQuad { points, .. } => self.apply_points(*points, clipped),
-            SceneCommand::DrawShaderRect { rect, .. } => self.apply_rect(*rect, clipped),
+            SceneCommand::DrawText(text) => self.apply_rect(text.rect),
+            SceneCommand::DrawShapedText(text) => self.apply_rect(text.translated_bounds()),
+            SceneCommand::DrawShapedTextWindow(text) => self.apply_rect(text.translated_bounds()),
+            SceneCommand::DrawImage { rect, .. } => self.apply_rect(*rect),
+            SceneCommand::DrawImageQuad { points, .. } => self.apply_points(*points),
+            SceneCommand::DrawShaderRect { rect, .. } => self.apply_rect(*rect),
             SceneCommand::PushClip { rect } => {
                 let clip = self.transform.transform_rect_bbox(*rect);
                 self.push_clip(clip);
-                None
+                (None, None)
             }
             SceneCommand::PushClipPath { path } => {
                 let clip = self.transform.transform_rect_bbox(path.bounds());
                 self.push_clip(clip);
-                None
+                (None, None)
             }
             SceneCommand::PopClip => {
                 self.clip_stack.pop();
-                None
+                (None, None)
             }
             SceneCommand::PushTransform { transform } => {
                 self.transform_stack.push(self.transform);
                 self.transform = self.transform.then(*transform);
-                None
+                (None, None)
             }
             SceneCommand::PopTransform => {
                 self.transform = self.transform_stack.pop().unwrap_or_default();
-                None
+                (None, None)
             }
-            SceneCommand::PushTextRenderPolicy { .. } | SceneCommand::PopTextRenderPolicy => None,
-            SceneCommand::Layer(layer) => self.apply_rect(
-                if clipped {
-                    layer.descriptor.paint_bounds
-                } else {
-                    layer.descriptor.content_bounds
-                },
-                clipped,
+            SceneCommand::PushTextRenderPolicy { .. } | SceneCommand::PopTextRenderPolicy => {
+                (None, None)
+            }
+            SceneCommand::Layer(layer) => self.apply_distinct_rects(
+                layer.descriptor.content_bounds,
+                layer.descriptor.paint_bounds,
             ),
             SceneCommand::FillRoundedRect { rect, shadow, .. } => {
                 let bounds = match shadow {
@@ -883,29 +965,27 @@ impl SceneBoundsState {
                     }
                     None => *rect,
                 };
-                self.apply_rect(bounds, clipped)
+                self.apply_rect(bounds)
             }
-            SceneCommand::Label { rect, .. } => self.apply_rect(*rect, clipped),
+            SceneCommand::Label { rect, .. } => self.apply_rect(*rect),
         }
     }
 
-    fn apply_rect(&self, rect: Rect, clipped: bool) -> Option<Rect> {
+    fn apply_rect(&self, rect: Rect) -> (Option<Rect>, Option<Rect>) {
         let transformed = self.transform.transform_rect_bbox(rect);
-        if clipped {
-            self.clip_rect(transformed)
-        } else {
-            Some(transformed)
-        }
+        (Some(transformed), self.clip_rect(transformed))
     }
 
-    fn apply_points(&self, points: [Point; 4], clipped: bool) -> Option<Rect> {
+    fn apply_distinct_rects(&self, content: Rect, paint: Rect) -> (Option<Rect>, Option<Rect>) {
+        let content = self.transform.transform_rect_bbox(content);
+        let paint = self.transform.transform_rect_bbox(paint);
+        (Some(content), self.clip_rect(paint))
+    }
+
+    fn apply_points(&self, points: [Point; 4]) -> (Option<Rect>, Option<Rect>) {
         let transformed = points.map(|point| self.transform.transform_point(point));
         let bounds = points_bounds(&transformed);
-        if clipped {
-            self.clip_rect(bounds)
-        } else {
-            Some(bounds)
-        }
+        (Some(bounds), self.clip_rect(bounds))
     }
 
     fn push_clip(&mut self, clip: Rect) {
@@ -1217,8 +1297,8 @@ impl SceneFrame {
 mod tests {
     use super::{
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
-        RegisteredImageFormat, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
-        SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
+        RegisteredImageFormat, Scene, SceneBoundsSummary, SceneCommand, SceneFrame, SceneLayer,
+        SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
         TextRenderCoveragePolicy, TextRenderMode, TextRenderPolicy, TextSubpixelOrder,
         WidgetShader,
     };
@@ -1231,6 +1311,13 @@ mod tests {
     };
 
     fn assert_send_sync<T: Send + Sync>() {}
+
+    fn assert_bounds_summary_matches_commands(scene: &Scene) {
+        let recomputed = SceneBoundsSummary::from_commands(&scene.commands);
+        assert_eq!(scene.bounds, recomputed);
+        assert_eq!(scene.content_bounds(), recomputed.content);
+        assert_eq!(scene.paint_bounds(), recomputed.paint);
+    }
 
     #[test]
     fn scene_frame_is_send_sync() {
@@ -1498,5 +1585,179 @@ mod tests {
 
         assert_eq!(command_count, 3);
         assert!(saw_nested_fill);
+    }
+
+    #[test]
+    fn scene_bounds_summary_stays_exact_through_all_mutation_paths() {
+        let mut scene = Scene::default();
+        assert_eq!(scene.content_bounds(), None);
+        assert_eq!(scene.paint_bounds(), None);
+        assert_bounds_summary_matches_commands(&scene);
+
+        scene.push(SceneCommand::PushClip {
+            rect: Rect::new(0.0, 0.0, 50.0, 50.0),
+        });
+        scene.push(SceneCommand::PushTransform {
+            transform: Transform::translation(10.0, 5.0),
+        });
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(30.0, 30.0, 40.0, 40.0),
+            brush: Brush::Solid(Color::WHITE),
+        });
+        assert_eq!(
+            scene.content_bounds(),
+            Some(Rect::new(40.0, 35.0, 40.0, 40.0))
+        );
+        assert_eq!(
+            scene.paint_bounds(),
+            Some(Rect::new(40.0, 35.0, 10.0, 15.0))
+        );
+        assert_bounds_summary_matches_commands(&scene);
+
+        let mut appended = Scene::new();
+        appended.push(SceneCommand::FillRect {
+            rect: Rect::new(-8.0, -6.0, 4.0, 3.0),
+            brush: Brush::Solid(Color::BLACK),
+        });
+        appended.push(SceneCommand::PushClip {
+            rect: Rect::new(-10.0, -10.0, 20.0, 20.0),
+        });
+        appended.push(SceneCommand::Clear(Color::BLACK));
+        appended.push(SceneCommand::PopClip);
+        assert_bounds_summary_matches_commands(&appended);
+
+        // The destination has an open clip and transform, so append must replay the
+        // incoming commands against that state rather than just unioning its bounds.
+        scene.append(appended);
+        scene.push(SceneCommand::PopTransform);
+        scene.push(SceneCommand::PopClip);
+        assert_bounds_summary_matches_commands(&scene);
+
+        let child_id = WidgetId::new(41);
+        let grandchild_id = WidgetId::new(42);
+        let mut grandchild_scene = Scene::new();
+        grandchild_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(4.0, 6.0, 12.0, 8.0),
+            brush: Brush::Solid(Color::WHITE),
+        });
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::Layer(SceneLayer::new(
+            grandchild_id,
+            Rect::new(4.0, 6.0, 12.0, 8.0),
+            grandchild_scene,
+        )));
+        scene.push(SceneCommand::Layer(SceneLayer::new(
+            child_id,
+            Rect::new(2.0, 3.0, 24.0, 18.0),
+            child_scene,
+        )));
+        assert_bounds_summary_matches_commands(&scene);
+
+        let mut replacement_scene = Scene::new();
+        replacement_scene.push(SceneCommand::FillRect {
+            rect: Rect::new(20.0, 22.0, 14.0, 10.0),
+            brush: Brush::Solid(Color::BLACK),
+        });
+        assert!(scene.replace_layer(
+            grandchild_id,
+            SceneLayer::new(
+                grandchild_id,
+                Rect::new(20.0, 22.0, 14.0, 10.0),
+                replacement_scene,
+            ),
+        ));
+        assert_bounds_summary_matches_commands(&scene);
+
+        assert!(scene.translate_layer(grandchild_id, Vector::new(7.0, -2.0)));
+        assert_bounds_summary_matches_commands(&scene);
+
+        let replacement_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(grandchild_id),
+            grandchild_id,
+            Rect::new(27.0, 20.0, 14.0, 10.0),
+        )
+        .with_content_bounds(Rect::new(25.0, 18.0, 18.0, 14.0))
+        .with_paint_bounds(Rect::new(24.0, 17.0, 20.0, 16.0));
+        assert!(scene.replace_layer_descriptor(grandchild_id, replacement_descriptor));
+        assert_bounds_summary_matches_commands(&scene);
+
+        scene.visit_layers_mut(&mut |layer| {
+            layer.descriptor.paint_bounds = layer.descriptor.paint_bounds.inflate(1.0, 2.0);
+            layer.scene.push(SceneCommand::Label {
+                rect: Rect::new(1.0, 2.0, 3.0, 4.0),
+                text: "cache mutation".to_string(),
+                color: Color::WHITE,
+            });
+        });
+        assert_bounds_summary_matches_commands(&scene);
+
+        let mut reordered = Scene::new();
+        reordered.push(SceneCommand::PushClip {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+        });
+        reordered.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            SceneLayerDescriptor::new(
+                SceneLayerId::new(91),
+                WidgetId::new(91),
+                Rect::new(0.0, 0.0, 100.0, 10.0),
+            )
+            .with_is_stack_surface(true)
+            .with_stack_order(1),
+            Scene::new(),
+        )));
+        reordered.push(SceneCommand::PopClip);
+        reordered.push(SceneCommand::PushClip {
+            rect: Rect::new(50.0, 0.0, 10.0, 10.0),
+        });
+        reordered.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            SceneLayerDescriptor::new(
+                SceneLayerId::new(92),
+                WidgetId::new(92),
+                Rect::new(50.0, 0.0, 100.0, 10.0),
+            )
+            .with_is_stack_surface(true)
+            .with_stack_order(0),
+            Scene::new(),
+        )));
+        reordered.push(SceneCommand::PopClip);
+        assert_eq!(
+            reordered.paint_bounds(),
+            Some(Rect::new(0.0, 0.0, 60.0, 10.0))
+        );
+        reordered.reorder_stack_surfaces();
+        assert_eq!(
+            reordered.paint_bounds(),
+            Some(Rect::new(50.0, 0.0, 10.0, 10.0))
+        );
+        assert_bounds_summary_matches_commands(&reordered);
+        scene.append(reordered);
+        assert_bounds_summary_matches_commands(&scene);
+
+        scene.translate(Vector::new(-3.0, 9.0));
+        assert_bounds_summary_matches_commands(&scene);
+
+        // A balanced scene can be appended by merging summaries without replaying
+        // its command stream. The result must still match a complete recomputation.
+        let mut balanced = Scene::new();
+        balanced.push(SceneCommand::PushTransform {
+            transform: Transform::translation(2.0, 4.0),
+        });
+        balanced.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 5.0, 7.0),
+            brush: Brush::Solid(Color::WHITE),
+        });
+        balanced.push(SceneCommand::PopTransform);
+        scene.append(balanced);
+        assert_bounds_summary_matches_commands(&scene);
+
+        let clone = scene.clone();
+        assert_eq!(scene, clone);
+        assert_bounds_summary_matches_commands(&clone);
+
+        scene.clear();
+        assert_eq!(scene, Scene::default());
+        assert_eq!(scene.content_bounds(), None);
+        assert_eq!(scene.paint_bounds(), None);
+        assert_bounds_summary_matches_commands(&scene);
     }
 }

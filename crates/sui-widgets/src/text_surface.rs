@@ -20,8 +20,8 @@ use sui_text::{
 use crate::{
     DefaultTheme, MotionScalar, ThemeColorScheme,
     editor::{
-        EditorCommand, EditorCommandResult, EditorState, clamp_to_grapheme_boundary,
-        selection_range,
+        EditorCommand, EditorCommandResult, EditorDocument, EditorState,
+        clamp_to_grapheme_boundary, selection_range,
     },
     selection::{SelectionChange, SelectionOwnerId, SelectionScope},
     text_align::paint_aligned_text,
@@ -63,6 +63,63 @@ impl TextSurfaceStyleOverlay {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct IndexedTextRange {
+    source_index: usize,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TextSurfaceRangeIndex {
+    by_start: Vec<IndexedTextRange>,
+    prefix_max_end: Vec<usize>,
+}
+
+impl TextSurfaceRangeIndex {
+    fn rebuild(&mut self, ranges: impl IntoIterator<Item = (usize, usize)>) {
+        self.by_start = ranges
+            .into_iter()
+            .enumerate()
+            .map(|(source_index, (start, end))| IndexedTextRange {
+                source_index,
+                start,
+                end,
+            })
+            .collect();
+        self.by_start
+            .sort_unstable_by_key(|range| (range.start, range.end, range.source_index));
+
+        self.prefix_max_end.clear();
+        self.prefix_max_end.reserve(self.by_start.len());
+        let mut max_end = 0;
+        for range in &self.by_start {
+            max_end = max_end.max(range.end);
+            self.prefix_max_end.push(max_end);
+        }
+    }
+
+    fn overlapping_indices(&self, query: &Range<usize>) -> Vec<usize> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let upper = self
+            .by_start
+            .partition_point(|range| range.start < query.end);
+        let lower = self.prefix_max_end[..upper].partition_point(|max_end| *max_end <= query.start);
+        let mut indices = self.by_start[lower..upper]
+            .iter()
+            .filter(|range| query.start < range.end)
+            .map(|range| range.source_index)
+            .collect::<Vec<_>>();
+        // Source order defines precedence: later spans override earlier spans,
+        // and overlays are applied after ordinary spans.
+        indices.sort_unstable();
+        indices
+    }
+}
+
 pub struct TextSurface {
     theme: Box<DefaultTheme>,
     name: String,
@@ -76,7 +133,11 @@ pub struct TextSurface {
     wrap: TextWrap,
     direction: TextDirection,
     style_spans: Vec<TextSurfaceStyleSpan>,
+    style_span_index: TextSurfaceRangeIndex,
+    style_span_max_line_height: f32,
     style_overlays: Vec<TextSurfaceStyleOverlay>,
+    style_overlay_index: TextSurfaceRangeIndex,
+    style_overlay_max_line_height: f32,
     style_revision: u64,
     hovered: bool,
     hover_animation: AnimatedScalar,
@@ -109,7 +170,11 @@ impl TextSurface {
             wrap: TextWrap::NoWrap,
             direction: TextDirection::Auto,
             style_spans: Vec::new(),
+            style_span_index: TextSurfaceRangeIndex::default(),
+            style_span_max_line_height: 0.0,
             style_overlays: Vec::new(),
+            style_overlay_index: TextSurfaceRangeIndex::default(),
+            style_overlay_max_line_height: 0.0,
             style_revision: 0,
             hovered: false,
             hover_animation: AnimatedScalar::new(0.0),
@@ -175,6 +240,16 @@ impl TextSurface {
 
     pub fn set_style_spans(&mut self, spans: Vec<TextSurfaceStyleSpan>) {
         self.style_spans = spans;
+        self.style_span_index.rebuild(
+            self.style_spans
+                .iter()
+                .map(|span| (span.range.start, span.range.end)),
+        );
+        self.style_span_max_line_height = self
+            .style_spans
+            .iter()
+            .map(|span| span.style.line_height.max(span.style.font_size))
+            .fold(0.0, f32::max);
         self.bump_style_revision();
     }
 
@@ -189,6 +264,16 @@ impl TextSurface {
 
     pub fn set_style_overlays(&mut self, overlays: Vec<TextSurfaceStyleOverlay>) {
         self.style_overlays = overlays;
+        self.style_overlay_index.rebuild(
+            self.style_overlays
+                .iter()
+                .map(|overlay| (overlay.range.start, overlay.range.end)),
+        );
+        self.style_overlay_max_line_height = self
+            .style_overlays
+            .iter()
+            .map(|overlay| overlay.style.line_height.max(overlay.style.font_size))
+            .fold(0.0, f32::max);
         self.bump_style_revision();
     }
 
@@ -290,6 +375,69 @@ impl TextSurface {
         self.line_layout_style = None;
         self.line_layout_revision = u64::MAX;
         self.line_layout_style_revision = u64::MAX;
+    }
+
+    fn reconcile_composition_line_layouts(
+        &mut self,
+        line_texts: &[String],
+        line_offsets: Vec<usize>,
+        line_lengths: Vec<usize>,
+        line_box_size: Size,
+        line_style: &TextStyle,
+    ) {
+        let metadata_matches = self.line_layout_box_size == Some(line_box_size)
+            && self.line_layout_style.as_ref() == Some(line_style)
+            && self.line_layout_style_revision == self.style_revision;
+        let previous_offsets = std::mem::replace(&mut self.line_offsets, line_offsets);
+        let previous_lengths = std::mem::replace(&mut self.line_lengths, line_lengths);
+        let mut previous_layouts = std::mem::take(&mut self.line_layouts);
+        let mut next_layouts = Vec::with_capacity(line_texts.len());
+
+        for (index, line_text) in line_texts.iter().enumerate() {
+            let can_reuse = metadata_matches
+                && previous_offsets.get(index) == self.line_offsets.get(index)
+                && previous_lengths.get(index) == self.line_lengths.get(index);
+            let layout = can_reuse
+                .then(|| previous_layouts.get_mut(index).and_then(Option::take))
+                .flatten()
+                .filter(|layout| layout.text() == line_text);
+            next_layouts.push(layout);
+        }
+
+        self.line_layouts = next_layouts;
+    }
+
+    fn refresh_reusable_document_line_metadata(
+        document: &EditorDocument,
+        line_layouts: &mut [Option<PersistentTextLayout>],
+        line_offsets: &mut [usize],
+        line_lengths: &mut [usize],
+        style_ranges_present: bool,
+    ) {
+        if let Some(start) = document.line_offsets_dirty_from() {
+            for index in start.min(document.line_count())..document.line_count() {
+                let line_range = document.line_range(index);
+                let metadata_changed = line_offsets[index] != line_range.start
+                    || line_lengths[index] != line_range.len();
+                line_offsets[index] = line_range.start;
+                line_lengths[index] = line_range.len();
+                if style_ranges_present && metadata_changed {
+                    // Styled layouts depend on their global byte range. A shifted
+                    // but text-identical line must be reshaped against the current
+                    // span/overlay ranges.
+                    line_layouts[index] = None;
+                }
+            }
+        }
+
+        for index in document.dirty_line_range() {
+            if index < line_layouts.len() {
+                let line_range = document.line_range(index);
+                line_offsets[index] = line_range.start;
+                line_lengths[index] = line_range.len();
+                line_layouts[index] = None;
+            }
+        }
     }
 
     fn selection_range(&self) -> Range<usize> {
@@ -581,17 +729,27 @@ impl TextSurface {
         line_range: Range<usize>,
         base_style: TextStyle,
     ) -> Vec<TextSpan> {
-        let mut breaks = vec![0, line_text.len()];
-        self.collect_style_breaks(&self.style_spans, &line_range, line_text, &mut breaks);
-        let overlays_as_spans = self
-            .style_overlays
-            .iter()
-            .map(|overlay| TextSurfaceStyleSpan {
-                range: overlay.range.clone(),
-                style: overlay.style.clone(),
-            })
-            .collect::<Vec<_>>();
-        self.collect_style_breaks(&overlays_as_spans, &line_range, line_text, &mut breaks);
+        let style_indices = self.style_span_index.overlapping_indices(&line_range);
+        let overlay_indices = self.style_overlay_index.overlapping_indices(&line_range);
+        let mut breaks =
+            Vec::with_capacity(2 + (style_indices.len() + overlay_indices.len()).saturating_mul(2));
+        breaks.extend([0, line_text.len()]);
+        for index in &style_indices {
+            Self::collect_style_breaks(
+                &self.style_spans[*index].range,
+                &line_range,
+                line_text,
+                &mut breaks,
+            );
+        }
+        for index in &overlay_indices {
+            Self::collect_style_breaks(
+                &self.style_overlays[*index].range,
+                &line_range,
+                line_text,
+                &mut breaks,
+            );
+        }
 
         breaks.sort_unstable();
         breaks.dedup();
@@ -605,12 +763,14 @@ impl TextSurface {
             }
             let global_range = line_range.start + start..line_range.start + end;
             let mut style = base_style.clone();
-            for span in &self.style_spans {
+            for index in &style_indices {
+                let span = &self.style_spans[*index];
                 if ranges_intersect(&global_range, &span.range) {
                     style = span.style.clone();
                 }
             }
-            for overlay in &self.style_overlays {
+            for index in &overlay_indices {
+                let overlay = &self.style_overlays[*index];
                 if ranges_intersect(&global_range, &overlay.range) {
                     style = overlay.style.clone();
                 }
@@ -625,25 +785,21 @@ impl TextSurface {
     }
 
     fn collect_style_breaks(
-        &self,
-        spans: &[TextSurfaceStyleSpan],
+        span_range: &Range<usize>,
         line_range: &Range<usize>,
         line_text: &str,
         breaks: &mut Vec<usize>,
     ) {
-        for span in spans {
-            if !ranges_intersect(line_range, &span.range) {
-                continue;
-            }
-            let local_start = span.range.start.saturating_sub(line_range.start);
-            let local_end = span
-                .range
-                .end
-                .min(line_range.end)
-                .saturating_sub(line_range.start);
-            breaks.push(clamp_to_grapheme_boundary(line_text, local_start));
-            breaks.push(clamp_to_grapheme_boundary(line_text, local_end));
+        if !ranges_intersect(line_range, span_range) {
+            return;
         }
+        let local_start = span_range.start.saturating_sub(line_range.start);
+        let local_end = span_range
+            .end
+            .min(line_range.end)
+            .saturating_sub(line_range.start);
+        breaks.push(clamp_to_grapheme_boundary(line_text, local_start));
+        breaks.push(clamp_to_grapheme_boundary(line_text, local_end));
     }
 
     fn update_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
@@ -837,15 +993,8 @@ impl TextSurface {
 
     fn line_slot_height_for_style(&self, base_style: &TextStyle) -> f32 {
         let base = base_style.line_height.max(base_style.font_size).max(1.0);
-        self.style_spans
-            .iter()
-            .map(|span| span.style.line_height.max(span.style.font_size))
-            .chain(
-                self.style_overlays
-                    .iter()
-                    .map(|overlay| overlay.style.line_height.max(overlay.style.font_size)),
-            )
-            .fold(base, f32::max)
+        base.max(self.style_span_max_line_height)
+            .max(self.style_overlay_max_line_height)
     }
 
     fn line_height(&self) -> f32 {
@@ -1270,6 +1419,8 @@ impl Widget for TextSurface {
         if !composition_active {
             let document = self.editor.document();
             let line_count = document.line_count();
+            let style_ranges_present =
+                !self.style_spans.is_empty() || !self.style_overlays.is_empty();
 
             if cache_lines_individually && line_count > 1 {
                 let can_reuse_lines = self.line_layout_revision != u64::MAX
@@ -1292,15 +1443,13 @@ impl Widget for TextSurface {
                         self.line_lengths.push(line_range.len());
                     }
                 } else {
-                    for index in document.dirty_line_range() {
-                        if index >= line_count {
-                            continue;
-                        }
-                        let line_range = document.line_range(index);
-                        self.line_layouts[index] = None;
-                        self.line_offsets[index] = line_range.start;
-                        self.line_lengths[index] = line_range.len();
-                    }
+                    Self::refresh_reusable_document_line_metadata(
+                        document,
+                        &mut self.line_layouts,
+                        &mut self.line_offsets,
+                        &mut self.line_lengths,
+                        style_ranges_present,
+                    );
                 }
 
                 let visible_lines = self.visible_line_range(viewport_height);
@@ -1354,20 +1503,13 @@ impl Widget for TextSurface {
             let display_text = self.display_text();
             let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
             if cache_lines_individually && line_texts.len() > 1 {
-                let metadata_matches = self.line_layout_box_size == Some(line_box_size)
-                    && self.line_layout_style.as_ref() == Some(&line_style)
-                    && self.line_layout_style_revision == self.style_revision
-                    && self.line_layouts.len() == line_texts.len()
-                    && self.line_offsets == line_offsets
-                    && self.line_lengths == line_lengths;
-
-                if !metadata_matches {
-                    self.line_layouts = vec![None; line_texts.len()];
-                    self.line_offsets = line_offsets;
-                    self.line_lengths = line_lengths;
-                } else {
-                    self.line_layouts.fill(None);
-                }
+                self.reconcile_composition_line_layouts(
+                    &line_texts,
+                    line_offsets,
+                    line_lengths,
+                    line_box_size,
+                    &line_style,
+                );
 
                 let visible_lines = self.visible_line_range(viewport_height);
                 let caret_line =
@@ -2179,6 +2321,94 @@ mod tests {
 
         assert!(after_window.start >= before_window.start);
         assert_ne!(after_window, before_window);
+    }
+
+    #[test]
+    fn text_surface_refreshes_shifted_offsets_without_discarding_plain_suffix_layouts() {
+        let mut surface = TextSurface::new("Editor").value("a\nb\nc");
+        let (line_texts, line_offsets, line_lengths) =
+            split_lines_with_offsets(surface.current_value());
+        let text_system = sui_text::TextSystem::new();
+        let font_registry = sui_text::FontRegistry::new();
+        let style = surface.resolved_text_style();
+        let retained = text_system
+            .shape_text_persistent(
+                None,
+                line_texts[1].clone(),
+                Size::new(180.0, style.line_height),
+                style,
+                &font_registry,
+            )
+            .expect("suffix line should shape");
+        let retained_handle = retained.handle();
+        surface.line_layouts = vec![None, Some(retained), None];
+        surface.line_offsets = line_offsets;
+        surface.line_lengths = line_lengths;
+        surface.editor.clear_document_dirty();
+
+        surface.editor.execute(EditorCommand::SetSelection {
+            anchor: 1,
+            focus: 1,
+        });
+        surface
+            .editor
+            .execute(EditorCommand::InsertText("XYZ".to_string()));
+
+        TextSurface::refresh_reusable_document_line_metadata(
+            surface.editor.document(),
+            &mut surface.line_layouts,
+            &mut surface.line_offsets,
+            &mut surface.line_lengths,
+            false,
+        );
+
+        assert_eq!(surface.line_offsets, vec![0, 5, 7]);
+        assert_eq!(surface.line_lengths, vec![4, 1, 1]);
+        assert_eq!(
+            surface.line_layouts[1]
+                .as_ref()
+                .map(PersistentTextLayout::handle),
+            Some(retained_handle)
+        );
+        assert!(surface.line_layouts[0].is_none());
+    }
+
+    #[test]
+    fn shifted_styled_suffix_layouts_are_invalidated_after_edit() {
+        let mut surface = TextSurface::new("Editor").value("a\nb");
+        let (line_texts, line_offsets, line_lengths) =
+            split_lines_with_offsets(surface.current_value());
+        let style = surface.resolved_text_style();
+        let retained = sui_text::TextSystem::new()
+            .shape_text_persistent(
+                None,
+                line_texts[1].clone(),
+                Size::new(180.0, style.line_height),
+                style,
+                &sui_text::FontRegistry::new(),
+            )
+            .expect("styled suffix line should shape");
+        surface.line_layouts = vec![None, Some(retained)];
+        surface.line_offsets = line_offsets;
+        surface.line_lengths = line_lengths;
+        surface.editor.clear_document_dirty();
+        surface.editor.execute(EditorCommand::SetSelection {
+            anchor: 1,
+            focus: 1,
+        });
+        surface
+            .editor
+            .execute(EditorCommand::InsertText("XYZ".to_string()));
+
+        TextSurface::refresh_reusable_document_line_metadata(
+            surface.editor.document(),
+            &mut surface.line_layouts,
+            &mut surface.line_offsets,
+            &mut surface.line_lengths,
+            true,
+        );
+
+        assert!(surface.line_layouts[1].is_none());
     }
 
     #[test]

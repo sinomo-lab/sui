@@ -2534,6 +2534,7 @@ pub struct ScrollView {
     offset: Vector,
     content_size: Size,
     focus_animation: AnimatedScalar,
+    retain_content: bool,
     child: SingleChild,
 }
 
@@ -2553,6 +2554,7 @@ impl ScrollView {
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             focus_animation: AnimatedScalar::new(0.0),
+            retain_content: false,
             child: SingleChild::new(child),
         }
     }
@@ -2643,6 +2645,19 @@ impl ScrollView {
         self
     }
 
+    /// Retains the complete child subtree behind a paint boundary so scrolling
+    /// can move it with a composition-only transform.
+    ///
+    /// This is best for content that is expensive to repaint but cheap to
+    /// composite. Very large text or deeply layered scenes may render faster
+    /// with the default flattened path.
+    pub fn retain_content_layer(mut self) -> Self {
+        self.retain_content = true;
+        let child = self.child;
+        self.child = child.with_paint_boundary();
+        self
+    }
+
     pub const fn current_offset(&self) -> Vector {
         self.offset
     }
@@ -2668,7 +2683,11 @@ impl ScrollView {
     where
         W: Widget + 'static,
     {
-        self.child = SingleChild::new(child);
+        self.child = if self.retain_content {
+            SingleChild::new_with_paint_boundary(child)
+        } else {
+            SingleChild::new(child)
+        };
     }
 
     fn clamp_offset(&self, viewport: Size, offset: Vector) -> Vector {
@@ -2736,7 +2755,9 @@ impl ScrollView {
             self.offset = next;
             self.publish_state(ctx, viewport);
             ctx.request_arrange();
-            ctx.request_paint();
+            if !self.retain_content {
+                ctx.request_paint();
+            }
             ctx.request(InvalidationRequest::new(
                 InvalidationTarget::Widget(self.child.child().id()),
                 InvalidationKind::Transform,
@@ -3898,6 +3919,74 @@ mod tests {
         }
     }
 
+    struct LayeredScrollPaintBox {
+        size: Size,
+        color: Color,
+        paints: Rc<RefCell<usize>>,
+    }
+
+    impl Widget for LayeredScrollPaintBox {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if ctx.phase() == EventPhase::Target
+                && matches!(event, Event::Pointer(pointer) if pointer.kind == PointerEventKind::Scroll)
+            {
+                ctx.request_paint();
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(self.size)
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            *self.paints.borrow_mut() += 1;
+            ctx.fill_bounds(self.color);
+        }
+
+        fn layer_options(&self) -> LayerOptions {
+            LayerOptions {
+                paint_boundary: PaintBoundaryMode::Explicit,
+                composition_mode: LayerCompositionMode::Normal,
+            }
+        }
+    }
+
+    struct HitTestBox {
+        size: Size,
+        presses: Rc<RefCell<Vec<usize>>>,
+        index: usize,
+    }
+
+    impl HitTestBox {
+        fn new(size: Size, presses: Rc<RefCell<Vec<usize>>>, index: usize) -> Self {
+            Self {
+                size,
+                presses,
+                index,
+            }
+        }
+    }
+
+    impl Widget for HitTestBox {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if ctx.phase() == EventPhase::Target
+                && matches!(
+                    event,
+                    Event::Pointer(pointer)
+                        if pointer.kind == PointerEventKind::Down
+                            && ctx.bounds().contains(pointer.position)
+                )
+            {
+                self.presses.borrow_mut()[self.index] += 1;
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(self.size)
+        }
+    }
+
     struct ConstraintProbe {
         size: Size,
         seen: Rc<RefCell<Vec<Constraints>>>,
@@ -4803,7 +4892,7 @@ mod tests {
         runtime
             .handle_event(window_id, Event::Pointer(scroll))
             .unwrap();
-        let _ = runtime.render(window_id).unwrap();
+        let output = runtime.render(window_id).unwrap();
         let graph = runtime.widget_graph(window_id).unwrap();
 
         assert_eq!(graph.nodes[1].bounds, Rect::new(0.0, 0.0, 80.0, 40.0));
@@ -4813,10 +4902,80 @@ mod tests {
             .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
             .expect("scroll content present");
         assert_eq!(content.bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+
+        let semantic_content = output
+            .semantics
+            .iter()
+            .find(|node| node.id == content.id)
+            .expect("scroll content semantics present");
+        assert_eq!(semantic_content.bounds, content.bounds);
+
+        let scroll_view = parent_node(&graph, content);
+        let scroll_scene = output
+            .frame
+            .scene
+            .layer_scene(scroll_view.id)
+            .expect("scroll viewport layer present");
+        assert!(scroll_scene.commands().iter().any(|command| {
+            matches!(
+                command,
+                SceneCommand::PushClip { rect }
+                    if *rect == Rect::new(0.0, 0.0, 80.0, 40.0)
+            )
+        }));
     }
 
     #[test]
-    fn scroll_view_repaints_visible_content_after_scroll_input() {
+    fn scroll_view_translates_retained_content_without_repainting() {
+        let counts = Rc::new(RefCell::new(vec![0usize; 2]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(PaintCounterBox::new(
+                            Size::new(80.0, 60.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                            Rc::clone(&counts),
+                            0,
+                        ))
+                        .with_child(PaintCounterBox::new(
+                            Size::new(80.0, 60.0),
+                            Color::rgba(0.2, 0.6, 0.8, 1.0),
+                            Rc::clone(&counts),
+                            1,
+                        )),
+                )
+                .retain_content_layer(),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1, 1]);
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let content_id = scroll_view_content_with_height(&graph, 120.0).id;
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(*counts.borrow(), vec![1, 1]);
+        assert!(output.frame.layer_updates.iter().any(|update| {
+            update.owner == content_id && update.kind == sui_scene::SceneLayerUpdateKind::Transform
+        }));
+        assert!(
+            !output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == sui_scene::SceneLayerUpdateKind::Content)
+        );
+    }
+
+    #[test]
+    fn scroll_view_repaints_content_by_default_after_scroll_input() {
         let counts = Rc::new(RefCell::new(vec![0usize; 2]));
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
@@ -4839,8 +4998,6 @@ mod tests {
         );
 
         let _ = runtime.render(window_id).unwrap();
-        assert_eq!(*counts.borrow(), vec![1, 1]);
-
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
         scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
         runtime
@@ -4849,10 +5006,107 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         assert_eq!(*counts.borrow(), vec![2, 2]);
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Content })
+        );
+    }
+
+    #[test]
+    fn retained_scroll_repaints_ancestor_when_nested_layer_is_dirty() {
+        let nested_paints = Rc::new(RefCell::new(0usize));
+        let sibling_paints = Rc::new(RefCell::new(vec![0usize]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(LayeredScrollPaintBox {
+                            size: Size::new(80.0, 60.0),
+                            color: Color::rgba(0.8, 0.2, 0.2, 1.0),
+                            paints: Rc::clone(&nested_paints),
+                        })
+                        .with_child(PaintCounterBox::new(
+                            Size::new(80.0, 60.0),
+                            Color::rgba(0.2, 0.6, 0.8, 1.0),
+                            Rc::clone(&sibling_paints),
+                            0,
+                        )),
+                )
+                .retain_content_layer(),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        let initial_graph = runtime.widget_graph(window_id).unwrap();
+        let content = scroll_view_content_with_height(&initial_graph, 120.0);
+        let content_id = content.id;
+        let nested_id = content.children[0];
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -32.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let nested = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == nested_id)
+            .expect("nested retained layer remains in the graph");
+        let descriptor = layer_descriptor_for(&output, nested_id)
+            .expect("nested retained layer remains in the scene");
+
+        assert_eq!(*nested_paints.borrow(), 2);
+        assert_eq!(*sibling_paints.borrow(), vec![2]);
+        assert_eq!(descriptor.bounds, nested.bounds);
         assert!(output.frame.layer_updates.iter().any(|update| {
-            update.kind == sui_scene::SceneLayerUpdateKind::Content
-                && update.damage == Some(Rect::new(0.0, 0.0, 80.0, 60.0))
+            update.owner == content_id && update.kind == sui_scene::SceneLayerUpdateKind::Content
         }));
+        assert!(!output.frame.layer_updates.iter().any(|update| {
+            update.owner == content_id && update.kind == sui_scene::SceneLayerUpdateKind::Transform
+        }));
+    }
+
+    #[test]
+    fn scroll_view_hit_testing_tracks_retained_content_translation() {
+        let presses = Rc::new(RefCell::new(vec![0usize; 2]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(HitTestBox::new(
+                            Size::new(80.0, 40.0),
+                            Rc::clone(&presses),
+                            0,
+                        ))
+                        .with_child(HitTestBox::new(
+                            Size::new(80.0, 40.0),
+                            Rc::clone(&presses),
+                            1,
+                        )),
+                )
+                .retain_content_layer(),
+            ),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -40.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+
+        let pointer = PointerEvent::new(PointerEventKind::Down, Point::new(20.0, 20.0));
+        runtime
+            .handle_event(window_id, Event::Pointer(pointer))
+            .unwrap();
+
+        assert_eq!(*presses.borrow(), vec![0, 1]);
     }
 
     #[test]
@@ -5054,15 +5308,17 @@ mod tests {
     #[test]
     fn scroll_view_emits_transform_updates_after_scroll_offset_changes() {
         let counts = Rc::new(RefCell::new(vec![0usize; 1]));
-        let (mut runtime, window_id) =
-            build_runtime(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
                 ScrollView::vertical(PaintCounterBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
                     Rc::clone(&counts),
                     0,
-                )),
-            ));
+                ))
+                .retain_content_layer(),
+            ),
+        );
 
         let _ = runtime.render(window_id).unwrap();
         assert_eq!(*counts.borrow(), vec![1]);
@@ -5074,8 +5330,14 @@ mod tests {
             .unwrap();
         let output = runtime.render(window_id).unwrap();
 
-        assert_eq!(*counts.borrow(), vec![2]);
-        assert!(!output.frame.layer_updates.is_empty());
+        assert_eq!(*counts.borrow(), vec![1]);
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| update.kind == sui_scene::SceneLayerUpdateKind::Transform)
+        );
     }
 
     #[test]
