@@ -14194,7 +14194,7 @@ mod tests {
         ToolPaletteItem, Toolbar, paint_action_tile, paint_border, paint_callout, paint_code_lines,
         paint_code_panel, paint_command_button, paint_disclosure_button, paint_hairline,
         paint_placement_badge_with, paint_rounded_panel, paint_section_label,
-        paint_section_label_detail, paint_section_panel,
+        paint_section_label_detail, paint_section_panel, text_token_style,
     };
     use crate::FloatingStack;
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone, ThemeTextToken};
@@ -15351,14 +15351,30 @@ mod tests {
 
     impl Widget for CompactCommandButtonPaintFixture {
         fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-            constraints.clamp(Size::new(104.0, 24.0))
+            constraints.clamp(Size::new(200.0, 24.0))
         }
 
         fn paint(&self, ctx: &mut PaintCtx) {
+            let mut natural_style =
+                text_token_style(&self.theme, self.theme.text.sm, self.theme.palette.accent);
+            natural_style.weight = FontWeight::SEMIBOLD;
+            let natural_width = ctx
+                .measure_text("Hide details", natural_style)
+                .expect("command button label should be measurable")
+                .width;
+            let target_label_width = natural_width * 0.95;
+            // Compact command buttons reserve 8px leading padding, a 12px icon,
+            // a 6px gap, and 6px trailing padding around the label slot.
+            let button_rect = Rect::new(
+                ctx.bounds().x(),
+                ctx.bounds().y(),
+                target_label_width + 32.0,
+                ctx.bounds().height(),
+            );
             paint_command_button(
                 ctx,
                 &self.theme,
-                ctx.bounds(),
+                button_rect,
                 "Hide details",
                 Some(crate::IconGlyph::ChevronUp),
                 CommandButtonPaint::tonal(SemanticTone::Accent).icon_tone(SemanticTone::Accent),
@@ -15371,18 +15387,19 @@ mod tests {
         let theme = DefaultTheme::default();
         let output = render(CompactCommandButtonPaintFixture { theme });
         let label = text_run_for(&output, "Hide details");
-        let estimated_label_width =
-            label.text.chars().count() as f32 * label.style.font_size * 0.56;
+        let layout = text_layout_for(&output, "Hide details");
 
         assert!(
             label.style.font_size < theme.text.sm.size,
             "compact command button should reduce label font size"
         );
         assert!(label.style.font_size >= 10.0);
+        assert_eq!(layout.lines().len(), 1, "label should not wrap");
         assert!(
-            estimated_label_width <= label.rect.width() + 0.75,
-            "compact command button label should fit its slot: estimated={estimated_label_width} rect={:?}",
-            label.rect
+            layout.measurement().width <= layout.box_size().width + 0.01,
+            "compact command button label should fit its slot: measurement={:?} box={:?}",
+            layout.measurement(),
+            layout.box_size()
         );
     }
 
@@ -16491,12 +16508,12 @@ mod tests {
 
     #[test]
     fn status_bar_sizes_segments_from_measured_text() {
+        let theme = DefaultTheme::default();
+        let text = "Layer Paint / Normal / 100% / Unlocked";
         let output = render(
             StatusBar::new()
                 .name("Editor status")
-                .segment(StatusBarSegment::new(
-                    "Layer Paint / Normal / 100% / Unlocked",
-                ))
+                .segment(StatusBarSegment::new(text))
                 .segment(StatusBarSegment::new("Cursor --").expand(true)),
         );
 
@@ -16508,9 +16525,13 @@ mod tests {
                     && node.name.as_deref() == Some("Layer Paint / Normal / 100% / Unlocked")
             })
             .expect("long status segment should expose text semantics");
+        let measured_width = text_layout_for(&output, text).measurement().width;
+        let expected_width = (measured_width + theme.metrics.status_bar_segment_padding * 2.0)
+            .ceil()
+            .max(theme.metrics.status_bar_segment_min_width);
         assert!(
-            layer.bounds.width() > 220.0,
-            "expected status segment width to grow from text measurement, got {:?}",
+            (layer.bounds.width() - expected_width).abs() < 0.01,
+            "expected status segment width {expected_width} from text measurement, got {:?}",
             layer.bounds
         );
     }
@@ -18064,6 +18085,22 @@ mod tests {
             };
         });
         found.expect("text draw command present")
+    }
+
+    fn text_layout_for(output: &RenderOutput, text: &str) -> sui_text::TextLayout {
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_some() {
+                return;
+            }
+            if let sui_scene::SceneCommand::DrawShapedText(run) = command
+                && let Some(layout) = run.resolve(output.frame.text_layout_registry.as_ref())
+                && layout.text() == text
+            {
+                found = Some(layout.clone());
+            }
+        });
+        found.expect("shaped text layout present")
     }
 
     fn slow_normal_motion_theme() -> DefaultTheme {
