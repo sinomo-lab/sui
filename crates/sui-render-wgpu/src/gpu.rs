@@ -306,7 +306,11 @@ impl SharedRenderer {
             let fragment_targets = [Some(wgpu::ColorTargetState {
                 format,
                 blend: Some(blend),
-                write_mask: wgpu::ColorWrites::ALL,
+                write_mask: if kind == PipelineKind::ClipMask {
+                    wgpu::ColorWrites::empty()
+                } else {
+                    wgpu::ColorWrites::ALL
+                },
             })];
             let layout = match kind {
                 PipelineKind::Textured
@@ -403,7 +407,6 @@ impl SharedRenderer {
                     depth_stencil,
                     multisample: wgpu::MultisampleState::default(),
                     fragment: match kind {
-                        PipelineKind::ClipMask => None,
                         PipelineKind::Solid
                         | PipelineKind::Clipped
                         | PipelineKind::Textured
@@ -418,6 +421,7 @@ impl SharedRenderer {
                         | PipelineKind::RoundedRectClipped
                         | PipelineKind::GradientRect
                         | PipelineKind::GradientRectClipped
+                        | PipelineKind::ClipMask
                         | PipelineKind::OutputTransform => Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),

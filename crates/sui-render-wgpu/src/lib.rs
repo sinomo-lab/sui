@@ -4680,6 +4680,41 @@ mod tests {
     }
 
     #[test]
+    fn headless_intermediate_accepts_stencil_clip_mask_pipeline() {
+        let window_id = WindowId::new(4521);
+        let viewport = Size::new(32.0, 24.0);
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Clear(Color::BLACK));
+        scene.push(SceneCommand::PushClipPath {
+            path: Path::rounded_rect(Rect::new(4.0, 4.0, 24.0, 16.0), 6.0),
+        });
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 32.0, 24.0),
+            brush: Color::WHITE.into(),
+        });
+        scene.push(SceneCommand::PopClip);
+
+        let frame = SceneFrame {
+            window_id,
+            viewport,
+            surface_size: viewport,
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&frame).unwrap();
+        let image = renderer.capture_last_frame_rgba(window_id).unwrap();
+        assert_rgba_pixel_near(&image, 16, 12, [255, 255, 255, 255], RGBA_CHANNEL_TOLERANCE);
+        assert_rgba_pixel_near(&image, 0, 0, [0, 0, 0, 255], RGBA_CHANNEL_TOLERANCE);
+    }
+
+    #[test]
     fn hdr_png_capture_converts_display_p3_final_output_back_to_srgb() {
         let color = Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 1.0);
         let strategy = OutputStrategy::HdrNativeSurface {

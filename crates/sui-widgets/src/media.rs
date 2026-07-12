@@ -197,7 +197,11 @@ impl Widget for Image {
             ctx.fill(rounded_rect_path(bounds, corner_radius), background);
         }
 
-        ctx.push_clip_rect(bounds);
+        if corner_radius > 0.0 {
+            ctx.push_clip(rounded_rect_path(bounds, corner_radius));
+        } else {
+            ctx.push_clip_rect(bounds);
+        }
         let mut source = ImageSource::new(self.image);
         if let Some(source_rect) = self.source_rect {
             source = source.with_source_rect(source_rect);
@@ -231,6 +235,8 @@ pub struct SignalMeter {
     description: Option<String>,
     active: bool,
     active_reader: Option<Box<dyn Fn() -> bool>>,
+    level: Option<f32>,
+    level_reader: Option<Box<dyn Fn() -> f32>>,
     tone: SemanticTone,
     tone_reader: Option<Box<dyn Fn() -> SemanticTone>>,
     bars: usize,
@@ -247,6 +253,8 @@ impl SignalMeter {
             description: None,
             active: false,
             active_reader: None,
+            level: None,
+            level_reader: None,
             tone: SemanticTone::Accent,
             tone_reader: None,
             bars: 12,
@@ -285,6 +293,29 @@ impl SignalMeter {
         F: Fn() -> bool + 'static,
     {
         self.active_reader = Some(Box::new(active));
+        self
+    }
+
+    /// Set the normalized signal level used to light the meter bars.
+    ///
+    /// Values outside `0.0..=1.0`, including non-finite values, are sanitized
+    /// when the widget paints and publishes semantics. [`Self::active`] still
+    /// controls whether reached bars use the semantic tone or the idle color.
+    pub fn level(mut self, level: f32) -> Self {
+        self.level = Some(level);
+        self.level_reader = None;
+        self
+    }
+
+    /// Read the normalized signal level when the meter paints or publishes semantics.
+    ///
+    /// The owner remains responsible for waking and invalidating the UI when the
+    /// underlying signal changes.
+    pub fn level_when<F>(mut self, level: F) -> Self
+    where
+        F: Fn() -> f32 + 'static,
+    {
+        self.level_reader = Some(Box::new(level));
         self
     }
 
@@ -331,6 +362,20 @@ impl SignalMeter {
             .unwrap_or(self.active)
     }
 
+    fn resolved_level(&self) -> Option<f32> {
+        self.level_reader
+            .as_ref()
+            .map(|level| level())
+            .or(self.level)
+            .map(|level| {
+                if level.is_finite() {
+                    level.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            })
+    }
+
     fn resolved_tone(&self) -> SemanticTone {
         self.tone_reader
             .as_ref()
@@ -357,15 +402,14 @@ impl Widget for SignalMeter {
         let bounds = ctx.bounds();
         let active = self.is_active();
         let bars = self.bar_count();
+        let reached_bars = self
+            .resolved_level()
+            .map(|level| (level * bars as f32).ceil() as usize);
         let gap = self.gap.unwrap_or(3.0).min(bounds.width() / bars as f32);
         let total_gap = gap * bars.saturating_sub(1) as f32;
         let bar_w = ((bounds.width() - total_gap) / bars as f32).max(1.0);
         let tone = theme.semantic_tone_color(self.resolved_tone());
-        let fill = if active {
-            tone
-        } else {
-            theme.palette.text_muted.with_alpha(0.48)
-        };
+        let idle_fill = theme.palette.text_muted.with_alpha(0.48);
         let min_h = (bounds.height() * if active { 0.20 } else { 0.12 }).max(1.0);
         let max_h = bounds.height().max(1.0);
         for index in 0..bars {
@@ -379,23 +423,37 @@ impl Widget for SignalMeter {
             let x = bounds.x() + index as f32 * (bar_w + gap);
             let y = bounds.max_y() - bar_h;
             let rect = Rect::new(x, y, bar_w, bar_h);
+            let reached = reached_bars.is_none_or(|reached| index < reached);
+            let fill = if active && reached { tone } else { idle_fill };
             ctx.fill(rounded_rect_path(rect, (bar_w * 0.5).min(3.0)), fill);
         }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let level = self.resolved_level();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
-            SemanticsRole::GenericContainer,
+            if level.is_some() {
+                SemanticsRole::ProgressBar
+            } else {
+                SemanticsRole::GenericContainer
+            },
             ctx.bounds(),
         );
         node.name = Some(self.name.clone());
         node.description = self.description.clone();
-        node.value = Some(SemanticsValue::Text(if self.is_active() {
-            "active".to_string()
-        } else {
-            "idle".to_string()
-        }));
+        node.value = Some(match level {
+            Some(level) => SemanticsValue::Range {
+                value: level as f64,
+                min: 0.0,
+                max: 1.0,
+            },
+            None => SemanticsValue::Text(if self.is_active() {
+                "active".to_string()
+            } else {
+                "idle".to_string()
+            }),
+        });
         ctx.push(node);
     }
 }
@@ -3721,6 +3779,65 @@ mod tests {
     }
 
     #[test]
+    fn signal_meter_level_lights_reached_bars_and_publishes_range() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let tone = theme.semantic_tone_color(SemanticTone::Success);
+        let (mut runtime, window_id) = build_runtime(
+            SignalMeter::new("Microphone level")
+                .description("Current microphone input level")
+                .active(true)
+                .level_when(|| 0.5)
+                .tone(SemanticTone::Success)
+                .bars(10)
+                .size(Size::new(120.0, 18.0))
+                .theme(theme),
+        );
+
+        let output = runtime.render(window_id)?;
+        let fills = solid_fill_colors(&output);
+        assert_eq!(
+            fills.iter().filter(|color| **color == tone).count(),
+            5,
+            "a half-level signal should light half of the meter bars"
+        );
+        let meter = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ProgressBar
+                    && node.name.as_deref() == Some("Microphone level")
+            })
+            .expect("signal meter semantics should be present");
+        assert_eq!(
+            meter.value.as_ref(),
+            Some(&SemanticsValue::Range {
+                value: 0.5,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn signal_meter_level_sanitizes_to_the_normalized_range() {
+        assert_eq!(
+            SignalMeter::new("Low").level(-0.25).resolved_level(),
+            Some(0.0)
+        );
+        assert_eq!(
+            SignalMeter::new("High").level(1.25).resolved_level(),
+            Some(1.0)
+        );
+        assert_eq!(
+            SignalMeter::new("Invalid")
+                .level(f32::INFINITY)
+                .resolved_level(),
+            Some(0.0)
+        );
+    }
+
+    #[test]
     fn image_without_border_omits_frame_stroke() -> Result<()> {
         let handle = ImageHandle::new(8);
         let mut application = Application::new();
@@ -3755,6 +3872,38 @@ mod tests {
 
         assert_eq!(image_draws, 1);
         assert_eq!(frame_strokes, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn image_corner_radius_clips_bitmap_with_rounded_path() -> Result<()> {
+        let handle = ImageHandle::new(9);
+        let mut application = Application::new();
+        application.register_image(
+            handle,
+            RegisteredImage::from_rgba8(32, 16, vec![255; 32 * 16 * 4])?,
+        )?;
+        let mut runtime = application
+            .window(
+                WindowBuilder::new().title("Rounded image").root(
+                    Image::new(handle)
+                        .fit(super::ImageFit::Cover)
+                        .corner_radius(12.0),
+                ),
+            )
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+
+        let output = runtime.render(window_id)?;
+        assert!(
+            output
+                .frame
+                .scene
+                .commands()
+                .iter()
+                .any(|command| matches!(command, SceneCommand::PushClipPath { .. })),
+            "rounded images should clip bitmap pixels to the rounded frame"
+        );
         Ok(())
     }
 
