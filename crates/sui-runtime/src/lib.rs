@@ -53,8 +53,8 @@ pub use widget::{
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{
-    BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PointerCaptureRequest,
-    WakeRequest,
+    BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PaintImageResource,
+    PointerCaptureRequest, WakeRequest,
 };
 
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
@@ -2681,7 +2681,7 @@ impl WindowState {
     fn frame_image_registry(
         &self,
         base: Arc<ImageRegistry>,
-        paint_images: Vec<(ImageHandle, RegisteredImage)>,
+        paint_images: Vec<(ImageHandle, PaintImageResource)>,
     ) -> Arc<ImageRegistry> {
         let mut registry = self
             .last_frame
@@ -2691,8 +2691,18 @@ impl WindowState {
         for (handle, image) in base.iter() {
             registry.insert(handle, image.clone());
         }
+        for (handle, image) in base.iter_external() {
+            registry.insert_external(handle, *image);
+        }
         for (handle, image) in paint_images {
-            registry.insert(handle, image);
+            match image {
+                PaintImageResource::Cpu(image) => {
+                    registry.insert(handle, image);
+                }
+                PaintImageResource::External(image) => {
+                    registry.insert_external(handle, image);
+                }
+            }
         }
         Arc::new(registry)
     }
@@ -2705,7 +2715,7 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) -> (
         Scene,
-        Vec<(ImageHandle, RegisteredImage)>,
+        Vec<(ImageHandle, PaintImageResource)>,
         HashMap<WidgetId, Rect>,
         Vec<InvalidationRequest>,
         Option<Rect>,
@@ -2739,7 +2749,7 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) -> (
         Scene,
-        Vec<(ImageHandle, RegisteredImage)>,
+        Vec<(ImageHandle, PaintImageResource)>,
         HashMap<WidgetId, Rect>,
         Vec<InvalidationRequest>,
         Option<Rect>,
@@ -4195,8 +4205,8 @@ mod tests {
     };
     use sui_layout::Constraints;
     use sui_scene::{
-        LayerCompositionMode, LayerProperties, RegisteredImage, Scene, SceneCommand,
-        SceneLayerUpdateKind,
+        LayerCompositionMode, LayerProperties, RegisteredExternalImage, RegisteredImage, Scene,
+        SceneCommand, SceneLayerUpdateKind,
     };
     use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle, TextSystem};
 
@@ -6516,6 +6526,42 @@ mod tests {
         let output = runtime.render(window_id).unwrap();
 
         assert!(output.frame.image_registry.contains(handle));
+    }
+
+    #[test]
+    fn paint_registered_external_images_are_included_in_render_output() {
+        struct ExternalImageLeaf {
+            handle: ImageHandle,
+        }
+
+        impl Widget for ExternalImageLeaf {
+            fn paint(&self, ctx: &mut PaintCtx) {
+                ctx.register_external_image(
+                    self.handle,
+                    RegisteredExternalImage::new(640, 360).unwrap(),
+                );
+                ctx.draw_image(ctx.bounds(), self.handle);
+            }
+        }
+
+        let handle = ImageHandle::new(71);
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("External image")
+                    .root(ExternalImageLeaf { handle }),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(
+            output.frame.image_registry.dimensions(handle),
+            Some((640, 360))
+        );
+        assert!(output.frame.image_registry.get(handle).is_none());
+        assert!(output.frame.image_registry.get_external(handle).is_some());
     }
 
     #[test]

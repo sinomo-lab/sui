@@ -68,7 +68,7 @@ pub use sui_platform::{
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
     RendererCapabilities, RendererInterop, StemDarkening, TextCoveragePolicy, TextHinting,
-    WgpuRenderer,
+    WgpuExternalTextureContext, WgpuExternalTextureRegistry, WgpuRenderer,
 };
 pub use sui_runtime::{
     Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta,
@@ -88,9 +88,9 @@ pub use sui_runtime::{
     window_scene_statistics_detail_mode,
 };
 pub use sui_scene::{
-    Border, Brush, GradientStop, ImageRegistry, ImageSource, RegisteredImage,
-    RegisteredImageFormat, Scene, SceneCommand, SceneFrame, ShadowParams, StrokeStyle,
-    TextRenderCoveragePolicy, TextRenderHinting, TextRenderMode, TextRenderPolicy,
+    Border, Brush, GradientStop, ImageRegistry, ImageSource, RegisteredExternalImage,
+    RegisteredImage, RegisteredImageFormat, Scene, SceneCommand, SceneFrame, ShadowParams,
+    StrokeStyle, TextRenderCoveragePolicy, TextRenderHinting, TextRenderMode, TextRenderPolicy,
     TextRenderStemDarkening, TextSubpixelOrder, WidgetShader,
 };
 pub use sui_text::{
@@ -301,6 +301,8 @@ pub struct Application {
     feathering_enabled: bool,
     #[cfg(feature = "wgpu")]
     feather_width: f32,
+    #[cfg(feature = "wgpu")]
+    external_texture_registry: Option<WgpuExternalTextureRegistry>,
     initial_window_render_options: Option<WindowRenderOptions>,
 }
 
@@ -315,6 +317,8 @@ impl Default for Application {
             feathering_enabled: WgpuRenderer::new().feathering_enabled(),
             #[cfg(feature = "wgpu")]
             feather_width: WgpuRenderer::new().feather_width(),
+            #[cfg(feature = "wgpu")]
+            external_texture_registry: None,
             initial_window_render_options: None,
         }
     }
@@ -343,6 +347,12 @@ impl Application {
     }
 
     #[cfg(feature = "wgpu")]
+    pub fn with_external_texture_registry(mut self, registry: WgpuExternalTextureRegistry) -> Self {
+        self.external_texture_registry = Some(registry);
+        self
+    }
+
+    #[cfg(feature = "wgpu")]
     pub fn feathering_enabled(&self) -> bool {
         self.feathering_enabled
     }
@@ -350,6 +360,11 @@ impl Application {
     #[cfg(feature = "wgpu")]
     pub fn feather_width(&self) -> f32 {
         self.feather_width
+    }
+
+    #[cfg(feature = "wgpu")]
+    pub fn external_texture_registry(&self) -> Option<&WgpuExternalTextureRegistry> {
+        self.external_texture_registry.as_ref()
     }
 
     pub fn with_window_render_options(mut self, options: WindowRenderOptions) -> Self {
@@ -436,11 +451,15 @@ impl Application {
     pub fn run(self) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
+        let external_texture_registry = self.external_texture_registry.clone();
         let initial_window_render_options = self.initial_window_render_options;
         let runtime = self.build()?;
-        let platform = DesktopPlatform::new()
+        let mut platform = DesktopPlatform::new()
             .with_feathering_enabled(feathering_enabled)
             .with_feather_width(feather_width);
+        if let Some(registry) = external_texture_registry {
+            platform.set_external_texture_registry(registry);
+        }
         if let Some(options) = initial_window_render_options {
             for window_id in runtime.window_ids() {
                 set_window_render_options(window_id, options);
@@ -457,11 +476,15 @@ impl Application {
     pub fn run_with(self, on_ready: impl FnOnce(Waker)) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
+        let external_texture_registry = self.external_texture_registry.clone();
         let initial_window_render_options = self.initial_window_render_options;
         let runtime = self.build()?;
-        let platform = DesktopPlatform::new()
+        let mut platform = DesktopPlatform::new()
             .with_feathering_enabled(feathering_enabled)
             .with_feather_width(feather_width);
+        if let Some(registry) = external_texture_registry {
+            platform.set_external_texture_registry(registry);
+        }
         if let Some(options) = initial_window_render_options {
             for window_id in runtime.window_ids() {
                 set_window_render_options(window_id, options);
@@ -484,11 +507,15 @@ impl Application {
     ) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
+        let external_texture_registry = self.external_texture_registry.clone();
         let initial_window_render_options = self.initial_window_render_options;
         let runtime = self.build()?;
-        let platform = DesktopPlatform::new()
+        let mut platform = DesktopPlatform::new()
             .with_feathering_enabled(feathering_enabled)
             .with_feather_width(feather_width);
+        if let Some(registry) = external_texture_registry {
+            platform.set_external_texture_registry(registry);
+        }
         if let Some(options) = initial_window_render_options {
             for window_id in runtime.window_ids() {
                 set_window_render_options(window_id, options);
@@ -600,8 +627,9 @@ mod tests {
     use super::{DefaultTheme, HdrThemeMode, HdrThemeTokens, Theme};
     #[cfg(feature = "wgpu")]
     use crate::{
-        Application, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-        WindowRenderOptions, WindowToneMappingMode,
+        Application, WgpuExternalTextureRegistry, WindowColorManagementMode,
+        WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions,
+        WindowToneMappingMode,
     };
 
     #[derive(Debug, PartialEq)]
@@ -727,5 +755,15 @@ mod tests {
         assert_eq!(app.feather_width(), 2.25);
         assert_eq!(clamped.feather_width(), 0.0);
         assert_eq!(app.initial_window_render_options(), Some(options));
+    }
+
+    #[cfg(feature = "wgpu")]
+    #[test]
+    fn application_accepts_external_texture_registry() {
+        let registry = WgpuExternalTextureRegistry::new();
+        let app = Application::new().with_external_texture_registry(registry.clone());
+
+        assert!(app.external_texture_registry().is_some());
+        assert!(registry.context().is_none());
     }
 }

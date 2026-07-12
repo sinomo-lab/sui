@@ -1254,18 +1254,22 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::DrawImage { rect, source } => {
                 self.scratch_vertices.clear();
-                let image = self.frame.image_registry.get(source.image).ok_or_else(|| {
-                    Error::new(format!(
-                        "image handle {} is not registered",
-                        source.image.get()
-                    ))
-                })?;
+                let image_size = self
+                    .frame
+                    .image_registry
+                    .dimensions(source.image)
+                    .ok_or_else(|| {
+                        Error::new(format!(
+                            "image handle {} is not registered",
+                            source.image.get()
+                        ))
+                    })?;
                 append_image(
                     &mut self.scratch_vertices,
                     state,
                     *rect,
                     source,
-                    image,
+                    image_size,
                     viewport,
                 );
                 push_draw_op(
@@ -1282,18 +1286,22 @@ impl SceneDrawOpBuilder<'_> {
             }
             SceneCommand::DrawImageQuad { points, source } => {
                 self.scratch_vertices.clear();
-                let image = self.frame.image_registry.get(source.image).ok_or_else(|| {
-                    Error::new(format!(
-                        "image handle {} is not registered",
-                        source.image.get()
-                    ))
-                })?;
+                let image_size = self
+                    .frame
+                    .image_registry
+                    .dimensions(source.image)
+                    .ok_or_else(|| {
+                        Error::new(format!(
+                            "image handle {} is not registered",
+                            source.image.get()
+                        ))
+                    })?;
                 append_image_quad(
                     &mut self.scratch_vertices,
                     state,
                     *points,
                     source,
-                    image,
+                    image_size,
                     viewport,
                 );
                 push_draw_op(
@@ -3471,7 +3479,7 @@ fn append_image(
     state: &SceneRasterState,
     rect: Rect,
     source: &sui_scene::ImageSource,
-    image: &RegisteredImage,
+    image_size: (u32, u32),
     viewport: Size,
 ) {
     if rect.is_empty() || viewport.is_empty() {
@@ -3490,8 +3498,8 @@ fn append_image(
         return;
     }
 
-    let image_width = image.width() as f32;
-    let image_height = image.height() as f32;
+    let image_width = image_size.0 as f32;
+    let image_height = image_size.1 as f32;
     let source_rect = source
         .source_rect
         .unwrap_or(Rect::new(0.0, 0.0, image_width, image_height));
@@ -3576,7 +3584,7 @@ fn append_image_quad(
     state: &SceneRasterState,
     points: [Point; 4],
     source: &sui_scene::ImageSource,
-    image: &RegisteredImage,
+    image_size: (u32, u32),
     viewport: Size,
 ) {
     if viewport.is_empty() {
@@ -3592,8 +3600,8 @@ fn append_image_quad(
         return;
     };
 
-    let image_width = image.width() as f32;
-    let image_height = image.height() as f32;
+    let image_width = image_size.0 as f32;
+    let image_height = image_size.1 as f32;
     let source_rect = source
         .source_rect
         .unwrap_or(Rect::new(0.0, 0.0, image_width, image_height));

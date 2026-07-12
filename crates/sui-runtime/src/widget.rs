@@ -18,8 +18,8 @@ use sui_core::{
 use sui_layout::{Constraints, LayoutContext};
 use sui_scene::{
     Border, Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
-    RegisteredImage, Scene, SceneCommand, SceneLayer, SceneLayerDescriptor, SceneLayerId,
-    ShadowParams, StrokeStyle, TextRenderPolicy, WidgetShader,
+    RegisteredExternalImage, RegisteredImage, Scene, SceneCommand, SceneLayer,
+    SceneLayerDescriptor, SceneLayerId, ShadowParams, StrokeStyle, TextRenderPolicy, WidgetShader,
 };
 use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
@@ -1587,10 +1587,16 @@ pub struct PaintCtx {
     font_registry: Arc<FontRegistry>,
     image_registry: Arc<ImageRegistry>,
     scene: Scene,
-    images: Vec<(ImageHandle, RegisteredImage)>,
+    images: Vec<(ImageHandle, PaintImageResource)>,
     widget_paint_bounds: HashMap<WidgetId, Rect>,
     invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PaintImageResource {
+    Cpu(RegisteredImage),
+    External(RegisteredExternalImage),
 }
 
 impl PaintCtx {
@@ -1843,7 +1849,18 @@ impl PaintCtx {
     }
 
     pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) {
-        self.images.push((handle, image));
+        self.images.push((handle, PaintImageResource::Cpu(image)));
+    }
+
+    /// Register renderer-neutral metadata for an externally owned image.
+    ///
+    /// The active renderer must have a matching backend resource registered
+    /// for `handle`. The external resource remains app-owned; this only makes
+    /// its dimensions available to layout and scene construction for the
+    /// current frame.
+    pub fn register_external_image(&mut self, handle: ImageHandle, image: RegisteredExternalImage) {
+        self.images
+            .push((handle, PaintImageResource::External(image)));
     }
 
     pub fn draw_shader_rect(&mut self, rect: Rect, shader: WidgetShader) {
@@ -2000,7 +2017,7 @@ impl PaintCtx {
         self.widget_paint_bounds.extend(widget_paint_bounds);
     }
 
-    pub(crate) fn extend_images(&mut self, images: Vec<(ImageHandle, RegisteredImage)>) {
+    pub(crate) fn extend_images(&mut self, images: Vec<(ImageHandle, PaintImageResource)>) {
         self.images.extend(images);
     }
 
@@ -2018,7 +2035,7 @@ impl PaintCtx {
         self,
     ) -> (
         Scene,
-        Vec<(ImageHandle, RegisteredImage)>,
+        Vec<(ImageHandle, PaintImageResource)>,
         HashMap<WidgetId, Rect>,
         Vec<InvalidationRequest>,
         Option<Rect>,

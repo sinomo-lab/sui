@@ -84,6 +84,25 @@ impl App {
         self
     }
 
+    /// Attach a shared registry for app-owned WGPU textures rendered through
+    /// SUI's normal image composition path.
+    #[cfg(feature = "wgpu")]
+    pub fn external_texture_registry(
+        mut self,
+        registry: crate::WgpuExternalTextureRegistry,
+    ) -> Self {
+        self.application = self.application.with_external_texture_registry(registry);
+        self
+    }
+
+    /// Return the configured app-owned texture registry, if one is attached.
+    #[cfg(feature = "wgpu")]
+    pub fn configured_external_texture_registry(
+        &self,
+    ) -> Option<&crate::WgpuExternalTextureRegistry> {
+        self.application.external_texture_registry()
+    }
+
     /// Build the runtime without starting a platform event loop.
     ///
     /// This is the right entrypoint for tests, headless rendering, embedding,

@@ -464,6 +464,12 @@ pub(crate) struct CachedImageTexture {
     pub(crate) image: sui_scene::RegisteredImage,
 }
 
+pub(crate) struct CachedExternalTextureBindGroup {
+    pub(crate) binding_revision: u64,
+    pub(crate) linear_bind_group: wgpu::BindGroup,
+    pub(crate) nearest_bind_group: wgpu::BindGroup,
+}
+
 pub(crate) struct CachedTextAtlasTexture {
     pub(crate) texture: wgpu::Texture,
     pub(crate) _view: wgpu::TextureView,

@@ -1126,6 +1126,38 @@ pub struct RegisteredImage {
     format: RegisteredImageFormat,
 }
 
+/// Renderer-neutral metadata for an image whose pixels are owned outside the
+/// frame's CPU image registry.
+///
+/// The renderer backend is responsible for resolving the matching
+/// [`ImageHandle`] to a backend resource. Keeping only dimensions in the scene
+/// frame lets widgets participate in normal image layout, clipping, sampling,
+/// and retained rendering without making the scene model depend on a GPU API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisteredExternalImage {
+    width: u32,
+    height: u32,
+}
+
+impl RegisteredExternalImage {
+    pub fn new(width: u32, height: u32) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(Error::new(
+                "external image dimensions must both be non-zero",
+            ));
+        }
+        Ok(Self { width, height })
+    }
+
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+}
+
 impl RegisteredImage {
     pub fn from_rgba8(width: u32, height: u32, data: impl Into<Vec<u8>>) -> Result<Self> {
         Self::from_pixels(width, height, RegisteredImageFormat::Rgba8, data)
@@ -1224,6 +1256,7 @@ fn parse_svg_image(svg: &[u8]) -> Result<resvg::usvg::Tree> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImageRegistry {
     images: HashMap<ImageHandle, RegisteredImage>,
+    external_images: HashMap<ImageHandle, RegisteredExternalImage>,
 }
 
 impl ImageRegistry {
@@ -1236,27 +1269,56 @@ impl ImageRegistry {
         handle: ImageHandle,
         image: RegisteredImage,
     ) -> Option<RegisteredImage> {
+        self.external_images.remove(&handle);
         self.images.insert(handle, image)
+    }
+
+    pub fn insert_external(
+        &mut self,
+        handle: ImageHandle,
+        image: RegisteredExternalImage,
+    ) -> Option<RegisteredExternalImage> {
+        self.images.remove(&handle);
+        self.external_images.insert(handle, image)
     }
 
     pub fn get(&self, handle: ImageHandle) -> Option<&RegisteredImage> {
         self.images.get(&handle)
     }
 
+    pub fn get_external(&self, handle: ImageHandle) -> Option<&RegisteredExternalImage> {
+        self.external_images.get(&handle)
+    }
+
+    pub fn dimensions(&self, handle: ImageHandle) -> Option<(u32, u32)> {
+        self.get(handle)
+            .map(|image| (image.width(), image.height()))
+            .or_else(|| {
+                self.get_external(handle)
+                    .map(|image| (image.width(), image.height()))
+            })
+    }
+
     pub fn contains(&self, handle: ImageHandle) -> bool {
-        self.images.contains_key(&handle)
+        self.images.contains_key(&handle) || self.external_images.contains_key(&handle)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (ImageHandle, &RegisteredImage)> {
         self.images.iter().map(|(handle, image)| (*handle, image))
     }
 
+    pub fn iter_external(&self) -> impl Iterator<Item = (ImageHandle, &RegisteredExternalImage)> {
+        self.external_images
+            .iter()
+            .map(|(handle, image)| (*handle, image))
+    }
+
     pub fn len(&self) -> usize {
-        self.images.len()
+        self.images.len() + self.external_images.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.images.is_empty()
+        self.images.is_empty() && self.external_images.is_empty()
     }
 }
 
@@ -1296,11 +1358,11 @@ impl SceneFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties, RegisteredImage,
-        RegisteredImageFormat, Scene, SceneBoundsSummary, SceneCommand, SceneFrame, SceneLayer,
-        SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate, SceneLayerUpdateKind, StrokeStyle,
-        TextRenderCoveragePolicy, TextRenderMode, TextRenderPolicy, TextSubpixelOrder,
-        WidgetShader,
+        Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
+        RegisteredExternalImage, RegisteredImage, RegisteredImageFormat, Scene, SceneBoundsSummary,
+        SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
+        SceneLayerUpdateKind, StrokeStyle, TextRenderCoveragePolicy, TextRenderMode,
+        TextRenderPolicy, TextSubpixelOrder, WidgetShader,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -1453,6 +1515,26 @@ mod tests {
         assert_eq!(update.owner, WidgetId::new(4));
         assert_eq!(update.kind, SceneLayerUpdateKind::Transform);
         assert_eq!(update.damage, Some(Rect::new(1.0, 2.0, 42.0, 24.0)));
+    }
+
+    #[test]
+    fn image_registry_tracks_external_dimensions_and_one_backing_per_handle() {
+        let handle = ImageHandle::new(15);
+        let mut registry = ImageRegistry::new();
+        registry.insert_external(handle, RegisteredExternalImage::new(640, 360).unwrap());
+
+        assert!(registry.contains(handle));
+        assert_eq!(registry.dimensions(handle), Some((640, 360)));
+        assert!(registry.get(handle).is_none());
+        assert!(registry.get_external(handle).is_some());
+
+        registry.insert(
+            handle,
+            RegisteredImage::from_rgba8(1, 1, vec![1, 2, 3, 255]).unwrap(),
+        );
+        assert_eq!(registry.dimensions(handle), Some((1, 1)));
+        assert!(registry.get(handle).is_some());
+        assert!(registry.get_external(handle).is_none());
     }
 
     #[test]

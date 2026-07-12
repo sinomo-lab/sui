@@ -392,6 +392,31 @@ impl SignalMeter {
     }
 }
 
+fn signal_meter_bar_layout(
+    width: f32,
+    requested_bars: usize,
+    requested_gap: f32,
+) -> (usize, f32, f32) {
+    let width = if width.is_finite() {
+        width.max(0.0)
+    } else {
+        0.0
+    };
+    // At very narrow constraints, keeping every configured bar at the old
+    // one-pixel minimum painted beyond the widget bounds. Prefer fewer visible
+    // bars so the meter remains a contained, useful signal.
+    let bars = requested_bars.max(1).min(width.floor().max(1.0) as usize);
+    let max_gap = if bars > 1 {
+        ((width - bars as f32).max(0.0) / (bars - 1) as f32).max(0.0)
+    } else {
+        0.0
+    };
+    let gap = requested_gap.max(0.0).min(max_gap);
+    let total_gap = gap * bars.saturating_sub(1) as f32;
+    let bar_width = ((width - total_gap) / bars as f32).max(0.0);
+    (bars, gap, bar_width)
+}
+
 impl Widget for SignalMeter {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.clamp(self.resolved_size())
@@ -401,13 +426,11 @@ impl Widget for SignalMeter {
         let theme = self.resolved_theme();
         let bounds = ctx.bounds();
         let active = self.is_active();
-        let bars = self.bar_count();
+        let (bars, gap, bar_w) =
+            signal_meter_bar_layout(bounds.width(), self.bar_count(), self.gap.unwrap_or(3.0));
         let reached_bars = self
             .resolved_level()
             .map(|level| (level * bars as f32).ceil() as usize);
-        let gap = self.gap.unwrap_or(3.0).min(bounds.width() / bars as f32);
-        let total_gap = gap * bars.saturating_sub(1) as f32;
-        let bar_w = ((bounds.width() - total_gap) / bars as f32).max(1.0);
         let tone = theme.semantic_tone_color(self.resolved_tone());
         let idle_fill = theme.palette.text_muted.with_alpha(0.48);
         let min_h = (bounds.height() * if active { 0.20 } else { 0.12 }).max(1.0);
@@ -3499,6 +3522,7 @@ mod tests {
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
         ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image, SignalMeter,
         color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
+        signal_meter_bar_layout,
     };
     use crate::{DefaultTheme, SemanticTone, ThemeTextToken};
     use sui_core::{
@@ -3835,6 +3859,18 @@ mod tests {
                 .resolved_level(),
             Some(0.0)
         );
+    }
+
+    #[test]
+    fn signal_meter_bar_layout_stays_inside_narrow_bounds() {
+        for width in [0.0_f32, 0.5, 5.0, 10.0, 27.0, 120.0] {
+            let (bars, gap, bar_width) = signal_meter_bar_layout(width, 18, 3.0);
+            let painted_width = bar_width * bars as f32 + gap * bars.saturating_sub(1) as f32;
+            assert!(bars >= 1);
+            assert!(bar_width >= 0.0);
+            assert!(painted_width <= width.max(0.0) + f32::EPSILON * 8.0);
+        }
+        assert_eq!(signal_meter_bar_layout(10.0, 18, 3.0), (10, 0.0, 1.0));
     }
 
     #[test]

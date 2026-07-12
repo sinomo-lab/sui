@@ -1,11 +1,18 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use sui_core::{
     Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta,
     SemanticsRole, Size, Vector, WindowEvent, WindowId,
 };
-use sui_render_wgpu::{FeatheringOptions, WgpuRenderer};
+use sui_render_wgpu::{FeatheringOptions, WgpuExternalTextureRegistry, WgpuRenderer};
 use sui_runtime::{
     PresentationLatencyDiagnostics, Runtime, WindowIcon as RuntimeWindowIcon,
     WindowPerformanceSnapshot, WindowRenderOptions, window_performance_snapshot,
@@ -174,6 +181,11 @@ impl DesktopPlatform {
         self
     }
 
+    pub fn with_external_texture_registry(mut self, registry: WgpuExternalTextureRegistry) -> Self {
+        self.set_external_texture_registry(registry);
+        self
+    }
+
     pub fn with_automation(mut self, automation: DesktopAutomationConfig) -> Self {
         self.automation = Some(automation);
         self
@@ -207,6 +219,10 @@ impl DesktopPlatform {
         self.renderer.set_vsync_enabled(enabled);
     }
 
+    pub fn set_external_texture_registry(&mut self, registry: WgpuExternalTextureRegistry) {
+        self.renderer.set_external_texture_registry(registry);
+    }
+
     pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {
         &mut self.renderer
     }
@@ -235,14 +251,21 @@ impl DesktopPlatform {
             .build()
             .map_err(map_event_loop_error)?;
         let event_loop_proxy = event_loop.create_proxy();
+        let external_wake_pending = Arc::new(AtomicBool::new(false));
         on_ready(Waker {
             proxy: event_loop_proxy.clone(),
+            pending: external_wake_pending.clone(),
         });
 
         #[cfg(target_arch = "wasm32")]
         {
-            let mut app =
-                DesktopApp::new(runtime, self.renderer, self.automation, event_loop_proxy);
+            let mut app = DesktopApp::new(
+                runtime,
+                self.renderer,
+                self.automation,
+                event_loop_proxy,
+                external_wake_pending,
+            );
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(error) = app.renderer.initialize_async(None).await {
                     web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&error.to_string()));
@@ -255,8 +278,13 @@ impl DesktopPlatform {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut app =
-                DesktopApp::new(runtime, self.renderer, self.automation, event_loop_proxy);
+            let mut app = DesktopApp::new(
+                runtime,
+                self.renderer,
+                self.automation,
+                event_loop_proxy,
+                external_wake_pending,
+            );
             event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
             if let Some(error) = app.last_error.take() {
@@ -278,11 +306,19 @@ impl DesktopPlatform {
         event_loop_builder.with_android_app(android_app);
         let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
         let event_loop_proxy = event_loop.create_proxy();
+        let external_wake_pending = Arc::new(AtomicBool::new(false));
         on_ready(Waker {
             proxy: event_loop_proxy.clone(),
+            pending: external_wake_pending.clone(),
         });
 
-        let mut app = DesktopApp::new(runtime, self.renderer, self.automation, event_loop_proxy);
+        let mut app = DesktopApp::new(
+            runtime,
+            self.renderer,
+            self.automation,
+            event_loop_proxy,
+            external_wake_pending,
+        );
         event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
         if let Some(error) = app.last_error.take() {
@@ -304,6 +340,7 @@ struct DesktopApp {
     windows: HashMap<WindowId, WindowState>,
     host_to_runtime: HashMap<HostWindowId, WindowId>,
     last_error: Option<Error>,
+    external_wake_pending: Arc<AtomicBool>,
 }
 
 impl DesktopApp {
@@ -454,6 +491,7 @@ impl DesktopApp {
         renderer: WgpuRenderer,
         automation: Option<DesktopAutomationConfig>,
         event_loop_proxy: EventLoopProxy<DesktopUserEvent>,
+        external_wake_pending: Arc<AtomicBool>,
     ) -> Self {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
@@ -472,6 +510,7 @@ impl DesktopApp {
             windows: HashMap::new(),
             host_to_runtime: HashMap::new(),
             last_error: None,
+            external_wake_pending,
         }
     }
 
@@ -1858,20 +1897,33 @@ impl DesktopApp {
 #[derive(Debug, Clone, Copy)]
 pub struct WakeSignal;
 
-/// A cheap, cloneable, `Send` handle that wakes the running desktop UI from any thread. Each
-/// [`wake`](Self::wake) delivers an external-wake event ([`sui_runtime::EXTERNAL_WAKE_KIND`]) to
-/// every window's root widget, so a widget can drain cross-thread work (channels, async results)
-/// without polling on animation frames.
+/// A cheap, cloneable, `Send` handle that wakes the running desktop UI from any thread. Pending
+/// [`wake`](Self::wake) calls are coalesced into one external-wake event
+/// ([`sui_runtime::EXTERNAL_WAKE_KIND`]) delivered to every window's root widget, so a widget can
+/// drain the latest cross-thread work without building an event backlog or polling on animation
+/// frames.
 #[derive(Clone)]
 pub struct Waker {
     proxy: EventLoopProxy<DesktopUserEvent>,
+    pending: Arc<AtomicBool>,
 }
 
 impl Waker {
     pub fn wake(&self) {
-        let _ = self
+        if self
+            .pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        if self
             .proxy
-            .send_event(DesktopUserEvent::ExternalWake(WakeSignal));
+            .send_event(DesktopUserEvent::ExternalWake(WakeSignal))
+            .is_err()
+        {
+            self.pending.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -1885,6 +1937,7 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: DesktopUserEvent) {
         match event {
             DesktopUserEvent::ExternalWake(_signal) => {
+                self.external_wake_pending.store(false, Ordering::Release);
                 // A background thread asked us to wake: deliver an external-wake event to every
                 // window's root (so widgets can drain cross-thread work), then drive the runtime.
                 for window_id in self.runtime.window_ids() {

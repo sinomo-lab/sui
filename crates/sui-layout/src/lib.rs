@@ -487,8 +487,8 @@ impl LayoutContext {
 
     pub fn image_size(&self, image: ImageHandle) -> Option<Size> {
         self.image_registry
-            .get(image)
-            .map(|image| Size::new(image.width() as f32, image.height() as f32))
+            .dimensions(image)
+            .map(|(width, height)| Size::new(width as f32, height as f32))
     }
 }
 
