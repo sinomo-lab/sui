@@ -16,8 +16,9 @@ use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, CustomEvent, DirtyRegion, DragEvent,
     DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect, Error, Event,
     FontHandle, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
-    Point, PointerEvent, PointerEventKind, Rect, Result, SemanticsNode, Size, TimerToken, Vector,
-    WakeEvent, WidgetId, WindowEvent, WindowId,
+    Point, PointerButton, PointerEvent, PointerEventKind, Rect, Result, SemanticsActionRequest,
+    SemanticsEvent, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent,
+    WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -478,6 +479,33 @@ impl Runtime {
         let window = self.window_mut(window_id)?;
         window.handle_event(event, text_system, font_registry, image_registry);
         Ok(())
+    }
+
+    /// Invoke an action advertised by a node in the latest semantic snapshot.
+    ///
+    /// The semantic node does not need to be a retained [`WidgetPod`]. Virtual
+    /// and generated nodes are routed to their nearest graph-backed semantic
+    /// ancestor while [`SemanticsEvent::target`] preserves the original node
+    /// identity for widget-local dispatch. The return value is `false` when the
+    /// node is stale, hidden, disabled, does not advertise the action, or no
+    /// widget handles an action without a built-in runtime fallback.
+    pub fn handle_semantics_action(
+        &mut self,
+        window_id: WindowId,
+        target: WidgetId,
+        action: SemanticsActionRequest,
+    ) -> Result<bool> {
+        let text_system = Arc::clone(&self.text_system);
+        let font_registry = Arc::clone(&self.font_registry);
+        let image_registry = Arc::clone(&self.image_registry);
+        let window = self.window_mut(window_id)?;
+        Ok(window.handle_semantics_action(
+            target,
+            action,
+            text_system,
+            font_registry,
+            image_registry,
+        ))
     }
 
     pub fn tick(&mut self, frame_time: f64) {
@@ -986,6 +1014,7 @@ struct WindowState {
     root: WidgetPod,
     graph: WidgetGraph,
     focus: FocusState,
+    focused_semantics: Option<WidgetId>,
     schedule: FrameSchedule,
     scale_factor: f32,
     raw_dpi: Option<f32>,
@@ -1026,6 +1055,7 @@ impl WindowState {
             graph: WidgetGraph::empty(root.id()),
             root,
             focus,
+            focused_semantics: None,
             schedule: FrameSchedule::bootstrap(),
             scale_factor: 1.0,
             raw_dpi: None,
@@ -1133,6 +1163,179 @@ impl WindowState {
         self.finish_event(&event);
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
+    }
+
+    fn handle_semantics_action(
+        &mut self,
+        target: WidgetId,
+        action: SemanticsActionRequest,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
+    ) -> bool {
+        let Some(node) = self
+            .last_semantics
+            .iter()
+            .find(|node| node.id == target)
+            .cloned()
+        else {
+            return false;
+        };
+
+        if node.state.hidden
+            || node.state.disabled
+            || !node.actions.contains(&action.advertised_action())
+        {
+            return false;
+        }
+
+        if matches!(
+            (&action, node.state.expanded),
+            (SemanticsActionRequest::Expand, Some(true))
+                | (SemanticsActionRequest::Collapse, Some(false))
+        ) {
+            return true;
+        }
+
+        let event = Event::Semantics(SemanticsEvent::new(target, action.clone()));
+        self.ensure_graph_for_event(
+            &event,
+            Arc::clone(&text_system),
+            Arc::clone(&font_registry),
+            Arc::clone(&image_registry),
+        );
+
+        let route_target = self.semantics_route_target(target);
+        let route = self.route_event(route_target, &event);
+        let handled = route.handled;
+        let semantics_was_focused = self.focused_semantics == Some(target);
+        let mut focus_request = route.focus_request;
+        let widget_requested_focus = matches!(focus_request, Some(FocusRequest::Focus(_)));
+        let mut focus_succeeded = false;
+        let mut invalidations = Vec::new();
+        self.apply_event_effects(route.effects, &mut invalidations);
+
+        match action {
+            SemanticsActionRequest::Focus => {
+                let runtime_focus_request = focus_request
+                    .is_none()
+                    .then(|| self.focus_request_for(route_target))
+                    .flatten();
+                focus_succeeded =
+                    handled || widget_requested_focus || runtime_focus_request.is_some();
+                focus_request = focus_request.or(runtime_focus_request);
+            }
+            SemanticsActionRequest::Blur if semantics_was_focused => {
+                focus_request = Some(FocusRequest::Clear);
+            }
+            _ => {}
+        }
+
+        if let Some(request) = focus_request {
+            let focus_effects = self.apply_focus_request(request);
+            self.apply_event_effects(focus_effects, &mut invalidations);
+        }
+
+        match action {
+            SemanticsActionRequest::Focus if focus_succeeded => {
+                self.focused_semantics = Some(target);
+                self.schedule.mark(InvalidationKind::Semantics);
+            }
+            SemanticsActionRequest::Blur if semantics_was_focused => {
+                self.focused_semantics = None;
+                self.schedule.mark(InvalidationKind::Semantics);
+            }
+            _ => {}
+        }
+
+        self.schedule.extend(&invalidations);
+        self.pending_invalidations.extend(invalidations);
+
+        let pointer_fallback = matches!(
+            action,
+            SemanticsActionRequest::Activate
+                | SemanticsActionRequest::Expand
+                | SemanticsActionRequest::Collapse
+        );
+        if pointer_fallback && !handled && !node.bounds.is_empty() {
+            self.dispatch_semantics_pointer_activation(
+                node.bounds,
+                text_system,
+                font_registry,
+                image_registry,
+            );
+            return true;
+        }
+
+        handled
+            || matches!(action, SemanticsActionRequest::Focus) && focus_succeeded
+            || matches!(action, SemanticsActionRequest::Blur) && semantics_was_focused
+    }
+
+    fn semantics_route_target(&self, target: WidgetId) -> WidgetId {
+        let mut current = Some(target);
+        let mut visited = HashSet::new();
+
+        while let Some(candidate) = current {
+            if !visited.insert(candidate) {
+                break;
+            }
+            if self.graph.contains(candidate) {
+                return candidate;
+            }
+            current = self
+                .last_semantics
+                .iter()
+                .find(|node| node.id == candidate)
+                .and_then(|node| node.parent);
+        }
+
+        self.root.id()
+    }
+
+    fn focus_request_for(&self, target: WidgetId) -> Option<FocusRequest> {
+        self.graph.path_to(target).and_then(|path| {
+            path.into_iter()
+                .rev()
+                .find(|widget_id| {
+                    self.graph
+                        .node(*widget_id)
+                        .is_some_and(|node| node.accepts_focus)
+                })
+                .map(FocusRequest::Focus)
+        })
+    }
+
+    fn dispatch_semantics_pointer_activation(
+        &mut self,
+        bounds: Rect,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
+    ) {
+        let position = Point::new(
+            bounds.x() + bounds.width() * 0.5,
+            bounds.y() + bounds.height() * 0.5,
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.button = Some(PointerButton::Primary);
+        down.buttons.insert(PointerButton::Primary);
+        self.handle_event(
+            Event::Pointer(down),
+            Arc::clone(&text_system),
+            Arc::clone(&font_registry),
+            Arc::clone(&image_registry),
+        );
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, position);
+        up.button = Some(PointerButton::Primary);
+        self.handle_event(
+            Event::Pointer(up),
+            text_system,
+            font_registry,
+            image_registry,
+        );
     }
 
     fn update_pointer_hover_path(
@@ -1545,6 +1748,7 @@ impl WindowState {
                 .contains(self.focus.focused_widget.unwrap_or_default())
         {
             self.focus.focused_widget = None;
+            self.focused_semantics = None;
         }
     }
 
@@ -1559,6 +1763,7 @@ impl WindowState {
             Event::Keyboard(_) | Event::Ime(_) => {
                 self.focus.focused_widget.unwrap_or(self.root.id())
             }
+            Event::Semantics(semantics) => self.semantics_route_target(semantics.target),
             Event::Wake(wake_event) => self.wake_target(*wake_event).unwrap_or(self.root.id()),
             _ => self.root.id(),
         }
@@ -1966,6 +2171,7 @@ impl WindowState {
                     focus_request = dispatch_focus_request;
                 }
                 if dispatch_handled && !ignore_handled {
+                    handled = true;
                     break;
                 }
             }
@@ -1975,6 +2181,7 @@ impl WindowState {
             path,
             effects,
             focus_request,
+            handled,
         }
     }
 
@@ -2031,11 +2238,16 @@ impl WindowState {
         };
 
         if self.focus.focused_widget == next_focus {
+            if self.focused_semantics != next_focus {
+                self.focused_semantics = next_focus;
+                self.schedule.mark(InvalidationKind::Semantics);
+            }
             return EventEffects::default();
         }
 
         let previous_focus = self.focus.focused_widget;
         self.focus.focused_widget = next_focus;
+        self.focused_semantics = next_focus;
         let dpi_info = self.current_dpi_info();
 
         let mut effects = EventEffects::default();
@@ -3197,6 +3409,7 @@ impl WindowState {
             .is_some_and(|widget_id| !self.graph.contains(widget_id))
         {
             self.focus.focused_widget = None;
+            self.focused_semantics = None;
         }
     }
 
@@ -3242,14 +3455,20 @@ fn scale_viewport_to_surface_size(viewport: Size, scale_factor: f32) -> Size {
 }
 
 impl WindowState {
-    fn assemble_semantics_tree(&self, nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {
+    fn assemble_semantics_tree(&mut self, nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {
         let semantic_ids: HashSet<_> = nodes.iter().map(|node| node.id).collect();
+        if self
+            .focused_semantics
+            .is_some_and(|focused| !semantic_ids.contains(&focused))
+        {
+            self.focused_semantics = self.focus.focused_widget;
+        }
 
         nodes
             .into_iter()
             .map(|mut node| {
                 node.parent = self.resolve_semantics_parent(&semantic_ids, node.id, node.parent);
-                node.state.focused = Some(node.id) == self.focus.focused_widget;
+                node.state.focused |= Some(node.id) == self.focused_semantics;
                 node
             })
             .collect()
@@ -3685,6 +3904,7 @@ struct EventRouteResult {
     path: Vec<WidgetId>,
     effects: EventEffects,
     focus_request: Option<FocusRequest>,
+    handled: bool,
 }
 
 #[derive(Default)]
@@ -3969,8 +4189,9 @@ mod tests {
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
         DragSessionId, DropEffect, Event, FontHandle, ImageHandle, KeyState, KeyboardEvent, Point,
-        PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, SemanticsNode,
-        SemanticsRole, Size, TimerToken, Vector, WakeEvent, WindowEvent,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, SemanticsAction,
+        SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken,
+        Vector, WakeEvent, WidgetId, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::{
@@ -3989,6 +4210,107 @@ mod tests {
 
     struct FocusLeaf {
         counters: Rc<RefCell<Counters>>,
+    }
+
+    const SYNTHETIC_ACTION_ID: WidgetId = WidgetId::new(u64::MAX - 1);
+
+    #[derive(Debug, Default)]
+    struct SemanticActionState {
+        actions: Vec<(WidgetId, SemanticsActionRequest)>,
+        pointer_activations: usize,
+        disabled: bool,
+        expanded: bool,
+    }
+
+    struct SyntheticSemanticActionLeaf {
+        state: Rc<RefCell<SemanticActionState>>,
+    }
+
+    struct UnfocusableSemanticLeaf;
+
+    impl Widget for UnfocusableSemanticLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+            node.name = Some("unfocusable semantic node".to_string());
+            node.actions = vec![SemanticsAction::Focus];
+            ctx.push(node);
+        }
+    }
+
+    impl Widget for SyntheticSemanticActionLeaf {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Semantics(event) => {
+                    self.state
+                        .borrow_mut()
+                        .actions
+                        .push((event.target, event.action.clone()));
+                    if !matches!(
+                        event.action,
+                        SemanticsActionRequest::Activate
+                            | SemanticsActionRequest::Blur
+                            | SemanticsActionRequest::Expand
+                            | SemanticsActionRequest::Collapse
+                    ) {
+                        ctx.set_handled();
+                    }
+                }
+                Event::Pointer(pointer) if pointer.kind == PointerEventKind::Up => {
+                    let mut state = self.state.borrow_mut();
+                    state.pointer_activations += 1;
+                    state.expanded = !state.expanded;
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(160.0, 64.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.16, 0.24, 0.34, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut owner = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            owner.name = Some("semantic action owner".to_string());
+            ctx.push(owner);
+
+            let mut action = SemanticsNode::new(
+                SYNTHETIC_ACTION_ID,
+                SemanticsRole::Button,
+                Rect::new(ctx.bounds().x() + 8.0, ctx.bounds().y() + 8.0, 80.0, 32.0),
+            );
+            action.parent = Some(ctx.widget_id());
+            action.name = Some("virtual action".to_string());
+            let state = self.state.borrow();
+            action.state.disabled = state.disabled;
+            action.state.expanded = Some(state.expanded);
+            action.actions = vec![
+                SemanticsAction::Focus,
+                SemanticsAction::Blur,
+                SemanticsAction::Activate,
+                SemanticsAction::Expand,
+                SemanticsAction::Collapse,
+                SemanticsAction::SetValue,
+                SemanticsAction::InsertText,
+            ];
+            ctx.push(action);
+        }
+
+        fn accepts_focus(&self) -> bool {
+            true
+        }
     }
 
     impl Widget for FocusLeaf {
@@ -5243,6 +5565,10 @@ mod tests {
             self.child.paint(ctx);
         }
 
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            self.child.semantics(ctx);
+        }
+
         fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
             self.child.visit_children(visitor);
         }
@@ -5273,6 +5599,26 @@ mod tests {
 
         let window_id = runtime.window_ids()[0];
         (runtime, window_id, root_counters, leaf_counters)
+    }
+
+    fn build_semantics_action_runtime() -> (
+        Runtime,
+        sui_core::WindowId,
+        Rc<RefCell<SemanticActionState>>,
+    ) {
+        let state = Rc::new(RefCell::new(SemanticActionState::default()));
+        let runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Semantic Actions")
+                    .root(PaintedChildRoot::new(SyntheticSemanticActionLeaf {
+                        state: Rc::clone(&state),
+                    })),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        (runtime, window_id, state)
     }
 
     #[test]
@@ -5601,6 +5947,302 @@ mod tests {
         assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
         assert_eq!(output.frame.surface_size, Size::new(320.0, 180.0));
         assert_eq!(output.frame.scale_factor, 1.0);
+    }
+
+    #[test]
+    fn synthetic_semantic_activate_falls_back_to_pointer_routing() {
+        let (mut runtime, window_id, state) = build_semantics_action_runtime();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Activate,
+                )
+                .unwrap()
+        );
+
+        let state = state.borrow();
+        assert_eq!(
+            state.actions,
+            vec![(SYNTHETIC_ACTION_ID, SemanticsActionRequest::Activate)]
+        );
+        assert_eq!(state.pointer_activations, 1);
+    }
+
+    #[test]
+    fn semantic_expand_and_collapse_use_idempotent_pointer_fallbacks() {
+        let (mut runtime, window_id, state) = build_semantics_action_runtime();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Expand,
+                )
+                .unwrap()
+        );
+        assert!(state.borrow().expanded);
+        assert_eq!(state.borrow().pointer_activations, 1);
+
+        let _ = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Expand,
+                )
+                .unwrap()
+        );
+        assert_eq!(state.borrow().pointer_activations, 1);
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Collapse,
+                )
+                .unwrap()
+        );
+        assert!(!state.borrow().expanded);
+        assert_eq!(state.borrow().pointer_activations, 2);
+    }
+
+    #[test]
+    fn synthetic_semantic_focus_targets_graph_owner_and_retains_semantic_identity() {
+        let (mut runtime, window_id, state) = build_semantics_action_runtime();
+        let first = runtime.render(window_id).unwrap();
+        let owner_id = first
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("semantic action owner"))
+            .unwrap()
+            .id;
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Focus,
+                )
+                .unwrap()
+        );
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(owner_id));
+
+        let focused = runtime.render(window_id).unwrap();
+        assert!(
+            focused
+                .semantics
+                .iter()
+                .find(|node| node.id == SYNTHETIC_ACTION_ID)
+                .unwrap()
+                .state
+                .focused
+        );
+        assert_eq!(
+            state.borrow().actions,
+            vec![(SYNTHETIC_ACTION_ID, SemanticsActionRequest::Focus)]
+        );
+
+        let mut pointer = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 32.0));
+        pointer.button = Some(PointerButton::Primary);
+        pointer.buttons.insert(PointerButton::Primary);
+        runtime
+            .handle_event(window_id, Event::Pointer(pointer))
+            .unwrap();
+        let pointer_focused = runtime.render(window_id).unwrap();
+        assert!(
+            pointer_focused
+                .semantics
+                .iter()
+                .find(|node| node.id == owner_id)
+                .unwrap()
+                .state
+                .focused
+        );
+        assert!(
+            !pointer_focused
+                .semantics
+                .iter()
+                .find(|node| node.id == SYNTHETIC_ACTION_ID)
+                .unwrap()
+                .state
+                .focused
+        );
+    }
+
+    #[test]
+    fn semantic_blur_only_clears_the_current_semantic_focus_target() {
+        let (mut runtime, window_id, _state) = build_semantics_action_runtime();
+        let _ = runtime.render(window_id).unwrap();
+
+        assert!(
+            !runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Blur,
+                )
+                .unwrap()
+        );
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Focus,
+                )
+                .unwrap()
+        );
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Blur,
+                )
+                .unwrap()
+        );
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+    }
+
+    #[test]
+    fn semantic_focus_rejects_an_unhandled_target_without_a_focusable_owner() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Unfocusable Semantic Action")
+                    .root(ChildRoot::new(UnfocusableSemanticLeaf)),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id).unwrap();
+        let target = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("unfocusable semantic node"))
+            .unwrap()
+            .id;
+
+        assert!(
+            !runtime
+                .handle_semantics_action(window_id, target, SemanticsActionRequest::Focus,)
+                .unwrap()
+        );
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+        assert!(
+            !runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .find(|node| node.id == target)
+                .unwrap()
+                .state
+                .focused
+        );
+    }
+
+    #[test]
+    fn stale_disabled_and_unadvertised_semantic_actions_are_rejected() {
+        let (mut stale_runtime, stale_window_id, stale_state) = build_semantics_action_runtime();
+        let _ = stale_runtime.render(stale_window_id).unwrap();
+
+        assert!(
+            !stale_runtime
+                .handle_semantics_action(
+                    stale_window_id,
+                    WidgetId::new(u64::MAX - 2),
+                    SemanticsActionRequest::Activate,
+                )
+                .unwrap()
+        );
+        assert!(
+            !stale_runtime
+                .handle_semantics_action(
+                    stale_window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Increment,
+                )
+                .unwrap()
+        );
+        assert!(stale_state.borrow().actions.is_empty());
+
+        let (mut disabled_runtime, disabled_window_id, disabled_state) =
+            build_semantics_action_runtime();
+        disabled_state.borrow_mut().disabled = true;
+        let _ = disabled_runtime.render(disabled_window_id).unwrap();
+        assert!(
+            !disabled_runtime
+                .handle_semantics_action(
+                    disabled_window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Activate,
+                )
+                .unwrap()
+        );
+        assert!(disabled_state.borrow().actions.is_empty());
+    }
+
+    #[test]
+    fn semantic_action_payload_is_typed_and_unsupported_actions_are_rejected() {
+        let (mut runtime, window_id, state) = build_semantics_action_runtime();
+        let _ = runtime.render(window_id).unwrap();
+
+        let set_value_handled = runtime
+            .handle_semantics_action(
+                window_id,
+                SYNTHETIC_ACTION_ID,
+                SemanticsActionRequest::SetValue(SemanticsValue::Text("forty two".into())),
+            )
+            .unwrap();
+        assert!(
+            set_value_handled,
+            "state after SetValue: {:?}; semantics: {:?}; graph: {:?}",
+            state.borrow(),
+            runtime.semantics(window_id).unwrap(),
+            runtime.widget_graph(window_id).unwrap()
+        );
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::InsertText("hello".into()),
+                )
+                .unwrap()
+        );
+        assert!(
+            !runtime
+                .handle_semantics_action(
+                    window_id,
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::Increment,
+                )
+                .unwrap()
+        );
+
+        assert_eq!(
+            state.borrow().actions,
+            vec![
+                (
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::SetValue(SemanticsValue::Text("forty two".into())),
+                ),
+                (
+                    SYNTHETIC_ACTION_ID,
+                    SemanticsActionRequest::InsertText("hello".into()),
+                ),
+            ]
+        );
     }
 
     #[test]

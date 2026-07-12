@@ -25,6 +25,11 @@ use winit::{
     window::{Window, WindowAttributes, WindowId as HostWindowId},
 };
 
+#[cfg(target_os = "windows")]
+use accesskit_winit::{
+    Adapter as AccessKitAdapter, Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent,
+};
+
 #[cfg(not(target_arch = "wasm32"))]
 use winit::window::Icon as WinitIcon;
 
@@ -57,6 +62,23 @@ use crate::{
     map_window_text_coverage_policy, map_window_text_hinting, map_window_text_subpixel_order,
     publish_window_output_diagnostics, resolve_sdr_content_brightness_nits,
 };
+
+#[cfg(target_os = "windows")]
+use crate::windows_accessibility::{AccessKitSnapshot, build_accesskit_snapshot};
+
+#[derive(Debug)]
+enum DesktopUserEvent {
+    ExternalWake(WakeSignal),
+    #[cfg(target_os = "windows")]
+    AccessKit(AccessKitEvent),
+}
+
+#[cfg(target_os = "windows")]
+impl From<AccessKitEvent> for DesktopUserEvent {
+    fn from(event: AccessKitEvent) -> Self {
+        Self::AccessKit(event)
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct DesktopPlatform {
@@ -209,16 +231,18 @@ impl DesktopPlatform {
         runtime: Runtime,
         on_ready: impl FnOnce(Waker),
     ) -> Result<Vec<PlatformWindow>> {
-        let event_loop = EventLoop::<WakeSignal>::with_user_event()
+        let event_loop = EventLoop::<DesktopUserEvent>::with_user_event()
             .build()
             .map_err(map_event_loop_error)?;
+        let event_loop_proxy = event_loop.create_proxy();
         on_ready(Waker {
-            proxy: event_loop.create_proxy(),
+            proxy: event_loop_proxy.clone(),
         });
 
         #[cfg(target_arch = "wasm32")]
         {
-            let mut app = DesktopApp::new(runtime, self.renderer, self.automation);
+            let mut app =
+                DesktopApp::new(runtime, self.renderer, self.automation, event_loop_proxy);
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(error) = app.renderer.initialize_async(None).await {
                     web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&error.to_string()));
@@ -231,7 +255,8 @@ impl DesktopPlatform {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut app = DesktopApp::new(runtime, self.renderer, self.automation);
+            let mut app =
+                DesktopApp::new(runtime, self.renderer, self.automation, event_loop_proxy);
             event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
             if let Some(error) = app.last_error.take() {
@@ -249,14 +274,15 @@ impl DesktopPlatform {
         android_app: AndroidApp,
         on_ready: impl FnOnce(Waker),
     ) -> Result<Vec<PlatformWindow>> {
-        let mut event_loop_builder = EventLoop::<WakeSignal>::with_user_event();
+        let mut event_loop_builder = EventLoop::<DesktopUserEvent>::with_user_event();
         event_loop_builder.with_android_app(android_app);
         let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
+        let event_loop_proxy = event_loop.create_proxy();
         on_ready(Waker {
-            proxy: event_loop.create_proxy(),
+            proxy: event_loop_proxy.clone(),
         });
 
-        let mut app = DesktopApp::new(runtime, self.renderer, self.automation);
+        let mut app = DesktopApp::new(runtime, self.renderer, self.automation, event_loop_proxy);
         event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
         if let Some(error) = app.last_error.take() {
@@ -270,6 +296,8 @@ impl DesktopPlatform {
 struct DesktopApp {
     runtime: Runtime,
     renderer: WgpuRenderer,
+    #[cfg(target_os = "windows")]
+    accesskit_event_proxy: EventLoopProxy<DesktopUserEvent>,
     automation: Option<DesktopAutomationState>,
     started_at: Instant,
     frame_clock: f64,
@@ -425,13 +453,19 @@ impl DesktopApp {
         runtime: Runtime,
         renderer: WgpuRenderer,
         automation: Option<DesktopAutomationConfig>,
+        event_loop_proxy: EventLoopProxy<DesktopUserEvent>,
     ) -> Self {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
 
+        #[cfg(not(target_os = "windows"))]
+        let _ = event_loop_proxy;
+
         Self {
             runtime,
             renderer,
+            #[cfg(target_os = "windows")]
+            accesskit_event_proxy: event_loop_proxy,
             automation: automation.map(DesktopAutomationState::new),
             started_at: Instant::now(),
             frame_clock: 0.0,
@@ -493,6 +527,13 @@ impl DesktopApp {
             let mut attributes = WindowAttributes::default()
                 .with_title(title.clone())
                 .with_inner_size(initial_size);
+            #[cfg(target_os = "windows")]
+            {
+                // AccessKit must attach its native provider before the HWND is shown for
+                // the first time. The window is made visible after the adapter and the
+                // renderer-backed WindowState have both been installed below.
+                attributes = attributes.with_visible(false);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 attributes = attributes.with_window_icon(
@@ -518,6 +559,14 @@ impl DesktopApp {
                 Self::initial_window_physical_size(&window),
                 scale_factor,
             );
+            #[cfg(target_os = "windows")]
+            let accesskit_adapter = AccessKitAdapter::with_event_loop_proxy(
+                event_loop,
+                window.as_ref(),
+                self.accesskit_event_proxy.clone(),
+            );
+            #[cfg(target_os = "windows")]
+            let accesskit_snapshot = build_accesskit_snapshot(window_id, scale_factor, &title, &[]);
             self.renderer
                 .register_window(window_id, Arc::clone(&window))?;
 
@@ -535,6 +584,10 @@ impl DesktopApp {
                     pending_event_time_ms: 0.0,
                     last_non_redraw_event_at_ms: None,
                     accessibility: AccessibilityBridge::default(),
+                    #[cfg(target_os = "windows")]
+                    accesskit_adapter,
+                    #[cfg(target_os = "windows")]
+                    accesskit_snapshot,
                     pointer: PointerState::default(),
                     touch_points: HashMap::new(),
                     scale_factor,
@@ -542,6 +595,11 @@ impl DesktopApp {
                 },
             );
             self.refresh_window_display_capabilities(window_id)?;
+
+            #[cfg(target_os = "windows")]
+            if let Some(window) = self.windows.get(&window_id) {
+                window.window.set_visible(true);
+            }
 
             self.process_event(
                 event_loop,
@@ -885,6 +943,27 @@ impl DesktopApp {
                 window.window.set_title(&output.title);
             }
 
+            #[cfg(target_os = "windows")]
+            {
+                let scale_factor = window.scale_factor;
+                let WindowState {
+                    accesskit_adapter,
+                    accesskit_snapshot,
+                    ..
+                } = window;
+                accesskit_adapter.update_if_active(|| {
+                    let snapshot = build_accesskit_snapshot(
+                        window_id,
+                        scale_factor,
+                        &output.title,
+                        &semantics,
+                    );
+                    let update = snapshot.full_update();
+                    *accesskit_snapshot = snapshot;
+                    update
+                });
+            }
+
             window.accessibility.update(window_id, semantics);
             window.last_non_redraw_event_at_ms = None;
             window.redraw_requested_at_ms = None;
@@ -941,6 +1020,15 @@ impl DesktopApp {
         let Some(window_id) = self.host_to_runtime.get(&host_id).copied() else {
             return Ok(());
         };
+
+        #[cfg(target_os = "windows")]
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            // AccessKit's winit adapter must see each native window event first so
+            // focus, geometry, and lifecycle state stay synchronized with UIA.
+            window
+                .accesskit_adapter
+                .process_event(window.window.as_ref(), &event);
+        }
 
         match event {
             WinitWindowEvent::CloseRequested => self.process_event(
@@ -1207,6 +1295,61 @@ impl DesktopApp {
                 }
             }
             _ => Ok(()),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn handle_accesskit_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: AccessKitEvent,
+    ) -> Result<()> {
+        let Some(window_id) = self.host_to_runtime.get(&event.window_id).copied() else {
+            return Ok(());
+        };
+
+        match event.window_event {
+            AccessKitWindowEvent::InitialTreeRequested => {
+                let Some(window) = self.windows.get_mut(&window_id) else {
+                    return Ok(());
+                };
+                let snapshot = build_accesskit_snapshot(
+                    window_id,
+                    window.scale_factor,
+                    &window.title,
+                    window
+                        .accessibility
+                        .snapshot()
+                        .map(|snapshot| snapshot.nodes.as_slice())
+                        .unwrap_or(&[]),
+                );
+                let update = snapshot.full_update();
+                window.accesskit_snapshot = snapshot;
+                let WindowState {
+                    accesskit_adapter, ..
+                } = window;
+                accesskit_adapter.update_if_active(|| update);
+                Ok(())
+            }
+            AccessKitWindowEvent::ActionRequested(request) => {
+                let mapped = self
+                    .windows
+                    .get(&window_id)
+                    .and_then(|window| window.accesskit_snapshot.map_action(&request));
+                let Some((target, action)) = mapped else {
+                    return Ok(());
+                };
+
+                // Accessibility callbacks arrive through the event-loop proxy, so
+                // widget state continues to be mutated exclusively on the UI thread.
+                self.update_clock();
+                self.runtime.tick(self.frame_clock);
+                let _handled = self
+                    .runtime
+                    .handle_semantics_action(window_id, target, action)?;
+                self.drive_runtime(event_loop)
+            }
+            AccessKitWindowEvent::AccessibilityDeactivated => Ok(()),
         }
     }
 
@@ -1721,34 +1864,45 @@ pub struct WakeSignal;
 /// without polling on animation frames.
 #[derive(Clone)]
 pub struct Waker {
-    proxy: EventLoopProxy<WakeSignal>,
+    proxy: EventLoopProxy<DesktopUserEvent>,
 }
 
 impl Waker {
     pub fn wake(&self) {
-        let _ = self.proxy.send_event(WakeSignal);
+        let _ = self
+            .proxy
+            .send_event(DesktopUserEvent::ExternalWake(WakeSignal));
     }
 }
 
-impl ApplicationHandler<WakeSignal> for DesktopApp {
+impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.drive_runtime(event_loop) {
             self.handle_error(event_loop, error);
         }
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, _signal: WakeSignal) {
-        // A background thread asked us to wake: deliver an external-wake event to every window's
-        // root (so widgets can drain cross-thread work), then drive the runtime — which
-        // re-renders affected windows and updates control flow.
-        for window_id in self.runtime.window_ids() {
-            if let Err(error) = self.runtime.wake_root(window_id) {
-                self.handle_error(event_loop, error);
-                return;
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: DesktopUserEvent) {
+        match event {
+            DesktopUserEvent::ExternalWake(_signal) => {
+                // A background thread asked us to wake: deliver an external-wake event to every
+                // window's root (so widgets can drain cross-thread work), then drive the runtime.
+                for window_id in self.runtime.window_ids() {
+                    if let Err(error) = self.runtime.wake_root(window_id) {
+                        self.handle_error(event_loop, error);
+                        return;
+                    }
+                }
+                if let Err(error) = self.drive_runtime(event_loop) {
+                    self.handle_error(event_loop, error);
+                }
             }
-        }
-        if let Err(error) = self.drive_runtime(event_loop) {
-            self.handle_error(event_loop, error);
+            #[cfg(target_os = "windows")]
+            DesktopUserEvent::AccessKit(event) => {
+                if let Err(error) = self.handle_accesskit_event(event_loop, event) {
+                    self.handle_error(event_loop, error);
+                }
+            }
         }
     }
 
@@ -1782,6 +1936,10 @@ struct WindowState {
     pending_event_time_ms: f64,
     last_non_redraw_event_at_ms: Option<f64>,
     accessibility: AccessibilityBridge,
+    #[cfg(target_os = "windows")]
+    accesskit_adapter: AccessKitAdapter,
+    #[cfg(target_os = "windows")]
+    accesskit_snapshot: AccessKitSnapshot,
     pointer: PointerState,
     touch_points: HashMap<u64, Point>,
     scale_factor: f64,

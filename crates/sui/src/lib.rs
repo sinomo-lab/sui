@@ -48,8 +48,9 @@ pub use sui_core::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent,
     LocalClipboardBackend, Modifiers, Path, PathBuilder, PathElement, Point, PointerButton,
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta,
-    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsState, SemanticsValue, Size, SurfaceId,
-    TimerToken, ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
+    SemanticsAction, SemanticsActionRequest, SemanticsEvent, SemanticsNode, SemanticsRole,
+    SemanticsState, SemanticsTextRange, SemanticsValue, Size, SurfaceId, TimerToken, ToggleState,
+    Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{

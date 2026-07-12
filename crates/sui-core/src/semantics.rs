@@ -62,6 +62,61 @@ pub enum SemanticsAction {
     Custom(String),
 }
 
+/// A concrete accessibility action requested by a platform assistive-technology
+/// provider.
+///
+/// [`SemanticsAction`] describes the capabilities advertised by a semantic
+/// node. This type carries the payload needed when one of those capabilities is
+/// invoked. Keeping the request typed avoids platform-specific string encoding
+/// while still allowing widgets to own the behavior and state changes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SemanticsActionRequest {
+    Focus,
+    Blur,
+    Activate,
+    Expand,
+    Collapse,
+    Increment,
+    Decrement,
+    SetValue(SemanticsValue),
+    SetSelection(SemanticsTextRange),
+    InsertText(String),
+    DeleteBackward,
+    DeleteForward,
+    Copy,
+    Cut,
+    Paste,
+    Undo,
+    Redo,
+    Custom { name: String, value: Option<String> },
+}
+
+impl SemanticsActionRequest {
+    /// Return the capability a semantic node must advertise for this request.
+    pub fn advertised_action(&self) -> SemanticsAction {
+        match self {
+            Self::Focus => SemanticsAction::Focus,
+            Self::Blur => SemanticsAction::Blur,
+            Self::Activate => SemanticsAction::Activate,
+            Self::Expand => SemanticsAction::Expand,
+            Self::Collapse => SemanticsAction::Collapse,
+            Self::Increment => SemanticsAction::Increment,
+            Self::Decrement => SemanticsAction::Decrement,
+            Self::SetValue(_) => SemanticsAction::SetValue,
+            Self::SetSelection(_) => SemanticsAction::SetSelection,
+            Self::InsertText(_) => SemanticsAction::InsertText,
+            Self::DeleteBackward => SemanticsAction::DeleteBackward,
+            Self::DeleteForward => SemanticsAction::DeleteForward,
+            Self::Copy => SemanticsAction::Copy,
+            Self::Cut => SemanticsAction::Cut,
+            Self::Paste => SemanticsAction::Paste,
+            Self::Undo => SemanticsAction::Undo,
+            Self::Redo => SemanticsAction::Redo,
+            Self::Custom { name, .. } => SemanticsAction::Custom(name.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToggleState {
     Unchecked,
@@ -118,6 +173,9 @@ pub struct SemanticsNode {
     pub name: Option<String>,
     pub description: Option<String>,
     pub value: Option<SemanticsValue>,
+    /// Smallest meaningful numeric adjustment for range-style controls.
+    /// `None` means the control does not expose a numeric step.
+    pub numeric_step: Option<f64>,
     pub state: SemanticsState,
     pub actions: Vec<SemanticsAction>,
     pub editable_text: Option<EditableTextSemantics>,
@@ -133,10 +191,24 @@ impl SemanticsNode {
             name: None,
             description: None,
             value: None,
+            numeric_step: None,
             state: SemanticsState::default(),
             actions: Vec::new(),
             editable_text: None,
             bounds,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SemanticsNode, SemanticsRole};
+    use crate::{Rect, WidgetId};
+
+    #[test]
+    fn semantic_nodes_default_to_no_numeric_step() {
+        let node = SemanticsNode::new(WidgetId::new(7), SemanticsRole::Slider, Rect::ZERO);
+
+        assert_eq!(node.numeric_step, None);
     }
 }

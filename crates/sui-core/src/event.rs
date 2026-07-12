@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use crate::{AsyncWakeToken, DragEvent, Point, Size, TimerToken, Vector};
+use crate::{
+    AsyncWakeToken, DragEvent, Point, SemanticsActionRequest, Size, TimerToken, Vector, WidgetId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
@@ -243,6 +245,24 @@ pub struct CustomEvent {
     pub payload: Option<String>,
 }
 
+/// An assistive-technology action directed at a semantic node.
+///
+/// The runtime routes this event to the retained widget that owns `target` (or
+/// the nearest graph-backed semantic ancestor for a virtual node). The semantic
+/// target remains in the event so widgets with virtual or generated children
+/// can update their own local state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticsEvent {
+    pub target: WidgetId,
+    pub action: SemanticsActionRequest,
+}
+
+impl SemanticsEvent {
+    pub fn new(target: WidgetId, action: SemanticsActionRequest) -> Self {
+        Self { target, action }
+    }
+}
+
 impl CustomEvent {
     pub fn new(kind: impl Into<String>) -> Self {
         Self {
@@ -258,6 +278,7 @@ pub enum Event {
     Drag(DragEvent),
     Keyboard(KeyboardEvent),
     Ime(ImeEvent),
+    Semantics(SemanticsEvent),
     Wake(WakeEvent),
     /// Window or embedded-viewport lifecycle event. The receiving `WindowId`
     /// is carried by the platform/runtime call that delivers the event.

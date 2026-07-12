@@ -22,6 +22,9 @@ opt-level = 2
 opt-level = 2
 
 [workspace.dependencies]
+accesskit = "0.24.1"
+accesskit_consumer = "0.37.0"
+accesskit_winit = { version = "0.33.1", default-features = false, features = ["rwh_06"] }
 avif-serialize = "0.8.8"
 bytemuck = { version = "1", features = ["derive"] }
 cosmic-text = "0.18.2"

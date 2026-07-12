@@ -8,6 +8,8 @@ mod headless;
 mod os_clipboard;
 #[cfg(any(target_arch = "wasm32", test))]
 mod web_interop;
+#[cfg(target_os = "windows")]
+mod windows_accessibility;
 
 use web_time::Instant;
 

@@ -17,8 +17,8 @@ use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
-    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsTextRange, SemanticsValue, Size,
-    TimerToken, ToggleState, Vector, WakeEvent, WidgetId,
+    SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsTextRange,
+    SemanticsValue, Size, TimerToken, ToggleState, Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
@@ -4132,6 +4132,21 @@ impl Widget for RadioGroup {
                     ctx.set_handled();
                 }
             }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let SemanticsActionRequest::SetValue(SemanticsValue::Text(value)) =
+                    &semantics.action
+                else {
+                    return;
+                };
+                let Some(index) = self.options.iter().position(|option| option == value) else {
+                    return;
+                };
+                self.set_hovered(Some(index), ctx);
+                self.select(index, ctx);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 if self.options.is_empty() {
                     return;
@@ -4586,6 +4601,28 @@ impl Widget for Slider {
                     ctx.set_handled();
                 }
             }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let next = match &semantics.action {
+                    SemanticsActionRequest::Increment => Some(self.value + self.step.max(0.01)),
+                    SemanticsActionRequest::Decrement => Some(self.value - self.step.max(0.01)),
+                    SemanticsActionRequest::SetValue(SemanticsValue::Number(value)) => Some(*value),
+                    SemanticsActionRequest::SetValue(SemanticsValue::Range { value, .. }) => {
+                        Some(*value)
+                    }
+                    _ => None,
+                };
+                let Some(next) = next.filter(|value| value.is_finite()) else {
+                    return;
+                };
+                let clamped = clamp_and_snap_value(next, self.min, self.max, self.step);
+                if (clamped - self.value).abs() > f64::EPSILON {
+                    self.value = clamped;
+                    self.emit_change(ctx);
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 let next = match key.key.as_str() {
                     "ArrowLeft" | "ArrowDown" => Some(self.value - self.step.max(0.01)),
@@ -4698,6 +4735,7 @@ impl Widget for Slider {
             min: self.min,
             max: self.max,
         });
+        node.numeric_step = Some(self.step.max(0.01));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.actions = vec![
@@ -5041,6 +5079,32 @@ impl Widget for NumberInput {
                     ctx.set_handled();
                 }
             }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let next = match &semantics.action {
+                    SemanticsActionRequest::Increment => Some(self.value + self.step),
+                    SemanticsActionRequest::Decrement => Some(self.value - self.step),
+                    SemanticsActionRequest::SetValue(SemanticsValue::Number(value)) => Some(*value),
+                    SemanticsActionRequest::SetValue(SemanticsValue::Range { value, .. }) => {
+                        Some(*value)
+                    }
+                    _ => None,
+                };
+                let Some(next) = next.filter(|value| value.is_finite()) else {
+                    return;
+                };
+                let next = clamp_and_snap_value(next, self.min, self.max, self.step);
+                if (next - self.value).abs() > f64::EPSILON {
+                    self.value = next;
+                    self.buffer = format_number(self.value, self.precision);
+                    if let Some(on_change) = &mut self.on_change {
+                        on_change(self.value);
+                    }
+                }
+                ctx.request_measure();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
                     "ArrowUp" => self.nudge(self.step),
@@ -5256,7 +5320,12 @@ impl Widget for NumberInput {
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::SpinBox, ctx.bounds());
         node.name = Some(self.name.clone());
-        node.value = Some(SemanticsValue::Number(self.resolved_value()));
+        node.value = Some(SemanticsValue::Range {
+            value: self.resolved_value(),
+            min: self.min,
+            max: self.max,
+        });
+        node.numeric_step = Some(self.step);
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.actions = vec![
@@ -5739,6 +5808,15 @@ impl Widget for TextArea {
                     ctx.request_focus();
                     ctx.request_paint();
                     ctx.request_semantics();
+                }
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                if let Some(commands) =
+                    semantics_editor_commands(ctx, &semantics.action, self.read_only, false)
+                {
+                    for command in commands {
+                        self.execute_editor_command(ctx, command);
+                    }
                 }
             }
             Event::Custom(custom) => {
@@ -7632,6 +7710,15 @@ impl Widget for TextInput {
                     ctx.request_semantics();
                 }
             }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                if let Some(commands) =
+                    semantics_editor_commands(ctx, &semantics.action, self.read_only, true)
+                {
+                    for command in commands {
+                        self.execute_editor_command(ctx, command);
+                    }
+                }
+            }
             Event::Custom(custom) => {
                 if let Some(command) = TextCommand::from_custom_event(custom) {
                     if !ctx.is_focused() {
@@ -8102,6 +8189,55 @@ fn single_line_text(text: impl Into<String>) -> String {
         .collect()
 }
 
+fn semantics_editor_commands(
+    ctx: &EventCtx,
+    action: &SemanticsActionRequest,
+    read_only: bool,
+    single_line: bool,
+) -> Option<Vec<EditorCommand>> {
+    let normalize = |text: String| {
+        if single_line {
+            single_line_text(text)
+        } else {
+            text
+        }
+    };
+
+    match action {
+        SemanticsActionRequest::SetValue(SemanticsValue::Text(text)) if !read_only => Some(vec![
+            EditorCommand::SelectAll,
+            EditorCommand::InsertText(normalize(text.clone())),
+        ]),
+        SemanticsActionRequest::SetSelection(selection) => {
+            Some(vec![EditorCommand::SetSelection {
+                anchor: selection.start,
+                focus: selection.end,
+            }])
+        }
+        SemanticsActionRequest::InsertText(text) if !read_only => {
+            Some(vec![EditorCommand::InsertText(normalize(text.clone()))])
+        }
+        SemanticsActionRequest::DeleteBackward if !read_only => {
+            Some(vec![EditorCommand::DeleteBackward])
+        }
+        SemanticsActionRequest::DeleteForward if !read_only => {
+            Some(vec![EditorCommand::DeleteForward])
+        }
+        SemanticsActionRequest::Copy => Some(vec![EditorCommand::Copy]),
+        SemanticsActionRequest::Cut if !read_only => Some(vec![EditorCommand::Cut]),
+        SemanticsActionRequest::Paste if !read_only => {
+            let command = match paste_command(ctx) {
+                EditorCommand::Paste(text) => EditorCommand::Paste(normalize(text)),
+                command => command,
+            };
+            Some(vec![command])
+        }
+        SemanticsActionRequest::Undo if !read_only => Some(vec![EditorCommand::Undo]),
+        SemanticsActionRequest::Redo if !read_only => Some(vec![EditorCommand::Redo]),
+        _ => None,
+    }
+}
+
 fn keyboard_text(event: &sui_core::KeyboardEvent) -> Option<&str> {
     if event.state != KeyState::Pressed
         || event.is_composing
@@ -8480,7 +8616,8 @@ mod tests {
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
         PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
-        SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+        SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector,
+        WidgetId, WindowEvent,
     };
     use sui_layout::{Constraints, Padding as TestPadding};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
@@ -9986,7 +10123,15 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::SpinBox)
             .expect("number input semantics present after stepper press");
-        assert_eq!(spin.value, Some(SemanticsValue::Number(2.0)));
+        assert_eq!(
+            spin.value,
+            Some(SemanticsValue::Range {
+                value: 2.0,
+                min: f64::NEG_INFINITY,
+                max: f64::INFINITY,
+            })
+        );
+        assert_eq!(spin.numeric_step, Some(1.0));
         Ok(())
     }
 
@@ -12230,6 +12375,46 @@ mod tests {
     }
 
     #[test]
+    fn radio_group_applies_typed_semantic_text_value_through_selection_callback() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            RadioGroup::new("Mode")
+                .options(["Alpha", "Beta", "Gamma"])
+                .selected(0)
+                .on_change(move |index, value| on_change.borrow_mut().push((index, value))),
+        );
+        let group_id = runtime
+            .render(window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioGroup)
+            .expect("radio group semantics present")
+            .id;
+
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            group_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Text("Beta".to_string())),
+        )?);
+        assert!(!runtime.handle_semantics_action(
+            window_id,
+            group_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Text("Missing".to_string())),
+        )?);
+        assert_eq!(changes.borrow().as_slice(), &[(1, "Beta".to_string())]);
+
+        let group = runtime
+            .render(window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.id == group_id)
+            .expect("radio group semantics remain present");
+        assert_eq!(group.value, Some(SemanticsValue::Text("Beta".to_string())));
+        Ok(())
+    }
+
+    #[test]
     fn slider_accepts_keyboard_adjustment_and_reports_range_semantics() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -12272,6 +12457,75 @@ mod tests {
                 max: 1.0,
             })
         );
+        assert_eq!(slider.numeric_step, Some(0.25));
+        Ok(())
+    }
+
+    #[test]
+    fn slider_applies_typed_semantic_numeric_actions_through_step_and_callbacks() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            Slider::new("Opacity")
+                .range(0.0, 1.0)
+                .step(0.25)
+                .value(0.25)
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+        let slider_id = runtime
+            .render(window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present")
+            .id;
+
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            slider_id,
+            SemanticsActionRequest::Increment,
+        )?);
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            slider_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Number(0.88)),
+        )?);
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            slider_id,
+            SemanticsActionRequest::Decrement,
+        )?);
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            slider_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Range {
+                value: 0.24,
+                min: -100.0,
+                max: 100.0,
+            }),
+        )?);
+        assert!(!runtime.handle_semantics_action(
+            window_id,
+            slider_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Text("invalid".to_string())),
+        )?);
+
+        assert_eq!(changes.borrow().as_slice(), &[0.5, 1.0, 0.75, 0.25]);
+        let slider = runtime
+            .render(window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.id == slider_id)
+            .expect("slider semantics remain present");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 0.25,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+        assert_eq!(slider.numeric_step, Some(0.25));
         Ok(())
     }
 
@@ -12300,6 +12554,7 @@ mod tests {
                 max: 1.0,
             })
         );
+        assert_eq!(slider.numeric_step, Some(0.01));
 
         *value.borrow_mut() = 0.75;
         runtime.handle_event(
@@ -12320,6 +12575,7 @@ mod tests {
                 max: 1.0,
             })
         );
+        assert_eq!(slider.numeric_step, Some(0.01));
         Ok(())
     }
 
@@ -12424,7 +12680,80 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::SpinBox)
             .expect("spinbox semantics present");
-        assert_eq!(input.value, Some(SemanticsValue::Number(6.0)));
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Range {
+                value: 6.0,
+                min: 0.0,
+                max: 10.0,
+            })
+        );
+        assert_eq!(input.numeric_step, Some(2.0));
+        Ok(())
+    }
+
+    #[test]
+    fn number_input_applies_typed_semantic_numeric_actions_through_step_and_callbacks() -> Result<()>
+    {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            NumberInput::new("Count")
+                .range(0.0, 10.0)
+                .step(2.0)
+                .precision(0)
+                .value(4.0)
+                .on_change(move |value| on_change.borrow_mut().push(value)),
+        );
+        let input_id = runtime
+            .render(window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::SpinBox)
+            .expect("number input semantics present")
+            .id;
+
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            input_id,
+            SemanticsActionRequest::Increment,
+        )?);
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            input_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Range {
+                value: 9.0,
+                min: -100.0,
+                max: 100.0,
+            }),
+        )?);
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            input_id,
+            SemanticsActionRequest::Decrement,
+        )?);
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            input_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Number(3.1)),
+        )?);
+
+        assert_eq!(changes.borrow().as_slice(), &[6.0, 10.0, 8.0, 4.0]);
+        let input = runtime
+            .render(window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.id == input_id)
+            .expect("number input semantics remain present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Range {
+                value: 4.0,
+                min: 0.0,
+                max: 10.0,
+            })
+        );
+        assert_eq!(input.numeric_step, Some(2.0));
         Ok(())
     }
 
@@ -12469,7 +12798,15 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::SpinBox)
             .expect("spinbox semantics present");
-        assert_eq!(input.value, Some(SemanticsValue::Number(2.0)));
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Range {
+                value: 2.0,
+                min: 0.0,
+                max: 10.0,
+            })
+        );
+        assert_eq!(input.numeric_step, Some(1.0));
         Ok(())
     }
 
@@ -12650,7 +12987,15 @@ mod tests {
                 node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Count")
             })
             .expect("number input semantics should exist");
-        assert_eq!(count.value, Some(SemanticsValue::Number(12.0)));
+        assert_eq!(
+            count.value,
+            Some(SemanticsValue::Range {
+                value: 12.0,
+                min: 0.0,
+                max: 96.0,
+            })
+        );
+        assert_eq!(count.numeric_step, Some(1.0));
 
         *value.borrow_mut() = 36.0;
         let position = Point::new(
@@ -12670,7 +13015,15 @@ mod tests {
                 node.role == SemanticsRole::SpinBox && node.name.as_deref() == Some("Count")
             })
             .expect("number input semantics should still exist");
-        assert_eq!(count.value, Some(SemanticsValue::Number(36.0)));
+        assert_eq!(
+            count.value,
+            Some(SemanticsValue::Range {
+                value: 36.0,
+                min: 0.0,
+                max: 96.0,
+            })
+        );
+        assert_eq!(count.numeric_step, Some(1.0));
         text_run_for(&output, "36");
     }
 
@@ -12718,6 +13071,84 @@ mod tests {
         assert_eq!(
             input.value,
             Some(SemanticsValue::Text("Line 1\nLine 2".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_inputs_apply_typed_semantic_value_selection_and_edit_actions() -> Result<()> {
+        let input_changes = Rc::new(RefCell::new(Vec::new()));
+        let on_input_change = Rc::clone(&input_changes);
+        let (mut input_runtime, input_window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("alpha")
+                .on_change(move |value| on_input_change.borrow_mut().push(value)),
+        );
+        let input_id = input_runtime
+            .render(input_window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text input semantics present")
+            .id;
+
+        assert!(input_runtime.handle_semantics_action(
+            input_window_id,
+            input_id,
+            SemanticsActionRequest::SetSelection(SemanticsTextRange::new(0, 5)),
+        )?);
+        assert!(input_runtime.handle_semantics_action(
+            input_window_id,
+            input_id,
+            SemanticsActionRequest::InsertText("Ada\nLovelace".to_string()),
+        )?);
+        let input = input_runtime
+            .render(input_window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.id == input_id)
+            .expect("text input semantics remain present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("AdaLovelace".to_string()))
+        );
+        assert_eq!(
+            input_changes.borrow().as_slice(),
+            &["AdaLovelace".to_string()]
+        );
+
+        let area_changes = Rc::new(RefCell::new(Vec::new()));
+        let on_area_change = Rc::clone(&area_changes);
+        let (mut area_runtime, area_window_id) = build_runtime(
+            TextArea::new("Notes")
+                .value("old")
+                .on_change(move |value| on_area_change.borrow_mut().push(value)),
+        );
+        let area_id = area_runtime
+            .render(area_window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text area semantics present")
+            .id;
+        assert!(area_runtime.handle_semantics_action(
+            area_window_id,
+            area_id,
+            SemanticsActionRequest::SetValue(SemanticsValue::Text("Line 1\nLine 2".to_string())),
+        )?);
+        let area = area_runtime
+            .render(area_window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.id == area_id)
+            .expect("text area semantics remain present");
+        assert_eq!(
+            area.value,
+            Some(SemanticsValue::Text("Line 1\nLine 2".to_string()))
+        );
+        assert_eq!(
+            area_changes.borrow().as_slice(),
+            &["Line 1\nLine 2".to_string()]
         );
         Ok(())
     }

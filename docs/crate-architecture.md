@@ -166,7 +166,10 @@ Host integration.
 
 This crate owns desktop lifecycle with `winit`, host event normalization into
 `sui_core::Event`, redraw scheduling for `WindowId` targets, accessibility
-bridging, deterministic headless execution, and renderer submission.
+bridging, deterministic headless execution, and renderer submission. Its
+Windows accessibility bridge publishes runtime semantic snapshots through
+AccessKit's native UI Automation adapter and routes requested actions back into
+the runtime event loop.
 
 It should not become a second runtime or renderer. In this pass, desktop and
 headless paths drive `sui_runtime::Runtime` directly.

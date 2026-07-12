@@ -123,7 +123,11 @@ updates, scene commands, and resource snapshots.
 
 Semantics are produced through `SemanticsCtx` and included in `RenderOutput`.
 They are consumed by accessibility bridges, testing locators, debug tooling, and
-widget-book validation.
+widget-book validation. On Windows desktop, `sui-platform` translates the same
+immutable semantic snapshot into an AccessKit tree and publishes it through the
+native UI Automation provider. UI Automation actions return through the host
+event loop as typed semantic actions, so widget-owned state is still mutated by
+the runtime's normal UI-thread event dispatch.
 
 ## Platform Boundary
 
@@ -134,7 +138,7 @@ It owns:
 - desktop window lifecycle with `winit`
 - host event normalization into `sui_core::Event`
 - redraw scheduling for `WindowId` targets
-- accessibility snapshot bridging
+- accessibility snapshot bridging, including native Windows UI Automation
 - deterministic headless execution
 - renderer registration and submission for each target
 
