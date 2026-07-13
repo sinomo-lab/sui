@@ -305,16 +305,49 @@ pub fn flex_layout<F>(
 where
     F: FnMut(usize, Constraints) -> Size,
 {
-    let measured_sizes = items
+    let initial_measurements = items
         .iter()
         .enumerate()
         .map(|(index, item)| {
             let child_constraints = flex_child_constraints(style, *item, constraints);
-            clamp_item_size(*item, measure_child(index, child_constraints))
+            let measured_size = clamp_item_size(*item, measure_child(index, child_constraints));
+            (child_constraints, measured_size)
+        })
+        .collect::<Vec<_>>();
+    let measured_sizes = initial_measurements
+        .iter()
+        .map(|(_, measured_size)| *measured_size)
+        .collect::<Vec<_>>();
+    let initial_layout = flex_layout_from_measured(style, items, constraints, &measured_sizes);
+
+    // Flex basis and grow/shrink resolution can assign a child a very different
+    // main-axis extent from the one used for its intrinsic measurement. Text is
+    // the important example: `FlexItem::flex(1.0)` has a zero-point basis, so an
+    // initial width of zero produces a one-glyph-per-line layout even though the
+    // item is then grown across the row. Measure again at the resolved allocation
+    // so width-dependent children can rebuild wrapping and report the resulting
+    // cross-axis size before the final line layout is computed.
+    let resolved_sizes = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let resolved_main = initial_layout
+                .items
+                .get(index)
+                .map(|layout| axis_main(style.axis, layout.rect.size))
+                .unwrap_or(0.0);
+            let child_constraints =
+                resolved_flex_child_constraints(style, *item, constraints, resolved_main);
+            let (initial_constraints, initial_size) = initial_measurements[index];
+            if child_constraints == initial_constraints {
+                initial_size
+            } else {
+                clamp_item_size(*item, measure_child(index, child_constraints))
+            }
         })
         .collect::<Vec<_>>();
 
-    flex_layout_from_measured(style, items, constraints, &measured_sizes)
+    flex_layout_from_measured(style, items, constraints, &resolved_sizes)
 }
 
 pub fn arrange_flex(
@@ -873,6 +906,29 @@ fn flex_child_constraints(
     axis_constraints(style.axis, min_main, max_main, min_cross, max_cross)
 }
 
+fn resolved_flex_child_constraints(
+    style: FlexStyle,
+    item: FlexItem,
+    constraints: Constraints,
+    resolved_main: f32,
+) -> Constraints {
+    let intrinsic = flex_child_constraints(style, item, constraints);
+    let min_cross = axis_cross(style.axis, intrinsic.min);
+    let max_cross = axis_cross(style.axis, intrinsic.max);
+    let resolved_main = finite_non_negative(resolved_main).clamp(
+        item_min_main(style.axis, item),
+        item_max_main(style.axis, item),
+    );
+
+    axis_constraints(
+        style.axis,
+        resolved_main,
+        resolved_main,
+        min_cross,
+        max_cross,
+    )
+}
+
 fn arranged_cross_size(
     axis: Axis,
     item: FlexItem,
@@ -1201,6 +1257,33 @@ mod tests {
 
         assert_rect_approx_eq(layout.items[0].rect, Rect::new(0.0, 0.0, 50.0, 10.0));
         assert_rect_approx_eq(layout.items[1].rect, Rect::new(50.0, 0.0, 50.0, 10.0));
+    }
+
+    #[test]
+    fn flex_layout_remeasures_grown_children_at_their_resolved_main_size() {
+        let items = [FlexItem::flex(1.0)];
+        let mut seen = Vec::new();
+        let layout = flex_layout(
+            FlexStyle::horizontal(),
+            &items,
+            Constraints::new(Size::new(240.0, 0.0), Size::new(240.0, 200.0)),
+            |_, constraints| {
+                seen.push(constraints);
+                if constraints.max.width <= 1.0 {
+                    Size::new(constraints.max.width, 160.0)
+                } else {
+                    Size::new(constraints.max.width, 20.0)
+                }
+            },
+        );
+
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].max.width, 0.0);
+        assert_eq!(seen[1].min.width, 240.0);
+        assert_eq!(seen[1].max.width, 240.0);
+        assert_eq!(layout.size, Size::new(240.0, 20.0));
+        assert_eq!(layout.items[0].measured_size, Size::new(240.0, 20.0));
+        assert_rect_approx_eq(layout.items[0].rect, Rect::new(0.0, 0.0, 240.0, 20.0));
     }
 
     #[test]

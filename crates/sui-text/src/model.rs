@@ -72,9 +72,34 @@ pub enum TextFlowDirection {
     BottomToTop,
 }
 
+/// An ordered, theme-owned font-family preference list.
+///
+/// Family names may be concrete installed families (for example, `Segoe UI`)
+/// or CSS-compatible generic aliases such as `ui-sans-serif`, `system-ui`,
+/// `sans-serif`, `ui-serif`, and `ui-monospace`. The text system resolves the
+/// first available family for the active platform. An explicitly registered
+/// [`FontHandle`] on [`TextStyle`] still takes precedence over this stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FontFamilyStack {
+    pub primary: &'static str,
+    pub fallbacks: &'static [&'static str],
+}
+
+impl FontFamilyStack {
+    pub const fn new(primary: &'static str, fallbacks: &'static [&'static str]) -> Self {
+        Self { primary, fallbacks }
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = &'static str> {
+        std::iter::once(self.primary).chain(self.fallbacks.iter().copied())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
     pub font: Option<FontHandle>,
+    /// Theme or caller supplied family preferences used when `font` is not set.
+    pub font_families: Option<FontFamilyStack>,
     pub font_size: f32,
     pub line_height: f32,
     pub color: Color,
@@ -101,6 +126,7 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             font: None,
+            font_families: None,
             font_size: 14.0,
             line_height: 18.0,
             color: Color::WHITE,

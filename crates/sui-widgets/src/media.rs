@@ -3011,8 +3011,8 @@ fn paint_labeled_row_text(
     let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let label_width = (theme.metrics.icon_size + theme.spacing * 2.0).max(20.0);
     let value_width = (rect.width() * 0.36).clamp(56.0, 96.0);
-    let label_style = text_token_style(text, theme.palette.accent_text);
-    let value_style = numeric_text_style(text_token_style(text, value_color));
+    let label_style = text_token_style(theme, text, theme.palette.accent_text);
+    let value_style = numeric_text_style(text_token_style(theme, text, value_color));
     let label_slot = Rect::new(
         rect.x() + theme.spacing * 1.5,
         rect.y(),
@@ -3046,7 +3046,7 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
     let text = theme.text.xs;
     let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let padding = metrics.text_input_padding;
-    let style = text_token_style(text, theme.palette.text);
+    let style = text_token_style(theme, text, theme.palette.text);
     let text_slot = Rect::new(
         rect.x() + padding.left.max(theme.spacing * 2.0),
         rect.y(),
@@ -3122,6 +3122,7 @@ fn paint_encoding_menu(
         }
         let label = editing_space_label(space);
         let style = text_token_style(
+            theme,
             text,
             if space == selected {
                 theme.palette.accent_text
@@ -3160,7 +3161,7 @@ fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: 
     let text = theme.text.xs;
     let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let padding = metrics.text_input_padding;
-    let style = text_token_style(text, theme.palette.text);
+    let style = text_token_style(theme, text, theme.palette.text);
     let text_slot = Rect::new(
         rect.x() + padding.left.max(theme.spacing * 2.0),
         rect.y(),
@@ -3186,7 +3187,7 @@ fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, va
     let text = theme.text.xs;
     let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let padding = metrics.text_input_padding;
-    let style = text_token_style(text, theme.palette.placeholder);
+    let style = text_token_style(theme, text, theme.palette.placeholder);
     let text_slot = Rect::new(
         rect.x() + padding.left.max(theme.spacing * 2.0),
         rect.y(),
@@ -3505,12 +3506,12 @@ fn numeric_text_style(mut style: TextStyle) -> TextStyle {
     style
 }
 
-fn text_token_style(token: ThemeTextToken, color: Color) -> TextStyle {
+fn text_token_style(theme: &DefaultTheme, token: ThemeTextToken, color: Color) -> TextStyle {
     TextStyle {
         font_size: token.size.max(1.0),
         line_height: token.line_height.max(1.0),
         color,
-        ..TextStyle::default()
+        ..theme.body_text_style()
     }
 }
 

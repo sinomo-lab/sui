@@ -1,7 +1,7 @@
 use crate::{
-    FontFeature, FontFeatures, FontRegistry, FontWeight, RegisteredFont, TextDirection,
-    TextDocument, TextFlowDirection, TextLayoutCacheSnapshot, TextLayoutRequest, TextParagraph,
-    TextParagraphStyle, TextSelection, TextSpan, TextStyle, TextSystem,
+    FontFamilyStack, FontFeature, FontFeatures, FontRegistry, FontWeight, RegisteredFont,
+    TextDirection, TextDocument, TextFlowDirection, TextLayoutCacheSnapshot, TextLayoutRequest,
+    TextParagraph, TextParagraphStyle, TextSelection, TextSpan, TextStyle, TextSystem,
 };
 use sui_core::{Color, FontHandle, Point, Size};
 
@@ -363,6 +363,47 @@ fn text_system_caches_distinct_layouts_per_weight() {
 
     // Re-requesting the original weight hits the cache.
     shape(FontWeight::NORMAL);
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 2,
+            hits: 1,
+            misses: 2,
+        }
+    );
+}
+
+#[test]
+fn text_system_caches_distinct_layouts_per_family_stack() {
+    let system = TextSystem::new();
+    let shape = |font_families| {
+        system
+            .shape_text(
+                "family stack",
+                Size::new(160.0, 24.0),
+                TextStyle {
+                    font_families: Some(font_families),
+                    ..TextStyle::new(Color::WHITE)
+                },
+                &FontRegistry::new(),
+            )
+            .unwrap()
+    };
+    let sans = FontFamilyStack::new("ui-sans-serif", &[]);
+    let system_ui = FontFamilyStack::new("system-ui", &[]);
+
+    shape(sans);
+    shape(system_ui);
+    assert_eq!(
+        system.layout_cache_snapshot(),
+        TextLayoutCacheSnapshot {
+            entries: 2,
+            hits: 0,
+            misses: 2,
+        }
+    );
+
+    shape(sans);
     assert_eq!(
         system.layout_cache_snapshot(),
         TextLayoutCacheSnapshot {

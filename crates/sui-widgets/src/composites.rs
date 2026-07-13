@@ -3,7 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path,
     PathBuilder, Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Vector, WakeEvent, WidgetId,
+    SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Transform, Vector, WakeEvent,
+    WidgetId,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_runtime::{
@@ -18,9 +19,9 @@ use sui_text::{
 };
 
 use crate::{
-    Button, ControlMetrics, DefaultTheme, HdrThemeMode, IconGlyph, Interpolate, MotionScalar,
-    ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeTextToken, WidgetColorRole,
-    WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    Button, ButtonAppearance, ControlMetrics, DefaultTheme, HdrThemeMode, IconGlyph, Interpolate,
+    MotionScalar, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeTextToken,
+    WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
     paint_theme_shadow, resolve_widget_hdr_style,
     text_align::{paint_aligned_text, paint_single_line_aligned_text},
@@ -59,11 +60,26 @@ pub enum SurfaceElevation {
     Large,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SurfaceAppearance {
+    /// The surface token associated with [`SurfaceRole`].
+    #[default]
+    Standard,
+    /// The shared raised-surface token, useful for elevated chips and cards.
+    Raised,
+    /// A low-emphasis semantic wash.
+    Soft,
+    /// A solid semantic fill.
+    Filled,
+}
+
 pub struct Surface {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
     role: SurfaceRole,
+    appearance: SurfaceAppearance,
+    tone: SemanticTone,
     border: SurfaceBorder,
     elevation: SurfaceElevation,
     radius: f32,
@@ -83,6 +99,8 @@ impl Surface {
             theme_reader: None,
             name: None,
             role,
+            appearance: SurfaceAppearance::Standard,
+            tone: SemanticTone::Neutral,
             border: SurfaceBorder::None,
             elevation: SurfaceElevation::None,
             radius: 0.0,
@@ -156,6 +174,16 @@ impl Surface {
         self
     }
 
+    pub fn appearance(mut self, appearance: SurfaceAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
     pub fn elevation(mut self, elevation: SurfaceElevation) -> Self {
         self.elevation = elevation;
         self
@@ -204,6 +232,29 @@ impl Surface {
         }
     }
 
+    fn resolved_colors(&self, theme: &DefaultTheme) -> (Color, Color) {
+        match self.appearance {
+            SurfaceAppearance::Standard => (
+                Self::background_for_role(theme, self.role),
+                theme.surfaces.border,
+            ),
+            SurfaceAppearance::Raised => (theme.palette.surface_raised, theme.surfaces.border),
+            SurfaceAppearance::Soft => {
+                let (fill, _) = theme.semantic_tone_soft_colors(self.tone);
+                let border = if self.tone == SemanticTone::Neutral {
+                    theme.surfaces.border
+                } else {
+                    theme.semantic_tone_color(self.tone).with_alpha(0.36)
+                };
+                (fill, border)
+            }
+            SurfaceAppearance::Filled => {
+                let (fill, _) = theme.semantic_tone_colors(self.tone);
+                (fill, fill)
+            }
+        }
+    }
+
     fn content_rect(&self, bounds: Rect) -> Rect {
         inset_rect(bounds, self.padding)
     }
@@ -223,9 +274,31 @@ impl Widget for Surface {
                 f32::INFINITY
             },
         );
+        // `arrange` always gives the child the complete content rect. Keep the
+        // measurement constraints consistent with that contract so
+        // width-dependent children (notably wrapping text in a flex item) are
+        // not measured narrowly and then stretched without being remeasured.
+        // A filling surface makes the corresponding content axis tight even
+        // when its own parent supplied loose constraints.
+        let min_child = Size::new(
+            if self.fill_width && max_child.width.is_finite() {
+                max_child.width
+            } else {
+                (constraints.min.width - self.padding.left - self.padding.right)
+                    .max(0.0)
+                    .min(max_child.width)
+            },
+            if self.fill_height && max_child.height.is_finite() {
+                max_child.height
+            } else {
+                (constraints.min.height - self.padding.top - self.padding.bottom)
+                    .max(0.0)
+                    .min(max_child.height)
+            },
+        );
         let child_size = self
             .child
-            .measure(ctx, Constraints::new(Size::ZERO, max_child));
+            .measure(ctx, Constraints::new(min_child, max_child));
         let mut size = Size::new(
             child_size.width + self.padding.left + self.padding.right,
             child_size.height + self.padding.top + self.padding.bottom,
@@ -258,8 +331,7 @@ impl Widget for Surface {
             paint_theme_shadow(ctx, bounds, [radius; 4], shadow);
         }
 
-        let background = Self::background_for_role(&theme, self.role);
-        let border = theme.surfaces.border;
+        let (background, border) = self.resolved_colors(&theme);
         if radius > 0.0 {
             ctx.fill(rounded_rect_path(bounds, radius), background);
         } else {
@@ -315,6 +387,317 @@ impl Widget for Surface {
                 ctx.bounds(),
             );
             node.name = Some(name.clone());
+            ctx.push(node);
+        }
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+/// A reusable field frame for compound editors such as search/composer rows.
+///
+/// The child owns editing, focus, and semantics. The frame owns only the
+/// standard field surface and border, which avoids applications repainting
+/// control chrome around otherwise stock SUI editors. Use [`Self::focused_when`]
+/// when the wrapped editor publishes its focus state.
+pub struct FramedField {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: Option<String>,
+    description: Option<String>,
+    padding: Insets,
+    min_height: Option<f32>,
+    fill_width: bool,
+    focused: Option<bool>,
+    focused_reader: Option<Box<dyn Fn() -> bool>>,
+    invalid: bool,
+    invalid_reader: Option<Box<dyn Fn() -> bool>>,
+    hovered: bool,
+    hover_animation: AnimatedScalar,
+    child: SingleChild,
+}
+
+impl FramedField {
+    pub fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: None,
+            description: None,
+            padding: Insets::ZERO,
+            min_height: None,
+            fill_width: false,
+            focused: None,
+            focused_reader: None,
+            invalid: false,
+            invalid_reader: None,
+            hovered: false,
+            hover_animation: AnimatedScalar::new(0.0),
+            child: SingleChild::new(child),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn min_height(mut self, min_height: f32) -> Self {
+        self.min_height = Some(min_height.max(0.0));
+        self
+    }
+
+    pub fn fill_width(mut self) -> Self {
+        self.fill_width = true;
+        self
+    }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = Some(focused);
+        self.focused_reader = None;
+        self
+    }
+
+    pub fn focused_when<F>(mut self, focused: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.focused_reader = Some(Box::new(focused));
+        self
+    }
+
+    pub fn invalid(mut self, invalid: bool) -> Self {
+        self.invalid = invalid;
+        self.invalid_reader = None;
+        self
+    }
+
+    pub fn invalid_when<F>(mut self, invalid: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.invalid_reader = Some(Box::new(invalid));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn child_contains(&self, target: WidgetId) -> bool {
+        if self.child.child().id() == target {
+            return true;
+        }
+        struct Finder {
+            target: WidgetId,
+            found: bool,
+        }
+        impl WidgetPodVisitor for Finder {
+            fn visit(&mut self, child: &WidgetPod) {
+                if self.found {
+                    return;
+                }
+                if child.id() == self.target {
+                    self.found = true;
+                } else {
+                    child.visit_children(self);
+                }
+            }
+        }
+        let mut finder = Finder {
+            target,
+            found: false,
+        };
+        self.child.child().visit_children(&mut finder);
+        finder.found
+    }
+
+    fn is_focused(&self, focused_widget_id: Option<WidgetId>) -> bool {
+        if let Some(focused) = &self.focused_reader {
+            return focused();
+        }
+        if let Some(focused) = self.focused {
+            return focused;
+        }
+        focused_widget_id
+            .map(|focused| self.child_contains(focused))
+            .unwrap_or(false)
+    }
+
+    fn is_invalid(&self) -> bool {
+        self.invalid_reader
+            .as_ref()
+            .map(|invalid| invalid())
+            .unwrap_or(self.invalid)
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, self.padding)
+    }
+
+    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
+        if self.hovered == hovered {
+            return;
+        }
+        self.hovered = hovered;
+        let theme = self.resolved_theme();
+        set_hover_animation_target(&mut self.hover_animation, hovered as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+    }
+}
+
+impl Widget for FramedField {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
+                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.set_hovered(false, ctx);
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let previous = self.hover_animation.value;
+                if self.hover_animation.advance(*time) {
+                    ctx.request_animation_frame();
+                }
+                if self.hover_animation.changed_since(previous) {
+                    ctx.request_paint();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let max_child = Size::new(
+            if constraints.max.width.is_finite() {
+                (constraints.max.width - self.padding.left - self.padding.right).max(0.0)
+            } else {
+                f32::INFINITY
+            },
+            if constraints.max.height.is_finite() {
+                (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0)
+            } else {
+                f32::INFINITY
+            },
+        );
+        let child = self
+            .child
+            .measure(ctx, Constraints::new(Size::ZERO, max_child));
+        let theme = self.resolved_theme();
+        let mut size = Size::new(
+            child.width + self.padding.left + self.padding.right,
+            (child.height + self.padding.top + self.padding.bottom)
+                .max(self.min_height.unwrap_or(theme.metrics.min_height)),
+        );
+        if self.fill_width && constraints.max.width.is_finite() {
+            size.width = constraints.max.width;
+        }
+        constraints.clamp(size)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, self.content_rect(bounds));
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let bounds = ctx.bounds();
+        let radius = theme
+            .metrics
+            .corner_radius
+            .min(bounds.width().min(bounds.height()) * 0.5);
+        let invalid = self.is_invalid();
+        let focused = self.is_focused(ctx.focused_widget_id());
+        let interaction_border = mix_color(
+            theme.palette.border,
+            theme.palette.border_hover,
+            self.hover_animation.value,
+        );
+        let border = if invalid {
+            theme.semantic_tone_color(SemanticTone::Danger)
+        } else if focused {
+            theme.palette.border_focus
+        } else {
+            interaction_border
+        };
+        let background = mix_color(
+            theme.surfaces.field,
+            theme.palette.surface_focus,
+            focused as u8 as f32,
+        );
+        ctx.fill(rounded_rect_path(bounds, radius), background);
+        ctx.stroke(
+            rounded_rect_path(bounds, radius),
+            border,
+            StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
+        );
+        if focused {
+            let outset = physical_pixels(ctx, theme.metrics.focus_ring_outset);
+            ctx.stroke(
+                rounded_rect_path(bounds.inflate(outset, outset), radius + outset),
+                if invalid {
+                    theme.semantic_tone_color(SemanticTone::Danger)
+                } else {
+                    theme.palette.focus_ring
+                },
+                StrokeStyle::new(physical_pixels(ctx, theme.metrics.focus_ring_width)),
+            );
+        }
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if self.name.is_some() || self.description.is_some() {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = self.name.clone();
+            node.description = self.description.clone();
+            node.state.focused = self.is_focused(ctx.focused_widget_id());
+            node.state.hovered = self.hovered;
             ctx.push(node);
         }
         self.child.semantics(ctx);
@@ -4823,24 +5206,9 @@ pub fn paint_border(ctx: &mut PaintCtx, rect: Rect, color: Color) {
     paint_hairline(ctx, rect, HairlineEdge::Left, color);
 }
 
-fn paint_centered_text(ctx: &mut PaintCtx, text: &str, style: TextStyle, cx: f32, cy: f32) {
-    let measurement = ctx.measure_text(text.to_string(), style.clone()).ok();
-    let (width, height) = measurement
-        .map(|measurement| (measurement.width, measurement.height))
-        .unwrap_or((
-            text.chars().count() as f32 * style.font_size * 0.55,
-            style.line_height,
-        ));
-    ctx.draw_text(
-        Rect::new(
-            cx - width * 0.5,
-            cy - height * 0.5,
-            width + 2.0,
-            height + 2.0,
-        ),
-        text.to_string(),
-        style,
-    );
+fn centered_text_slot(bounds: Rect, center_y: f32, line_height: f32) -> Rect {
+    let height = line_height.max(1.0) * 2.0;
+    Rect::new(bounds.x(), center_y - height * 0.5, bounds.width(), height)
 }
 
 #[derive(Clone, Copy)]
@@ -4903,7 +5271,6 @@ pub fn paint_empty_state(
         ctx.fill_rect(bounds, background);
     }
 
-    let cx = bounds.x() + bounds.width() * 0.5;
     let cy = bounds.y() + bounds.height() * 0.5
         - if paint.reserve_action_space {
             18.0
@@ -4914,6 +5281,7 @@ pub fn paint_empty_state(
     let icon_color = theme.surfaces.text_faint;
     if let Some(icon) = paint.icon {
         let side = 40.0;
+        let cx = bounds.x() + bounds.width() * 0.5;
         draw_icon_glyph(
             ctx,
             icon,
@@ -4924,15 +5292,36 @@ pub fn paint_empty_state(
 
     let mut title_style = text_token_style(theme, theme.text.lg, theme.surfaces.text_muted);
     title_style.weight = FontWeight::SEMIBOLD;
-    paint_centered_text(ctx, paint.title, title_style, cx, cy + 4.0);
+    paint_single_line_aligned_text(
+        ctx,
+        centered_text_slot(bounds, cy + 4.0, title_style.line_height),
+        paint.title,
+        &title_style,
+        title_style.line_height,
+        0.5,
+    );
 
     let description_style = text_token_style(theme, theme.text.sm, theme.surfaces.text_faint);
-    paint_centered_text(ctx, paint.description, description_style, cx, cy + 30.0);
+    paint_single_line_aligned_text(
+        ctx,
+        centered_text_slot(bounds, cy + 30.0, description_style.line_height),
+        paint.description,
+        &description_style,
+        description_style.line_height,
+        0.5,
+    );
 
     if let Some(detail) = paint.detail {
         let mut detail_style = text_token_style(theme, theme.text.xs, theme.surfaces.text_muted);
         detail_style.weight = FontWeight::MEDIUM;
-        paint_centered_text(ctx, detail, detail_style, cx, cy + 48.0);
+        paint_single_line_aligned_text(
+            ctx,
+            centered_text_slot(bounds, cy + 48.0, detail_style.line_height),
+            detail,
+            &detail_style,
+            detail_style.line_height,
+            0.5,
+        );
     }
 }
 
@@ -7333,7 +7722,7 @@ pub fn paint_code_lines(
         font_size: style.font_size.max(1.0),
         line_height: style.line_height.max(1.0),
         color: style.color.unwrap_or(theme.palette.text),
-        ..theme.body_text_style()
+        ..theme.mono_text_style(theme.palette.text)
     };
     base_style.weight = style.weight;
 
@@ -11715,12 +12104,22 @@ impl Widget for PopoverFocusSurface {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PopoverAlignment {
+    #[default]
+    Start,
+    End,
+}
+
 pub struct Popover {
     name: String,
     trigger: SingleChild,
     surface: SingleChild,
     focus_surface: SingleChild,
     open: bool,
+    open_reader: Option<Box<dyn Fn() -> bool>>,
+    on_open_change: Option<Box<dyn FnMut(bool)>>,
+    alignment: PopoverAlignment,
     gap: f32,
     arrival_timer: Option<TimerToken>,
     state: Rc<RefCell<PopoverSurfaceState>>,
@@ -11739,6 +12138,9 @@ impl Popover {
             surface: SingleChild::new(PopoverSurface::new(Rc::clone(&state), content)),
             focus_surface: SingleChild::new(PopoverFocusSurface::new(Rc::clone(&state))),
             open: false,
+            open_reader: None,
+            on_open_change: None,
+            alignment: PopoverAlignment::Start,
             gap: DefaultTheme::default().metrics.popover_gap,
             arrival_timer: None,
             state,
@@ -11753,11 +12155,49 @@ impl Popover {
 
     pub fn open(mut self, open: bool) -> Self {
         self.open = open;
+        self.open_reader = None;
         {
             let mut state = self.state.borrow_mut();
             state.reveal = AnimatedScalar::new(if open { 1.0 } else { 0.0 });
         }
         self
+    }
+
+    pub fn open_when<F>(mut self, open: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.open_reader = Some(Box::new(open));
+        self
+    }
+
+    pub fn on_open_change<F>(mut self, on_open_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_open_change = Some(Box::new(on_open_change));
+        self
+    }
+
+    /// Aligns a narrower trigger and surface within the popover's measured
+    /// width. End alignment keeps title-bar and trailing toolbar triggers
+    /// anchored while a wider surface opens beneath them.
+    pub fn alignment(mut self, alignment: PopoverAlignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
+    fn sync_external_open(&mut self) {
+        let Some(open) = self.open_reader.as_ref().map(|open| open()) else {
+            return;
+        };
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        let mut state = self.state.borrow_mut();
+        state.reveal = AnimatedScalar::new(if open { 1.0 } else { 0.0 });
+        state.arrival_active = false;
     }
 
     fn start_arrival(&mut self, ctx: &mut EventCtx) {
@@ -11805,6 +12245,9 @@ impl Popover {
         }
 
         self.open = open;
+        if let Some(on_open_change) = &mut self.on_open_change {
+            on_open_change(open);
+        }
         let surface_id = self.surface.child().id();
         let focus_surface_id = self.focus_surface.child().id();
         let mut state = self.state.borrow_mut();
@@ -11860,6 +12303,25 @@ impl Widget for Popover {
             {
                 self.set_open(ctx, false);
                 ctx.set_handled();
+            }
+            Event::Keyboard(key)
+                if ctx.is_focused()
+                    && key.state == KeyState::Pressed
+                    && matches!(key.key.as_str(), "Enter" | " ") =>
+            {
+                self.set_open(ctx, !self.open);
+                ctx.set_handled();
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let open = match semantics.action {
+                    sui_core::SemanticsActionRequest::Expand => Some(true),
+                    sui_core::SemanticsActionRequest::Collapse => Some(false),
+                    _ => None,
+                };
+                if let Some(open) = open {
+                    self.set_open(ctx, open);
+                    ctx.set_handled();
+                }
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
                 let surface_id = self.surface.child().id();
@@ -11917,15 +12379,23 @@ impl Widget for Popover {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_external_open();
         let trigger_size = self.trigger.measure(ctx, constraints.loosen());
+        // A popover's trigger belongs to its parent's layout, but its surface belongs to the
+        // window overlay stack. In particular, toolbar and title-bar slots are commonly tight to
+        // the trigger; reusing those constraints for the surface collapses a wide panel into that
+        // narrow slot. Measure the overlay against the viewport instead and keep it out of the
+        // parent's reported size.
+        let viewport = ctx.dpi().viewport;
+        let viewport_margin = self.gap.max(4.0);
         let surface_max = Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width
+            if viewport.width > 0.0 {
+                (viewport.width - viewport_margin * 2.0).max(0.0)
             } else {
                 f32::INFINITY
             },
-            if constraints.max.height.is_finite() {
-                (constraints.max.height - trigger_size.height - self.gap).max(0.0)
+            if viewport.height > 0.0 {
+                (viewport.height - viewport_margin * 2.0).max(0.0)
             } else {
                 f32::INFINITY
             },
@@ -11937,31 +12407,50 @@ impl Widget for Popover {
         let focus_size = if presented { surface_size } else { Size::ZERO };
         self.focus_surface
             .measure(ctx, Constraints::tight(focus_size));
-        let size = if presented {
-            Size::new(
-                surface_size.width.max(trigger_size.width),
-                trigger_size.height + self.gap + surface_size.height,
-            )
-        } else {
-            trigger_size
-        };
-        constraints.clamp(size)
+        constraints.clamp(trigger_size)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let trigger_size = self.trigger.child().measured_size();
-        let trigger_bounds = Rect::from_origin_size(bounds.origin, trigger_size);
+        let aligned_x = |width: f32| match self.alignment {
+            PopoverAlignment::Start => bounds.x(),
+            PopoverAlignment::End => bounds.max_x() - width,
+        };
+        let trigger_bounds = Rect::new(
+            aligned_x(trigger_size.width),
+            bounds.y(),
+            trigger_size.width,
+            trigger_size.height,
+        );
         self.trigger.arrange(ctx, trigger_bounds);
 
         let presented = self.state.borrow().is_presented();
         let surface_bounds = if presented {
             let surface_size = self.surface.child().measured_size();
-            Rect::new(
-                bounds.x(),
-                bounds.y() + trigger_size.height + self.gap,
-                surface_size.width.max(trigger_size.width),
-                surface_size.height,
-            )
+            let viewport = ctx.dpi().viewport;
+            let margin = self.gap.max(4.0);
+            let width = surface_size.width.max(trigger_size.width);
+            let mut x = aligned_x(width);
+            if viewport.width > 0.0 {
+                let max_x = (viewport.width - margin - width).max(margin);
+                x = x.clamp(margin, max_x);
+            }
+
+            let below_y = trigger_bounds.max_y() + self.gap;
+            let above_y = trigger_bounds.y() - self.gap - surface_size.height;
+            let mut y = below_y;
+            if viewport.height > 0.0
+                && below_y + surface_size.height > viewport.height - margin
+                && above_y >= margin
+            {
+                y = above_y;
+            }
+            if viewport.height > 0.0 {
+                let max_y = (viewport.height - margin - surface_size.height).max(margin);
+                y = y.clamp(margin, max_y);
+            }
+
+            Rect::new(x, y, width, surface_size.height)
         } else {
             Rect::from_origin_size(trigger_bounds.origin, Size::ZERO)
         };
@@ -13562,6 +14051,657 @@ impl Widget for Dialog {
 
 pub type Modal = Dialog;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SideSheetPlacement {
+    Left,
+    #[default]
+    Right,
+}
+
+/// A viewport-height overlay panel anchored to either horizontal edge.
+///
+/// `SideSheet` is suitable for responsive inspectors, conversation drawers,
+/// and focused configuration flows. It shares SUI's dialog surface, spacing,
+/// elevation, motion, focus, and semantic contracts while using a horizontal
+/// reveal appropriate to a drawer.
+pub struct SideSheet {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    title: String,
+    description: Option<String>,
+    shown: bool,
+    modal: bool,
+    dismiss_on_scrim: bool,
+    placement: SideSheetPlacement,
+    width: Option<f32>,
+    body: SingleChild,
+    header_action: Option<SingleChild>,
+    actions: WidgetChildren,
+    sheet_frame: Rect,
+    body_frame: Rect,
+    header_action_frame: Rect,
+    title_measurement: Option<TextMeasurement>,
+    description_measurement: Option<TextMeasurement>,
+    reveal: AnimatedScalar,
+    focus_animation: AnimatedScalar,
+    entrance_started: bool,
+    focus_requested: bool,
+    on_dismiss: Option<Box<dyn FnMut()>>,
+}
+
+impl SideSheet {
+    pub fn new<W>(title: impl Into<String>, body: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            title: title.into(),
+            description: None,
+            shown: true,
+            modal: true,
+            dismiss_on_scrim: true,
+            placement: SideSheetPlacement::Right,
+            width: None,
+            body: SingleChild::new(body),
+            header_action: None,
+            actions: WidgetChildren::new(),
+            sheet_frame: Rect::ZERO,
+            body_frame: Rect::ZERO,
+            header_action_frame: Rect::ZERO,
+            title_measurement: None,
+            description_measurement: None,
+            reveal: AnimatedScalar::new(0.0),
+            focus_animation: AnimatedScalar::new(0.0),
+            entrance_started: false,
+            focus_requested: false,
+            on_dismiss: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn shown(mut self, shown: bool) -> Self {
+        self.shown = shown;
+        if !shown {
+            self.reveal = AnimatedScalar::new(0.0);
+            self.focus_animation = AnimatedScalar::new(0.0);
+            self.entrance_started = false;
+            self.focus_requested = false;
+        }
+        self
+    }
+
+    pub fn modal(mut self, modal: bool) -> Self {
+        self.modal = modal;
+        self
+    }
+
+    pub fn dismiss_on_scrim(mut self, dismiss_on_scrim: bool) -> Self {
+        self.dismiss_on_scrim = dismiss_on_scrim;
+        self
+    }
+
+    pub fn placement(mut self, placement: SideSheetPlacement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn header_action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.header_action = Some(SingleChild::new(action));
+        self
+    }
+
+    pub fn action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.actions.push(action);
+        self
+    }
+
+    pub fn primary_action<F>(mut self, label: impl Into<String>, on_press: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        let theme = self.resolved_theme();
+        self.actions.push(
+            Button::new(label)
+                .theme(theme)
+                .min_width(theme.metrics.dialog_action_min_width)
+                .on_press(on_press),
+        );
+        self
+    }
+
+    pub fn secondary_action<F>(mut self, label: impl Into<String>, on_press: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        let theme = self.resolved_theme();
+        self.actions.push(
+            Button::new(label)
+                .theme(theme)
+                .appearance(ButtonAppearance::Outline)
+                .tone(SemanticTone::Neutral)
+                .min_width(theme.metrics.dialog_action_min_width)
+                .on_press(on_press),
+        );
+        self
+    }
+
+    pub fn on_dismiss<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.on_dismiss = Some(Box::new(on_dismiss));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn resolved_width(&self, viewport_width: f32, theme: &DefaultTheme) -> f32 {
+        self.width
+            .unwrap_or(theme.metrics.dialog_max_width.min(420.0))
+            .max(theme.metrics.dialog_min_width.min(viewport_width))
+            .min(viewport_width)
+            .max(0.0)
+    }
+
+    fn title_style(theme: &DefaultTheme) -> TextStyle {
+        TextStyle {
+            font_size: theme.metrics.dialog_title_font_size,
+            line_height: theme.metrics.dialog_title_line_height,
+            color: theme.palette.text,
+            ..theme.body_text_style()
+        }
+    }
+
+    fn dismiss(&mut self) {
+        if let Some(on_dismiss) = &mut self.on_dismiss {
+            on_dismiss();
+        }
+    }
+
+    fn contains_widget(&self, target: WidgetId) -> bool {
+        struct Finder {
+            target: WidgetId,
+            found: bool,
+        }
+
+        impl WidgetPodVisitor for Finder {
+            fn visit(&mut self, child: &WidgetPod) {
+                if self.found {
+                    return;
+                }
+                if child.id() == self.target {
+                    self.found = true;
+                } else {
+                    child.visit_children(self);
+                }
+            }
+        }
+
+        fn inspect(pod: &WidgetPod, finder: &mut Finder) {
+            if finder.found {
+                return;
+            }
+            if pod.id() == finder.target {
+                finder.found = true;
+            } else {
+                pod.visit_children(finder);
+            }
+        }
+
+        let mut finder = Finder {
+            target,
+            found: false,
+        };
+        inspect(self.body.child(), &mut finder);
+        if let Some(action) = &self.header_action {
+            inspect(action.child(), &mut finder);
+        }
+        for action in self.actions.as_slice() {
+            inspect(action, &mut finder);
+        }
+        finder.found
+    }
+
+    fn ensure_entrance_started(&mut self, ctx: &mut MeasureCtx) {
+        if self.entrance_started {
+            return;
+        }
+        self.entrance_started = true;
+        let motion = self.resolved_theme().motion;
+        let reveal_animating = self.reveal.set_target(
+            1.0,
+            ctx.current_time(),
+            f64::from(motion.duration_slower),
+            motion.easing_decelerate,
+        );
+        if reveal_animating || !self.focus_requested {
+            ctx.request_animation_frame();
+        }
+    }
+
+    fn reveal_offset(&self) -> f32 {
+        let distance = self.sheet_frame.width() * (1.0 - self.reveal.value);
+        match self.placement {
+            SideSheetPlacement::Left => -distance,
+            SideSheetPlacement::Right => distance,
+        }
+    }
+
+    fn presented_sheet(&self, origin: Point) -> Rect {
+        self.sheet_frame
+            .translate(origin.to_vector() + Vector::new(self.reveal_offset(), 0.0))
+    }
+}
+
+impl Widget for SideSheet {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.shown {
+            return;
+        }
+        match event {
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if !self.focus_requested {
+                    self.focus_requested = true;
+                    let focus_is_inside = ctx.focused_widget_id().is_some_and(|focused| {
+                        focused == ctx.widget_id() || self.contains_widget(focused)
+                    });
+                    if !focus_is_inside {
+                        ctx.request_focus();
+                    }
+                }
+                let previous = self.reveal.value;
+                let previous_focus = self.focus_animation.value;
+                if self.reveal.advance(*time) | self.focus_animation.advance(*time) {
+                    ctx.request_animation_frame();
+                }
+                if self.reveal.changed_since(previous)
+                    || self.focus_animation.changed_since(previous_focus)
+                {
+                    ctx.request_paint();
+                }
+                ctx.set_handled();
+            }
+            Event::Semantics(semantics)
+                if semantics.target == ctx.widget_id()
+                    && matches!(semantics.action, sui_core::SemanticsActionRequest::Collapse) =>
+            {
+                self.dismiss();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                if self
+                    .presented_sheet(ctx.bounds().origin)
+                    .contains(pointer.position)
+                {
+                    ctx.request_focus();
+                    ctx.request_semantics();
+                } else {
+                    if self.dismiss_on_scrim {
+                        self.dismiss();
+                    }
+                    if self.modal || self.dismiss_on_scrim {
+                        ctx.set_handled();
+                    }
+                    ctx.request_semantics();
+                }
+            }
+            Event::Keyboard(key) if key.state == KeyState::Pressed && key.key == "Escape" => {
+                self.dismiss();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if !self.shown {
+            self.sheet_frame = Rect::ZERO;
+            self.body_frame = Rect::ZERO;
+            self.header_action_frame = Rect::ZERO;
+            self.reveal = AnimatedScalar::new(0.0);
+            self.focus_animation = AnimatedScalar::new(0.0);
+            self.entrance_started = false;
+            return Size::ZERO;
+        }
+        self.ensure_entrance_started(ctx);
+
+        let viewport = constraints.clamp(Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                960.0
+            },
+            if constraints.max.height.is_finite() {
+                constraints.max.height
+            } else {
+                640.0
+            },
+        ));
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
+        let padding = metrics.dialog_padding;
+        let sheet_width = self.resolved_width(viewport.width, &theme);
+        let sheet_x = match self.placement {
+            SideSheetPlacement::Left => 0.0,
+            SideSheetPlacement::Right => viewport.width - sheet_width,
+        };
+        self.sheet_frame = Rect::new(sheet_x, 0.0, sheet_width, viewport.height);
+
+        let title_style = Self::title_style(&theme);
+        let description_style = theme.placeholder_text_style();
+        self.title_measurement = Some(measure_text(ctx, &self.title, &title_style));
+        self.description_measurement = self
+            .description
+            .as_ref()
+            .map(|description| measure_text(ctx, description, &description_style));
+
+        let header_action_size = if let Some(action) = &mut self.header_action {
+            action.measure(
+                ctx,
+                Constraints::new(
+                    Size::ZERO,
+                    Size::new(
+                        (sheet_width - padding.left - padding.right).max(0.0),
+                        metrics.touch_target_size,
+                    ),
+                ),
+            )
+        } else {
+            Size::ZERO
+        };
+        let title_height = self
+            .title_measurement
+            .map(|measurement| measurement.height.max(title_style.line_height))
+            .unwrap_or(title_style.line_height)
+            .max(header_action_size.height);
+        let description_height = self
+            .description_measurement
+            .map(|measurement| measurement.height.max(description_style.line_height))
+            .unwrap_or(0.0);
+        let description_gap = if self.description.is_some() {
+            metrics.dialog_description_gap
+        } else {
+            0.0
+        };
+        let body_top = padding.top
+            + title_height
+            + description_gap
+            + description_height
+            + metrics.dialog_body_gap;
+
+        let mut footer_height: f32 = 0.0;
+        for action in self.actions.as_mut_slice() {
+            footer_height = footer_height.max(
+                action
+                    .measure(
+                        ctx,
+                        Constraints::new(
+                            Size::ZERO,
+                            Size::new(sheet_width, metrics.touch_target_size),
+                        ),
+                    )
+                    .height,
+            );
+        }
+        let footer_gap = if self.actions.is_empty() {
+            0.0
+        } else {
+            metrics.dialog_footer_gap
+        };
+        let body_height =
+            (viewport.height - body_top - footer_gap - footer_height - padding.bottom).max(0.0);
+        let body_width = (sheet_width - padding.left - padding.right).max(0.0);
+        let _ = self.body.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(body_width, body_height)),
+        );
+        self.body_frame = Rect::new(padding.left, body_top, body_width, body_height);
+        self.header_action_frame = Rect::new(
+            sheet_width - padding.right - header_action_size.width,
+            padding.top,
+            header_action_size.width,
+            header_action_size.height,
+        );
+        viewport
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if !self.shown {
+            return;
+        }
+        let sheet = self.sheet_frame.translate(bounds.origin.to_vector());
+        self.body
+            .arrange(ctx, self.body_frame.translate(sheet.origin.to_vector()));
+        if let Some(action) = &mut self.header_action {
+            action.arrange(
+                ctx,
+                self.header_action_frame.translate(sheet.origin.to_vector()),
+            );
+        }
+        if !self.actions.is_empty() {
+            let theme = self.resolved_theme();
+            let metrics = theme.metrics;
+            let padding = metrics.dialog_padding;
+            let gap = metrics.dialog_action_gap;
+            let total_width = self
+                .actions
+                .as_slice()
+                .iter()
+                .map(|action| action.measured_size().width)
+                .sum::<f32>()
+                + gap * self.actions.len().saturating_sub(1) as f32;
+            let footer_height = self
+                .actions
+                .as_slice()
+                .iter()
+                .map(|action| action.measured_size().height)
+                .fold(0.0, f32::max);
+            let mut x = sheet.max_x() - padding.right - total_width;
+            let y = sheet.max_y() - padding.bottom - footer_height;
+            for action in self.actions.as_mut_slice() {
+                let size = action.measured_size();
+                action.arrange(ctx, Rect::new(x, y, size.width, size.height));
+                x += size.width + gap;
+            }
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if !self.shown {
+            return;
+        }
+        let theme = self.resolved_theme();
+        if self.modal {
+            let scrim = theme
+                .surfaces
+                .overlay_scrim
+                .with_alpha(theme.surfaces.overlay_scrim.alpha * self.reveal.value);
+            ctx.fill_bounds(scrim);
+        }
+
+        ctx.push_transform(Transform::translation(self.reveal_offset(), 0.0));
+        let sheet = self.sheet_frame.translate(ctx.bounds().origin.to_vector());
+        let metrics = theme.metrics;
+        paint_theme_shadow(ctx, sheet, [0.0; 4], &theme.shadows.box_shadow.xl);
+        ctx.fill_rect(sheet, theme.palette.surface_raised);
+        let border_width = physical_pixels(ctx, metrics.border_width.max(1.0));
+        let border_x = match self.placement {
+            SideSheetPlacement::Left => sheet.max_x() - border_width,
+            SideSheetPlacement::Right => sheet.x(),
+        };
+        ctx.fill_rect(
+            Rect::new(border_x, sheet.y(), border_width, sheet.height()),
+            theme.palette.border,
+        );
+        if self.focus_animation.value > AnimatedScalar::EPSILON {
+            let inset = physical_pixels(ctx, theme.metrics.focus_ring_width) * 0.5;
+            ctx.stroke(
+                rounded_rect_path(sheet.inflate(-inset, -inset), 0.0),
+                theme
+                    .palette
+                    .focus_ring
+                    .with_alpha(theme.palette.focus_ring.alpha * self.focus_animation.value),
+                StrokeStyle::new(physical_pixels(ctx, theme.metrics.focus_ring_width)),
+            );
+        }
+
+        let padding = metrics.dialog_padding;
+        let title_style = Self::title_style(&theme);
+        let action_width = if self.header_action.is_some() {
+            self.header_action_frame.width() + metrics.dialog_action_gap
+        } else {
+            0.0
+        };
+        let title_height = self
+            .title_measurement
+            .map(|measurement| measurement.height.max(title_style.line_height))
+            .unwrap_or(title_style.line_height)
+            .max(self.header_action_frame.height());
+        let title_slot = Rect::new(
+            sheet.x() + padding.left,
+            sheet.y() + padding.top,
+            (sheet.width() - padding.left - padding.right - action_width).max(0.0),
+            title_height,
+        );
+        paint_aligned_text(
+            ctx,
+            title_slot,
+            &self.title,
+            &title_style,
+            title_style.line_height,
+            0.0,
+        );
+        if let Some(description) = &self.description {
+            let style = theme.placeholder_text_style();
+            let height = self
+                .description_measurement
+                .map(|measurement| measurement.height.max(style.line_height))
+                .unwrap_or(style.line_height);
+            let slot = Rect::new(
+                sheet.x() + padding.left,
+                title_slot.max_y() + metrics.dialog_description_gap,
+                (sheet.width() - padding.left - padding.right).max(0.0),
+                height,
+            );
+            paint_aligned_text(ctx, slot, description, &style, style.line_height, 0.0);
+        }
+        self.body.paint(ctx);
+        if let Some(action) = &self.header_action {
+            action.paint(ctx);
+        }
+        self.actions.paint(ctx);
+        ctx.pop_transform();
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: if self.shown {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if !self.shown {
+            return;
+        }
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::Dialog,
+            self.sheet_frame.translate(ctx.bounds().origin.to_vector()),
+        );
+        node.name = Some(self.title.clone());
+        node.description = self.description.clone();
+        node.state.focused = ctx.is_focused();
+        node.state.expanded = Some(true);
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Collapse];
+        ctx.push(node);
+        self.body.semantics(ctx);
+        if let Some(action) = &self.header_action {
+            action.semantics(ctx);
+        }
+        self.actions.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.shown
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if self.shown {
+            self.body.visit_children(visitor);
+            if let Some(action) = &self.header_action {
+                action.visit_children(visitor);
+            }
+            self.actions.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if self.shown {
+            self.body.visit_children_mut(visitor);
+            if let Some(action) = &mut self.header_action {
+                action.visit_children_mut(visitor);
+            }
+            self.actions.visit_children_mut(visitor);
+        }
+    }
+}
+
+/// A familiar alias for navigation-oriented side sheets.
+pub type Drawer = SideSheet;
+
 pub struct ProgressBar {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -14187,10 +15327,11 @@ mod tests {
         ActionCard, ActionTilePaint, BrowserTabBar, CalloutPaint, CodePanelPaint, CodeTextLine,
         CodeTextPaint, CodeTextSpan, CommandButtonPaint, CommandGroup, ContextMenu, CoverageDots,
         DetailRow, Dialog, DisclosureButtonPaint, DockPanel, EmptyState, FieldGroup, FormRow,
-        FormSection, HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge,
-        PlacementBadgePaint, Popover, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout,
-        SectionLabel, SectionLabelPaint, SectionPanelPaint, SegmentedControl, SegmentedControlItem,
-        Spinner, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, TabBar, ToolPalette,
+        FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge,
+        PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
+        PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelPaint, SegmentedControl,
+        SegmentedControlItem, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar,
+        StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, TabBar, ToolPalette,
         ToolPaletteItem, Toolbar, paint_action_tile, paint_border, paint_callout, paint_code_lines,
         paint_code_panel, paint_command_button, paint_disclosure_button, paint_hairline,
         paint_placement_badge_with, paint_rounded_panel, paint_section_label,
@@ -14200,10 +15341,10 @@ mod tests {
     use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone, ThemeTextToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-        Size, Vector, WidgetId, WindowEvent,
+        PointerEventKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
-    use sui_layout::Constraints;
+    use sui_layout::{Alignment, Constraints};
     use sui_runtime::{
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WindowBuilder,
@@ -14248,6 +15389,44 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[1];
         runtime.render(window_id).unwrap()
+    }
+
+    #[test]
+    fn filling_surface_measures_flex_text_at_its_arranged_width() {
+        const TEXT: &str = "Evolution dashboard source ready";
+        let output = render(
+            crate::SizedBox::new().width(640.0).height(78.0).with_child(
+                Surface::window(
+                    crate::Flex::horizontal()
+                        .with_item(crate::Label::new(TEXT), sui_layout::FlexItem::flex(1.0))
+                        .with_child(crate::Label::new("1 promoted")),
+                )
+                .padding(sui_layout::Padding::all(20.0))
+                .fill(),
+            ),
+        );
+
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some(TEXT))
+            .expect("flex label semantics present");
+        assert!(
+            label.bounds.width() > 200.0,
+            "filling surface should allocate a useful text width, got {:?}",
+            label.bounds
+        );
+
+        let mut line_count = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawShapedText(run) = command
+                && let Some(layout) = run.resolve(output.frame.text_layout_registry.as_ref())
+                && layout.text() == TEXT
+            {
+                line_count = Some(layout.lines().len());
+            }
+        });
+        assert_eq!(line_count, Some(1));
     }
 
     #[test]
@@ -14598,6 +15777,374 @@ mod tests {
             .y
             .abs();
         assert!(compact_offset < touch_offset);
+    }
+
+    #[test]
+    fn popover_keyboard_and_semantic_actions_share_open_contract() {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_open_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            Popover::new(
+                "Health center",
+                crate::Button::new("Open"),
+                crate::Label::new("All systems operational"),
+            )
+            .on_open_change(move |open| on_open_change.borrow_mut().push(open)),
+        );
+        let output = runtime.render(window_id).unwrap();
+        let popover_id = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Popover)
+            .expect("popover semantics present")
+            .id;
+
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, popover_id, SemanticsActionRequest::Focus,)
+                .unwrap()
+        );
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+            )
+            .unwrap();
+        assert_eq!(changes.borrow().as_slice(), &[true]);
+        assert_eq!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .find(|node| node.id == popover_id)
+                .and_then(|node| node.state.expanded),
+            Some(true)
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new(" ", KeyState::Pressed)),
+            )
+            .unwrap();
+        assert_eq!(changes.borrow().as_slice(), &[true, false]);
+        let _ = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, popover_id, SemanticsActionRequest::Expand,)
+                .unwrap()
+        );
+        let _ = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, popover_id, SemanticsActionRequest::Collapse,)
+                .unwrap()
+        );
+        assert_eq!(changes.borrow().as_slice(), &[true, false, true, false]);
+    }
+
+    #[test]
+    fn popover_end_alignment_keeps_a_narrow_trigger_on_the_trailing_edge() {
+        let output = render(
+            crate::SizedBox::new().width(360.0).with_child(
+                Popover::new(
+                    "Trailing inspector",
+                    crate::Button::new("Open").min_width(92.0),
+                    crate::SizedBox::new()
+                        .width(240.0)
+                        .with_child(crate::Label::new("Inspector body")),
+                )
+                .alignment(PopoverAlignment::End)
+                .open(true),
+            ),
+        );
+        let popover = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Popover
+                    && node.name.as_deref() == Some("Trailing inspector")
+            })
+            .expect("popover semantics present");
+        let trigger = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open"))
+            .expect("popover trigger semantics present");
+
+        assert!(trigger.bounds.x() > popover.bounds.x());
+        assert!((trigger.bounds.max_x() - popover.bounds.max_x()).abs() < 0.01);
+    }
+
+    #[test]
+    fn popover_surface_escapes_a_tight_toolbar_slot() {
+        let output = render(
+            crate::SizedBox::new()
+                .width(800.0)
+                .height(600.0)
+                .with_child(crate::Align::new(
+                    Alignment::End,
+                    Alignment::Start,
+                    crate::SizedBox::new().width(150.0).height(24.0).with_child(
+                        Popover::new(
+                            "Toolbar recovery",
+                            crate::Button::new("2 issues").min_width(150.0),
+                            crate::SizedBox::new()
+                                .width(400.0)
+                                .height(300.0)
+                                .with_child(crate::Label::new("Recovery panel")),
+                        )
+                        .alignment(PopoverAlignment::End)
+                        .open(true),
+                    ),
+                )),
+        );
+        let popover = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Popover
+                    && node.name.as_deref() == Some("Toolbar recovery")
+            })
+            .expect("popover semantics present");
+        let content = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Recovery panel")
+            })
+            .expect("popover content present");
+        let surface = overlay_layer_descriptor(&output).expect("popover overlay present");
+
+        assert!((popover.bounds.width() - 150.0).abs() < 0.01);
+        assert!((popover.bounds.height() - 24.0).abs() < 0.01);
+        assert!(
+            surface.bounds.width() >= 400.0,
+            "surface={:?}, popover={:?}, content={:?}",
+            surface.bounds,
+            popover.bounds,
+            content.bounds
+        );
+        assert!(content.bounds.y() >= popover.bounds.max_y());
+    }
+
+    #[test]
+    fn framed_field_owns_standard_and_validation_chrome() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            FramedField::new(crate::Label::new("Query"))
+                .theme(theme)
+                .name("Search query")
+                .invalid(true),
+        );
+
+        assert!(solid_fill_colors(&output).contains(&theme.surfaces.field));
+        assert!(
+            solid_stroke_colors(&output).contains(&theme.semantic_tone_color(SemanticTone::Danger))
+        );
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some("Search query")
+        }));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Query")
+        }));
+    }
+
+    #[test]
+    fn framed_field_tracks_focus_anywhere_in_its_child_subtree() {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(
+            FramedField::new(crate::TextInput::new("Query").bare())
+                .theme(theme)
+                .name("Search field"),
+        );
+        let _ = runtime.render(window_id).unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+            )
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+        let frame = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Search field"))
+            .expect("framed field semantics present");
+        assert!(frame.state.focused);
+        assert!(solid_stroke_colors(&output).contains(&theme.palette.focus_ring));
+    }
+
+    #[test]
+    fn framed_field_uses_stock_hover_and_focus_surface_tokens() {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(
+            FramedField::new(crate::TextInput::new("Query").bare())
+                .theme(theme)
+                .name("Search field"),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, Point::new(12.0, 12.0), false),
+            )
+            .unwrap();
+        runtime.tick(1.0);
+        handle_ready_events(&mut runtime).unwrap();
+        let hovered = runtime.render(window_id).unwrap();
+        assert!(solid_stroke_colors(&hovered).contains(&theme.palette.border_hover));
+        assert!(
+            hovered
+                .semantics
+                .iter()
+                .any(|node| { node.name.as_deref() == Some("Search field") && node.state.hovered })
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+            )
+            .unwrap();
+        let focused = runtime.render(window_id).unwrap();
+        assert!(solid_fill_colors(&focused).contains(&theme.palette.surface_focus));
+        assert!(solid_stroke_colors(&focused).contains(&theme.palette.focus_ring));
+    }
+
+    #[test]
+    fn surface_appearance_uses_shared_raised_and_semantic_tokens() {
+        let theme = DefaultTheme::default();
+        let raised = render(
+            Surface::field(crate::Label::new("Ready"))
+                .theme(theme)
+                .appearance(SurfaceAppearance::Raised),
+        );
+        assert!(solid_fill_colors(&raised).contains(&theme.palette.surface_raised));
+
+        let soft = render(
+            Surface::field(crate::Label::new("Queued"))
+                .theme(theme)
+                .appearance(SurfaceAppearance::Soft)
+                .tone(SemanticTone::Accent),
+        );
+        assert!(
+            solid_fill_colors(&soft)
+                .contains(&theme.semantic_tone_soft_colors(SemanticTone::Accent).0)
+        );
+    }
+
+    #[test]
+    fn side_sheet_anchors_to_edge_and_exposes_dialog_semantics() {
+        let output = render(
+            SideSheet::new("Inspector", crate::Label::new("Selection details"))
+                .description("Properties for the selected item")
+                .placement(SideSheetPlacement::Right)
+                .width(360.0),
+        );
+        let sheet = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Dialog && node.name.as_deref() == Some("Inspector")
+            })
+            .expect("side sheet dialog semantics present");
+        assert!((sheet.bounds.width() - 360.0).abs() < 0.01);
+        assert!((sheet.bounds.max_x() - output.frame.viewport.width).abs() < 0.01);
+        assert_eq!(sheet.state.expanded, Some(true));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Selection details")
+        }));
+    }
+
+    #[test]
+    fn side_sheet_scrim_dismisses_without_swallowing_sheet_presses() {
+        let dismissals = Rc::new(Cell::new(0_u32));
+        let on_dismiss = Rc::clone(&dismissals);
+        let (mut runtime, window_id) = build_runtime(
+            SideSheet::new("Inspector", crate::Label::new("Body"))
+                .width(320.0)
+                .on_dismiss(move || on_dismiss.set(on_dismiss.get() + 1)),
+        );
+        let _ = runtime.render(window_id).unwrap();
+        runtime.tick(1.0);
+        handle_ready_events(&mut runtime).unwrap();
+        let settled = runtime.render(window_id).unwrap();
+        let sheet = settled
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("side sheet semantics present");
+        let sheet_id = sheet.id;
+        let sheet_point = Point::new(sheet.bounds.x() + 12.0, sheet.bounds.y() + 12.0);
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, sheet_point, true),
+            )
+            .unwrap();
+        assert_eq!(dismissals.get(), 0);
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+            )
+            .unwrap();
+        assert_eq!(dismissals.get(), 1);
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, sheet_id, SemanticsActionRequest::Collapse,)
+                .unwrap()
+        );
+        assert_eq!(dismissals.get(), 2);
+    }
+
+    #[test]
+    fn side_sheet_takes_initial_focus_and_escape_dismisses_from_a_child() {
+        let dismissals = Rc::new(Cell::new(0_u32));
+        let on_dismiss = Rc::clone(&dismissals);
+        let (mut runtime, window_id) = build_runtime(
+            SideSheet::new("Inspector", crate::Button::new("Child action"))
+                .width(320.0)
+                .on_dismiss(move || on_dismiss.set(on_dismiss.get() + 1)),
+        );
+        let initial = runtime.render(window_id).unwrap();
+        let sheet_id = initial
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("side sheet semantics present")
+            .id;
+        let child_id = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Child action")
+            })
+            .expect("side sheet child semantics present")
+            .id;
+
+        runtime.tick(1.0);
+        handle_ready_events(&mut runtime).unwrap();
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(sheet_id));
+
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, child_id, SemanticsActionRequest::Focus)
+                .unwrap()
+        );
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(child_id));
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Escape", KeyState::Pressed)),
+            )
+            .unwrap();
+        assert_eq!(dismissals.get(), 1);
     }
 
     #[test]
@@ -15672,6 +17219,7 @@ mod tests {
         );
         let keyword = text_run_for(&output, "let");
         assert_eq!(keyword.style.color, theme.palette.accent);
+        assert_eq!(keyword.style.font_families, Some(theme.fonts.mono.into()));
         let fallback = text_run_for(&output, " value");
         assert_eq!(fallback.style.color, theme.palette.text);
         let added = text_run_for(&output, "+ added");
@@ -17878,6 +19426,15 @@ mod tests {
                 .style
                 .color,
             theme.surfaces.text_muted
+        );
+        // The action reserves 18px above the geometric center. Each line is
+        // then centered on its authored slot through the same optical-baseline
+        // path used by buttons, inputs, tables, and other SUI controls.
+        assert!((text_visual_center_for(&output, "Empty directory") - 96.0).abs() < 0.75);
+        assert!((text_visual_center_for(&output, "Nothing here yet.") - 122.0).abs() < 0.75);
+        assert!(
+            (text_visual_center_for(&output, "No files matched the active filter.") - 140.0).abs()
+                < 0.75
         );
     }
 

@@ -7,7 +7,9 @@ use sui::{
 
 #[cfg(test)]
 use crate::app::default_dev_theme_reader;
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_theme_color, request_window_refresh};
+use crate::app::{
+    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
+};
 
 pub(crate) const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const VECTOR_DOCUMENT_NAME: &str = "Wave mark.svg";
@@ -897,8 +899,11 @@ fn build_vector_document_bar(
         .spacing(8.0)
         .with_child(
             Label::new(VECTOR_DOCUMENT_NAME)
-                .font_size(13.0)
-                .line_height(18.0)
+                .style(dev_text_style(
+                    theme_reader(),
+                    theme_reader().text.sm,
+                    theme_reader().palette.text,
+                ))
                 .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
         )
         .with_child(Separator::vertical().length(18.0))
@@ -907,16 +912,22 @@ fn build_vector_document_bar(
                 "{:.0} x {:.0} px",
                 VECTOR_DOCUMENT_WIDTH, VECTOR_DOCUMENT_HEIGHT
             ))
-            .font_size(12.0)
-            .line_height(18.0)
+            .style(dev_text_style(
+                theme_reader(),
+                theme_reader().text.xs,
+                theme_reader().palette.text_muted,
+            ))
             .color_when(dev_theme_color(&theme_reader, |theme| {
                 theme.palette.text_muted
             })),
         )
         .with_child(
             Label::new("SVG / Display P3")
-                .font_size(12.0)
-                .line_height(18.0)
+                .style(dev_text_style(
+                    theme_reader(),
+                    theme_reader().text.xs,
+                    theme_reader().palette.text_muted,
+                ))
                 .color_when(dev_theme_color(&theme_reader, |theme| {
                     theme.palette.text_muted
                 })),
@@ -924,8 +935,11 @@ fn build_vector_document_bar(
         .with_child(Separator::vertical().length(18.0))
         .with_child(
             Label::new("1 artboard / 3 objects")
-                .font_size(12.0)
-                .line_height(18.0)
+                .style(dev_text_style(
+                    theme_reader(),
+                    theme_reader().text.xs,
+                    theme_reader().palette.text_muted,
+                ))
                 .color_when(dev_theme_color(&theme_reader, |theme| {
                     theme.palette.text_muted
                 })),
@@ -972,8 +986,11 @@ fn build_vector_document_bar(
                             vector_zoom_status_text(&zoom_reader_state)
                         })
                         .semantic_name(VECTOR_ZOOM_READOUT_NAME)
-                        .font_size(12.0)
-                        .line_height(18.0)
+                        .style(dev_text_style(
+                            theme_reader(),
+                            theme_reader().text.xs,
+                            theme_reader().palette.text,
+                        ))
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                     ),
                 )
@@ -1433,8 +1450,11 @@ where
             .with_child(
                 SizedBox::new().width(44.0).height(28.0).with_child(
                     Label::dynamic("", value_reader)
-                        .font_size(10.0)
-                        .line_height(14.0)
+                        .style(dev_text_style(
+                            theme_reader(),
+                            theme_reader().text.xs,
+                            theme_reader().palette.text_muted,
+                        ))
                         .color_when(dev_theme_color(theme_reader, |theme| {
                             theme.palette.text_muted
                         })),

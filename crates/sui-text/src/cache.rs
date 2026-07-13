@@ -30,6 +30,7 @@ impl From<Size> for SizeCacheKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TextStyleCacheKey {
     font_handle: Option<u64>,
+    font_families_hash: u64,
     font_size_bits: u32,
     line_height_bits: u32,
     weight: u16,
@@ -44,6 +45,7 @@ impl TextStyleCacheKey {
     fn new(style: &TextStyle) -> Self {
         Self {
             font_handle: style.font.map(FontHandle::get),
+            font_families_hash: hash_value(&style.font_families),
             font_size_bits: style.font_size.to_bits(),
             line_height_bits: style.line_height.to_bits(),
             weight: style.weight.value(),
@@ -55,8 +57,12 @@ impl TextStyleCacheKey {
 }
 
 fn hash_features(features: &FontFeatures) -> u64 {
+    hash_value(features)
+}
+
+fn hash_value(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
-    features.hash(&mut hasher);
+    value.hash(&mut hasher);
     hasher.finish()
 }
 

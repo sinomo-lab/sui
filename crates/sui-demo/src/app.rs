@@ -16,7 +16,7 @@ use sui::{
     WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
     WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
-    prelude::*, window_output_diagnostics,
+    paint_aligned_text, paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
 };
 
 #[cfg(test)]
@@ -167,6 +167,19 @@ where
 {
     let theme_reader = Rc::clone(theme_reader);
     move || color(theme_reader())
+}
+
+pub(crate) fn dev_text_style(
+    theme: DefaultTheme,
+    token: ThemeTextToken,
+    color: Color,
+) -> TextStyle {
+    TextStyle {
+        font_size: token.size,
+        line_height: token.line_height,
+        color,
+        ..theme.body_text_style()
+    }
 }
 
 fn next_dev_theme_scheme(scheme: ThemeColorScheme) -> ThemeColorScheme {
@@ -632,7 +645,9 @@ impl DevBrowserShell {
         ctx.fill_rect(content, palette.surface);
         let header = Rect::new(content.x(), content.y(), content.width(), 96.0);
         ctx.fill_rect(header, palette.surface_hover.with_alpha(0.45));
-        ctx.draw_text(
+        let title_style = dev_text_style(*theme, theme.text._3xl, palette.text);
+        paint_single_line_aligned_text(
+            ctx,
             Rect::new(
                 content.x() + 40.0,
                 content.y() + 24.0,
@@ -640,14 +655,13 @@ impl DevBrowserShell {
                 32.0,
             ),
             DEV_SHELL_PICKER_TITLE,
-            TextStyle {
-                font_size: 28.0,
-                line_height: 34.0,
-                color: palette.text,
-                ..TextStyle::default()
-            },
+            &title_style,
+            title_style.line_height,
+            0.0,
         );
-        ctx.draw_text(
+        let subtitle_style = dev_text_style(*theme, theme.text.sm, palette.text_muted);
+        paint_single_line_aligned_text(
+            ctx,
             Rect::new(
                 content.x() + 40.0,
                 content.y() + 56.0,
@@ -655,12 +669,9 @@ impl DevBrowserShell {
                 20.0,
             ),
             "Renderer, text, color, editor, and widget surfaces.",
-            TextStyle {
-                font_size: 14.0,
-                line_height: 20.0,
-                color: palette.text_muted,
-                ..TextStyle::default()
-            },
+            &subtitle_style,
+            subtitle_style.line_height,
+            0.0,
         );
     }
 }
@@ -1240,15 +1251,14 @@ impl Widget for ThemeToggleButton {
             ),
         );
         let label_rect = Self::label_rect(bounds, knob, scheme);
-        ctx.draw_text(
+        let label_style = dev_text_style(theme, theme.text.xs, palette.text);
+        paint_single_line_aligned_text(
+            ctx,
             label_rect,
             dev_theme_toggle_label(scheme),
-            TextStyle {
-                font_size: 12.0,
-                line_height: 16.0,
-                color: palette.text,
-                ..TextStyle::default()
-            },
+            &label_style,
+            label_style.line_height,
+            0.5,
         );
     }
 
@@ -1512,20 +1522,19 @@ impl Widget for FloatingSettingsWindow {
             content_palette.border.with_alpha(0.6),
             StrokeStyle::new(1.0),
         );
-        ctx.draw_text(
+        let title_style = dev_text_style(theme, theme.text.sm, Color::rgba(0.96, 0.97, 0.99, 1.0));
+        paint_single_line_aligned_text(
+            ctx,
             Rect::new(
                 title.x() + 14.0,
-                title.y() + 9.0,
+                title.y(),
                 title.width() - 54.0,
-                20.0,
+                title.height(),
             ),
             SETTINGS_TAB_LABEL,
-            TextStyle {
-                font_size: 13.0,
-                line_height: 18.0,
-                color: Color::rgba(0.96, 0.97, 0.99, 1.0),
-                ..TextStyle::default()
-            },
+            &title_style,
+            title_style.line_height,
+            0.0,
         );
 
         let close = Self::close_rect(bounds);
@@ -2093,22 +2102,12 @@ fn settings_panel_width(max_width: f32) -> f32 {
     }
 }
 
-fn settings_panel_title_style(palette: ControlPalette) -> TextStyle {
-    TextStyle {
-        font_size: 14.0,
-        line_height: SETTINGS_PANEL_TITLE_HEIGHT,
-        color: palette.text,
-        ..TextStyle::default()
-    }
+fn settings_panel_title_style(theme: DefaultTheme) -> TextStyle {
+    dev_text_style(theme, theme.text.sm, theme.palette.text)
 }
 
-fn settings_panel_body_style(palette: ControlPalette) -> TextStyle {
-    TextStyle {
-        font_size: 11.0,
-        line_height: 15.0,
-        color: palette.text.with_alpha(0.9),
-        ..TextStyle::default()
-    }
+fn settings_panel_body_style(theme: DefaultTheme) -> TextStyle {
+    dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.9))
 }
 
 fn settings_wrapped_text_height(
@@ -2155,12 +2154,8 @@ fn settings_panel_height(
         + SETTINGS_PANEL_PADDING_BOTTOM
 }
 
-fn paint_settings_panel(
-    ctx: &mut PaintCtx,
-    title: &str,
-    lines: &[String],
-    palette: ControlPalette,
-) {
+fn paint_settings_panel(ctx: &mut PaintCtx, title: &str, lines: &[String], theme: DefaultTheme) {
+    let palette = theme.palette;
     let bounds = ctx.bounds();
     ctx.fill_rect(bounds, palette.surface.with_alpha(0.35));
     ctx.stroke_rect(
@@ -2171,11 +2166,12 @@ fn paint_settings_panel(
 
     let text_x = bounds.x() + SETTINGS_PANEL_PADDING_X;
     let text_width = (bounds.width() - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0);
-    let title_style = settings_panel_title_style(palette);
-    let body_style = settings_panel_body_style(palette);
+    let title_style = settings_panel_title_style(theme);
+    let body_style = settings_panel_body_style(theme);
 
     ctx.push_clip_rect(bounds);
-    ctx.draw_text(
+    paint_single_line_aligned_text(
+        ctx,
         Rect::new(
             text_x,
             bounds.y() + SETTINGS_PANEL_PADDING_TOP,
@@ -2183,7 +2179,9 @@ fn paint_settings_panel(
             title_style.line_height,
         ),
         title,
-        title_style,
+        &title_style,
+        title_style.line_height,
+        0.0,
     );
 
     let mut y = bounds.y()
@@ -2199,10 +2197,13 @@ fn paint_settings_panel(
             )
             .map(|layout| layout.measurement().height.max(body_style.line_height))
             .unwrap_or(body_style.line_height);
-        ctx.draw_text(
+        paint_aligned_text(
+            ctx,
             Rect::new(text_x, y, text_width, line_height),
-            line.clone(),
-            body_style.clone(),
+            line,
+            &body_style,
+            body_style.line_height,
+            0.0,
         );
         y += line_height + SETTINGS_PANEL_LINE_GAP;
     }
@@ -2225,23 +2226,23 @@ impl HdrThemeInspectionPanel {
 
 impl Widget for HdrThemeInspectionPanel {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let palette = self.theme().palette;
+        let theme = self.theme();
         let width = settings_panel_width(constraints.max.width);
         let lines = hdr_theme_inspection_lines(ctx.window_id());
         let height = settings_panel_height(
             ctx,
             &lines,
             width,
-            &settings_panel_title_style(palette),
-            &settings_panel_body_style(palette),
+            &settings_panel_title_style(theme),
+            &settings_panel_body_style(theme),
         );
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme().palette;
+        let theme = self.theme();
         let lines = hdr_theme_inspection_lines(ctx.window_id());
-        paint_settings_panel(ctx, HDR_THEME_INSPECTION_TITLE, &lines, palette);
+        paint_settings_panel(ctx, HDR_THEME_INSPECTION_TITLE, &lines, theme);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2272,23 +2273,23 @@ impl OutputDiagnosticsPanel {
 
 impl Widget for OutputDiagnosticsPanel {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let palette = self.theme().palette;
+        let theme = self.theme();
         let width = settings_panel_width(constraints.max.width);
         let lines = output_diagnostics_lines(ctx.window_id());
         let height = settings_panel_height(
             ctx,
             &lines,
             width,
-            &settings_panel_title_style(palette),
-            &settings_panel_body_style(palette),
+            &settings_panel_title_style(theme),
+            &settings_panel_body_style(theme),
         );
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme().palette;
+        let theme = self.theme();
         let lines = output_diagnostics_lines(ctx.window_id());
-        paint_settings_panel(ctx, OUTPUT_DIAGNOSTICS_TITLE, &lines, palette);
+        paint_settings_panel(ctx, OUTPUT_DIAGNOSTICS_TITLE, &lines, theme);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2322,12 +2323,8 @@ impl Widget for SdrContentBrightnessStatus {
         let text = window_output_diagnostics(ctx.window_id())
             .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
             .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
-        let style = TextStyle {
-            font_size: 12.0,
-            line_height: 16.0,
-            color: self.theme().palette.text.with_alpha(0.78),
-            ..TextStyle::default()
-        };
+        let theme = self.theme();
+        let style = dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.78));
         let width = if constraints.max.width.is_finite() {
             constraints.max.width.min(420.0).max(0.0)
         } else {
@@ -2338,20 +2335,12 @@ impl Widget for SdrContentBrightnessStatus {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme().palette;
+        let theme = self.theme();
         let text = window_output_diagnostics(ctx.window_id())
             .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
             .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
-        ctx.draw_text(
-            ctx.bounds(),
-            text,
-            TextStyle {
-                font_size: 12.0,
-                line_height: 16.0,
-                color: palette.text.with_alpha(0.78),
-                ..TextStyle::default()
-            },
-        );
+        let style = dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.78));
+        paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2493,6 +2482,7 @@ impl RenderSettingsTab {
         let system_sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
         let scroll_state = ScrollState::new();
+        let theme = theme_reader();
 
         let content = VerticalScrollPane::new(
             ScrollView::vertical(Padding::all(
@@ -2502,16 +2492,14 @@ impl RenderSettingsTab {
                     .alignment(Alignment::Stretch)
                     .with_child(
                         Label::new("Renderer settings")
-                            .font_size(24.0)
-                            .line_height(30.0)
+                            .style(dev_text_style(theme, theme.text._3xl, theme.palette.text))
                             .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                     )
                     .with_child(
                         Label::new(
                             "These controls update the active window's runtime presentation on the next redraw.",
                         )
-                        .font_size(14.0)
-                        .line_height(20.0)
+                        .style(dev_text_style(theme, theme.text.sm, theme.palette.text_muted))
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     )
                     .with_child(
@@ -2818,8 +2806,7 @@ impl RenderSettingsTab {
                         Label::new(
                             "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The default perceptual text coverage policy applies a luminance-aware coverage curve to atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
-                        .font_size(13.0)
-                        .line_height(18.0)
+                        .style(dev_text_style(theme, theme.text.sm, theme.palette.text_muted))
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     ),
             ))
@@ -4461,7 +4448,11 @@ mod tests {
             semantics.iter().any(|node| {
                 node.role == SemanticsRole::SpinBox
                     && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_NAME)
-                    && node.value == Some(SemanticsValue::Number(PAINT_INITIAL_BRUSH_SIZE as f64))
+                    && matches!(
+                        node.value,
+                        Some(SemanticsValue::Range { value, .. })
+                            if (value - PAINT_INITIAL_BRUSH_SIZE as f64).abs() < f64::EPSILON
+                    )
             }),
             "expected the brush size number input to expose its value"
         );
@@ -4906,11 +4897,29 @@ mod tests {
         up.pointer_id = 14;
         up.button = Some(PointerButton::Primary);
         runtime.handle_event(window_id, Event::Pointer(up))?;
-        let _ = runtime.render(window_id)?;
+        let expanded = runtime.render(window_id)?;
 
+        let theme = DefaultTheme::default();
+        let menu_height = blend.bounds.height() * PixelCanvasBlendMode::ALL.len() as f32;
+        let below_space = (expanded.frame.viewport.height - blend.bounds.max_y()).max(0.0);
+        let above_space = blend.bounds.y().max(0.0);
+        let comfortable_below =
+            menu_height + theme.metrics.select_menu_gap + theme.metrics.select_menu_edge_padding;
+        let mut menu_y = if below_space < comfortable_below && above_space > below_space {
+            blend.bounds.y() - theme.metrics.select_menu_gap - menu_height
+        } else {
+            blend.bounds.max_y() + theme.metrics.select_menu_gap
+        };
+        let min_y = theme.metrics.select_menu_edge_padding.min(blend.bounds.y());
+        let max_y =
+            (expanded.frame.viewport.height - menu_height - theme.metrics.select_menu_edge_padding)
+                .max(0.0);
+        if min_y <= max_y {
+            menu_y = menu_y.clamp(min_y, max_y);
+        }
         let option_position = Point::new(
             blend.bounds.x() + (blend.bounds.width() * 0.5),
-            blend.bounds.y() + blend.bounds.height() + 6.0 + (blend.bounds.height() * 1.5),
+            menu_y + (blend.bounds.height() * 1.5),
         );
         let mut move_event = PointerEvent::new(PointerEventKind::Move, option_position);
         move_event.pointer_id = 14;
@@ -5463,7 +5472,11 @@ mod tests {
             output.semantics.iter().any(|node| {
                 node.role == SemanticsRole::SpinBox
                     && node.name.as_deref() == Some(PAINT_BRUSH_SIZE_NAME)
-                    && node.value == Some(SemanticsValue::Number(36.0))
+                    && matches!(
+                        node.value,
+                        Some(SemanticsValue::Range { value, .. })
+                            if (value - 36.0).abs() < f64::EPSILON
+                    )
             }),
             "expected the brush size number input to sync to 36"
         );
@@ -8434,7 +8447,10 @@ final_max_luminance={final_max_luminance}
             return false;
         };
 
-        visible_area_ratio(story.bounds, gallery.bounds) > 0.0
+        // A one-pixel intersection is not enough for interaction or pixel probes. Typography and
+        // DPI changes can otherwise leave the target technically visible while its center remains
+        // outside the rendered viewport.
+        visible_area_ratio(story.bounds, gallery.bounds) >= 0.75
     }
 
     fn visible_area_ratio(bounds: Rect, viewport: Rect) -> f32 {

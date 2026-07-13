@@ -1,6 +1,6 @@
 use sui_core::Color;
 use sui_layout::Padding as Insets;
-use sui_text::TextStyle;
+use sui_text::{FontFamilyStack, TextStyle};
 
 use crate::animation::Easing;
 use crate::hdr_theme::HdrThemeTokens;
@@ -136,6 +136,12 @@ impl Default for ThemeMotion {
 pub struct ThemeFontStack {
     pub primary: &'static str,
     pub fallbacks: &'static [&'static str],
+}
+
+impl From<ThemeFontStack> for FontFamilyStack {
+    fn from(value: ThemeFontStack) -> Self {
+        Self::new(value.primary, value.fallbacks)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3321,7 +3327,22 @@ impl DefaultTheme {
     }
 
     pub fn text_style(&self, color: Color) -> TextStyle {
+        self.text_style_with_font_stack(color, self.fonts.sans)
+    }
+
+    /// Build a text style using the theme's serif family preference stack.
+    pub fn serif_text_style(&self, color: Color) -> TextStyle {
+        self.text_style_with_font_stack(color, self.fonts.serif)
+    }
+
+    /// Build a text style using the theme's monospace family preference stack.
+    pub fn mono_text_style(&self, color: Color) -> TextStyle {
+        self.text_style_with_font_stack(color, self.fonts.mono)
+    }
+
+    fn text_style_with_font_stack(&self, color: Color, fonts: ThemeFontStack) -> TextStyle {
         TextStyle {
+            font_families: Some(fonts.into()),
             font_size: self.typography.body_font_size.max(1.0),
             line_height: self.typography.body_line_height.max(1.0),
             color,
@@ -3464,6 +3485,18 @@ mod tests {
         assert_eq!(theme.metrics.min_height, 32.0);
         assert_eq!(theme.metrics.touch_target_size, 44.0);
         assert_eq!(theme.metrics.icon_button_size, 32.0);
+        assert_eq!(
+            theme.body_text_style().font_families,
+            Some(theme.fonts.sans.into())
+        );
+        assert_eq!(
+            theme.serif_text_style(theme.palette.text).font_families,
+            Some(theme.fonts.serif.into())
+        );
+        assert_eq!(
+            theme.mono_text_style(theme.palette.text).font_families,
+            Some(theme.fonts.mono.into())
+        );
     }
 
     #[test]

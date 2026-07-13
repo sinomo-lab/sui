@@ -1,7 +1,7 @@
 use crate::{
     Blink, ControlMetrics, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar,
-    ResolvedEffectStyle, ResolvedHdrStyle, ThemeColorScheme, WidgetColorRole, WidgetLuminanceRole,
-    WidgetMaterialRole,
+    ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeColorScheme, WidgetColorRole,
+    WidgetLuminanceRole, WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionOwnerId, SelectionScope},
@@ -525,8 +525,145 @@ fn mix_color(from: Color, to: Color, t: f32) -> Color {
     Color::interpolate(from, to, t)
 }
 
+/// The visual treatment used by pressable controls.
+///
+/// Appearance and semantic tone are deliberately independent: a destructive
+/// action can be rendered as a filled, tonal, outlined, or low-emphasis ghost
+/// control without remapping the application's theme palette.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ButtonAppearance {
+    /// A solid semantic-color fill. This is the default for [`Button`].
+    #[default]
+    Filled,
+    /// A soft semantic-color wash with semantic ink.
+    Tonal,
+    /// A transparent surface with a visible semantic outline.
+    Outline,
+    /// A borderless, transparent surface that reveals a wash on interaction.
+    Ghost,
+}
+
+/// Whether an editor paints its own field chrome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FieldAppearance {
+    /// Paint the standard field background, border, hover, and focus ring.
+    #[default]
+    Framed,
+    /// Paint only editor content. Intended for use inside [`crate::FramedField`].
+    Bare,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SemanticButtonVisuals {
+    background: Color,
+    border: Color,
+    content: Color,
+}
+
+fn semantic_button_visuals(
+    theme: &DefaultTheme,
+    appearance: ButtonAppearance,
+    tone: SemanticTone,
+    enabled: bool,
+    hover_progress: f32,
+    press_progress: f32,
+) -> SemanticButtonVisuals {
+    let palette = theme.palette;
+    let interaction = theme.interaction;
+    let hover = if enabled {
+        hover_progress.clamp(0.0, 1.0) * interaction.hover_blend
+    } else {
+        0.0
+    };
+    let press = if enabled {
+        press_progress.clamp(0.0, 1.0) * interaction.pressed_blend
+    } else {
+        0.0
+    };
+    let (solid, solid_text) = theme.semantic_tone_colors(tone);
+    let (soft, soft_text) = theme.semantic_tone_soft_colors(tone);
+    let ink = if tone == SemanticTone::Neutral {
+        palette.text
+    } else {
+        solid
+    };
+    let outline = if tone == SemanticTone::Neutral {
+        palette.border
+    } else {
+        solid.with_alpha(0.72)
+    };
+
+    let (base, hovered, pressed, border, content) = match appearance {
+        ButtonAppearance::Filled => {
+            let hovered = if tone == SemanticTone::Accent {
+                palette.accent_hover
+            } else {
+                mix_color(solid, solid_text, 0.10)
+            };
+            let pressed = if tone == SemanticTone::Accent {
+                palette.accent_pressed
+            } else {
+                mix_color(solid, palette.text, 0.16)
+            };
+            (solid, hovered, pressed, solid, solid_text)
+        }
+        ButtonAppearance::Tonal => (
+            soft,
+            mix_color(soft, solid, 0.12),
+            mix_color(soft, solid, 0.24),
+            if tone == SemanticTone::Neutral {
+                palette.border
+            } else {
+                solid.with_alpha(0.30)
+            },
+            soft_text,
+        ),
+        ButtonAppearance::Outline => (
+            Color::TRANSPARENT,
+            soft,
+            mix_color(soft, solid, 0.16),
+            outline,
+            ink,
+        ),
+        ButtonAppearance::Ghost => (
+            Color::TRANSPARENT,
+            soft,
+            mix_color(soft, solid, 0.16),
+            Color::TRANSPARENT,
+            ink,
+        ),
+    };
+    let background = mix_color(mix_color(base, hovered, hover), pressed, press);
+
+    if enabled {
+        SemanticButtonVisuals {
+            background,
+            border,
+            content,
+        }
+    } else {
+        let background = if matches!(
+            appearance,
+            ButtonAppearance::Outline | ButtonAppearance::Ghost
+        ) {
+            Color::TRANSPARENT
+        } else {
+            mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
+        };
+        SemanticButtonVisuals {
+            background,
+            border: border.with_alpha(interaction.disabled_content_opacity),
+            content: palette
+                .text_muted
+                .with_alpha(interaction.disabled_content_opacity),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IconButtonPaint {
+    pub appearance: ButtonAppearance,
+    pub tone: SemanticTone,
     pub selected: bool,
     pub enabled: bool,
     pub hover_progress: f32,
@@ -538,6 +675,8 @@ pub struct IconButtonPaint {
 impl IconButtonPaint {
     pub const fn new() -> Self {
         Self {
+            appearance: ButtonAppearance::Tonal,
+            tone: SemanticTone::Neutral,
             selected: false,
             enabled: true,
             hover_progress: 0.0,
@@ -545,6 +684,16 @@ impl IconButtonPaint {
             focus_progress: 0.0,
             icon_size: None,
         }
+    }
+
+    pub const fn appearance(mut self, appearance: ButtonAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    pub const fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     pub const fn selected(mut self, selected: bool) -> Self {
@@ -620,9 +769,8 @@ pub fn paint_icon_button(
     } else {
         0.0
     };
-    let raw_press_progress = style.press_progress.clamp(0.0, 1.0);
     let press_progress = if enabled {
-        raw_press_progress * interaction.pressed_blend
+        style.press_progress.clamp(0.0, 1.0) * interaction.pressed_blend
     } else {
         0.0
     };
@@ -631,44 +779,83 @@ pub fn paint_icon_button(
     } else {
         0.0
     };
-    let base_background = if selected {
-        mix_color(palette.control, palette.accent, interaction.selected_blend)
+    let legacy_default =
+        style.appearance == ButtonAppearance::Tonal && style.tone == SemanticTone::Neutral;
+    let (background, border, icon_color) = if legacy_default {
+        let base_background = if selected {
+            mix_color(palette.control, palette.accent, interaction.selected_blend)
+        } else {
+            palette.control
+        };
+        let hover_background = if selected {
+            mix_color(base_background, palette.accent_hover, 0.18)
+        } else {
+            palette.control_hover
+        };
+        let press_background = if selected {
+            mix_color(base_background, palette.control_active, 0.45)
+        } else {
+            palette.control_active
+        };
+        let background = mix_color(
+            mix_color(base_background, hover_background, hover_progress),
+            press_background,
+            press_progress,
+        );
+        let border_base = if !enabled {
+            palette.border.with_alpha(0.55)
+        } else if selected {
+            mix_color(palette.accent_border, palette.border_hover, hover_progress)
+        } else {
+            mix_color(palette.border, palette.border_hover, hover_progress)
+        };
+        let border = if enabled {
+            mix_color(border_base, palette.border_focus, focus_progress)
+        } else {
+            border_base
+        };
+        let background = if enabled {
+            background
+        } else {
+            mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
+        };
+        let icon_color = if !enabled {
+            palette
+                .text
+                .with_alpha(interaction.disabled_content_opacity)
+        } else if selected {
+            palette.accent
+        } else {
+            palette.text
+        };
+        (background, border, icon_color)
     } else {
-        palette.control
+        let mut visuals = semantic_button_visuals(
+            theme,
+            style.appearance,
+            style.tone,
+            enabled,
+            style.hover_progress,
+            style.press_progress,
+        );
+        if selected && enabled {
+            let selection = if style.tone == SemanticTone::Neutral {
+                palette.accent
+            } else {
+                theme.semantic_tone_color(style.tone)
+            };
+            visuals.background =
+                mix_color(visuals.background, selection, interaction.selected_blend);
+            visuals.border = mix_color(visuals.border, selection, 0.72);
+            visuals.content = selection;
+        }
+        visuals.border = if enabled {
+            mix_color(visuals.border, palette.border_focus, focus_progress)
+        } else {
+            visuals.border
+        };
+        (visuals.background, visuals.border, visuals.content)
     };
-    let hover_background = if selected {
-        mix_color(base_background, palette.accent_hover, 0.18)
-    } else {
-        palette.control_hover
-    };
-    let press_background = if selected {
-        mix_color(base_background, palette.control_active, 0.45)
-    } else {
-        palette.control_active
-    };
-    let background = mix_color(
-        mix_color(base_background, hover_background, hover_progress),
-        press_background,
-        press_progress,
-    );
-    let border_base = if !enabled {
-        palette.border.with_alpha(0.55)
-    } else if selected {
-        mix_color(palette.accent_border, palette.border_hover, hover_progress)
-    } else {
-        mix_color(palette.border, palette.border_hover, hover_progress)
-    };
-    let border = if enabled {
-        mix_color(border_base, palette.border_focus, focus_progress)
-    } else {
-        border_base
-    };
-    let background = if enabled {
-        background
-    } else {
-        mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
-    };
-    let content_offset = Vector::new(0.0, raw_press_progress * interaction.pressed_offset);
     let icon_size = style
         .icon_size
         .unwrap_or(metrics.icon_size)
@@ -688,20 +875,7 @@ pub fn paint_icon_button(
                 .with_alpha(palette.focus_ring.alpha * focus_progress),
         ),
     );
-    draw_icon_glyph(
-        ctx,
-        icon,
-        center_square(rect, icon_size).translate(content_offset),
-        if !enabled {
-            palette
-                .text
-                .with_alpha(interaction.disabled_content_opacity)
-        } else if selected {
-            palette.accent
-        } else {
-            palette.text
-        },
-    );
+    draw_icon_glyph(ctx, icon, center_square(rect, icon_size), icon_color);
 }
 
 pub struct IconButton {
@@ -710,6 +884,8 @@ pub struct IconButton {
     icon: IconGlyph,
     label: String,
     semantic_description: Option<String>,
+    appearance: ButtonAppearance,
+    tone: SemanticTone,
     size: Option<f32>,
     icon_size: Option<f32>,
     selected: bool,
@@ -733,6 +909,8 @@ impl IconButton {
             icon,
             label: label.into(),
             semantic_description: None,
+            appearance: ButtonAppearance::Tonal,
+            tone: SemanticTone::Neutral,
             size: None,
             icon_size: None,
             selected: false,
@@ -757,6 +935,16 @@ impl IconButton {
 
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.semantic_description = Some(description.into());
+        self
+    }
+
+    pub fn appearance(mut self, appearance: ButtonAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
         self
     }
 
@@ -1002,6 +1190,8 @@ impl Widget for IconButton {
             ctx.bounds(),
             self.icon,
             IconButtonPaint::new()
+                .appearance(self.appearance)
+                .tone(self.tone)
                 .selected(self.is_selected())
                 .enabled(self.is_enabled())
                 .hover_progress(self.hover_animation.value)
@@ -1821,6 +2011,8 @@ pub struct Button {
     label: String,
     semantic_name: Option<String>,
     semantic_description: Option<String>,
+    appearance: ButtonAppearance,
+    tone: SemanticTone,
     text_style: Option<TextStyle>,
     icon: Option<IconGlyph>,
     icon_size: Option<f32>,
@@ -1859,6 +2051,8 @@ impl Button {
             label: label.into(),
             semantic_name: None,
             semantic_description: None,
+            appearance: ButtonAppearance::Filled,
+            tone: SemanticTone::Accent,
             text_style: None,
             icon: None,
             icon_size: None,
@@ -1895,6 +2089,20 @@ impl Button {
 
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.semantic_description = Some(description.into());
+        self
+    }
+
+    /// Selects the button's visual emphasis without changing its semantic
+    /// meaning. The default is [`ButtonAppearance::Filled`].
+    pub fn appearance(mut self, appearance: ButtonAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    /// Selects the semantic color family used by this button. The default is
+    /// [`SemanticTone::Accent`].
+    pub fn tone(mut self, tone: SemanticTone) -> Self {
+        self.tone = tone;
         self
     }
 
@@ -2097,6 +2305,46 @@ impl Button {
         } else {
             0.0
         };
+        let legacy_default =
+            self.appearance == ButtonAppearance::Filled && self.tone == SemanticTone::Accent;
+        if !legacy_default {
+            let semantic = semantic_button_visuals(
+                &theme,
+                self.appearance,
+                self.tone,
+                enabled,
+                self.hover_animation.value,
+                self.press_animation.value,
+            );
+            let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
+            let label_color = if enabled {
+                apply_hdr_policy_cap(
+                    self.text_style
+                        .as_ref()
+                        .map(|style| style.color)
+                        .unwrap_or(semantic.content),
+                    label_peak_lift,
+                )
+            } else {
+                apply_hdr_policy_cap(semantic.content, label_peak_lift)
+            };
+            return ButtonVisuals {
+                background: semantic.background,
+                border: if enabled {
+                    mix_color(semantic.border, palette.border_focus, focus_progress)
+                } else {
+                    semantic.border
+                },
+                focus_ring: (focus_progress > 0.0).then_some(
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
+                ),
+                label_color,
+                label_peak_lift,
+                chrome_style: None,
+            };
+        }
         let background = if !enabled {
             mix_color(palette.control, palette.accent, 0.08)
                 .with_alpha(interaction.disabled_opacity)
@@ -2369,13 +2617,9 @@ impl Widget for Button {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
-        let interaction = theme.interaction;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let visuals = self.resolved_visuals_with_focus_progress(self.focus_animation.value);
-        let content_offset =
-            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset);
-
         draw_control_frame(
             ctx,
             ctx.bounds(),
@@ -2387,14 +2631,8 @@ impl Widget for Button {
         );
         let (icon_rect, label_slot, label_alignment) =
             self.button_content_rects(ctx.bounds(), padding);
-        let label_slot = label_slot.translate(content_offset);
         if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
-            draw_icon_glyph(
-                ctx,
-                icon,
-                icon_rect.translate(content_offset),
-                visuals.label_color,
-            );
+            draw_icon_glyph(ctx, icon, icon_rect, visuals.label_color);
         }
         if self.is_enabled()
             && let Some(layout) = &self.label_layout
@@ -5364,6 +5602,7 @@ pub struct TextArea {
     editor: EditorState,
     placeholder: String,
     read_only: bool,
+    appearance: FieldAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -5382,6 +5621,7 @@ pub struct TextArea {
     on_change: Option<Box<dyn FnMut(String)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
     on_submit: Option<Box<dyn FnMut(&str)>>,
+    on_focus_change: Option<Box<dyn FnMut(bool)>>,
 }
 
 impl TextArea {
@@ -5393,6 +5633,7 @@ impl TextArea {
             editor: EditorState::new(),
             placeholder: String::new(),
             read_only: false,
+            appearance: FieldAppearance::Framed,
             text_style: None,
             padding: None,
             min_width: None,
@@ -5411,6 +5652,7 @@ impl TextArea {
             on_change: None,
             on_change_with_ctx: None,
             on_submit: None,
+            on_focus_change: None,
         }
     }
 
@@ -5430,6 +5672,16 @@ impl TextArea {
 
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = Some(text_style);
+        self
+    }
+
+    pub fn appearance(mut self, appearance: FieldAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    pub fn bare(mut self) -> Self {
+        self.appearance = FieldAppearance::Bare;
         self
     }
 
@@ -5509,6 +5761,14 @@ impl TextArea {
         F: FnMut(&str) + 'static,
     {
         self.on_submit = Some(Box::new(on_submit));
+        self
+    }
+
+    pub fn on_focus_change<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_focus_change = Some(Box::new(on_focus_change));
         self
     }
 
@@ -6070,27 +6330,29 @@ impl Widget for TextArea {
         } else {
             palette.field
         };
-        draw_control_frame(
-            ctx,
-            ctx.bounds(),
-            metrics.corner_radius,
-            metrics,
-            mix_color(base_background, palette.surface_focus, focus_progress),
-            mix_color(
+        if self.appearance == FieldAppearance::Framed {
+            draw_control_frame(
+                ctx,
+                ctx.bounds(),
+                metrics.corner_radius,
+                metrics,
+                mix_color(base_background, palette.surface_focus, focus_progress),
                 mix_color(
-                    palette.border,
-                    palette.border_hover,
-                    self.hover_animation.value,
+                    mix_color(
+                        palette.border,
+                        palette.border_hover,
+                        self.hover_animation.value,
+                    ),
+                    palette.border_focus,
+                    focus_progress,
                 ),
-                palette.border_focus,
-                focus_progress,
-            ),
-            (focus_progress > 0.0).then_some(
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * focus_progress),
-            ),
-        );
+                (focus_progress > 0.0).then_some(
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
+                ),
+            );
+        }
 
         if let Some(layout) = &self.display_layout {
             ctx.push_clip_rect(content);
@@ -6196,6 +6458,9 @@ impl Widget for TextArea {
         }
         let theme = self.resolved_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        if let Some(on_focus_change) = &mut self.on_focus_change {
+            on_focus_change(focused);
+        }
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -7223,6 +7488,7 @@ pub struct TextInput {
     placeholder: String,
     leading_icon: Option<IconGlyph>,
     read_only: bool,
+    appearance: FieldAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     min_width: Option<f32>,
@@ -7242,6 +7508,7 @@ pub struct TextInput {
     selection_scope: Option<SelectionScope>,
     on_change: Option<Box<dyn FnMut(String)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
+    on_focus_change: Option<Box<dyn FnMut(bool)>>,
 }
 
 impl TextInput {
@@ -7254,6 +7521,7 @@ impl TextInput {
             placeholder: String::new(),
             leading_icon: None,
             read_only: false,
+            appearance: FieldAppearance::Framed,
             text_style: None,
             padding: None,
             min_width: None,
@@ -7273,6 +7541,7 @@ impl TextInput {
             selection_scope: None,
             on_change: None,
             on_change_with_ctx: None,
+            on_focus_change: None,
         }
     }
 
@@ -7296,6 +7565,16 @@ impl TextInput {
 
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = Some(text_style);
+        self
+    }
+
+    pub fn appearance(mut self, appearance: FieldAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    pub fn bare(mut self) -> Self {
+        self.appearance = FieldAppearance::Bare;
         self
     }
 
@@ -7365,6 +7644,14 @@ impl TextInput {
         F: FnMut(&mut EventCtx, String) + 'static,
     {
         self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn on_focus_change<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_focus_change = Some(Box::new(on_focus_change));
         self
     }
 
@@ -7985,19 +8272,21 @@ impl Widget for TextInput {
         let display_text = self.visible_text();
         let placeholder = self.input_text().is_empty();
 
-        draw_control_frame(
-            ctx,
-            ctx.bounds(),
-            metrics.corner_radius,
-            metrics,
-            background,
-            border,
-            (focus_progress > 0.0).then_some(
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * focus_progress),
-            ),
-        );
+        if self.appearance == FieldAppearance::Framed {
+            draw_control_frame(
+                ctx,
+                ctx.bounds(),
+                metrics.corner_radius,
+                metrics,
+                background,
+                border,
+                (focus_progress > 0.0).then_some(
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus_progress),
+                ),
+            );
+        }
         if let Some(icon) = self.leading_icon {
             let icon_color = if self.read_only || placeholder {
                 palette.text_muted
@@ -8159,6 +8448,9 @@ impl Widget for TextInput {
         }
         let theme = self.resolved_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        if let Some(on_focus_change) = &mut self.on_focus_change {
+            on_focus_change(focused);
+        }
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -8603,11 +8895,14 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Button, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme, Icon, IconButton,
-        IconButtonPaint, IconGlyph, Label, Link, NumberInput, RadioButton, RadioGroup, Select,
-        Separator, Slider, Switch, TextArea, TextInput, paint_icon_button, rect_is_finite,
+        Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme,
+        FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label, Link, NumberInput,
+        RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea, TextInput,
+        paint_icon_button, rect_is_finite,
     };
-    use crate::{HdrThemeMode, SemanticColorToken, WidgetLuminanceRole, resolve_luminance_role};
+    use crate::{
+        HdrThemeMode, SemanticColorToken, SemanticTone, WidgetLuminanceRole, resolve_luminance_role,
+    };
     use crate::{
         containers::{SizedBox, Stack},
         selection::SelectionScope,
@@ -8900,6 +9195,18 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn first_image_rect(output: &RenderOutput) -> Rect {
+        let mut found = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if found.is_none()
+                && let SceneCommand::DrawImage { rect, .. } = command
+            {
+                found = Some(*rect);
+            }
+        });
+        found.expect("expected an image command")
     }
 
     fn assert_color_approx_eq(actual: Color, expected: Color) {
@@ -9599,6 +9906,69 @@ mod tests {
     }
 
     #[test]
+    fn button_appearance_and_tone_resolve_without_theme_remapping() {
+        let theme = DefaultTheme::default();
+        let danger = theme.semantic_tone_color(SemanticTone::Danger);
+        let outline = Button::new("Delete")
+            .theme(theme)
+            .appearance(ButtonAppearance::Outline)
+            .tone(SemanticTone::Danger)
+            .resolved_visuals(false);
+
+        assert_eq!(outline.background, Color::TRANSPARENT);
+        assert_eq!(outline.border, danger.with_alpha(0.72));
+        assert_eq!(outline.label_color, danger);
+
+        let tonal = Button::new("Retry")
+            .theme(theme)
+            .appearance(ButtonAppearance::Tonal)
+            .tone(SemanticTone::Warning)
+            .resolved_visuals(false);
+        let (soft_fill, soft_text) = theme.semantic_tone_soft_colors(SemanticTone::Warning);
+        assert_eq!(tonal.background, soft_fill);
+        assert_eq!(tonal.label_color, soft_text);
+    }
+
+    #[test]
+    fn icon_button_appearance_and_tone_use_semantic_tokens() {
+        let theme = DefaultTheme::default();
+        let output = render(IconButtonPaintFixture {
+            theme,
+            style: IconButtonPaint::new()
+                .appearance(ButtonAppearance::Ghost)
+                .tone(SemanticTone::Danger)
+                .hovered(true),
+        });
+        let (soft_fill, _) = theme.semantic_tone_soft_colors(SemanticTone::Danger);
+        let expected =
+            super::mix_color(Color::TRANSPARENT, soft_fill, theme.interaction.hover_blend);
+        assert_color_approx_eq(solid_fill_colors(&output)[0], expected);
+        assert!(
+            solid_stroke_colors(&output)
+                .iter()
+                .all(|color| color.alpha <= f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn bare_text_editors_leave_chrome_to_their_container() {
+        let framed = render(TextArea::new("Notes").value("Body"));
+        let bare = render(
+            TextArea::new("Notes")
+                .appearance(FieldAppearance::Bare)
+                .value("Body"),
+        );
+        assert!(!solid_fill_colors(&framed).is_empty());
+        assert!(!solid_stroke_colors(&framed).is_empty());
+        assert!(solid_fill_colors(&bare).is_empty());
+        assert!(solid_stroke_colors(&bare).is_empty());
+
+        let bare_input = render(TextInput::new("Search").bare().value("query"));
+        assert!(solid_fill_colors(&bare_input).is_empty());
+        assert!(solid_stroke_colors(&bare_input).is_empty());
+    }
+
+    #[test]
     fn disabled_button_label_uses_readable_muted_text() {
         let theme = DefaultTheme::default();
         let output = render(Button::new("Save").enabled(false).theme(theme));
@@ -9868,10 +10238,14 @@ mod tests {
 
     #[test]
     fn button_press_changes_color_without_moving_content() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(Button::new("Press"));
+        let mut theme = DefaultTheme::default();
+        theme.interaction.pressed_offset = 7.0;
+        let (mut runtime, window_id) =
+            build_runtime(Button::new("Press").icon(IconGlyph::Brush).theme(theme));
         let rest = runtime.render(window_id)?;
         let rest_background = solid_fill_colors(&rest)[0];
         let rest_label = text_run_for(&rest, "Press").rect;
+        let rest_icon = first_image_rect(&rest);
         let point = Point::new(12.0, 12.0);
 
         runtime.handle_event(
@@ -9884,6 +10258,7 @@ mod tests {
         let pressed = runtime.render(window_id)?;
         assert_ne!(solid_fill_colors(&pressed)[0], rest_background);
         assert_eq!(text_run_for(&pressed, "Press").rect, rest_label);
+        assert_eq!(first_image_rect(&pressed), rest_icon);
         Ok(())
     }
 
@@ -10252,6 +10627,23 @@ mod tests {
                 .iter()
                 .any(|command| matches!(command, SceneCommand::DrawImage { .. }))
         );
+    }
+
+    #[test]
+    fn icon_button_press_changes_color_without_moving_icon() {
+        let mut theme = DefaultTheme::default();
+        theme.interaction.pressed_offset = 7.0;
+        let rest = render(IconButtonPaintFixture {
+            theme,
+            style: IconButtonPaint::new().icon_size(16.0),
+        });
+        let pressed = render(IconButtonPaintFixture {
+            theme,
+            style: IconButtonPaint::new().pressed(true).icon_size(16.0),
+        });
+
+        assert_ne!(solid_fill_colors(&pressed)[0], solid_fill_colors(&rest)[0]);
+        assert_eq!(first_image_rect(&pressed), first_image_rect(&rest));
     }
 
     #[test]

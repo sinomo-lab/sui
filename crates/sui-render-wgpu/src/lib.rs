@@ -4303,14 +4303,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let mode = in.p0.z; let feather = in.p0.w;
     let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
     let p = in.local;
+    // Derivatives must execute in uniform control flow on WebGPU. Compute the
+    // fill edge before selecting the shadow path; the shadow branch simply
+    // leaves the derivative result unused.
+    let d = sd_round_box(p, half, radii);
+    let aa = max(feather, fwidth(d));
     if (mode == RR_MODE_SHADOW) {
         let sigma = in.p2.y;
         let pp = p - vec2<f32>(in.p2.z, in.p2.w);
         let cov = gaussian_box_coverage(pp, half, radii, sigma);
         return vec4<f32>(in.color.rgb, in.color.a * cov);
     }
-    let d = sd_round_box(p, half, radii);
-    let aa = max(feather, fwidth(d));
     let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
     let bw = in.p2.x;
     if (bw > 0.0) {

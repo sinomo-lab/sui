@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use sui::{WidgetPodMutVisitor, WidgetPodVisitor, prelude::*};
 
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_theme_color};
+use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
 
 pub(crate) const LAYOUT_TAB_LABEL: &str = "Layout";
 pub(crate) const LAYOUT_DEMO_SCROLL_NAME: &str = "Layout demo scroll";
@@ -56,14 +56,20 @@ where
         .alignment(Alignment::Stretch)
         .with_child(
             Label::new(title)
-                .font_size(18.0)
-                .line_height(22.0)
+                .style(dev_text_style(
+                    theme_reader(),
+                    theme_reader().text.lg,
+                    theme_reader().palette.text,
+                ))
                 .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
         )
         .with_child(
             Label::new(description)
-                .font_size(13.0)
-                .line_height(18.0)
+                .style(dev_text_style(
+                    theme_reader(),
+                    theme_reader().text.sm,
+                    theme_reader().palette.text_muted,
+                ))
                 .color_when(dev_theme_color(&theme_reader, |theme| {
                     theme.palette.text_muted
                 })),
@@ -240,15 +246,13 @@ where
 }
 
 fn tile(label: &'static str, fill: Color, text: Color) -> LayoutTile {
+    let theme = DefaultTheme::default();
     LayoutTile::new(
         move || fill,
         Some(move || Color::WHITE.with_alpha(0.26)),
         Align::center(Padding::all(
             6.0,
-            Label::new(label)
-                .font_size(12.0)
-                .line_height(15.0)
-                .color(text),
+            Label::new(label).style(dev_text_style(theme, theme.text.xs, text)),
         )),
     )
     .min_size(Size::new(72.0, 38.0))

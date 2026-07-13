@@ -6,7 +6,7 @@ use sui::{
     prelude::*,
 };
 
-use crate::app::{DevThemeReader, dev_theme_color, request_window_refresh};
+use crate::app::{DevThemeReader, dev_text_style, dev_theme_color, request_window_refresh};
 
 pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Markdown render";
 pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
@@ -579,8 +579,11 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new(MARKDOWN_RENDER_DEMO_NAME)
-                        .font_size(22.0)
-                        .line_height(28.0)
+                        .style(dev_text_style(
+                            theme_reader(),
+                            theme_reader().text._2xl,
+                            theme_reader().palette.text,
+                        ))
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
                 )
                 .with_child(MarkdownPanelSplit::new(
@@ -733,8 +736,11 @@ where
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new(title)
-                        .font_size(13.0)
-                        .line_height(18.0)
+                        .style(dev_text_style(
+                            theme_reader(),
+                            theme_reader().text.sm,
+                            theme_reader().palette.text_muted,
+                        ))
                         .color_when(dev_theme_color(&theme_reader, |theme| {
                             theme.palette.text_muted
                         })),

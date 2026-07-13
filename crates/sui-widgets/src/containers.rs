@@ -4712,6 +4712,38 @@ mod tests {
     }
 
     #[test]
+    fn flex_remeasures_wrapping_label_at_resolved_width() {
+        const TEXT: &str =
+            "Provider verification status and usage limits are shared across the cluster.";
+        let (output, _) = render_root(SizedBox::new().width(240.0).with_child(
+            Flex::horizontal().with_item(crate::Label::new(TEXT), FlexItem::flex(1.0)),
+        ));
+
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Text && node.name.as_deref() == Some(TEXT))
+            .expect("flex label semantics present");
+        assert!((label.bounds.width() - 240.0).abs() < 0.01);
+
+        let mut shaped_width = None;
+        let mut line_count = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawShapedText(run) = command
+                && let Some(layout) = run.resolve(output.frame.text_layout_registry.as_ref())
+                && layout.text() == TEXT
+            {
+                shaped_width = Some(layout.box_size().width);
+                line_count = Some(layout.lines().len());
+            }
+        });
+
+        assert!(shaped_width.is_some_and(|width| width >= 239.0));
+        assert!(line_count.is_some_and(|lines| (2..=4).contains(&lines)));
+        assert!(output.frame.viewport.height < 100.0);
+    }
+
+    #[test]
     fn flex_spacer_pushes_following_children_to_remaining_edge() {
         let (_, graph) = render_root(
             SizedBox::new().size(Size::new(100.0, 10.0)).with_child(

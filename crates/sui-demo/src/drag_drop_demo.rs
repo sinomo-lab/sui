@@ -2,7 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use sui::prelude::*;
 
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_theme_color, request_window_refresh};
+use crate::app::{
+    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
+};
 
 pub(crate) const DRAG_DROP_TAB_LABEL: &str = "Drag and drop";
 pub(crate) const DRAG_DROP_DEMO_SCROLL_NAME: &str = "Drag and drop demo scroll";
@@ -10,6 +12,44 @@ pub(crate) const DRAG_DROP_DEMO_SCROLL_NAME: &str = "Drag and drop demo scroll";
 const ASSET_KIND: &str = "sui-demo.asset";
 const SCOPE_TOKEN_KIND: &str = "sui-demo.scope-token";
 const REORDER_ITEM_COUNT: usize = 5;
+
+fn body_label(label: Label, theme_reader: &DevThemeReader, muted: bool) -> Label {
+    let theme = theme_reader();
+    let color = if muted {
+        theme.palette.text_muted
+    } else {
+        theme.palette.text
+    };
+    label
+        .style(dev_text_style(theme, theme.text.sm, color))
+        .color_when(dev_theme_color(theme_reader, move |theme| {
+            if muted {
+                theme.palette.text_muted
+            } else {
+                theme.palette.text
+            }
+        }))
+}
+
+fn meta_label(label: Label, theme_reader: &DevThemeReader) -> Label {
+    let theme = theme_reader();
+    label
+        .style(dev_text_style(
+            theme,
+            theme.text.xs,
+            theme.palette.text_muted,
+        ))
+        .color_when(dev_theme_color(theme_reader, |theme| {
+            theme.palette.text_muted
+        }))
+}
+
+fn section_title_label(label: Label, theme_reader: &DevThemeReader) -> Label {
+    let theme = theme_reader();
+    label
+        .style(dev_text_style(theme, theme.text.lg, theme.palette.text))
+        .color_when(dev_theme_color(theme_reader, |theme| theme.palette.text))
+}
 
 const INITIAL_REORDER_ITEMS: [ReorderItem; REORDER_ITEM_COUNT] = [
     ReorderItem {
@@ -391,14 +431,13 @@ fn build_list_reorder_example(
 
 fn reorder_summary_label(theme_reader: DevThemeReader, state: DragDropDemoState) -> impl Widget {
     let label_state = state.clone();
-    Label::dynamic(label_state.reorder_summary(), move || {
-        label_state.reorder_summary()
-    })
-    .font_size(13.0)
-    .line_height(18.0)
-    .color_when(dev_theme_color(&theme_reader, |theme| {
-        theme.palette.text_muted
-    }))
+    body_label(
+        Label::dynamic(label_state.reorder_summary(), move || {
+            label_state.reorder_summary()
+        }),
+        &theme_reader,
+        true,
+    )
 }
 
 fn reorder_demo_row(item: ReorderItem, theme_reader: DevThemeReader) -> impl Widget {
@@ -406,20 +445,11 @@ fn reorder_demo_row(item: ReorderItem, theme_reader: DevThemeReader) -> impl Wid
         Stack::vertical()
             .spacing(3.0)
             .alignment(Alignment::Stretch)
-            .with_child(
-                Label::new(item.label)
-                    .font_size(13.0)
-                    .line_height(17.0)
-                    .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-            )
-            .with_child(
-                Label::new(format!("{}  item {}", item.detail, item.id))
-                    .font_size(11.0)
-                    .line_height(15.0)
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
-            ),
+            .with_child(body_label(Label::new(item.label), &theme_reader, false))
+            .with_child(meta_label(
+                Label::new(format!("{}  item {}", item.detail, item.id)),
+                &theme_reader,
+            )),
     )
     .name(format!("Reorder item {}", item.label))
     .theme_when(clone_dev_theme_reader(&theme_reader))
@@ -489,12 +519,11 @@ fn build_status_panel(theme_reader: DevThemeReader, state: DragDropDemoState) ->
     let status_state = state.clone();
     panel(
         "Drag status",
-        Label::dynamic("Ready", move || status_state.status())
-            .font_size(13.0)
-            .line_height(18.0)
-            .color_when(dev_theme_color(&theme_reader, |theme| {
-                theme.palette.text_muted
-            })),
+        body_label(
+            Label::dynamic("Ready", move || status_state.status()),
+            &theme_reader,
+            true,
+        ),
         theme_reader,
     )
 }
@@ -510,10 +539,7 @@ fn text_chip(
     Draggable::new(
         Surface::field(Align::center(Padding::all(
             8.0,
-            Label::new(text)
-                .font_size(13.0)
-                .line_height(18.0)
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+            body_label(Label::new(text), &theme_reader, false),
         )))
         .name(format!("Text source {text}"))
         .theme_when(clone_dev_theme_reader(&theme_reader))
@@ -549,20 +575,11 @@ fn asset_card(
             Stack::vertical()
                 .spacing(3.0)
                 .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new(asset.name)
-                        .font_size(13.0)
-                        .line_height(17.0)
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-                )
-                .with_child(
-                    Label::new(format!("{}  {}", asset.group, asset.size))
-                        .font_size(11.0)
-                        .line_height(15.0)
-                        .color_when(dev_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
-                ),
+                .with_child(body_label(Label::new(asset.name), &theme_reader, false))
+                .with_child(meta_label(
+                    Label::new(format!("{}  {}", asset.group, asset.size)),
+                    &theme_reader,
+                )),
         )
         .name(format!("Asset source {}", asset.name))
         .theme_when(clone_dev_theme_reader(&theme_reader))
@@ -604,20 +621,8 @@ fn scope_token_card(
             Stack::vertical()
                 .spacing(3.0)
                 .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new(label)
-                        .font_size(13.0)
-                        .line_height(17.0)
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-                )
-                .with_child(
-                    Label::new(caption)
-                        .font_size(11.0)
-                        .line_height(15.0)
-                        .color_when(dev_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
-                ),
+                .with_child(body_label(Label::new(label), &theme_reader, false))
+                .with_child(meta_label(Label::new(caption), &theme_reader)),
         )
         .name(format!("Scope token source {label}"))
         .theme_when(clone_dev_theme_reader(&theme_reader))
@@ -659,14 +664,11 @@ fn text_drop_target(
                 state.clone(),
                 DragDropDemoState::text_hovered,
             ))
-            .with_child(
-                Label::dynamic("No copied text yet.", move || state.text_summary())
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
-            ),
+            .with_child(body_label(
+                Label::dynamic("No copied text yet.", move || state.text_summary()),
+                &theme_reader,
+                true,
+            )),
         theme_reader,
     ))
     .scope(scope)
@@ -705,14 +707,11 @@ fn asset_drop_target(
                 state.clone(),
                 DragDropDemoState::asset_hovered,
             ))
-            .with_child(
-                Label::dynamic("No assets accepted yet.", move || state.asset_summary())
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
-            ),
+            .with_child(body_label(
+                Label::dynamic("No assets accepted yet.", move || state.asset_summary()),
+                &theme_reader,
+                true,
+            )),
         theme_reader,
     ))
     .scope(scope)
@@ -751,14 +750,11 @@ fn text_only_drop_target(
                 state.clone(),
                 DragDropDemoState::text_only_hovered,
             ))
-            .with_child(
-                Label::new("Asset and scope-token payloads are ignored.")
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
-            ),
+            .with_child(body_label(
+                Label::new("Asset and scope-token payloads are ignored."),
+                &theme_reader,
+                true,
+            )),
         theme_reader,
     ))
     .scope(scope)
@@ -797,16 +793,13 @@ fn scoped_drop_target(
                 state.clone(),
                 DragDropDemoState::scoped_hovered,
             ))
-            .with_child(
+            .with_child(body_label(
                 Label::dynamic("Shared scope target is empty.", move || {
                     state.scope_status()
-                })
-                .font_size(13.0)
-                .line_height(18.0)
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-            ),
+                }),
+                &theme_reader,
+                true,
+            )),
         theme_reader,
     ))
     .scope(scope)
@@ -834,20 +827,8 @@ where
     Stack::vertical()
         .spacing(8.0)
         .alignment(Alignment::Stretch)
-        .with_child(
-            Label::new(title)
-                .font_size(18.0)
-                .line_height(22.0)
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-        )
-        .with_child(
-            Label::new(description)
-                .font_size(13.0)
-                .line_height(18.0)
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-        )
+        .with_child(section_title_label(Label::new(title), &theme_reader))
+        .with_child(body_label(Label::new(description), &theme_reader, true))
         .with_child(body)
         .with_child(
             Separator::horizontal()
@@ -878,8 +859,11 @@ where
     F: Fn(&DragDropDemoState) -> bool + 'static,
 {
     Label::new(text)
-        .font_size(14.0)
-        .line_height(18.0)
+        .style(dev_text_style(
+            theme_reader(),
+            theme_reader().text.base,
+            theme_reader().palette.text,
+        ))
         .color_when(move || {
             let theme = theme_reader();
             if hovered(&state) {

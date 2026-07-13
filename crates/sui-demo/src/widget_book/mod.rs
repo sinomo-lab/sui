@@ -12,10 +12,11 @@ use sui::{
     InvalidationRequest, InvalidationTarget, PlacementBadge, PointerEventKind, Rect,
     SceneStatisticsDetailMode, SemanticColorToken, SemanticRegion, SemanticTone, SemanticsNode,
     SemanticsRole, SemanticsValue, SignalMeter, StatusBadge, TextDirection, TextStyle, TextSurface,
-    TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap, ThemeDensity,
-    Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot, resolve_semantic_color,
-    resolve_widget_hdr_style, set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, TextWrap,
+    ThemeTextToken, Vector, WidgetColorRole, WidgetLuminanceRole, WidgetMaterialRole,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot,
+    paint_single_line_aligned_text, resolve_semantic_color, resolve_widget_hdr_style,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
@@ -30,6 +31,32 @@ pub use visual_artifacts::write_visual_artifacts;
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
+
+fn widget_book_text_style(token: ThemeTextToken, color: Color) -> TextStyle {
+    widget_book_theme_text_style(DefaultTheme::default(), token, color)
+}
+
+fn widget_book_theme_text_style(
+    theme: DefaultTheme,
+    token: ThemeTextToken,
+    color: Color,
+) -> TextStyle {
+    TextStyle {
+        font_size: token.size,
+        line_height: token.line_height,
+        color,
+        ..theme.body_text_style()
+    }
+}
+
+fn widget_book_mono_text_style(token: ThemeTextToken, color: Color) -> TextStyle {
+    let theme = DefaultTheme::default();
+    TextStyle {
+        font_size: token.size,
+        line_height: token.line_height,
+        ..theme.mono_text_style(color)
+    }
+}
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const ANIMATION_BENCHMARK_TITLE: &str = "SUI Animation Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
@@ -69,15 +96,18 @@ pub const WIDGET_STATES_SLIDER_NAME: &str = "States slider";
 pub const WIDGET_STATES_TABS_NAME: &str = "States tabs";
 pub const WIDGET_STATES_MENU_NAME: &str = "States menu";
 pub const WIDGET_STATES_POPOVER_NAME: &str = "States popover";
-const WIDGET_STATE_ROW_WIDTH: f32 = 952.0;
-const WIDGET_STATE_COLUMN_WIDTH: f32 = 447.0;
 pub const SIZE_PRESETS_GALLERY_NAME: &str = "Size presets";
-pub const SIZE_PRESET_COMPACT_ACTION_LABEL: &str = "Compact preset action";
-pub const SIZE_PRESET_COMFORTABLE_ACTION_LABEL: &str = "Comfortable preset action";
-pub const SIZE_PRESET_TOUCH_ACTION_LABEL: &str = "Touch preset action";
-pub const SIZE_PRESET_COMPACT_INPUT_LABEL: &str = "Compact preset input";
-pub const SIZE_PRESET_COMFORTABLE_INPUT_LABEL: &str = "Comfortable preset input";
-pub const SIZE_PRESET_TOUCH_INPUT_LABEL: &str = "Touch preset input";
+pub const SIZE_PRESET_SMALL_ACTION_LABEL: &str = "Small preset action";
+pub const SIZE_PRESET_MEDIUM_ACTION_LABEL: &str = "Medium preset action";
+pub const SIZE_PRESET_LARGE_ACTION_LABEL: &str = "Large preset action";
+pub const SIZE_PRESET_SMALL_INPUT_LABEL: &str = "Small preset input";
+pub const SIZE_PRESET_MEDIUM_INPUT_LABEL: &str = "Medium preset input";
+pub const SIZE_PRESET_LARGE_INPUT_LABEL: &str = "Large preset input";
+const SIZE_PRESET_CARD_MIN_WIDTH: f32 = 260.0;
+const SIZE_PRESET_CARD_MAX_WIDTH: f32 = 360.0;
+const CONTROL_STORY_CARD_MIN_WIDTH: f32 = 280.0;
+const CONTROL_STORY_CARD_MAX_WIDTH: f32 = 430.0;
+const CONTROL_STORY_CONTENT_MAX_WIDTH: f32 = 300.0;
 pub const DIALOG_TITLE: &str = "Project settings";
 pub const DIALOG_TRIGGER_LABEL: &str = "Toggle project settings";
 pub const PROGRESS_NAME: &str = "Export progress";
@@ -223,12 +253,58 @@ fn clone_widget_book_theme_reader(
     move || theme_reader()
 }
 
-fn widget_book_density_theme_reader(
+fn widget_book_size_theme_reader(
     theme_reader: &WidgetBookThemeReader,
-    density: ThemeDensity,
+    size: ControlSize,
 ) -> impl Fn() -> DefaultTheme + 'static {
     let theme_reader = Rc::clone(theme_reader);
-    move || theme_reader().with_density(density)
+    move || theme_reader().with_size(size)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DemoTextRole {
+    Metadata,
+    Supporting,
+    Body,
+    Emphasis,
+    SectionTitle,
+    PageTitle,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DemoTextColor {
+    Text,
+    Muted,
+}
+
+fn demo_label(
+    theme_reader: &WidgetBookThemeReader,
+    text: impl Into<String>,
+    role: DemoTextRole,
+    color: DemoTextColor,
+) -> Label {
+    let theme = theme_reader();
+    let token = match role {
+        DemoTextRole::Metadata => theme.text.xs,
+        DemoTextRole::Supporting => theme.text.sm,
+        DemoTextRole::Body => theme.text.base,
+        DemoTextRole::Emphasis => theme.text.lg,
+        DemoTextRole::SectionTitle => theme.text.xl,
+        DemoTextRole::PageTitle => theme.text._3xl,
+    };
+    Label::new(text)
+        .style(TextStyle {
+            font_size: token.size,
+            line_height: token.line_height,
+            ..theme.body_text_style()
+        })
+        .color_when(widget_book_theme_color(
+            theme_reader,
+            move |theme| match color {
+                DemoTextColor::Text => theme.palette.text,
+                DemoTextColor::Muted => theme.palette.text_muted,
+            },
+        ))
 }
 
 fn widget_book_theme_color<F>(
@@ -1277,22 +1353,15 @@ impl ProjectSettingsPreview {
                         .spacing(10.0)
                         .alignment(Alignment::Stretch)
                         .with_child(
-                            Label::new("Autosave every 90 seconds")
-                                .font_size(14.0)
-                                .line_height(18.0)
-                                .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                            Label::new("Autosave every 90 seconds").theme(DefaultTheme::default()),
                         )
                         .with_child(
                             Label::new("Export color profile: Display P3")
-                                .font_size(14.0)
-                                .line_height(18.0)
-                                .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                                .theme(DefaultTheme::default()),
                         )
                         .with_child(
                             Label::new("Scratch disk: fast-local-ssd")
-                                .font_size(14.0)
-                                .line_height(18.0)
-                                .color(Color::rgba(0.18, 0.22, 0.30, 1.0)),
+                                .theme(DefaultTheme::default()),
                         ),
                 )
                 .description(
@@ -1835,17 +1904,19 @@ fn hdr_theme_lab_card(
                 .spacing(12.0)
                 .alignment(Alignment::Start)
                 .with_child(
-                    Label::new(hdr_theme_mode_title(mode))
-                        .font_size(18.0)
-                        .line_height(22.0)
-                        .color(theme.palette.text),
+                    Label::new(hdr_theme_mode_title(mode)).style(widget_book_theme_text_style(
+                        theme,
+                        theme.text.lg,
+                        theme.palette.text,
+                    )),
                 )
                 .with_child(MaximumWidth::new(
                     980.0,
-                    Label::new(lead_text)
-                        .font_size(13.0)
-                        .line_height(18.0)
-                        .color(theme.palette.placeholder),
+                    Label::new(lead_text).style(widget_book_theme_text_style(
+                        theme,
+                        theme.text.sm,
+                        theme.palette.placeholder,
+                    )),
                 ))
                 .with_child(MaximumWidth::new(
                     980.0,
@@ -1856,9 +1927,11 @@ fn hdr_theme_lab_card(
                         theme.hdr.luminance.emissive_indicator,
                         theme.hdr.luminance.alert_pulse,
                     ))
-                    .font_size(12.0)
-                    .line_height(17.0)
-                    .color(theme.palette.placeholder),
+                    .style(widget_book_theme_text_style(
+                        theme,
+                        theme.text.xs,
+                        theme.palette.placeholder,
+                    )),
                 ))
                 .with_child(
                     Stack::horizontal()
@@ -1878,9 +1951,11 @@ fn hdr_theme_lab_card(
                             Label::new(
                                 "The swatch mirrors the accent token resolved for the current gamut/HDR mode.",
                             )
-                            .font_size(12.0)
-                            .line_height(17.0)
-                            .color(theme.palette.placeholder),
+                            .style(widget_book_theme_text_style(
+                                theme,
+                                theme.text.xs,
+                                theme.palette.placeholder,
+                            )),
                         )),
                 )
                 .with_child(
@@ -1904,17 +1979,21 @@ fn hdr_theme_lab_card(
                                     Label::new(
                                         "Small popup surfaces are where constrained vs full HDR arrival cues become easiest to validate.",
                                     )
-                                    .font_size(13.0)
-                                    .line_height(18.0)
-                                    .color(theme.palette.text),
+                                    .style(widget_book_theme_text_style(
+                                        theme,
+                                        theme.text.sm,
+                                        theme.palette.text,
+                                    )),
                                 )
                                 .with_child(
                                     Label::new(
                                         "Use this trigger to compare popup chrome, border lift, and arrival emphasis against the matching button and switch.",
                                     )
-                                    .font_size(12.0)
-                                    .line_height(17.0)
-                                    .color(theme.palette.placeholder),
+                                    .style(widget_book_theme_text_style(
+                                        theme,
+                                        theme.text.xs,
+                                        theme.palette.placeholder,
+                                    )),
                                 ),
                         )
                         .open(true)
@@ -2702,6 +2781,7 @@ fn animation_benchmark_scale_timeline() -> Timeline {
 
 pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
     let scroll_state = ScrollState::new();
+    let theme_reader = default_widget_book_theme_reader();
 
     VirtualScrollView::new()
         .name(THEME_DEMO_SCROLL_NAME)
@@ -2714,17 +2794,21 @@ pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Wid
                 .alignment(Alignment::Stretch)
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(THEME_DEMO_TITLE)
-                        .font_size(30.0)
-                        .line_height(34.0)
-                        .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
+                    demo_label(
+                        &theme_reader,
+                        THEME_DEMO_TITLE,
+                        DemoTextRole::PageTitle,
+                        DemoTextColor::Text,
+                    ),
                 ))
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(THEME_DEMO_DESCRIPTION)
-                        .font_size(15.0)
-                        .line_height(20.0)
-                        .color(Color::rgba(0.40, 0.48, 0.58, 1.0)),
+                    demo_label(
+                        &theme_reader,
+                        THEME_DEMO_DESCRIPTION,
+                        DemoTextRole::Body,
+                        DemoTextColor::Muted,
+                    ),
                 )),
         )
         .with_child(panel(
@@ -2789,23 +2873,21 @@ pub fn build_widget_book_gallery_with_theme(
                 .alignment(Alignment::Stretch)
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(WINDOW_TITLE)
-                        .font_size(30.0)
-                        .line_height(34.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text
-                        })),
+                    demo_label(
+                        &theme_reader,
+                        WINDOW_TITLE,
+                        DemoTextRole::PageTitle,
+                        DemoTextColor::Text,
+                    ),
                 ))
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(
+                    demo_label(
+                        &theme_reader,
                         "A dedicated widget book for exercising built-in controls, generating inspection artifacts, and providing stable screenshot stories.",
-                    )
-                    .font_size(15.0)
-                    .line_height(20.0)
-                    .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
+                        DemoTextRole::Body,
+                        DemoTextColor::Muted,
+                    ),
                 )),
         )
             .with_child(build_widget_states_gallery_with_theme(Rc::clone(
@@ -2822,10 +2904,8 @@ pub fn build_widget_book_gallery_with_theme(
                     .spacing(14.0)
                     .alignment(Alignment::Start)
                     .with_child(
-                        Stack::horizontal()
-                            .spacing(14.0)
-                            .alignment(Alignment::Start)
-                            .with_child(control_story_with_theme(
+                        responsive_control_story_pair(
+                            control_story_with_theme(
                                 Rc::clone(&theme_reader),
                                 "Input state",
                                 "Text entry and boolean opt-in controls keep their natural widths instead of stretching across the page.",
@@ -2855,8 +2935,8 @@ pub fn build_widget_book_gallery_with_theme(
                                                 subscribed_state.borrow_mut().subscribed = checked;
                                             }),
                                     ),
-                            ))
-                            .with_child(control_story_with_theme(
+                            ),
+                            control_story_with_theme(
                                 Rc::clone(&theme_reader),
                                 "Primary action",
                                 "A dense action plus supporting copy demonstrates the button without turning the row into a full-width form.",
@@ -2874,35 +2954,31 @@ pub fn build_widget_book_gallery_with_theme(
                                         ),
                                     )
                                     .with_child(
-                                        Label::new(
-                                            "Related controls should feel like one composed workflow, not separate experiments.",
-                                        )
-                                        .font_size(13.0)
-                                        .line_height(18.0)
-                                        .color_when(widget_book_theme_color(
+                                        demo_label(
                                             &theme_reader,
-                                            |theme| theme.palette.text_muted,
-                                        )),
+                                            "Related controls should feel like one composed workflow, not separate experiments.",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Muted,
+                                        ),
                                     ),
-                            )),
+                            ),
+                        ),
                     )
                     .with_child(MaximumWidth::new(
                         GALLERY_TEXT_MAX_WIDTH,
-                        Label::new(
+                        demo_label(
+                            &theme_reader,
                             "The widget book tests capture these controls directly so visual regressions can be reviewed manually or compared automatically.",
-                        )
-                        .font_size(13.0)
-                        .line_height(18.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
+                            DemoTextRole::Supporting,
+                            DemoTextColor::Muted,
+                        ),
                     )),
             ))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
                 "Toolbar pieces",
                 "Compact controls, separators, and icons need to feel intentional before any themed application shell exists.",
-                control_story_with_theme(
+                responsive_control_story(control_story_with_theme(
                     Rc::clone(&theme_reader),
                     "Toolbar cluster",
                     "Small controls stay aligned, scannable, and visually grouped before any app-specific toolbar exists.",
@@ -2910,13 +2986,16 @@ pub fn build_widget_book_gallery_with_theme(
                         .spacing(14.0)
                         .alignment(Alignment::Start)
                         .with_child(
-                            Stack::horizontal()
-                                .spacing(14.0)
-                                .alignment(Alignment::Center)
-                                .with_child(
+                            Flex::horizontal()
+                                .gap(14.0)
+                                .wrap(FlexWrap::Wrap)
+                                .align_items(Alignment::Center)
+                                .align_content(FlexAlignContent::Start)
+                                .with_item(
                                     Icon::new(IconGlyph::Search).label(ICON_LABEL).size(24.0),
+                                    FlexItem::fixed(24.0),
                                 )
-                                .with_child(
+                                .with_item(
                                     IconButton::new(IconGlyph::MoreHorizontal, ICON_BUTTON_LABEL)
                                         .theme_when(clone_widget_book_theme_reader(
                                             &theme_reader,
@@ -2924,17 +3003,16 @@ pub fn build_widget_book_gallery_with_theme(
                                         .on_press(move || {
                                             icon_action_state.borrow_mut().icon_button_presses += 1;
                                         }),
+                                    FlexItem::new(),
                                 )
-                                .with_child(
-                                    Label::new(
-                                        "Icons and icon buttons round out dense toolbar layouts.",
-                                    )
-                                    .font_size(14.0)
-                                    .line_height(18.0)
-                                    .color_when(widget_book_theme_color(
+                                .with_item(
+                                    demo_label(
                                         &theme_reader,
-                                        |theme| theme.palette.text_muted,
-                                    )),
+                                        "Icons and icon buttons round out dense toolbar layouts.",
+                                        DemoTextRole::Supporting,
+                                        DemoTextColor::Muted,
+                                    ),
+                                    FlexItem::new().grow(1.0).basis(220.0).min_width(200.0),
                                 ),
                         )
                         .with_child(SizedBox::new().width(260.0).with_child(
@@ -2942,16 +3020,14 @@ pub fn build_widget_book_gallery_with_theme(
                                 .name(TOOLBAR_SEPARATOR_NAME)
                                 .inset(12.0),
                         )),
-                ),
+                )),
             ))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
                 "Choices and ranges",
                 "Desktop-style inspectors rely on switches, radio groups, sliders, numeric inputs, and selects more than oversized form controls.",
-                Stack::horizontal()
-                    .spacing(14.0)
-                    .alignment(Alignment::Start)
-                    .with_child(control_story_with_theme(
+                responsive_control_story_pair(
+                    control_story_with_theme(
                         Rc::clone(&theme_reader),
                         "Boolean choices",
                         "Switches and radios are compact choices, so they should sit in a compact inspector-like block.",
@@ -2989,8 +3065,8 @@ pub fn build_widget_book_gallery_with_theme(
                                         }),
                                 ),
                             ),
-                    ))
-                    .with_child(control_story_with_theme(
+                    ),
+                    control_story_with_theme(
                         Rc::clone(&theme_reader),
                         "Numeric range",
                         "Slider, spinbox, and select examples now read like inspector controls instead of long page rows.",
@@ -2998,7 +3074,9 @@ pub fn build_widget_book_gallery_with_theme(
                             .spacing(12.0)
                             .alignment(Alignment::Start)
                             .with_child(
-                                SizedBox::new().width(320.0).with_child(
+                                SizedBox::new()
+                                    .width(CONTROL_STORY_CONTENT_MAX_WIDTH)
+                                    .with_child(
                                     Slider::new(SLIDER_NAME)
                                         .range(0.0, 100.0)
                                         .step(1.0)
@@ -3007,7 +3085,7 @@ pub fn build_widget_book_gallery_with_theme(
                                         .on_change(move |value| {
                                             slider_state.borrow_mut().slider_value = value;
                                         }),
-                                ),
+                                    ),
                             )
                             .with_child(
                                 SizedBox::new().width(220.0).with_child(
@@ -3037,7 +3115,8 @@ pub fn build_widget_book_gallery_with_theme(
                                         }),
                                 ),
                             ),
-                    )),
+                    ),
+                ),
             ))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
@@ -3059,14 +3138,12 @@ pub fn build_widget_book_gallery_with_theme(
                         ),
                     )
                     .with_child(
-                        Label::new(
+                        demo_label(
+                            &theme_reader,
                             "Use PageDown on the outer scroll view story to capture the lower panels and prove the gallery exceeds the viewport.",
-                        )
-                        .font_size(13.0)
-                        .line_height(18.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
+                            DemoTextRole::Supporting,
+                            DemoTextColor::Muted,
+                        ),
                     ),
             ))
             .with_child(panel_with_theme(
@@ -3077,28 +3154,28 @@ pub fn build_widget_book_gallery_with_theme(
                     .spacing(8.0)
                     .alignment(Alignment::Stretch)
                     .with_child(
-                        Label::new("Section heading")
-                            .font_size(22.0)
-                            .line_height(26.0)
-                            .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                                theme.palette.text
-                            })),
+                        demo_label(
+                            &theme_reader,
+                            "Section heading",
+                            DemoTextRole::SectionTitle,
+                            DemoTextColor::Text,
+                        ),
                     )
                     .with_child(
-                        Label::new("Body copy can use the same widget with different size and color settings.")
-                            .font_size(15.0)
-                            .line_height(20.0)
-                            .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                                theme.palette.text
-                            })),
+                        demo_label(
+                            &theme_reader,
+                            "Body copy can use the same widget with different size and color settings.",
+                            DemoTextRole::Body,
+                            DemoTextColor::Text,
+                        ),
                     )
                     .with_child(
-                        Label::new("Secondary note")
-                            .font_size(13.0)
-                            .line_height(18.0)
-                            .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                                theme.palette.text_muted
-                            })),
+                        demo_label(
+                            &theme_reader,
+                            "Secondary note",
+                            DemoTextRole::Supporting,
+                            DemoTextColor::Muted,
+                        ),
                     ),
             ))
             .with_child(panel_with_theme(
@@ -3132,13 +3209,12 @@ pub fn build_widget_book_gallery_with_theme(
                                             .spacing(8.0)
                                             .alignment(Alignment::Stretch)
                                             .with_child(
-                                                Label::new("Alignment, spacing, and surface geometry controls belong in a compact inspector tab.")
-                                                    .font_size(14.0)
-                                                    .line_height(19.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Alignment, spacing, and surface geometry controls belong in a compact inspector tab.",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Text,
+                                                ),
                                             )
                                             .with_child(
                                                 ProgressBar::new("Layout completion")
@@ -3159,22 +3235,20 @@ pub fn build_widget_book_gallery_with_theme(
                                             .spacing(8.0)
                                             .alignment(Alignment::Stretch)
                                             .with_child(
-                                                Label::new("Inline data summaries and editable metadata fit naturally in a reusable tabs widget.")
-                                                    .font_size(14.0)
-                                                    .line_height(19.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Inline data summaries and editable metadata fit naturally in a reusable tabs widget.",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Text,
+                                                ),
                                             )
                                             .with_child(
-                                                Label::new("Selection: 4 layers, 2 masks, 1 smart object")
-                                                    .font_size(13.0)
-                                                    .line_height(18.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text_muted,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Selection: 4 layers, 2 masks, 1 smart object",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Muted,
+                                                ),
                                             ),
                                     ),
                                 )
@@ -3186,22 +3260,20 @@ pub fn build_widget_book_gallery_with_theme(
                                             .spacing(8.0)
                                             .alignment(Alignment::Stretch)
                                             .with_child(
-                                                Label::new("Undo groups, import checkpoints, and review markers are another common fit for tabbed panels.")
-                                                    .font_size(14.0)
-                                                    .line_height(19.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Undo groups, import checkpoints, and review markers are another common fit for tabbed panels.",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Text,
+                                                ),
                                             )
                                             .with_child(
-                                                Label::new("Replaying history cache")
-                                                    .font_size(13.0)
-                                                    .line_height(18.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text_muted,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Replaying history cache",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Muted,
+                                                ),
                                             ),
                                     ),
                                 )
@@ -3243,13 +3315,12 @@ pub fn build_widget_book_gallery_with_theme(
                                     theme_reader().palette.control,
                                     Padding::all(
                                         14.0,
-                                        Label::new("Right-click this explicit surface")
-                                            .font_size(14.0)
-                                            .line_height(18.0)
-                                            .color_when(widget_book_theme_color(
-                                                &theme_reader,
-                                                |theme| theme.palette.text,
-                                            )),
+                                        demo_label(
+                                            &theme_reader,
+                                            "Right-click this explicit surface",
+                                            DemoTextRole::Body,
+                                            DemoTextColor::Text,
+                                        ),
                                     ),
                                 )
                                 .brush_when(widget_book_theme_color(
@@ -3287,22 +3358,20 @@ pub fn build_widget_book_gallery_with_theme(
                                     .spacing(8.0)
                                     .alignment(Alignment::Stretch)
                                     .with_child(
-                                        Label::new("Inline inspector content can stay lightweight instead of forcing a full modal.")
-                                            .font_size(14.0)
-                                            .line_height(19.0)
-                                            .color_when(widget_book_theme_color(
-                                                &theme_reader,
-                                                |theme| theme.palette.text,
-                                            )),
+                                        demo_label(
+                                            &theme_reader,
+                                            "Inline inspector content can stay lightweight instead of forcing a full modal.",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Text,
+                                        ),
                                     )
                                     .with_child(
-                                        Label::new("Blend preview: Screen @ 72%")
-                                            .font_size(13.0)
-                                            .line_height(18.0)
-                                            .color_when(widget_book_theme_color(
-                                                &theme_reader,
-                                                |theme| theme.palette.text_muted,
-                                            )),
+                                        demo_label(
+                                            &theme_reader,
+                                            "Blend preview: Screen @ 72%",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Muted,
+                                        ),
                                     ),
                             ),
                         ),
@@ -3347,27 +3416,23 @@ pub fn build_widget_book_gallery_with_theme(
                 Rc::clone(&theme_reader),
                 "Live performance overlay",
                 "The stats card now floats over the gallery so frame timing stays visible while you inspect any part of the widget book.",
-                Label::new(
+                demo_label(
+                    &theme_reader,
                     "Use the compact panel pinned in the top-right corner while you scroll and interact with the rest of the gallery.",
-                )
-                .font_size(13.0)
-                .line_height(18.0)
-                .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
+                    DemoTextRole::Supporting,
+                    DemoTextColor::Muted,
+                ),
             ))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
                 "Debugging and inspection",
                 "The sui-debug crate composes reusable diagnostics chrome with SUI-specific views over focus, semantics, widget graph, and scene summaries.",
-                Label::new(
+                demo_label(
+                    &theme_reader,
                     "Debug inspector available via sui-debug crate. Open the standalone debug view for full semantics, widget graph, and scene inspection."
-                )
-                .font_size(13.0)
-                .line_height(18.0)
-                .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
+                    , DemoTextRole::Supporting,
+                    DemoTextColor::Muted,
+                ),
             ))
             .with_child(panel_with_theme(
                 Rc::clone(&theme_reader),
@@ -3467,22 +3532,20 @@ pub fn build_widget_book_gallery_with_theme(
                                             .spacing(8.0)
                                             .alignment(Alignment::Stretch)
                                             .with_child(
-                                                Label::new("Viewport")
-                                                    .font_size(18.0)
-                                                    .line_height(22.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Viewport",
+                                                    DemoTextRole::Emphasis,
+                                                    DemoTextColor::Text,
+                                                ),
                                             )
                                             .with_child(
-                                                Label::new("Resizable panes let editor shells settle into familiar two-up and inspector layouts.")
-                                                    .font_size(14.0)
-                                                    .line_height(19.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text_muted,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Resizable panes let editor shells settle into familiar two-up and inspector layouts.",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Muted,
+                                                ),
                                             ),
                                     ),
                                 )
@@ -3498,22 +3561,20 @@ pub fn build_widget_book_gallery_with_theme(
                                             .spacing(8.0)
                                             .alignment(Alignment::Stretch)
                                             .with_child(
-                                                Label::new("Inspector")
-                                                    .font_size(18.0)
-                                                    .line_height(22.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Inspector",
+                                                    DemoTextRole::Emphasis,
+                                                    DemoTextColor::Text,
+                                                ),
                                             )
                                             .with_child(
-                                                Label::new("Drag the divider to rebalance the viewport and detail pane without custom shell code.")
-                                                    .font_size(14.0)
-                                                    .line_height(19.0)
-                                                    .color_when(widget_book_theme_color(
-                                                        &theme_reader,
-                                                        |theme| theme.palette.text_muted,
-                                                    )),
+                                                demo_label(
+                                                    &theme_reader,
+                                                    "Drag the divider to rebalance the viewport and detail pane without custom shell code.",
+                                                    DemoTextRole::Supporting,
+                                                    DemoTextColor::Muted,
+                                                ),
                                             ),
                                     ),
                                 )
@@ -3558,49 +3619,57 @@ fn build_size_presets_gallery_with_theme(theme_reader: WidgetBookThemeReader) ->
         panel_with_theme(
             Rc::clone(&theme_reader),
             SIZE_PRESETS_GALLERY_NAME,
-            "Density presets resize the same supported widgets for compact inspectors, comfortable desktop controls, and touch-friendly surfaces.",
+            "Contextual size presets resize the same theme-aware widgets for dense tools, standard application interfaces, and focused actions.",
             Stack::vertical()
                 .spacing(14.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
-                    Stack::horizontal()
-                        .spacing(12.0)
-                        .alignment(Alignment::Start)
-                        .with_child(density_preset_column_with_theme(
-                            Rc::clone(&theme_reader),
-                            ThemeDensity::Compact,
-                        ))
-                        .with_child(density_preset_column_with_theme(
-                            Rc::clone(&theme_reader),
-                            ThemeDensity::Comfortable,
-                        ))
-                        .with_child(density_preset_column_with_theme(
-                            Rc::clone(&theme_reader),
-                            ThemeDensity::Touch,
-                        )),
-                )
-                .with_child(MaximumWidth::new(
-                    GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(
-                        "These samples use each widget's theme-aware defaults instead of fixed demo slots, so height, padding, icons, overlays, tabs, and command rows can be compared directly.",
-                    )
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
-                )),
+                    Flex::horizontal()
+                        .gap(12.0)
+                        .wrap(FlexWrap::Wrap)
+                        .align_items(Alignment::Stretch)
+                        .align_content(FlexAlignContent::Start)
+                        .with_item(
+                            size_preset_column_with_theme(
+                                Rc::clone(&theme_reader),
+                                ControlSize::Small,
+                            ),
+                            size_preset_flex_item(),
+                        )
+                        .with_item(
+                            size_preset_column_with_theme(
+                                Rc::clone(&theme_reader),
+                                ControlSize::Medium,
+                            ),
+                            size_preset_flex_item(),
+                        )
+                        .with_item(
+                            size_preset_column_with_theme(
+                                Rc::clone(&theme_reader),
+                                ControlSize::Large,
+                            ),
+                            size_preset_flex_item(),
+                        ),
+                ),
         ),
     )
 }
 
-fn density_preset_column_with_theme(
+fn size_preset_flex_item() -> FlexItem {
+    FlexItem::new()
+        .grow(1.0)
+        .basis_gap_aware_fraction(1.0 / 3.0)
+        .min_width(SIZE_PRESET_CARD_MIN_WIDTH)
+        .max_width(SIZE_PRESET_CARD_MAX_WIDTH)
+}
+
+fn size_preset_column_with_theme(
     theme_reader: WidgetBookThemeReader,
-    density: ThemeDensity,
+    size: ControlSize,
 ) -> impl Widget {
-    let title = density_preset_title(density);
-    let action_label = density_preset_action_label(density);
-    let input_label = density_preset_input_label(density);
+    let title = size_preset_title(size);
+    let action_label = size_preset_action_label(size);
+    let input_label = size_preset_input_label(size);
     let switch_label = format!("{title} preset switch");
     let checkbox_label = format!("{title} preset checkbox");
     let select_name = format!("{title} preset select");
@@ -3609,139 +3678,129 @@ fn density_preset_column_with_theme(
     let preset_name = format!("{title} preset strip");
     let toolbar_name = format!("{title} preset toolbar");
 
-    SizedBox::new().width(300.0).with_child(
-        StoryCard::new(
-            Stack::vertical()
-                .spacing(10.0)
-                .alignment(Alignment::Start)
-                .with_child(
-                    Label::new(title)
-                        .font_size(15.0)
-                        .line_height(19.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text
-                        })),
-                )
-                .with_child(MaximumWidth::new(
-                    250.0,
-                    Label::new(density_preset_caption(density))
-                        .font_size(12.0)
-                        .line_height(16.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
-                ))
-                .with_child(
-                    Button::new(action_label)
-                        .icon(IconGlyph::Check)
-                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                )
-                .with_child(
-                    SizedBox::new().width(230.0).with_child(
-                        TextInput::new(input_label)
-                            .value("Layer name")
-                            .leading_icon(IconGlyph::Search)
-                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                    ),
-                )
-                .with_child(
-                    Checkbox::new(checkbox_label)
-                        .checked(true)
-                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                )
-                .with_child(
-                    Switch::new(switch_label)
-                        .on(true)
-                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                )
-                .with_child(
-                    SizedBox::new().width(230.0).with_child(
-                        Slider::new(slider_name)
-                            .range(0.0, 100.0)
-                            .value(64.0)
-                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(230.0).with_child(
-                        Select::new(select_name)
-                            .options(BLEND_MODE_OPTIONS)
-                            .selected(1)
-                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(250.0).with_child(
-                        TabBar::new(tab_name)
-                            .tabs(["Canvas", "Inspect"])
-                            .selected(1)
-                            .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                    ),
-                )
-                .with_child(
-                    PresetStrip::new(preset_name)
-                        .presets(["8 px", "18 px", "36 px"])
-                        .selected(1)
-                        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
-                )
-                .with_child(
-                    Toolbar::horizontal()
-                        .name(toolbar_name)
-                        .theme_when(widget_book_density_theme_reader(&theme_reader, density))
-                        .with_child(
-                            IconButton::new(IconGlyph::Undo, format!("{title} preset undo"))
-                                .theme_when(widget_book_density_theme_reader(
-                                    &theme_reader,
-                                    density,
-                                )),
-                        )
-                        .with_child(
-                            IconButton::new(IconGlyph::Redo, format!("{title} preset redo"))
-                                .theme_when(widget_book_density_theme_reader(
-                                    &theme_reader,
-                                    density,
-                                )),
-                        )
-                        .with_child(
-                            Button::new(format!("{title} preset apply")).theme_when(
-                                widget_book_density_theme_reader(&theme_reader, density),
-                            ),
-                        ),
+    StoryCard::new(
+        Stack::vertical()
+            .spacing(10.0)
+            .alignment(Alignment::Start)
+            .with_child(demo_label(
+                &theme_reader,
+                title,
+                DemoTextRole::Body,
+                DemoTextColor::Text,
+            ))
+            .with_child(MaximumWidth::new(
+                250.0,
+                demo_label(
+                    &theme_reader,
+                    size_preset_caption(size),
+                    DemoTextRole::Metadata,
+                    DemoTextColor::Muted,
                 ),
-        )
-        .theme_when(widget_book_density_theme_reader(&theme_reader, density)),
+            ))
+            .with_child(
+                Button::new(action_label)
+                    .icon(IconGlyph::Check)
+                    .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+            )
+            .with_child(
+                SizedBox::new().width(230.0).with_child(
+                    TextInput::new(input_label)
+                        .value("Layer name")
+                        .leading_icon(IconGlyph::Search)
+                        .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                ),
+            )
+            .with_child(
+                Checkbox::new(checkbox_label)
+                    .checked(true)
+                    .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+            )
+            .with_child(
+                Switch::new(switch_label)
+                    .on(true)
+                    .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+            )
+            .with_child(
+                SizedBox::new().width(230.0).with_child(
+                    Slider::new(slider_name)
+                        .range(0.0, 100.0)
+                        .value(64.0)
+                        .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                ),
+            )
+            .with_child(
+                SizedBox::new().width(230.0).with_child(
+                    Select::new(select_name)
+                        .options(BLEND_MODE_OPTIONS)
+                        .selected(1)
+                        .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                ),
+            )
+            .with_child(
+                SizedBox::new().width(250.0).with_child(
+                    TabBar::new(tab_name)
+                        .tabs(["Canvas", "Inspect"])
+                        .selected(1)
+                        .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                ),
+            )
+            .with_child(
+                PresetStrip::new(preset_name)
+                    .presets(["8 px", "18 px", "36 px"])
+                    .selected(1)
+                    .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+            )
+            .with_child(
+                Toolbar::horizontal()
+                    .name(toolbar_name)
+                    .theme_when(widget_book_size_theme_reader(&theme_reader, size))
+                    .with_child(
+                        IconButton::new(IconGlyph::Undo, format!("{title} preset undo"))
+                            .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                    )
+                    .with_child(
+                        IconButton::new(IconGlyph::Redo, format!("{title} preset redo"))
+                            .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                    )
+                    .with_child(
+                        Button::new("Apply")
+                            .semantic_name(format!("{title} preset apply"))
+                            .theme_when(widget_book_size_theme_reader(&theme_reader, size)),
+                    ),
+            ),
     )
+    .theme_when(widget_book_size_theme_reader(&theme_reader, size))
 }
 
-fn density_preset_title(density: ThemeDensity) -> &'static str {
-    match density {
-        ThemeDensity::Compact => "Compact",
-        ThemeDensity::Comfortable => "Comfortable",
-        ThemeDensity::Touch => "Touch",
+fn size_preset_title(size: ControlSize) -> &'static str {
+    match size {
+        ControlSize::Small => "Small",
+        ControlSize::Medium => "Medium",
+        ControlSize::Large => "Large",
     }
 }
 
-fn density_preset_caption(density: ThemeDensity) -> &'static str {
-    match density {
-        ThemeDensity::Compact => "Dense inspector and toolbar layouts.",
-        ThemeDensity::Comfortable => "Default desktop application sizing.",
-        ThemeDensity::Touch => "Larger targets for pointer and touch input.",
+fn size_preset_caption(size: ControlSize) -> &'static str {
+    match size {
+        ControlSize::Small => "Dense inspectors, configuration panels, and toolbars.",
+        ControlSize::Medium => "Standard desktop application interfaces.",
+        ControlSize::Large => "Hero actions and focused overlays.",
     }
 }
 
-fn density_preset_action_label(density: ThemeDensity) -> &'static str {
-    match density {
-        ThemeDensity::Compact => SIZE_PRESET_COMPACT_ACTION_LABEL,
-        ThemeDensity::Comfortable => SIZE_PRESET_COMFORTABLE_ACTION_LABEL,
-        ThemeDensity::Touch => SIZE_PRESET_TOUCH_ACTION_LABEL,
+fn size_preset_action_label(size: ControlSize) -> &'static str {
+    match size {
+        ControlSize::Small => SIZE_PRESET_SMALL_ACTION_LABEL,
+        ControlSize::Medium => SIZE_PRESET_MEDIUM_ACTION_LABEL,
+        ControlSize::Large => SIZE_PRESET_LARGE_ACTION_LABEL,
     }
 }
 
-fn density_preset_input_label(density: ThemeDensity) -> &'static str {
-    match density {
-        ThemeDensity::Compact => SIZE_PRESET_COMPACT_INPUT_LABEL,
-        ThemeDensity::Comfortable => SIZE_PRESET_COMFORTABLE_INPUT_LABEL,
-        ThemeDensity::Touch => SIZE_PRESET_TOUCH_INPUT_LABEL,
+fn size_preset_input_label(size: ControlSize) -> &'static str {
+    match size {
+        ControlSize::Small => SIZE_PRESET_SMALL_INPUT_LABEL,
+        ControlSize::Medium => SIZE_PRESET_MEDIUM_INPUT_LABEL,
+        ControlSize::Large => SIZE_PRESET_LARGE_INPUT_LABEL,
     }
 }
 
@@ -3896,33 +3955,30 @@ fn build_widget_states_gallery_with_theme(theme_reader: WidgetBookThemeReader) -
                                     .selected(1)
                                     .tab(
                                         "Canvas",
-                                        Label::new("Viewport controls")
-                                            .font_size(13.0)
-                                            .line_height(18.0)
-                                            .color_when(widget_book_theme_color(
-                                                &theme_reader,
-                                                |theme| theme.palette.text_muted,
-                                            )),
+                                        demo_label(
+                                            &theme_reader,
+                                            "Viewport controls",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Muted,
+                                        ),
                                     )
                                     .tab(
                                         "Inspector",
-                                        Label::new("Selected layer properties")
-                                            .font_size(13.0)
-                                            .line_height(18.0)
-                                            .color_when(widget_book_theme_color(
-                                                &theme_reader,
-                                                |theme| theme.palette.text_muted,
-                                            )),
+                                        demo_label(
+                                            &theme_reader,
+                                            "Selected layer properties",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Muted,
+                                        ),
                                     )
                                     .tab(
                                         "Export",
-                                        Label::new("Preset summary")
-                                            .font_size(13.0)
-                                            .line_height(18.0)
-                                            .color_when(widget_book_theme_color(
-                                                &theme_reader,
-                                                |theme| theme.palette.text_muted,
-                                            )),
+                                        demo_label(
+                                            &theme_reader,
+                                            "Preset summary",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Muted,
+                                        ),
                                     ),
                             ),
                         ))
@@ -3971,24 +4027,18 @@ fn build_widget_states_gallery_with_theme(theme_reader: WidgetBookThemeReader) -
                                     Stack::vertical()
                                         .spacing(6.0)
                                         .alignment(Alignment::Start)
-                                        .with_child(
-                                            Label::new("Layer blend")
-                                                .font_size(13.0)
-                                                .line_height(18.0)
-                                                .color_when(widget_book_theme_color(
-                                                    &theme_reader,
-                                                    |theme| theme.palette.text,
-                                                )),
-                                        )
-                                        .with_child(
-                                            Label::new("Screen, 72% opacity")
-                                                .font_size(12.0)
-                                                .line_height(16.0)
-                                                .color_when(widget_book_theme_color(
-                                                    &theme_reader,
-                                                    |theme| theme.palette.text_muted,
-                                                )),
-                                        ),
+                                        .with_child(demo_label(
+                                            &theme_reader,
+                                            "Layer blend",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Text,
+                                        ))
+                                        .with_child(demo_label(
+                                            &theme_reader,
+                                            "Screen, 72% opacity",
+                                            DemoTextRole::Metadata,
+                                            DemoTextColor::Muted,
+                                        )),
                                 )
                                 .theme(theme_reader())
                                 .open(true),
@@ -4010,30 +4060,25 @@ where
     L: Widget + 'static,
     R: Widget + 'static,
 {
-    let separator_theme = Rc::clone(&theme_reader);
-    SizedBox::new().width(WIDGET_STATE_ROW_WIDTH).with_child(
-        StoryCard::new(
-            Stack::horizontal()
-                .spacing(14.0)
-                .alignment(Alignment::Stretch)
-                .with_child(widget_state_column_with_theme(
-                    Rc::clone(&theme_reader),
-                    left_title,
-                    left_body,
-                ))
-                .with_child(
-                    Separator::vertical()
-                        .theme_when(move || separator_theme())
-                        .inset(0.0),
-                )
-                .with_child(widget_state_column_with_theme(
-                    Rc::clone(&theme_reader),
-                    right_title,
-                    right_body,
-                )),
-        )
-        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+    StoryCard::new(
+        Flex::horizontal()
+            .gap(14.0)
+            .wrap(FlexWrap::Wrap)
+            .align_items(Alignment::Stretch)
+            .with_item(
+                widget_state_column_with_theme(Rc::clone(&theme_reader), left_title, left_body),
+                FlexItem::new()
+                    .basis_gap_aware_fraction(0.5)
+                    .min_width(280.0),
+            )
+            .with_item(
+                widget_state_column_with_theme(Rc::clone(&theme_reader), right_title, right_body),
+                FlexItem::new()
+                    .basis_gap_aware_fraction(0.5)
+                    .min_width(280.0),
+            ),
     )
+    .theme_when(clone_widget_book_theme_reader(&theme_reader))
 }
 
 fn widget_state_column_with_theme<W>(
@@ -4044,20 +4089,16 @@ fn widget_state_column_with_theme<W>(
 where
     W: Widget + 'static,
 {
-    SizedBox::new().width(WIDGET_STATE_COLUMN_WIDTH).with_child(
-        Stack::vertical()
-            .spacing(12.0)
-            .alignment(Alignment::Stretch)
-            .with_child(
-                Label::new(title)
-                    .font_size(14.0)
-                    .line_height(18.0)
-                    .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                        theme.palette.text
-                    })),
-            )
-            .with_child(body),
-    )
+    Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Stretch)
+        .with_child(demo_label(
+            &theme_reader,
+            title,
+            DemoTextRole::Supporting,
+            DemoTextColor::Text,
+        ))
+        .with_child(body)
 }
 
 fn state_sample_with_theme<W>(
@@ -4071,14 +4112,12 @@ where
     Stack::vertical()
         .spacing(5.0)
         .alignment(Alignment::Start)
-        .with_child(
-            Label::new(state)
-                .font_size(11.0)
-                .line_height(14.0)
-                .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-        )
+        .with_child(demo_label(
+            &theme_reader,
+            state,
+            DemoTextRole::Metadata,
+            DemoTextColor::Muted,
+        ))
         .with_child(body)
 }
 
@@ -4086,24 +4125,19 @@ fn widget_book_body_text(
     theme_reader: WidgetBookThemeReader,
     text: impl Into<String>,
 ) -> impl Widget {
-    Label::new(text)
-        .font_size(14.0)
-        .line_height(19.0)
-        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-            theme.palette.text
-        }))
+    demo_label(&theme_reader, text, DemoTextRole::Body, DemoTextColor::Text)
 }
 
 fn widget_book_muted_text(
     theme_reader: WidgetBookThemeReader,
     text: impl Into<String>,
 ) -> impl Widget {
-    Label::new(text)
-        .font_size(13.0)
-        .line_height(18.0)
-        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-            theme.palette.text_muted
-        }))
+    demo_label(
+        &theme_reader,
+        text,
+        DemoTextRole::Supporting,
+        DemoTextColor::Muted,
+    )
 }
 
 fn build_composite_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
@@ -4424,9 +4458,12 @@ fn build_layout_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) 
                                                     .wrap(FlexWrap::Wrap)
                                                     .with_child(
                                                         Surface::field(
-                                                            Label::new("Sized")
-                                                                .font_size(13.0)
-                                                                .line_height(18.0),
+                                                            demo_label(
+                                                                &theme_reader,
+                                                                "Sized",
+                                                                DemoTextRole::Supporting,
+                                                                DemoTextColor::Text,
+                                                            ),
                                                         )
                                                         .padding(Insets::all(8.0))
                                                         .theme_when(
@@ -4437,9 +4474,12 @@ fn build_layout_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) 
                                                     )
                                                     .with_child(
                                                         Surface::field(
-                                                            Label::new("Aligned")
-                                                                .font_size(13.0)
-                                                                .line_height(18.0),
+                                                            demo_label(
+                                                                &theme_reader,
+                                                                "Aligned",
+                                                                DemoTextRole::Supporting,
+                                                                DemoTextColor::Text,
+                                                            ),
                                                         )
                                                         .padding(Insets::all(8.0))
                                                         .theme_when(
@@ -4450,9 +4490,12 @@ fn build_layout_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) 
                                                     )
                                                     .with_child(
                                                         Surface::field(
-                                                            Label::new("Wrapped")
-                                                                .font_size(13.0)
-                                                                .line_height(18.0),
+                                                            demo_label(
+                                                                &theme_reader,
+                                                                "Wrapped",
+                                                                DemoTextRole::Supporting,
+                                                                DemoTextColor::Text,
+                                                            ),
                                                         )
                                                         .padding(Insets::all(8.0))
                                                         .theme_when(
@@ -5065,16 +5108,12 @@ fn build_color_and_imagery_story_with_theme(theme_reader: WidgetBookThemeReader)
                         ColorSwatch::new("Shadow swatch", Color::rgba(0.08, 0.10, 0.14, 0.84))
                             .size(Size::new(64.0, 36.0)),
                     )
-                    .with_child(
-                        Label::new(
-                            "Use swatches for palettes, material chips, and compact property rows.",
-                        )
-                        .font_size(14.0)
-                        .line_height(18.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
-                    ),
+                    .with_child(demo_label(
+                        &theme_reader,
+                        "Use swatches for palettes, material chips, and compact property rows.",
+                        DemoTextRole::Supporting,
+                        DemoTextColor::Muted,
+                    )),
             )
             .with_child(
                 Stack::vertical()
@@ -5126,6 +5165,7 @@ pub fn build_retained_text_benchmark() -> impl Widget {
     const SECTION_COUNT: usize = 72;
     const PARAGRAPHS_PER_SECTION: usize = 4;
 
+    let text = DefaultTheme::default().text;
     let scroll_state = ScrollState::new();
     let mut content = Stack::vertical()
         .spacing(18.0)
@@ -5141,9 +5181,10 @@ pub fn build_retained_text_benchmark() -> impl Widget {
                     Label::new(
                         "The outer scroll view stays retained, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained packet rebuilds focused on atlas text payloads.",
                     )
-                    .font_size(14.0)
-                    .line_height(20.0)
-                    .color(Color::rgba(0.38, 0.46, 0.56, 1.0)),
+                    .style(widget_book_text_style(
+                        text.base,
+                        Color::rgba(0.38, 0.46, 0.56, 1.0),
+                    )),
                 ),
             )
             .with_child(
@@ -5151,9 +5192,10 @@ pub fn build_retained_text_benchmark() -> impl Widget {
                     Label::new(
                         "Each section deliberately uses several long paragraphs so the per-frame upload delta is shaped by text submission rather than button chrome, icons, or image content.",
                     )
-                    .font_size(14.0)
-                    .line_height(20.0)
-                    .color(Color::rgba(0.42, 0.49, 0.58, 1.0)),
+                    .style(widget_book_text_style(
+                        text.base,
+                        Color::rgba(0.42, 0.49, 0.58, 1.0),
+                    )),
                 ),
             ),
     ));
@@ -5169,9 +5211,10 @@ pub fn build_retained_text_benchmark() -> impl Widget {
                         section_index,
                         paragraph_index,
                     ))
-                    .font_size(14.0)
-                    .line_height(20.0)
-                    .color(Color::rgba(0.36, 0.44, 0.53, 1.0)),
+                    .style(widget_book_text_style(
+                        text.base,
+                        Color::rgba(0.36, 0.44, 0.53, 1.0),
+                    )),
                 ),
             );
         }
@@ -5183,18 +5226,14 @@ pub fn build_retained_text_benchmark() -> impl Widget {
                 Stack::vertical()
                     .spacing(10.0)
                     .alignment(Alignment::Stretch)
-                    .with_child(
-                        Label::new(title)
-                            .font_size(20.0)
-                            .line_height(24.0)
-                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
-                    )
-                    .with_child(
-                        Label::new(subtitle)
-                            .font_size(14.0)
-                            .line_height(19.0)
-                            .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
-                    )
+                    .with_child(Label::new(title).style(widget_book_text_style(
+                        text.xl,
+                        Color::rgba(0.11, 0.15, 0.21, 1.0),
+                    )))
+                    .with_child(Label::new(subtitle).style(widget_book_text_style(
+                        text.base,
+                        Color::rgba(0.44, 0.51, 0.60, 1.0),
+                    )))
                     .with_child(body),
             ),
         ));
@@ -5408,6 +5447,7 @@ fn build_color_validation_row(
     swatches: [(&'static str, Color); 2],
     swatch_min_width: f32,
 ) -> impl Widget {
+    let text = DefaultTheme::default().text;
     NamedSection::new(
         title,
         Background::new(
@@ -5417,18 +5457,14 @@ fn build_color_validation_row(
                 Stack::vertical()
                     .spacing(12.0)
                     .alignment(Alignment::Stretch)
-                    .with_child(
-                        Label::new(title)
-                            .font_size(18.0)
-                            .line_height(22.0)
-                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
-                    )
-                    .with_child(
-                        Label::new(description)
-                            .font_size(14.0)
-                            .line_height(20.0)
-                            .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
-                    )
+                    .with_child(Label::new(title).style(widget_book_text_style(
+                        text.lg,
+                        Color::rgba(0.11, 0.15, 0.21, 1.0),
+                    )))
+                    .with_child(Label::new(description).style(widget_book_text_style(
+                        text.base,
+                        Color::rgba(0.40, 0.47, 0.56, 1.0),
+                    )))
                     .with_child(
                         Stack::horizontal()
                             .spacing(18.0)
@@ -5455,6 +5491,7 @@ fn build_color_validation_quad_row(
     swatches: [(&'static str, Color); 4],
     swatch_min_width: f32,
 ) -> impl Widget {
+    let text = DefaultTheme::default().text;
     NamedSection::new(
         title,
         Background::new(
@@ -5464,18 +5501,14 @@ fn build_color_validation_quad_row(
                 Stack::vertical()
                     .spacing(12.0)
                     .alignment(Alignment::Stretch)
-                    .with_child(
-                        Label::new(title)
-                            .font_size(18.0)
-                            .line_height(22.0)
-                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
-                    )
-                    .with_child(
-                        Label::new(description)
-                            .font_size(14.0)
-                            .line_height(20.0)
-                            .color(Color::rgba(0.40, 0.47, 0.56, 1.0)),
-                    )
+                    .with_child(Label::new(title).style(widget_book_text_style(
+                        text.lg,
+                        Color::rgba(0.11, 0.15, 0.21, 1.0),
+                    )))
+                    .with_child(Label::new(description).style(widget_book_text_style(
+                        text.base,
+                        Color::rgba(0.40, 0.47, 0.56, 1.0),
+                    )))
                     .with_child(
                         Stack::horizontal()
                             .spacing(18.0)
@@ -5507,22 +5540,22 @@ fn build_color_validation_quad_row(
 }
 
 fn build_color_validation_swatch(name: &'static str, color: Color, min_width: f32) -> impl Widget {
+    let text = DefaultTheme::default().text;
     MinimumWidth::new(
         min_width,
         Stack::vertical()
             .spacing(8.0)
             .alignment(Alignment::Center)
             .with_child(ColorSwatch::new(name, color).size(Size::new(132.0, 56.0)))
-            .with_child(
-                Label::new(name)
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color(Color::rgba(0.16, 0.21, 0.28, 1.0)),
-            ),
+            .with_child(Label::new(name).style(widget_book_text_style(
+                text.sm,
+                Color::rgba(0.16, 0.21, 0.28, 1.0),
+            ))),
     )
 }
 
 fn build_text_rendering_mode_card(spec: TextRenderingModeSpec) -> impl Widget {
+    let text = DefaultTheme::default().text;
     NamedSection::new(
         spec.title,
         SizedBox::new()
@@ -5534,18 +5567,16 @@ fn build_text_rendering_mode_card(spec: TextRenderingModeSpec) -> impl Widget {
                     Stack::vertical()
                         .spacing(10.0)
                         .alignment(Alignment::Stretch)
-                        .with_child(
-                            Label::new(spec.title)
-                                .font_size(17.0)
-                                .line_height(21.0)
-                                .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
-                        )
+                        .with_child(Label::new(spec.title).style(widget_book_text_style(
+                            text.lg,
+                            Color::rgba(0.11, 0.15, 0.21, 1.0),
+                        )))
                         .with_child(MaximumWidth::new(
                             480.0,
-                            Label::new(spec.subtitle)
-                                .font_size(12.0)
-                                .line_height(16.0)
-                                .color(Color::rgba(0.44, 0.51, 0.60, 1.0)),
+                            Label::new(spec.subtitle).style(widget_book_text_style(
+                                text.xs,
+                                Color::rgba(0.44, 0.51, 0.60, 1.0),
+                            )),
                         ))
                         .with_child(build_text_rendering_policy_snippet(spec.setting))
                         .with_child(
@@ -5567,10 +5598,10 @@ fn build_text_rendering_mode_card(spec: TextRenderingModeSpec) -> impl Widget {
                         )
                         .with_child(MaximumWidth::new(
                             480.0,
-                            Label::new(spec.notes)
-                                .font_size(12.0)
-                                .line_height(16.0)
-                                .color(Color::rgba(0.41, 0.48, 0.56, 1.0)),
+                            Label::new(spec.notes).style(widget_book_text_style(
+                                text.xs,
+                                Color::rgba(0.41, 0.48, 0.56, 1.0),
+                            )),
                         )),
                 ),
             )),
@@ -5582,40 +5613,36 @@ fn build_text_rendering_summary_metric(
     value: &'static str,
     caption: &'static str,
 ) -> impl Widget {
+    let text = DefaultTheme::default().text;
     SizedBox::new().width(210.0).with_child(StoryCard::new(
         Stack::vertical()
             .spacing(5.0)
             .alignment(Alignment::Start)
-            .with_child(
-                Label::new(label)
-                    .font_size(11.0)
-                    .line_height(14.0)
-                    .color(Color::rgba(0.48, 0.55, 0.64, 1.0)),
-            )
-            .with_child(
-                Label::new(value)
-                    .font_size(18.0)
-                    .line_height(21.0)
-                    .color(Color::rgba(0.10, 0.14, 0.20, 1.0)),
-            )
-            .with_child(
-                Label::new(caption)
-                    .font_size(11.0)
-                    .line_height(14.0)
-                    .color(Color::rgba(0.38, 0.45, 0.54, 1.0)),
-            ),
+            .with_child(Label::new(label).style(widget_book_text_style(
+                text.xs,
+                Color::rgba(0.48, 0.55, 0.64, 1.0),
+            )))
+            .with_child(Label::new(value).style(widget_book_text_style(
+                text.lg,
+                Color::rgba(0.10, 0.14, 0.20, 1.0),
+            )))
+            .with_child(Label::new(caption).style(widget_book_text_style(
+                text.xs,
+                Color::rgba(0.38, 0.45, 0.54, 1.0),
+            ))),
     ))
 }
 
 fn build_text_rendering_policy_snippet(setting: &'static str) -> impl Widget {
+    let text = DefaultTheme::default().text;
     Background::new(
         Color::rgba(0.94, 0.955, 0.975, 1.0),
         Padding::all(
             8.0,
-            Label::new(setting)
-                .font_size(11.0)
-                .line_height(15.0)
-                .color(Color::rgba(0.20, 0.25, 0.32, 1.0)),
+            Label::new(setting).style(widget_book_mono_text_style(
+                text.xs,
+                Color::rgba(0.20, 0.25, 0.32, 1.0),
+            )),
         ),
     )
 }
@@ -5761,6 +5788,7 @@ fn draw_text_rendering_sample_line(
 }
 
 pub fn build_text_validation_surface() -> impl Widget {
+    let theme = DefaultTheme::default();
     let content = Stack::vertical()
         .spacing(16.0)
         .alignment(Alignment::Stretch)
@@ -5799,9 +5827,10 @@ pub fn build_text_validation_surface() -> impl Widget {
                     MaximumWidth::new(
                         960.0,
                         Label::new("Focus the editor, type with IME or keyboard input, extend selection with Shift+Arrow, and wheel-scroll to inspect visible-line extraction.")
-                            .font_size(13.0)
-                            .line_height(19.0)
-                            .color(Color::rgba(0.43, 0.50, 0.58, 1.0)),
+                            .style(widget_book_text_style(
+                                theme.text.sm,
+                                Color::rgba(0.43, 0.50, 0.58, 1.0),
+                            )),
                     ),
                 )
                 .with_child(
@@ -5815,12 +5844,10 @@ pub fn build_text_validation_surface() -> impl Widget {
                                 .direction(TextDirection::Auto)
                                 .min_width(980.0)
                                 .min_height(300.0)
-                                .text_style(TextStyle {
-                                    font_size: 14.0,
-                                    line_height: 20.0,
-                                    color: Color::rgba(0.15, 0.19, 0.25, 1.0),
-                                    ..TextStyle::default()
-                                }),
+                                .text_style(widget_book_text_style(
+                                    theme.text.base,
+                                    Color::rgba(0.15, 0.19, 0.25, 1.0),
+                                )),
                         ),
                 ),
         ));
@@ -5840,6 +5867,7 @@ fn build_text_validation_probe_card(
     sample: &'static str,
     caption: &'static str,
 ) -> impl Widget {
+    let text = DefaultTheme::default().text;
     NamedSection::new(
         name,
         SizedBox::new()
@@ -5848,29 +5876,24 @@ fn build_text_validation_probe_card(
                 Stack::vertical()
                     .spacing(8.0)
                     .alignment(Alignment::Start)
-                    .with_child(
-                        Label::new(title)
-                            .font_size(13.0)
-                            .line_height(17.0)
-                            .color(Color::rgba(0.45, 0.52, 0.61, 1.0)),
-                    )
-                    .with_child(
-                        Label::new(sample)
-                            .font_size(16.0)
-                            .line_height(21.0)
-                            .color(Color::rgba(0.11, 0.15, 0.21, 1.0)),
-                    )
-                    .with_child(
-                        Label::new(caption)
-                            .font_size(12.0)
-                            .line_height(16.0)
-                            .color(Color::rgba(0.39, 0.47, 0.56, 1.0)),
-                    ),
+                    .with_child(Label::new(title).style(widget_book_text_style(
+                        text.sm,
+                        Color::rgba(0.45, 0.52, 0.61, 1.0),
+                    )))
+                    .with_child(Label::new(sample).style(widget_book_text_style(
+                        text.lg,
+                        Color::rgba(0.11, 0.15, 0.21, 1.0),
+                    )))
+                    .with_child(Label::new(caption).style(widget_book_text_style(
+                        text.xs,
+                        Color::rgba(0.39, 0.47, 0.56, 1.0),
+                    ))),
             )),
     )
 }
 
 pub fn build_text_editing_benchmark() -> impl Widget {
+    let theme = DefaultTheme::default();
     let editor_document = text_editing_benchmark_document();
     let editor_style_spans = text_editing_benchmark_style_spans(&editor_document);
     let editor_style_overlays = text_editing_benchmark_style_overlays(&editor_document);
@@ -5885,12 +5908,10 @@ pub fn build_text_editing_benchmark() -> impl Widget {
                 .min_height(700.0)
                 .style_spans(editor_style_spans)
                 .style_overlays(editor_style_overlays)
-                .text_style(TextStyle {
-                    font_size: 13.0,
-                    line_height: 18.0,
-                    color: Color::rgba(0.13, 0.17, 0.23, 1.0),
-                    ..TextStyle::default()
-                }),
+                .text_style(widget_book_mono_text_style(
+                    theme.text.sm,
+                    Color::rgba(0.13, 0.17, 0.23, 1.0),
+                )),
         ),
     );
     let syntax_panel = panel(
@@ -6151,12 +6172,8 @@ fn text_editing_benchmark_style_overlays(document: &str) -> Vec<TextSurfaceStyle
 }
 
 fn text_editing_benchmark_span_style(color: Color) -> TextStyle {
-    TextStyle {
-        font_size: 13.0,
-        line_height: 18.0,
-        color,
-        ..TextStyle::default()
-    }
+    let text = DefaultTheme::default().text;
+    widget_book_mono_text_style(text.sm, color)
 }
 
 fn collect_text_editing_word_spans(
@@ -6276,6 +6293,7 @@ fn build_text_editing_syntax_preview() -> impl Widget {
 }
 
 fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
+    let text = DefaultTheme::default().text;
     let keyword = ["fn", "let", "match", "if", "while", "return"][line_index % 6];
     let type_name =
         ["Editor", "Glyphs", "Select", "Syntax", "Window", "Frame"][(line_index * 7) % 6];
@@ -6284,55 +6302,46 @@ fn build_text_editing_syntax_line(line_index: usize) -> impl Widget {
     let line = Stack::horizontal()
         .spacing(0.0)
         .alignment(Alignment::Start)
+        .with_child(SizedBox::new().width(44.0).with_child(
+            Label::new(format!("{:>3}", line_index + 1)).style(widget_book_mono_text_style(
+                text.xs,
+                Color::rgba(0.58, 0.64, 0.72, 1.0),
+            )),
+        ))
         .with_child(
-            SizedBox::new().width(44.0).with_child(
-                Label::new(format!("{:>3}", line_index + 1))
-                    .font_size(12.0)
-                    .line_height(18.0)
-                    .color(Color::rgba(0.58, 0.64, 0.72, 1.0)),
+            Label::new(format!("{keyword} ")).style(widget_book_mono_text_style(
+                text.sm,
+                Color::rgba(0.78, 0.34, 0.16, 1.0),
+            )),
+        )
+        .with_child(Label::new(format!("sample_{line_index:03}")).style(
+            widget_book_mono_text_style(text.sm, Color::rgba(0.15, 0.19, 0.26, 1.0)),
+        ))
+        .with_child(
+            Label::new(format!(": {type_name}")).style(widget_book_mono_text_style(
+                text.sm,
+                Color::rgba(0.09, 0.43, 0.58, 1.0),
+            )),
+        )
+        .with_child(
+            Label::new(format!(" = {method}(")).style(widget_book_mono_text_style(
+                text.sm,
+                Color::rgba(0.21, 0.27, 0.35, 1.0),
+            )),
+        )
+        .with_child(
+            Label::new(format!("{:.2}", 0.5 + ((line_index % 17) as f32 * 0.125))).style(
+                widget_book_mono_text_style(text.sm, Color::rgba(0.14, 0.49, 0.24, 1.0)),
             ),
         )
+        .with_child(Label::new("); ").style(widget_book_mono_text_style(
+            text.sm,
+            Color::rgba(0.21, 0.27, 0.35, 1.0),
+        )))
         .with_child(
-            Label::new(format!("{keyword} "))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.78, 0.34, 0.16, 1.0)),
-        )
-        .with_child(
-            Label::new(format!("sample_{line_index:03}"))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.15, 0.19, 0.26, 1.0)),
-        )
-        .with_child(
-            Label::new(format!(": {type_name}"))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.09, 0.43, 0.58, 1.0)),
-        )
-        .with_child(
-            Label::new(format!(" = {method}("))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
-        )
-        .with_child(
-            Label::new(format!("{:.2}", 0.5 + ((line_index % 17) as f32 * 0.125)))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.14, 0.49, 0.24, 1.0)),
-        )
-        .with_child(
-            Label::new("); ")
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.21, 0.27, 0.35, 1.0)),
-        )
-        .with_child(
-            Label::new(format!("// {accent} glyph {}", line_index % 9))
-                .font_size(13.0)
-                .line_height(18.0)
-                .color(Color::rgba(0.36, 0.45, 0.25, 1.0)),
+            Label::new(format!("// {accent} glyph {}", line_index % 9)).style(
+                widget_book_mono_text_style(text.sm, Color::rgba(0.36, 0.45, 0.25, 1.0)),
+            ),
         );
 
     if line_index % 2 == 0 {
@@ -6415,21 +6424,21 @@ where
                 .alignment(Alignment::Stretch)
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(title)
-                        .font_size(20.0)
-                        .line_height(24.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text
-                        })),
+                    demo_label(
+                        &theme_reader,
+                        title,
+                        DemoTextRole::SectionTitle,
+                        DemoTextColor::Text,
+                    ),
                 ))
                 .with_child(MaximumWidth::new(
                     GALLERY_TEXT_MAX_WIDTH,
-                    Label::new(subtitle)
-                        .font_size(14.0)
-                        .line_height(19.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
+                    demo_label(
+                        &theme_reader,
+                        subtitle,
+                        DemoTextRole::Supporting,
+                        DemoTextColor::Muted,
+                    ),
                 ))
                 .with_child(body),
         ),
@@ -6448,32 +6457,68 @@ fn control_story_with_theme<W>(
 where
     W: Widget + 'static,
 {
-    SizedBox::new().width(430.0).with_child(
-        StoryCard::new(
-            Stack::vertical()
-                .spacing(10.0)
-                .alignment(Alignment::Start)
-                .with_child(
-                    Label::new(title)
-                        .font_size(14.0)
-                        .line_height(18.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text
-                        })),
-                )
-                .with_child(MaximumWidth::new(
-                    380.0,
-                    Label::new(caption)
-                        .font_size(12.0)
-                        .line_height(16.0)
-                        .color_when(widget_book_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
-                ))
-                .with_child(body),
-        )
-        .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+    StoryCard::new(
+        Stack::vertical()
+            .spacing(10.0)
+            .alignment(Alignment::Start)
+            .with_child(demo_label(
+                &theme_reader,
+                title,
+                DemoTextRole::Supporting,
+                DemoTextColor::Text,
+            ))
+            .with_child(MaximumWidth::new(
+                CONTROL_STORY_CONTENT_MAX_WIDTH,
+                demo_label(
+                    &theme_reader,
+                    caption,
+                    DemoTextRole::Metadata,
+                    DemoTextColor::Muted,
+                ),
+            ))
+            .with_child(body),
     )
+    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+}
+
+fn responsive_control_story<Story>(story: Story) -> impl Widget
+where
+    Story: Widget + 'static,
+{
+    Flex::horizontal()
+        .wrap(FlexWrap::Wrap)
+        .align_items(Alignment::Stretch)
+        .align_content(FlexAlignContent::Start)
+        .with_item(
+            story,
+            FlexItem::new()
+                .grow(1.0)
+                .basis_gap_aware_fraction(1.0)
+                .min_width(CONTROL_STORY_CARD_MIN_WIDTH)
+                .max_width(CONTROL_STORY_CARD_MAX_WIDTH),
+        )
+}
+
+fn responsive_control_story_pair<Left, Right>(left: Left, right: Right) -> impl Widget
+where
+    Left: Widget + 'static,
+    Right: Widget + 'static,
+{
+    Flex::horizontal()
+        .gap(14.0)
+        .wrap(FlexWrap::Wrap)
+        .align_items(Alignment::Stretch)
+        .align_content(FlexAlignContent::Start)
+        .with_item(left, control_story_flex_item())
+        .with_item(right, control_story_flex_item())
+}
+
+fn control_story_flex_item() -> FlexItem {
+    FlexItem::new()
+        .grow(1.0)
+        .basis_gap_aware_fraction(0.5)
+        .min_width(CONTROL_STORY_CARD_MIN_WIDTH)
+        .max_width(CONTROL_STORY_CARD_MAX_WIDTH)
 }
 
 struct StoryCard {
@@ -6633,10 +6678,11 @@ fn theme_preview_card(
         .spacing(12.0)
         .alignment(Alignment::Start)
         .with_child(
-            Label::new(format!("{title} theme"))
-                .font_size(18.0)
-                .line_height(22.0)
-                .color(theme.palette.text),
+            Label::new(format!("{title} theme")).style(widget_book_theme_text_style(
+                theme,
+                theme.text.lg,
+                theme.palette.text,
+            )),
         )
         .with_child(MaximumWidth::new(
             520.0,
@@ -6644,9 +6690,11 @@ fn theme_preview_card(
                 "{} base surface with {} accent for primary actions.",
                 theme.colors.name, theme.colors.name
             ))
-            .font_size(13.0)
-            .line_height(18.0)
-            .color(theme.palette.placeholder),
+            .style(widget_book_theme_text_style(
+                theme,
+                theme.text.sm,
+                theme.palette.placeholder,
+            )),
         ))
         .with_child(
             SizedBox::new().width(220.0).with_child(
@@ -6665,9 +6713,11 @@ fn theme_preview_card(
                     Label::new(
                         "Reusable controls should stay coherent across all theme directions.",
                     )
-                    .font_size(13.0)
-                    .line_height(18.0)
-                    .color(theme.palette.placeholder),
+                    .style(widget_book_theme_text_style(
+                        theme,
+                        theme.text.sm,
+                        theme.palette.placeholder,
+                    )),
                 )),
         )
         .with_child(
@@ -6813,11 +6863,11 @@ struct LivePerformancePanel {
 
 impl LivePerformancePanel {
     const WIDTH: f32 = 340.0;
-    const HEIGHT: f32 = 158.0;
+    const HEIGHT: f32 = 162.0;
     const PADDING_X: f32 = 12.0;
     const PADDING_Y: f32 = 10.0;
     const CORNER_RADIUS: f32 = 8.0;
-    const HEADER_HEIGHT: f32 = 32.0;
+    const HEADER_HEIGHT: f32 = 36.0;
     const GRAPH_HEIGHT: f32 = 72.0;
     const LEGEND_HEIGHT: f32 = 28.0;
     const BAR_GAP: f32 = 1.0;
@@ -6829,6 +6879,16 @@ impl LivePerformancePanel {
 
     fn with_display(display: Rc<RefCell<LivePerformanceDisplay>>) -> Self {
         Self { display }
+    }
+
+    fn caption_text_style(color: Color) -> TextStyle {
+        let theme = DefaultTheme::default();
+        widget_book_theme_text_style(theme, theme.text.xs, color)
+    }
+
+    fn headline_text_style(color: Color) -> TextStyle {
+        let theme = DefaultTheme::default();
+        widget_book_theme_text_style(theme, theme.text._2xl, color)
     }
 
     fn graph_bounds(bounds: Rect) -> Rect {
@@ -6915,10 +6975,14 @@ impl LivePerformancePanel {
         Self::paint_budget_line(ctx, graph, scale_ms, 33.33);
 
         if display.samples.is_empty() {
-            ctx.draw_text(
+            let style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.72));
+            paint_single_line_aligned_text(
+                ctx,
                 graph,
                 "waiting for frames",
-                text_style(Color::rgba(0.92, 0.96, 1.0, 0.72), 11.0, 14.0),
+                &style,
+                style.line_height,
+                0.5,
             );
             return;
         }
@@ -6951,21 +7015,40 @@ impl LivePerformancePanel {
         }
         ctx.pop_clip();
 
-        ctx.draw_text(
-            Rect::new(graph.x() + 4.0, graph.y() + 2.0, 48.0, 14.0),
-            format!("{scale_ms:.0} ms"),
-            text_style(Color::rgba(0.92, 0.96, 1.0, 0.62), 10.0, 12.0),
+        let scale_style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.62));
+        let scale_label = format!("{scale_ms:.0} ms");
+        paint_single_line_aligned_text(
+            ctx,
+            Rect::new(
+                graph.x() + 4.0,
+                graph.y() + 2.0,
+                48.0,
+                scale_style.line_height,
+            ),
+            &scale_label,
+            &scale_style,
+            scale_style.line_height,
+            0.0,
         );
-        ctx.draw_text(
-            Rect::new(graph.x() + 4.0, graph.max_y() - 16.0, 56.0, 14.0),
+        paint_single_line_aligned_text(
+            ctx,
+            Rect::new(
+                graph.x() + 4.0,
+                graph.max_y() - scale_style.line_height - 2.0,
+                56.0,
+                scale_style.line_height,
+            ),
             "16.7 ms",
-            text_style(Color::rgba(0.92, 0.96, 1.0, 0.62), 10.0, 12.0),
+            &scale_style,
+            scale_style.line_height,
+            0.0,
         );
     }
 
     fn paint_legend(&self, ctx: &mut PaintCtx, bounds: Rect) {
         let mut x = bounds.x();
-        let y = bounds.y() + 4.0;
+        let label_style = Self::caption_text_style(Color::rgba(0.94, 0.97, 1.0, 0.74));
+        let y = bounds.y() + (bounds.height() - label_style.line_height) * 0.5;
         for phase in LIVE_PERFORMANCE_GRAPH_PHASES {
             let label = Self::stage_short_label(phase);
             let label_width = match phase {
@@ -6982,10 +7065,13 @@ impl LivePerformancePanel {
                 Rect::new(x, y + 4.0, 7.0, 7.0),
                 Self::stage_color(phase, 0.95),
             );
-            ctx.draw_text(
-                Rect::new(x + 10.0, y, label_width - 10.0, 16.0),
+            paint_single_line_aligned_text(
+                ctx,
+                Rect::new(x + 10.0, y, label_width - 10.0, label_style.line_height),
                 label,
-                text_style(Color::rgba(0.94, 0.97, 1.0, 0.74), 10.0, 13.0),
+                &label_style,
+                label_style.line_height,
+                0.0,
             );
             x += label_width;
         }
@@ -7085,35 +7171,47 @@ impl Widget for LivePerformancePanel {
             )
         };
 
-        ctx.draw_text(
+        let fps_style = Self::headline_text_style(Color::rgba(0.98, 1.0, 1.0, 0.96));
+        paint_single_line_aligned_text(
+            ctx,
             Rect::new(
                 ctx.bounds().x() + Self::PADDING_X,
                 header_y,
                 118.0,
                 Self::HEADER_HEIGHT,
             ),
-            fps_text,
-            text_style(Color::rgba(0.98, 1.0, 1.0, 0.96), 22.0, 28.0),
+            &fps_text,
+            &fps_style,
+            fps_style.line_height,
+            0.0,
         );
-        ctx.draw_text(
+        let detail_style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.76));
+        paint_single_line_aligned_text(
+            ctx,
             Rect::new(
                 ctx.bounds().x() + 136.0,
-                header_y + 2.0,
+                header_y,
                 ctx.bounds().width() - 148.0,
-                15.0,
+                detail_style.line_height,
             ),
-            frame_text,
-            text_style(Color::rgba(0.92, 0.96, 1.0, 0.76), 11.0, 14.0),
+            &frame_text,
+            &detail_style,
+            detail_style.line_height,
+            0.0,
         );
-        ctx.draw_text(
+        let muted_detail_style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.66));
+        paint_single_line_aligned_text(
+            ctx,
             Rect::new(
                 ctx.bounds().x() + 136.0,
-                header_y + 17.0,
+                header_y + detail_style.line_height,
                 ctx.bounds().width() - 148.0,
-                15.0,
+                muted_detail_style.line_height,
             ),
-            slowest_text,
-            text_style(Color::rgba(0.92, 0.96, 1.0, 0.66), 11.0, 14.0),
+            &slowest_text,
+            &muted_detail_style,
+            muted_detail_style.line_height,
+            0.0,
         );
 
         self.paint_graph(ctx, &display, Self::graph_bounds(ctx.bounds()));
@@ -7149,13 +7247,6 @@ impl Widget for LivePerformancePanel {
         node.value = Some(SemanticsValue::Text(value));
         ctx.push(node);
     }
-}
-
-fn text_style(color: Color, size: f32, line_height: f32) -> TextStyle {
-    let mut style = TextStyle::new(color);
-    style.font_size = size;
-    style.line_height = line_height;
-    style
 }
 
 fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
@@ -8934,7 +9025,7 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_size_presets_section_exposes_density_samples() {
+    fn widget_book_size_presets_section_exposes_contextual_size_samples() {
         let root = SizedBox::new().width(1040.0).height(760.0).with_child(
             super::build_size_presets_gallery_with_theme(super::default_widget_book_theme_reader()),
         );
@@ -8964,21 +9055,151 @@ mod tests {
                 .map(|node| node.bounds.height())
                 .unwrap_or_else(|| panic!("missing {name} preset action button"))
         };
-        let compact_button = button_height(super::SIZE_PRESET_COMPACT_ACTION_LABEL);
-        let comfortable_button = button_height(super::SIZE_PRESET_COMFORTABLE_ACTION_LABEL);
-        let touch_button = button_height(super::SIZE_PRESET_TOUCH_ACTION_LABEL);
+        let small_button = button_height(super::SIZE_PRESET_SMALL_ACTION_LABEL);
+        let medium_button = button_height(super::SIZE_PRESET_MEDIUM_ACTION_LABEL);
+        let large_button = button_height(super::SIZE_PRESET_LARGE_ACTION_LABEL);
 
-        assert!(compact_button < comfortable_button);
-        assert!(comfortable_button < touch_button);
-
-        for name in [
-            super::SIZE_PRESET_COMPACT_INPUT_LABEL,
-            super::SIZE_PRESET_COMFORTABLE_INPUT_LABEL,
-            super::SIZE_PRESET_TOUCH_INPUT_LABEL,
+        assert!(small_button < medium_button);
+        assert!(medium_button < large_button);
+        for (actual, size) in [
+            (small_button, super::ControlSize::Small),
+            (medium_button, super::ControlSize::Medium),
+            (large_button, super::ControlSize::Large),
         ] {
-            assert!(semantics.iter().any(|node| {
-                node.role == SemanticsRole::TextInput && node.name.as_deref() == Some(name)
-            }));
+            let expected = DefaultTheme::default().with_size(size).metrics.min_height;
+            assert!(
+                (actual - expected).abs() < 0.01,
+                "expected {size:?} action height {expected}, got {actual}"
+            );
+        }
+
+        for (name, size) in [
+            (
+                super::SIZE_PRESET_SMALL_INPUT_LABEL,
+                super::ControlSize::Small,
+            ),
+            (
+                super::SIZE_PRESET_MEDIUM_INPUT_LABEL,
+                super::ControlSize::Medium,
+            ),
+            (
+                super::SIZE_PRESET_LARGE_INPUT_LABEL,
+                super::ControlSize::Large,
+            ),
+        ] {
+            let node = semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::TextInput && node.name.as_deref() == Some(name)
+                })
+                .unwrap_or_else(|| panic!("missing {name}"));
+            let expected = DefaultTheme::default().with_size(size).metrics.min_height;
+            assert!(
+                (node.bounds.height() - expected).abs() < 0.01,
+                "expected {size:?} input height {expected}, got {:?}",
+                node.bounds
+            );
+        }
+    }
+
+    #[test]
+    fn widget_book_size_presets_wrap_without_overflow_at_narrow_width() {
+        const VIEW_WIDTH: f32 = 420.0;
+        let root = SizedBox::new().width(VIEW_WIDTH).height(1800.0).with_child(
+            super::build_size_presets_gallery_with_theme(super::default_widget_book_theme_reader()),
+        );
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Narrow size presets").root(root))
+            .build()
+            .expect("narrow size preset runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("narrow size presets should render");
+        let semantics = runtime
+            .semantics(window_id)
+            .expect("narrow size preset semantics should exist");
+
+        let action_bounds = |name: &str| {
+            semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::Button && node.name.as_deref() == Some(name)
+                })
+                .map(|node| node.bounds)
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        let small = action_bounds(super::SIZE_PRESET_SMALL_ACTION_LABEL);
+        let medium = action_bounds(super::SIZE_PRESET_MEDIUM_ACTION_LABEL);
+        let large = action_bounds(super::SIZE_PRESET_LARGE_ACTION_LABEL);
+
+        for bounds in [small, medium, large] {
+            assert!(
+                bounds.x() >= 0.0 && bounds.max_x() <= VIEW_WIDTH + 0.01,
+                "size preset action should remain inside the narrow viewport: {bounds:?}"
+            );
+        }
+        assert!(
+            small.y() < medium.y() && medium.y() < large.y(),
+            "narrow size preset cards should wrap into separate rows: {small:?}, {medium:?}, {large:?}"
+        );
+    }
+
+    #[test]
+    fn control_story_pairs_keep_two_columns_wide_and_wrap_narrow() {
+        const FIRST_ACTION: &str = "First responsive story action";
+        const SECOND_ACTION: &str = "Second responsive story action";
+
+        let render_actions = |width: f32| {
+            let theme_reader = super::default_widget_book_theme_reader();
+            let row = super::responsive_control_story_pair(
+                super::control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "First story",
+                    "Responsive story caption",
+                    sui::Button::new(FIRST_ACTION),
+                ),
+                super::control_story_with_theme(
+                    Rc::clone(&theme_reader),
+                    "Second story",
+                    "Responsive story caption",
+                    sui::Button::new(SECOND_ACTION),
+                ),
+            );
+            let root = SizedBox::new().width(width).height(800.0).with_child(row);
+            let mut runtime = Application::new()
+                .window(WindowBuilder::new().title("Responsive stories").root(root))
+                .build()
+                .expect("responsive story runtime should build");
+            let window_id = runtime.window_ids()[0];
+            runtime
+                .render(window_id)
+                .expect("responsive stories should render");
+            let semantics = runtime
+                .semantics(window_id)
+                .expect("responsive story semantics should exist");
+            [FIRST_ACTION, SECOND_ACTION].map(|name| {
+                semantics
+                    .iter()
+                    .find(|node| {
+                        node.role == SemanticsRole::Button && node.name.as_deref() == Some(name)
+                    })
+                    .map(|node| node.bounds)
+                    .unwrap_or_else(|| panic!("missing {name}"))
+            })
+        };
+
+        let [wide_first, wide_second] = render_actions(1040.0);
+        assert!((wide_first.y() - wide_second.y()).abs() < 0.01);
+        assert!(wide_first.x() < wide_second.x());
+
+        let [narrow_first, narrow_second] = render_actions(420.0);
+        assert!(narrow_first.y() < narrow_second.y());
+        for bounds in [narrow_first, narrow_second] {
+            assert!(
+                bounds.x() >= 0.0 && bounds.max_x() <= 420.01,
+                "responsive story action should remain inside the narrow viewport: {bounds:?}"
+            );
         }
     }
 
@@ -9744,7 +9965,7 @@ mod tests {
                         && node.name.as_deref() == Some(NUMBER_INPUT_NAME)
                 })
                 .and_then(|node| match node.value {
-                    Some(SemanticsValue::Number(value)) => Some(value),
+                    Some(SemanticsValue::Range { value, .. }) => Some(value),
                     _ => None,
                 })
                 .expect("default number input semantics value present");
@@ -9802,7 +10023,7 @@ mod tests {
                         && node.name.as_deref() == Some(NUMBER_INPUT_NAME)
                 })
                 .and_then(|node| match node.value {
-                    Some(SemanticsValue::Number(value)) => Some(value),
+                    Some(SemanticsValue::Range { value, .. }) => Some(value),
                     _ => None,
                 })
                 .expect("configured number input semantics value present");
@@ -9909,6 +10130,23 @@ mod tests {
 
         assert!(root.bounds.width() <= LivePerformancePanel::WIDTH);
         assert!(root.bounds.height() > 0.0);
+    }
+
+    #[test]
+    fn live_performance_panel_uses_theme_text_tokens_and_font_stack() {
+        let theme = DefaultTheme::default();
+        let caption = LivePerformancePanel::caption_text_style(sui::Color::WHITE);
+        let headline = LivePerformancePanel::headline_text_style(sui::Color::WHITE);
+
+        assert_eq!(caption.font_size, theme.text.xs.size);
+        assert_eq!(caption.line_height, theme.text.xs.line_height);
+        assert_eq!(headline.font_size, theme.text._2xl.size);
+        assert_eq!(headline.line_height, theme.text._2xl.line_height);
+        assert_eq!(caption.font_families, theme.body_text_style().font_families);
+        assert_eq!(
+            headline.font_families,
+            theme.body_text_style().font_families
+        );
     }
 
     #[test]

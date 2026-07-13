@@ -147,7 +147,13 @@ fn aligned_text_layout_for_text_with_mode_and_wrap(
     })
 }
 
-pub(crate) fn paint_aligned_text(
+/// Paint text using SUI's shared optical baseline and horizontal alignment path.
+///
+/// `horizontal_alignment` is clamped to `0.0..=1.0`, where `0.0` is left,
+/// `0.5` is centered, and `1.0` is right aligned. Callers should normally pass
+/// `style.line_height` for `line_height`; the separate argument is retained for
+/// compatibility with controls that constrain a token line-height to their slot.
+pub fn paint_aligned_text(
     ctx: &mut PaintCtx,
     rect: Rect,
     text: &str,
@@ -200,7 +206,8 @@ pub(crate) fn paint_aligned_text_with_mode(
     ctx.draw_text(fallback_rect, text.to_string(), style.clone());
 }
 
-pub(crate) fn paint_single_line_aligned_text(
+/// Paint one unwrapped line using SUI's shared optical baseline alignment path.
+pub fn paint_single_line_aligned_text(
     ctx: &mut PaintCtx,
     rect: Rect,
     text: &str,

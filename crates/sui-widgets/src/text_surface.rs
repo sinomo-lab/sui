@@ -2466,14 +2466,17 @@ mod tests {
             .measurement()
             .height
             .max(base_style.line_height);
-        let slot_height = first_height.max(second_height);
+        // The authored overlay line-height owns the shared row slot even when
+        // the resolved font's measured glyph box is shorter or taller. Arial
+        // happened to match this slot; Segoe UI and Noto Sans need not.
+        let slot_height = 36.0;
         assert!(
             first_height < slot_height,
             "fixture should produce a shorter first line"
         );
 
-        let first_offset = (slot_height - first_height) * 0.5;
-        let second_offset = (slot_height - second_height) * 0.5;
+        let first_offset = (slot_height - first_height).max(0.0) * 0.5;
+        let second_offset = (slot_height - second_height).max(0.0) * 0.5;
         let first_row_top = second.origin.y - slot_height - second_offset;
         assert_approx_eq(first.origin.y, first_row_top + first_offset);
 

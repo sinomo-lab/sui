@@ -39,18 +39,19 @@ pub use composites::{
     ActionCard, ActionTilePaint, BrowserTabBar, BusyIndicator, CalloutPaint, CodePanelPaint,
     CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
     ContextMenu, CoverageDots, CoverageDotsConfig, DetailRow, Dialog, DisclosureButtonPaint,
-    DockPanel, EmptyState, EmptyStatePaint, FieldGroup, FormRow, FormSection, HairlineEdge, Menu,
-    MenuItem, Modal, PanelSection, PlacementBadge, PlacementBadgePaint, Popover, PresetStrip,
-    ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
-    SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, Spinner,
-    StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceBorder,
-    SurfaceElevation, SurfaceRole, TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip,
-    TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
-    paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
-    paint_empty_state, paint_hairline, paint_placement_badge, paint_placement_badge_with,
-    paint_progress_bar, paint_rounded_panel, paint_rounded_rect, paint_section_label,
-    paint_section_label_detail, paint_section_panel, paint_status_badge,
+    DockPanel, Drawer, EmptyState, EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField,
+    HairlineEdge, Menu, MenuItem, Modal, PanelSection, PlacementBadge, PlacementBadgePaint,
+    Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout,
+    SectionLabel, SectionLabelPaint, SectionPanelGeometry, SectionPanelPaint, SegmentedControl,
+    SegmentedControlItem, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar,
+    StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation,
+    SurfaceRole, TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement,
+    detail_row_height_for_value, paint_action_tile, paint_border, paint_callout, paint_code_lines,
+    paint_code_panel, paint_command_button, paint_coverage_dots, paint_coverage_dots_with_config,
+    paint_detail_row_at, paint_disclosure_button, paint_empty_state, paint_hairline,
+    paint_placement_badge, paint_placement_badge_with, paint_progress_bar, paint_rounded_panel,
+    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
+    paint_status_badge,
 };
 pub use containers::{
     Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,
@@ -58,10 +59,11 @@ pub use containers::{
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
 pub use controls::{
-    BUILTIN_ICON_GLYPHS, Button, Checkbox, CheckboxIndicatorState, ComboBox, Divider, Icon,
-    IconButton, IconButtonPaint, IconGlyph, Label, Link, MultilineTextInput, NumberInput,
-    RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea, TextInput,
-    draw_glyph, paint_checkbox_indicator, paint_icon_button, register_builtin_icon_resources,
+    BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState, ComboBox,
+    Divider, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label, Link,
+    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
+    Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator, paint_icon_button,
+    register_builtin_icon_resources,
 };
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, LayerListReorderChange,
@@ -92,7 +94,7 @@ pub use selection::{
     SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
     SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
 };
-pub use text_align::wrap_text_lines;
+pub use text_align::{paint_aligned_text, paint_single_line_aligned_text, wrap_text_lines};
 pub use text_command::{TEXT_COMMAND_EVENT_KIND, TextCommand};
 pub use text_surface::{
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,

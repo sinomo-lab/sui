@@ -7,7 +7,7 @@ use cosmic_text::{Attrs, Family, FeatureTag, FontSystem, Metrics, Stretch, Style
 use sui_core::{Error, FontHandle, Rect, Result};
 use ttf_parser::GlyphId;
 
-use crate::model::{TextSpanId, TextStyle};
+use crate::model::{FontFamilyStack, TextSpanId, TextStyle};
 use crate::style::{FontFeatures, FontStretch, FontStyle, FontWeight};
 
 /// Map sui-text's `FontWeight` to cosmic-text's `Weight` (drives bold-face selection and, for
@@ -276,6 +276,8 @@ impl FontContext {
                 Error::new(format!("font handle {} is not registered", handle.get()))
             })?;
             Some(spec.family_name.clone())
+        } else if let Some(families) = style.font_families {
+            resolve_font_family_name(self.font_system.db(), families, style)
         } else {
             None
         };
@@ -376,6 +378,7 @@ impl TextSystemState {
         let mut font_db = fontdb::Database::new();
         font_db.load_system_fonts();
         load_bundled_fallback_fonts(&mut font_db);
+        configure_platform_generic_families(&mut font_db);
 
         let families = [fontdb::Family::SansSerif];
         let default_font = font_db
@@ -455,12 +458,139 @@ impl TextSystemState {
     }
 }
 
+fn resolve_font_family_name(
+    font_db: &fontdb::Database,
+    stack: FontFamilyStack,
+    style: &TextStyle,
+) -> Option<String> {
+    let families = stack.iter().map(fontdb_family).collect::<Vec<_>>();
+    let font_id = font_db.query(&fontdb::Query {
+        families: &families,
+        weight: Weight(style.weight.value()),
+        stretch: to_cosmic_stretch(style.stretch),
+        style: to_cosmic_style(style.style),
+    })?;
+    let face = font_db.face(font_id)?;
+    face.families
+        .first()
+        .map(|(name, _language)| name.clone())
+        .or_else(|| (!face.post_script_name.is_empty()).then(|| face.post_script_name.clone()))
+}
+
+fn fontdb_family(name: &str) -> Family<'_> {
+    if name.eq_ignore_ascii_case("ui-sans-serif")
+        || name.eq_ignore_ascii_case("system-ui")
+        || name.eq_ignore_ascii_case("-apple-system")
+        || name.eq_ignore_ascii_case("BlinkMacSystemFont")
+        || name.eq_ignore_ascii_case("sans-serif")
+    {
+        Family::SansSerif
+    } else if name.eq_ignore_ascii_case("ui-serif") || name.eq_ignore_ascii_case("serif") {
+        Family::Serif
+    } else if name.eq_ignore_ascii_case("ui-monospace") || name.eq_ignore_ascii_case("monospace") {
+        Family::Monospace
+    } else if name.eq_ignore_ascii_case("cursive") {
+        Family::Cursive
+    } else if name.eq_ignore_ascii_case("fantasy") {
+        Family::Fantasy
+    } else {
+        Family::Name(name)
+    }
+}
+
+#[cfg(target_os = "windows")]
+const PLATFORM_SANS_FAMILIES: &[&str] = &["Segoe UI Variable Text", "Segoe UI", "Arial"];
+#[cfg(target_os = "windows")]
+const PLATFORM_SERIF_FAMILIES: &[&str] = &["Cambria", "Georgia", "Times New Roman"];
+#[cfg(target_os = "windows")]
+const PLATFORM_MONO_FAMILIES: &[&str] =
+    &["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"];
+
+#[cfg(target_os = "macos")]
+const PLATFORM_SANS_FAMILIES: &[&str] =
+    &["SF Pro Text", "SF Pro Display", "Helvetica Neue", "Arial"];
+#[cfg(target_os = "macos")]
+const PLATFORM_SERIF_FAMILIES: &[&str] = &["New York", "Times New Roman", "Georgia"];
+#[cfg(target_os = "macos")]
+const PLATFORM_MONO_FAMILIES: &[&str] = &["SFMono-Regular", "SF Mono", "Menlo", "Monaco"];
+
+#[cfg(all(
+    target_arch = "wasm32",
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+const PLATFORM_SANS_FAMILIES: &[&str] = &["Noto Sans"];
+#[cfg(all(
+    target_arch = "wasm32",
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+const PLATFORM_SERIF_FAMILIES: &[&str] = &["Noto Serif"];
+#[cfg(all(
+    target_arch = "wasm32",
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+const PLATFORM_MONO_FAMILIES: &[&str] = &["Noto Sans Mono"];
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+const PLATFORM_SANS_FAMILIES: &[&str] = &["Noto Sans", "Inter", "DejaVu Sans", "Liberation Sans"];
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+const PLATFORM_SERIF_FAMILIES: &[&str] = &["Noto Serif", "DejaVu Serif", "Liberation Serif"];
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+const PLATFORM_MONO_FAMILIES: &[&str] = &["Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono"];
+
+fn configure_platform_generic_families(font_db: &mut fontdb::Database) {
+    if let Some(family) = first_installed_family(font_db, PLATFORM_SANS_FAMILIES) {
+        font_db.set_sans_serif_family(family);
+    }
+    if let Some(family) = first_installed_family(font_db, PLATFORM_SERIF_FAMILIES) {
+        font_db.set_serif_family(family);
+    }
+    if let Some(family) = first_installed_family(font_db, PLATFORM_MONO_FAMILIES) {
+        font_db.set_monospace_family(family);
+    }
+}
+
+fn first_installed_family(font_db: &fontdb::Database, candidates: &[&str]) -> Option<String> {
+    candidates.iter().find_map(|candidate| {
+        font_db.faces().find_map(|face| {
+            face.families.iter().find_map(|(family, _language)| {
+                family
+                    .eq_ignore_ascii_case(candidate)
+                    .then(|| family.clone())
+            })
+        })
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 fn load_bundled_fallback_fonts(font_db: &mut fontdb::Database) {
-    let ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+    load_bundled_wasm_fallback_fonts(font_db);
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn load_bundled_wasm_fallback_fonts(font_db: &mut fontdb::Database) {
+    let sans_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
         include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
     )));
-    let _ = set_sans_serif_family_from_loaded_faces(font_db, &ids);
+    let _ = set_sans_serif_family_from_loaded_faces(font_db, &sans_ids);
+
+    let serif_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+        include_bytes!("../assets/NotoSerif-Variable.ttf").to_vec(),
+    )));
+    let _ = set_serif_family_from_loaded_faces(font_db, &serif_ids);
+
+    let mono_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+        include_bytes!("../assets/NotoSansMono-Variable.ttf").to_vec(),
+    )));
+    let _ = set_monospace_family_from_loaded_faces(font_db, &mono_ids);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -471,16 +601,45 @@ fn set_sans_serif_family_from_loaded_faces(
     font_db: &mut fontdb::Database,
     ids: &[fontdb::ID],
 ) -> Option<String> {
+    let name = preferred_family_from_loaded_faces(font_db, ids, "Noto Sans")?;
+    font_db.set_sans_serif_family(name.clone());
+    Some(name)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn set_serif_family_from_loaded_faces(
+    font_db: &mut fontdb::Database,
+    ids: &[fontdb::ID],
+) -> Option<String> {
+    let name = preferred_family_from_loaded_faces(font_db, ids, "Noto Serif")?;
+    font_db.set_serif_family(name.clone());
+    Some(name)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn set_monospace_family_from_loaded_faces(
+    font_db: &mut fontdb::Database,
+    ids: &[fontdb::ID],
+) -> Option<String> {
+    let name = preferred_family_from_loaded_faces(font_db, ids, "Noto Sans Mono")?;
+    font_db.set_monospace_family(name.clone());
+    Some(name)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn preferred_family_from_loaded_faces(
+    font_db: &fontdb::Database,
+    ids: &[fontdb::ID],
+    preferred: &str,
+) -> Option<String> {
     let mut fallback = None;
     for id in ids {
         let Some(face_info) = font_db.face(*id) else {
             continue;
         };
         for (name, _language) in &face_info.families {
-            if name == "Noto Sans" {
-                let name = name.clone();
-                font_db.set_sans_serif_family(name.clone());
-                return Some(name);
+            if name.eq_ignore_ascii_case(preferred) {
+                return Some(name.clone());
             }
             fallback.get_or_insert_with(|| name.clone());
         }
@@ -489,12 +648,7 @@ fn set_sans_serif_family_from_loaded_faces(
         }
     }
 
-    if let Some(name) = fallback {
-        font_db.set_sans_serif_family(name.clone());
-        Some(name)
-    } else {
-        None
-    }
+    fallback
 }
 
 #[cfg(test)]
@@ -527,5 +681,115 @@ mod font_database_tests {
             .face(font_id)
             .expect("resolved bundled font face should still be registered");
         assert!(face.families.iter().any(|(name, _)| name == "Noto Sans"));
+    }
+
+    #[test]
+    fn bundled_wasm_fonts_resolve_all_theme_generic_stacks_on_native_tests() {
+        let mut font_db = fontdb::Database::new();
+        load_bundled_wasm_fallback_fonts(&mut font_db);
+        configure_platform_generic_families(&mut font_db);
+
+        assert_eq!(font_db.family_name(&fontdb::Family::SansSerif), "Noto Sans");
+        assert_eq!(font_db.family_name(&fontdb::Family::Serif), "Noto Serif");
+        assert_eq!(
+            font_db.family_name(&fontdb::Family::Monospace),
+            "Noto Sans Mono"
+        );
+
+        let cases = [
+            (
+                FontFamilyStack::new("ui-sans-serif", &["system-ui", "sans-serif"]),
+                "Noto Sans",
+            ),
+            (
+                FontFamilyStack::new("ui-serif", &["Georgia", "serif"]),
+                "Noto Serif",
+            ),
+            (
+                FontFamilyStack::new("ui-monospace", &["Consolas", "monospace"]),
+                "Noto Sans Mono",
+            ),
+        ];
+
+        for (stack, expected) in cases {
+            let style = TextStyle {
+                font_families: Some(stack),
+                ..TextStyle::default()
+            };
+            let resolved = resolve_font_family_name(&font_db, stack, &style);
+            assert_eq!(resolved.as_deref(), Some(expected));
+
+            let font_id = font_db
+                .query(&fontdb::Query {
+                    families: &[fontdb_family(stack.primary)],
+                    weight: fontdb::Weight::NORMAL,
+                    stretch: fontdb::Stretch::Normal,
+                    style: fontdb::Style::Normal,
+                })
+                .expect("bundled generic family should resolve to an actual face");
+            let face = font_db
+                .face(font_id)
+                .expect("resolved bundled face should remain registered");
+            assert!(face.families.iter().any(|(name, _)| name == expected));
+            assert!(
+                font_db
+                    .with_face_data(font_id, |data, _index| !data.is_empty())
+                    .unwrap_or(false),
+                "resolved {expected} face should expose font bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn theme_family_stack_resolves_generic_alias_after_missing_family() {
+        let mut font_db = fontdb::Database::new();
+        let ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+            include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
+        )));
+        set_sans_serif_family_from_loaded_faces(&mut font_db, &ids)
+            .expect("bundled sans font should expose a family name");
+        let style = TextStyle {
+            font_families: Some(FontFamilyStack::new(
+                "Missing UI Family",
+                &["system-ui", "sans-serif"],
+            )),
+            ..TextStyle::default()
+        };
+
+        assert_eq!(
+            resolve_font_family_name(
+                &font_db,
+                style.font_families.expect("test family stack"),
+                &style,
+            )
+            .as_deref(),
+            Some("Noto Sans")
+        );
+    }
+
+    #[test]
+    fn platform_family_preference_uses_first_installed_candidate() {
+        let mut font_db = fontdb::Database::new();
+        font_db.load_font_source(fontdb::Source::Binary(Arc::new(
+            include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
+        )));
+
+        assert_eq!(
+            first_installed_family(&font_db, &["Missing UI Family", "Noto Sans"]).as_deref(),
+            Some("Noto Sans")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_generic_sans_prefers_the_first_installed_ui_family() {
+        let mut font_db = fontdb::Database::new();
+        font_db.load_system_fonts();
+        let expected = first_installed_family(&font_db, PLATFORM_SANS_FAMILIES)
+            .expect("Windows should provide at least one supported UI font");
+
+        configure_platform_generic_families(&mut font_db);
+
+        assert_eq!(font_db.family_name(&fontdb::Family::SansSerif), expected);
     }
 }
