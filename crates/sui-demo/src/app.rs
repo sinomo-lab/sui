@@ -3,11 +3,11 @@ use std::{cell::RefCell, rc::Rc};
 #[cfg(test)]
 use crate::widget_book::build_widget_book_gallery;
 use crate::widget_book::{
-    LivePerformanceRoot, build_color_validation_surface, build_retained_text_benchmark,
-    build_text_editing_benchmark, build_text_rendering_comparison_surface,
-    build_text_validation_surface, build_theme_demo_surface, build_widget_book_gallery_with_theme,
-    default_widget_book_state, register_widget_book_images, set_widget_book_hdr_theme_mode,
-    widget_book_hdr_theme_mode,
+    LivePerformanceRoot, build_color_validation_surface_with_theme,
+    build_retained_text_benchmark_with_theme, build_text_editing_benchmark,
+    build_text_rendering_comparison_surface_with_theme, build_text_validation_surface,
+    build_theme_demo_surface, build_widget_book_gallery_with_theme, default_widget_book_state,
+    register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
 };
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
@@ -95,6 +95,7 @@ const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
 const SETTINGS_SCROLL_NAME: &str = "Settings controls";
+const SETTINGS_SCROLL_BAR_NAME: &str = "Settings scroll bar";
 const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
     ["Automatic", "Force SDR", "Prefer wide gamut", "Prefer HDR"];
 const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
@@ -450,7 +451,9 @@ impl DevBrowserShell {
             ScrollView::vertical(DevDemoPickerGrid::new(demo_buttons))
                 .state(picker_scroll_state.clone())
                 .name(DEV_SHELL_PICKER_SCROLL_NAME),
-            ScrollBar::vertical(picker_scroll_state).name(DEV_SHELL_PICKER_SCROLL_BAR_NAME),
+            ScrollBar::vertical(picker_scroll_state)
+                .name(DEV_SHELL_PICKER_SCROLL_BAR_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
         );
 
         let tab_titles = demo_titles.clone();
@@ -1627,14 +1630,18 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             description: "Retained text layout and redraw benchmark.",
             icon: IconGlyph::Search,
             accent: Color::rgba(0.75, 0.42, 0.12, 1.0),
-            child: WidgetPod::new(build_retained_text_benchmark()),
+            child: WidgetPod::new(build_retained_text_benchmark_with_theme(Rc::clone(
+                &theme_reader,
+            ))),
         },
         DevDemo {
             title: TEXT_RENDERING_COMPARISON_TAB_LABEL,
             description: "Side-by-side text rendering comparison surface.",
             icon: IconGlyph::FitView,
             accent: Color::rgba(0.20, 0.50, 0.62, 1.0),
-            child: WidgetPod::new(build_text_rendering_comparison_surface()),
+            child: WidgetPod::new(build_text_rendering_comparison_surface_with_theme(
+                Rc::clone(&theme_reader),
+            )),
         },
         DevDemo {
             title: TEXT_VALIDATION_TAB_LABEL,
@@ -1665,7 +1672,9 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             description: "HDR, color-management, and tone-mapping validation surface.",
             icon: IconGlyph::Maximize,
             accent: Color::rgba(0.82, 0.52, 0.10, 1.0),
-            child: WidgetPod::new(build_color_validation_surface()),
+            child: WidgetPod::new(build_color_validation_surface_with_theme(Rc::clone(
+                &theme_reader,
+            ))),
         },
         DevDemo {
             title: LAYOUT_TAB_LABEL,
@@ -2812,7 +2821,9 @@ impl RenderSettingsTab {
             ))
             .state(scroll_state.clone())
             .name(SETTINGS_SCROLL_NAME),
-            ScrollBar::vertical(scroll_state).name("Settings scroll bar"),
+            ScrollBar::vertical(scroll_state)
+                .name(SETTINGS_SCROLL_BAR_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
         );
 
         Self {
@@ -6625,6 +6636,61 @@ final_max_luminance={final_max_luminance}
         assert_ne!(
             light_pixel, dark_pixel,
             "expected the settings number input surface to repaint after the theme switch toggles"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dev_shell_scroll_bars_repaint_when_theme_toggle_changes() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window.dispatch_event_now(Event::Window(WindowEvent::Resized(Size::new(1100.0, 360.0))))?;
+        open_dev_shell_settings(&window)?;
+
+        let light_snapshot = window.snapshot()?;
+        let picker_scroll_bar = find_named_node(
+            &light_snapshot,
+            SemanticsRole::Slider,
+            DEV_SHELL_PICKER_SCROLL_BAR_NAME,
+        );
+        let settings_scroll_bar = find_named_node(
+            &light_snapshot,
+            SemanticsRole::Slider,
+            SETTINGS_SCROLL_BAR_NAME,
+        );
+        let picker_probe = Rect::new(
+            picker_scroll_bar.bounds.x() + picker_scroll_bar.bounds.width() * 0.5,
+            picker_scroll_bar.bounds.y() + picker_scroll_bar.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let settings_probe = Rect::new(
+            settings_scroll_bar.bounds.x() + settings_scroll_bar.bounds.width() * 0.5,
+            settings_scroll_bar.bounds.y() + settings_scroll_bar.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_frame = window.capture_screenshot()?;
+        let light_picker_pixel = sample_pixel(&light_frame, picker_probe, &light_snapshot)?;
+        let light_settings_pixel = sample_pixel(&light_frame, settings_probe, &light_snapshot)?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name(DEV_SHELL_THEME_TOGGLE_NAME)
+            .click()?;
+
+        let dark_snapshot = window.snapshot()?;
+        let dark_frame = window.capture_screenshot()?;
+        let dark_picker_pixel = sample_pixel(&dark_frame, picker_probe, &dark_snapshot)?;
+        let dark_settings_pixel = sample_pixel(&dark_frame, settings_probe, &dark_snapshot)?;
+
+        assert_ne!(
+            light_picker_pixel, dark_picker_pixel,
+            "expected the demo picker scroll bar to repaint after the theme switch toggles"
+        );
+        assert_ne!(
+            light_settings_pixel, dark_settings_pixel,
+            "expected the settings scroll bar to repaint after the theme switch toggles"
         );
         Ok(())
     }

@@ -3612,7 +3612,9 @@ pub fn build_widget_book_gallery_with_theme(
 
     WidgetBookGalleryScrollPane::new(
         gallery,
-        ScrollBar::vertical(scroll_state).name(GALLERY_SCROLL_BAR_NAME),
+        ScrollBar::vertical(scroll_state)
+            .name(GALLERY_SCROLL_BAR_NAME)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
     )
 }
 
@@ -5162,6 +5164,12 @@ pub fn build_animation_benchmark_application() -> Application {
 }
 
 pub fn build_retained_text_benchmark() -> impl Widget {
+    build_retained_text_benchmark_with_theme(default_widget_book_theme_reader())
+}
+
+pub fn build_retained_text_benchmark_with_theme(
+    theme_reader: WidgetBookThemeReader,
+) -> impl Widget {
     const SECTION_COUNT: usize = 72;
     const PARAGRAPHS_PER_SECTION: usize = 4;
 
@@ -5246,7 +5254,9 @@ pub fn build_retained_text_benchmark() -> impl Widget {
         ))
         .state(scroll_state.clone())
         .name(RETAINED_TEXT_BENCHMARK_SCROLL_NAME),
-        ScrollBar::vertical(scroll_state).name(RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME),
+        ScrollBar::vertical(scroll_state)
+            .name(RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
     )
 }
 
@@ -5257,6 +5267,12 @@ pub fn build_retained_text_benchmark_application() -> Application {
 }
 
 pub fn build_text_rendering_comparison_surface() -> impl Widget {
+    build_text_rendering_comparison_surface_with_theme(default_widget_book_theme_reader())
+}
+
+pub fn build_text_rendering_comparison_surface_with_theme(
+    theme_reader: WidgetBookThemeReader,
+) -> impl Widget {
     let scroll_state = ScrollState::new();
     let mut mode_grid = Stack::vertical()
         .spacing(14.0)
@@ -5313,9 +5329,11 @@ pub fn build_text_rendering_comparison_surface() -> impl Widget {
             .overflow_y(Overflow::Auto)
             .name(TEXT_RENDERING_COMPARISON_SCROLL_NAME),
         ScrollBar::vertical(scroll_state.clone())
-            .name(TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME),
+            .name(TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
         ScrollBar::horizontal(scroll_state)
-            .name(TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME),
+            .name(TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
     )
 }
 
@@ -5332,6 +5350,12 @@ pub fn build_text_rendering_comparison_application() -> Application {
 }
 
 pub fn build_color_validation_surface() -> impl Widget {
+    build_color_validation_surface_with_theme(default_widget_book_theme_reader())
+}
+
+pub fn build_color_validation_surface_with_theme(
+    theme_reader: WidgetBookThemeReader,
+) -> impl Widget {
     const COLOR_VALIDATION_MIN_CONTENT_WIDTH: f32 = 780.0;
     const COLOR_VALIDATION_SWATCH_MIN_WIDTH: f32 = 150.0;
 
@@ -5424,8 +5448,12 @@ pub fn build_color_validation_surface() -> impl Widget {
             .overflow_x(Overflow::Auto)
             .overflow_y(Overflow::Auto)
             .name(COLOR_VALIDATION_SCROLL_NAME),
-        ScrollBar::vertical(scroll_state.clone()).name(COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME),
-        ScrollBar::horizontal(scroll_state).name(COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME),
+        ScrollBar::vertical(scroll_state.clone())
+            .name(COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+        ScrollBar::horizontal(scroll_state)
+            .name(COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
     )
 }
 
@@ -7968,6 +7996,29 @@ mod tests {
     }
 
     #[test]
+    fn retained_text_benchmark_scroll_bar_uses_themed_metrics() {
+        let theme = DefaultTheme::touch();
+        let output = render_widget_with_size(
+            RETAINED_TEXT_BENCHMARK_TITLE,
+            Size::new(520.0, 360.0),
+            super::build_retained_text_benchmark_with_theme(widget_book_theme_reader(theme)),
+        );
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME)
+            })
+            .expect("retained text vertical scroll bar should be present");
+
+        assert_eq!(
+            scroll_bar.bounds.width(),
+            theme.metrics.scroll_bar_thickness
+        );
+    }
+
+    #[test]
     fn text_editing_benchmark_exposes_named_splitter() -> Result<()> {
         let mut runtime = build_text_editing_benchmark_runtime()?;
         let window_id = runtime.window_ids()[0];
@@ -8080,6 +8131,28 @@ mod tests {
                     ),
             )
             .build()
+    }
+
+    fn widget_book_theme_reader(theme: DefaultTheme) -> super::WidgetBookThemeReader {
+        Rc::new(move || theme)
+    }
+
+    fn render_widget_with_size<W>(title: &str, size: Size, child: W) -> RenderOutput
+    where
+        W: Widget + 'static,
+    {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title(title)
+                    .root(SizedBox::new().size(size).with_child(child)),
+            )
+            .build()
+            .expect("themed widget runtime should build");
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .render(window_id)
+            .expect("themed widget should render")
     }
 
     fn assert_semantics_omit_live_performance_overlay(semantics: &[sui::SemanticsNode]) {
@@ -8805,6 +8878,45 @@ mod tests {
     }
 
     #[test]
+    fn text_rendering_comparison_scroll_bars_use_themed_metrics() {
+        let theme = DefaultTheme::touch();
+        let output = render_widget_with_size(
+            TEXT_RENDERING_COMPARISON_TITLE,
+            Size::new(430.0, 320.0),
+            super::build_text_rendering_comparison_surface_with_theme(widget_book_theme_reader(
+                theme,
+            )),
+        );
+        let horizontal_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref()
+                        == Some(super::TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME)
+            })
+            .expect("horizontal text comparison scroll bar should be present");
+        let vertical_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref()
+                        == Some(super::TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME)
+            })
+            .expect("vertical text comparison scroll bar should be present");
+
+        assert_eq!(
+            vertical_scroll_bar.bounds.width(),
+            theme.metrics.scroll_bar_thickness
+        );
+        assert_eq!(
+            horizontal_scroll_bar.bounds.height(),
+            theme.metrics.scroll_bar_thickness
+        );
+    }
+
+    #[test]
     fn text_validation_scroll_repaints_visible_content() -> Result<()> {
         let mut runtime = build_text_validation_runtime()?;
         let window_id = runtime.window_ids()[0];
@@ -8953,6 +9065,43 @@ mod tests {
         assert!(cyan_label.bounds.height() <= 40.0);
         assert!(hdr_description.bounds.height() > 20.0);
         assert!(hdr_description.bounds.width() < 900.0);
+    }
+
+    #[test]
+    fn color_validation_scroll_bars_use_themed_metrics() {
+        let theme = DefaultTheme::touch();
+        let output = render_widget_with_size(
+            super::COLOR_VALIDATION_VIEW_TITLE,
+            Size::new(430.0, 320.0),
+            super::build_color_validation_surface_with_theme(widget_book_theme_reader(theme)),
+        );
+        let horizontal_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref()
+                        == Some(super::COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME)
+            })
+            .expect("horizontal color validation scroll bar should be present");
+        let vertical_scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref()
+                        == Some(super::COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME)
+            })
+            .expect("vertical color validation scroll bar should be present");
+
+        assert_eq!(
+            vertical_scroll_bar.bounds.width(),
+            theme.metrics.scroll_bar_thickness
+        );
+        assert_eq!(
+            horizontal_scroll_bar.bounds.height(),
+            theme.metrics.scroll_bar_thickness
+        );
     }
 
     #[test]
@@ -9887,6 +10036,32 @@ mod tests {
 
         assert!(scroll_bar.bounds.x() >= gallery.bounds.max_x());
         assert!(scroll_bar.bounds.height() >= gallery.bounds.height() - 1.0);
+    }
+
+    #[test]
+    fn widget_book_gallery_scroll_bar_uses_themed_metrics() {
+        let theme = DefaultTheme::touch();
+        let output = render_widget_with_size(
+            WINDOW_TITLE,
+            Size::new(520.0, 420.0),
+            super::build_widget_book_gallery_with_theme(
+                default_widget_book_state(),
+                widget_book_theme_reader(theme),
+            ),
+        );
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_BAR_NAME)
+            })
+            .expect("widget book gallery scroll bar should be present");
+
+        assert_eq!(
+            scroll_bar.bounds.width(),
+            theme.metrics.scroll_bar_thickness
+        );
     }
 
     #[test]
