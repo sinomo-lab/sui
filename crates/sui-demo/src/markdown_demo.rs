@@ -6,10 +6,13 @@ use sui::{
     prelude::*,
 };
 
-use crate::app::{DevThemeReader, dev_text_style, dev_theme_color, request_window_refresh};
+use crate::app::{
+    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
+};
 
 pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Markdown render";
 pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
+pub(crate) const MARKDOWN_RENDER_SCROLL_BAR_NAME: &str = "Markdown render scroll bar";
 pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
 
 pub(crate) const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 0.5;
@@ -196,7 +199,9 @@ struct MarkdownDemoState {
 
 struct MarkdownDemoStateInner {
     source: String,
+    rendered_source: String,
     rendered_document: TextDocument,
+    rendered_theme: DefaultTheme,
     dirty: bool,
     cooling_down: bool,
     cooldown_timer: Option<TimerToken>,
@@ -207,7 +212,9 @@ impl MarkdownDemoState {
         Self {
             inner: Rc::new(RefCell::new(MarkdownDemoStateInner {
                 source: SAMPLE_MARKDOWN.to_string(),
+                rendered_source: SAMPLE_MARKDOWN.to_string(),
                 rendered_document: markdown_to_document(SAMPLE_MARKDOWN, theme),
+                rendered_theme: theme,
                 dirty: false,
                 cooling_down: false,
                 cooldown_timer: None,
@@ -219,8 +226,25 @@ impl MarkdownDemoState {
         self.inner.borrow().source.clone()
     }
 
+    fn rendered_document_for_theme(&self, theme: DefaultTheme) -> TextDocument {
+        let mut inner = self.inner.borrow_mut();
+        if inner.rendered_theme != theme {
+            let rendered_source = inner.rendered_source.clone();
+            inner.rendered_document = markdown_to_document(&rendered_source, theme);
+            inner.rendered_theme = theme;
+        }
+        inner.rendered_document.clone()
+    }
+
+    #[cfg(test)]
     fn rendered_document(&self) -> TextDocument {
         self.inner.borrow().rendered_document.clone()
+    }
+
+    fn replace_rendered(inner: &mut MarkdownDemoStateInner, source: String, theme: DefaultTheme) {
+        inner.rendered_document = markdown_to_document(&source, theme);
+        inner.rendered_source = source;
+        inner.rendered_theme = theme;
     }
 
     #[cfg(test)]
@@ -244,7 +268,7 @@ impl MarkdownDemoState {
             return false;
         }
         let source = inner.source.clone();
-        inner.rendered_document = markdown_to_document(&source, theme);
+        Self::replace_rendered(&mut inner, source, theme);
         inner.dirty = false;
         true
     }
@@ -269,7 +293,7 @@ impl MarkdownDemoState {
                 inner.dirty = true;
             } else {
                 let source = inner.source.clone();
-                inner.rendered_document = markdown_to_document(&source, theme);
+                Self::replace_rendered(&mut inner, source, theme);
                 inner.dirty = false;
                 inner.cooling_down = inner.cooldown_timer.is_some();
                 should_refresh = true;
@@ -292,7 +316,7 @@ impl MarkdownDemoState {
             inner.cooldown_timer = None;
             if inner.dirty {
                 let source = inner.source.clone();
-                inner.rendered_document = markdown_to_document(&source, theme);
+                Self::replace_rendered(&mut inner, source, theme);
                 inner.dirty = false;
                 inner.cooling_down = true;
                 inner.cooldown_timer =
@@ -562,40 +586,131 @@ pub(crate) fn markdown_to_document(markdown: &str, theme: DefaultTheme) -> TextD
 pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
     let state = MarkdownDemoState::new(theme_reader());
     let rendered_state = state.clone();
-    let rendered = RichText::dynamic(state.rendered_document(), move || {
-        rendered_state.rendered_document()
-    })
+    let rendered_theme_reader = Rc::clone(&theme_reader);
+    let rendered = RichText::dynamic(
+        state.rendered_document_for_theme(theme_reader()),
+        move || rendered_state.rendered_document_for_theme(rendered_theme_reader()),
+    )
     .semantic_name(MARKDOWN_RENDER_DEMO_NAME)
     .padding(Insets::all(16.0))
     .min_height(360.0);
     let source = MarkdownSourceEditor::new(state, Rc::clone(&theme_reader));
+    let scroll_state = ScrollState::new();
+    let scroll = ScrollView::vertical(Padding::all(
+        18.0,
+        Stack::vertical()
+            .spacing(14.0)
+            .alignment(Alignment::Stretch)
+            .with_child(
+                Label::new(MARKDOWN_RENDER_DEMO_NAME)
+                    .style(dev_text_style(
+                        theme_reader(),
+                        theme_reader().text._2xl,
+                        theme_reader().palette.text,
+                    ))
+                    .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+            )
+            .with_child(MarkdownPanelSplit::new(
+                markdown_panel("Source", source, Rc::clone(&theme_reader)),
+                markdown_panel("Rendered", rendered, Rc::clone(&theme_reader)),
+            )),
+    ))
+    .name(MARKDOWN_RENDER_SCROLL_NAME)
+    .state(scroll_state.clone())
+    .theme(theme_reader());
+    let scroll_bar = ScrollBar::vertical(scroll_state)
+        .name(MARKDOWN_RENDER_SCROLL_BAR_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader));
 
     Background::new(
         theme_reader().palette.surface,
-        ScrollView::vertical(Padding::all(
-            18.0,
-            Stack::vertical()
-                .spacing(14.0)
-                .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new(MARKDOWN_RENDER_DEMO_NAME)
-                        .style(dev_text_style(
-                            theme_reader(),
-                            theme_reader().text._2xl,
-                            theme_reader().palette.text,
-                        ))
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-                )
-                .with_child(MarkdownPanelSplit::new(
-                    markdown_panel("Source", source, Rc::clone(&theme_reader)),
-                    markdown_panel("Rendered", rendered, Rc::clone(&theme_reader)),
-                )),
-        ))
-        .name(MARKDOWN_RENDER_SCROLL_NAME),
+        MarkdownScrollPane::new(scroll, scroll_bar),
     )
     .brush_when(dev_theme_color(&theme_reader, |theme| {
         theme.palette.surface
     }))
+}
+
+struct MarkdownScrollPane {
+    spacing: f32,
+    content: SingleChild,
+    scroll_bar: SingleChild,
+}
+
+impl MarkdownScrollPane {
+    fn new<C, S>(content: C, scroll_bar: S) -> Self
+    where
+        C: Widget + 'static,
+        S: Widget + 'static,
+    {
+        Self {
+            spacing: 10.0,
+            content: SingleChild::new(content),
+            scroll_bar: SingleChild::new(scroll_bar),
+        }
+    }
+}
+
+impl Widget for MarkdownScrollPane {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let scroll_bar_size = self.scroll_bar.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
+        );
+        let content_constraints = Constraints::new(
+            Size::new(
+                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.min.height,
+            ),
+            Size::new(
+                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
+                constraints.max.height,
+            ),
+        );
+        let content_size = self.content.measure(ctx, content_constraints);
+        constraints.clamp(Size::new(
+            content_size.width + scroll_bar_size.width + self.spacing,
+            content_size.height.max(scroll_bar_size.height),
+        ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let scroll_bar_size = self.scroll_bar.child().measured_size();
+        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
+        self.content.arrange(
+            ctx,
+            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
+        );
+        self.scroll_bar.arrange(
+            ctx,
+            Rect::new(
+                bounds.max_x() - scroll_bar_size.width,
+                bounds.y(),
+                scroll_bar_size.width,
+                bounds.height(),
+            ),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.content.paint(ctx);
+        self.scroll_bar.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.content.semantics(ctx);
+        self.scroll_bar.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.content.visit_children(visitor);
+        self.scroll_bar.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.content.visit_children_mut(visitor);
+        self.scroll_bar.visit_children_mut(visitor);
+    }
 }
 
 struct MarkdownPanelSplit {
@@ -779,7 +894,11 @@ mod tests {
     use sui_scene::SceneCommand;
 
     fn render_markdown_demo(width: f32) -> RenderOutput {
-        let theme_reader: DevThemeReader = Rc::new(DefaultTheme::default);
+        render_markdown_demo_with_theme(width, DefaultTheme::default())
+    }
+
+    fn render_markdown_demo_with_theme(width: f32, theme: DefaultTheme) -> RenderOutput {
+        let theme_reader: DevThemeReader = Rc::new(move || theme);
         let root = SizedBox::new()
             .width(width)
             .height(900.0)
@@ -910,6 +1029,50 @@ mod tests {
         assert!(!state.is_dirty());
         assert_eq!(state.rendered_document().paragraphs[0].text(), "Final edit");
         assert!(!state.apply_pending_render(DefaultTheme::default()));
+    }
+
+    #[test]
+    fn markdown_state_rethemes_last_rendered_source_without_flushing_dirty_edit() {
+        let state = MarkdownDemoState::new(DefaultTheme::default());
+        state.set_source("# Dirty edit".to_string());
+
+        let dark_document = state.rendered_document_for_theme(DefaultTheme::dark());
+
+        assert!(
+            dark_document.plain_text().contains("SUI rich text report"),
+            "dirty source should not be rendered early when only the theme changes"
+        );
+        assert_eq!(
+            dark_document.paragraphs[0].spans[0].style.color,
+            DefaultTheme::dark().palette.text
+        );
+
+        assert!(state.apply_pending_render(DefaultTheme::dark()));
+        let rendered = state.rendered_document();
+        assert_eq!(rendered.paragraphs[0].text(), "Dirty edit");
+        assert_eq!(
+            rendered.paragraphs[0].spans[0].style.color,
+            DefaultTheme::dark().palette.text
+        );
+    }
+
+    #[test]
+    fn markdown_demo_exposes_themed_scroll_bar() {
+        let theme = DefaultTheme::touch();
+        let output = render_markdown_demo_with_theme(900.0, theme);
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(MARKDOWN_RENDER_SCROLL_BAR_NAME)
+            })
+            .expect("markdown scroll bar semantics present");
+
+        assert_eq!(
+            scroll_bar.bounds.width(),
+            theme.metrics.scroll_bar_thickness
+        );
     }
 
     #[test]

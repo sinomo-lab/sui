@@ -2017,6 +2017,7 @@ fn mix_color(from: Color, to: Color, amount: f32) -> Color {
 
 pub struct ScrollBar {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     state: ScrollState,
     axis: ScrollBarAxis,
     name: Option<String>,
@@ -2034,6 +2035,7 @@ impl ScrollBar {
     pub fn vertical(state: ScrollState) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             state,
             axis: ScrollBarAxis::Vertical,
             name: None,
@@ -2057,6 +2059,15 @@ impl ScrollBar {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -2071,12 +2082,19 @@ impl ScrollBar {
     }
 
     fn resolved_width(&self) -> f32 {
-        self.width
-            .unwrap_or(self.theme.metrics.scroll_bar_thickness)
+        let theme = self.resolved_theme();
+        self.width.unwrap_or(theme.metrics.scroll_bar_thickness)
     }
 
     fn resolved_min_thumb_length(&self) -> f32 {
-        self.theme.metrics.scroll_bar_min_thumb_length
+        self.resolved_theme().metrics.scroll_bar_min_thumb_length
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(*self.theme)
     }
 
     fn track_rect(&self, bounds: Rect) -> Rect {
@@ -2190,9 +2208,14 @@ impl ScrollBar {
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
-            let theme = self.theme.as_ref();
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_hover_animation_target(&mut self.hover_animation, hovered as u8 as f32, theme, ctx);
+            set_hover_animation_target(
+                &mut self.hover_animation,
+                hovered as u8 as f32,
+                &theme,
+                ctx,
+            );
             ctx.request_paint();
             ctx.request_semantics();
         }
@@ -2200,9 +2223,14 @@ impl ScrollBar {
 
     fn set_dragging(&mut self, dragging: bool, ctx: &mut EventCtx) {
         if self.dragging != dragging {
-            let theme = self.theme.as_ref();
+            let theme = self.resolved_theme();
             self.dragging = dragging;
-            set_press_animation_target(&mut self.drag_animation, dragging as u8 as f32, theme, ctx);
+            set_press_animation_target(
+                &mut self.drag_animation,
+                dragging as u8 as f32,
+                &theme,
+                ctx,
+            );
             ctx.request_paint();
             ctx.request_semantics();
         }
@@ -2454,7 +2482,8 @@ impl Widget for ScrollBar {
             return;
         };
 
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         let track = metrics.track;
         let thumb = metrics.thumb;
         let track_radius = (track.width() * 0.5).min(track.height() * 0.5);
@@ -2483,7 +2512,7 @@ impl Widget for ScrollBar {
                 palette.focus_ring,
                 self.focus_animation.value,
             ),
-            StrokeStyle::new(physical_pixels(ctx, self.theme.metrics.border_width).max(1.0)),
+            StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width).max(1.0)),
         );
     }
 
@@ -2516,8 +2545,8 @@ impl Widget for ScrollBar {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        let theme = self.theme.as_ref();
-        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, theme, ctx);
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -5716,6 +5745,28 @@ mod tests {
                 .width(9.0),
         );
         assert_eq!(overridden.frame.viewport.width, 9.0);
+    }
+
+    #[test]
+    fn scroll_bar_theme_when_reads_current_theme() {
+        let state = ScrollState::new();
+        state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let theme = Rc::new(RefCell::new(DefaultTheme::touch()));
+        let theme_reader = Rc::clone(&theme);
+        let (output, _) = render_root(
+            ScrollBar::vertical(state)
+                .theme_when(move || *theme_reader.borrow())
+                .name("Themed scroll bar"),
+        );
+
+        assert_eq!(
+            output.frame.viewport.width,
+            DefaultTheme::touch().metrics.scroll_bar_thickness
+        );
     }
 
     #[test]
