@@ -9867,6 +9867,27 @@ mod tests {
     }
 
     #[test]
+    fn button_press_changes_color_without_moving_content() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(Button::new("Press"));
+        let rest = runtime.render(window_id)?;
+        let rest_background = solid_fill_colors(&rest)[0];
+        let rest_label = text_run_for(&rest, "Press").rect;
+        let point = Point::new(12.0, 12.0);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, point, true),
+        )?;
+        runtime.tick(press_duration());
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+
+        let pressed = runtime.render(window_id)?;
+        assert_ne!(solid_fill_colors(&pressed)[0], rest_background);
+        assert_eq!(text_run_for(&pressed, "Press").rect, rest_label);
+        Ok(())
+    }
+
+    #[test]
     fn switch_thumb_animation_tracks_progress_and_completion() -> Result<()> {
         let theme = slow_toggle_theme();
         let toggle_time = theme.motion.toggle_duration();

@@ -98,10 +98,10 @@ pub use text_surface::{
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
 };
 pub use theme::{
-    ControlMetrics, ControlPalette, ControlStateMetrics, ControlTypography, DefaultTheme,
-    SemanticTone, SurfacePalette, ThemeAspectRatios, ThemeBlurScale, ThemeBoxShadowScale,
-    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
-    ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
+    ControlMetrics, ControlPalette, ControlSize, ControlStateMetrics, ControlTypography,
+    DefaultTheme, SemanticTone, SurfacePalette, ThemeAspectRatios, ThemeBlurScale,
+    ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
+    ThemeDensity, ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
     ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
     ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale, ThemeTextToken,
     ThemeTracking, paint_theme_shadow,

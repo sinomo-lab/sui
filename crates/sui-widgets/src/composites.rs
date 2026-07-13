@@ -16718,15 +16718,24 @@ mod tests {
                     && node.name.as_deref() == Some("History commands")
             })
             .expect("command group semantics should exist");
-        let expected_width = 28.0 * 2.0
+        let button_size = 28.0_f32.max(theme.metrics.icon_button_size);
+        let expected_width = button_size * 2.0
             + theme.metrics.command_group_spacing
             + theme.metrics.command_group_padding.left
             + theme.metrics.command_group_padding.right;
-        let expected_height = 28.0
+        let expected_height = button_size
             + theme.metrics.command_group_padding.top
             + theme.metrics.command_group_padding.bottom;
-        assert!((group.bounds.width() - expected_width).abs() < 0.01);
-        assert!((group.bounds.height() - expected_height).abs() < 0.01);
+        assert!(
+            (group.bounds.width() - expected_width).abs() < 0.01,
+            "expected command group width {expected_width}, got {}",
+            group.bounds.width()
+        );
+        assert!(
+            (group.bounds.height() - expected_height).abs() < 0.01,
+            "expected command group height {expected_height}, got {}",
+            group.bounds.height()
+        );
 
         for name in ["Undo", "Redo"] {
             let button = output

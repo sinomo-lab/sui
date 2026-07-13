@@ -189,10 +189,60 @@ pub enum ThemeColorScheme {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeDensity {
-    #[default]
     Compact,
+    #[default]
     Comfortable,
     Touch,
+}
+
+/// Contextual interface-control sizing.
+///
+/// Unlike [`ThemeDensity`], which is retained as the legacy global theme API,
+/// control size is intended to be chosen for the interface being designed:
+/// small for dense toolbars and configuration surfaces, medium for standard
+/// controls, and large for hero actions or focused overlays. It changes
+/// control geometry and typography while leaving the independent text-scale
+/// ramp unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl ControlSize {
+    const fn legacy_density(self) -> ThemeDensity {
+        match self {
+            Self::Small => ThemeDensity::Compact,
+            Self::Medium => ThemeDensity::Comfortable,
+            Self::Large => ThemeDensity::Touch,
+        }
+    }
+
+    const fn control_height(self) -> f32 {
+        match self {
+            Self::Small => 28.0,
+            Self::Medium => 32.0,
+            Self::Large => 40.0,
+        }
+    }
+
+    const fn row_height(self) -> f32 {
+        match self {
+            Self::Small => 30.0,
+            Self::Medium => 36.0,
+            Self::Large => 44.0,
+        }
+    }
+
+    const fn icon_size(self) -> f32 {
+        match self {
+            Self::Small => 13.0,
+            Self::Medium => 15.0,
+            Self::Large => 17.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -414,56 +464,56 @@ impl Default for ThemeTextScale {
     fn default() -> Self {
         Self {
             xs: ThemeTextToken {
-                size: 11.0,
-                line_height: 16.0,
-            },
-            sm: ThemeTextToken {
                 size: 12.0,
                 line_height: 17.0,
             },
+            sm: ThemeTextToken {
+                size: 13.0,
+                line_height: 18.0,
+            },
             base: ThemeTextToken {
-                size: 14.0,
-                line_height: 20.0,
+                size: 15.0,
+                line_height: 22.0,
             },
             lg: ThemeTextToken {
-                size: 16.0,
-                line_height: 24.0,
+                size: 17.0,
+                line_height: 25.0,
             },
             xl: ThemeTextToken {
-                size: 18.0,
-                line_height: 26.0,
+                size: 19.0,
+                line_height: 27.0,
             },
             _2xl: ThemeTextToken {
-                size: 20.0,
-                line_height: 28.0,
+                size: 21.0,
+                line_height: 29.0,
             },
             _3xl: ThemeTextToken {
-                size: 24.0,
-                line_height: 32.0,
+                size: 25.0,
+                line_height: 33.0,
             },
             _4xl: ThemeTextToken {
-                size: 30.0,
-                line_height: 38.0,
+                size: 31.0,
+                line_height: 39.0,
             },
             _5xl: ThemeTextToken {
-                size: 36.0,
-                line_height: 44.0,
+                size: 37.0,
+                line_height: 45.0,
             },
             _6xl: ThemeTextToken {
-                size: 48.0,
-                line_height: 54.0,
+                size: 49.0,
+                line_height: 55.0,
             },
             _7xl: ThemeTextToken {
-                size: 60.0,
-                line_height: 66.0,
+                size: 61.0,
+                line_height: 67.0,
             },
             _8xl: ThemeTextToken {
-                size: 72.0,
-                line_height: 78.0,
+                size: 73.0,
+                line_height: 79.0,
             },
             _9xl: ThemeTextToken {
-                size: 96.0,
-                line_height: 102.0,
+                size: 97.0,
+                line_height: 103.0,
             },
         }
     }
@@ -1625,13 +1675,28 @@ impl ControlTypography {
         Self::for_density(text, ThemeDensity::default())
     }
 
-    /// Body/control type per the Mesh density contract: compact and
-    /// comfortable share the 14px body (`--sm-text-md`); touch reads at 16px
-    /// (`--sm-text-lg`).
+    /// Legacy density typography. Authored interfaces should prefer
+    /// [`Self::for_size`], which resolves Small/Medium/Large to 13/15/17px
+    /// before any independent text-scale adjustment.
     pub fn for_density(text: &ThemeTextScale, density: ThemeDensity) -> Self {
         let token = match density {
             ThemeDensity::Compact | ThemeDensity::Comfortable => text.base,
             ThemeDensity::Touch => text.lg,
+        };
+        Self {
+            body_font_size: token.size,
+            body_line_height: token.line_height,
+        }
+    }
+
+    /// Resolve authored interface-size typography from the current text scale.
+    /// Text scaling remains independent: each size selects a token from the
+    /// already-scaled ramp instead of applying another multiplier.
+    pub fn for_size(text: &ThemeTextScale, size: ControlSize) -> Self {
+        let token = match size {
+            ControlSize::Small => text.sm,
+            ControlSize::Medium => text.base,
+            ControlSize::Large => text.lg,
         };
         Self {
             body_font_size: token.size,
@@ -1668,7 +1733,7 @@ impl ControlStateMetrics {
                 tab_selected_blend: 0.07,
                 disabled_opacity: 0.70,
                 disabled_content_opacity: 0.46,
-                pressed_offset: 0.5,
+                pressed_offset: 0.0,
                 active_indicator_thickness: 2.0,
             },
             ThemeDensity::Comfortable => Self {
@@ -1678,7 +1743,7 @@ impl ControlStateMetrics {
                 tab_selected_blend: 0.08,
                 disabled_opacity: 0.74,
                 disabled_content_opacity: 0.50,
-                pressed_offset: 1.0,
+                pressed_offset: 0.0,
                 active_indicator_thickness: 3.0,
             },
             ThemeDensity::Touch => Self {
@@ -1688,7 +1753,7 @@ impl ControlStateMetrics {
                 tab_selected_blend: 0.09,
                 disabled_opacity: 0.78,
                 disabled_content_opacity: 0.54,
-                pressed_offset: 1.5,
+                pressed_offset: 0.0,
                 active_indicator_thickness: 4.0,
             },
         }
@@ -3097,6 +3162,8 @@ pub struct DefaultTheme {
     pub fonts: ThemeFontFamilies,
     pub colors: ThemeColors,
     pub density: ThemeDensity,
+    /// Contextual authored size, when this theme copy is scoped to an interface surface.
+    pub control_size: Option<ControlSize>,
     pub spacing: f32,
     pub breakpoints: ThemeBreakpoints,
     pub containers: ThemeContainers,
@@ -3145,15 +3212,15 @@ impl DefaultTheme {
     }
 
     pub fn compact() -> Self {
-        Self::default().with_density(ThemeDensity::Compact)
+        Self::default().with_size(ControlSize::Small)
     }
 
     pub fn comfortable() -> Self {
-        Self::default().with_density(ThemeDensity::Comfortable)
+        Self::default().with_size(ControlSize::Medium)
     }
 
     pub fn touch() -> Self {
-        Self::default().with_density(ThemeDensity::Touch)
+        Self::default().with_size(ControlSize::Large)
     }
 
     pub fn from_colors(colors: ThemeColors) -> Self {
@@ -3165,10 +3232,11 @@ impl DefaultTheme {
         let palette = ControlPalette::from_colors(&colors);
         let surfaces = SurfacePalette::from_theme_parts(&colors, &palette);
 
-        let theme = Self {
+        let mut theme = Self {
             fonts: ThemeFontFamilies::default(),
             colors,
             density,
+            control_size: Some(ControlSize::Medium),
             spacing,
             breakpoints: ThemeBreakpoints::default(),
             containers: ThemeContainers::default(),
@@ -3190,16 +3258,54 @@ impl DefaultTheme {
             interaction: ControlStateMetrics::for_density(density),
             metrics: ControlMetrics::from_tokens(spacing, radius, density),
         };
+        theme.sync_size_fields(ControlSize::Medium);
         theme
     }
 
     pub fn with_density(mut self, density: ThemeDensity) -> Self {
         self.density = density;
+        self.control_size = None;
         self.sync_density_fields();
         self
     }
 
+    /// Apply contextual interface sizing without changing the text-scale ramp.
+    ///
+    /// The existing density tiers provide the mature detailed metric ladders
+    /// behind `Small`, `Medium`, and `Large`. The authored size contract then
+    /// normalizes the primary control, row, icon, and control-text tokens while
+    /// leaving the caller's text ramp intact.
+    pub fn with_size(mut self, size: ControlSize) -> Self {
+        self.density = size.legacy_density();
+        self.control_size = Some(size);
+        self.sync_size_fields(size);
+        self
+    }
+
+    fn sync_size_fields(&mut self, size: ControlSize) {
+        self.interaction = ControlStateMetrics::for_density(size.legacy_density());
+        self.metrics =
+            ControlMetrics::from_tokens(self.spacing, self.radius, size.legacy_density());
+        self.metrics.min_height = size.control_height();
+        self.metrics.touch_target_size = 44.0;
+        self.metrics.icon_size = size.icon_size();
+        self.metrics.icon_button_size = size.control_height();
+        self.metrics.list_row_height = size.row_height();
+        self.metrics.tree_row_height = size.row_height();
+        self.metrics.table_row_height = size.row_height();
+        self.metrics.menu_row_height = size.row_height();
+        self.typography = ControlTypography::for_size(&self.text, size);
+    }
+
     fn sync_density_fields(&mut self) {
+        if let Some(size) = self
+            .control_size
+            .filter(|size| size.legacy_density() == self.density)
+        {
+            self.sync_size_fields(size);
+            return;
+        }
+        self.control_size = None;
         self.typography = ControlTypography::for_density(&self.text, self.density);
         self.interaction = ControlStateMetrics::for_density(self.density);
         self.metrics = ControlMetrics::from_tokens(self.spacing, self.radius, self.density);
@@ -3337,8 +3443,8 @@ fn shadow_layer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Color, DefaultTheme, SemanticTone, ThemeColorScheme, ThemeColors, ThemeDensity,
-        ThemeShadow, rgb8, rgba8,
+        Color, ControlSize, DefaultTheme, SemanticTone, ThemeColorScheme, ThemeColors,
+        ThemeDensity, ThemeShadow, rgb8, rgba8,
     };
     use crate::hdr_theme::HdrThemeMode;
 
@@ -3351,12 +3457,13 @@ mod tests {
             theme.typography.body_line_height,
             theme.text.base.line_height
         );
-        assert_eq!(theme.typography.body_font_size, 14.0);
-        assert_eq!(theme.typography.body_line_height, 20.0);
-        assert_eq!(theme.density, ThemeDensity::Compact);
-        assert_eq!(theme.metrics.min_height, 28.0);
-        assert_eq!(theme.metrics.touch_target_size, 28.0);
-        assert_eq!(theme.metrics.icon_button_size, 28.0);
+        assert_eq!(theme.typography.body_font_size, 15.0);
+        assert_eq!(theme.typography.body_line_height, 22.0);
+        assert_eq!(theme.control_size, Some(ControlSize::Medium));
+        assert_eq!(theme.density, ThemeDensity::Comfortable);
+        assert_eq!(theme.metrics.min_height, 32.0);
+        assert_eq!(theme.metrics.touch_target_size, 44.0);
+        assert_eq!(theme.metrics.icon_button_size, 32.0);
     }
 
     #[test]
@@ -3553,8 +3660,65 @@ mod tests {
             compact.interaction.tab_selected_blend < comfortable.interaction.tab_selected_blend
         );
         assert!(comfortable.interaction.tab_selected_blend < touch.interaction.tab_selected_blend);
-        assert!(compact.interaction.pressed_offset < comfortable.interaction.pressed_offset);
-        assert!(comfortable.interaction.pressed_offset < touch.interaction.pressed_offset);
+        assert_eq!(compact.interaction.pressed_offset, 0.0);
+        assert_eq!(comfortable.interaction.pressed_offset, 0.0);
+        assert_eq!(touch.interaction.pressed_offset, 0.0);
+    }
+
+    #[test]
+    fn contextual_control_sizes_match_authored_geometry_and_typography() {
+        assert_eq!(ControlSize::default(), ControlSize::Medium);
+
+        let base = DefaultTheme::default();
+        let small = base.with_size(ControlSize::Small);
+        let medium = base.with_size(ControlSize::Medium);
+        let large = base.with_size(ControlSize::Large);
+
+        assert_eq!(small.density, ThemeDensity::Compact);
+        assert_eq!(medium.density, ThemeDensity::Comfortable);
+        assert_eq!(large.density, ThemeDensity::Touch);
+        assert_eq!(small.metrics.min_height, 28.0);
+        assert_eq!(medium.metrics.min_height, 32.0);
+        assert_eq!(large.metrics.min_height, 40.0);
+        assert_eq!(small.metrics.list_row_height, 30.0);
+        assert_eq!(medium.metrics.list_row_height, 36.0);
+        assert_eq!(large.metrics.list_row_height, 44.0);
+        assert_eq!(small.metrics.touch_target_size, 44.0);
+        assert_eq!(medium.metrics.touch_target_size, 44.0);
+        assert_eq!(large.metrics.touch_target_size, 44.0);
+        assert_eq!(small.typography.body_font_size, base.text.sm.size);
+        assert_eq!(medium.typography.body_font_size, base.text.base.size);
+        assert_eq!(large.typography.body_font_size, base.text.lg.size);
+        assert_eq!(large.text, base.text);
+    }
+
+    #[test]
+    fn contextual_control_size_uses_the_callers_scaled_text_ramp() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm.size = 15.0;
+        theme.text.base.size = 17.0;
+        theme.text.lg.size = 19.0;
+
+        let small = theme.with_size(ControlSize::Small);
+        let medium = theme.with_size(ControlSize::Medium);
+        let large = theme.with_size(ControlSize::Large);
+
+        assert_eq!(small.typography.body_font_size, 15.0);
+        assert_eq!(medium.typography.body_font_size, 17.0);
+        assert_eq!(large.typography.body_font_size, 19.0);
+    }
+
+    #[test]
+    fn contextual_control_size_survives_derived_theme_refresh() {
+        let mut theme = DefaultTheme::dark().with_size(ControlSize::Small);
+        theme.text.sm.size = 14.5;
+
+        theme.sync_derived_fields();
+
+        assert_eq!(theme.control_size, Some(ControlSize::Small));
+        assert_eq!(theme.metrics.min_height, 28.0);
+        assert_eq!(theme.metrics.touch_target_size, 44.0);
+        assert_eq!(theme.typography.body_font_size, 14.5);
     }
 
     #[test]
@@ -3708,22 +3872,24 @@ mod tests {
         let comfortable = DefaultTheme::comfortable();
         let touch = DefaultTheme::touch();
 
-        // Control heights: 28 / 32 / 36, with the 44px anchor as touch target.
+        // Authored control heights: 28 / 32 / 40, with a separate 44px target.
         assert_eq!(compact.metrics.min_height, 28.0);
         assert_eq!(comfortable.metrics.min_height, 32.0);
-        assert_eq!(touch.metrics.min_height, 36.0);
+        assert_eq!(touch.metrics.min_height, 40.0);
+        assert_eq!(compact.metrics.touch_target_size, 44.0);
+        assert_eq!(comfortable.metrics.touch_target_size, 44.0);
         assert_eq!(touch.metrics.touch_target_size, 44.0);
 
-        // Rows: 30 / 36 / 40.
+        // Rows: 30 / 36 / 44.
         assert_eq!(compact.metrics.list_row_height, 30.0);
         assert_eq!(comfortable.metrics.list_row_height, 36.0);
-        assert_eq!(touch.metrics.list_row_height, 40.0);
+        assert_eq!(touch.metrics.list_row_height, 44.0);
         assert_eq!(compact.metrics.table_row_height, 30.0);
 
-        // Body type: 14px compact/comfortable, 16px touch.
-        assert_eq!(compact.typography.body_font_size, 14.0);
-        assert_eq!(comfortable.typography.body_font_size, 14.0);
-        assert_eq!(touch.typography.body_font_size, 16.0);
+        // Control type follows Small / Medium / Large on the shared text ramp.
+        assert_eq!(compact.typography.body_font_size, 13.0);
+        assert_eq!(comfortable.typography.body_font_size, 15.0);
+        assert_eq!(touch.typography.body_font_size, 17.0);
 
         // Control radius: 6 compact/comfortable, 8 touch.
         assert_eq!(compact.metrics.corner_radius, 6.0);
@@ -3782,11 +3948,17 @@ mod tests {
         assert_eq!(theme.typography.body_line_height, 22.0);
         assert_eq!(
             theme.metrics.min_height,
-            DefaultTheme::touch().metrics.min_height
+            DefaultTheme::default()
+                .with_density(ThemeDensity::Touch)
+                .metrics
+                .min_height
         );
         assert_eq!(
             theme.interaction.pressed_offset,
-            DefaultTheme::touch().interaction.pressed_offset
+            DefaultTheme::default()
+                .with_density(ThemeDensity::Touch)
+                .interaction
+                .pressed_offset
         );
     }
 

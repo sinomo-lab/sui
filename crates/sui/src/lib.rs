@@ -118,7 +118,7 @@ pub use sui_widgets::animation::{
 pub use sui_widgets::{
     ActionCard, Breadcrumb, BreadcrumbItem, BrushPreview, BrushPreviewShape, BrushPreviewSpec,
     Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, ColorPalette,
-    ColorPaletteSwatch, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette,
+    ColorPaletteSwatch, ColorPicker, ColorSwatch, ControlMetrics, ControlPalette, ControlSize,
     ControlTypography, CoverageDots, CoverageDotsConfig, DataGrid, DefaultTheme, DetailRow,
     DragDropHost, Draggable, DropTarget, EffectToken, FloatingStack, FloatingViewConfig,
     FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, HdrColorRoles,
@@ -567,7 +567,7 @@ pub mod prelude {
         CodeTextLine, CodeTextPaint, CodeTextSpan, Color, ColorPalette, ColorPaletteSwatch,
         ColorPicker, ColorSwatch, ComboBox, CommandButtonFill, CommandButtonPaint, CommandGroup,
         CompiledClip, CompiledTimeline, CompiledTrack, Constraints, ContextMenu, ControlMetrics,
-        ControlPalette, ControlTypography, CoverageDots, CoverageDotsConfig, DataGrid,
+        ControlPalette, ControlSize, ControlTypography, CoverageDots, CoverageDotsConfig, DataGrid,
         DefaultTheme, DetailRow, Dialog, DisclosureButtonPaint, Divider, Dock, DockPanel,
         DragDropHost, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload,
         DragPreview, DragScopeId, DragSessionId, Draggable, DropEffect, DropTarget, Easing,
