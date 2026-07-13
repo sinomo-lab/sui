@@ -482,6 +482,17 @@ impl PyEvent {
         }
     }
 
+    #[getter]
+    pub fn file_path(&self) -> Option<String> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::ExternalFileHovered(path))
+            | BindingEvent::Window(BindingWindowEvent::ExternalFileDropped(path)) => {
+                Some(path.clone())
+            }
+            _ => None,
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!("Event(kind='{}')", self.inner.kind())
     }
@@ -2868,6 +2879,9 @@ fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
         BindingWindowEvent::ScaleFactorChanged { .. } => "scale_factor_changed",
         BindingWindowEvent::Focused(_) => "focused",
         BindingWindowEvent::Occluded(_) => "occluded",
+        BindingWindowEvent::ExternalFileHovered(_) => "external_file_hovered",
+        BindingWindowEvent::ExternalFileHoverCancelled => "external_file_hover_cancelled",
+        BindingWindowEvent::ExternalFileDropped(_) => "external_file_dropped",
         BindingWindowEvent::RedrawRequested => "redraw_requested",
     }
 }

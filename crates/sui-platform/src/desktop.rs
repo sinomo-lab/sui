@@ -1069,6 +1069,10 @@ impl DesktopApp {
                 .process_event(window.window.as_ref(), &event);
         }
 
+        if let Some(file_event) = map_external_file_window_event(&event) {
+            return self.process_event(event_loop, window_id, Event::Window(file_event));
+        }
+
         match event {
             WinitWindowEvent::CloseRequested => self.process_event(
                 event_loop,
@@ -2174,6 +2178,15 @@ fn map_ime_event(event: Ime) -> Option<ImeEvent> {
     }
 }
 
+fn map_external_file_window_event(event: &WinitWindowEvent) -> Option<WindowEvent> {
+    match event {
+        WinitWindowEvent::HoveredFile(path) => Some(WindowEvent::ExternalFileHovered(path.clone())),
+        WinitWindowEvent::HoveredFileCancelled => Some(WindowEvent::ExternalFileHoverCancelled),
+        WinitWindowEvent::DroppedFile(path) => Some(WindowEvent::ExternalFileDropped(path.clone())),
+        _ => None,
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn window_icon_to_winit_icon(icon: &RuntimeWindowIcon) -> Result<WinitIcon> {
     match icon {
@@ -2420,14 +2433,17 @@ fn map_os_error(error: OsError) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{
-        physical_position_to_logical_point, physical_position_to_logical_vector,
-        physical_size_to_logical_size, rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area,
-        window_icon_to_winit_icon,
+        map_external_file_window_event, physical_position_to_logical_point,
+        physical_position_to_logical_vector, physical_size_to_logical_size,
+        rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, window_icon_to_winit_icon,
     };
-    use sui_core::Rect;
+    use sui_core::{Rect, WindowEvent};
     use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
+    use winit::event::WindowEvent as WinitWindowEvent;
 
     #[test]
     fn converts_physical_size_to_logical_size() {
@@ -2451,6 +2467,28 @@ mod tests {
 
         assert_eq!(delta.x, 60.0);
         assert_eq!(delta.y, 30.0);
+    }
+
+    #[test]
+    fn maps_winit_external_file_window_events() {
+        let path = PathBuf::from(r"C:\workspace\agent.json");
+
+        assert_eq!(
+            map_external_file_window_event(&WinitWindowEvent::HoveredFile(path.clone())),
+            Some(WindowEvent::ExternalFileHovered(path.clone()))
+        );
+        assert_eq!(
+            map_external_file_window_event(&WinitWindowEvent::DroppedFile(path.clone())),
+            Some(WindowEvent::ExternalFileDropped(path))
+        );
+        assert_eq!(
+            map_external_file_window_event(&WinitWindowEvent::HoveredFileCancelled),
+            Some(WindowEvent::ExternalFileHoverCancelled)
+        );
+        assert_eq!(
+            map_external_file_window_event(&WinitWindowEvent::Focused(true)),
+            None
+        );
     }
 
     #[test]

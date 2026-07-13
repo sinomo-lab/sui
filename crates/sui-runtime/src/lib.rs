@@ -1713,7 +1713,11 @@ impl WindowState {
             WindowEvent::RedrawRequested => {
                 self.schedule.mark(InvalidationKind::Paint);
             }
-            WindowEvent::CloseRequested | WindowEvent::Occluded(_) => {}
+            WindowEvent::CloseRequested
+            | WindowEvent::Occluded(_)
+            | WindowEvent::ExternalFileHovered(_)
+            | WindowEvent::ExternalFileHoverCancelled
+            | WindowEvent::ExternalFileDropped(_) => {}
         }
     }
 
@@ -4184,6 +4188,7 @@ mod tests {
     use std::{
         cell::RefCell,
         collections::VecDeque,
+        path::PathBuf,
         rc::Rc,
         sync::{Arc, Mutex},
     };
@@ -4220,6 +4225,22 @@ mod tests {
 
     struct FocusLeaf {
         counters: Rc<RefCell<Counters>>,
+    }
+
+    struct WindowEventRecorder {
+        events: Rc<RefCell<Vec<WindowEvent>>>,
+    }
+
+    impl Widget for WindowEventRecorder {
+        fn event(&mut self, _ctx: &mut EventCtx, event: &Event) {
+            if let Event::Window(event) = event {
+                self.events.borrow_mut().push(event.clone());
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 80.0))
+        }
     }
 
     const SYNTHETIC_ACTION_ID: WidgetId = WidgetId::new(u64::MAX - 1);
@@ -6495,6 +6516,46 @@ mod tests {
         assert_eq!(output.frame.viewport, Size::new(320.0, 180.0));
         assert_eq!(output.frame.surface_size, Size::new(640.0, 360.0));
         assert_eq!(output.frame.scale_factor, 2.0);
+    }
+
+    #[test]
+    fn runtime_delivers_external_file_events_without_changing_window_geometry() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime =
+            Application::new()
+                .window(WindowBuilder::new().title("External file events").root(
+                    WindowEventRecorder {
+                        events: Rc::clone(&events),
+                    },
+                ))
+                .build()
+                .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let before = runtime.render(window_id).unwrap().frame;
+        let path = PathBuf::from(r"C:\workspace\agent.json");
+
+        for event in [
+            WindowEvent::ExternalFileHovered(path.clone()),
+            WindowEvent::ExternalFileDropped(path.clone()),
+            WindowEvent::ExternalFileHoverCancelled,
+        ] {
+            runtime
+                .handle_event(window_id, Event::Window(event))
+                .unwrap();
+        }
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[
+                WindowEvent::ExternalFileHovered(path.clone()),
+                WindowEvent::ExternalFileDropped(path),
+                WindowEvent::ExternalFileHoverCancelled,
+            ]
+        );
+        let after = runtime.render(window_id).unwrap().frame;
+        assert_eq!(after.viewport, before.viewport);
+        assert_eq!(after.surface_size, before.surface_size);
+        assert_eq!(after.scale_factor, before.scale_factor);
     }
 
     #[test]

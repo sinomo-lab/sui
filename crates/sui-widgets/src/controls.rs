@@ -1414,6 +1414,16 @@ impl Label {
             TextCursor::new(focus.min(text_len)),
         );
     }
+
+    fn copy_selection(&self, ctx: &mut EventCtx) -> bool {
+        let text = self.current_text();
+        let range = self.selected_range(text.len());
+        let Some(selected) = text.get(range).filter(|selected| !selected.is_empty()) else {
+            return false;
+        };
+        ctx.set_clipboard_text(selected);
+        true
+    }
 }
 
 impl Widget for Label {
@@ -1475,6 +1485,19 @@ impl Widget for Label {
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.set_handled();
             }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Secondary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                // Preserve the active selection while handing the same press
+                // to a wrapping ContextMenu. Its activation can route a
+                // TextCommand back to this label after focus moves to the menu.
+                ctx.request_focus();
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed
                     && ctx.is_focused()
@@ -1489,6 +1512,16 @@ impl Widget for Label {
                 ctx.set_handled();
             }
             Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && (key.modifiers.control || key.modifiers.meta)
+                    && matches!(key.key.as_str(), "c" | "C") =>
+            {
+                if self.copy_selection(ctx) {
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key)
                 if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Escape" =>
             {
                 if let Some(scope) = &self.selection_scope {
@@ -1499,6 +1532,44 @@ impl Widget for Label {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                match &semantics.action {
+                    SemanticsActionRequest::SetSelection(selection) => {
+                        let text = self.current_text();
+                        self.set_selection(selection.start, selection.end, text.len());
+                        self.sync_selection_scope(ctx, &text);
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                        ctx.set_handled();
+                    }
+                    SemanticsActionRequest::Copy => {
+                        if self.copy_selection(ctx) {
+                            ctx.set_handled();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::Custom(custom) => {
+                if let Some(command) = TextCommand::from_custom_event(custom) {
+                    match command {
+                        TextCommand::SelectAll => {
+                            let text = self.current_text();
+                            self.set_selection(0, text.len(), text.len());
+                            self.sync_selection_scope(ctx, &text);
+                            ctx.request_paint();
+                            ctx.request_semantics();
+                            ctx.set_handled();
+                        }
+                        TextCommand::Copy => {
+                            if self.copy_selection(ctx) {
+                                ctx.set_handled();
+                            }
+                        }
+                        TextCommand::Cut | TextCommand::Paste => {}
+                    }
+                }
             }
             _ => {}
         }
@@ -1610,7 +1681,11 @@ impl Widget for Label {
             node.value = Some(SemanticsValue::Text(text));
         }
         if self.selection_scope.is_some() {
-            node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
+            node.actions = vec![
+                SemanticsAction::Focus,
+                SemanticsAction::SetSelection,
+                SemanticsAction::Copy,
+            ];
             node.state.focused = ctx.is_focused();
         }
         ctx.push(node);
@@ -6356,6 +6431,16 @@ impl Widget for TextArea {
 
         if let Some(layout) = &self.display_layout {
             ctx.push_clip_rect(content);
+            let input_text = self.input_text();
+            let selection = selection_range(&self.editor.display_selection(), input_text.len());
+            if !selection.is_empty() {
+                for rect in layout.selection_rects(selection) {
+                    ctx.fill_rect(
+                        rect.translate(content.origin.to_vector()),
+                        palette.selection,
+                    );
+                }
+            }
             ctx.draw_persistent_text_layout(content.origin, layout);
             ctx.pop_clip();
         }
@@ -9432,6 +9517,23 @@ mod tests {
         })
     }
 
+    fn secondary_pointer_down(position: Point) -> Event {
+        let mut buttons = PointerButtons::NONE;
+        buttons.insert(PointerButton::Secondary);
+        Event::Pointer(PointerEvent {
+            pointer_id: 2,
+            kind: PointerEventKind::Down,
+            position,
+            delta: Vector::ZERO,
+            scroll_delta: None,
+            button: Some(PointerButton::Secondary),
+            buttons,
+            modifiers: Modifiers::NONE,
+            pointer_kind: PointerKind::Mouse,
+            is_primary: true,
+        })
+    }
+
     fn command_key(key: &str) -> Event {
         let mut event = KeyboardEvent::new(key, KeyState::Pressed);
         event.modifiers.control = true;
@@ -9519,6 +9621,55 @@ mod tests {
         runtime.handle_event(window_id, command_key("a"))?;
 
         assert_eq!(selection.selected_text().as_deref(), Some("Hello SUI"));
+        Ok(())
+    }
+
+    #[test]
+    fn selectable_label_copies_with_hotkey_command_and_semantics() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(Label::new("Hello SUI").selectable(selection));
+        let output = runtime.render(window_id)?;
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Hello SUI")
+            })
+            .expect("selectable label semantics should exist");
+        let label_id = label.id;
+        let center = Point::new(
+            label.bounds.x() + 4.0,
+            label.bounds.y() + label.bounds.height() * 0.5,
+        );
+
+        runtime.handle_event(window_id, secondary_pointer_down(center))?;
+        let focused = runtime.render(window_id)?;
+        let label = focused
+            .semantics
+            .iter()
+            .find(|node| node.id == label_id)
+            .expect("selectable label semantics should remain present");
+        assert!(
+            label.state.focused,
+            "right click should focus selectable text"
+        );
+        assert!(label.actions.contains(&SemanticsAction::Copy));
+
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("c"))?;
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
+
+        runtime.clipboard().set_text("");
+        runtime.handle_event(window_id, TextCommand::Copy.into_event())?;
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
+
+        runtime.clipboard().set_text("");
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            label_id,
+            SemanticsActionRequest::Copy,
+        )?);
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
         Ok(())
     }
 
@@ -11290,6 +11441,42 @@ mod tests {
         assert_eq!(
             selection.selected_text().as_deref(),
             Some("first line\nsecond line")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_only_text_area_paints_selection_and_copies_it() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextArea::new("Connection details")
+                .value("node = local\naddress = 127.0.0.1:21353")
+                .read_only()
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        let selected = runtime.render(window_id)?;
+
+        assert_eq!(
+            selection.selected_text().as_deref(),
+            Some("node = local\naddress = 127.0.0.1:21353")
+        );
+        assert!(
+            solid_fill_colors(&selected).contains(&theme.palette.selection),
+            "read-only TextArea should paint the active selection before its text"
+        );
+
+        runtime.handle_event(window_id, command_key("c"))?;
+        assert_eq!(
+            runtime.clipboard().text().as_deref(),
+            Some("node = local\naddress = 127.0.0.1:21353")
         );
         Ok(())
     }

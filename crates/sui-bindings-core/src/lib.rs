@@ -6438,6 +6438,9 @@ pub enum BindingWindowEvent {
     },
     Focused(bool),
     Occluded(bool),
+    ExternalFileHovered(String),
+    ExternalFileHoverCancelled,
+    ExternalFileDropped(String),
     RedrawRequested,
 }
 
@@ -6457,6 +6460,13 @@ impl From<&WindowEvent> for BindingWindowEvent {
             },
             WindowEvent::Focused(focused) => Self::Focused(*focused),
             WindowEvent::Occluded(occluded) => Self::Occluded(*occluded),
+            WindowEvent::ExternalFileHovered(path) => {
+                Self::ExternalFileHovered(path.to_string_lossy().into_owned())
+            }
+            WindowEvent::ExternalFileHoverCancelled => Self::ExternalFileHoverCancelled,
+            WindowEvent::ExternalFileDropped(path) => {
+                Self::ExternalFileDropped(path.to_string_lossy().into_owned())
+            }
             WindowEvent::RedrawRequested => Self::RedrawRequested,
         }
     }
@@ -6478,6 +6488,9 @@ impl From<BindingWindowEvent> for WindowEvent {
             },
             BindingWindowEvent::Focused(focused) => Self::Focused(focused),
             BindingWindowEvent::Occluded(occluded) => Self::Occluded(occluded),
+            BindingWindowEvent::ExternalFileHovered(path) => Self::ExternalFileHovered(path.into()),
+            BindingWindowEvent::ExternalFileHoverCancelled => Self::ExternalFileHoverCancelled,
+            BindingWindowEvent::ExternalFileDropped(path) => Self::ExternalFileDropped(path.into()),
             BindingWindowEvent::RedrawRequested => Self::RedrawRequested,
         }
     }
@@ -6553,6 +6566,9 @@ impl From<&Event> for BindingEvent {
             Event::Custom(event) => Self::Custom(BindingCustomEvent::from(event)),
             Event::Drag(_) => Self::Unsupported {
                 kind: "drag".to_string(),
+            },
+            Event::Semantics(_) => Self::Unsupported {
+                kind: "semantics".to_string(),
             },
             Event::Wake(_) => Self::Unsupported {
                 kind: "wake".to_string(),

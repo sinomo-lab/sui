@@ -15338,7 +15338,10 @@ mod tests {
         paint_section_label_detail, paint_section_panel, text_token_style,
     };
     use crate::FloatingStack;
-    use crate::{DefaultTheme, HdrThemeMode, SemanticColorToken, SemanticTone, ThemeTextToken};
+    use crate::{
+        DefaultTheme, HdrThemeMode, Padding, ScrollView, SelectionScope, SemanticColorToken,
+        SemanticTone, SizedBox, Stack, TextArea, TextCommand, ThemeTextToken,
+    };
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode,
@@ -21103,6 +21106,191 @@ mod tests {
             "menu label should paint near the press position, got {:?}",
             label.rect
         );
+        Ok(())
+    }
+
+    #[test]
+    fn context_menu_routes_copy_to_read_only_text_area() -> Result<(), String> {
+        let value = "node = local\naddress = 127.0.0.1:21353";
+        let selection = SelectionScope::new();
+        let menu = ContextMenu::new(
+            "Connection details menu",
+            TextArea::new("Connection details")
+                .value(value)
+                .read_only()
+                .selectable(selection.clone()),
+        );
+        let text_area_id = menu.trigger_id();
+        let menu = menu
+            .items([MenuItem::new("Copy")])
+            .on_activate_with_ctx(move |ctx, _, _| {
+                ctx.post_event(text_area_id, TextCommand::Copy.into_event());
+            });
+        let (mut runtime, window_id) = build_runtime(menu);
+
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    text_area_id,
+                    SemanticsActionRequest::SetSelection(sui_core::SemanticsTextRange::new(
+                        0,
+                        value.len(),
+                    )),
+                )
+                .map_err(|error| error.to_string())?
+        );
+        assert_eq!(selection.selected_text().as_deref(), Some(value));
+
+        let press = Point::new(20.0, 20.0);
+        let mut right_click = PointerEvent::new(PointerEventKind::Down, press);
+        right_click.pointer_id = 1;
+        right_click.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(right_click))
+            .map_err(|error| error.to_string())?;
+
+        let open = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let copy = open
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Copy")
+            })
+            .expect("copy context-menu item should be presented")
+            .bounds;
+        let copy_center = Point::new(
+            copy.x() + copy.width() * 0.5,
+            copy.y() + copy.height() * 0.5,
+        );
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, copy_center, true),
+            )
+            .map_err(|error| error.to_string())?;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, copy_center, false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(runtime.clipboard().text().as_deref(), Some(value));
+        assert_eq!(selection.selected_text().as_deref(), Some(value));
+        Ok(())
+    }
+
+    #[test]
+    fn context_menu_pointer_activation_escapes_tight_trigger_inside_scroll_view()
+    -> Result<(), String> {
+        let activations = Rc::new(Cell::new(0));
+        let recorded_activations = Rc::clone(&activations);
+        let menu = ContextMenu::new(
+            "Connection details menu",
+            TextArea::new("Connection details")
+                .value("node = local\naddress = 127.0.0.1:21353")
+                .read_only(),
+        )
+        .items([MenuItem::new("Select all"), MenuItem::new("Copy")])
+        .on_activate(move |index, _| {
+            if index == 1 {
+                activations.set(activations.get() + 1);
+            }
+        });
+        let root = SizedBox::new()
+            .size(Size::new(600.0, 360.0))
+            .with_child(ScrollView::vertical(Padding::all(
+                24.0,
+                Stack::vertical()
+                    .spacing(16.0)
+                    .with_child(SizedBox::new().height(96.0))
+                    .with_child(SizedBox::new().height(68.0).width(480.0).with_child(menu))
+                    .with_child(SizedBox::new().height(420.0)),
+            )));
+        let (mut runtime, window_id) = build_runtime(root);
+
+        let closed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some("Connection details")
+            })
+            .expect("nested context-menu trigger should be present")
+            .bounds;
+        assert!(
+            trigger.height() <= 68.0,
+            "trigger should remain constrained by the tight settings row"
+        );
+        let trigger_center = Point::new(
+            trigger.x() + trigger.width() * 0.5,
+            trigger.y() + trigger.height() * 0.5,
+        );
+        let mut right_click = PointerEvent::new(PointerEventKind::Down, trigger_center);
+        right_click.pointer_id = 1;
+        right_click.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(right_click))
+            .map_err(|error| error.to_string())?;
+
+        let open = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let copy = open
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Copy")
+            })
+            .expect("copy item should be presented outside the tight trigger")
+            .bounds;
+        assert!(
+            copy.max_y() > trigger.max_y(),
+            "dropdown row should exercise out-of-trigger hit testing: trigger={trigger:?}, copy={copy:?}"
+        );
+        let copy_center = Point::new(
+            copy.x() + copy.width() * 0.5,
+            copy.y() + copy.height() * 0.5,
+        );
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, copy_center, true),
+            )
+            .map_err(|error| error.to_string())?;
+        let pressed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let context_menu = pressed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ContextMenu
+                    && node.name.as_deref() == Some("Connection details menu")
+            })
+            .expect("context menu should remain present while its row is pressed");
+        assert!(
+            context_menu.state.focused,
+            "ancestor scrollers must not steal focus during pointer capture"
+        );
+        assert_eq!(context_menu.state.expanded, Some(true));
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, copy_center, false),
+            )
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(recorded_activations.get(), 1);
         Ok(())
     }
 

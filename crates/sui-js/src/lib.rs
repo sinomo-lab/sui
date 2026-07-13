@@ -459,6 +459,17 @@ impl JsEvent {
             _ => None,
         }
     }
+
+    #[napi(getter)]
+    pub fn file_path(&self) -> Option<String> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::ExternalFileHovered(path))
+            | BindingEvent::Window(BindingWindowEvent::ExternalFileDropped(path)) => {
+                Some(path.clone())
+            }
+            _ => None,
+        }
+    }
 }
 
 impl JsEvent {
@@ -2735,6 +2746,9 @@ fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
         BindingWindowEvent::ScaleFactorChanged { .. } => "scaleFactorChanged",
         BindingWindowEvent::Focused(_) => "focused",
         BindingWindowEvent::Occluded(_) => "occluded",
+        BindingWindowEvent::ExternalFileHovered(_) => "externalFileHovered",
+        BindingWindowEvent::ExternalFileHoverCancelled => "externalFileHoverCancelled",
+        BindingWindowEvent::ExternalFileDropped(_) => "externalFileDropped",
         BindingWindowEvent::RedrawRequested => "redrawRequested",
     }
 }

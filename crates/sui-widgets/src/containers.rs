@@ -3113,6 +3113,7 @@ impl Widget for ScrollView {
             }
             Event::Pointer(pointer)
                 if pointer.kind == sui_core::PointerEventKind::Down
+                    && ctx.phase() != EventPhase::Capture
                     && ctx.bounds().contains(pointer.position) =>
             {
                 ctx.request_focus();
@@ -3302,6 +3303,7 @@ impl Widget for VirtualScrollView {
             }
             Event::Pointer(pointer)
                 if pointer.kind == sui_core::PointerEventKind::Down
+                    && ctx.phase() != EventPhase::Capture
                     && ctx.bounds().contains(pointer.position) =>
             {
                 ctx.request_focus();

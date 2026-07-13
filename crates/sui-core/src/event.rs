@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 
 use crate::{
     AsyncWakeToken, DragEvent, Point, SemanticsActionRequest, Size, TimerToken, Vector, WidgetId,
@@ -236,6 +236,17 @@ pub enum WindowEvent {
     },
     Focused(bool),
     Occluded(bool),
+    /// A file from outside the application is being hovered over the host
+    /// window. Platforms emit one event per file when several files are
+    /// dragged together.
+    ExternalFileHovered(PathBuf),
+    /// Files from outside the application left the host window without being
+    /// dropped.
+    ExternalFileHoverCancelled,
+    /// A file from outside the application was dropped on the host window.
+    /// Platforms emit one event per file when several files are dropped
+    /// together.
+    ExternalFileDropped(PathBuf),
     RedrawRequested,
 }
 
@@ -288,7 +299,9 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
-    use super::WakeEvent;
+    use std::path::PathBuf;
+
+    use super::{WakeEvent, WindowEvent};
 
     #[test]
     fn wake_event_animation_frame_carries_time_and_delta() {
@@ -305,6 +318,27 @@ mod tests {
                 delta,
                 frame_index
             } if time == 42.5 && delta == 1.0 / 120.0 && frame_index == 7
+        ));
+    }
+
+    #[test]
+    fn external_file_window_events_preserve_paths_and_cancellation() {
+        let path = PathBuf::from(r"C:\workspace\candidate.json");
+
+        let hovered = WindowEvent::ExternalFileHovered(path.clone());
+        let dropped = WindowEvent::ExternalFileDropped(path.clone());
+
+        assert!(matches!(
+            hovered,
+            WindowEvent::ExternalFileHovered(event_path) if event_path == path
+        ));
+        assert!(matches!(
+            dropped,
+            WindowEvent::ExternalFileDropped(event_path) if event_path == path
+        ));
+        assert!(matches!(
+            WindowEvent::ExternalFileHoverCancelled,
+            WindowEvent::ExternalFileHoverCancelled
         ));
     }
 }
