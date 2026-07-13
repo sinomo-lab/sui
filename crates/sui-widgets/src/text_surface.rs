@@ -122,11 +122,13 @@ impl TextSurfaceRangeIndex {
 
 pub struct TextSurface {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     placeholder: String,
     read_only: bool,
     editor: EditorState,
     text_style: Option<TextStyle>,
+    text_style_reader: Option<Box<dyn Fn(DefaultTheme) -> TextStyle>>,
     padding: Option<Insets>,
     min_width: Option<f32>,
     min_height: Option<f32>,
@@ -159,11 +161,13 @@ impl TextSurface {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: name.into(),
             placeholder: String::new(),
             read_only: false,
             editor: EditorState::new(),
             text_style: None,
+            text_style_reader: None,
             padding: None,
             min_width: None,
             min_height: None,
@@ -195,11 +199,30 @@ impl TextSurface {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = Some(text_style);
+        self.text_style_reader = None;
+        self
+    }
+
+    pub fn text_style_when<F>(mut self, text_style: F) -> Self
+    where
+        F: Fn(DefaultTheme) -> TextStyle + 'static,
+    {
+        self.text_style_reader = Some(Box::new(text_style));
+        self.text_style = None;
         self
     }
 
@@ -323,23 +346,36 @@ impl TextSurface {
         self
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_text_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
+        if let Some(text_style) = &self.text_style_reader {
+            return text_style(theme);
+        }
         self.text_style
             .clone()
-            .unwrap_or_else(|| self.theme.body_text_style())
+            .unwrap_or_else(|| theme.body_text_style())
     }
 
     fn display_text_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
         let mut style = self.resolved_text_style();
         if self.read_only {
-            style.color = self.theme.palette.text_muted;
+            style.color = theme.palette.text_muted;
         }
         style
     }
 
     fn placeholder_text_style(&self) -> TextStyle {
+        let theme = self.resolved_theme();
         let mut style = self.resolved_text_style();
-        style.color = self.theme.palette.placeholder;
+        style.color = theme.palette.placeholder;
         style
     }
 
@@ -348,16 +384,16 @@ impl TextSurface {
     }
 
     fn resolved_padding(&self) -> Insets {
-        self.padding
-            .unwrap_or(self.theme.metrics.text_input_padding)
+        let theme = self.resolved_theme();
+        self.padding.unwrap_or(theme.metrics.text_input_padding)
     }
 
     fn resolved_min_size(&self) -> Size {
+        let theme = self.resolved_theme();
         Size::new(
-            self.min_width
-                .unwrap_or(self.theme.metrics.text_input_min_width),
+            self.min_width.unwrap_or(theme.metrics.text_input_min_width),
             self.min_height
-                .unwrap_or(self.theme.metrics.text_area_min_height),
+                .unwrap_or(theme.metrics.text_area_min_height),
         )
     }
 
@@ -804,9 +840,14 @@ impl TextSurface {
 
     fn update_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
-            let theme = self.theme.as_ref();
+            let theme = self.resolved_theme();
             self.hovered = hovered;
-            set_hover_animation_target(&mut self.hover_animation, hovered as u8 as f32, theme, ctx);
+            set_hover_animation_target(
+                &mut self.hover_animation,
+                hovered as u8 as f32,
+                &theme,
+                ctx,
+            );
             ctx.request_paint();
             ctx.request_semantics();
         }
@@ -1642,8 +1683,9 @@ impl Widget for TextSurface {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let content = self.content_rect(ctx.bounds());
         let hover_progress = self.hover_animation.value;
         let focus_progress = self.focus_animation.value;
@@ -1702,7 +1744,7 @@ impl Widget for TextSurface {
             );
             ctx.fill(
                 Path::rounded_rect(line_rect, 0.0),
-                palette.accent.with_alpha(match self.theme.colors.scheme {
+                palette.accent.with_alpha(match theme.colors.scheme {
                     ThemeColorScheme::Light => 0.05,
                     ThemeColorScheme::Dark => 0.12,
                     ThemeColorScheme::HighContrast => 0.18,
@@ -1829,8 +1871,8 @@ impl Widget for TextSurface {
                 ctx.request_text();
             }
         }
-        let theme = self.theme.as_ref();
-        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, theme, ctx);
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -2220,6 +2262,47 @@ mod tests {
             theme.palette.surface_focus
         );
         assert!(solid_stroke_colors(&settled_focus).contains(&theme.palette.focus_ring));
+    }
+
+    #[test]
+    fn text_surface_theme_when_and_text_style_when_read_current_theme() {
+        let theme = Rc::new(RefCell::new(DefaultTheme::default()));
+        let theme_reader = Rc::clone(&theme);
+        let style_reader = Rc::clone(&theme);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(180.0, 72.0))
+                .with_child(
+                    TextSurface::new("Editor")
+                        .value("themed text")
+                        .theme_when(move || *theme_reader.borrow())
+                        .text_style_when(move |_| {
+                            let theme = *style_reader.borrow();
+                            theme.text_style(theme.palette.text)
+                        }),
+                ),
+        );
+
+        let light = runtime.render(window_id).expect("render should succeed");
+        assert_eq!(
+            solid_fill_colors(&light)[0],
+            DefaultTheme::default().palette.control
+        );
+
+        *theme.borrow_mut() = DefaultTheme::dark();
+        runtime
+            .handle_event(
+                window_id,
+                Event::Window(WindowEvent::Resized(Size::new(180.0, 72.0))),
+            )
+            .expect("resize should invalidate themed text surface");
+        let dark = runtime.render(window_id).expect("render should succeed");
+
+        assert_eq!(
+            solid_fill_colors(&dark)[0],
+            DefaultTheme::dark().palette.control
+        );
+        assert_ne!(light.frame.scene, dark.frame.scene);
     }
 
     #[test]

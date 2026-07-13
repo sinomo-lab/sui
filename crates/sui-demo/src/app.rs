@@ -4,10 +4,11 @@ use std::{cell::RefCell, rc::Rc};
 use crate::widget_book::build_widget_book_gallery;
 use crate::widget_book::{
     LivePerformanceRoot, build_color_validation_surface_with_theme,
-    build_retained_text_benchmark_with_theme, build_text_editing_benchmark,
-    build_text_rendering_comparison_surface_with_theme, build_text_validation_surface,
-    build_theme_demo_surface, build_widget_book_gallery_with_theme, default_widget_book_state,
-    register_widget_book_images, set_widget_book_hdr_theme_mode, widget_book_hdr_theme_mode,
+    build_retained_text_benchmark_with_theme, build_text_editing_benchmark_with_theme,
+    build_text_rendering_comparison_surface_with_theme, build_text_validation_surface_with_theme,
+    build_theme_demo_surface_with_theme, build_widget_book_gallery_with_theme,
+    default_widget_book_state, register_widget_book_images, set_widget_book_hdr_theme_mode,
+    widget_book_hdr_theme_mode,
 };
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
@@ -1616,7 +1617,10 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             description: "Theme previews and HDR theme mode comparisons.",
             icon: IconGlyph::PaintBucket,
             accent: Color::rgba(0.62, 0.28, 0.78, 1.0),
-            child: WidgetPod::new(build_theme_demo_surface(default_widget_book_state())),
+            child: WidgetPod::new(build_theme_demo_surface_with_theme(
+                default_widget_book_state(),
+                Rc::clone(&theme_reader),
+            )),
         },
         DevDemo {
             title: ANIMATION_DEMO_TAB_LABEL,
@@ -1648,14 +1652,18 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             description: "Validation surface for text metrics, alignment, and rasterization.",
             icon: IconGlyph::ActualSize,
             accent: Color::rgba(0.68, 0.26, 0.32, 1.0),
-            child: WidgetPod::new(build_text_validation_surface()),
+            child: WidgetPod::new(build_text_validation_surface_with_theme(Rc::clone(
+                &theme_reader,
+            ))),
         },
         DevDemo {
             title: TEXT_EDITING_TAB_LABEL,
             description: "Single-line and multi-line text editing demos.",
             icon: IconGlyph::Restore,
             accent: Color::rgba(0.35, 0.38, 0.82, 1.0),
-            child: WidgetPod::new(build_text_editing_benchmark()),
+            child: WidgetPod::new(build_text_editing_benchmark_with_theme(Rc::clone(
+                &theme_reader,
+            ))),
         },
         #[cfg(feature = "markdown")]
         DevDemo {
@@ -6644,7 +6652,9 @@ final_max_luminance={final_max_luminance}
     fn dev_shell_scroll_bars_repaint_when_theme_toggle_changes() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
-        window.dispatch_event_now(Event::Window(WindowEvent::Resized(Size::new(1100.0, 360.0))))?;
+        window.dispatch_event_now(Event::Window(WindowEvent::Resized(Size::new(
+            1100.0, 360.0,
+        ))))?;
         open_dev_shell_settings(&window)?;
 
         let light_snapshot = window.snapshot()?;
