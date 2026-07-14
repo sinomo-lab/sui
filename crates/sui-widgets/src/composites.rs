@@ -22030,8 +22030,7 @@ mod tests {
             .semantics
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Button
-                    && node.name.as_deref() == Some("Send message")
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Send message")
             })
             .expect("tooltip trigger semantics present")
             .bounds;

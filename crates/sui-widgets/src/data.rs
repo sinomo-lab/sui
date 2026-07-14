@@ -5032,24 +5032,11 @@ pub fn paint_leading_label_cell(
         ..theme.body_text_style()
     };
     label_style.weight = style.label_weight;
-    let measurement = paint_text_measurement(ctx, label, &label_style);
-    let text_rect = vertically_centered_text_rect_y(
-        ctx,
-        label_rect,
-        measurement,
-        label_style.line_height.max(measurement.height),
-    );
-    let text_rect = Rect::new(
-        label_rect.x(),
-        text_rect,
-        label_rect.width(),
-        label_rect.height(),
-    );
 
     ctx.push_clip_rect(label_rect);
     paint_aligned_text(
         ctx,
-        text_rect,
+        label_rect,
         label,
         &label_style,
         label_style.line_height,
@@ -5143,19 +5130,10 @@ pub fn paint_text_cell(
         text_style = numeric_text_style(text_style);
     }
 
-    let measurement = paint_text_measurement(ctx, text, &text_style);
-    let text_y = vertically_centered_text_rect_y(
-        ctx,
-        content,
-        measurement,
-        text_style.line_height.max(measurement.height),
-    );
-    let text_rect = Rect::new(content.x(), text_y, content.width(), content.height());
-
     ctx.push_clip_rect(content);
     paint_aligned_text(
         ctx,
-        text_rect,
+        content,
         text,
         &text_style,
         text_style.line_height,
@@ -8377,6 +8355,17 @@ mod tests {
             "label should stay within the cell bounds: {:?}",
             label.rect
         );
+        let layout = TextSystem::new()
+            .shape_text_run(&label, &FontRegistry::new())
+            .expect("leading-label cell text should shape");
+        let line = layout.lines().first().expect("leading-label line present");
+        let visual_center =
+            label.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        assert!(
+            (visual_center - (output.frame.viewport.height * 0.5)).abs() < 0.75,
+            "leading-label visual center {visual_center} did not match cell center; text rect {:?}",
+            label.rect
+        );
     }
 
     struct TextCellFixture {
@@ -8441,6 +8430,17 @@ mod tests {
         assert!((run.rect.max_x() - content_right).abs() < 0.75);
         assert!((clip.x() - 10.0).abs() < 0.01);
         assert!((clip.max_x() - content_right).abs() < 0.01);
+        let layout = TextSystem::new()
+            .shape_text_run(&run, &FontRegistry::new())
+            .expect("text-cell text should shape");
+        let line = layout.lines().first().expect("text-cell line present");
+        let visual_center =
+            run.rect.y() + line.baseline + optical_visual_center(layout.measurement());
+        assert!(
+            (visual_center - (output.frame.viewport.height * 0.5)).abs() < 0.75,
+            "text-cell visual center {visual_center} did not match cell center; text rect {:?}",
+            run.rect
+        );
     }
 
     struct TextBlockFixture {

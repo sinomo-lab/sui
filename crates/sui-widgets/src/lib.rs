@@ -47,12 +47,11 @@ pub use composites::{
     StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation,
     SurfaceRole, TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
     TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines,
-    paint_code_panel, paint_command_button, paint_coverage_dots, paint_coverage_dots_with_config,
-    paint_detail_row_at, paint_disclosure_button, paint_empty_state, paint_hairline,
-    paint_placement_badge, paint_placement_badge_with, paint_progress_bar, paint_rounded_panel,
-    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
-    paint_status_badge,
+    paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
+    paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
+    paint_empty_state, paint_hairline, paint_placement_badge, paint_placement_badge_with,
+    paint_progress_bar, paint_rounded_panel, paint_rounded_rect, paint_section_label,
+    paint_section_label_detail, paint_section_panel, paint_status_badge,
 };
 pub use containers::{
     Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,

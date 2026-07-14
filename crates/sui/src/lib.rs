@@ -26,10 +26,9 @@ pub use composites::{
     Spinner, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder,
     SurfaceElevation, SurfaceRole, TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip,
     TooltipAlignment, TooltipPlacement, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines,
-    paint_code_panel, paint_command_button, paint_disclosure_button, paint_empty_state,
-    paint_hairline, paint_placement_badge_with, paint_rounded_panel, paint_rounded_rect,
-    paint_section_label, paint_section_label_detail, paint_section_panel,
+    paint_code_lines, paint_code_panel, paint_command_button, paint_disclosure_button,
+    paint_empty_state, paint_hairline, paint_placement_badge_with, paint_rounded_panel,
+    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
 };
 pub use containers::{
     Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, RebuildOnChange,
@@ -610,8 +609,7 @@ pub mod prelude {
         ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline, TimelineBindingSink,
         TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette, ToolPaletteItem,
         Toolbar, Tooltip, TooltipAlignment, TooltipPlacement, Track, TrailingSlotRow, Transform,
-        Transition,
-        TreeItem, TreeView, VirtualScrollView, VirtualTable, VirtualTableColumn,
+        Transition, TreeItem, TreeView, VirtualScrollView, VirtualTable, VirtualTableColumn,
         VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
         WakeEvent, Widget, WidgetChildren, WidgetPod, WidgetShader, Window, WindowBuilder,
         WindowRenderOptions, arrange_flex, containers::Padding, detail_row_height_for_value,
