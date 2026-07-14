@@ -717,10 +717,10 @@ impl Widget for Canvas {
         for shape in &self.shapes {
             paint_canvas_shape(ctx, shape, transform, self.viewport.zoom);
         }
-        if let Some(points) = &self.active_stroke {
-            if let Some(shape) = CanvasShape::polyline(points, self.draw_stroke) {
-                paint_canvas_shape(ctx, &shape, transform, self.viewport.zoom);
-            }
+        if let Some(points) = &self.active_stroke
+            && let Some(shape) = CanvasShape::polyline(points, self.draw_stroke)
+        {
+            paint_canvas_shape(ctx, &shape, transform, self.viewport.zoom);
         }
         ctx.pop_clip();
         draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
@@ -2289,11 +2289,9 @@ impl Widget for PixelCanvas {
                 if matches!(
                     pointer.kind,
                     PointerEventKind::Leave | PointerEventKind::Cancel
-                ) =>
+                ) && self.clear_cursor_position() =>
             {
-                if self.clear_cursor_position() {
-                    Self::request_interaction_update(ctx);
-                }
+                Self::request_interaction_update(ctx);
             }
             _ => {}
         }

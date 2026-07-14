@@ -1036,14 +1036,14 @@ impl DesktopApp {
         }
 
         let bootstrap_redraw_at_ms = self.current_time_ms();
-        if let Some(window) = self.windows.get_mut(&window_id) {
-            if window.awaiting_performance_bootstrap {
-                window.awaiting_performance_bootstrap = false;
-                if !window.redraw_requested {
-                    window.redraw_requested = true;
-                    window.redraw_requested_at_ms = Some(bootstrap_redraw_at_ms);
-                    window.window.request_redraw();
-                }
+        if let Some(window) = self.windows.get_mut(&window_id)
+            && window.awaiting_performance_bootstrap
+        {
+            window.awaiting_performance_bootstrap = false;
+            if !window.redraw_requested {
+                window.redraw_requested = true;
+                window.redraw_requested_at_ms = Some(bootstrap_redraw_at_ms);
+                window.window.request_redraw();
             }
         }
 

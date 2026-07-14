@@ -3134,10 +3134,10 @@ impl Widget for ScrollView {
                     _ => None,
                 };
 
-                if let Some(delta) = delta {
-                    if self.scroll_by(viewport, delta, ctx) {
-                        ctx.set_handled();
-                    }
+                if let Some(delta) = delta
+                    && self.scroll_by(viewport, delta, ctx)
+                {
+                    ctx.set_handled();
                 }
             }
             Event::Pointer(pointer)
@@ -3324,10 +3324,10 @@ impl Widget for VirtualScrollView {
                     _ => None,
                 };
 
-                if let Some(delta) = delta {
-                    if self.scroll_by(viewport, delta, ctx) {
-                        ctx.set_handled();
-                    }
+                if let Some(delta) = delta
+                    && self.scroll_by(viewport, delta, ctx)
+                {
+                    ctx.set_handled();
                 }
             }
             Event::Pointer(pointer)
@@ -4379,10 +4379,10 @@ mod tests {
         (runtime, window_id)
     }
 
-    fn scroll_view_content_with_height<'a>(
-        graph: &'a WidgetGraphSnapshot,
+    fn scroll_view_content_with_height(
+        graph: &WidgetGraphSnapshot,
         content_height: f32,
-    ) -> &'a WidgetNodeSnapshot {
+    ) -> &WidgetNodeSnapshot {
         graph
             .nodes
             .iter()

@@ -45,10 +45,7 @@ impl ClipboardBackend for OsClipboardBackend {
         let Some(connection) = self.connection() else {
             return self.fallback.clone();
         };
-        match connection.get_text() {
-            Ok(text) => Some(text),
-            Err(_) => None,
-        }
+        connection.get_text().ok()
     }
 
     fn set_text(&mut self, text: &str) {

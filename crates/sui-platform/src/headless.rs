@@ -858,13 +858,13 @@ mod tests {
 
         while totals.len() < HDR_BENCH_FRAMES && iterations < max_iterations {
             let _ = platform.pump(&mut runtime)?;
-            if let Some(snapshot) = window_performance_snapshot(window_id) {
-                if snapshot.frame_index != last_frame {
-                    last_frame = snapshot.frame_index;
-                    totals.push(snapshot.total_time_ms);
-                    commands.push(snapshot.scene.command_count as f64);
-                    dirty.push(snapshot.scene.dirty_coverage as f64);
-                }
+            if let Some(snapshot) = window_performance_snapshot(window_id)
+                && snapshot.frame_index != last_frame
+            {
+                last_frame = snapshot.frame_index;
+                totals.push(snapshot.total_time_ms);
+                commands.push(snapshot.scene.command_count as f64);
+                dirty.push(snapshot.scene.dirty_coverage as f64);
             }
             platform.advance_time(HDR_BENCH_STEP_S);
             iterations += 1;

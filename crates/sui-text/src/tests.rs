@@ -93,12 +93,12 @@ fn find_fallback_font_case() -> Option<(RegisteredFont, char)> {
             }
         }
 
-        if let Some(font_id) = missing_font_id.filter(|_| fallback_found) {
-            if let Some(font) = font_db.with_face_data(font_id, |font_data, face_index| {
+        if let Some(font_id) = missing_font_id.filter(|_| fallback_found)
+            && let Some(font) = font_db.with_face_data(font_id, |font_data, face_index| {
                 RegisteredFont::from_bytes(font_data.to_vec()).with_face_index(face_index)
-            }) {
-                return Some((font, candidate));
-            }
+            })
+        {
+            return Some((font, candidate));
         }
     }
 

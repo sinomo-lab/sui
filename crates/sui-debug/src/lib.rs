@@ -652,7 +652,7 @@ fn build_graph_tree_items(graph: &WidgetGraphSnapshot) -> Vec<TreeItem> {
 
     nodes
         .get(&graph.root)
-        .map(|root| vec![graph_tree_item(*root, &nodes)])
+        .map(|root| vec![graph_tree_item(root, &nodes)])
         .unwrap_or_default()
 }
 
@@ -685,7 +685,7 @@ fn graph_tree_item(
         item = item.expanded(true);
         for child in &node.children {
             if let Some(child_node) = nodes.get(child) {
-                item = item.with_child(graph_tree_item(*child_node, nodes));
+                item = item.with_child(graph_tree_item(child_node, nodes));
             }
         }
     }
@@ -757,6 +757,7 @@ fn yes_no(value: bool) -> &'static str {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::SceneDebugSummary;
     use sui_core::{Color, DirtyRegion, InvalidationKind, Rect, WindowId};

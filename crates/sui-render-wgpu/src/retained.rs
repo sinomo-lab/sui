@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -440,7 +442,7 @@ impl RetainedCompositorState {
         feather_width: f32,
     ) -> Result<DrawOpArena> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
-        let composition_started = self.diagnostics_enabled.then(|| Instant::now());
+        let composition_started = self.diagnostics_enabled.then(Instant::now);
         let draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
         self.finish_frame(
             frame.viewport,
@@ -458,7 +460,7 @@ impl RetainedCompositorState {
         feather_width: f32,
     ) -> Result<RetainedFrameSubmission> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
-        let composition_started = self.diagnostics_enabled.then(|| Instant::now());
+        let composition_started = self.diagnostics_enabled.then(Instant::now);
         let submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
         self.finish_frame(
             frame.viewport,
@@ -479,12 +481,12 @@ impl RetainedCompositorState {
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
         self.frame_index = self.frame_index.wrapping_add(1);
         let mut frame_stats = RetainedCompositorFrameStats::default();
-        let scene_traversal_started = self.diagnostics_enabled.then(|| Instant::now());
+        let scene_traversal_started = self.diagnostics_enabled.then(Instant::now);
         let snapshot = self.build_snapshot(&frame.scene)?;
         if let Some(started) = scene_traversal_started {
             frame_stats.scene_traversal_time_ms = started.elapsed().as_secs_f64() * 1000.0;
         }
-        let state_update_started = self.diagnostics_enabled.then(|| Instant::now());
+        let state_update_started = self.diagnostics_enabled.then(Instant::now);
         self.apply_snapshot(
             frame,
             snapshot,
@@ -969,7 +971,7 @@ impl RetainedCompositorState {
         };
 
         if let Some(reason) = rebuild_reason {
-            let packet_build_started = self.diagnostics_enabled.then(|| Instant::now());
+            let packet_build_started = self.diagnostics_enabled.then(Instant::now);
             let (draw_ops, diagnostics) = build_direct_packet_with_diagnostics(
                 frame,
                 &snapshot.scene,
@@ -1064,7 +1066,6 @@ impl RetainedCompositorState {
                 &self.root.items,
                 phase,
                 &mut current,
-                &mut submission,
                 viewport,
                 stats,
             )?;
@@ -1154,7 +1155,6 @@ impl RetainedCompositorState {
         items: &[CompositionItem],
         phase: CompositionPhase,
         current: &mut DrawOpArena,
-        submission: &mut RetainedFrameSubmission,
         viewport: Size,
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
@@ -1214,7 +1214,6 @@ impl RetainedCompositorState {
                             &layer.items,
                             phase,
                             current,
-                            submission,
                             viewport,
                             stats,
                         )?;

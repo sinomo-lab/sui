@@ -3,6 +3,13 @@ name = "sui-render-wgpu"
 version.workspace = true
 description = "wgpu renderer boundary for SUI scene frames."
 edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
@@ -24,4 +31,4 @@ wasm-bindgen-futures = { workspace = true }
 web-time = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-sui-platform-windows = { path = "../sui-platform-windows" }
+sui-platform-windows = { workspace = true }

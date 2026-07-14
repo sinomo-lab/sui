@@ -1,25 +1,32 @@
 # SUI Documentation
 
-This directory contains documentation for the current workspace.
+This directory contains both documentation for the current workspace and clearly separated design/roadmap material. Documents under **Current implementation** describe code that exists today. Documents under **Design and roadmap** are proposals, plans, or directional constraints and should not be read as shipped API guarantees.
 
-The design goals still live in [design.md](./design.md). The other documents describe the code that exists today: how the workspace is organized, how frames move through the runtime, how the renderer works, and how tests are expected to be written.
-
-## Read Order
+## Current Implementation
 
 Suggested reading order:
 
-1. [user-api.md](./user-api.md) for the public Rust API and the intended Python/JavaScript binding shape.
-2. [plans/cross-language-bindings-plan.md](./plans/cross-language-bindings-plan.md) for the proposed Python/JavaScript binding architecture.
-3. [architecture.md](./architecture.md) for the runtime and frame pipeline.
-4. [stack-hosts.md](./stack-hosts.md) for the planned stacking, popup-host, and multi-bounds model.
-5. [crate-architecture.md](./crate-architecture.md) for crate ownership and dependency boundaries.
-6. [layout-and-overflow.md](./layout-and-overflow.md) for the simplified sizing and overflow model.
-7. [text-system.md](./text-system.md) for the planned text-engine refactor and long-term text goals.
-8. [renderer-architecture.md](./renderer-architecture.md) for scene, compositor, and renderer details.
-9. [testing.md](./testing.md) for headless tests, desktop harness tests, and visual artifacts.
-10. [design.md](./design.md) for the long-term product and API direction.
-11. [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) for the intended HDR-native visual language and design constraints.
-12. [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) for the proposed HDR-aware theme and token model.
+1. [user-api.md](./user-api.md) — supported Rust, Python, and JavaScript entry points.
+2. [architecture.md](./architecture.md) — runtime and frame pipeline.
+3. [crate-architecture.md](./crate-architecture.md) — crate ownership and dependency boundaries.
+4. [layout-and-overflow.md](./layout-and-overflow.md) — sizing and overflow behavior.
+5. [renderer-architecture.md](./renderer-architecture.md) — scene, compositor, and renderer details.
+6. [testing.md](./testing.md) — headless tests, desktop harness tests, and visual artifacts.
+7. [text-rendering-benchmarks.md](./text-rendering-benchmarks.md) — current text benchmark procedure and results.
+
+The binding-specific READMEs contain build instructions and examples:
+
+- [Python binding README](../crates/sui-python/README.md)
+- [JavaScript binding README](../crates/sui-js/README.md)
+
+## Design And Roadmap
+
+- [design.md](./design.md) — long-term product and API direction.
+- [stack-hosts.md](./stack-hosts.md) — planned stacking, popup-host, and multi-bounds model.
+- [text-system.md](./text-system.md) — planned text-engine refactor and long-term text goals.
+- [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) — intended HDR-native visual language.
+- [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) — proposed HDR-aware token model.
+- [plans/](./plans/) — implementation plans. The cross-language binding plan is historical context for the now-implemented alpha bindings; remaining items are not promises of shipped behavior.
 
 ## Workspace At A Glance
 
@@ -37,6 +44,9 @@ The current workspace is organized around a retained widget runtime.
 - `sui-widgets` owns built-in widgets and theme types.
 - `sui-testing` owns deterministic UI automation helpers.
 - `sui-debug` owns reusable debug widgets and inspectors.
+- `sui-tui` owns accessibility-tree generated terminal UI support.
+- `sui-bindings-core` owns the shared binding model and host-driven runtime adapters.
+- `sui-python` and `sui-js` own the native Python and Node/Electron surfaces.
 - `sui-demo` owns the main development host, widget book, story content, and screenshot-oriented tests.
 
 One important implementation detail to keep in mind: the runtime is still in the layer-boundary transition. Explicit paint boundaries are the intended retained-compositor and retained-animation boundary, but some diagnostics still report emitted `SceneLayer` counts while that decoupling work finishes.
@@ -47,7 +57,8 @@ Common commands:
 
 ```bash
 cargo run -p sui-demo
-cargo test
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p sui-testing
 cargo test -p sui-demo -- --nocapture
 ```

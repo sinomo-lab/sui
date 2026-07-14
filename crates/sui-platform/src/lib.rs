@@ -238,6 +238,7 @@ fn split_renderer_phase_times_ms(
     (renderer_work_time_ms, surface_wait_time_ms)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn publish_frame_performance(
     window_id: WindowId,
     frame_index: u64,

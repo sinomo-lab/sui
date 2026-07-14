@@ -488,10 +488,9 @@ impl Widget for ListView {
                     .zip(hovered)
                     .filter(|(pressed, hovered)| pressed == hovered)
                     .map(|(index, _)| index)
+                    && !self.row_blocks_parent_activation(index)
                 {
-                    if !self.row_blocks_parent_activation(index) {
-                        self.activate(index, ctx);
-                    }
+                    self.activate(index, ctx);
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
@@ -731,16 +730,15 @@ impl Widget for ListView {
             let hover_amount = self.hover_motion.amount_for(&index);
             let press_amount = self.press_motion.amount_for(&index);
 
-            if selected
+            if (selected
                 || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON)
+                && let Some(highlight) = row_highlight_rect(row, viewport)
             {
-                if let Some(highlight) = row_highlight_rect(row, viewport) {
-                    ctx.fill_rect(
-                        highlight,
-                        data_row_state_fill(&theme, selected, hover_amount, press_amount),
-                    );
-                }
+                ctx.fill_rect(
+                    highlight,
+                    data_row_state_fill(&theme, selected, hover_amount, press_amount),
+                );
             }
 
             let Some(item) = self.items.get(index) else {
@@ -759,7 +757,7 @@ impl Widget for ListView {
             }
 
             let mut text_x = row.x() + metrics.data_row_padding.left;
-            let leading_color = item.leading_color.unwrap_or_else(|| {
+            let leading_color = item.leading_color.unwrap_or({
                 if item.disabled {
                     palette.placeholder
                 } else {
@@ -1672,16 +1670,15 @@ impl LayerList {
         let row_hit = LayerListHit::Row(index);
         let row_hover_amount = self.hover_motion.amount_for(&row_hit);
         let row_press_amount = self.press_motion.amount_for(&row_hit);
-        if selected
+        if (selected
             || row_hover_amount > AnimatedScalar::EPSILON
-            || row_press_amount > AnimatedScalar::EPSILON
+            || row_press_amount > AnimatedScalar::EPSILON)
+            && let Some(highlight) = row_highlight_rect(row, viewport)
         {
-            if let Some(highlight) = row_highlight_rect(row, viewport) {
-                ctx.fill_rect(
-                    highlight,
-                    data_row_state_fill(theme, selected, row_hover_amount, row_press_amount),
-                );
-            }
+            ctx.fill_rect(
+                highlight,
+                data_row_state_fill(theme, selected, row_hover_amount, row_press_amount),
+            );
         }
 
         let visibility_hit = LayerListHit::Visibility(index);
@@ -1954,21 +1951,21 @@ impl Widget for LayerList {
             ctx.fill(Path::rounded_rect(marker, 1.0), theme.palette.border_focus);
         }
 
-        if let Some(drag) = self.reorder_drag {
-            if let Some(row) = self.row_rect(ctx.bounds(), drag.row) {
-                let y = drag.position.y - drag.drag_offset_y;
-                ctx.push_transform(Transform::translation(0.0, y - row.y()));
-                self.paint_row(
-                    ctx,
-                    viewport,
-                    drag.row,
-                    row,
-                    &theme,
-                    &label_style,
-                    &detail_style,
-                );
-                ctx.pop_transform();
-            }
+        if let Some(drag) = self.reorder_drag
+            && let Some(row) = self.row_rect(ctx.bounds(), drag.row)
+        {
+            let y = drag.position.y - drag.drag_offset_y;
+            ctx.push_transform(Transform::translation(0.0, y - row.y()));
+            self.paint_row(
+                ctx,
+                viewport,
+                drag.row,
+                row,
+                &theme,
+                &label_style,
+                &detail_style,
+            );
+            ctx.pop_transform();
         }
 
         ctx.pop_clip();
@@ -2561,8 +2558,7 @@ impl Widget for TreeView {
         let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
             .min(rows.len());
 
-        for index in start..end {
-            let row = &rows[index];
+        for (index, row) in rows.iter().enumerate().take(end).skip(start) {
             let y = viewport.y() + (index as f32 * row_height) - self.scroll_y;
             let row_rect = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.selected.as_deref() == Some(row.path.as_slice());
@@ -2573,16 +2569,15 @@ impl Widget for TreeView {
                 .press_motion
                 .amount_for_by(|path| path.as_slice() == row.path.as_slice());
 
-            if selected
+            if (selected
                 || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON)
+                && let Some(highlight) = row_highlight_rect(row_rect, viewport)
             {
-                if let Some(highlight) = row_highlight_rect(row_rect, viewport) {
-                    ctx.fill_rect(
-                        highlight,
-                        data_row_state_fill(&theme, selected, hover_amount, press_amount),
-                    );
-                }
+                ctx.fill_rect(
+                    highlight,
+                    data_row_state_fill(&theme, selected, hover_amount, press_amount),
+                );
             }
 
             if row.has_children {
@@ -3659,12 +3654,11 @@ impl VirtualTable {
         }
         self.selected = Some(row_index);
         let kind = self.row_activation_kind(row_index);
-        if let Some(column_index) = column_index {
-            if let Some(on_activate) = &mut self.on_cell_activate {
-                if on_activate(row_index, column_index, kind) {
-                    return;
-                }
-            }
+        if let Some(column_index) = column_index
+            && let Some(on_activate) = &mut self.on_cell_activate
+            && on_activate(row_index, column_index, kind)
+        {
+            return;
         }
         if let Some(on_activate) = &mut self.on_row_activate {
             on_activate(row_index, kind);
@@ -3673,10 +3667,10 @@ impl VirtualTable {
 
     fn maybe_notify_near_end(&mut self, viewport_height: f32) {
         let remaining = (self.content_height() - viewport_height - self.scroll_y).max(0.0);
-        if remaining <= self.resolved_row_height() * 12.0 {
-            if let Some(on_near_end) = &mut self.on_near_end {
-                on_near_end();
-            }
+        if remaining <= self.resolved_row_height() * 12.0
+            && let Some(on_near_end) = &mut self.on_near_end
+        {
+            on_near_end();
         }
     }
 
@@ -4287,23 +4281,23 @@ impl Widget for Breadcrumb {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                if pointer.buttons.contains(PointerButton::Primary) {
-                    if let Some((anchor_position, anchor_scroll_x)) = self.drag_anchor {
-                        let bounds = ctx.bounds();
-                        if self.content_overflows(bounds) {
-                            let next_scroll_x =
-                                anchor_scroll_x - (pointer.position.x - anchor_position.x);
-                            if self.set_scroll_x(bounds, next_scroll_x) {
-                                self.drag_moved = true;
-                                self.set_pressed(None, ctx);
-                                ctx.request_paint();
-                                ctx.request_semantics();
-                                ctx.set_handled();
-                            }
+                if pointer.buttons.contains(PointerButton::Primary)
+                    && let Some((anchor_position, anchor_scroll_x)) = self.drag_anchor
+                {
+                    let bounds = ctx.bounds();
+                    if self.content_overflows(bounds) {
+                        let next_scroll_x =
+                            anchor_scroll_x - (pointer.position.x - anchor_position.x);
+                        if self.set_scroll_x(bounds, next_scroll_x) {
+                            self.drag_moved = true;
+                            self.set_pressed(None, ctx);
+                            ctx.request_paint();
+                            ctx.request_semantics();
+                            ctx.set_handled();
+                        }
 
-                            if (pointer.position.x - anchor_position.x).abs() > 3.0 {
-                                self.drag_moved = true;
-                            }
+                        if (pointer.position.x - anchor_position.x).abs() > 3.0 {
+                            self.drag_moved = true;
                         }
                     }
                 }
@@ -4345,15 +4339,14 @@ impl Widget for Breadcrumb {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 let hovered = self.item_at(ctx.bounds(), pointer.position);
-                if !self.drag_moved {
-                    if let Some(index) = self
+                if !self.drag_moved
+                    && let Some(index) = self
                         .pressed
                         .zip(hovered)
                         .filter(|(pressed, hovered)| pressed == hovered)
                         .map(|(index, _)| index)
-                    {
-                        self.activate(index);
-                    }
+                {
+                    self.activate(index);
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
@@ -4465,11 +4458,7 @@ impl Widget for Breadcrumb {
                 );
             }
 
-            let style = if current {
-                theme.body_text_style()
-            } else {
-                theme.body_text_style()
-            };
+            let style = theme.body_text_style();
             draw_aligned_text(
                 ctx,
                 horizontal_inset_rect(rect, 8.0),
@@ -5833,17 +5822,14 @@ mod tests {
                         clips.push(*rect);
                     }
                 }
-                SceneCommand::DrawShapedText(run) => {
-                    if let Some(layout) = run
+                SceneCommand::DrawShapedText(run)
+                    if run
                         .resolve(output.frame.text_layout_registry.as_ref())
                         .filter(|layout| layout.text() == text)
-                    {
-                        if !layout.text().is_empty() {
-                            if let Some(rect) = stack.last() {
-                                clips.push(*rect);
-                            }
-                        }
-                    }
+                        .is_some_and(|layout| !layout.text().is_empty())
+                        && let Some(rect) = stack.last() =>
+                {
+                    clips.push(*rect);
                 }
                 _ => {}
             });
@@ -5925,13 +5911,11 @@ mod tests {
 
     fn solid_stroke_rects(output: &RenderOutput) -> Vec<Rect> {
         let mut rects = Vec::new();
-        output
-            .frame
-            .scene
-            .visit_commands(&mut |command| match command {
-                SceneCommand::StrokeRect { rect, .. } => rects.push(*rect),
-                _ => {}
-            });
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokeRect { rect, .. } = command {
+                rects.push(*rect);
+            }
+        });
         rects
     }
 

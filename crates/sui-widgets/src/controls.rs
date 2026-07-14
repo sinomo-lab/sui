@@ -1543,10 +1543,8 @@ impl Widget for Label {
                         ctx.request_semantics();
                         ctx.set_handled();
                     }
-                    SemanticsActionRequest::Copy => {
-                        if self.copy_selection(ctx) {
-                            ctx.set_handled();
-                        }
+                    SemanticsActionRequest::Copy if self.copy_selection(ctx) => {
+                        ctx.set_handled();
                     }
                     _ => {}
                 }
@@ -5429,11 +5427,11 @@ impl Widget for NumberInput {
                         self.apply_edit_buffer();
                     }
                     _ => {
-                        if let Some(text) = keyboard_text(key) {
-                            if text.chars().all(is_numeric_input_char) {
-                                self.buffer.push_str(text);
-                                self.apply_edit_buffer();
-                            }
+                        if let Some(text) = keyboard_text(key)
+                            && text.chars().all(is_numeric_input_char)
+                        {
+                            self.buffer.push_str(text);
+                            self.apply_edit_buffer();
                         }
                     }
                 }
@@ -8761,10 +8759,10 @@ pub fn draw_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Col
 pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
     let icon = glyph.lucide_icon();
     let resource = icon.resource();
-    if !ctx.image_registered(resource.handle()) {
-        if let Ok(image) = icon.registered_mask_image() {
-            ctx.register_image(resource.handle(), image);
-        }
+    if !ctx.image_registered(resource.handle())
+        && let Ok(image) = icon.registered_mask_image()
+    {
+        ctx.register_image(resource.handle(), image);
     }
 
     let side = bounds.width().min(bounds.height());
@@ -9187,7 +9185,7 @@ mod tests {
         )
     }
 
-    fn first_shaped_text<'a>(output: &'a RenderOutput) -> &'a sui_text::ShapedText {
+    fn first_shaped_text(output: &RenderOutput) -> &sui_text::ShapedText {
         output
             .frame
             .scene
@@ -9363,21 +9361,19 @@ mod tests {
                 SceneCommand::DrawText(run) if run.text == text => {
                     found = stack.last().copied();
                 }
-                SceneCommand::DrawShapedText(run) => {
+                SceneCommand::DrawShapedText(run)
                     if run
                         .resolve(output.frame.text_layout_registry.as_ref())
-                        .is_some_and(|layout| layout.text() == text)
-                    {
-                        found = stack.last().copied();
-                    }
+                        .is_some_and(|layout| layout.text() == text) =>
+                {
+                    found = stack.last().copied();
                 }
-                SceneCommand::DrawShapedTextWindow(run) => {
+                SceneCommand::DrawShapedTextWindow(run)
                     if run
                         .resolve(output.frame.text_layout_registry.as_ref())
-                        .is_some_and(|layout| layout.text() == text)
-                    {
-                        found = stack.last().copied();
-                    }
+                        .is_some_and(|layout| layout.text() == text) =>
+                {
+                    found = stack.last().copied();
                 }
                 _ => {}
             }
@@ -11632,8 +11628,8 @@ mod tests {
         let output = runtime.render(window_id)?;
         let fill_colors = solid_fill_colors(&output);
 
-        assert!(fill_colors.iter().any(|color| *color == caret_color));
-        assert!(!fill_colors.iter().any(|color| *color == accent_text));
+        assert!(fill_colors.contains(&caret_color));
+        assert!(!fill_colors.contains(&accent_text));
         Ok(())
     }
 
@@ -13865,7 +13861,7 @@ mod tests {
         )?;
         assert_eq!(
             submits.borrow().as_slice(),
-            &[after_shift.clone()],
+            std::slice::from_ref(&after_shift),
             "plain Enter submits the current text exactly once"
         );
 

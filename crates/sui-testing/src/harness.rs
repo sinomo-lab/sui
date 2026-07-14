@@ -93,6 +93,7 @@ pub(crate) struct Harness {
     default_timeout: f64,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum HarnessBackend {
     Headless(HeadlessHarness),
     Live(LiveHarness),

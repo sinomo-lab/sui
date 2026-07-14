@@ -57,6 +57,14 @@ use widget::{
     PointerCaptureRequest, WakeRequest,
 };
 
+type PaintOutput = (
+    Scene,
+    Vec<(ImageHandle, PaintImageResource)>,
+    HashMap<WidgetId, Rect>,
+    Vec<InvalidationRequest>,
+    Option<Rect>,
+);
+
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct WindowBuilder {
@@ -1480,15 +1488,14 @@ impl WindowState {
                 HitTestCompositionPhase::Normal,
             )
         };
-        if let Some(widget_id) = effect_hit {
-            if self
+        if let Some(widget_id) = effect_hit
+            && self
                 .current_widget_matches_hit_test_phase(widget_id, HitTestCompositionPhase::Effect)
-            {
-                return self
-                    .graph
-                    .hit_test_within(widget_id, point)
-                    .or(Some(widget_id));
-            }
+        {
+            return self
+                .graph
+                .hit_test_within(widget_id, point)
+                .or(Some(widget_id));
         }
 
         let overlay_hit = {
@@ -1848,10 +1855,10 @@ impl WindowState {
         pointer: &PointerEvent,
         hit_target: Option<WidgetId>,
     ) -> EventEffects {
-        if !self
+        if self
             .active_drag
             .as_ref()
-            .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+            .is_none_or(|drag| drag.pointer_id != pointer.pointer_id)
         {
             return EventEffects::default();
         }
@@ -2104,7 +2111,7 @@ impl WindowState {
                         &self.clipboard,
                         event,
                     )
-                    .unwrap_or_else(|| empty_dispatch());
+                    .unwrap_or_else(empty_dispatch);
                 let dispatch_handled = dispatch.handled;
                 let dispatch_focus_request = dispatch.focus_request;
                 effects.extend(dispatch);
@@ -2143,7 +2150,7 @@ impl WindowState {
                         event,
                     )
                 })
-                .unwrap_or_else(|| empty_dispatch());
+                .unwrap_or_else(empty_dispatch);
             let dispatch_handled = dispatch.handled;
             let dispatch_focus_request = dispatch.focus_request;
             effects.extend(dispatch);
@@ -2167,7 +2174,7 @@ impl WindowState {
                         &self.clipboard,
                         event,
                     )
-                    .unwrap_or_else(|| empty_dispatch());
+                    .unwrap_or_else(empty_dispatch);
                 let dispatch_handled = dispatch.handled;
                 let dispatch_focus_request = dispatch.focus_request;
                 effects.extend(dispatch);
@@ -2224,7 +2231,7 @@ impl WindowState {
                             .is_some_and(|node| node.accepts_focus)
                     })
                     .map(FocusRequest::Focus)
-                    .or_else(|| Some(FocusRequest::Clear))
+                    .or(Some(FocusRequest::Clear))
                     .filter(|request| {
                         matches!(request, FocusRequest::Focus(id) if *id == hit_target)
                             || matches!(request, FocusRequest::Clear)
@@ -2558,10 +2565,10 @@ impl WindowState {
                         ancestor = self.graph.node(widget_id).and_then(|node| node.parent);
                     }
                 }
-                if focused_path.as_ref().is_some_and(|path| {
-                    path.iter()
-                        .any(|widget_id| *widget_id == translation.widget_id)
-                }) {
+                if focused_path
+                    .as_ref()
+                    .is_some_and(|path| path.contains(&translation.widget_id))
+                {
                     ime_composition_rect =
                         ime_composition_rect.map(|rect| rect.translate(translation.delta));
                 }
@@ -2717,13 +2724,7 @@ impl WindowState {
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
-    ) -> (
-        Scene,
-        Vec<(ImageHandle, PaintImageResource)>,
-        HashMap<WidgetId, Rect>,
-        Vec<InvalidationRequest>,
-        Option<Rect>,
-    ) {
+    ) -> PaintOutput {
         let mut paint_ctx = PaintCtx::new(
             self.id,
             self.root.id(),
@@ -2751,13 +2752,7 @@ impl WindowState {
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
-    ) -> (
-        Scene,
-        Vec<(ImageHandle, PaintImageResource)>,
-        HashMap<WidgetId, Rect>,
-        Vec<InvalidationRequest>,
-        Option<Rect>,
-    ) {
+    ) -> PaintOutput {
         let mut scene = self
             .last_frame
             .as_ref()
@@ -3750,10 +3745,7 @@ impl WidgetGraph {
         self.order.push(id);
 
         let host_options = if id == self.root {
-            Some(
-                pod.current_stack_host_options()
-                    .unwrap_or_else(StackHostOptions::default),
-            )
+            Some(pod.current_stack_host_options().unwrap_or_default())
         } else {
             pod.current_stack_host_options()
         };

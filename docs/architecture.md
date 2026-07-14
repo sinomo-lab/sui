@@ -23,16 +23,17 @@ children, generated children, virtualized children, worker-thread state, remote
 systems, or custom rendering internally, then rejoin SUI through widget contexts
 and scene output.
 
-The public Rust entry point is `sui::Application`. With default features enabled,
-`Application::run()` builds a `sui_runtime::Runtime` and hands execution to
-`sui_platform::DesktopPlatform`.
+The recommended public Rust entry point is `sui::App`. It wraps the lower-level
+`sui::Application` builder used by custom integration and debug tooling. With
+default features enabled, `App::run()` builds a `sui_runtime::Runtime` and hands
+execution to `sui_platform::DesktopPlatform`.
 
 ## Main Execution Path
 
 The normal desktop flow is:
 
-1. User code creates an `Application` and one or more `WindowBuilder` values.
-2. `sui::Application::run()` builds a `Runtime` with shared font and image registries.
+1. User code creates an `App` and one or more user-facing `Window` values.
+2. `sui::App::run()` builds a `Runtime` with shared font and image registries.
 3. `DesktopPlatform` creates host windows or targets, wires them to a shared `WgpuRenderer`, and enters the `winit` event loop.
 4. Host events are normalized into `sui_core::Event` values and delivered for a `WindowId`.
 5. `Runtime::handle_event(window_id, event)` routes the event through the retained widget protocol.

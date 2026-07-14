@@ -834,10 +834,10 @@ impl Scene {
         for command in &mut self.commands {
             if let SceneCommand::Layer(layer) = command {
                 layer.scene.reorder_stack_surfaces();
-                if layer.descriptor.is_stack_surface {
-                    if let Some(replacement) = sorted_layers.next() {
-                        *layer = replacement;
-                    }
+                if layer.descriptor.is_stack_surface
+                    && let Some(replacement) = sorted_layers.next()
+                {
+                    *layer = replacement;
                 }
             }
         }

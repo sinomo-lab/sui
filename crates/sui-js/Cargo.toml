@@ -3,6 +3,13 @@ name = "sui-js"
 version.workspace = true
 description = "JavaScript bindings for SUI."
 edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
 rust-version.workspace = true
 
 [features]
@@ -16,7 +23,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 napi = { workspace = true }
 napi-derive = { workspace = true }
-sui = { path = "../sui", default-features = false }
+sui = { workspace = true }
 sui-bindings-core = { workspace = true }
 
 [build-dependencies]

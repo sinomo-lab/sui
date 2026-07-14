@@ -1981,14 +1981,14 @@ impl Widget for VectorEditorCanvas {
                     return;
                 }
 
-                if let Some(drag) = self.drag {
-                    if drag.pointer_id == pointer.pointer_id {
-                        let document = self.from_screen(ctx.bounds(), pointer.position);
-                        self.apply_drag(drag, document);
-                        Self::request_edit_update(ctx);
-                        ctx.set_handled();
-                        return;
-                    }
+                if let Some(drag) = self.drag
+                    && drag.pointer_id == pointer.pointer_id
+                {
+                    let document = self.from_screen(ctx.bounds(), pointer.position);
+                    self.apply_drag(drag, document);
+                    Self::request_edit_update(ctx);
+                    ctx.set_handled();
+                    return;
                 }
 
                 if ctx.bounds().contains(pointer.position) {

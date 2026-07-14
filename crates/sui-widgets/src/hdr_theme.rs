@@ -618,8 +618,10 @@ mod tests {
 
     #[test]
     fn disabled_mode_material_role_resolves_flat_style() {
-        let mut tokens = HdrThemeTokens::default();
-        tokens.mode = HdrThemeMode::Disabled;
+        let mut tokens = HdrThemeTokens {
+            mode: HdrThemeMode::Disabled,
+            ..HdrThemeTokens::default()
+        };
         tokens.materials.flat = MaterialToken::new(1.0, 0.0, 0.0, 0.0);
         tokens.materials.raised = MaterialToken::new(0.98, 0.0, 0.08, 0.04);
         tokens.materials.glass = MaterialToken::new(0.42, 8.0, 0.35, 0.28);
@@ -655,8 +657,10 @@ mod tests {
         let token = SemanticColorToken::from_sdr(Color::rgba(0.2, 0.3, 0.4, 1.0))
             .with_wide_gamut(Color::display_p3(0.8, 0.2, 0.1, 1.0))
             .with_hdr(Color::linear_display_p3(1.4, 0.3, 0.2, 1.0));
-        let mut tokens = HdrThemeTokens::default();
-        tokens.mode = HdrThemeMode::Disabled;
+        let mut tokens = HdrThemeTokens {
+            mode: HdrThemeMode::Disabled,
+            ..HdrThemeTokens::default()
+        };
         tokens.color_roles.accent = token;
         tokens.luminance.semantic_accent = 1.8;
 
@@ -680,8 +684,10 @@ mod tests {
 
     #[test]
     fn wide_gamut_only_prefers_wide_gamut_variants_but_clamps_luminance_to_reference_white() {
-        let mut tokens = HdrThemeTokens::default();
-        tokens.mode = HdrThemeMode::WideGamutOnly;
+        let mut tokens = HdrThemeTokens {
+            mode: HdrThemeMode::WideGamutOnly,
+            ..HdrThemeTokens::default()
+        };
         tokens.color_roles.accent = SemanticColorToken::from_sdr(Color::rgba(0.2, 0.3, 0.4, 1.0))
             .with_wide_gamut(Color::display_p3(0.8, 0.2, 0.1, 1.0))
             .with_hdr(Color::linear_display_p3(1.4, 0.3, 0.2, 1.0));
@@ -701,8 +707,10 @@ mod tests {
 
     #[test]
     fn constrained_hdr_caps_emissive_roles_below_full_hdr() {
-        let mut constrained = HdrThemeTokens::default();
-        constrained.mode = HdrThemeMode::ConstrainedHdr;
+        let mut constrained = HdrThemeTokens {
+            mode: HdrThemeMode::ConstrainedHdr,
+            ..HdrThemeTokens::default()
+        };
         constrained.luminance.emissive_indicator = 2.5;
         constrained.policy.max_constrained_lift = 1.3;
         constrained.policy.max_emissive_lift = 2.2;
@@ -721,8 +729,10 @@ mod tests {
 
     #[test]
     fn full_hdr_respects_max_large_area_lift_policy() {
-        let mut tokens = HdrThemeTokens::default();
-        tokens.mode = HdrThemeMode::FullHdr;
+        let mut tokens = HdrThemeTokens {
+            mode: HdrThemeMode::FullHdr,
+            ..HdrThemeTokens::default()
+        };
         tokens.luminance.semantic_accent = 1.8;
         tokens.policy.max_large_area_lift = 1.25;
 

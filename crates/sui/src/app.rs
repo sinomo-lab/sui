@@ -214,18 +214,22 @@ pub struct ResourceRegistry<'a> {
 }
 
 impl ResourceRegistry<'_> {
+    /// Register a font with an explicit stable handle.
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
         self.application.register_font(handle, font)
     }
 
+    /// Register font bytes and allocate a stable handle.
     pub fn font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
         self.application.register_font_bytes(data)
     }
 
+    /// Register an image with an explicit stable handle.
     pub fn image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
         self.application.register_image(handle, image)
     }
 
+    /// Register RGBA8 pixels and allocate an image handle.
     pub fn rgba_image(
         &mut self,
         width: u32,
@@ -235,10 +239,12 @@ impl ResourceRegistry<'_> {
         self.application.register_rgba_image(width, height, data)
     }
 
+    /// Register SVG bytes at their intrinsic size and allocate an image handle.
     pub fn svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
         self.application.register_svg_image(data)
     }
 
+    /// Register SVG bytes at their intrinsic size with an explicit handle.
     pub fn svg_image_with_handle(
         &mut self,
         handle: ImageHandle,
@@ -248,6 +254,7 @@ impl ResourceRegistry<'_> {
             .register_svg_image_with_handle(handle, data)
     }
 
+    /// Rasterize SVG bytes at an explicit size and allocate an image handle.
     pub fn svg_image_at_size(
         &mut self,
         width: u32,
@@ -258,6 +265,7 @@ impl ResourceRegistry<'_> {
             .register_svg_image_at_size(width, height, data)
     }
 
+    /// Rasterize SVG bytes at an explicit size and handle.
     pub fn svg_image_at_size_with_handle(
         &mut self,
         handle: ImageHandle,
@@ -269,10 +277,12 @@ impl ResourceRegistry<'_> {
             .register_svg_image_at_size_with_handle(handle, width, height, data)
     }
 
+    /// Register one compile-time embedded SVG resource.
     pub fn embedded_svg_image(&mut self, resource: EmbeddedSvgImageResource) -> Result<()> {
         self.application.register_embedded_svg_image(resource)
     }
 
+    /// Register multiple compile-time embedded SVG resources.
     pub fn embedded_svg_images(
         &mut self,
         resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,

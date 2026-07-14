@@ -702,16 +702,16 @@ pub fn paint_theme_shadow(
 ) {
     // Draw the tighter `second` layer first, then the wider/more-diffuse `first`
     // layer on top (CSS box-shadow order: the first-listed shadow is topmost).
-    if let Some(layer) = shadow.second {
-        if layer.is_outer() {
-            paint.draw_shadow(rect, radii, layer.to_shadow_params());
-        }
+    if let Some(layer) = shadow.second
+        && layer.is_outer()
+    {
+        paint.draw_shadow(rect, radii, layer.to_shadow_params());
         // inset layers are inner shadows -> future work
     }
-    if let Some(layer) = shadow.first {
-        if layer.is_outer() {
-            paint.draw_shadow(rect, radii, layer.to_shadow_params());
-        }
+    if let Some(layer) = shadow.first
+        && layer.is_outer()
+    {
+        paint.draw_shadow(rect, radii, layer.to_shadow_params());
         // inset layers are inner shadows -> future work
     }
 }

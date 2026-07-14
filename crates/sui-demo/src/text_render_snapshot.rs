@@ -10,7 +10,7 @@ use sui_testing::TestApp;
 
 const WIDTH: f32 = 480.0;
 const HEIGHT: f32 = 260.0;
-const FONT_BYTES: &[u8] = include_bytes!("../../sui-text/assets/NotoSans-Regular.ttf");
+const FONT_BYTES: &[u8] = sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT;
 
 struct TextSample {
     text: &'static str,
@@ -114,10 +114,10 @@ impl Widget for TextReferenceSurface {
 fn output_dir() -> PathBuf {
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--output" {
-            if let Some(value) = args.next() {
-                return value.into();
-            }
+        if arg == "--output"
+            && let Some(value) = args.next()
+        {
+            return value.into();
         }
     }
     PathBuf::from("target/text-rendering-compare")
@@ -166,13 +166,11 @@ fn render_options() -> WindowRenderOptions {
             .and_then(|raw| raw.parse::<f32>().ok())
         {
             Some(WindowTextCoveragePolicy::Gamma(gamma))
-        } else if let Some(amount) = value
-            .strip_prefix("boost:")
-            .and_then(|raw| raw.parse::<f32>().ok())
-        {
-            Some(WindowTextCoveragePolicy::CoverageBoost(amount))
         } else {
-            None
+            value
+                .strip_prefix("boost:")
+                .and_then(|raw| raw.parse::<f32>().ok())
+                .map(WindowTextCoveragePolicy::CoverageBoost)
         };
         if let Some(policy) = policy {
             options = options.with_text_coverage_policy(policy);

@@ -25,5 +25,8 @@ pub use system::{
     take_text_timing_collection,
 };
 
+/// Bundled Noto Sans font used by browser fallback and rendering comparisons.
+pub const BUNDLED_NOTO_SANS_REGULAR_FONT: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
+
 #[cfg(test)]
 mod tests;

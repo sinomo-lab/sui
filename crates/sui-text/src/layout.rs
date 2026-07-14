@@ -81,6 +81,27 @@ struct PreparedParagraphResult {
     lines: Vec<PreparedLine>,
 }
 
+struct GlyphPreparationContext<'a> {
+    paragraph_start: usize,
+    baseline: f32,
+    font_context: &'a FontContext,
+    faces: &'a mut Vec<ResolvedTextFace>,
+    face_slots: &'a mut HashMap<cosmic_text::fontdb::ID, usize>,
+    face_metrics: &'a mut Vec<Option<FaceMetrics>>,
+    max_cap_height: &'a mut Option<f32>,
+}
+
+struct LayoutVersionInputs<'a> {
+    box_size: Size,
+    faces: &'a [ResolvedTextFace],
+    measurement: TextMeasurement,
+    paragraphs: &'a [TextParagraphLayout],
+    lines: &'a [TextLine],
+    runs: &'a [TextLayoutRun],
+    clusters: &'a [TextCluster],
+    glyphs: &'a [ShapedGlyph],
+}
+
 pub(crate) fn layout_document(
     flattened: FlattenedTextDocument,
     resolved_spans: Vec<ResolvedSpanInput>,
@@ -138,7 +159,7 @@ pub(crate) fn layout_document(
         let default_style = resolved_spans
             .first()
             .map(|span| span.style.clone())
-            .unwrap_or_else(TextStyle::default);
+            .unwrap_or_default();
         lines.push(PreparedLine {
             paragraph_index: 0,
             byte_range: 0..0,
@@ -309,16 +330,16 @@ pub(crate) fn layout_document(
         descent: max_descent,
         cap_height: max_cap_height,
     };
-    let version = compute_layout_version(
-        final_box_size,
-        &faces,
+    let version = compute_layout_version(LayoutVersionInputs {
+        box_size: final_box_size,
+        faces: &faces,
         measurement,
-        &paragraph_layouts,
-        &layout_lines,
-        &layout_runs,
-        &layout_clusters,
-        &shaped_glyphs,
-    );
+        paragraphs: &paragraph_layouts,
+        lines: &layout_lines,
+        runs: &layout_runs,
+        clusters: &layout_clusters,
+        glyphs: &shaped_glyphs,
+    });
 
     Ok(TextLayout {
         primary_style: flattened.document.primary_style(),
@@ -506,13 +527,15 @@ fn prepare_paragraph(
         );
         let prepared_glyphs = build_prepared_glyphs(
             &visible_glyphs,
-            paragraph.byte_range.start,
-            baseline,
-            font_context,
-            faces,
-            face_slots,
-            face_metrics,
-            max_cap_height,
+            GlyphPreparationContext {
+                paragraph_start: paragraph.byte_range.start,
+                baseline,
+                font_context,
+                faces,
+                face_slots,
+                face_metrics,
+                max_cap_height,
+            },
         )?;
         let runs = build_run_segments(
             &visible_glyphs,
@@ -548,14 +571,17 @@ fn prepare_paragraph(
 
 fn build_prepared_glyphs(
     visible_glyphs: &[(&LayoutGlyph, Range<usize>)],
-    paragraph_start: usize,
-    baseline: f32,
-    font_context: &FontContext,
-    faces: &mut Vec<ResolvedTextFace>,
-    face_slots: &mut HashMap<cosmic_text::fontdb::ID, usize>,
-    face_metrics: &mut Vec<Option<FaceMetrics>>,
-    max_cap_height: &mut Option<f32>,
+    context: GlyphPreparationContext<'_>,
 ) -> Result<Vec<PreparedGlyph>> {
+    let GlyphPreparationContext {
+        paragraph_start,
+        baseline,
+        font_context,
+        faces,
+        face_slots,
+        face_metrics,
+        max_cap_height,
+    } = context;
     let mut prepared = Vec::with_capacity(visible_glyphs.len());
 
     for (glyph, adjusted_range) in visible_glyphs {
@@ -756,25 +782,16 @@ fn collapse_range(ranges: impl Iterator<Item = Range<usize>>) -> Option<Range<us
     })
 }
 
-fn compute_layout_version(
-    box_size: Size,
-    faces: &[ResolvedTextFace],
-    measurement: TextMeasurement,
-    paragraphs: &[TextParagraphLayout],
-    lines: &[TextLine],
-    runs: &[TextLayoutRun],
-    clusters: &[TextCluster],
-    glyphs: &[ShapedGlyph],
-) -> TextLayoutVersion {
+fn compute_layout_version(inputs: LayoutVersionInputs<'_>) -> TextLayoutVersion {
     let mut state = DefaultHasher::new();
-    hash_size(&mut state, box_size);
-    hash_measurement(&mut state, measurement);
-    hash_faces(&mut state, faces);
-    hash_paragraphs(&mut state, paragraphs);
-    hash_lines(&mut state, lines);
-    hash_runs(&mut state, runs);
-    hash_clusters(&mut state, clusters);
-    hash_glyphs(&mut state, glyphs);
+    hash_size(&mut state, inputs.box_size);
+    hash_measurement(&mut state, inputs.measurement);
+    hash_faces(&mut state, inputs.faces);
+    hash_paragraphs(&mut state, inputs.paragraphs);
+    hash_lines(&mut state, inputs.lines);
+    hash_runs(&mut state, inputs.runs);
+    hash_clusters(&mut state, inputs.clusters);
+    hash_glyphs(&mut state, inputs.glyphs);
     TextLayoutVersion::new(state.finish())
 }
 

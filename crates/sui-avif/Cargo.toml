@@ -3,6 +3,12 @@ name = "sui-avif"
 version.workspace = true
 description = "Minimal AVIF encoding primitives for SUI, with HDR still-image support."
 edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 license.workspace = true
 

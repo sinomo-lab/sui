@@ -2,7 +2,14 @@
 name = "sui-demo"
 version.workspace = true
 description = "Demo, widget gallery, and smoke-test binary for the SUI workspace."
+authors.workspace = true
+categories.workspace = true
 edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish = false
 default-run = "sui-demo"
@@ -35,10 +42,11 @@ path = "src/text_render_snapshot.rs"
 required-features = ["native", "artifacts"]
 
 [dependencies]
-sui = { path = "../sui", default-features = false }
+sui = { workspace = true }
 sui-debug = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
+sui-text = { workspace = true }
 sui-render-wgpu = { workspace = true, optional = true }
 pulldown-cmark = { version = "0.13", optional = true }
 
@@ -58,5 +66,4 @@ png = "0.17"
 sui-platform = { workspace = true }
 sui-render-wgpu = { workspace = true }
 sui-scene = { workspace = true }
-sui-text = { workspace = true }
 winit = { workspace = true }

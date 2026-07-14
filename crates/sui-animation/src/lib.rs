@@ -92,13 +92,19 @@ impl Interpolate for Color {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Easing {
+    #[default]
     Linear,
     EaseIn,
     EaseOut,
     EaseInOut,
-    CubicBezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+    CubicBezier {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+    },
 }
 
 impl Easing {
@@ -117,12 +123,6 @@ impl Easing {
             }
             Self::CubicBezier { x1, y1, x2, y2 } => sample_cubic_bezier(x1, y1, x2, y2, t),
         }
-    }
-}
-
-impl Default for Easing {
-    fn default() -> Self {
-        Self::Linear
     }
 }
 
@@ -1228,16 +1228,11 @@ impl<'a, T> IntoIterator for SampleBatch<'a, T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LoopMode {
+    #[default]
     Once,
     Repeat,
-}
-
-impl Default for LoopMode {
-    fn default() -> Self {
-        Self::Once
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2640,7 +2635,7 @@ mod tests {
         let a = pulse.sample(0.25);
         let b = pulse.sample(0.25);
         assert_eq!(a, b);
-        assert!(a >= 0.2 && a <= 1.0);
+        assert!((0.2..=1.0).contains(&a));
     }
 
     #[test]

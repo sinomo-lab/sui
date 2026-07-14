@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_variables))]
+#![allow(clippy::too_many_arguments)]
 
 use super::*;
 
@@ -418,8 +419,7 @@ pub(crate) fn prepare_cached_passes(
 ) -> Vec<PreparedPassBatch> {
     cached_passes
         .iter()
-        .enumerate()
-        .map(|(_, pass)| PreparedPassBatch {
+        .map(|pass| PreparedPassBatch {
             clip_paths: pass
                 .clip_paths
                 .iter()
@@ -2151,11 +2151,8 @@ impl TextEngine {
                 .coverage_policy
                 .resolved_for_text_color(glyph_color);
             let render_mode = if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
-                && matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
-            {
-                TextRenderMode::Grayscale
-            } else if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
-                && !allows_lcd_text(state.current_transform)
+                && (matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
+                    || !allows_lcd_text(state.current_transform))
             {
                 TextRenderMode::Grayscale
             } else {
@@ -2190,22 +2187,20 @@ impl TextEngine {
                 text_policy.hinting,
                 text_policy.stem_darkening,
                 glyph_style.weight.value(),
-            )? {
-                if let Some(instance) = build_text_atlas_instance(
-                    atlas,
-                    &translated_glyph,
-                    glyph_color,
-                    coverage_policy,
-                    state.current_transform,
-                    state.pixel_snap_offset,
-                    viewport,
-                    raster_scale_factor,
-                ) {
-                    atlas_instances.push(instance);
-                    if self.diagnostics_enabled {
-                        self.frame_stats.glyph_instances += 1;
-                        self.frame_stats.glyph_upload_bytes += TEXT_ATLAS_INSTANCE_SIZE;
-                    }
+            )? && let Some(instance) = build_text_atlas_instance(
+                atlas,
+                &translated_glyph,
+                glyph_color,
+                coverage_policy,
+                state.current_transform,
+                state.pixel_snap_offset,
+                viewport,
+                raster_scale_factor,
+            ) {
+                atlas_instances.push(instance);
+                if self.diagnostics_enabled {
+                    self.frame_stats.glyph_instances += 1;
+                    self.frame_stats.glyph_upload_bytes += TEXT_ATLAS_INSTANCE_SIZE;
                 }
             }
         }
@@ -2396,7 +2391,6 @@ fn build_cached_glyph_atlas(
 
     let rasterized = if needs_oversample {
         let placement = image.placement;
-        drop(scaler);
         let oversampled = oversampled_mask_coverage(
             scale_context,
             face,
@@ -4188,11 +4182,8 @@ impl DrawOpArena {
                             _ => draw_op.vertices.offset(scene_delta),
                         };
                         draw_op.clip_state_index += clip_state_base;
-                        let Some(clip_rect) =
-                            resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)
-                        else {
-                            return None;
-                        };
+                        let clip_rect =
+                            resolve_fragment_clip_rect(draw_op.clip_rect, external_clip_rect)?;
                         draw_op.clip_rect = clip_rect;
                         if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
                             draw_op.kind = DrawOpKind::AnalyticPath {

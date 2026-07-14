@@ -274,13 +274,17 @@ impl Encoder {
 
         encode_prepared(
             self,
-            image.width,
-            image.height,
-            options.bit_depth,
-            options.nclx_profile,
-            options.mastering_display,
-            Some(content_light),
-            converted,
+            PreparedImage {
+                descriptor: ImageDescriptor {
+                    width: image.width,
+                    height: image.height,
+                    bit_depth: options.bit_depth,
+                    nclx_profile: options.nclx_profile,
+                    mastering_display: options.mastering_display,
+                    content_light: Some(content_light),
+                },
+                converted,
+            },
         )
     }
 
@@ -295,13 +299,17 @@ impl Encoder {
         let converted = convert_sdr_image_to_planes(image, options.bit_depth, options.nclx_profile);
         encode_prepared(
             self,
-            image.width,
-            image.height,
-            options.bit_depth,
-            options.nclx_profile,
-            None,
-            None,
-            converted,
+            PreparedImage {
+                descriptor: ImageDescriptor {
+                    width: image.width,
+                    height: image.height,
+                    bit_depth: options.bit_depth,
+                    nclx_profile: options.nclx_profile,
+                    mastering_display: None,
+                    content_light: None,
+                },
+                converted,
+            },
         )
     }
 }
@@ -323,6 +331,22 @@ struct ConvertedImage {
     has_alpha: bool,
     max_content_light_level: u16,
     max_frame_average_light_level: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImageDescriptor {
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    nclx_profile: NclxProfile,
+    mastering_display: Option<MasteringDisplayMetadata>,
+    content_light: Option<ContentLightMetadata>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedImage {
+    descriptor: ImageDescriptor,
+    converted: ConvertedImage,
 }
 
 impl ConvertedImage {
@@ -544,48 +568,22 @@ fn encoded_rgb_to_planes(rgb: [f32; 3], kr: f32, kg: f32, kb: f32) -> (f32, f32,
     }
 }
 
-fn encode_prepared(
-    encoder: &Encoder,
-    width: u32,
-    height: u32,
-    bit_depth: u8,
-    nclx_profile: NclxProfile,
-    mastering_display: Option<MasteringDisplayMetadata>,
-    content_light: Option<ContentLightMetadata>,
-    converted: ConvertedImage,
-) -> Result<EncodedAvif> {
-    let color_payload = encode_color_payload(
-        encoder,
-        width,
-        height,
-        bit_depth,
-        nclx_profile,
-        mastering_display,
-        content_light,
-        &converted,
-    )?;
-    let alpha_payload = if converted.has_alpha {
+fn encode_prepared(encoder: &Encoder, prepared: PreparedImage) -> Result<EncodedAvif> {
+    let descriptor = prepared.descriptor;
+    let color_payload = encode_color_payload(encoder, descriptor, &prepared.converted)?;
+    let alpha_payload = if prepared.converted.has_alpha {
         Some(encode_alpha_payload(
             encoder,
-            width,
-            height,
-            bit_depth,
-            &converted.alpha,
+            descriptor.width,
+            descriptor.height,
+            descriptor.bit_depth,
+            &prepared.converted.alpha,
         )?)
     } else {
         None
     };
 
-    let avif_file = mux_avif(
-        width,
-        height,
-        bit_depth,
-        nclx_profile,
-        mastering_display,
-        content_light,
-        &color_payload,
-        alpha_payload.as_deref(),
-    )?;
+    let avif_file = mux_avif(descriptor, &color_payload, alpha_payload.as_deref())?;
 
     Ok(EncodedAvif {
         avif_file,
@@ -596,27 +594,22 @@ fn encode_prepared(
 
 fn encode_color_payload(
     encoder: &Encoder,
-    width: u32,
-    height: u32,
-    bit_depth: u8,
-    nclx_profile: NclxProfile,
-    mastering_display: Option<MasteringDisplayMetadata>,
-    content_light: Option<ContentLightMetadata>,
+    descriptor: ImageDescriptor,
     converted: &ConvertedImage,
 ) -> Result<Vec<u8>> {
     let mut config = EncoderConfig::with_speed_preset(encoder.speed);
-    config.width = width as usize;
-    config.height = height as usize;
-    config.bit_depth = bit_depth as usize;
+    config.width = descriptor.width as usize;
+    config.height = descriptor.height as usize;
+    config.bit_depth = descriptor.bit_depth as usize;
     config.chroma_sampling = ChromaSampling::Cs444;
-    config.pixel_range = nclx_profile.pixel_range;
+    config.pixel_range = descriptor.nclx_profile.pixel_range;
     config.color_description = Some(ColorDescription {
-        color_primaries: nclx_profile.color_primaries,
-        transfer_characteristics: nclx_profile.transfer_characteristics,
-        matrix_coefficients: nclx_profile.matrix_coefficients,
+        color_primaries: descriptor.nclx_profile.color_primaries,
+        transfer_characteristics: descriptor.nclx_profile.transfer_characteristics,
+        matrix_coefficients: descriptor.nclx_profile.matrix_coefficients,
     });
-    config.mastering_display = mastering_display.map(to_rav1e_mastering_display);
-    config.content_light = content_light.map(|metadata| ContentLight {
+    config.mastering_display = descriptor.mastering_display.map(to_rav1e_mastering_display);
+    config.content_light = descriptor.content_light.map(|metadata| ContentLight {
         max_content_light_level: metadata.max_content_light_level,
         max_frame_average_light_level: metadata.max_frame_average_light_level,
     });
@@ -637,20 +630,20 @@ fn encode_color_payload(
     copy_plane(
         &mut frame.planes[0],
         &converted.y,
-        width as usize,
-        height as usize,
+        descriptor.width as usize,
+        descriptor.height as usize,
     );
     copy_plane(
         &mut frame.planes[1],
         &converted.u,
-        width as usize,
-        height as usize,
+        descriptor.width as usize,
+        descriptor.height as usize,
     );
     copy_plane(
         &mut frame.planes[2],
         &converted.v,
-        width as usize,
-        height as usize,
+        descriptor.width as usize,
+        descriptor.height as usize,
     );
 
     encode_single_frame(context, frame)
@@ -728,32 +721,31 @@ fn copy_plane(plane: &mut Plane<u16>, source: &[u16], width: usize, height: usiz
 }
 
 fn mux_avif(
-    width: u32,
-    height: u32,
-    bit_depth: u8,
-    nclx_profile: NclxProfile,
-    mastering_display: Option<MasteringDisplayMetadata>,
-    content_light: Option<ContentLightMetadata>,
+    descriptor: ImageDescriptor,
     color_payload: &[u8],
     alpha_payload: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let mut avif = Aviffy::new();
-    avif.set_width(width)
-        .set_height(height)
-        .set_bit_depth(bit_depth)
-        .set_full_color_range(nclx_profile.pixel_range == PixelRange::Full)
-        .set_color_primaries(map_color_primaries(nclx_profile.color_primaries)?)
-        .set_transfer_characteristics(map_transfer(nclx_profile.transfer_characteristics)?)
-        .set_matrix_coefficients(map_matrix(nclx_profile.matrix_coefficients)?);
+    avif.set_width(descriptor.width)
+        .set_height(descriptor.height)
+        .set_bit_depth(descriptor.bit_depth)
+        .set_full_color_range(descriptor.nclx_profile.pixel_range == PixelRange::Full)
+        .set_color_primaries(map_color_primaries(
+            descriptor.nclx_profile.color_primaries,
+        )?)
+        .set_transfer_characteristics(map_transfer(
+            descriptor.nclx_profile.transfer_characteristics,
+        )?)
+        .set_matrix_coefficients(map_matrix(descriptor.nclx_profile.matrix_coefficients)?);
 
-    if let Some(metadata) = content_light {
+    if let Some(metadata) = descriptor.content_light {
         avif.set_content_light_level(
             metadata.max_content_light_level,
             metadata.max_frame_average_light_level,
         );
     }
 
-    if let Some(metadata) = mastering_display {
+    if let Some(metadata) = descriptor.mastering_display {
         avif.set_mastering_display(
             [
                 to_avif_xy(metadata.green),
@@ -770,7 +762,13 @@ fn mux_avif(
         );
     }
 
-    Ok(avif.to_vec(color_payload, alpha_payload, width, height, bit_depth))
+    Ok(avif.to_vec(
+        color_payload,
+        alpha_payload,
+        descriptor.width,
+        descriptor.height,
+        descriptor.bit_depth,
+    ))
 }
 
 fn to_rav1e_mastering_display(metadata: MasteringDisplayMetadata) -> MasteringDisplay {
@@ -932,7 +930,7 @@ mod tests {
             encoded
                 .avif_file
                 .windows(4)
-                .any(|bytes| bytes == &[0, 9, 0, 16])
+                .any(|bytes| bytes == [0, 9, 0, 16])
         );
     }
 

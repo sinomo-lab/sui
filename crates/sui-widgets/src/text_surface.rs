@@ -554,10 +554,8 @@ impl TextSurface {
             sync_editor_selection_scope(ctx, self.selection_scope.as_ref(), &self.editor);
             ctx.request_semantics();
         }
-        if result.handled {
-            if !(copied_to_clipboard && self.selection_scope.is_some()) {
-                ctx.set_handled();
-            }
+        if result.handled && !(copied_to_clipboard && self.selection_scope.is_some()) {
+            ctx.set_handled();
         }
     }
 
@@ -2057,6 +2055,7 @@ fn sync_editor_selection_scope(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
@@ -2735,8 +2734,8 @@ mod tests {
             .expect("focused render should succeed");
         let fill_colors = solid_fill_colors(&output);
 
-        assert!(fill_colors.iter().any(|color| *color == caret_color));
-        assert!(!fill_colors.iter().any(|color| *color == accent_text));
+        assert!(fill_colors.contains(&caret_color));
+        assert!(!fill_colors.contains(&accent_text));
     }
 
     #[test]
@@ -2864,7 +2863,7 @@ mod tests {
         assert_eq!(text.style().font_size, text_style.font_size);
         assert_eq!(text.style().line_height, text_style.line_height);
         assert!(changes.borrow().is_empty());
-        assert!(!fill_colors.iter().any(|color| *color == caret));
+        assert!(!fill_colors.contains(&caret));
     }
 
     #[test]

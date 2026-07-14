@@ -3,6 +3,13 @@ name = "sui-python"
 version.workspace = true
 description = "Python bindings for SUI."
 edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
 rust-version.workspace = true
 
 [lib]
@@ -17,7 +24,7 @@ auto-initialize = ["pyo3/auto-initialize"]
 
 [dependencies]
 pyo3 = { workspace = true }
-sui = { path = "../sui", default-features = false }
+sui = { workspace = true }
 sui-bindings-core = { workspace = true }
 
 [dev-dependencies]

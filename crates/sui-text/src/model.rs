@@ -10,8 +10,9 @@ use sui_core::{Color, FontHandle, Point, Rect, Size, Vector};
 use crate::font::ResolvedTextFace;
 use crate::style::{FontFeatures, FontStretch, FontStyle, FontWeight};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextAlign {
+    #[default]
     Start,
     End,
     Left,
@@ -20,48 +21,27 @@ pub enum TextAlign {
     Justified,
 }
 
-impl Default for TextAlign {
-    fn default() -> Self {
-        Self::Start
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextWrap {
     NoWrap,
+    #[default]
     Word,
     Character,
 }
 
-impl Default for TextWrap {
-    fn default() -> Self {
-        Self::Word
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextDirection {
+    #[default]
     Auto,
     LeftToRight,
     RightToLeft,
 }
 
-impl Default for TextDirection {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextWritingMode {
+    #[default]
     Horizontal,
     Vertical,
-}
-
-impl Default for TextWritingMode {
-    fn default() -> Self {
-        Self::Horizontal
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -344,16 +324,11 @@ pub struct TextMeasurement {
     pub cap_height: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAffinity {
     Upstream,
+    #[default]
     Downstream,
-}
-
-impl Default for TextAffinity {
-    fn default() -> Self {
-        Self::Downstream
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

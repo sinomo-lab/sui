@@ -101,10 +101,10 @@ pub(crate) struct GlyphSubpixelOffsetKey {
 }
 
 impl GlyphSubpixelOffsetKey {
-    pub(crate) fn new(x: u8, y: u8) -> Self {
+    pub(crate) fn new(x: u8, _y: u8) -> Self {
         Self {
             x: x % GLYPH_SUBPIXEL_VARIANTS_X,
-            y: y % GLYPH_SUBPIXEL_VARIANTS_Y,
+            y: 0,
         }
     }
 

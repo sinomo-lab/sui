@@ -1,5 +1,21 @@
 #![forbid(unsafe_code)]
 
+//! Public Rust facade for SUI.
+//!
+//! Most applications can import [`prelude`] and construct an [`App`] with one
+//! or more [`Window`] values. Lower-level runtime, scene, renderer, and widget
+//! types are re-exported for custom widgets, embedding, tests, and tooling.
+//!
+//! ```no_run
+//! use sui::prelude::*;
+//!
+//! fn main() -> Result<()> {
+//!     App::new()
+//!         .main_window("Hello SUI", Label::new("Ready"))
+//!         .run()
+//! }
+//! ```
+
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
@@ -7,9 +23,13 @@ use std::{
     sync::Arc,
 };
 
+/// User-facing application, window, resource, and wake-handle builders.
 pub mod app;
+/// Composite widgets and application-shell building blocks.
 pub mod composites;
+/// Layout and containment widgets.
 pub mod containers;
+/// Primitive controls, labels, inputs, and icons.
 pub mod controls;
 
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
@@ -149,20 +169,24 @@ pub use sui_widgets::{
     resolve_widget_hdr_style, wrap_text_lines,
 };
 
+/// Marker trait for type-indexed application theme extensions.
 pub trait ThemeExtension: Any + Send + Sync {}
 
 impl<T> ThemeExtension for T where T: Any + Send + Sync {}
 
+/// Type-indexed storage for application-specific theme values.
 #[derive(Clone, Default)]
 pub struct ThemeExtensions {
     values: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
 impl ThemeExtensions {
+    /// Create empty extension storage.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Insert or replace an extension, returning the previous value when present.
     pub fn insert<T>(&mut self, value: T) -> Option<Arc<T>>
     where
         T: ThemeExtension,
@@ -172,6 +196,7 @@ impl ThemeExtensions {
             .and_then(|previous| Arc::downcast::<T>(previous).ok())
     }
 
+    /// Borrow an extension by its concrete type.
     pub fn get<T>(&self) -> Option<&T>
     where
         T: ThemeExtension,
@@ -181,6 +206,7 @@ impl ThemeExtensions {
             .and_then(|value| value.as_ref().downcast_ref::<T>())
     }
 
+    /// Clone the shared pointer for an extension by its concrete type.
     pub fn get_arc<T>(&self) -> Option<Arc<T>>
     where
         T: ThemeExtension,
@@ -190,6 +216,7 @@ impl ThemeExtensions {
             .and_then(|value| Arc::clone(value).downcast::<T>().ok())
     }
 
+    /// Return whether an extension of type `T` is registered.
     pub fn contains<T>(&self) -> bool
     where
         T: ThemeExtension,
@@ -197,6 +224,7 @@ impl ThemeExtensions {
         self.values.contains_key(&TypeId::of::<T>())
     }
 
+    /// Remove and return an extension by its concrete type.
     pub fn remove<T>(&mut self) -> Option<Arc<T>>
     where
         T: ThemeExtension,
@@ -206,10 +234,12 @@ impl ThemeExtensions {
             .and_then(|value| Arc::downcast::<T>(value).ok())
     }
 
+    /// Return whether no extensions are registered.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
+    /// Return the number of registered extension types.
     pub fn len(&self) -> usize {
         self.values.len()
     }
@@ -223,11 +253,16 @@ impl fmt::Debug for ThemeExtensions {
     }
 }
 
+/// Application-level colors, built-in widget theme, and custom extensions.
 #[derive(Debug, Clone)]
 pub struct Theme {
+    /// Default application background color.
     pub background: Color,
+    /// Default application foreground color.
     pub foreground: Color,
+    /// Theme used by SUI's built-in widgets.
     pub default_widgets: DefaultTheme,
+    /// Type-indexed application theme extensions.
     pub extensions: ThemeExtensions,
 }
 
@@ -244,15 +279,18 @@ impl Default for Theme {
 }
 
 impl Theme {
+    /// Create the default application theme.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Replace the theme used by built-in widgets.
     pub fn with_default_widgets(mut self, theme: DefaultTheme) -> Self {
         self.default_widgets = theme;
         self
     }
 
+    /// Add a typed extension using builder syntax.
     pub fn with_extension<T>(mut self, value: T) -> Self
     where
         T: ThemeExtension,
@@ -261,6 +299,7 @@ impl Theme {
         self
     }
 
+    /// Insert or replace a typed theme extension.
     pub fn insert_extension<T>(&mut self, value: T) -> Option<Arc<T>>
     where
         T: ThemeExtension,
@@ -268,6 +307,7 @@ impl Theme {
         self.extensions.insert(value)
     }
 
+    /// Borrow a typed theme extension.
     pub fn extension<T>(&self) -> Option<&T>
     where
         T: ThemeExtension,
@@ -275,6 +315,7 @@ impl Theme {
         self.extensions.get::<T>()
     }
 
+    /// Clone the shared pointer for a typed theme extension.
     pub fn extension_arc<T>(&self) -> Option<Arc<T>>
     where
         T: ThemeExtension,
@@ -282,6 +323,7 @@ impl Theme {
         self.extensions.get_arc::<T>()
     }
 
+    /// Return whether a typed theme extension is present.
     pub fn has_extension<T>(&self) -> bool
     where
         T: ThemeExtension,
@@ -289,6 +331,7 @@ impl Theme {
         self.extensions.contains::<T>()
     }
 
+    /// Remove and return a typed theme extension.
     pub fn remove_extension<T>(&mut self) -> Option<Arc<T>>
     where
         T: ThemeExtension,
@@ -297,6 +340,10 @@ impl Theme {
     }
 }
 
+/// Lower-level application builder for runtime and platform integration.
+///
+/// Regular applications should prefer [`App`]. This type remains public for
+/// custom embedding, debug tooling, and direct [`Runtime`] construction.
 pub struct Application {
     inner: RuntimeApplication,
     #[cfg(feature = "wgpu")]
@@ -327,69 +374,83 @@ impl Default for Application {
 }
 
 impl Application {
+    /// Create an empty application with built-in icon resources registered.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Add a lower-level window builder.
     pub fn window(mut self, window: WindowBuilder) -> Self {
         self.inner = self.inner.window(window);
         self
     }
 
     #[cfg(feature = "wgpu")]
+    /// Enable or disable analytic-edge feathering in the WGPU renderer.
     pub fn with_feathering_enabled(mut self, enabled: bool) -> Self {
         self.feathering_enabled = enabled;
         self
     }
 
     #[cfg(feature = "wgpu")]
+    /// Set the analytic-edge feather width in logical pixels.
     pub fn with_feather_width(mut self, feather_width: f32) -> Self {
         self.feather_width = feather_width.max(0.0);
         self
     }
 
     #[cfg(feature = "wgpu")]
+    /// Attach an app-owned external texture registry.
     pub fn with_external_texture_registry(mut self, registry: WgpuExternalTextureRegistry) -> Self {
         self.external_texture_registry = Some(registry);
         self
     }
 
     #[cfg(feature = "wgpu")]
+    /// Return whether renderer feathering is enabled.
     pub fn feathering_enabled(&self) -> bool {
         self.feathering_enabled
     }
 
     #[cfg(feature = "wgpu")]
+    /// Return the configured renderer feather width.
     pub fn feather_width(&self) -> f32 {
         self.feather_width
     }
 
     #[cfg(feature = "wgpu")]
+    /// Borrow the configured external texture registry, if present.
     pub fn external_texture_registry(&self) -> Option<&WgpuExternalTextureRegistry> {
         self.external_texture_registry.as_ref()
     }
 
+    /// Set initial render options applied to every window at startup.
     pub fn with_window_render_options(mut self, options: WindowRenderOptions) -> Self {
         self.initial_window_render_options = Some(options.clamped());
         self
     }
 
+    /// Return the initial render options, if configured.
     pub fn initial_window_render_options(&self) -> Option<WindowRenderOptions> {
         self.initial_window_render_options
     }
 
+    /// Register a font with an explicit handle.
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
         self.inner.register_font(handle, font)
     }
 
+    /// Register font bytes and allocate a handle.
     pub fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
         self.inner.register_font_bytes(data)
     }
 
+    /// Register an image with an explicit handle.
     pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
         self.inner.register_image(handle, image)
     }
 
+    /// Register RGBA8 pixels and allocate an image handle.
     pub fn register_rgba_image(
         &mut self,
         width: u32,
@@ -399,10 +460,12 @@ impl Application {
         self.inner.register_rgba_image(width, height, data)
     }
 
+    /// Register SVG bytes at their intrinsic size and allocate an image handle.
     pub fn register_svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
         self.inner.register_svg_image(data)
     }
 
+    /// Register SVG bytes at their intrinsic size with an explicit handle.
     pub fn register_svg_image_with_handle(
         &mut self,
         handle: ImageHandle,
@@ -411,6 +474,7 @@ impl Application {
         self.inner.register_svg_image_with_handle(handle, data)
     }
 
+    /// Rasterize SVG bytes at an explicit size and allocate an image handle.
     pub fn register_svg_image_at_size(
         &mut self,
         width: u32,
@@ -420,6 +484,7 @@ impl Application {
         self.inner.register_svg_image_at_size(width, height, data)
     }
 
+    /// Rasterize SVG bytes at an explicit size and handle.
     pub fn register_svg_image_at_size_with_handle(
         &mut self,
         handle: ImageHandle,
@@ -431,6 +496,7 @@ impl Application {
             .register_svg_image_at_size_with_handle(handle, width, height, data)
     }
 
+    /// Register one embedded SVG resource.
     pub fn register_embedded_svg_image(
         &mut self,
         resource: EmbeddedSvgImageResource,
@@ -438,6 +504,7 @@ impl Application {
         self.inner.register_embedded_svg_image(resource)
     }
 
+    /// Register multiple embedded SVG resources.
     pub fn register_embedded_svg_images(
         &mut self,
         resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,
@@ -445,11 +512,13 @@ impl Application {
         self.inner.register_embedded_svg_images(resources)
     }
 
+    /// Build the retained runtime without starting a platform event loop.
     pub fn build(self) -> Result<Runtime> {
         self.inner.build()
     }
 
     #[cfg(any(feature = "desktop", feature = "web"))]
+    /// Build and run the application on the default desktop or web platform.
     pub fn run(self) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
@@ -497,11 +566,13 @@ impl Application {
     }
 
     #[cfg(all(target_os = "android", feature = "mobile"))]
+    /// Build and run the application in an Android native activity.
     pub fn run_android(self, android_app: AndroidApp) -> Result<()> {
         self.run_android_with(android_app, |_| {})
     }
 
     #[cfg(all(target_os = "android", feature = "mobile"))]
+    /// Run on Android and invoke `on_ready` with a cross-thread wake handle.
     pub fn run_android_with(
         self,
         android_app: AndroidApp,
@@ -528,6 +599,7 @@ impl Application {
     }
 
     #[cfg(not(any(feature = "desktop", feature = "web", feature = "mobile")))]
+    /// Return an error when no platform event-loop feature is enabled.
     pub fn run(self) -> Result<()> {
         let _ = self;
         Err(Error::new(
@@ -536,9 +608,12 @@ impl Application {
     }
 }
 
+/// Minimal shared style values for custom facade-level components.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Style {
+    /// Foreground brush used to draw content.
     pub foreground: Brush,
+    /// Insets around the styled content.
     pub padding: Padding,
 }
 
@@ -553,6 +628,7 @@ impl Default for Style {
     }
 }
 
+/// Common imports for ordinary SUI application and widget code.
 pub mod prelude {
     #[cfg(any(feature = "desktop", feature = "web"))]
     pub use crate::UiHandle;

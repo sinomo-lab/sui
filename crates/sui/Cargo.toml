@@ -2,8 +2,14 @@
 name = "sui"
 version.workspace = true
 description = "Public Rust facade for the SUI workspace."
-authors = ["Infinity_X <Infinity_X@sinomo.net>"]
+authors.workspace = true
+categories.workspace = true
 edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 include = ["**/*.rs", "Cargo.toml"]
 

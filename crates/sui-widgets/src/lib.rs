@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+// Widgets naturally combine callback trait objects and parameter-rich paint helpers.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 pub mod animation;
 pub mod canvas;

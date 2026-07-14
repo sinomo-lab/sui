@@ -3624,10 +3624,10 @@ mod tests {
                 brush: Brush::Solid(stroke_color),
                 stroke,
             } = command
+                && *stroke_color == color
+                && (stroke.width - width).abs() < 0.01
             {
-                if *stroke_color == color && (stroke.width - width).abs() < 0.01 {
-                    bounds.push(path.bounds());
-                }
+                bounds.push(path.bounds());
             }
         });
         bounds
@@ -4694,7 +4694,7 @@ mod tests {
         let mut ids = BTreeSet::new();
         for part in parts {
             let id = color_picker_child_semantics_id(parent, part).get();
-            assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
+            assert!(id < (1_u64 << 53), "{id} should be JS-safe");
             assert!(ids.insert(id), "{id} should be unique");
         }
     }

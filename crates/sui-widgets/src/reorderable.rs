@@ -609,14 +609,9 @@ impl Widget for ReorderableList {
         self.row_offsets = offsets.clone();
         self.content_height = height;
 
-        for item in 0..self.children.len() {
+        for (item, &offset) in offsets.iter().enumerate().take(self.children.len()) {
             let size = Size::new(bounds.width(), self.row_sizes[item].height);
-            let rect = Rect::new(
-                bounds.x(),
-                bounds.y() + offsets[item],
-                size.width,
-                size.height,
-            );
+            let rect = Rect::new(bounds.x(), bounds.y() + offset, size.width, size.height);
             self.row_bounds[item] = rect;
             self.children.arrange_child(item, ctx, rect);
             if !self.row_motions[item].is_animating() && self.active_drag.is_none() {

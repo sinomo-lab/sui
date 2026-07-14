@@ -810,7 +810,7 @@ fn replace_generated_ts_section(current: &str, generated: &str) -> Result<String
     output.push_str(current[..start].trim_end_matches(['\r', '\n']));
     output.push_str("\n\n");
     output.push_str(generated.trim_end_matches(['\r', '\n']));
-    output.push_str("\n");
+    output.push('\n');
     output.push_str(current[end..].trim_start_matches(['\r', '\n']));
     Ok(output)
 }

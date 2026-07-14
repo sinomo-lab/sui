@@ -1,8 +1,30 @@
 # SUI
 
-SUI is a Rust UI workspace built around a retained widget runtime, a renderer-neutral scene model, and a `wgpu` renderer. The repository contains the public Rust facade, runtime, platform integration, built-in widgets, deterministic testing tools, and the demo/widget-book host used for development.
+SUI is a Rust UI workspace built around a retained widget runtime, a renderer-neutral scene model, and a `wgpu` renderer. The repository contains the public Rust facade, runtime, platform integration, built-in widgets, deterministic testing tools, native Python and JavaScript bindings, and the demo/widget-book host used for development.
 
-The Rust API exists today. The docs also describe the intended shape for future Python and JavaScript bindings, but those bindings are not part of this workspace yet.
+> **Project status:** SUI is pre-release alpha software. The main Rust API, desktop runtime, headless test harness, browser demo, and native Python and Node/Electron bindings are implemented, but APIs and package names may still change before the first stable release. Crates and language packages are not published yet.
+
+## Installation
+
+Until the first registry release, depend on the repository directly:
+
+```toml
+[dependencies]
+sui = { git = "https://github.com/sinomo-lab/sui" }
+```
+
+The default features enable the desktop shell and `wgpu` renderer. For custom embedding or headless use, disable defaults and select only the features you need.
+
+## Supported Surfaces
+
+| Surface | Status | Notes |
+| --- | --- | --- |
+| Rust desktop | Implemented | `winit` + `wgpu`; Linux, macOS, and Windows targets |
+| Rust browser | Implemented | WebAssembly demo through the `web` feature and Trunk |
+| Rust Android | Experimental | Native-activity entry point through the `mobile` feature |
+| Headless/test embedding | Implemented | Deterministic runtime, semantics, rendering, and screenshots |
+| Python | Alpha | Native extension with desktop and host-driven execution; not published |
+| JavaScript | Alpha | Node/Electron N-API binding; browser JavaScript bindings are not implemented |
 
 ## Quick Start
 
@@ -18,10 +40,10 @@ Run the desktop demo:
 cargo run -p sui-demo
 ```
 
-Run the full test suite:
+Run the full workspace test suite:
 
 ```bash
-cargo test
+cargo test --workspace
 ```
 
 Run focused test surfaces:
@@ -48,6 +70,12 @@ fn main() -> Result<()> {
 ```
 
 For a fuller API overview, see [docs/user-api.md](docs/user-api.md).
+
+The same example is checked as a real Cargo example:
+
+```bash
+cargo check -p sui --example hello
+```
 
 ## Web Demo
 
@@ -111,6 +139,9 @@ motion ladder is 70/140/220/340ms.
 - `crates/sui-tui` - accessibility-tree generated terminal UI support.
 - `crates/sui-lucide` - embedded Lucide SVG icon resources.
 - `crates/sui-avif` - minimal AVIF encoding primitives, including HDR still-image support.
+- `crates/sui-bindings-core` - shared language-neutral binding model.
+- `crates/sui-python` - native Python extension.
+- `crates/sui-js` - native Node/Electron N-API extension.
 - `crates/sui-demo` - desktop demo, widget gallery, benchmark surfaces, and visual validation host.
 
 ## Documentation
@@ -144,7 +175,8 @@ SUI tests are semantics-first. Prefer locators based on role, accessible name, t
 Common commands:
 
 ```bash
-cargo test
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p sui-testing
 cargo test -p sui-demo -- --nocapture
 cargo run -p sui-demo
@@ -154,5 +186,4 @@ See [docs/testing.md](docs/testing.md) for the testing layers and expected style
 
 ## License
 
-The workspace is licensed as `MIT OR Apache-2.0`.
-
+SUI is licensed under the [MIT License](LICENSE). The bundled `sui-lucide` crate retains its upstream `ISC` license.

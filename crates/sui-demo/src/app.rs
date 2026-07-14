@@ -2113,7 +2113,7 @@ const SETTINGS_PANEL_LINE_GAP: f32 = 3.0;
 
 fn settings_panel_width(max_width: f32) -> f32 {
     if max_width.is_finite() {
-        max_width.min(SETTINGS_PANEL_MAX_WIDTH).max(0.0)
+        max_width.clamp(0.0, SETTINGS_PANEL_MAX_WIDTH)
     } else {
         SETTINGS_PANEL_MAX_WIDTH
     }
@@ -2343,7 +2343,7 @@ impl Widget for SdrContentBrightnessStatus {
         let theme = self.theme();
         let style = dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.78));
         let width = if constraints.max.width.is_finite() {
-            constraints.max.width.min(420.0).max(0.0)
+            constraints.max.width.clamp(0.0, 420.0)
         } else {
             420.0
         };
@@ -8638,10 +8638,11 @@ final_max_luminance={final_max_luminance}
             thickness,
             (view_bounds.height() - 32.0).max(24.0),
         );
-        if let Some(probe) = left_probe.intersection(viewport) {
-            if probe.width() >= 24.0 && probe.height() >= 24.0 {
-                probes.push(probe);
-            }
+        if let Some(probe) = left_probe.intersection(viewport)
+            && probe.width() >= 24.0
+            && probe.height() >= 24.0
+        {
+            probes.push(probe);
         }
 
         let top_probe = Rect::new(
@@ -8650,10 +8651,11 @@ final_max_luminance={final_max_luminance}
             (view_bounds.width() - 32.0).max(24.0),
             thickness,
         );
-        if let Some(probe) = top_probe.intersection(viewport) {
-            if probe.width() >= 24.0 && probe.height() >= 24.0 {
-                probes.push(probe);
-            }
+        if let Some(probe) = top_probe.intersection(viewport)
+            && probe.width() >= 24.0
+            && probe.height() >= 24.0
+        {
+            probes.push(probe);
         }
 
         let right_probe = Rect::new(
@@ -8662,10 +8664,11 @@ final_max_luminance={final_max_luminance}
             thickness,
             (view_bounds.height() - 32.0).max(24.0),
         );
-        if let Some(probe) = right_probe.intersection(viewport) {
-            if probe.width() >= 24.0 && probe.height() >= 24.0 {
-                probes.push(probe);
-            }
+        if let Some(probe) = right_probe.intersection(viewport)
+            && probe.width() >= 24.0
+            && probe.height() >= 24.0
+        {
+            probes.push(probe);
         }
 
         let bottom_probe = Rect::new(
@@ -8674,10 +8677,11 @@ final_max_luminance={final_max_luminance}
             (view_bounds.width() - 32.0).max(24.0),
             thickness,
         );
-        if let Some(probe) = bottom_probe.intersection(viewport) {
-            if probe.width() >= 24.0 && probe.height() >= 24.0 {
-                probes.push(probe);
-            }
+        if let Some(probe) = bottom_probe.intersection(viewport)
+            && probe.width() >= 24.0
+            && probe.height() >= 24.0
+        {
+            probes.push(probe);
         }
 
         probes

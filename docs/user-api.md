@@ -1,9 +1,9 @@
 # SUI User API
 
-This document describes the public API shape application authors should use.
-The Rust API exists today. Python and JavaScript bindings do not exist in this
-workspace yet, but they should follow the same ownership, resource, and async
-model instead of exposing the lower-level runtime directly.
+This document describes the public API application authors should use. The Rust
+facade is the primary API. Native Python and Node/Electron bindings are also
+implemented as alpha surfaces over the same ownership, resource, event, and
+host-driven rendering model.
 
 ## Rust Entry Point
 
@@ -188,48 +188,64 @@ The key boundary is that sampled animation values are data. Applying those
 values to widgets, invalidation, or retained layer properties still happens on
 the UI runtime thread.
 
-## Binding Shape
+## Python And JavaScript Bindings
 
-Future Python and JavaScript bindings should wrap the same concepts rather than
-mirror every Rust crate type.
+The binding crates ship in this workspace but are not yet published to PyPI or
+npm. Both expose `App`, `Window`, reactive `State`, built-in widgets, resource
+registration, custom events, custom paint/semantics callbacks, and two execution
+modes:
+
+- `App.run()` starts the native desktop event loop.
+- `App.start()` returns a host-driven app for embedding, deterministic rendering,
+  and tests. Its UI handle can post callbacks from another thread/host and
+  `drain()` applies them on the UI runtime.
 
 Python:
 
 ```python
 import sui
 
-async def main():
-    app = sui.App()
-    app.window(sui.Window("Hello").root(sui.Label("Ready")))
-    await app.run_async()
+message = sui.State("Ready")
+window = sui.Window("Hello")
+window.root(sui.Column([sui.Label(message), sui.Button("Update", on_press=lambda: message.set("Done"))], gap=8))
+
+app = sui.App()
+app.window(window)
+running = app.start()
+snapshot = running.render()
+print(snapshot.command_count)
 ```
 
-JavaScript:
+Build the extension with `maturin develop` from `crates/sui-python`. It imports
+as `sui`; see the [Python binding README](../crates/sui-python/README.md).
+
+JavaScript (CommonJS / Node or Electron):
 
 ```javascript
-import { App, Window, Label } from "@sui/ui";
+const sui = require("@sui/ui");
 
-const app = new App();
-app.window(new Window("Hello").root(new Label("Ready")));
-await app.run();
+const message = new sui.State("Ready");
+const window = new sui.Window("Hello");
+window.root(sui.Column([sui.Label(message), sui.Button("Update", () => message.set("Done"))], 8));
+
+const app = new sui.App();
+app.window(window);
+const running = app.start();
+console.log(running.render().commandCount);
 ```
 
-Binding guidelines:
+Build the native `.node` module with napi-rs from `crates/sui-js`; see the
+[JavaScript binding README](../crates/sui-js/README.md). This binding targets
+Node/Electron. Browser/Wasm JavaScript bindings are not implemented.
 
-- Keep `App`, `Window`, resources, handles, animation documents, compiled
-  timelines, and sampled values as the stable binding surface.
-- Do not expose raw runtime graph mutation as the normal API.
-- Use explicit handles for resources and windows instead of borrowing internal
-  registries across async boundaries.
-- Keep widget updates on the UI executor. Python `asyncio` tasks and JavaScript
-  promises should enqueue messages and wake the UI, not mutate widgets from
-  arbitrary threads or microtasks.
-- Provide async-friendly app runners, but keep widget callbacks synchronous and
-  bounded.
+The bindings intentionally do not expose raw runtime graph mutation as the
+normal API. Resource and window identities use explicit handles, and callbacks
+that update widgets are posted back to the UI runtime.
 
 ## Boundary Rule
 
-Application and demo code should prefer `App`, `Window`, and
+Rust application and demo code should prefer `App`, `Window`, and
 `ResourceRegistry`. Lower-level types such as `Application`, `Runtime`,
 `WindowBuilder`, platform objects, and diagnostics remain available for tests,
-debug tools, benchmarks, and custom embedding.
+debug tools, benchmarks, and custom embedding. Python and JavaScript code should
+use their binding-level `App`, `Window`, `State`, and widget factories.

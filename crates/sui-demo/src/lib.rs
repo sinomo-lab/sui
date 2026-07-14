@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments, clippy::wrong_self_convention)]
+
 mod animation_demo;
 mod app;
 mod drag_drop_demo;
@@ -160,20 +162,15 @@ fn parse_tui_layout(raw_value: &str) -> sui::Result<TuiLayoutMode> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn app_automation_mode(mode: Option<DesktopLaunchAutomation>) -> Option<DesktopAutomationMode> {
-    match mode {
-        Some(DesktopLaunchAutomation::WidgetBookScroll) => {
-            Some(DesktopAutomationMode::WidgetBookScroll)
-        }
-        None => None,
-    }
+    mode.map(|DesktopLaunchAutomation::WidgetBookScroll| DesktopAutomationMode::WidgetBookScroll)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn platform_automation_config(
     mode: Option<DesktopLaunchAutomation>,
 ) -> Option<DesktopAutomationConfig> {
-    match mode {
-        Some(DesktopLaunchAutomation::WidgetBookScroll) => Some(DesktopAutomationConfig {
+    mode.map(
+        |DesktopLaunchAutomation::WidgetBookScroll| DesktopAutomationConfig {
             label: "widget-book-scroll".to_string(),
             target_role: SemanticsRole::ScrollView,
             target_name: GALLERY_SCROLL_NAME.to_string(),
@@ -184,9 +181,8 @@ fn platform_automation_config(
             duration: std::time::Duration::from_secs(4),
             report_interval: std::time::Duration::from_millis(500),
             startup_timeout: std::time::Duration::from_secs(2),
-        }),
-        None => None,
-    }
+        },
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1542,7 +1538,7 @@ fn tui_accessibility_flow_inline_node(node: &SemanticsNode) -> bool {
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 fn tui_accessibility_flow_cell_width(node: &SemanticsNode, area_width: u16) -> u16 {
     let text_width = tui_widget_text(node).chars().count() as u16;
-    let max_width = area_width.min(24).max(1);
+    let max_width = area_width.clamp(1, 24);
     let min_width = 6.min(max_width);
     text_width.saturating_add(2).clamp(min_width, max_width)
 }

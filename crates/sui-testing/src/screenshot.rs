@@ -62,11 +62,13 @@ pub fn write_hdr_avif(
 ) -> Result<()> {
     let hdr_image =
         RgbaF32Image::new(image.width(), image.height(), image.pixels()).map_err(avif_error)?;
-    let mut options = HdrEncodingOptions::default();
-    options.source_white_level = if sdr_white_level.is_finite() && sdr_white_level > 0.0 {
-        sdr_white_level
-    } else {
-        1.0
+    let options = HdrEncodingOptions {
+        source_white_level: if sdr_white_level.is_finite() && sdr_white_level > 0.0 {
+            sdr_white_level
+        } else {
+            1.0
+        },
+        ..HdrEncodingOptions::default()
     };
     let encoded = AvifEncoder::new()
         .with_quality(100.0)
@@ -511,10 +513,9 @@ fn blend_pixel(image: &mut Screenshot, x: i32, y: i32, color: Color) {
     ];
     let alpha = overlay[3] as f32 / 255.0;
 
-    for channel in 0..3 {
+    for (channel, &over) in overlay.iter().take(3).enumerate() {
         let base = image.pixels[offset + channel] as f32;
-        let over = overlay[channel] as f32;
-        image.pixels[offset + channel] = ((base * (1.0 - alpha)) + (over * alpha)) as u8;
+        image.pixels[offset + channel] = ((base * (1.0 - alpha)) + (f32::from(over) * alpha)) as u8;
     }
     image.pixels[offset + 3] = 255;
 }

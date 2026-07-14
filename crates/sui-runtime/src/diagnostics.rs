@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
@@ -589,16 +591,14 @@ impl WindowTextHinting {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WindowStemDarkening {
+    #[default]
     None,
-    Enabled { max_ppem: f32, amount: f32 },
-}
-
-impl Default for WindowStemDarkening {
-    fn default() -> Self {
-        Self::None
-    }
+    Enabled {
+        max_ppem: f32,
+        amount: f32,
+    },
 }
 
 impl WindowStemDarkening {
@@ -618,19 +618,14 @@ impl WindowStemDarkening {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WindowTextCoveragePolicy {
+    #[default]
     Perceptual,
     Linear,
     Gamma(f32),
     CoverageBoost(f32),
     TwoCoverageMinusCoverageSq,
-}
-
-impl Default for WindowTextCoveragePolicy {
-    fn default() -> Self {
-        Self::Perceptual
-    }
 }
 
 impl WindowTextCoveragePolicy {

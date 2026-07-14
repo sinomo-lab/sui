@@ -489,9 +489,7 @@ impl FloatingWorkspace {
         let Some(gesture) = &self.gesture else {
             return None;
         };
-        let Some(view) = self.state.snapshot(gesture.view_id) else {
-            return None;
-        };
+        let view = self.state.snapshot(gesture.view_id)?;
 
         let delta = position - gesture.pointer_origin;
         let previous_bounds = view.bounds;
@@ -807,7 +805,7 @@ impl FloatingViewSurface {
         W: Widget + 'static,
     {
         Self {
-            theme: Box::new(theme.clone()),
+            theme: Box::new(theme),
             theme_reader: theme_reader.clone(),
             state: state.clone(),
             view_id,
@@ -949,13 +947,13 @@ impl FloatingViewHost {
         let vertical_scroll_bar = if let Some(theme_reader) = theme_reader.clone() {
             vertical_scroll_bar.theme_when(move || theme_reader())
         } else {
-            vertical_scroll_bar.theme(theme.clone())
+            vertical_scroll_bar.theme(theme)
         };
         let horizontal_scroll_bar = ScrollBar::horizontal(scroll_state.clone());
         let horizontal_scroll_bar = if let Some(theme_reader) = theme_reader.clone() {
             horizontal_scroll_bar.theme_when(move || theme_reader())
         } else {
-            horizontal_scroll_bar.theme(theme.clone())
+            horizontal_scroll_bar.theme(theme)
         };
         Self {
             theme: Box::new(theme),
@@ -1264,8 +1262,7 @@ impl SplitView {
         let divider = self.resolved_divider_thickness();
         let available = (axis_main(self.axis, bounds.size) - divider).max(0.0);
         let (lower, upper) = self.allowed_first_main_range(available);
-        let first = (available * self.ratio).clamp(lower, upper);
-        first
+        (available * self.ratio).clamp(lower, upper)
     }
 
     fn update_hover(&mut self, hovered: bool, ctx: &mut EventCtx) {
@@ -1703,16 +1700,15 @@ impl Default for FloatingStack {
 
 impl Widget for FloatingStack {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if let Event::Pointer(pointer) = event {
-            if pointer.kind == PointerEventKind::Down
-                && pointer.button == Some(PointerButton::Primary)
-                && let Some(index) = self.frontmost_window_at(ctx.bounds(), pointer.position)
-                && self.bring_to_front(index)
-            {
-                ctx.request_ordering();
-                ctx.request_paint();
-                ctx.request_hit_test();
-            }
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+            && pointer.button == Some(PointerButton::Primary)
+            && let Some(index) = self.frontmost_window_at(ctx.bounds(), pointer.position)
+            && self.bring_to_front(index)
+        {
+            ctx.request_ordering();
+            ctx.request_paint();
+            ctx.request_hit_test();
         }
     }
 

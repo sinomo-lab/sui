@@ -1,3 +1,9 @@
+#![allow(
+    clippy::large_enum_variant,
+    clippy::too_many_arguments,
+    clippy::wrong_self_convention
+)]
+
 use std::{
     fs,
     sync::{Arc, Mutex},
@@ -2260,7 +2266,7 @@ impl JsObjectCallbacks {
             return Ok(false);
         }
         let event_fn: Function<'_, (JsEvent,), bool> = object.get_named_property("event")?;
-        event_fn.apply(&object, (JsEvent::from_binding(BindingEvent::from(event)),))
+        event_fn.apply(object, (JsEvent::from_binding(BindingEvent::from(event)),))
     }
 
     fn call_measure(&self, constraints: Constraints) -> Result<Size> {
@@ -2271,7 +2277,7 @@ impl JsObjectCallbacks {
         }
         let measure: Function<'_, (JsConstraints,), ClassInstance<'_, JsSize>> =
             object.get_named_property("measure")?;
-        let size = measure.apply(&object, (JsConstraints::from(constraints),))?;
+        let size = measure.apply(object, (JsConstraints::from(constraints),))?;
         Ok(Size::from(*size))
     }
 
@@ -2284,7 +2290,7 @@ impl JsObjectCallbacks {
         let paint = JsPaint::new(bounds);
         let paint_for_js = paint.clone();
         let paint_fn: Function<'_, (JsPaint,), Unknown<'_>> = object.get_named_property("paint")?;
-        let _ = paint_fn.apply(&object, (paint_for_js,))?;
+        let _ = paint_fn.apply(object, (paint_for_js,))?;
         let commands = paint.finish().map_err(napi_value_error)?;
         Ok((commands, paint.take_images()))
     }
@@ -2305,7 +2311,7 @@ impl JsObjectCallbacks {
         let semantics_for_js = semantics.clone();
         let semantics_fn: Function<'_, (JsSemantics,), Unknown<'_>> =
             object.get_named_property("semantics")?;
-        let _ = semantics_fn.apply(&object, (semantics_for_js,))?;
+        let _ = semantics_fn.apply(object, (semantics_for_js,))?;
         Ok(Some(semantics.take_commands()))
     }
 
@@ -4148,7 +4154,7 @@ mod tests {
         for value in [
             "https://example.invalid/docs",
             "0.5:0:1",
-            "3",
+            "3:0:10",
             "Medium",
             "Gallery",
             "List",

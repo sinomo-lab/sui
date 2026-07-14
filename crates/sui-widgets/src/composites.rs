@@ -5432,7 +5432,7 @@ impl EmptyState {
         self.theme_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or_else(|| (*self.theme).clone())
+            .unwrap_or(*self.theme)
     }
 
     fn action_rect(&self, bounds: Rect) -> Rect {
@@ -7242,7 +7242,7 @@ pub fn paint_callout(
     // the status-hued ink (not the on-solid content color) for the icon.
     let (tone_soft, tone_ink) = theme.semantic_tone_soft_colors(style.tone);
     let fill = style.fill.unwrap_or(tone_soft);
-    let border = style.border.unwrap_or_else(|| palette.border);
+    let border = style.border.unwrap_or(palette.border);
     let rail = style.rail_color.unwrap_or(tone_color);
     let radius = style.radius.unwrap_or(theme.radius.md).max(0.0);
 
@@ -11431,8 +11431,10 @@ impl Widget for Menu {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut state = SemanticsState::default();
-        state.focused = ctx.is_focused();
+        let state = SemanticsState {
+            focused: ctx.is_focused(),
+            ..SemanticsState::default()
+        };
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Menu, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state = state;
@@ -19475,10 +19477,10 @@ mod tests {
                 .size(Size::new(320.0, 220.0))
                 .with_child(
                     EmptyState::new("Empty directory", "Nothing here yet.")
-                        .theme(theme.clone())
+                        .theme(theme)
                         .icon(crate::IconGlyph::Folder)
                         .detail("No files matched the active filter.")
-                        .action(crate::Button::new("Create file").theme(theme.clone())),
+                        .action(crate::Button::new("Create file").theme(theme)),
                 ),
         );
 
@@ -20634,7 +20636,7 @@ mod tests {
                 super::browser_tab_semantics_id(parent, tab_index).get(),
                 super::browser_tab_close_semantics_id(parent, tab_index).get(),
             ] {
-                assert!(id <= (1_u64 << 53) - 1, "{id} should be JS-safe");
+                assert!(id < (1_u64 << 53), "{id} should be JS-safe");
                 assert!(ids.insert(id), "{id} should be unique");
             }
         }

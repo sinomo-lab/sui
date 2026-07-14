@@ -67,14 +67,14 @@ fn validate_roots(snapshot: &AccessibilitySnapshot, issues: &mut Vec<Accessibili
         ));
     }
 
-    if let Some(root) = snapshot.root {
-        if !snapshot.nodes.iter().any(|node| node.id == root) {
-            issues.push(AccessibilityIssue::new(
-                AccessibilityIssueSeverity::Error,
-                AccessibilityIssueTarget::Snapshot,
-                format!("snapshot root #{root} is missing from nodes"),
-            ));
-        }
+    if let Some(root) = snapshot.root
+        && !snapshot.nodes.iter().any(|node| node.id == root)
+    {
+        issues.push(AccessibilityIssue::new(
+            AccessibilityIssueSeverity::Error,
+            AccessibilityIssueTarget::Snapshot,
+            format!("snapshot root #{root} is missing from nodes"),
+        ));
     }
 }
 
@@ -161,17 +161,18 @@ fn validate_nodes(snapshot: &AccessibilitySnapshot, issues: &mut Vec<Accessibili
     }
 
     for node in &snapshot.nodes {
-        if interactive_role(node) && !node.state.hidden {
-            if node.name.as_deref().unwrap_or_default().trim().is_empty() {
-                issues.push(AccessibilityIssue::new(
-                    AccessibilityIssueSeverity::Error,
-                    AccessibilityIssueTarget::Node(node.id),
-                    format!(
-                        "{:?} node #{} is missing accessible name",
-                        node.role, node.id
-                    ),
-                ));
-            }
+        if interactive_role(node)
+            && !node.state.hidden
+            && node.name.as_deref().unwrap_or_default().trim().is_empty()
+        {
+            issues.push(AccessibilityIssue::new(
+                AccessibilityIssueSeverity::Error,
+                AccessibilityIssueTarget::Node(node.id),
+                format!(
+                    "{:?} node #{} is missing accessible name",
+                    node.role, node.id
+                ),
+            ));
         }
 
         for action in expected_actions(node) {

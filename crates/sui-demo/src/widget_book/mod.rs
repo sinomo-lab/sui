@@ -555,7 +555,7 @@ impl LivePerformanceRoot {
             || self
                 .overlay_enabled_reader
                 .as_ref()
-                .map_or(false, |enabled| enabled())
+                .is_some_and(|enabled| enabled())
     }
 
     fn set_performance_display(
@@ -567,7 +567,7 @@ impl LivePerformanceRoot {
         if let Some(snapshot) = &snapshot {
             if samples
                 .last()
-                .map_or(true, |sample| sample.frame_index != snapshot.frame_index)
+                .is_none_or(|sample| sample.frame_index != snapshot.frame_index)
             {
                 samples.push(LivePerformanceFrameSample::from_snapshot(snapshot));
                 if samples.len() > LIVE_PERFORMANCE_HISTORY_LIMIT {
@@ -777,17 +777,17 @@ impl Widget for LivePerformanceRoot {
                     self.owns_detail_mode = true;
                 }
 
-                if let Some(snapshot) = window_performance_snapshot(ctx.window_id()) {
-                    if self.set_performance_display(Some(snapshot), false) {
-                        let overlay_id = self.performance_overlay.child().id();
-                        ctx.request(
-                            InvalidationRequest::new(
-                                InvalidationTarget::Widget(overlay_id),
-                                InvalidationKind::Paint,
-                            )
-                            .with_region(self.performance_overlay.child().bounds()),
-                        );
-                    }
+                if let Some(snapshot) = window_performance_snapshot(ctx.window_id())
+                    && self.set_performance_display(Some(snapshot), false)
+                {
+                    let overlay_id = self.performance_overlay.child().id();
+                    ctx.request(
+                        InvalidationRequest::new(
+                            InvalidationTarget::Widget(overlay_id),
+                            InvalidationKind::Paint,
+                        )
+                        .with_region(self.performance_overlay.child().bounds()),
+                    );
                 }
             }
         }
@@ -6522,9 +6522,9 @@ fn build_text_editing_syntax_line_with_theme(
             |theme| theme.palette.text_muted,
         ));
 
-    let even = line_index % 2 == 0;
+    let even = line_index.is_multiple_of(2);
     let initial_theme = theme_reader();
-    if line_index % 2 == 0 {
+    if line_index.is_multiple_of(2) {
         Background::new(initial_theme.palette.surface, Padding::all(6.0, line)).brush_when(
             widget_book_theme_color(&theme_reader, move |theme| {
                 if even {
@@ -9352,7 +9352,7 @@ mod tests {
         let semantics = runtime
             .semantics(window_id)
             .expect("color validation semantics should exist");
-        assert_semantics_omit_live_performance_overlay(&semantics);
+        assert_semantics_omit_live_performance_overlay(semantics);
     }
 
     #[test]
@@ -9368,7 +9368,7 @@ mod tests {
         let semantics = runtime
             .semantics(window_id)
             .expect("widget book semantics should exist");
-        assert_semantics_omit_live_performance_overlay(&semantics);
+        assert_semantics_omit_live_performance_overlay(semantics);
     }
 
     #[test]

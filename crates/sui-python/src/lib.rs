@@ -1,4 +1,9 @@
 #![forbid(unsafe_code)]
+#![allow(
+    clippy::large_enum_variant,
+    clippy::too_many_arguments,
+    clippy::wrong_self_convention
+)]
 
 use std::{
     cell::RefCell,
@@ -3825,7 +3830,7 @@ for role in ('generic_container', 'text', 'button', 'link', 'checkbox', 'switch'
 for name in ('Ready', 'Apply', 'Search icon', 'Download', 'Main surface', 'Surface content', 'Main toolbar', 'Toolbar action', 'Toolbar search', 'Documentation', 'Enabled', 'Airplane mode', 'Manual', 'Priority', 'View mode', 'Show list view', 'Gallery', 'Show map view', 'Workspace path', 'Assets', 'Brush', 'Canvas', 'Export', 'Build table', 'Input signal', 'Online', 'Editor status', 'Ln 12', 'Writable', 'UTF-8', 'Build', 'Opacity', 'Count', 'Mode', 'Load progress', 'Background work', 'Name', 'Notes', 'Scrollable content', 'Rich summary', 'Accent', 'Section divider', 'Projects empty', 'New project'):
     assert name in snapshot.semantics_names, (name, snapshot.semantics_names)
 
-for value in ('https://example.invalid/docs', '0.5:0:1', '3', 'Medium', 'Gallery', 'List', 'Map', 'sui', 'Canvas', 'Bindings', 'active', 'Online', 'All systems nominal', 'Ln 12', 'Writable', 'UTF-8', 'Debug profile with local bindings', 'Final', '0.25:0:1', 'Ada', 'Line one' + chr(10) + 'Line two', 'Warm cool', '#4080BFFF'):
+for value in ('https://example.invalid/docs', '0.5:0:1', '3:0:10', 'Medium', 'Gallery', 'List', 'Map', 'sui', 'Canvas', 'Bindings', 'active', 'Online', 'All systems nominal', 'Ln 12', 'Writable', 'UTF-8', 'Debug profile with local bindings', 'Final', '0.25:0:1', 'Ada', 'Line one' + chr(10) + 'Line two', 'Warm cool', '#4080BFFF'):
     assert value in snapshot.semantics_values, (value, snapshot.semantics_values)
 
 assert 'Loading assets' in snapshot.semantics_descriptions, snapshot.semantics_descriptions

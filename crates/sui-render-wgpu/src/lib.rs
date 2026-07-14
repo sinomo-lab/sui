@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::too_many_arguments)]
 
 mod feathering;
 mod gpu;
@@ -644,16 +645,14 @@ impl TextHinting {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum StemDarkening {
+    #[default]
     None,
-    Enabled { max_ppem: f32, amount: f32 },
-}
-
-impl Default for StemDarkening {
-    fn default() -> Self {
-        Self::None
-    }
+    Enabled {
+        max_ppem: f32,
+        amount: f32,
+    },
 }
 
 impl StemDarkening {
@@ -681,19 +680,14 @@ impl StemDarkening {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TextCoveragePolicy {
+    #[default]
     Perceptual,
     Linear,
     Gamma(f32),
     CoverageBoost(f32),
     TwoCoverageMinusCoverageSq,
-}
-
-impl Default for TextCoveragePolicy {
-    fn default() -> Self {
-        Self::Perceptual
-    }
 }
 
 impl TextCoveragePolicy {
@@ -2417,7 +2411,7 @@ impl WgpuRenderer {
             self.submit_prepared_scene(prepared, format, &view)?
         };
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;
-        let surface_present_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
+        let surface_present_started = self.runtime_diagnostics_enabled.then(Instant::now);
         frame_texture.present();
         frame_stats.surface_present_time_us = surface_present_started
             .map(|started| started.elapsed().as_micros() as u64)
@@ -2435,7 +2429,7 @@ impl WgpuRenderer {
         window_id: WindowId,
         size: (u32, u32),
     ) -> Result<Option<(wgpu::SurfaceTexture, bool, u64)>> {
-        let surface_acquire_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
+        let surface_acquire_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let (frame_texture, suboptimal) = loop {
             let result = {
                 let surface = self.surfaces.get(&window_id).ok_or_else(|| {
@@ -2863,7 +2857,7 @@ impl WgpuRenderer {
         let mut analytic_paths = HashMap::new();
         let mut image_resources = HashSet::new();
         let mut uses_text_atlas = false;
-        let resource_collection_started = diagnostics_enabled.then(|| Instant::now());
+        let resource_collection_started = diagnostics_enabled.then(Instant::now);
         for fragment in &submission.fragments {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
             uses_text_atlas |=
@@ -2873,14 +2867,14 @@ impl WgpuRenderer {
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
 
-        let bind_group_prepare_started = diagnostics_enabled.then(|| Instant::now());
+        let bind_group_prepare_started = diagnostics_enabled.then(Instant::now);
         let (analytic_path_resources, analytic_path_stats) =
             self.prepare_analytic_path_resources(analytic_paths, diagnostics_enabled)?;
         let analytic_path_bind_group_time_us = analytic_path_stats.total_time_us;
         let analytic_path_bind_group_miss_count = analytic_path_stats.miss_count;
         let analytic_path_bind_group_upload_bytes = analytic_path_stats.upload_bytes;
 
-        let image_bind_group_started = diagnostics_enabled.then(|| Instant::now());
+        let image_bind_group_started = diagnostics_enabled.then(Instant::now);
         let mut image_bind_groups = HashMap::new();
         for (handle, sampling) in image_resources {
             let bind_group = if let Some(image) = frame.image_registry.get_external(handle) {
@@ -2928,7 +2922,7 @@ impl WgpuRenderer {
 
         for fragment in submission.fragments {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
-            let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
+            let batch_prepare_started = diagnostics_enabled.then(Instant::now);
             let mut prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
             stamp_analytic_path_slots(
                 &mut prepared.scene_vertices,
@@ -2959,7 +2953,7 @@ impl WgpuRenderer {
                 .passes
                 .iter()
                 .any(|pass| !pass.clip_paths.is_empty());
-            let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
+            let gpu_upload_started = diagnostics_enabled.then(Instant::now);
             prepared_fragments.push(PreparedFragmentSubmission {
                 passes: prepared.passes,
                 scene_buffer: create_static_vertex_buffer(
@@ -2989,7 +2983,7 @@ impl WgpuRenderer {
                 .shared
                 .as_ref()
                 .expect("renderer shared state initialized");
-            let gpu_upload_started = diagnostics_enabled.then(|| Instant::now());
+            let gpu_upload_started = diagnostics_enabled.then(Instant::now);
             self.frame_resources
                 .ensure_stencil(&shared.device, framebuffer_size);
             if let Some(started) = gpu_upload_started {
@@ -2997,7 +2991,7 @@ impl WgpuRenderer {
             }
         }
 
-        let batch_prepare_started = diagnostics_enabled.then(|| Instant::now());
+        let batch_prepare_started = diagnostics_enabled.then(Instant::now);
         let encodable_passes = flatten_fragment_passes(&prepared_fragments);
         if let Some(started) = batch_prepare_started {
             batch_prepare_time_us += started.elapsed().as_micros() as u64;
@@ -3050,7 +3044,7 @@ impl WgpuRenderer {
                 })
         };
 
-        let pass_encode_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
+        let pass_encode_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let pass_count = if prepared.encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
@@ -3101,7 +3095,7 @@ impl WgpuRenderer {
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
 
-        let queue_submit_started = self.runtime_diagnostics_enabled.then(|| Instant::now());
+        let queue_submit_started = self.runtime_diagnostics_enabled.then(Instant::now);
         self.shared
             .as_ref()
             .expect("renderer shared state initialized")
@@ -3249,12 +3243,12 @@ impl WgpuRenderer {
             )));
         }
 
-        if let Some(cached) = self.external_image_cache.get(&handle) {
-            if cached.binding_revision == entry.binding_revision {
-                return Ok(Self::external_image_bind_group_for_sampling(
-                    cached, sampling,
-                ));
-            }
+        if let Some(cached) = self.external_image_cache.get(&handle)
+            && cached.binding_revision == entry.binding_revision
+        {
+            return Ok(Self::external_image_bind_group_for_sampling(
+                cached, sampling,
+            ));
         }
 
         let shared = self
@@ -3326,8 +3320,8 @@ impl WgpuRenderer {
         text_engine: &mut TextEngine,
         collect_stats: bool,
     ) -> Result<(wgpu::BindGroup, TextAtlasBindGroupStats)> {
-        let total_started = collect_stats.then(|| Instant::now());
-        let upload_copy_started = collect_stats.then(|| Instant::now());
+        let total_started = collect_stats.then(Instant::now);
+        let upload_copy_started = collect_stats.then(Instant::now);
         let uploads = text_engine.take_atlas_uploads();
         let page_size = text_engine.atlas.page_size();
         let page_count = text_engine.atlas.page_count() as u32;
@@ -3359,7 +3353,7 @@ impl WgpuRenderer {
                 .text_atlas_array
                 .as_ref()
                 .expect("text atlas array created above");
-            let upload_write_started = collect_stats.then(|| Instant::now());
+            let upload_write_started = collect_stats.then(Instant::now);
             for (page_index, upload) in &uploads {
                 shared.queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -3460,35 +3454,35 @@ impl WgpuRenderer {
 
         // Growing an existing array of the same page size: copy the already-populated layers
         // forward so their glyphs survive (their CPU dirty state was cleared after first upload).
-        if let Some(old) = self.text_atlas_array.as_ref() {
-            if old.size == page_size {
-                let mut encoder =
-                    shared
-                        .device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("SUI text atlas array grow copy"),
-                        });
-                encoder.copy_texture_to_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &old.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::Extent3d {
-                        width: page_size.0,
-                        height: page_size.1,
-                        depth_or_array_layers: old.layers,
-                    },
-                );
-                shared.queue.submit([encoder.finish()]);
-            }
+        if let Some(old) = self.text_atlas_array.as_ref()
+            && old.size == page_size
+        {
+            let mut encoder =
+                shared
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("SUI text atlas array grow copy"),
+                    });
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &old.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: page_size.0,
+                    height: page_size.1,
+                    depth_or_array_layers: old.layers,
+                },
+            );
+            shared.queue.submit([encoder.finish()]);
         }
 
         self.text_atlas_array = Some(CachedTextAtlasTexture {
@@ -3514,7 +3508,7 @@ impl WgpuRenderer {
             return Ok((None, AnalyticPathBindGroupStats::default()));
         }
 
-        let total_started = collect_stats.then(|| Instant::now());
+        let total_started = collect_stats.then(Instant::now);
         let shared = self
             .shared
             .as_ref()
