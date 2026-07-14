@@ -1826,27 +1826,31 @@ impl VectorEditorCanvas {
         );
         ctx.fill(
             Path::rounded_rect(artboard_bounds, object.corner_radius * self.viewport.zoom),
-            object
-                .fill
-                .unwrap_or(Color::WHITE)
-                .with_alpha(object.opacity),
+            vector_object_color_with_opacity(object.fill.unwrap_or(Color::WHITE), object.opacity),
         );
         ctx.stroke(
             Path::rounded_rect(artboard_bounds, object.corner_radius * self.viewport.zoom),
-            object.stroke,
+            vector_object_color_with_opacity(object.stroke, object.opacity),
             StrokeStyle::new(object.stroke_width * self.viewport.zoom),
         );
     }
 
     fn paint_ellipse(&self, ctx: &mut PaintCtx, bounds: Rect, object: VectorObject) {
         let path = vector_ellipse_path(bounds, self.viewport, object);
+        let stroke_width = (object.stroke_width * self.viewport.zoom).max(1.0);
         if let Some(fill) = object.fill {
-            ctx.fill(path.clone(), fill.with_alpha(object.opacity));
+            let fill_path =
+                vector_ellipse_fill_path(bounds, self.viewport, object, object.stroke_width)
+                    .unwrap_or_else(|| path.clone());
+            ctx.fill(
+                fill_path,
+                vector_object_color_with_opacity(fill, object.opacity),
+            );
         }
         ctx.stroke(
             path,
-            object.stroke.with_alpha(object.opacity.max(0.25)),
-            StrokeStyle::new((object.stroke_width * self.viewport.zoom).max(1.0)),
+            vector_object_color_with_opacity(object.stroke, object.opacity),
+            StrokeStyle::new(stroke_width),
         );
     }
 
@@ -1876,7 +1880,7 @@ impl VectorEditorCanvas {
         );
         ctx.stroke(
             path.build(),
-            object.stroke.with_alpha(object.opacity),
+            vector_object_color_with_opacity(object.stroke, object.opacity),
             StrokeStyle::new((object.stroke_width * self.viewport.zoom).max(1.0)),
         );
     }
@@ -2293,15 +2297,45 @@ fn vector_scroll_delta_to_offset(scroll_delta: Option<ScrollDelta>, fallback: Ve
     }
 }
 
+fn vector_object_color_with_opacity(color: Color, opacity: f32) -> Color {
+    color.with_alpha(color.alpha * opacity.clamp(0.0, 1.0))
+}
+
 fn vector_ellipse_path(bounds: Rect, viewport: CanvasViewport, object: VectorObject) -> Path {
+    vector_ellipse_path_for_radii(
+        bounds,
+        viewport,
+        object,
+        object.size.width * 0.5,
+        object.size.height * 0.5,
+    )
+}
+
+fn vector_ellipse_fill_path(
+    bounds: Rect,
+    viewport: CanvasViewport,
+    object: VectorObject,
+    stroke_width: f32,
+) -> Option<Path> {
+    let inset = (stroke_width * 0.5).max(0.0);
+    let radius_x = (object.size.width * 0.5) - inset;
+    let radius_y = (object.size.height * 0.5) - inset;
+    (radius_x > 0.0 && radius_y > 0.0)
+        .then(|| vector_ellipse_path_for_radii(bounds, viewport, object, radius_x, radius_y))
+}
+
+fn vector_ellipse_path_for_radii(
+    bounds: Rect,
+    viewport: CanvasViewport,
+    object: VectorObject,
+    radius_x: f32,
+    radius_y: f32,
+) -> Path {
     let mut path = PathBuilder::new();
     let segments = 56;
     for segment in 0..=segments {
         let angle = (segment as f32 / segments as f32) * std::f32::consts::TAU;
-        let local = Point::new(
-            angle.cos() * object.size.width * 0.5,
-            angle.sin() * object.size.height * 0.5,
-        );
+        let local = Point::new(angle.cos() * radius_x, angle.sin() * radius_y);
         let point = VectorEditorCanvas::document_to_screen_with_viewport(
             bounds,
             viewport,
@@ -2322,8 +2356,9 @@ mod tests {
     use super::*;
 
     use sui::{
-        Application, Event, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Result,
-        ScrollDelta, SemanticsRole, SemanticsValue, Vector, WindowBuilder,
+        Application, Brush, Event, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        RenderOutput, Result, SceneCommand, ScrollDelta, SemanticsRole, SemanticsValue, Vector,
+        WindowBuilder,
     };
     use sui_testing::{TestApp, TestWindow, WindowSnapshot};
 
@@ -2351,6 +2386,67 @@ mod tests {
         assert_eq!(state.selected_width(), 142.0);
         assert_eq!(state.selected_height(), 112.0);
         assert_eq!(state.selected_rotation(), 8.0);
+    }
+
+    #[test]
+    fn vector_ellipse_fill_path_is_inset_for_object_opacity_grouping() {
+        let object = VectorObject::new(
+            VectorObjectKind::Ellipse,
+            Point::ZERO,
+            Size::new(100.0, 80.0),
+            0.0,
+            Some(Color::rgba(0.18, 0.54, 0.86, 1.0)),
+            Color::rgba(0.08, 0.22, 0.42, 1.0),
+            10.0,
+            0.45,
+            0.0,
+        );
+        let bounds = Rect::new(0.0, 0.0, 240.0, 180.0);
+        let viewport = CanvasViewport::new().zoom(1.0);
+        let stroke_path = vector_ellipse_path(bounds, viewport, object);
+        let fill_path = vector_ellipse_fill_path(bounds, viewport, object, object.stroke_width)
+            .expect("stroked ellipse should keep a fillable interior");
+
+        assert!(
+            fill_path.bounds().x() > stroke_path.bounds().x() + 4.5,
+            "fill should not sit under the left side of the centered stroke"
+        );
+        assert!(
+            fill_path.bounds().max_x() < stroke_path.bounds().max_x() - 4.5,
+            "fill should not sit under the right side of the centered stroke"
+        );
+        assert!(
+            fill_path.bounds().y() > stroke_path.bounds().y() + 4.5,
+            "fill should not sit under the top of the centered stroke"
+        );
+        assert!(
+            fill_path.bounds().max_y() < stroke_path.bounds().max_y() - 4.5,
+            "fill should not sit under the bottom of the centered stroke"
+        );
+    }
+
+    #[test]
+    fn vector_ellipse_stroke_uses_object_opacity_without_minimum_alpha() -> Result<()> {
+        let state = VectorDemoState::new();
+        state.set_selected_object(1);
+        state.set_opacity(0.12);
+        let mut runtime = build_vector_canvas_test_application_with_state(state).build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let object = vector_default_objects()[1];
+        let expected = vector_object_color_with_opacity(object.stroke, 0.12);
+        let stale_minimum = object.stroke.with_alpha(0.25);
+        let strokes = solid_stroke_colors(&output);
+
+        assert!(
+            contains_approx_color(&strokes, expected),
+            "ellipse stroke should use object opacity directly; strokes={strokes:?}"
+        );
+        assert!(
+            !contains_approx_color(&strokes, stale_minimum),
+            "ellipse stroke should not clamp object opacity to the old minimum alpha"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2513,14 +2609,44 @@ mod tests {
     }
 
     fn build_vector_canvas_test_application() -> Application {
+        build_vector_canvas_test_application_with_state(VectorDemoState::new())
+    }
+
+    fn build_vector_canvas_test_application_with_state(state: VectorDemoState) -> Application {
         let viewport_state = VectorCanvasViewportState::new();
         Application::new().window(WindowBuilder::new().title(VECTOR_EDITOR_TAB_LABEL).root(
-            VectorEditorCanvas::new(
-                VectorDemoState::new(),
-                viewport_state,
-                default_dev_theme_reader(),
-            ),
+            VectorEditorCanvas::new(state, viewport_state, default_dev_theme_reader()),
         ))
+    }
+
+    fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokeRect {
+                brush: Brush::Solid(color),
+                ..
+            }
+            | SceneCommand::StrokePath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                colors.push(*color);
+            }
+        });
+        colors
+    }
+
+    fn contains_approx_color(colors: &[Color], expected: Color) -> bool {
+        const CHANNEL_TOLERANCE: f32 = 1.0 / 255.0;
+
+        colors.iter().any(|color| {
+            color.space == expected.space
+                && (color.red - expected.red).abs() <= CHANNEL_TOLERANCE
+                && (color.green - expected.green).abs() <= CHANNEL_TOLERANCE
+                && (color.blue - expected.blue).abs() <= CHANNEL_TOLERANCE
+                && (color.alpha - expected.alpha).abs() <= CHANNEL_TOLERANCE
+        })
     }
 
     fn click_pointer(window: &TestWindow, position: Point) -> Result<()> {
