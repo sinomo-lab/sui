@@ -1522,6 +1522,7 @@ impl Default for PixelCanvasState {
 pub struct PixelCanvas {
     theme: DefaultTheme,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    paper_color: Option<Color>,
     name: String,
     width: usize,
     height: usize,
@@ -1548,6 +1549,7 @@ impl PixelCanvas {
         Self {
             theme: DefaultTheme::default(),
             theme_reader: None,
+            paper_color: None,
             name: name.into(),
             width,
             height,
@@ -1594,6 +1596,12 @@ impl PixelCanvas {
         F: Fn() -> DefaultTheme + 'static,
     {
         self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn paper_color(mut self, color: Color) -> Self {
+        self.paper_color = Some(color);
+        self.paint_image_cache.borrow_mut().take();
         self
     }
 
@@ -2115,10 +2123,11 @@ impl PixelCanvas {
     }
 
     fn paint_image(&self) -> RegisteredImage {
+        let theme = self.resolved_theme();
         let display = self.state.display();
         let paper = self.state.paper();
         let display_above_paper = self.state.display_above_paper();
-        let paper_color = self.resolved_theme().surfaces.pixel_canvas_paper;
+        let paper_color = self.resolved_paper_color(&theme);
         self.paint_image_for_source(Self::image_source(
             display,
             paper,
@@ -2236,6 +2245,11 @@ impl PixelCanvas {
             .as_ref()
             .map(|theme| theme())
             .unwrap_or(self.theme)
+    }
+
+    fn resolved_paper_color(&self, theme: &DefaultTheme) -> Color {
+        self.paper_color
+            .unwrap_or(theme.surfaces.pixel_canvas_paper)
     }
 }
 
@@ -2549,6 +2563,7 @@ impl Widget for PixelCanvas {
             .transform(ctx.bounds(), self.document_origin());
         let image_bounds = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
         paint_pixel_canvas_document_shadow(ctx, image_bounds, transform, &theme);
+        let paper_color = self.resolved_paper_color(&theme);
         let display = self.state.display();
         let paper = self.state.paper();
         let display_above_paper = self.state.display_above_paper();
@@ -2559,12 +2574,7 @@ impl Widget for PixelCanvas {
             ImageSampling::Linear
         };
         if Self::can_paint_with_image_opacity(display, paper, display_above_paper) {
-            fill_transformed_rect(
-                ctx,
-                image_bounds,
-                transform,
-                theme.surfaces.pixel_canvas_paper,
-            );
+            fill_transformed_rect(ctx, image_bounds, transform, paper_color);
             ctx.register_image(image_handle, self.raw_paint_image());
             ctx.draw_image_quad_source(
                 transformed_rect_points(image_bounds, transform),
@@ -2577,12 +2587,7 @@ impl Widget for PixelCanvas {
                 || paper.requires_compositing()
                 || !display_above_paper;
             if !baked_image {
-                fill_transformed_rect(
-                    ctx,
-                    image_bounds,
-                    transform,
-                    theme.surfaces.pixel_canvas_paper,
-                );
+                fill_transformed_rect(ctx, image_bounds, transform, paper_color);
             }
             ctx.register_image(image_handle, self.paint_image());
             ctx.draw_image_quad_source(
@@ -4564,6 +4569,39 @@ mod tests {
         let snapshot = state
             .latest_export_snapshot()
             .expect("hidden layer export should publish a snapshot");
+        assert_rgba_channels_near(&snapshot.rgba8()[0..4], expected);
+        Ok(())
+    }
+
+    #[test]
+    fn pixel_canvas_explicit_paper_color_overrides_theme_for_render_and_export()
+    -> sui_core::Result<()> {
+        let mut theme = DefaultTheme::default();
+        theme.surfaces.pixel_canvas_paper = Color::rgba(0.80, 0.62, 0.36, 1.0);
+        let paper_color = Color::WHITE;
+        let state = PixelCanvasState::new();
+        state.set_display_visible(false);
+        let (mut runtime, window_id) = build_runtime(
+            PixelCanvas::new("Paint", 1, 1)
+                .theme(theme)
+                .paper_color(paper_color)
+                .state(state.clone())
+                .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
+        );
+        let paper = PixelColor::from_color(paper_color);
+        let expected = [paper.red, paper.green, paper.blue, paper.alpha];
+
+        let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
+        assert_rgba_channels_near(&pixels[0..4], expected);
+
+        state.request_export_snapshot();
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(521.0, 361.0))),
+        )?;
+        let snapshot = state
+            .latest_export_snapshot()
+            .expect("explicit paper export should publish a snapshot");
         assert_rgba_channels_near(&snapshot.rgba8()[0..4], expected);
         Ok(())
     }

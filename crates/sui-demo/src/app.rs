@@ -3035,10 +3035,10 @@ mod tests {
         PAINT_DOCUMENT_WIDTH, PAINT_ERASER_PREVIEW_NAME, PAINT_FILL_BLEND_MODE_NAME,
         PAINT_FILL_OPACITY_NAME, PAINT_FIT_VIEW_NAME, PAINT_HISTORY_COMMANDS_NAME,
         PAINT_HORIZONTAL_RULER_NAME, PAINT_INITIAL_BRUSH_SIZE, PAINT_LAYER_BLEND_MODE_NAME,
-        PAINT_LAYER_OPACITY_NAME, PAINT_LAYERS_NAME, PAINT_PROPERTIES_NAME, PAINT_SCROLL_NAME,
-        PAINT_SELECT_LAYER_ABOVE_NAME, PAINT_SELECT_LAYER_BELOW_NAME, PAINT_VERTICAL_RULER_NAME,
-        PAINT_VIEW_COMMANDS_NAME, PAINT_ZOOM_IN_NAME, PAINT_ZOOM_OUT_NAME, PAINT_ZOOM_READOUT_NAME,
-        build_paint_demo_with_state,
+        PAINT_LAYER_OPACITY_NAME, PAINT_LAYERS_NAME, PAINT_PAPER_COLOR, PAINT_PROPERTIES_NAME,
+        PAINT_SCROLL_NAME, PAINT_SELECT_LAYER_ABOVE_NAME, PAINT_SELECT_LAYER_BELOW_NAME,
+        PAINT_VERTICAL_RULER_NAME, PAINT_VIEW_COMMANDS_NAME, PAINT_ZOOM_IN_NAME,
+        PAINT_ZOOM_OUT_NAME, PAINT_ZOOM_READOUT_NAME, build_paint_demo_with_state,
     };
 
     use std::{
@@ -3338,6 +3338,15 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn color_to_rgba8(color: Color) -> [u8; 4] {
+        [
+            (color.red.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (color.green.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (color.blue.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (color.alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+        ]
     }
 
     fn solid_fill_bounds_for_color_in_rect(
@@ -4519,6 +4528,84 @@ mod tests {
             }),
             "expected the blend mode select to expose the current blend mode"
         );
+    }
+
+    #[test]
+    fn paint_workspace_theme_toggle_repaints_chrome_but_keeps_paper_color() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, PAINT_TAB_LABEL)?;
+
+        let light_snapshot = window.snapshot()?;
+        let light_canvas = find_named_node(&light_snapshot, SemanticsRole::Canvas, PAINT_TAB_LABEL);
+        let light_properties = find_named_node(
+            &light_snapshot,
+            SemanticsRole::GenericContainer,
+            PAINT_PROPERTIES_NAME,
+        );
+        let light_paper_probe = Rect::new(
+            light_canvas.bounds.x() + light_canvas.bounds.width() * 0.5,
+            light_canvas.bounds.y() + light_canvas.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_divider_probe = Rect::new(
+            light_properties.bounds.x() - 1.0,
+            light_canvas.bounds.y() + light_canvas.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let light_frame = window.capture_screenshot()?;
+        let light_paper_pixel = sample_pixel(&light_frame, light_paper_probe, &light_snapshot)?;
+        let light_divider_pixel = sample_pixel(&light_frame, light_divider_probe, &light_snapshot)?;
+        assert_eq!(
+            light_paper_pixel,
+            color_to_rgba8(PAINT_PAPER_COLOR),
+            "paint paper should render as the user content color before theme changes"
+        );
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name(DEV_SHELL_THEME_TOGGLE_NAME)
+            .click()?;
+
+        let dark_snapshot = window.snapshot()?;
+        let dark_canvas = find_named_node(&dark_snapshot, SemanticsRole::Canvas, PAINT_TAB_LABEL);
+        let dark_properties = find_named_node(
+            &dark_snapshot,
+            SemanticsRole::GenericContainer,
+            PAINT_PROPERTIES_NAME,
+        );
+        let dark_paper_probe = Rect::new(
+            dark_canvas.bounds.x() + dark_canvas.bounds.width() * 0.5,
+            dark_canvas.bounds.y() + dark_canvas.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let dark_divider_probe = Rect::new(
+            dark_properties.bounds.x() - 1.0,
+            dark_canvas.bounds.y() + dark_canvas.bounds.height() * 0.5,
+            1.0,
+            1.0,
+        );
+        let dark_frame = window.capture_screenshot()?;
+        let dark_paper_pixel = sample_pixel(&dark_frame, dark_paper_probe, &dark_snapshot)?;
+        let dark_divider_pixel = sample_pixel(&dark_frame, dark_divider_probe, &dark_snapshot)?;
+
+        assert_ne!(
+            light_divider_pixel, dark_divider_pixel,
+            "paint resize divider should repaint when the global theme changes"
+        );
+        assert_eq!(
+            dark_paper_pixel,
+            color_to_rgba8(PAINT_PAPER_COLOR),
+            "paint paper should keep the user content color after theme changes"
+        );
+        assert_eq!(
+            light_paper_pixel, dark_paper_pixel,
+            "paint paper should not be themed"
+        );
+        Ok(())
     }
 
     #[test]

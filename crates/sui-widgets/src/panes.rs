@@ -18,6 +18,7 @@ use crate::{
 };
 
 type AnimatedScalar = MotionScalar;
+type ThemeReader = std::rc::Rc<dyn Fn() -> DefaultTheme>;
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
@@ -361,6 +362,7 @@ struct FloatingWorkspaceGesture {
 
 pub struct FloatingWorkspace {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<ThemeReader>,
     name: Option<String>,
     state: FloatingWorkspaceState,
     views: Vec<FloatingWorkspaceEntry>,
@@ -371,6 +373,7 @@ impl FloatingWorkspace {
     pub fn new(state: FloatingWorkspaceState) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: None,
             state,
             views: Vec::new(),
@@ -380,6 +383,15 @@ impl FloatingWorkspace {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(std::rc::Rc::new(theme));
         self
     }
 
@@ -406,7 +418,8 @@ impl FloatingWorkspace {
     {
         let view_id = self.state.add_view(config);
         let child = WidgetPod::new(FloatingViewSurface::new(
-            (*self.theme).clone(),
+            self.resolved_theme(),
+            self.theme_reader.clone(),
             self.state.clone(),
             view_id,
             child,
@@ -424,23 +437,31 @@ impl FloatingWorkspace {
         self.views.iter_mut().find(|entry| entry.view_id == view_id)
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn active_view_ids(&self) -> Vec<u64> {
         self.state.active_view_ids()
     }
 
     fn frontmost_hit(&self, host_bounds: Rect, position: Point) -> Option<FloatingWorkspaceHit> {
+        let theme = self.resolved_theme();
         self.active_view_ids()
             .into_iter()
             .rev()
             .filter_map(|view_id| self.state.snapshot(view_id))
             .find_map(|view| {
-                let bounds = resolved_floating_view_bounds(&self.theme, host_bounds, &view);
+                let bounds = resolved_floating_view_bounds(&theme, host_bounds, &view);
                 if !bounds.contains(position) {
                     return None;
                 }
 
                 if !view.maximized
-                    && floating_view_resize_handle_rect(&self.theme, bounds).contains(position)
+                    && floating_view_resize_handle_rect(&theme, bounds).contains(position)
                 {
                     return Some(FloatingWorkspaceHit {
                         view_id: view.id,
@@ -449,7 +470,7 @@ impl FloatingWorkspace {
                 }
 
                 if !view.maximized
-                    && floating_view_title_bar_rect(&self.theme, bounds).contains(position)
+                    && floating_view_title_bar_rect(&theme, bounds).contains(position)
                 {
                     return Some(FloatingWorkspaceHit {
                         view_id: view.id,
@@ -488,8 +509,8 @@ impl FloatingWorkspace {
                 gesture.initial_bounds.height() + delta.y,
             ),
         };
-        let clamped =
-            clamp_floating_view_bounds(&self.theme, host_bounds, next_bounds, view.min_size);
+        let theme = self.resolved_theme();
+        let clamped = clamp_floating_view_bounds(&theme, host_bounds, next_bounds, view.min_size);
         if !self.state.set_view_bounds(view.id, clamped) {
             return None;
         }
@@ -595,7 +616,8 @@ impl Widget for FloatingWorkspace {
                 let Some(view) = self.state.snapshot(hit.view_id) else {
                     return;
                 };
-                let bounds = resolved_floating_view_bounds(&self.theme, ctx.bounds(), &view);
+                let theme = self.resolved_theme();
+                let bounds = resolved_floating_view_bounds(&theme, ctx.bounds(), &view);
                 match hit.region {
                     FloatingWorkspaceHitRegion::TitleBar => {
                         self.gesture = Some(FloatingWorkspaceGesture {
@@ -649,11 +671,12 @@ impl Widget for FloatingWorkspace {
         ));
 
         let host_bounds = Rect::from_origin_size(Point::ZERO, size);
+        let theme = self.resolved_theme();
         for view_id in self.active_view_ids() {
             let Some(snapshot) = self.state.snapshot(view_id) else {
                 continue;
             };
-            let bounds = resolved_floating_view_bounds(&self.theme, host_bounds, &snapshot);
+            let bounds = resolved_floating_view_bounds(&theme, host_bounds, &snapshot);
             if let Some(entry) = self.entry_mut(view_id) {
                 entry.child.measure(ctx, Constraints::tight(bounds.size));
             }
@@ -663,11 +686,12 @@ impl Widget for FloatingWorkspace {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.resolved_theme();
         for view_id in self.active_view_ids() {
             let Some(snapshot) = self.state.snapshot(view_id) else {
                 continue;
             };
-            let resolved = resolved_floating_view_bounds(&self.theme, bounds, &snapshot);
+            let resolved = resolved_floating_view_bounds(&theme, bounds, &snapshot);
             if !snapshot.maximized && resolved != snapshot.bounds {
                 self.state.set_view_bounds(view_id, resolved);
             }
@@ -685,12 +709,13 @@ impl Widget for FloatingWorkspace {
             ctx.push_clip_rect(region);
         }
 
-        let palette = self.theme.palette;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
         ctx.fill_bounds(palette.control);
         ctx.fill_rect(
             ctx.bounds().inflate(
-                -self.theme.metrics.floating_workspace_margin,
-                -self.theme.metrics.floating_workspace_margin,
+                -theme.metrics.floating_workspace_margin,
+                -theme.metrics.floating_workspace_margin,
             ),
             palette.surface_raised.with_alpha(0.72),
         );
@@ -764,22 +789,43 @@ enum FloatingWorkspaceHitRegion {
 
 struct FloatingViewSurface {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<ThemeReader>,
     state: FloatingWorkspaceState,
     view_id: u64,
     host: SingleChild,
 }
 
 impl FloatingViewSurface {
-    fn new<W>(theme: DefaultTheme, state: FloatingWorkspaceState, view_id: u64, child: W) -> Self
+    fn new<W>(
+        theme: DefaultTheme,
+        theme_reader: Option<ThemeReader>,
+        state: FloatingWorkspaceState,
+        view_id: u64,
+        child: W,
+    ) -> Self
     where
         W: Widget + 'static,
     {
         Self {
             theme: Box::new(theme.clone()),
+            theme_reader: theme_reader.clone(),
             state: state.clone(),
             view_id,
-            host: SingleChild::new(FloatingViewHost::new(theme, state, view_id, child)),
+            host: SingleChild::new(FloatingViewHost::new(
+                theme,
+                theme_reader,
+                state,
+                view_id,
+                child,
+            )),
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 }
 
@@ -797,13 +843,14 @@ impl Widget for FloatingViewSurface {
             return;
         };
 
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let border_width = metrics.border_width.max(1.0);
         ctx.push_clip_rect(ctx.bounds());
         ctx.fill_rect(ctx.bounds(), palette.surface_raised);
         if !view.maximized {
-            let title_bar = floating_view_title_bar_rect(&self.theme, ctx.bounds());
+            let title_bar = floating_view_title_bar_rect(&theme, ctx.bounds());
             ctx.fill_rect(title_bar, palette.control_active);
             let title_padding = metrics.floating_view_title_padding;
             let text_slot = Rect::new(
@@ -812,7 +859,7 @@ impl Widget for FloatingViewSurface {
                 (title_bar.width() - title_padding.left - title_padding.right).max(0.0),
                 (title_bar.height() - title_padding.top - title_padding.bottom).max(0.0),
             );
-            let title_style = self.theme.text_style(palette.text);
+            let title_style = theme.text_style(palette.text);
             ctx.push_clip_rect(text_slot);
             paint_aligned_text(
                 ctx,
@@ -827,7 +874,7 @@ impl Widget for FloatingViewSurface {
         self.host.paint(ctx);
         if !view.maximized {
             ctx.stroke_rect(ctx.bounds(), palette.border, StrokeStyle::new(border_width));
-            let handle = floating_view_resize_handle_rect(&self.theme, ctx.bounds());
+            let handle = floating_view_resize_handle_rect(&theme, ctx.bounds());
             let accent = palette.border.with_alpha(0.95);
             let first_length = (metrics.floating_view_resize_handle_size * 0.56).max(6.0);
             let second_length = (metrics.floating_view_resize_handle_size * 0.34).max(4.0);
@@ -839,7 +886,7 @@ impl Widget for FloatingViewSurface {
                 StrokeStyle::new(handle_stroke),
             );
             ctx.stroke(
-                diagonal_handle_path(handle, second_length, handle_inset + self.theme.spacing),
+                diagonal_handle_path(handle, second_length, handle_inset + theme.spacing),
                 accent.with_alpha(0.72),
                 StrokeStyle::new(handle_stroke),
             );
@@ -874,6 +921,7 @@ impl Widget for FloatingViewSurface {
 
 struct FloatingViewHost {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<ThemeReader>,
     state: FloatingWorkspaceState,
     view_id: u64,
     content: SingleChild,
@@ -882,7 +930,13 @@ struct FloatingViewHost {
 }
 
 impl FloatingViewHost {
-    fn new<W>(theme: DefaultTheme, state: FloatingWorkspaceState, view_id: u64, child: W) -> Self
+    fn new<W>(
+        theme: DefaultTheme,
+        theme_reader: Option<ThemeReader>,
+        state: FloatingWorkspaceState,
+        view_id: u64,
+        child: W,
+    ) -> Self
     where
         W: Widget + 'static,
     {
@@ -891,22 +945,36 @@ impl FloatingViewHost {
             .state(scroll_state.clone())
             .viewport_size_hint(true)
             .name("Floating view content");
+        let vertical_scroll_bar = ScrollBar::vertical(scroll_state.clone());
+        let vertical_scroll_bar = if let Some(theme_reader) = theme_reader.clone() {
+            vertical_scroll_bar.theme_when(move || theme_reader())
+        } else {
+            vertical_scroll_bar.theme(theme.clone())
+        };
+        let horizontal_scroll_bar = ScrollBar::horizontal(scroll_state.clone());
+        let horizontal_scroll_bar = if let Some(theme_reader) = theme_reader.clone() {
+            horizontal_scroll_bar.theme_when(move || theme_reader())
+        } else {
+            horizontal_scroll_bar.theme(theme.clone())
+        };
         Self {
-            theme: Box::new(theme.clone()),
+            theme: Box::new(theme),
+            theme_reader,
             state,
             view_id,
-            vertical_scroll_bar: SingleChild::new(
-                ScrollBar::vertical(scroll_state.clone())
-                    .theme(theme.clone())
-                    .name("Vertical scroll bar"),
-            ),
+            vertical_scroll_bar: SingleChild::new(vertical_scroll_bar.name("Vertical scroll bar")),
             horizontal_scroll_bar: SingleChild::new(
-                ScrollBar::horizontal(scroll_state.clone())
-                    .theme(theme)
-                    .name("Horizontal scroll bar"),
+                horizontal_scroll_bar.name("Horizontal scroll bar"),
             ),
             content: SingleChild::new(scroll_view),
         }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
     }
 
     fn resizing(&self) -> bool {
@@ -919,11 +987,12 @@ impl Widget for FloatingViewHost {
         let Some(view) = self.state.snapshot(self.view_id) else {
             return constraints.max;
         };
+        let theme = self.resolved_theme();
         let outer = constraints.max;
         let probe = Rect::from_origin_size(Point::ZERO, outer);
-        let content = floating_view_content_rect(&self.theme, probe, view.maximized);
+        let content = floating_view_content_rect(&theme, probe, view.maximized);
         self.content.measure(ctx, Constraints::tight(content.size));
-        let thickness = self.theme.metrics.scroll_bar_thickness;
+        let thickness = theme.metrics.scroll_bar_thickness;
         self.vertical_scroll_bar.measure(
             ctx,
             Constraints::tight(Size::new(thickness, content.height())),
@@ -939,10 +1008,10 @@ impl Widget for FloatingViewHost {
         let Some(view) = self.state.snapshot(self.view_id) else {
             return;
         };
-        let content = floating_view_content_rect(&self.theme, bounds, view.maximized);
+        let theme = self.resolved_theme();
+        let content = floating_view_content_rect(&theme, bounds, view.maximized);
         self.content.arrange(ctx, content);
-        let thickness = self
-            .theme
+        let thickness = theme
             .metrics
             .scroll_bar_thickness
             .min(content.width().max(0.0))
@@ -1017,6 +1086,7 @@ impl Widget for FloatingViewHost {
 
 pub struct SplitView {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<ThemeReader>,
     name: Option<String>,
     axis: Axis,
     ratio: f32,
@@ -1042,6 +1112,7 @@ impl SplitView {
     {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             name: None,
             axis,
             ratio: 0.5,
@@ -1078,6 +1149,15 @@ impl SplitView {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(std::rc::Rc::new(theme));
         self
     }
 
@@ -1134,10 +1214,18 @@ impl SplitView {
         self.ratio
     }
 
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
     fn resolved_divider_thickness(&self) -> f32 {
+        let theme = self.resolved_theme();
         self.divider_thickness
-            .unwrap_or(self.theme.metrics.split_view_divider_thickness)
-            .max(self.theme.metrics.border_width.max(1.0))
+            .unwrap_or(theme.metrics.split_view_divider_thickness)
+            .max(theme.metrics.border_width.max(1.0))
     }
 
     fn divider_rect(&self, bounds: Rect) -> Rect {
@@ -1146,8 +1234,8 @@ impl SplitView {
 
     fn divider_hit_rect(&self, bounds: Rect) -> Rect {
         let divider = self.divider_rect(bounds);
-        let target = self
-            .theme
+        let theme = self.resolved_theme();
+        let target = theme
             .metrics
             .split_view_drag_target_thickness
             .max(self.resolved_divider_thickness());
@@ -1182,7 +1270,7 @@ impl SplitView {
 
     fn update_hover(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
-            let theme = *self.theme;
+            let theme = self.resolved_theme();
             self.hovered = hovered;
             set_hover_animation_target(
                 &mut self.hover_animation,
@@ -1196,7 +1284,7 @@ impl SplitView {
     }
 
     fn set_dragging(&mut self, dragging: bool, ctx: &mut EventCtx) {
-        let theme = *self.theme;
+        let theme = self.resolved_theme();
         set_press_animation_target(&mut self.drag_animation, dragging as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
@@ -1413,8 +1501,9 @@ impl Widget for SplitView {
         self.first.paint(ctx);
         self.second.paint(ctx);
 
-        let palette = self.theme.palette;
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let palette = theme.palette;
+        let metrics = theme.metrics;
         let divider_bounds = self.divider_rect(ctx.bounds());
         let hover_color = mix_color(
             palette.border,
@@ -1454,7 +1543,7 @@ impl Widget for SplitView {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        let theme = *self.theme;
+        let theme = self.resolved_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
@@ -2218,6 +2307,51 @@ mod tests {
             splitter.value,
             Some(SemanticsValue::Number(value)) if value > 0.65
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn split_view_theme_when_reads_current_theme_for_divider() -> Result<()> {
+        let mut light = DefaultTheme::default();
+        light.palette.border = Color::rgba(0.18, 0.27, 0.36, 1.0);
+        let mut dark = light;
+        dark.palette.border = Color::rgba(0.74, 0.42, 0.16, 1.0);
+
+        let theme = Rc::new(RefCell::new(light));
+        let theme_reader = Rc::clone(&theme);
+        let (mut runtime, window_id) = build_runtime(
+            SplitView::new(
+                Axis::Horizontal,
+                SizedBox::new().width(100.0).height(40.0),
+                SizedBox::new().width(100.0).height(40.0),
+            )
+            .theme_when(move || *theme_reader.borrow())
+            .min_first(40.0)
+            .min_second(40.0),
+        );
+
+        let light_output = runtime.render(window_id)?;
+        let light_fills = solid_fill_colors(&light_output);
+        assert!(
+            contains_approx_color(&light_fills, light.palette.border),
+            "split divider should use the initial theme border; fills={light_fills:?}"
+        );
+
+        *theme.borrow_mut() = dark;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(640.0, 180.0))),
+        )?;
+        let dark_output = runtime.render(window_id)?;
+        let dark_fills = solid_fill_colors(&dark_output);
+        assert!(
+            contains_approx_color(&dark_fills, dark.palette.border),
+            "split divider should use the current theme border after repaint; fills={dark_fills:?}"
+        );
+        assert!(
+            !contains_approx_color(&dark_fills, light.palette.border),
+            "split divider should not keep the stale theme border after repaint"
+        );
         Ok(())
     }
 

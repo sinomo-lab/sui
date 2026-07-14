@@ -34,6 +34,13 @@ pub enum TooltipPlacement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TooltipAlignment {
+    Start,
+    Center,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceRole {
     Window,
     Sidebar,
@@ -11486,6 +11493,7 @@ fn tooltip_bubble_rect(
     measurement: Option<TextMeasurement>,
     theme: &DefaultTheme,
     placement: TooltipPlacement,
+    alignment: TooltipAlignment,
 ) -> Rect {
     let measurement = measurement.unwrap_or_else(|| tooltip_fallback_measurement(theme));
     let padding = theme.metrics.tooltip_padding;
@@ -11493,7 +11501,11 @@ fn tooltip_bubble_rect(
         (measurement.width + padding.left + padding.right).max(theme.metrics.tooltip_min_width);
     let height =
         measurement.height.max(theme.typography.body_line_height) + padding.top + padding.bottom;
-    let x = trigger_bounds.x() + ((trigger_bounds.width() - width) * 0.5);
+    let x = match alignment {
+        TooltipAlignment::Start => trigger_bounds.x(),
+        TooltipAlignment::Center => trigger_bounds.x() + ((trigger_bounds.width() - width) * 0.5),
+        TooltipAlignment::End => trigger_bounds.max_x() - width,
+    };
     let y = match placement {
         TooltipPlacement::Above => trigger_bounds.y() - height - theme.metrics.tooltip_gap,
         TooltipPlacement::Below => trigger_bounds.max_y() + theme.metrics.tooltip_gap,
@@ -11506,6 +11518,7 @@ struct TooltipPresentationState {
     theme: DefaultTheme,
     text: String,
     placement: TooltipPlacement,
+    alignment: TooltipAlignment,
     measurement: Option<TextMeasurement>,
     hovered: bool,
     trigger_bounds: Rect,
@@ -11519,6 +11532,7 @@ impl TooltipPresentationState {
             theme: DefaultTheme::default(),
             text,
             placement: TooltipPlacement::Above,
+            alignment: TooltipAlignment::Center,
             measurement: None,
             hovered: false,
             trigger_bounds: Rect::ZERO,
@@ -11670,6 +11684,11 @@ impl Tooltip {
         self
     }
 
+    pub fn alignment(self, alignment: TooltipAlignment) -> Self {
+        self.state.borrow_mut().alignment = alignment;
+        self
+    }
+
     fn set_hovered(&mut self, ctx: &mut EventCtx, hovered: bool) {
         let overlay_id = self.overlay.child().id();
         let mut state = self.state.borrow_mut();
@@ -11762,6 +11781,7 @@ impl Widget for Tooltip {
             state.measurement,
             &state.theme,
             state.placement,
+            state.alignment,
         );
         let overlay_bounds = if state.is_presented() {
             state.bubble_bounds
@@ -21927,6 +21947,59 @@ mod tests {
                 _ => {}
             });
         assert!(painted_tooltip_border);
+        Ok(())
+    }
+
+    #[test]
+    fn tooltip_end_alignment_keeps_bubble_inside_trailing_trigger_edge() -> Result<(), String> {
+        let tooltip_text = "Enter sends · Shift+Enter newline";
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+            16.0,
+            crate::Tooltip::new(
+                tooltip_text,
+                crate::Button::new("Send message").min_width(32.0),
+            )
+            .alignment(super::TooltipAlignment::End),
+        ));
+
+        let initial = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let trigger = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Send message")
+            })
+            .expect("tooltip trigger semantics present")
+            .bounds;
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(
+                    PointerEventKind::Move,
+                    Point::new(trigger.x() + 8.0, trigger.y() + 8.0),
+                    false,
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let tooltip = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Tooltip && node.name.as_deref() == Some(tooltip_text)
+            })
+            .expect("tooltip semantics present");
+        assert!(
+            (tooltip.bounds.max_x() - trigger.max_x()).abs() < 0.01,
+            "end-aligned tooltip should share the trigger's trailing edge: trigger={trigger:?}, tooltip={:?}",
+            tooltip.bounds
+        );
         Ok(())
     }
 

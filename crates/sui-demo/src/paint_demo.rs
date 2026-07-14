@@ -45,6 +45,7 @@ pub(crate) const PAINT_HORIZONTAL_RULER_NAME: &str = "Horizontal ruler";
 pub(crate) const PAINT_VERTICAL_RULER_NAME: &str = "Vertical ruler";
 pub(crate) const PAINT_DOCUMENT_NAME: &str = "Untitled.sui";
 pub(crate) const PAINT_LAYER_NAMES: [&str; 2] = ["Paint", "Paper"];
+pub(crate) const PAINT_PAPER_COLOR: Color = Color::WHITE;
 
 const PAINT_RULER_EXTENT: f32 = 30.0;
 const PAINT_TOOLS: [PixelCanvasTool; 4] = [
@@ -303,11 +304,13 @@ fn build_paint_demo_with_state_and_theme(
                                 Rc::clone(&theme_reader),
                             ),
                         )
+                        .theme_when(clone_dev_theme_reader(&theme_reader))
                         .name("Canvas and properties")
                         .ratio(0.79)
                         .min_first(420.0)
                         .min_second(304.0),
                     )
+                    .theme_when(clone_dev_theme_reader(&theme_reader))
                     .name("Paint workspace")
                     .ratio(0.039)
                     .min_first(54.0)
@@ -618,6 +621,7 @@ fn build_paint_canvas_stage(
                                     PAINT_DOCUMENT_HEIGHT,
                                 )
                                 .theme_when(clone_dev_theme_reader(&theme_reader))
+                                .paper_color(PAINT_PAPER_COLOR)
                                 .state(paint_state)
                                 .desired_size(Size::new(960.0, 620.0))
                                 .fit_on_first_layout(),
