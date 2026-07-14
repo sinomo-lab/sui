@@ -10237,17 +10237,17 @@ impl Widget for SegmentedControl {
 
         ctx.fill(rounded_rect_path(ctx.bounds(), radius), palette.control);
 
-        if !self.segments.is_empty() {
+        let selected_thumb = if !self.segments.is_empty() {
             let from = self.selection_from.min(self.segments.len() - 1);
             let selected = self.normalized_selected();
-            if let Some(thumb) = tab_indicator_rect(
+            let thumb = sliding_inset_rect(
                 |index| self.segment_rect(ctx.bounds(), index),
                 from,
                 selected,
                 self.selection_animation.value,
                 Insets::all(2.0),
-                (ctx.bounds().height() - 4.0).max(0.0),
-            ) {
+            );
+            if let Some(thumb) = thumb {
                 draw_control_shape(
                     ctx,
                     thumb,
@@ -10257,7 +10257,10 @@ impl Widget for SegmentedControl {
                     palette.accent.with_alpha(0.36),
                 );
             }
-        }
+            thumb
+        } else {
+            None
+        };
 
         let focus_progress = self.focus_animation.value;
         for (index, segment) in self.segments.iter().enumerate() {
@@ -10285,10 +10288,11 @@ impl Widget for SegmentedControl {
             }
 
             if selected && focus_progress > AnimatedScalar::EPSILON {
+                let focus_bounds = selected_thumb.unwrap_or_else(|| rect.inflate(-2.0, -2.0));
                 draw_focus_ring_frame(
                     ctx,
-                    rect.inflate(-1.0, -1.0),
-                    radius,
+                    focus_bounds,
+                    (focus_bounds.height() * 0.5).min(radius),
                     metrics,
                     palette
                         .focus_ring
@@ -15128,6 +15132,23 @@ fn tab_indicator_from_tab_rect(rect: Rect, padding: Insets, thickness: f32) -> R
     )
 }
 
+fn sliding_inset_rect<F>(
+    mut item_rect: F,
+    from_index: usize,
+    selected_index: usize,
+    progress: f32,
+    insets: Insets,
+) -> Option<Rect>
+where
+    F: FnMut(usize) -> Option<Rect>,
+{
+    let to = inset_rect(item_rect(selected_index)?, insets);
+    let from = item_rect(from_index)
+        .map(|rect| inset_rect(rect, insets))
+        .unwrap_or(to);
+    Some(lerp_rect(from, to, progress))
+}
+
 fn tab_panel_transition_translation(
     from_index: usize,
     selected_index: usize,
@@ -15530,6 +15551,46 @@ mod tests {
                 .frame
                 .viewport
                 .height
+        );
+    }
+
+    #[test]
+    fn segmented_control_selection_thumb_is_evenly_inset() {
+        let theme = DefaultTheme::default();
+        let output = render(
+            crate::SizedBox::new()
+                .width(360.0)
+                .height(theme.metrics.tab_height)
+                .with_child(
+                    SegmentedControl::new("Conversation view")
+                        .theme(theme)
+                        .segments(["All", "Chats", "Channels"]),
+                ),
+        );
+        let group = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::RadioGroup)
+            .expect("segmented control semantics present");
+        let mut selection_thumb = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath { path, brush } = command
+                && *brush == Brush::Solid(theme.palette.selection)
+            {
+                selection_thumb = Some(path.bounds());
+            }
+        });
+        let thumb = selection_thumb.expect("selected segment thumb painted");
+
+        assert!(
+            (thumb.y() - group.bounds.y() - 2.0).abs() < 0.001,
+            "selection thumb should have a 2 px top inset: group={:?}, thumb={thumb:?}",
+            group.bounds
+        );
+        assert!(
+            (group.bounds.max_y() - thumb.max_y() - 2.0).abs() < 0.001,
+            "selection thumb should have a 2 px bottom inset: group={:?}, thumb={thumb:?}",
+            group.bounds
         );
     }
 
