@@ -1,5 +1,5 @@
 [package]
-name = "sui"
+name = "sinomo-ui"
 version.workspace = true
 description = "Public Rust facade for the SUI workspace."
 authors.workspace = true
@@ -12,6 +12,9 @@ readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 include = ["**/*.rs", "Cargo.toml"]
+
+[lib]
+name = "sui"
 
 [features]
 default = ["desktop", "wgpu"]

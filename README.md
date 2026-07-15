@@ -10,8 +10,10 @@ Until the first registry release, depend on the repository directly:
 
 ```toml
 [dependencies]
-sui = { git = "https://github.com/sinomo-lab/sui" }
+sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
 ```
+
+The Cargo package is named `sinomo-ui` because the `sui` registry namespace is already occupied. The dependency is intentionally aliased as `sui`, so application code continues to use `sui::...`.
 
 The default features enable the desktop shell and `wgpu` renderer. For custom embedding or headless use, disable defaults and select only the features you need.
 
@@ -74,7 +76,7 @@ For a fuller API overview, see [docs/user-api.md](docs/user-api.md).
 The same example is checked as a real Cargo example:
 
 ```bash
-cargo check -p sui --example hello
+cargo check -p sinomo-ui --example hello
 ```
 
 ## Web Demo

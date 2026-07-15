@@ -49,7 +49,7 @@ pollster = "0.4"
 pyo3 = "0.29.0"
 rustybuzz = "0.20"
 swash = "0.2.7"
-sui = { version = "0.1.0", path = "crates/sui", default-features = false }
+sui = { package = "sinomo-ui", version = "0.1.0", path = "crates/sui", default-features = false }
 sui-animation = { version = "0.1.0", path = "crates/sui-animation" }
 sui-avif = { version = "0.1.0", path = "crates/sui-avif" }
 sui-bindings-core = { version = "0.1.0", path = "crates/sui-bindings-core" }

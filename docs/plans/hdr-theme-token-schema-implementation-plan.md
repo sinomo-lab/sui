@@ -235,7 +235,7 @@ Add tests covering:
 **Step 2: Run the focused tests**
 Run:
 ```bash
-cargo test -p sui --lib tests::theme_extensions_round_trip_hdr_theme_tokens -- --exact
+cargo test -p sinomo-ui --lib tests::theme_extensions_round_trip_hdr_theme_tokens -- --exact
 ```
 Expected: FAIL
 
@@ -244,7 +244,7 @@ Implementation notes:
 - prefer re-exporting `HdrThemeTokens` / related enums through `sui`
 - avoid duplicating the token schema unless there is a compelling ownership boundary reason
 
-**Step 4: Re-run the exact test and `cargo check -p sui`**
+**Step 4: Re-run the exact test and `cargo check -p sinomo-ui`**
 
 **Step 5: Commit**
 ```bash
@@ -459,10 +459,10 @@ After Tasks 1 through 7, run at least:
 
 ```bash
 cargo test -p sui-widgets --lib -- --nocapture
-cargo test -p sui --lib -- --nocapture
+cargo test -p sinomo-ui --lib -- --nocapture
 cargo test -p sui-demo --lib -- --nocapture
 cargo check -p sui-widgets
-cargo check -p sui
+cargo check -p sinomo-ui
 cargo check -p sui-demo
 ```
 

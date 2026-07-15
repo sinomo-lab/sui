@@ -3080,6 +3080,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinomo-ui"
+version = "0.1.0"
+dependencies = [
+ "sui-core",
+ "sui-layout",
+ "sui-platform",
+ "sui-render-wgpu",
+ "sui-runtime",
+ "sui-scene",
+ "sui-text",
+ "sui-widgets",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3215,20 +3229,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sui"
-version = "0.1.0"
-dependencies = [
- "sui-core",
- "sui-layout",
- "sui-platform",
- "sui-render-wgpu",
- "sui-runtime",
- "sui-scene",
- "sui-text",
- "sui-widgets",
-]
-
-[[package]]
 name = "sui-animation"
 version = "0.1.0"
 dependencies = [
@@ -3249,7 +3249,7 @@ name = "sui-bindings-core"
 version = "0.1.0"
 dependencies = [
  "png 0.17.16",
- "sui",
+ "sinomo-ui",
 ]
 
 [[package]]
@@ -3277,7 +3277,7 @@ dependencies = [
  "png 0.17.16",
  "pulldown-cmark",
  "ratatui",
- "sui",
+ "sinomo-ui",
  "sui-debug",
  "sui-platform",
  "sui-render-wgpu",
@@ -3298,7 +3298,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "sui",
+ "sinomo-ui",
  "sui-bindings-core",
 ]
 
@@ -3358,7 +3358,7 @@ name = "sui-python"
 version = "0.1.0"
 dependencies = [
  "pyo3",
- "sui",
+ "sinomo-ui",
  "sui-bindings-core",
 ]
 
@@ -3411,7 +3411,7 @@ version = "0.1.0"
 dependencies = [
  "exr",
  "png 0.17.16",
- "sui",
+ "sinomo-ui",
  "sui-avif",
  "sui-core",
  "sui-layout",
