@@ -1829,6 +1829,7 @@ impl Widget for TextSurface {
             caret_offset: display_selection.focus.utf8_offset,
             selection: SemanticsTextRange::new(selection.start, selection.end),
             multiline: true,
+            password: false,
             readonly: self.read_only,
             scroll_x: self.editor.scroll_x(),
             scroll_y: self.editor.scroll_y(),

@@ -276,6 +276,7 @@ fn hash_editable_text(hasher: &mut impl Hasher, editable: Option<&EditableTextSe
     editable.selection.start.hash(hasher);
     editable.selection.end.hash(hasher);
     editable.multiline.hash(hasher);
+    editable.password.hash(hasher);
     editable.readonly.hash(hasher);
     editable.scroll_x.to_bits().hash(hasher);
     editable.scroll_y.to_bits().hash(hasher);
@@ -365,6 +366,14 @@ fn serialize_dom_descriptor(json: &mut String, node: &SemanticsNode) {
     }
     json.push(',');
     push_json_bool_field(json, "interactive", interactive_node(node));
+    if node
+        .editable_text
+        .as_ref()
+        .is_some_and(|editable| editable.password)
+    {
+        json.push(',');
+        push_json_string_field(json, "inputType", "password");
+    }
     json.push('}');
 }
 
@@ -542,6 +551,8 @@ fn serialize_editable_text(json: &mut String, editable: Option<&EditableTextSema
     push_json_number_field(json, "selectionEnd", editable.selection.end as f64);
     json.push(',');
     push_json_bool_field(json, "multiline", editable.multiline);
+    json.push(',');
+    push_json_bool_field(json, "password", editable.password);
     json.push(',');
     push_json_bool_field(json, "readonly", editable.readonly);
     json.push(',');
@@ -744,6 +755,7 @@ mod tests {
             caret_offset: 5,
             selection: SemanticsTextRange::new(1, 5),
             multiline: true,
+            password: false,
             readonly: false,
             scroll_x: 0.0,
             scroll_y: 12.0,
@@ -768,8 +780,43 @@ mod tests {
         assert!(json.contains("\"selectionStart\":1"));
         assert!(json.contains("\"selectionEnd\":5"));
         assert!(json.contains("\"multiline\":true"));
+        assert!(json.contains("\"password\":false"));
         assert!(json.contains("\"scrollY\":12"));
         assert!(json.contains("\"actions\":[\"InsertText\"]"));
+    }
+
+    #[test]
+    fn serializes_password_editable_text_for_secure_dom_mapping() {
+        let mut node = SemanticsNode::new(
+            WidgetId::new(11),
+            SemanticsRole::TextInput,
+            Rect::new(2.0, 4.0, 240.0, 32.0),
+        );
+        node.name = Some("Password".to_string());
+        node.value = Some(SemanticsValue::Text("secret".to_string()));
+        node.editable_text = Some(EditableTextSemantics {
+            caret_offset: 6,
+            selection: SemanticsTextRange::new(6, 6),
+            multiline: false,
+            password: true,
+            readonly: false,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+        });
+        let nodes = [node];
+
+        let json = serialize_snapshot(
+            WindowId::new(1),
+            1,
+            1.0,
+            Size::new(320.0, 240.0),
+            Some(&nodes),
+            None,
+            semantics_hash(&nodes),
+        );
+
+        assert!(json.contains("\"inputType\":\"password\""));
+        assert!(json.contains("\"password\":true"));
     }
 
     #[test]

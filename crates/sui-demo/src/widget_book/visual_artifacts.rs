@@ -685,6 +685,8 @@ fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
 pub(crate) fn configured_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
     Rc::new(RefCell::new(WidgetBookState {
         name: "Grace Hopper".to_string(),
+        password: "compiler".to_string(),
+        scheduled_for: "2026-07-16 09:00".to_string(),
         subscribed: false,
         theme_preview_comparison: true,
         button_presses: 1,
@@ -707,6 +709,8 @@ pub(crate) fn configured_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
 pub(crate) fn blank_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
     Rc::new(RefCell::new(WidgetBookState {
         name: String::new(),
+        password: String::new(),
+        scheduled_for: String::new(),
         subscribed: false,
         theme_preview_comparison: true,
         button_presses: 0,

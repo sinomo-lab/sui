@@ -160,6 +160,7 @@ pub struct EditableTextSemantics {
     pub caret_offset: usize,
     pub selection: SemanticsTextRange,
     pub multiline: bool,
+    pub password: bool,
     pub readonly: bool,
     pub scroll_x: f32,
     pub scroll_y: f32,

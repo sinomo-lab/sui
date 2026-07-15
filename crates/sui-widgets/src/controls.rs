@@ -13,7 +13,7 @@ use crate::{
     text_command::TextCommand,
     text_surface::paste_command,
 };
-use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+use std::{cell::RefCell, collections::BTreeSet, ops::Range, rc::Rc};
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
@@ -30,6 +30,7 @@ use sui_scene::{ImageSource, LayerCompositionMode, LayerProperties, StrokeStyle}
 use sui_text::{
     FontFeature, PersistentTextLayout, TextCursor, TextMeasurement, TextSelection, TextStyle,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconGlyph {
@@ -6491,6 +6492,7 @@ impl Widget for TextArea {
             caret_offset: display_selection.focus.utf8_offset,
             selection: SemanticsTextRange::new(selection.start, selection.end),
             multiline: true,
+            password: false,
             readonly: self.read_only,
             scroll_x: 0.0,
             scroll_y: 0.0,
@@ -7563,11 +7565,14 @@ pub type SpinBox = NumberInput;
 pub type MultilineTextInput = TextArea;
 pub type ComboBox = Select;
 
+const PASSWORD_MASK: &str = "•";
+
 pub struct TextInput {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     editor: EditorState,
+    password: bool,
     placeholder: String,
     leading_icon: Option<IconGlyph>,
     read_only: bool,
@@ -7601,6 +7606,7 @@ impl TextInput {
             theme_reader: None,
             name: name.into(),
             editor: EditorState::new(),
+            password: false,
             placeholder: String::new(),
             leading_icon: None,
             read_only: false,
@@ -7706,6 +7712,11 @@ impl TextInput {
         self
     }
 
+    fn password(mut self) -> Self {
+        self.password = true;
+        self
+    }
+
     pub fn current_value(&self) -> &str {
         self.editor.document().text()
     }
@@ -7742,12 +7753,52 @@ impl TextInput {
         self.editor.display_text()
     }
 
+    fn rendered_input_text(&self) -> String {
+        let input = self.input_text();
+        if self.password {
+            PASSWORD_MASK.repeat(input.graphemes(true).count())
+        } else {
+            input
+        }
+    }
+
+    fn rendered_offset(&self, input: &str, editor_offset: usize) -> usize {
+        if !self.password {
+            return editor_offset.min(input.len());
+        }
+
+        input
+            .grapheme_indices(true)
+            .take_while(|(offset, _)| *offset < editor_offset.min(input.len()))
+            .count()
+            * PASSWORD_MASK.len()
+    }
+
+    fn editor_offset(&self, input: &str, rendered_offset: usize) -> usize {
+        if !self.password {
+            return rendered_offset.min(input.len());
+        }
+
+        let grapheme_index = rendered_offset / PASSWORD_MASK.len();
+        input
+            .grapheme_indices(true)
+            .nth(grapheme_index)
+            .map(|(offset, _)| offset)
+            .unwrap_or(input.len())
+    }
+
+    fn rendered_selection_range(&self, input: &str) -> Range<usize> {
+        let selection = selection_range(&self.editor.display_selection(), input.len());
+        self.rendered_offset(input, selection.start)..self.rendered_offset(input, selection.end)
+    }
+
     fn display_caret_offset(&self) -> usize {
-        self.editor.display_selection().focus.utf8_offset
+        let input = self.input_text();
+        self.rendered_offset(&input, self.editor.display_selection().focus.utf8_offset)
     }
 
     fn visible_text(&self) -> String {
-        let input = self.input_text();
+        let input = self.rendered_input_text();
         if input.is_empty() {
             self.placeholder.clone()
         } else {
@@ -7859,7 +7910,8 @@ impl TextInput {
 
     fn text_offset_at_position(&self, bounds: Rect, position: Point) -> usize {
         let content = self.text_content_rect(bounds);
-        self.input_layout
+        let rendered_offset = self
+            .input_layout
             .as_ref()
             .map(|layout| {
                 layout
@@ -7869,7 +7921,8 @@ impl TextInput {
                     ))
                     .utf8_offset
             })
-            .unwrap_or(self.editor.document().len())
+            .unwrap_or(self.rendered_input_text().len());
+        self.editor_offset(&self.input_text(), rendered_offset)
     }
 
     fn set_caret_from_position(
@@ -8256,7 +8309,7 @@ impl Widget for TextInput {
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
         let visible_text = self.visible_text();
-        let input_text = self.input_text();
+        let input_text = self.rendered_input_text();
         let display_style = self.display_text_style();
         let measured_visible = measure_text(ctx, &visible_text, &display_style);
         let measured_input = if input_text.is_empty() {
@@ -8390,10 +8443,17 @@ impl Widget for TextInput {
             let layout_bounds = layout.measurement().bounds;
             let layout_rect =
                 self.single_line_layout_rect(ctx, content_rect, layout, layout.style().line_height);
-            ctx.draw_persistent_text_layout(
-                Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y()),
-                layout,
-            );
+            let layout_origin = Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y());
+            if !placeholder {
+                let input = self.input_text();
+                let selection = self.rendered_selection_range(&input);
+                if !selection.is_empty() {
+                    for rect in layout.selection_rects(selection) {
+                        ctx.fill_rect(rect.translate(layout_origin.to_vector()), palette.selection);
+                    }
+                }
+            }
+            ctx.draw_persistent_text_layout(layout_origin, layout);
         } else {
             let display_style = if placeholder {
                 theme.placeholder_text_style()
@@ -8415,7 +8475,7 @@ impl Widget for TextInput {
 
         if self.focused && !self.read_only {
             let caret_width = physical_pixels(ctx, metrics.caret_width);
-            let input_text = self.input_text();
+            let input_text = self.rendered_input_text();
             let input_text_rect = self
                 .input_layout
                 .as_ref()
@@ -8481,6 +8541,7 @@ impl Widget for TextInput {
             caret_offset: display_selection.focus.utf8_offset,
             selection: SemanticsTextRange::new(selection.start, selection.end),
             multiline: false,
+            password: self.password,
             readonly: self.read_only,
             scroll_x: 0.0,
             scroll_y: 0.0,
@@ -8536,6 +8597,252 @@ impl Widget for TextInput {
         }
         ctx.request_paint();
         ctx.request_semantics();
+    }
+}
+
+/// A single-line text input that masks its visible value while retaining the
+/// same selection, clipboard, IME, and change-callback behavior as
+/// [`TextInput`].
+pub struct PasswordInput {
+    inner: TextInput,
+}
+
+impl PasswordInput {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            inner: TextInput::new(name).password(),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.inner = self.inner.theme(theme);
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.inner = self.inner.theme_when(theme);
+        self
+    }
+
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.inner = self.inner.placeholder(placeholder);
+        self
+    }
+
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.inner = self.inner.value(value);
+        self
+    }
+
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.inner = self.inner.min_width(width);
+        self
+    }
+
+    pub fn read_only(mut self) -> Self {
+        self.inner = self.inner.read_only();
+        self
+    }
+
+    pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
+        self.inner = self.inner.selectable(selection_scope);
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(String) + 'static,
+    {
+        self.inner = self.inner.on_change(on_change);
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, String) + 'static,
+    {
+        self.inner = self.inner.on_change_with_ctx(on_change);
+        self
+    }
+
+    pub fn current_value(&self) -> &str {
+        self.inner.current_value()
+    }
+
+    pub fn set_value(&mut self, value: impl Into<String>) {
+        self.inner.set_value(value);
+    }
+
+    pub fn selected_text(&self) -> &str {
+        self.inner.selected_text()
+    }
+
+    pub fn select_all(&mut self, ctx: &mut EventCtx) {
+        self.inner.select_all(ctx);
+    }
+
+    pub fn copy(&mut self, ctx: &mut EventCtx) {
+        self.inner.copy(ctx);
+    }
+
+    pub fn cut(&mut self, ctx: &mut EventCtx) {
+        self.inner.cut(ctx);
+    }
+
+    pub fn paste(&mut self, ctx: &mut EventCtx) {
+        self.inner.paste(ctx);
+    }
+}
+
+impl Widget for PasswordInput {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.inner.event(ctx, event);
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
+    }
+}
+
+/// A lightweight single-line local date/time field. Values remain strings so
+/// applications can choose their own parsing, timezone, and validation rules;
+/// the suggested format is `YYYY-MM-DD HH:MM`.
+pub struct DateTimeInput {
+    inner: TextInput,
+}
+
+impl DateTimeInput {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            inner: TextInput::new(name).placeholder("YYYY-MM-DD HH:MM"),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.inner = self.inner.theme(theme);
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.inner = self.inner.theme_when(theme);
+        self
+    }
+
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.inner = self.inner.placeholder(placeholder);
+        self
+    }
+
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.inner = self.inner.value(value);
+        self
+    }
+
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.inner = self.inner.min_width(width);
+        self
+    }
+
+    pub fn read_only(mut self) -> Self {
+        self.inner = self.inner.read_only();
+        self
+    }
+
+    pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
+        self.inner = self.inner.selectable(selection_scope);
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(String) + 'static,
+    {
+        self.inner = self.inner.on_change(on_change);
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, String) + 'static,
+    {
+        self.inner = self.inner.on_change_with_ctx(on_change);
+        self
+    }
+
+    pub fn current_value(&self) -> &str {
+        self.inner.current_value()
+    }
+
+    pub fn set_value(&mut self, value: impl Into<String>) {
+        self.inner.set_value(value);
+    }
+
+    pub fn selected_text(&self) -> &str {
+        self.inner.selected_text()
+    }
+
+    pub fn select_all(&mut self, ctx: &mut EventCtx) {
+        self.inner.select_all(ctx);
+    }
+
+    pub fn copy(&mut self, ctx: &mut EventCtx) {
+        self.inner.copy(ctx);
+    }
+
+    pub fn cut(&mut self, ctx: &mut EventCtx) {
+        self.inner.cut(ctx);
+    }
+
+    pub fn paste(&mut self, ctx: &mut EventCtx) {
+        self.inner.paste(ctx);
+    }
+}
+
+impl Widget for DateTimeInput {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.inner.event(ctx, event);
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
     }
 }
 
@@ -8978,10 +9285,10 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, DefaultTheme,
-        FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label, Link, NumberInput,
-        RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea, TextInput,
-        paint_icon_button, rect_is_finite,
+        Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, DateTimeInput,
+        DefaultTheme, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label, Link,
+        NumberInput, PasswordInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch,
+        TextArea, TextInput, paint_icon_button, rect_is_finite,
     };
     use crate::{
         HdrThemeMode, SemanticColorToken, SemanticTone, WidgetLuminanceRole, resolve_luminance_role,
@@ -11415,6 +11722,105 @@ mod tests {
         runtime.handle_event(window_id, command_key("a"))?;
 
         assert_eq!(selection.selected_text().as_deref(), Some("Ada Lovelace"));
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_paints_keyboard_selection_and_copies_it() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(TextInput::new("Name").value("Ada Lovelace"));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        let selected = runtime.render(window_id)?;
+
+        assert!(
+            solid_fill_colors(&selected).contains(&theme.palette.selection),
+            "TextInput should paint its active selection before the text"
+        );
+
+        runtime.handle_event(window_id, command_key("c"))?;
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("Ada Lovelace"));
+        Ok(())
+    }
+
+    #[test]
+    fn password_input_masks_display_but_edits_and_copies_actual_value() -> Result<()> {
+        let value = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            PasswordInput::new("Password")
+                .value("sëcret")
+                .on_change(move |text| *captured.borrow_mut() = text),
+        );
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("password input semantics present");
+        let editable = input
+            .editable_text
+            .as_ref()
+            .expect("password input should expose editable semantics");
+
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("sëcret".to_string()))
+        );
+        assert!(editable.password);
+        assert_eq!(text_run_for(&output, "••••••").text, "••••••");
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("c"))?;
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("sëcret"));
+
+        runtime.clipboard().set_text("new secret");
+        runtime.handle_event(window_id, command_key("v"))?;
+        assert_eq!(value.borrow().as_str(), "new secret");
+        Ok(())
+    }
+
+    #[test]
+    fn datetime_input_edits_and_pastes_a_single_line_value() -> Result<()> {
+        let value = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&value);
+        let (mut runtime, window_id) = build_runtime(
+            DateTimeInput::new("Scheduled for")
+                .value("2026-07-15 09:30")
+                .on_change(move |text| *captured.borrow_mut() = text),
+        );
+
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("date/time input semantics present");
+        assert_eq!(
+            input.value,
+            Some(SemanticsValue::Text("2026-07-15 09:30".to_string()))
+        );
+        assert!(!input.editable_text.as_ref().unwrap().password);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.clipboard().set_text("2026-08-01\n14:45");
+        runtime.handle_event(window_id, command_key("v"))?;
+
+        assert_eq!(value.borrow().as_str(), "2026-08-0114:45");
         Ok(())
     }
 

@@ -72,6 +72,8 @@ pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
 pub const TEXT_EDITING_BENCHMARK_TITLE: &str = "SUI Text Editing Benchmark";
 pub const NAME_INPUT_LABEL: &str = "Name";
+pub const PASSWORD_INPUT_LABEL: &str = "Password";
+pub const DATETIME_INPUT_LABEL: &str = "Scheduled for";
 pub const TEXT_AREA_LABEL: &str = "Notes";
 pub const SUBSCRIBE_LABEL: &str = "Subscribe to product updates";
 pub const PRIMARY_BUTTON_LABEL: &str = "Trigger action";
@@ -465,6 +467,8 @@ pub fn set_widget_book_hdr_theme_mode(mode: HdrThemeMode) {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WidgetBookState {
     pub name: String,
+    pub password: String,
+    pub scheduled_for: String,
     pub subscribed: bool,
     pub theme_preview_comparison: bool,
     pub button_presses: usize,
@@ -647,6 +651,8 @@ const fn frame_phase_index(phase: FramePhase) -> usize {
 pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
     Rc::new(RefCell::new(WidgetBookState {
         name: "Ada".to_string(),
+        password: "sui-demo".to_string(),
+        scheduled_for: "2026-07-15 14:30".to_string(),
         subscribed: true,
         theme_preview_comparison: true,
         button_presses: 0,
@@ -2877,6 +2883,8 @@ pub fn build_widget_book_gallery_with_theme(
 ) -> impl Widget {
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
+    let initial_password = snapshot.password.clone();
+    let initial_scheduled_for = snapshot.scheduled_for.clone();
     let initial_notes = snapshot.notes.clone();
     let initial_subscribed = snapshot.subscribed;
     let initial_switch_on = snapshot.switch_on;
@@ -2889,6 +2897,8 @@ pub fn build_widget_book_gallery_with_theme(
     let initial_tabs_choice = snapshot.tabs_choice.clone();
 
     let name_state = Rc::clone(&state);
+    let password_state = Rc::clone(&state);
+    let scheduled_for_state = Rc::clone(&state);
     let subscribed_state = Rc::clone(&state);
     let action_state = Rc::clone(&state);
     let icon_action_state = Rc::clone(&state);
@@ -2952,7 +2962,7 @@ pub fn build_widget_book_gallery_with_theme(
                             control_story_with_theme(
                                 Rc::clone(&theme_reader),
                                 "Input state",
-                                "Text entry and boolean opt-in controls keep their natural widths instead of stretching across the page.",
+                                "Editable text, password, date/time, and boolean controls keep their natural widths instead of stretching across the page.",
                                 Stack::vertical()
                                     .spacing(12.0)
                                     .alignment(Alignment::Start)
@@ -2966,6 +2976,32 @@ pub fn build_widget_book_gallery_with_theme(
                                                 ))
                                                 .on_change(move |value| {
                                                     name_state.borrow_mut().name = value;
+                                                }),
+                                        ),
+                                    )
+                                    .with_child(
+                                        SizedBox::new().width(300.0).with_child(
+                                            PasswordInput::new(PASSWORD_INPUT_LABEL)
+                                                .value(initial_password)
+                                                .placeholder("Enter a password")
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                ))
+                                                .on_change(move |value| {
+                                                    password_state.borrow_mut().password = value;
+                                                }),
+                                        ),
+                                    )
+                                    .with_child(
+                                        SizedBox::new().width(300.0).with_child(
+                                            DateTimeInput::new(DATETIME_INPUT_LABEL)
+                                                .value(initial_scheduled_for)
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                ))
+                                                .on_change(move |value| {
+                                                    scheduled_for_state.borrow_mut().scheduled_for =
+                                                        value;
                                                 }),
                                         ),
                                     )
@@ -7582,6 +7618,15 @@ impl Widget for WidgetBookSummary {
                 state.button_presses, state.icon_button_presses
             ),
             format!(
+                "password: {} chars | scheduled: {}",
+                state.password.chars().count(),
+                if state.scheduled_for.is_empty() {
+                    "unset"
+                } else {
+                    state.scheduled_for.as_str()
+                }
+            ),
+            format!(
                 "subscription: {} | snapping: {}",
                 if state.subscribed { "on" } else { "off" },
                 if state.switch_on { "on" } else { "off" }
@@ -7671,11 +7716,17 @@ impl Widget for WidgetBookSummary {
         );
         node.name = Some(SUMMARY_NAME.to_string());
         node.description = Some(format!(
-            "name: {}; subscription: {}; button presses: {}; icon actions: {}; switch: {}; standalone radio: {}; radio choice: {}; slider: {:.0}; brush size: {:.0}; mode: {}; tab bar: {}; tabs: {}; menu: {}; context menu: {}; dialog apply: {}; notes lines: {}",
+            "name: {}; password length: {}; scheduled for: {}; subscription: {}; button presses: {}; icon actions: {}; switch: {}; standalone radio: {}; radio choice: {}; slider: {:.0}; brush size: {:.0}; mode: {}; tab bar: {}; tabs: {}; menu: {}; context menu: {}; dialog apply: {}; notes lines: {}",
             if state.name.is_empty() {
                 "stranger"
             } else {
                 state.name.as_str()
+            },
+            state.password.chars().count(),
+            if state.scheduled_for.is_empty() {
+                "unset"
+            } else {
+                state.scheduled_for.as_str()
             },
             if state.subscribed { "on" } else { "off" },
             state.button_presses,
@@ -7745,11 +7796,12 @@ mod tests {
     };
     use super::{
         ANIMATION_BENCHMARK_REPAINT_NAME, ANIMATION_BENCHMARK_RETAINED_NAME,
-        ANIMATION_BENCHMARK_SCALE_NAME, ANIMATION_BENCHMARK_TITLE, COLOR_PICKER_NAME, DIALOG_TITLE,
-        DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME,
-        LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME,
-        LivePerformanceDisplay, LivePerformanceFrameSample, LivePerformancePanel, NAME_INPUT_LABEL,
-        NUMBER_INPUT_NAME, POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
+        ANIMATION_BENCHMARK_SCALE_NAME, ANIMATION_BENCHMARK_TITLE, COLOR_PICKER_NAME,
+        DATETIME_INPUT_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME,
+        GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL,
+        LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay, LivePerformanceFrameSample,
+        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PASSWORD_INPUT_LABEL,
+        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
         RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
         RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL,
         TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
@@ -10091,6 +10143,63 @@ mod tests {
             edited_summary != baseline_summary,
             "summary screenshot did not change after typing"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_password_and_datetime_inputs_are_editable() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+
+        scroll_to_story_target(&window, StoryCase::FilledInput, 12)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME)
+            .scroll_pixels(Vector::new(0.0, -120.0))?;
+        let password = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(PASSWORD_INPUT_LABEL);
+        password.focus()?;
+        password.press("Z")?;
+
+        let snapshot = window.snapshot()?;
+        let password = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(PASSWORD_INPUT_LABEL)
+            })
+            .expect("widget-book password input semantics present");
+        assert_eq!(
+            password.value,
+            Some(SemanticsValue::Text("sui-demoZ".to_string()))
+        );
+        assert!(password.editable_text.as_ref().unwrap().password);
+
+        let datetime = window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(DATETIME_INPUT_LABEL);
+        datetime.focus()?;
+        datetime.press("Z")?;
+
+        let snapshot = window.snapshot()?;
+        let datetime_value = snapshot
+            .accessibility
+            .nodes
+            .into_iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some(DATETIME_INPUT_LABEL)
+            })
+            .and_then(|node| match node.value {
+                Some(SemanticsValue::Text(value)) => Some(value),
+                _ => None,
+            })
+            .expect("widget-book date/time input semantics value present after typing");
+        assert_eq!(datetime_value, "2026-07-15 14:30Z");
 
         Ok(())
     }

@@ -2359,6 +2359,8 @@ fn build_scroll_history_repro_application() -> Application {
 fn scroll_benchmark_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
     Rc::new(RefCell::new(WidgetBookState {
         name: "Ada".to_string(),
+        password: "sui-demo".to_string(),
+        scheduled_for: "2026-07-15 14:30".to_string(),
         subscribed: true,
         theme_preview_comparison: false,
         button_presses: 0,
@@ -3555,6 +3557,8 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let harness = DesktopHarness::launch(|| {
         build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
             name: String::new(),
+            password: String::new(),
+            scheduled_for: String::new(),
             subscribed: false,
             theme_preview_comparison: true,
             button_presses: 0,
@@ -4095,6 +4099,8 @@ fn desktop_widget_book_overlay_publishes_detailed_scene_stats() -> Result<()> {
     let harness = DesktopHarness::launch(|| {
         build_widget_book_application_with_overlay(Rc::new(RefCell::new(WidgetBookState {
             name: "Ada".to_string(),
+            password: "sui-demo".to_string(),
+            scheduled_for: "2026-07-15 14:30".to_string(),
             subscribed: true,
             theme_preview_comparison: true,
             button_presses: 0,

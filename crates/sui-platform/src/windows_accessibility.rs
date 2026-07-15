@@ -311,11 +311,10 @@ fn map_semantics_node(
     text_offsets: &mut HashMap<NodeId, Vec<usize>>,
     custom_actions: &mut HashMap<(NodeId, i32), SemanticsActionRequest>,
 ) -> Node {
-    let multiline = source
-        .editable_text
-        .as_ref()
-        .is_some_and(|editable| editable.multiline);
-    let mut node = Node::new(map_role(&source.role, multiline));
+    let editable = source.editable_text.as_ref();
+    let multiline = editable.is_some_and(|editable| editable.multiline);
+    let password = editable.is_some_and(|editable| editable.password);
+    let mut node = Node::new(map_role(&source.role, multiline, password));
     node.set_bounds(scaled_bounds(source.bounds, scale_factor));
 
     if let Some(name) = source.name.as_deref().filter(|name| !name.is_empty()) {
@@ -530,7 +529,7 @@ fn map_editable_text_run(source: &SemanticsNode, scale_factor: f64) -> Node {
     node
 }
 
-fn map_role(role: &SemanticsRole, multiline: bool) -> Role {
+fn map_role(role: &SemanticsRole, multiline: bool, password: bool) -> Role {
     match role {
         SemanticsRole::Window | SemanticsRole::Root => Role::Window,
         SemanticsRole::GenericContainer => Role::GenericContainer,
@@ -556,6 +555,7 @@ fn map_role(role: &SemanticsRole, multiline: bool) -> Role {
         SemanticsRole::ProgressBar => Role::ProgressIndicator,
         SemanticsRole::BusyIndicator => Role::Status,
         SemanticsRole::Text => Role::Label,
+        SemanticsRole::TextInput if password => Role::PasswordInput,
         SemanticsRole::TextInput if multiline => Role::MultilineTextInput,
         SemanticsRole::TextInput => Role::TextInput,
         SemanticsRole::SpinBox => Role::SpinButton,
@@ -778,6 +778,7 @@ mod tests {
             caret_offset: 14,
             selection: SemanticsTextRange::new(3, 14),
             multiline: false,
+            password: false,
             readonly: false,
             scroll_x: 0.0,
             scroll_y: 0.0,
@@ -837,6 +838,24 @@ mod tests {
                 SemanticsActionRequest::SetSelection(SemanticsTextRange::new(0, 14)),
             ))
         );
+    }
+
+    #[test]
+    fn password_editable_text_maps_to_secure_accesskit_role() {
+        let mut input = node(21, SemanticsRole::TextInput);
+        input.value = Some(SemanticsValue::Text("secret".into()));
+        input.editable_text = Some(EditableTextSemantics {
+            caret_offset: 6,
+            selection: SemanticsTextRange::new(6, 6),
+            multiline: false,
+            password: true,
+            readonly: false,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+        });
+
+        let snapshot = build_accesskit_snapshot(WindowId::new(1), 1.0, "Login", &[input]);
+        assert_eq!(mapped_node(&snapshot, 21).role(), Role::PasswordInput);
     }
 
     #[test]
@@ -918,6 +937,7 @@ mod tests {
             caret_offset: 5,
             selection: SemanticsTextRange::new(5, 5),
             multiline: false,
+            password: false,
             readonly: false,
             scroll_x: 0.0,
             scroll_y: 0.0,
@@ -960,6 +980,7 @@ mod tests {
             caret_offset: text.len(),
             selection: SemanticsTextRange::new(text.len(), text.len()),
             multiline: false,
+            password: false,
             readonly: false,
             scroll_x: 0.0,
             scroll_y: 0.0,

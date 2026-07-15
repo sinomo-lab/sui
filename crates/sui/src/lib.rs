@@ -57,10 +57,10 @@ pub use containers::{
 };
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState, ComboBox,
-    Divider, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label, Link,
-    MultilineTextInput, NumberInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox,
-    Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator, paint_icon_button,
-    register_builtin_icon_resources,
+    DateTimeInput, Divider, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label,
+    Link, MultilineTextInput, NumberInput, PasswordInput, RadioButton, RadioGroup, Select,
+    Separator, Slider, SpinBox, Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator,
+    paint_icon_button, register_builtin_icon_resources,
 };
 pub use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, Color, ColorSpace, CustomEvent, DirtyRegion,
@@ -646,10 +646,10 @@ pub mod prelude {
         Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSwatch, ComboBox,
         CommandButtonFill, CommandButtonPaint, CommandGroup, CompiledClip, CompiledTimeline,
         CompiledTrack, Constraints, ContextMenu, ControlMetrics, ControlPalette, ControlSize,
-        ControlTypography, CoverageDots, CoverageDotsConfig, DataGrid, DefaultTheme, DetailRow,
-        Dialog, DisclosureButtonPaint, Divider, Dock, DockPanel, DragDropHost, DragDropScope,
-        DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview, DragScopeId,
-        DragSessionId, Draggable, Drawer, DropEffect, DropTarget, Easing, EmptyState,
+        ControlTypography, CoverageDots, CoverageDotsConfig, DataGrid, DateTimeInput, DefaultTheme,
+        DetailRow, Dialog, DisclosureButtonPaint, Divider, Dock, DockPanel, DragDropHost,
+        DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview,
+        DragScopeId, DragSessionId, Draggable, Drawer, DropEffect, DropTarget, Easing, EmptyState,
         EmptyStatePaint, Event, EventCtx, FieldAppearance, FieldGroup, FixedPaneSplit, Flex,
         FlexAlignContent, FlexBasis, FlexItem, FlexItemLayout, FlexJustify, FlexLayout,
         FlexLineLayout, FlexStyle, FlexWrap, FloatingViewConfig, FloatingViewSnapshot,
@@ -659,7 +659,7 @@ pub mod prelude {
         Interpolate, KeyboardEvent, Keyframe, KeyframeSelection, Label, LayerList, LayerListItem,
         LayerListReorderChange, LeadingLabelCellPaint, Link, ListItem, ListView, LoopMode,
         MeasureCtx, MeasuredBottomDock, Menu, MenuItem, Modal, MultilineTextInput, NumberInput,
-        Overflow, PaintCtx, PanelSection, Path, PathBar, PathBuilder, PixelCanvas,
+        Overflow, PaintCtx, PanelSection, PasswordInput, Path, PathBar, PathBuilder, PixelCanvas,
         PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
         PixelCanvasTool, PlacementBadgePaint, PlaybackState, Point, PointerEvent, Popover,
         PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, Pulse, RadioButton, RadioGroup,
