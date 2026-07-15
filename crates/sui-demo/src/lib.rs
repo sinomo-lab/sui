@@ -7,6 +7,7 @@ mod layout_demo;
 #[cfg(feature = "markdown")]
 mod markdown_demo;
 mod paint_demo;
+mod theme_editor_demo;
 mod vector_demo;
 pub mod widget_book;
 
@@ -3292,6 +3293,14 @@ mod tests {
 
         assert_eq!(mode.benchmark, Some(WebBenchmarkKind::DevWorkspace));
         assert_eq!(mode.dev_initial_demo.as_deref(), Some("paint"));
+    }
+
+    #[test]
+    fn parses_dev_workspace_theme_editor_slug() {
+        let mode = parse_web_launch_mode("benchmark=dev&demo=theme-editor");
+
+        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::DevWorkspace));
+        assert_eq!(mode.dev_initial_demo.as_deref(), Some("theme-editor"));
     }
 
     #[cfg(feature = "markdown")]

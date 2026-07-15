@@ -42,6 +42,12 @@ use crate::markdown_demo::{
 };
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
+use crate::theme_editor_demo::{
+    THEME_EDITOR_CONTROLS_SCROLL_NAME, THEME_EDITOR_PREVIEW_SCROLL_NAME, THEME_RED_CHANNEL_NAME,
+    THEME_SPACING_NAME,
+};
+use crate::theme_editor_demo::{THEME_EDITOR_TAB_LABEL, build_theme_editor_demo_with_theme};
+#[cfg(test)]
 use crate::vector_demo::{
     VECTOR_DOCUMENT_WIDTH, VECTOR_FILL_RULE_NAME, VECTOR_MIN_OBJECT_SIZE, VECTOR_OPACITY_NAME,
     VECTOR_ROTATION_NAME, VECTOR_STROKE_WIDTH_NAME, VECTOR_WIDTH_NAME,
@@ -1619,6 +1625,13 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             )),
         },
         DevDemo {
+            title: THEME_EDITOR_TAB_LABEL,
+            description: "Edit foundational theme tokens and preview every change in real time.",
+            icon: IconGlyph::PaintBucket,
+            accent: Color::rgba(0.18, 0.54, 0.66, 1.0),
+            child: WidgetPod::new(build_theme_editor_demo_with_theme(Rc::clone(&theme_reader))),
+        },
+        DevDemo {
             title: ANIMATION_DEMO_TAB_LABEL,
             description: "Timeline playback, retained layer, repaint, editor, and overlay examples.",
             icon: IconGlyph::Sparkles,
@@ -1715,6 +1728,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
     match slug {
         "widget-book" | "widgets" => Some(WIDGET_BOOK_TAB_LABEL),
         "themes" | "theme" => Some(THEMES_TAB_LABEL),
+        "theme-editor" | "theme-edit" | "theme-builder" => Some(THEME_EDITOR_TAB_LABEL),
         "animation" | "animations" | "animation-demo" => Some(ANIMATION_DEMO_TAB_LABEL),
         "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
@@ -4441,9 +4455,15 @@ mod tests {
 
     #[test]
     fn paint_workspace_theme_toggle_repaints_chrome_but_keeps_paper_color() -> Result<()> {
-        let app = TestApp::new(|| build_dev_application().build())?;
+        let app = TestApp::new(|| {
+            finish_dev_application(DevBrowserShell::with_initial_demo(
+                RenderSettingsTab::default_options(),
+                Some(PAINT_TAB_LABEL),
+            ))
+            .build()
+        })?;
         let window = app.main_window()?;
-        open_dev_shell_demo(&window, PAINT_TAB_LABEL)?;
+        assert_dev_shell_active_tab(&window, PAINT_TAB_LABEL)?;
 
         let light_snapshot = window.snapshot()?;
         let light_canvas = find_named_node(&light_snapshot, SemanticsRole::Canvas, PAINT_TAB_LABEL);
@@ -7204,6 +7224,106 @@ final_max_luminance={final_max_luminance}
             .with_name(LAYOUT_DEMO_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_registers_theme_editor_demo() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(THEME_EDITOR_TAB_LABEL)
+            .expect()
+            .to_be_visible()?;
+        open_dev_shell_demo(&window, THEME_EDITOR_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(THEME_EDITOR_CONTROLS_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(THEME_EDITOR_PREVIEW_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        window
+            .get_by_role(SemanticsRole::Slider)
+            .with_name(THEME_SPACING_NAME)
+            .expect()
+            .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
+    fn theme_editor_color_changes_repaint_the_live_preview() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(THEME_EDITOR_TAB_LABEL),
+        ))
+        .build()
+        .expect("theme editor demo should build");
+        let window_id = runtime.window_ids()[0];
+        let before = runtime.render(window_id)?;
+        let red_slider = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(THEME_RED_CHANNEL_NAME)
+            })
+            .expect("red channel slider should exist");
+        let initial_theme = DefaultTheme::light();
+
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            red_slider.id,
+            sui::SemanticsActionRequest::SetValue(SemanticsValue::Number(0.95)),
+        )?);
+
+        let after = runtime.render(window_id)?;
+        let edited_slider = after
+            .semantics
+            .iter()
+            .find(|node| node.id == red_slider.id)
+            .expect("red channel slider should remain in the semantic tree");
+        let Some(SemanticsValue::Range { value, min, max }) = edited_slider.value else {
+            panic!("red channel slider should expose its edited range value");
+        };
+        assert!((value - 0.95).abs() < f64::EPSILON * 2.0);
+        assert_eq!((min, max), (0.0, 1.0));
+
+        let preview_button = after
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Create project")
+            })
+            .expect("primary preview button should exist");
+        let mut edited_theme = initial_theme;
+        let primary = edited_theme.colors.primary;
+        edited_theme.colors.primary = Color::rgba(0.95, primary.green, primary.blue, 1.0);
+        edited_theme.colors.accent = edited_theme.colors.primary;
+        edited_theme.sync_derived_fields();
+
+        assert!(
+            !solid_fill_bounds_for_color_in_rect(
+                &after,
+                edited_theme.palette.accent,
+                preview_button.bounds,
+            )
+            .is_empty(),
+            "expected the edited primary color to repaint the live preview button"
+        );
+        assert!(
+            solid_fill_bounds_for_color_in_rect(
+                &after,
+                initial_theme.palette.accent,
+                preview_button.bounds,
+            )
+            .is_empty(),
+            "expected the preview button to stop using the original primary color"
+        );
         Ok(())
     }
 
