@@ -4,10 +4,10 @@
 
 - [Documentation Index](./README.md)
 - [SUI Design](./design.md)
-- [HDR And Wide-Gamut Display Support Proposal](./plans/hdr-wide-gamut-display-proposal.md)
+- [HDR and Wide-Gamut Display Roadmap](./plans/hdr-wide-gamut-display-proposal.md)
 - [Rendering Architecture](./renderer-architecture.md)
 - [Testing Guide](./testing.md)
-- [HDR Theme And Token Schema Proposal](./hdr-theme-token-schema-proposal.md)
+- [HDR Theme Tokens](./hdr-theme-token-schema-proposal.md)
 
 This document describes the intended product and visual-language direction for HDR-native user interfaces in SUI. It is still primarily a vision document, but it now sits beside a first working milestone in code. Today that milestone is intentionally narrow: the HDR token schema exists, `Button`, `Switch`, and `Popover` are the first built-in widgets consuming it, and `sui-demo` exposes validation surfaces for the initial rollout.
 

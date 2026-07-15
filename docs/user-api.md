@@ -1,22 +1,18 @@
 # SUI User API
 
-This document describes the public API application authors should use. The Rust
-facade is the primary API. Native Python and Node/Electron bindings are also
-implemented as alpha surfaces over the same ownership, resource, event, and
-host-driven rendering model.
+This page is the compact entry point for SUI's supported application-facing
+API. The detailed reference is split into focused pages under [`docs/api`](./api/README.md),
+and exact method signatures are available from generated Rust documentation.
 
-## Rust Entry Point
+## Rust entry point
 
-Use `sui::prelude::*` for ordinary application code. The primary construction
-types are:
+Depend on the Cargo package as `sui` and import the prelude in ordinary
+application code:
 
-- `App`: owned application builder.
-- `Window`: user-facing window builder.
-- `ResourceRegistry`: resource registration facade for fonts and images.
-- `UiHandle`: cloneable wake handle for background work when a platform event
-  loop is running.
-
-Minimal app:
+```toml
+[dependencies]
+sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
+```
 
 ```rust,no_run
 use sui::prelude::*;
@@ -28,224 +24,101 @@ fn main() -> Result<()> {
 }
 ```
 
-Registering resources:
+The public facade is intentionally the normal boundary for applications:
 
-```rust,no_run
-use sui::prelude::*;
+- `App` owns application resources and one or more windows.
+- `Window` configures a user-facing window and its retained root widget.
+- `ResourceRegistry` registers fonts and images and returns stable handles.
+- `UiHandle` wakes a running platform event loop after background work.
+- `Widget` is the protocol for custom retained widgets.
+- Built-in controls, containers, composites, geometry, events, semantic types,
+  text types, and themes are re-exported by the facade.
 
-fn main() -> Result<()> {
-    let mut app = App::new();
-    let logo = {
-        let mut resources = app.resources();
-        resources.svg_image(include_bytes!("logo.svg"))?
-    };
+Prefer these types over importing internal workspace crates. Lower-level
+`Application`, `Runtime`, scene, and renderer types remain available for
+embedding, tests, and tooling, but they carry more integration responsibility.
 
-    app.main_window("Images", Image::new(logo).label("Logo"))
-        .run()
-}
+## Find the right guide
+
+| Task | Guide |
+| --- | --- |
+| Configure an app, window, or resources | [Getting started](./api/getting-started.md) |
+| Choose a control or layout container | [Widgets and layout](./api/widgets-and-layout.md) |
+| Edit text, passwords, or date/time values | [Input and editing](./api/input-and-editing.md) |
+| Handle events or update shared state | [State, events, and async](./api/state-events-and-async.md) |
+| Apply Mesh themes or register assets | [Themes and resources](./api/themes-and-resources.md) |
+| Implement `Widget` directly | [Custom widgets](./api/custom-widgets.md) |
+| Automate UI and verify accessibility | [Testing and accessibility](./api/testing-and-accessibility.md) |
+| Select desktop, web, or mobile features | [Platforms and features](./api/platforms-and-features.md) |
+
+For a guided introduction, follow [Build your first SUI application](./tutorials/quickstart.md)
+and [Build a stateful form](./tutorials/stateful-form.md). Every tutorial links
+to checked Cargo example source.
+
+## API conventions
+
+SUI uses a few conventions consistently:
+
+- Constructors such as `Label::new` and `TextInput::new` take stable semantic
+  names or content; builder methods configure the retained value before it is
+  inserted into the tree.
+- Layout is constraint-based. Use `Stack` for simple rows and columns and
+  `Flex` for growth, wrapping, or distribution.
+- Widgets own transient interaction details such as focus, caret, and text
+  selection. Application state owns domain values and receives changes through
+  callbacks.
+- State changes become visible through explicit invalidation. Request only the
+  passes that may have changed: measure, paint, semantics, resources, or
+  animation.
+- Widgets stay on the UI thread. Background tasks publish results through a
+  queue and call `UiHandle::wake()`; the retained tree consumes them when SUI
+  delivers the external wake event.
+- Accessibility semantics are part of the widget contract, not optional test
+  metadata. Tests and the generated TUI consume the same tree.
+
+## Build, run, and document
+
+Check all public Rust examples:
+
+```bash
+cargo check -p sinomo-ui --examples
 ```
 
-Builder-style resource setup:
+Run the widget book to inspect real controls and their semantics:
 
-```rust,no_run
-use sui::prelude::*;
-
-fn main() -> Result<()> {
-    App::new()
-        .with_resources(|resources| {
-            resources.font_bytes(include_bytes!("Inter-Regular.ttf"))?;
-            Ok(())
-        })?
-        .main_window("Text", Label::new("Registered fonts are ready"))
-        .run()
-}
+```bash
+cargo run -p sui-demo
 ```
 
-## Layout Helpers
+Generate browsable rustdoc for the checked-out version:
 
-Use `Stack` for simple rows and columns. Use `Flex` when a container needs
-weighted children, wrapping, or main-axis distribution.
-
-```rust,no_run
-use sui::prelude::*;
-
-fn search_row() -> impl Widget {
-    Flex::horizontal()
-        .gap(8.0)
-        .align_items(Alignment::Center)
-        .with_child(Label::new("Search"))
-        .with_item(
-            TextInput::new("Query"),
-            FlexItem::flex(1.0).min_width(120.0),
-        )
-        .with_child(Button::new("Run"))
-}
+```bash
+cargo doc -p sinomo-ui --no-deps --open
 ```
 
-For wrapping layouts, opt in explicitly:
+Because SUI is pre-release, the generated docs are the source of truth for
+exact signatures. The hand-written guides explain the intended patterns and
+call out platform or stability limits.
 
-```rust,no_run
-use sui::prelude::*;
+## Python and JavaScript
 
-fn tag_cloud(tags: impl IntoIterator<Item = String>) -> impl Widget {
-    let mut flex = Flex::horizontal().wrap(FlexWrap::Wrap).gap(6.0);
-    for tag in tags {
-        flex.push(Label::new(tag));
-    }
-    flex
-}
-```
+Native bindings implement the same high-level ownership model but are alpha
+and not published yet:
 
-Custom widgets can use `flex_layout` and `arrange_flex` from `sui-layout`
-through the `sui` facade when they need the same layout behavior without using
-the retained `Flex` container.
+- [Python/PyO3 guide](../crates/sui-python/README.md)
+- [Node/Electron napi-rs guide](../crates/sui-js/README.md)
 
-Common item helpers cover the frequent cases:
+Both expose normal desktop execution and a host-driven mode for embedding or
+tests. They do not expose arbitrary runtime-graph mutation as the default API.
+Browser JavaScript/WASM bindings, package publication, custom user WGSL, and
+zero-copy external-surface composition remain roadmap items; see the
+[active binding plan](./plans/cross-language-bindings-plan.md).
 
-```rust,no_run
-use sui::prelude::*;
+## Stability boundary
 
-let toolbar = Flex::horizontal()
-    .gap(8.0)
-    .with_child(Button::new("Back"))
-    .spacer()
-    .with_child(Button::new("Done"));
-
-let columns = Flex::horizontal()
-    .gap(12.0)
-    .with_item(left_panel(), FlexItem::fixed(240.0))
-    .with_item(main_panel(), FlexItem::fill());
-
-let cards = Flex::horizontal()
-    .wrap(FlexWrap::Wrap)
-    .gap(12.0)
-    .with_item(card_a(), FlexItem::new().basis_gap_aware_fraction(0.5))
-    .with_item(card_b(), FlexItem::new().basis_gap_aware_fraction(0.5));
-```
-
-Use `basis_gap_aware_fraction` when fractional items should add up to a full
-row while accounting for the container gap. For example, two `0.5` items with a
-12px gap each measure as `(width * 0.5) - 6px`, so the two items plus the gap
-fit exactly.
-
-`App::build()` returns a `Runtime` for tests, headless rendering, embedding, or
-custom platform integration. `App::run()` is the default desktop/web entry
-point. `App::into_application()` is an escape hatch for debug tooling and
-migration code that still needs the lower-level builder.
-
-## Threading And Async
-
-SUI keeps widget state on the UI runtime thread. User widgets do not need to be
-`Send`, and widget methods should stay synchronous. Long-running work belongs
-outside the widget tree.
-
-The cross-thread contract is:
-
-1. Own async results or background messages outside the widget tree, usually in
-   a channel, mutex-protected queue, or other application state.
-2. Start the app with `App::run_with_handle`.
-3. Clone `UiHandle` into worker threads or async tasks.
-4. Push work into your queue, then call `UiHandle::wake()`.
-5. In the root widget, handle `Event::Custom` whose kind is
-   `EXTERNAL_WAKE_KIND`, drain the queue, update UI state, and invalidate what
-   changed.
-
-Sketch:
-
-```rust,no_run
-use std::sync::mpsc;
-use sui::prelude::*;
-
-fn run_app(root: impl Widget + 'static) -> Result<()> {
-    let (tx, _rx) = mpsc::channel::<String>();
-
-    App::new()
-        .main_window("Async", root)
-        .run_with_handle(move |ui| {
-            std::thread::spawn(move || {
-                let _ = tx.send("loaded".to_string());
-                ui.wake();
-            });
-        })
-}
-```
-
-This split is intentional: Rust, Python, and JavaScript can all share the same
-model where the UI thread owns widgets, while background work communicates with
-the UI through explicit messages and a wake handle.
-
-## Animation API
-
-Pure animation data is safe to prepare away from the UI thread. Prefer compiled
-and reusable structures for editor-style timelines:
-
-- Build or load a `Timeline`.
-- Call `compile_shared()` to produce a `SharedCompiledTimeline`.
-- Keep one `AnimationPlayer` per playback stream.
-- Reuse `SampleBuffer` with `sample_into`/`tick` to avoid per-frame allocation.
-
-The key boundary is that sampled animation values are data. Applying those
-values to widgets, invalidation, or retained layer properties still happens on
-the UI runtime thread.
-
-## Python And JavaScript Bindings
-
-The binding crates ship in this workspace but are not yet published to PyPI or
-npm. Both expose `App`, `Window`, reactive `State`, built-in widgets, resource
-registration, custom events, custom paint/semantics callbacks, and two execution
-modes:
-
-- `App.run()` starts the native desktop event loop.
-- `App.start()` returns a host-driven app for embedding, deterministic rendering,
-  and tests. Its UI handle can post callbacks from another thread/host and
-  `drain()` applies them on the UI runtime.
-
-Python:
-
-```python
-import sui
-
-message = sui.State("Ready")
-window = sui.Window("Hello")
-window.root(sui.Column([sui.Label(message), sui.Button("Update", on_press=lambda: message.set("Done"))], gap=8))
-
-app = sui.App()
-app.window(window)
-running = app.start()
-snapshot = running.render()
-print(snapshot.command_count)
-```
-
-Build the extension with `maturin develop` from `crates/sui-python`. It imports
-as `sui`; see the [Python binding README](../crates/sui-python/README.md).
-
-JavaScript (CommonJS / Node or Electron):
-
-```javascript
-const sui = require("@sui/ui");
-
-const message = new sui.State("Ready");
-const window = new sui.Window("Hello");
-window.root(sui.Column([sui.Label(message), sui.Button("Update", () => message.set("Done"))], 8));
-
-const app = new sui.App();
-app.window(window);
-const running = app.start();
-console.log(running.render().commandCount);
-```
-
-Build the native `.node` module with napi-rs from `crates/sui-js`; see the
-[JavaScript binding README](../crates/sui-js/README.md). This binding targets
-Node/Electron. Browser/Wasm JavaScript bindings are not implemented.
-
-The bindings intentionally do not expose raw runtime graph mutation as the
-normal API. Resource and window identities use explicit handles, and callbacks
-that update widgets are posted back to the UI runtime.
-
-## Boundary Rule
-
-Rust application and demo code should prefer `App`, `Window`, and
-`ResourceRegistry`. Lower-level types such as `Application`, `Runtime`,
-`WindowBuilder`, platform objects, and diagnostics remain available for tests,
-debug tools, benchmarks, and custom embedding. Python and JavaScript code should
-use their binding-level `App`, `Window`, `State`, and widget factories.
+The public Rust facade, desktop runtime, built-in widgets, and deterministic
+testing model are implemented. This is still a `0.1.0` pre-release workspace:
+semver compatibility is not promised, language packages are local builds, and
+browser/mobile/native-HDR surfaces vary by platform. Check the
+[platform matrix](../README.md#platform-status) before choosing a deployment
+target.

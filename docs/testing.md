@@ -136,7 +136,18 @@ cargo test -p sui-demo -- --nocapture
 cargo run -p sui-demo
 ```
 
-`cargo test -p sui-demo -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-demo/widget-book`.
+Generate the widget-book visual artifacts explicitly when a change needs image
+review:
+
+```bash
+cargo run -p sui-demo --bin sui-demo-artifacts
+```
+
+The artifact command writes to `target/ui-artifacts/sui-demo/widget-book`.
+Ordinary `sui-demo` tests do not run this slow artifact generator.
+
+For linear HDR captures, SDR previews, headroom maps, clip masks, and output
+diagnostics, follow the [HDR debugging guide](./hdr-debugging.md).
 
 Note: AVIF export in the artifact pipeline currently uses a high-quality rav1e still-image encode and is much slower than the accompanying EXR or PNG writes. When iterating on renderer/debug artifacts, expect AVIF generation to dominate wall-clock time.
 
@@ -184,4 +195,6 @@ If you are changing the test surface itself, start here:
 - `crates/sui-platform/src/headless.rs`
 - `crates/sui-demo/tests/desktop_e2e.rs`
 
-Those files show the current expected testing style more accurately than the old proposal docs did.
+Those files and the [testing API guide](./api/testing-and-accessibility.md)
+show the current expected testing style; historical implementation plans are
+not testing contracts.

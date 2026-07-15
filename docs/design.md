@@ -10,9 +10,12 @@
 - [Rendering Architecture](./renderer-architecture.md)
 - [Testing Guide](./testing.md)
 - [HDR-Native Interface Manifesto](./hdr-native-interface-manifesto.md)
-- [HDR Theme And Token Schema Proposal](./hdr-theme-token-schema-proposal.md)
+- [HDR Theme Tokens](./hdr-theme-token-schema-proposal.md)
 
-The documents above describe the current codebase. This file remains the higher-level design target for the framework.
+The architecture, crate, stack-host, renderer, and testing guides describe the
+current codebase. The text and HDR guides label their shipped and directional
+sections explicitly. This file is the higher-level design target for the
+framework, not an API guarantee.
 
 ## Vision
 

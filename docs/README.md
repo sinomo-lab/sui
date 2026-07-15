@@ -1,83 +1,138 @@
 # SUI Documentation
 
-This directory contains both documentation for the current workspace and clearly separated design/roadmap material. Documents under **Current implementation** describe code that exists today. Documents under **Design and roadmap** are proposals, plans, or directional constraints and should not be read as shipped API guarantees.
+This is the documentation map for SUI users and contributors. Start with a
+tutorial if you are building an application, use the API guides while you
+work, and read the architecture documents only when you need implementation
+detail. Roadmaps are deliberately separated from shipped behavior.
 
-## Current Implementation
+SUI is still pre-release: the Rust desktop and testing surfaces are usable,
+but package publication and some platform integrations are unfinished. The
+[root README](../README.md#platform-status) records the supported surface and
+release boundary.
 
-Suggested reading order:
+## Start here
 
-1. [user-api.md](./user-api.md) — supported Rust, Python, and JavaScript entry points.
-2. [architecture.md](./architecture.md) — runtime and frame pipeline.
-3. [crate-architecture.md](./crate-architecture.md) — crate ownership and dependency boundaries.
-4. [layout-and-overflow.md](./layout-and-overflow.md) — sizing and overflow behavior.
-5. [renderer-architecture.md](./renderer-architecture.md) — scene, compositor, and renderer details.
-6. [testing.md](./testing.md) — headless tests, desktop harness tests, and visual artifacts.
-7. [text-rendering-benchmarks.md](./text-rendering-benchmarks.md) — current text benchmark procedure and results.
+1. [Build your first SUI application](./tutorials/quickstart.md) — install SUI,
+   create a window, compose widgets, apply a theme, and handle an action.
+2. [Build a stateful form](./tutorials/stateful-form.md) — edit text, password,
+   and date/time fields while preserving widget-owned selection and focus.
+3. [Browse the examples](./examples.md) — run the Rust, test, TUI, Python, and
+   JavaScript samples from the correct directory.
+4. [Open the API guide](./api/README.md) — find the public concept or widget
+   you need.
 
-The binding-specific READMEs contain build instructions and examples:
+See the [tutorial index](./tutorials/README.md) for the maintained learning
+path and its checked example sources.
 
-- [Python binding README](../crates/sui-python/README.md)
-- [JavaScript binding README](../crates/sui-js/README.md)
-
-## Design And Roadmap
-
-- [design.md](./design.md) — long-term product and API direction.
-- [stack-hosts.md](./stack-hosts.md) — planned stacking, popup-host, and multi-bounds model.
-- [text-system.md](./text-system.md) — planned text-engine refactor and long-term text goals.
-- [hdr-native-interface-manifesto.md](./hdr-native-interface-manifesto.md) — intended HDR-native visual language.
-- [hdr-theme-token-schema-proposal.md](./hdr-theme-token-schema-proposal.md) — proposed HDR-aware token model.
-- [plans/](./plans/) — implementation plans. The cross-language binding plan is historical context for the now-implemented alpha bindings; remaining items are not promises of shipped behavior.
-
-## Workspace At A Glance
-
-The current workspace is organized around a retained widget runtime.
-
-- `sui` is the public Rust facade.
-- `sui-core` owns shared types such as events, geometry, color, semantics, and invalidation kinds.
-- `sui-animation` owns pure animation timelines, keyframes, playback state, editor state, and sampled values.
-- `sui-layout` owns layout primitives, constraints, and reusable measure/arrange utilities.
-- `sui-runtime` owns windows, the retained widget graph, event routing, invalidation scheduling, the default widget-tree layout pipeline, scene generation, and semantics generation.
-- `sui-scene` defines the renderer-neutral scene representation.
-- `sui-text` owns font registration, shaping, measurement, and text layout.
-- `sui-render-wgpu` owns the retained compositor and the `wgpu` backend.
-- `sui-platform` owns desktop and headless platform integration.
-- `sui-widgets` owns built-in widgets and theme types.
-- `sui-testing` owns deterministic UI automation helpers.
-- `sui-debug` owns reusable debug widgets and inspectors.
-- `sui-tui` owns accessibility-tree generated terminal UI support.
-- `sui-bindings-core` owns the shared binding model and host-driven runtime adapters.
-- `sui-python` and `sui-js` own the native Python and Node/Electron surfaces.
-- `sui-demo` owns the main development host, widget book, story content, and screenshot-oriented tests.
-
-One important implementation detail to keep in mind: the runtime is still in the layer-boundary transition. Explicit paint boundaries are the intended retained-compositor and retained-animation boundary, but some diagnostics still report emitted `SceneLayer` counts while that decoupling work finishes.
-
-## Common Commands
-
-Common commands:
+The fastest way to explore the complete widget set is the desktop widget book:
 
 ```bash
 cargo run -p sui-demo
-cargo test --workspace
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test -p sui-testing
-cargo test -p sui-demo -- --nocapture
 ```
 
-`cargo run -p sui-demo` launches the desktop development host.
+## API guide
 
-The `sui-demo` host includes the widget book, focused benchmark views, and renderer settings in one floating workspace.
+The hand-written API guide complements generated Rust documentation:
 
-`cargo test -p sui-demo -- --nocapture` writes visual artifacts under `target/ui-artifacts/sui-demo/widget-book`.
+- [API guide index](./api/README.md)
+- [Getting started and application lifecycle](./api/getting-started.md)
+- [Widgets and layout](./api/widgets-and-layout.md)
+- [Input and editing](./api/input-and-editing.md)
+- [State, events, and async work](./api/state-events-and-async.md)
+- [Themes and resources](./api/themes-and-resources.md)
+- [Custom widgets](./api/custom-widgets.md)
+- [Testing and accessibility](./api/testing-and-accessibility.md)
+- [Platforms and feature flags](./api/platforms-and-features.md)
 
-## Mental Model
+The [user API overview](./user-api.md) is a compact landing page for existing
+links and points into these focused guides.
 
-Most work in the repo follows the same path:
+Generate the exact Rust API for the checked-out revision with:
 
-1. `sui-platform` turns host events into `sui_core::Event` values.
-2. `sui-runtime` routes the event through the retained widget tree.
-3. Widgets request explicit invalidation, timers, or animation frames.
-4. The runtime runs measure, arrange, paint, semantics, and resource work as needed.
-5. The runtime produces a `SceneFrame` plus diagnostics.
-6. `sui-render-wgpu` updates retained compositor state and presents the result.
+```bash
+cargo doc -p sinomo-ui --no-deps --open
+```
 
-The key rule is that widgets do not talk directly to `wgpu` or host window APIs. They operate through runtime contexts and emit scene content. For efficient retained animation, explicit paint-boundary widgets may also expose presentation-only layer properties such as opacity and translation; the runtime and renderer handle the rest.
+## Practical guides
+
+- [Testing](./testing.md) — headless automation, semantic locators,
+  screenshots, and visual artifact generation.
+- [Accessibility-generated TUI](./tui.md) — dump, navigate, validate, and
+  embed the semantic terminal interface.
+- [Layout and overflow](./layout-and-overflow.md) — constraints, overflow
+  policies, and scroll sizing.
+- [Stack hosts](./stack-hosts.md) — current stacking, popup resolution, hit
+  testing, and ordering contract.
+- [Text system](./text-system.md) — current text rendering model, editor
+  direction, and benchmark workflow.
+- [Text rendering benchmarks](./text-rendering-benchmarks.md) — performance
+  and visual-quality capture procedures.
+- [HDR debugging](./hdr-debugging.md) — linear EXR capture, SDR previews,
+  headroom and clip maps, and output diagnostics.
+- [HDR theme tokens](./hdr-theme-token-schema-proposal.md) — implemented HDR
+  token API, usage, and explicitly marked future direction.
+
+Language-specific setup and examples:
+
+- [Python binding guide](../crates/sui-python/README.md)
+- [Node/Electron binding guide](../crates/sui-js/README.md)
+
+Both binding packages are alpha and must currently be built from source.
+Browser JavaScript/WASM bindings are not implemented.
+
+## Architecture and contributors
+
+- [Architecture overview](./architecture.md) — runtime and frame pipeline.
+- [Crate architecture](./crate-architecture.md) — ownership, dependencies, and
+  where a change belongs.
+- [Renderer architecture](./renderer-architecture.md) — scene input, retained
+  compositor, output pipeline, diagnostics, and performance constraints.
+- [Design](./design.md) — long-term product principles and non-goals.
+- [Contributing](../CONTRIBUTING.md) — environment setup, checks, documentation
+  style, and change submission.
+- [Security policy](../SECURITY.md) — supported revisions and private
+  vulnerability reporting.
+
+The implementation follows one main path: the platform normalizes input, the
+runtime routes events through the retained tree, widgets request invalidation,
+the runtime produces a renderer-neutral `SceneFrame`, and the renderer updates
+retained compositor state before presentation. Widgets do not call `wgpu` or
+host window APIs directly.
+
+## Active roadmap
+
+Only unfinished plans belong in [`plans/`](./plans/):
+
+- [Cross-language bindings](./plans/cross-language-bindings-plan.md) — package
+  publication, browser bindings, richer shader support, and zero-copy graphics
+  interop.
+- [HDR and wide-gamut output](./plans/hdr-wide-gamut-display-proposal.md) —
+  remaining macOS EDR, Linux native-HDR, and platform validation work.
+
+Vision documents are not API guarantees:
+
+- [HDR-native interface manifesto](./hdr-native-interface-manifesto.md)
+
+Completed implementation plans are removed after their stable behavior has
+been documented in tutorials, API guides, or architecture pages.
+
+## Common repository commands
+
+```bash
+# Compile every target in the workspace
+cargo check --workspace --all-targets
+
+# Run tests and lint the complete surface
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# Check the public Rust examples
+cargo check -p sinomo-ui --examples
+
+# Generate the widget-book artifact bundle
+cargo run -p sui-demo --bin sui-demo-artifacts
+```
+
+The artifact generator writes to
+`target/ui-artifacts/sui-demo/widget-book`. Ordinary tests intentionally do
+not run that slower generator.
