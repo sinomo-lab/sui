@@ -284,6 +284,68 @@ impl PyColorPaletteSwatch {
     }
 }
 
+#[pyclass(name = "BrushPreviewSpec", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyBrushPreviewSpec {
+    inner: BindingBrushPreviewSpec,
+}
+
+#[pymethods]
+impl PyBrushPreviewSpec {
+    #[new]
+    #[pyo3(signature = (color, size=18.0, opacity=1.0, shape="round"))]
+    pub fn new(color: PyColor, size: f32, opacity: f32, shape: &str) -> PyResult<Self> {
+        let shape = match shape {
+            "round" | "circle" => sui_crate::BrushPreviewShape::Round,
+            "square" => sui_crate::BrushPreviewShape::Square,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "brush preview shape must be 'round' or 'square'",
+                ));
+            }
+        };
+        Ok(Self {
+            inner: BindingBrushPreviewSpec::new(color.into(), size, opacity, shape),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
+#[pyclass(name = "FloatingStackWindow", module = "sui", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyFloatingStackWindow {
+    inner: BindingFloatingStackWindow,
+}
+
+#[pymethods]
+impl PyFloatingStackWindow {
+    #[new]
+    pub fn new(bounds: PyRect, child: PyRef<'_, PyWidget>) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingFloatingStackWindow::new(bounds.into(), child.binding_widget()?),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        "FloatingStackWindow(...)".to_string()
+    }
+}
+
+fn optional_uniform_insets(value: Option<f32>) -> Option<sui_crate::Insets> {
+    value.map(|value| {
+        let value = value.max(0.0);
+        sui_crate::Insets {
+            left: value,
+            top: value,
+            right: value,
+            bottom: value,
+        }
+    })
+}
+
 #[pyfunction(name = "Label")]
 pub fn py_label(value: &Bound<'_, PyAny>) -> PyResult<PyWidget> {
     Ok(PyWidget::from_binding(BindingWidget::label(
@@ -867,6 +929,462 @@ pub fn py_busy_indicator(
     )))
 }
 
+#[pyfunction(name = "ActionCard")]
+#[pyo3(signature = (title, description, icon=None, tone="accent", enabled=None, on_press=None))]
+pub fn py_action_card(
+    title: String,
+    description: String,
+    icon: Option<String>,
+    tone: &str,
+    enabled: Option<&Bound<'_, PyAny>>,
+    on_press: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let enabled = enabled
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(true));
+    let action = on_press.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::action_card(
+        title,
+        description,
+        icon.as_deref().map(py_icon_glyph).transpose()?,
+        py_semantic_tone(tone)?,
+        enabled,
+        action,
+    )))
+}
+
+#[pyfunction(name = "BrushPreview")]
+#[pyo3(signature = (name, spec, kind="brush", size=None))]
+pub fn py_brush_preview(
+    name: String,
+    spec: PyRef<'_, PyBrushPreviewSpec>,
+    kind: &str,
+    size: Option<PySize>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::brush_preview(
+        name,
+        kind,
+        spec.inner,
+        size.map(Into::into),
+    )))
+}
+
+#[pyfunction(name = "CommandGroup")]
+#[pyo3(signature = (name, children, axis="vertical", padding=None, spacing=None, corner_radius=None, background=None, border=None))]
+pub fn py_command_group(
+    name: String,
+    children: &Bound<'_, PyAny>,
+    axis: &str,
+    padding: Option<f32>,
+    spacing: Option<f32>,
+    corner_radius: Option<f32>,
+    background: Option<PyColor>,
+    border: Option<PyColor>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::command_group(
+        name,
+        extract_binding_widgets(children)?,
+        py_axis(axis)?,
+        optional_uniform_insets(padding),
+        spacing,
+        corner_radius,
+        background.map(Into::into),
+        border.map(Into::into),
+    )))
+}
+
+#[pyfunction(name = "CoverageDots")]
+#[pyo3(signature = (name, current, target, tone="neutral", max_dots=4, show_label=true, min_width=None))]
+pub fn py_coverage_dots(
+    name: String,
+    current: usize,
+    target: usize,
+    tone: &str,
+    max_dots: usize,
+    show_label: bool,
+    min_width: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::coverage_dots(
+        name,
+        current,
+        target,
+        py_semantic_tone(tone)?,
+        max_dots,
+        show_label,
+        min_width,
+    )))
+}
+
+#[pyfunction(name = "Dock")]
+#[pyo3(signature = (body, top=None, top_height=0.0, bottom=None, bottom_height=0.0, fallback_width=320.0, fallback_body_height=240.0))]
+pub fn py_dock(
+    body: PyRef<'_, PyWidget>,
+    top: Option<PyRef<'_, PyWidget>>,
+    top_height: f32,
+    bottom: Option<PyRef<'_, PyWidget>>,
+    bottom_height: f32,
+    fallback_width: f32,
+    fallback_body_height: f32,
+) -> PyResult<PyWidget> {
+    let top = top
+        .map(|widget| widget.binding_widget().map(|widget| (top_height, widget)))
+        .transpose()?;
+    let bottom = bottom
+        .map(|widget| {
+            widget
+                .binding_widget()
+                .map(|widget| (bottom_height, widget))
+        })
+        .transpose()?;
+    Ok(PyWidget::from_binding(BindingWidget::dock(
+        body.binding_widget()?,
+        top,
+        bottom,
+        fallback_width,
+        fallback_body_height,
+    )))
+}
+
+#[pyfunction(name = "FixedPaneSplit")]
+#[pyo3(signature = (first, divider, second, axis="horizontal", fixed="first", fixed_extent=0.0, divider_extent=1.0, fallback_flexible_extent=320.0))]
+pub fn py_fixed_pane_split(
+    first: PyRef<'_, PyWidget>,
+    divider: PyRef<'_, PyWidget>,
+    second: PyRef<'_, PyWidget>,
+    axis: &str,
+    fixed: &str,
+    fixed_extent: f32,
+    divider_extent: f32,
+    fallback_flexible_extent: f32,
+) -> PyResult<PyWidget> {
+    let fixed_second = match fixed {
+        "first" => false,
+        "second" => true,
+        _ => {
+            return Err(PyValueError::new_err(
+                "fixed pane must be 'first' or 'second'",
+            ));
+        }
+    };
+    Ok(PyWidget::from_binding(BindingWidget::fixed_pane_split(
+        py_axis(axis)?,
+        first.binding_widget()?,
+        divider.binding_widget()?,
+        second.binding_widget()?,
+        fixed_second,
+        fixed_extent,
+        divider_extent,
+        fallback_flexible_extent,
+    )))
+}
+
+#[pyfunction(name = "FramedField")]
+#[pyo3(signature = (child, name=None, description=None, padding=None, min_height=None, fill_width=false, focused=None, invalid=None))]
+pub fn py_framed_field(
+    child: PyRef<'_, PyWidget>,
+    name: Option<String>,
+    description: Option<String>,
+    padding: Option<f32>,
+    min_height: Option<f32>,
+    fill_width: bool,
+    focused: Option<&Bound<'_, PyAny>>,
+    invalid: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyWidget> {
+    let focused = focused
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(false));
+    let invalid = invalid
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(false));
+    Ok(PyWidget::from_binding(BindingWidget::framed_field(
+        child.binding_widget()?,
+        name,
+        description,
+        optional_uniform_insets(padding),
+        min_height,
+        fill_width,
+        focused,
+        invalid,
+    )))
+}
+
+#[pyfunction(name = "MeasuredBottomDock")]
+#[pyo3(signature = (body, bottom, fallback_size=None))]
+pub fn py_measured_bottom_dock(
+    body: PyRef<'_, PyWidget>,
+    bottom: PyRef<'_, PyWidget>,
+    fallback_size: Option<PySize>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::measured_bottom_dock(
+        body.binding_widget()?,
+        bottom.binding_widget()?,
+        fallback_size
+            .map(Into::into)
+            .unwrap_or_else(|| Size::new(640.0, 640.0)),
+    )))
+}
+
+#[pyfunction(name = "PlacementBadge")]
+#[pyo3(signature = (label, icon=None, tone="neutral", current=None, target=None, min_width=None))]
+pub fn py_placement_badge(
+    label: &Bound<'_, PyAny>,
+    icon: Option<String>,
+    tone: &str,
+    current: Option<usize>,
+    target: Option<usize>,
+    min_width: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::placement_badge(
+        binding_text_from_py(label)?,
+        icon.as_deref().map(py_icon_glyph).transpose()?,
+        py_semantic_tone(tone)?,
+        current,
+        target,
+        min_width,
+    )))
+}
+
+#[pyfunction(name = "PropertyRow")]
+#[pyo3(signature = (label, control, stacked=true, label_width=None, control_width=None, gap=None))]
+pub fn py_property_row(
+    label: String,
+    control: PyRef<'_, PyWidget>,
+    stacked: bool,
+    label_width: Option<f32>,
+    control_width: Option<f32>,
+    gap: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::property_row(
+        label,
+        control.binding_widget()?,
+        stacked,
+        label_width,
+        control_width,
+        gap,
+    )))
+}
+
+#[pyfunction(name = "SectionLabel")]
+#[pyo3(signature = (label, semantic_name=None, color=None))]
+pub fn py_section_label(
+    label: String,
+    semantic_name: Option<String>,
+    color: Option<PyColor>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::section_label(
+        label,
+        semantic_name,
+        color.map(Into::into),
+    )))
+}
+
+#[pyfunction(name = "SideSheet")]
+#[pyo3(signature = (title, body, description=None, shown=None, modal=true, dismiss_on_scrim=true, placement="right", width=None, header_action=None, actions=None, on_dismiss=None))]
+pub fn py_side_sheet(
+    title: String,
+    body: PyRef<'_, PyWidget>,
+    description: Option<String>,
+    shown: Option<&Bound<'_, PyAny>>,
+    modal: bool,
+    dismiss_on_scrim: bool,
+    placement: &str,
+    width: Option<f32>,
+    header_action: Option<PyRef<'_, PyWidget>>,
+    actions: Option<&Bound<'_, PyAny>>,
+    on_dismiss: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let shown = shown
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(true));
+    let placement = match placement {
+        "left" => sui_crate::SideSheetPlacement::Left,
+        "right" => sui_crate::SideSheetPlacement::Right,
+        _ => {
+            return Err(PyValueError::new_err(
+                "side sheet placement must be 'left' or 'right'",
+            ));
+        }
+    };
+    let action = on_dismiss.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::side_sheet(
+        title,
+        body.binding_widget()?,
+        description,
+        shown,
+        modal,
+        dismiss_on_scrim,
+        placement,
+        width,
+        header_action
+            .as_ref()
+            .map(|widget| widget.binding_widget())
+            .transpose()?,
+        actions
+            .map(extract_binding_widgets)
+            .transpose()?
+            .unwrap_or_default(),
+        action,
+    )))
+}
+
+#[pyfunction(name = "SplitView")]
+#[pyo3(signature = (first, second, axis="horizontal", name=None, ratio=None, min_first=120.0, min_second=120.0, divider_thickness=None, on_change=None))]
+pub fn py_split_view(
+    first: PyRef<'_, PyWidget>,
+    second: PyRef<'_, PyWidget>,
+    axis: &str,
+    name: Option<String>,
+    ratio: Option<&Bound<'_, PyAny>>,
+    min_first: f32,
+    min_second: f32,
+    divider_thickness: Option<f32>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let ratio = ratio
+        .map(binding_number_from_py)
+        .transpose()?
+        .unwrap_or(BindingNumber::Static(0.5));
+    let action = on_change.map(|callback| {
+        BindingNumberAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::split_view(
+        name,
+        py_axis(axis)?,
+        first.binding_widget()?,
+        second.binding_widget()?,
+        ratio,
+        min_first,
+        min_second,
+        divider_thickness,
+        action,
+    )))
+}
+
+#[pyfunction(name = "SwitchView")]
+#[pyo3(signature = (children, selected=None))]
+pub fn py_switch_view(
+    children: &Bound<'_, PyAny>,
+    selected: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyWidget> {
+    let selected = selected
+        .map(binding_number_from_py)
+        .transpose()?
+        .unwrap_or(BindingNumber::Static(0.0));
+    Ok(PyWidget::from_binding(BindingWidget::switch_view(
+        extract_binding_widgets(children)?,
+        selected,
+    )))
+}
+
+#[pyfunction(name = "TrailingSlotRow")]
+#[pyo3(signature = (body, trailing, trailing_width=0.0, trailing_height=0.0, gap=0.0))]
+pub fn py_trailing_slot_row(
+    body: PyRef<'_, PyWidget>,
+    trailing: PyRef<'_, PyWidget>,
+    trailing_width: f32,
+    trailing_height: f32,
+    gap: f32,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::trailing_slot_row(
+        body.binding_widget()?,
+        trailing.binding_widget()?,
+        trailing_width,
+        trailing_height,
+        gap,
+    )))
+}
+
+#[pyfunction(name = "FloatingStack")]
+#[pyo3(signature = (windows, name=None))]
+pub fn py_floating_stack(
+    windows: &Bound<'_, PyAny>,
+    name: Option<String>,
+) -> PyResult<PyWidget> {
+    let windows = windows
+        .extract::<Vec<PyRef<'_, PyFloatingStackWindow>>>()?
+        .iter()
+        .map(|window| window.inner.clone())
+        .collect::<Vec<_>>();
+    Ok(PyWidget::from_binding(BindingWidget::floating_stack(
+        windows, name,
+    )))
+}
+
+#[pyfunction(name = "VirtualScrollView")]
+#[pyo3(signature = (children, name=None, padding=None, spacing=0.0))]
+pub fn py_virtual_scroll_view(
+    children: &Bound<'_, PyAny>,
+    name: Option<String>,
+    padding: Option<f32>,
+    spacing: f32,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::virtual_scroll_view(
+        extract_binding_widgets(children)?,
+        name,
+        optional_uniform_insets(padding),
+        Some(spacing),
+    )))
+}
+
+#[pyfunction(name = "ReorderableList")]
+#[pyo3(signature = (name, children, spacing=8.0, drag_threshold=4.0, preview_label=None, on_reorder=None))]
+pub fn py_reorderable_list(
+    name: String,
+    children: &Bound<'_, PyAny>,
+    spacing: f32,
+    drag_threshold: f32,
+    preview_label: Option<String>,
+    on_reorder: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let action = on_reorder.map(|callback| {
+        BindingReorderAction::new(move |item, from_index, to_index| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (item, from_index, to_index))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::reorderable_list(
+        name,
+        extract_binding_widgets(children)?,
+        spacing,
+        drag_threshold,
+        preview_label,
+        action,
+    )))
+}
+
 #[pyfunction(name = "TextInput")]
 #[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
 pub fn py_text_input(
@@ -890,6 +1408,66 @@ pub fn py_text_input(
         })
     });
     Ok(PyWidget::from_binding(BindingWidget::text_input(
+        binding_text_from_py(name)?,
+        value,
+        placeholder,
+        action,
+    )))
+}
+
+#[pyfunction(name = "PasswordInput")]
+#[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
+pub fn py_password_input(
+    name: &Bound<'_, PyAny>,
+    value: Option<&Bound<'_, PyAny>>,
+    placeholder: Option<String>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let value = value
+        .map(binding_text_from_py)
+        .transpose()?
+        .unwrap_or_else(|| BindingText::Static(String::new()));
+    let action = on_change.map(|callback| {
+        BindingStringAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::password_input(
+        binding_text_from_py(name)?,
+        value,
+        placeholder,
+        action,
+    )))
+}
+
+#[pyfunction(name = "DateTimeInput")]
+#[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
+pub fn py_datetime_input(
+    name: &Bound<'_, PyAny>,
+    value: Option<&Bound<'_, PyAny>>,
+    placeholder: Option<String>,
+    on_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let value = value
+        .map(binding_text_from_py)
+        .transpose()?
+        .unwrap_or_else(|| BindingText::Static(String::new()));
+    let action = on_change.map(|callback| {
+        BindingStringAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::datetime_input(
         binding_text_from_py(name)?,
         value,
         placeholder,

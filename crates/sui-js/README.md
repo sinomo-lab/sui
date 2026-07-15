@@ -168,9 +168,10 @@ Build the native addon before importing that dependency at runtime.
   users build from source.
 - This package targets Node.js and Electron. Browser/WASM bindings are not
   implemented.
-- The JavaScript surface is intentionally smaller than the Rust facade. Some
-  newer specialized widgets, including `PasswordInput` and `DateTimeInput`,
-  remain Rust-only.
+- The JavaScript surface intentionally omits Rust-native widgets whose
+  contracts require local `Widget` closures, `Any` payloads, shared `Rc`
+  state, or custom paint models. The checked binding manifest records those
+  exclusions instead of silently treating them as missing coverage.
 - Desktop `run` entry points exist, but the repository does not yet have broad
   real-window smoke coverage for every supported platform.
 - Custom WGSL, arbitrary shader resources, and uniforms are not exposed;

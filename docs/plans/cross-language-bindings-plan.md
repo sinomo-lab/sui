@@ -24,7 +24,8 @@ The workspace currently includes:
 - RGBA, PNG, SVG, and font resource registration;
 - explicit external-texture, synchronization, backend-handle, and capability
   descriptors, with a CPU RGBA fallback for `ExternalSurface`;
-- generated widget manifests and cross-language compatibility tests.
+- generated widget manifests, a complete Rust-widget classification, and
+  cross-language compatibility tests.
 
 The checked manifest currently has complete core, Python, JavaScript,
 TypeScript, documentation, and required compatibility coverage:
@@ -40,26 +41,45 @@ auditable:
 
 - Descriptors: `TextSpan`, `StatusBarSegment`, `SegmentedControlItem`,
   `TableColumn`, `TableRow`, `TreeItem`, `LayerListItem`, `MenuItem`,
-  `ToolPaletteItem`, and `ColorPaletteSwatch`.
+  `ToolPaletteItem`, `ColorPaletteSwatch`, `BrushPreviewSpec`, and
+  `FloatingStackWindow`.
 - Basic controls: `Label`, `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`,
   `Switch`, `RadioButton`, `RadioGroup`, `SegmentedControl`, `Slider`,
-  `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`, and
-  `TextArea`.
+  `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
+  `PasswordInput`, `DateTimeInput`, and `TextArea`.
 - Content and data: `Breadcrumb`, `PathBar`, `ListView`, `Table`, `DataGrid`,
   `TreeView`, `LayerList`, `RichText`, `Image`, `ColorSwatch`, `ColorPalette`,
   `ColorPicker`, `SignalMeter`, `StatusBadge`, `StatusBar`, and `DetailRow`.
 - Containers and application widgets: `Separator`, `EmptyState`, `Surface`,
   `Toolbar`, `ToolPalette`, `PresetStrip`, `BrowserTabBar`, `ScrollView`,
   `Menu`, `ContextMenu`, `TabBar`, `Tabs`, `Dialog`, `StatusBarHost`,
-  `Tooltip`, `Popover`, and `DockPanel`.
+  `Tooltip`, `Popover`, `DockPanel`, `ActionCard`, `BrushPreview`,
+  `CommandGroup`, `CoverageDots`, `FramedField`, `PlacementBadge`,
+  `PropertyRow`, `SectionLabel`, `SideSheet`, `FloatingStack`, and
+  `ReorderableList`.
 - Layout and forms: `Column`, `Row`, `Padding`, `Align`, `Background`,
   `SizedBox`, `Stack`, `SemanticRegion`, `FormRow`, `FieldGroup`,
-  `FormSection`, and `PanelSection`.
+  `FormSection`, `PanelSection`, `Dock`, `FixedPaneSplit`,
+  `MeasuredBottomDock`, `SplitView`, `SwitchView`, `TrailingSlotRow`, and
+  `VirtualScrollView`.
 - Interop: `ExternalSurface`.
 
-This list describes the generated binding manifest, not every widget in the
-Rust facade. In particular, the newer Rust `PasswordInput` and
-`DateTimeInput` controls still need binding designs and parity tests.
+The manifest also classifies every public Rust `Widget` implementation. Most
+portable widgets map directly to generated binding items. `ActionCard`,
+`BrushPreview`, `DateTimeInput`, `PasswordInput`, `SideSheet`, and `SplitView`
+use manual wrappers because they need callback, secrecy, descriptor, or
+state-synchronization policy; `ReorderableList` also uses a manual wrapper to
+translate its reorder event. `Spinner` is represented by `BusyIndicator`, and
+`Flex` by `Column` and `Row`.
+
+The intentionally Rust-only tier is `Canvas`, `CanvasRuler`, `DragDropHost`,
+`Draggable`, `DropTarget`, `FloatingWorkspace`, `PixelCanvas`,
+`RebuildOnChange`, `RebuildOnConstraints`, and `ScrollBar`. These widgets
+expose Rust-local closures, type-erased payloads, shared
+non-thread-safe state, or output/control contracts that do not have a safe
+portable value model. `TextSurface` is represented by the supported `TextArea`
+facade, while `VirtualTable` is represented by `Table` unless an application
+implements its own virtualized foreign widget.
 
 ## Stable design constraints
 
@@ -85,24 +105,7 @@ Future work should preserve these boundaries:
 
 ## Release milestones
 
-### 1. Close high-level parity gaps
-
-- Add `PasswordInput` without exposing secret text through debug output,
-  snapshots, or accidental value formatting.
-- Add `DateTimeInput` with the same string-based/local-time boundary as Rust;
-  parsing, locale, timezone, and instant conversion remain application work.
-- Decide which remaining Rust-only composites belong in the portable binding
-  tier and mark intentional exclusions in the manifest.
-- Add selection, clipboard, keyboard, IME, and accessibility tests for bound
-  editing controls.
-
-Exit criteria:
-
-- the declared portable widget tier is explicit;
-- generated files and coverage checks are green;
-- compatibility snapshots cover the new controls without leaking passwords.
-
-### 2. Publish reproducible native packages
+### 1. Publish reproducible native packages
 
 Python:
 
@@ -127,7 +130,7 @@ Shared exit criteria:
   incompatible binary;
 - package release can be rehearsed without publishing.
 
-### 3. Add real desktop smoke coverage
+### 2. Add real desktop smoke coverage
 
 Host-driven render tests already validate the model, but release builds also
 need supported-platform smoke tests that open a window and exercise:

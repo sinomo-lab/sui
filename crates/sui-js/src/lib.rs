@@ -13,12 +13,13 @@ use ::sui as sui_crate;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use sui_bindings_core::{
-    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingColorAction,
-    BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent, BindingEvent,
-    BindingFontHandle, BindingImageFit, BindingImageHandle, BindingImeEvent, BindingKeyState,
-    BindingKeyboardEvent, BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber,
-    BindingNumberAction, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
-    BindingPointerKind, BindingRenderSnapshot, BindingRuntime, BindingScrollAxes,
+    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec,
+    BindingColorAction, BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent,
+    BindingEvent, BindingFloatingStackWindow, BindingFontHandle, BindingImageFit,
+    BindingImageHandle, BindingImeEvent, BindingKeyState, BindingKeyboardEvent,
+    BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber, BindingNumberAction,
+    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
+    BindingRenderSnapshot, BindingReorderAction, BindingRuntime, BindingScrollAxes,
     BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingShader,
     BindingState, BindingStatusBarSegment, BindingStringAction, BindingTableColumn,
     BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
@@ -136,8 +137,8 @@ pub struct JsEvent {
 
 #[napi]
 impl JsEvent {
-    #[napi(factory)]
-    pub fn pointer(
+    #[napi(factory, js_name = "pointer")]
+    pub fn pointer_with_modifiers(
         kind: String,
         position: &JsPoint,
         pointer_id: Option<String>,
@@ -146,6 +147,7 @@ impl JsEvent {
         buttons: Option<u32>,
         pointer_kind: Option<String>,
         is_primary: Option<bool>,
+        modifiers: Option<&JsModifiers>,
     ) -> Result<Self> {
         Ok(Self {
             inner: BindingEvent::Pointer(BindingPointerEvent {
@@ -160,19 +162,20 @@ impl JsEvent {
                 scroll_delta: None,
                 button: button.as_deref().map(pointer_button_from_js).transpose()?,
                 buttons: checked_buttons(buttons.unwrap_or(0))?,
-                modifiers: BindingModifiers::default(),
+                modifiers: modifiers.copied().map(Into::into).unwrap_or_default(),
                 pointer_kind: pointer_kind_from_js(pointer_kind.as_deref().unwrap_or("mouse"))?,
                 is_primary: is_primary.unwrap_or(true),
             }),
         })
     }
 
-    #[napi(factory)]
-    pub fn scroll(
+    #[napi(factory, js_name = "scroll")]
+    pub fn scroll_with_modifiers(
         position: &JsPoint,
         delta: &JsPoint,
         mode: Option<String>,
         pointer_id: Option<String>,
+        modifiers: Option<&JsModifiers>,
     ) -> Result<Self> {
         let scroll_delta = match mode.as_deref().unwrap_or("pixels") {
             "pixels" | "pixel" => BindingScrollDelta::Pixels((*delta).into()),
@@ -192,21 +195,22 @@ impl JsEvent {
                 scroll_delta: Some(scroll_delta),
                 button: None,
                 buttons: 0,
-                modifiers: BindingModifiers::default(),
+                modifiers: modifiers.copied().map(Into::into).unwrap_or_default(),
                 pointer_kind: BindingPointerKind::Mouse,
                 is_primary: true,
             }),
         })
     }
 
-    #[napi(factory)]
-    pub fn keyboard(
+    #[napi(factory, js_name = "keyboard")]
+    pub fn keyboard_with_modifiers(
         key: String,
         state: Option<String>,
         code: Option<String>,
         text: Option<String>,
         repeat: Option<bool>,
         is_composing: Option<bool>,
+        modifiers: Option<&JsModifiers>,
     ) -> Result<Self> {
         let mut event = BindingKeyboardEvent::new(
             key,
@@ -220,6 +224,7 @@ impl JsEvent {
         }
         event.repeat = repeat.unwrap_or(false);
         event.is_composing = is_composing.unwrap_or(false);
+        event.modifiers = modifiers.copied().map(Into::into).unwrap_or_default();
         Ok(Self {
             inner: BindingEvent::Keyboard(event),
         })
@@ -466,6 +471,73 @@ impl JsEvent {
         }
     }
 
+    #[napi(getter, js_name = "cursorStart")]
+    pub fn cursor_start(&self) -> Option<u32> {
+        match &self.inner {
+            BindingEvent::Ime(BindingImeEvent::CompositionUpdate { cursor_start, .. }) => {
+                cursor_start.and_then(|value| u32::try_from(value).ok())
+            }
+            _ => None,
+        }
+    }
+
+    #[napi(getter, js_name = "cursorEnd")]
+    pub fn cursor_end(&self) -> Option<u32> {
+        match &self.inner {
+            BindingEvent::Ime(BindingImeEvent::CompositionUpdate { cursor_end, .. }) => {
+                cursor_end.and_then(|value| u32::try_from(value).ok())
+            }
+            _ => None,
+        }
+    }
+
+    #[napi(getter)]
+    pub fn value(&self) -> Option<bool> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::Focused(value))
+            | BindingEvent::Window(BindingWindowEvent::Occluded(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[napi(getter)]
+    pub fn size(&self) -> Option<JsSize> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::Resized(size)) => Some((*size).into()),
+            _ => None,
+        }
+    }
+
+    #[napi(getter, js_name = "scaleFactor")]
+    pub fn scale_factor(&self) -> Option<f64> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::ScaleFactorChanged {
+                scale_factor, ..
+            }) => Some(*scale_factor),
+            _ => None,
+        }
+    }
+
+    #[napi(getter, js_name = "rawDpi")]
+    pub fn raw_dpi(&self) -> Option<f64> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::ScaleFactorChanged { raw_dpi, .. }) => {
+                (*raw_dpi).map(f64::from)
+            }
+            _ => None,
+        }
+    }
+
+    #[napi(getter, js_name = "suggestedSize")]
+    pub fn suggested_size(&self) -> Option<JsSize> {
+        match &self.inner {
+            BindingEvent::Window(BindingWindowEvent::ScaleFactorChanged {
+                suggested_size, ..
+            }) => (*suggested_size).map(Into::into),
+            _ => None,
+        }
+    }
+
     #[napi(getter)]
     pub fn file_path(&self) -> Option<String> {
         match &self.inner {
@@ -479,6 +551,42 @@ impl JsEvent {
 }
 
 impl JsEvent {
+    #[cfg(test)]
+    fn pointer(
+        kind: String,
+        position: &JsPoint,
+        pointer_id: Option<String>,
+        delta: Option<&JsPoint>,
+        button: Option<String>,
+        buttons: Option<u32>,
+        pointer_kind: Option<String>,
+        is_primary: Option<bool>,
+    ) -> Result<Self> {
+        Self::pointer_with_modifiers(
+            kind,
+            position,
+            pointer_id,
+            delta,
+            button,
+            buttons,
+            pointer_kind,
+            is_primary,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    fn keyboard(
+        key: String,
+        state: Option<String>,
+        code: Option<String>,
+        text: Option<String>,
+        repeat: Option<bool>,
+        is_composing: Option<bool>,
+    ) -> Result<Self> {
+        Self::keyboard_with_modifiers(key, state, code, text, repeat, is_composing, None)
+    }
+
     fn from_binding(inner: BindingEvent) -> Self {
         Self { inner }
     }
@@ -2018,6 +2126,16 @@ impl JsExternalSync {
         }
         .to_owned()
     }
+
+    #[napi(getter)]
+    pub fn value(&self) -> Option<String> {
+        match self.inner {
+            ExternalSync::Generation(value) | ExternalSync::TimelineValue { value, .. } => {
+                Some(value.to_string())
+            }
+            ExternalSync::None | ExternalSync::Fence { .. } => None,
+        }
+    }
 }
 
 #[napi(js_name = "ExternalTextureDescriptor")]
@@ -2265,8 +2383,12 @@ impl JsObjectCallbacks {
         if !object.has_named_property("event")? {
             return Ok(false);
         }
-        let event_fn: Function<'_, (JsEvent,), bool> = object.get_named_property("event")?;
-        event_fn.apply(object, (JsEvent::from_binding(BindingEvent::from(event)),))
+        let event_fn: Function<'_, FnArgs<(JsEvent,)>, bool> =
+            object.get_named_property("event")?;
+        event_fn.apply(
+            object,
+            FnArgs::from((JsEvent::from_binding(BindingEvent::from(event)),)),
+        )
     }
 
     fn call_measure(&self, constraints: Constraints) -> Result<Size> {
@@ -2275,9 +2397,9 @@ impl JsObjectCallbacks {
         if !object.has_named_property("measure")? {
             return Ok(constraints.clamp(Size::ZERO));
         }
-        let measure: Function<'_, (JsConstraints,), ClassInstance<'_, JsSize>> =
+        let measure: Function<'_, FnArgs<(JsConstraints,)>, ClassInstance<'_, JsSize>> =
             object.get_named_property("measure")?;
-        let size = measure.apply(object, (JsConstraints::from(constraints),))?;
+        let size = measure.apply(object, FnArgs::from((JsConstraints::from(constraints),)))?;
         Ok(Size::from(*size))
     }
 
@@ -2289,8 +2411,9 @@ impl JsObjectCallbacks {
         }
         let paint = JsPaint::new(bounds);
         let paint_for_js = paint.clone();
-        let paint_fn: Function<'_, (JsPaint,), Unknown<'_>> = object.get_named_property("paint")?;
-        let _ = paint_fn.apply(object, (paint_for_js,))?;
+        let paint_fn: Function<'_, FnArgs<(JsPaint,)>, Unknown<'_>> =
+            object.get_named_property("paint")?;
+        let _ = paint_fn.apply(object, FnArgs::from((paint_for_js,)))?;
         let commands = paint.finish().map_err(napi_value_error)?;
         Ok((commands, paint.take_images()))
     }
@@ -2309,9 +2432,9 @@ impl JsObjectCallbacks {
         }
         let semantics = JsSemantics::new(widget_id, bounds, focused, child_count);
         let semantics_for_js = semantics.clone();
-        let semantics_fn: Function<'_, (JsSemantics,), Unknown<'_>> =
+        let semantics_fn: Function<'_, FnArgs<(JsSemantics,)>, Unknown<'_>> =
             object.get_named_property("semantics")?;
-        let _ = semantics_fn.apply(object, (semantics_for_js,))?;
+        let _ = semantics_fn.apply(object, FnArgs::from((semantics_for_js,)))?;
         Ok(Some(semantics.take_commands()))
     }
 
@@ -2543,20 +2666,155 @@ fn binding_value_to_js(value: BindingValue) -> Either3<String, f64, bool> {
     }
 }
 
-fn binding_bool_from_js(value: Either3<ClassInstance<'_, JsState>, bool, f64>) -> BindingBool {
-    match value {
-        Either3::A(state) => BindingBool::State(state.inner.clone()),
-        Either3::B(value) => BindingBool::Static(value),
-        Either3::C(value) => BindingBool::Static(value != 0.0),
+pub struct JsBindingTextArg(BindingText);
+pub struct JsBindingBoolArg(BindingBool);
+pub struct JsBindingNumberArg(BindingNumber);
+
+enum JsStateOrValue {
+    State(BindingState),
+    Value(BindingValue),
+}
+
+macro_rules! impl_js_binding_arg {
+    ($name:ident, $inner:ty, $convert:ident, $type_name:literal) => {
+        impl TypeName for $name {
+            fn type_name() -> &'static str {
+                $type_name
+            }
+
+            fn value_type() -> ValueType {
+                ValueType::Unknown
+            }
+        }
+
+        impl ValidateNapiValue for $name {
+            unsafe fn validate(
+                _env: napi::sys::napi_env,
+                _value: napi::sys::napi_value,
+            ) -> Result<napi::sys::napi_value> {
+                Ok(std::ptr::null_mut())
+            }
+        }
+
+        impl FromNapiValue for $name {
+            unsafe fn from_napi_value(
+                env: napi::sys::napi_env,
+                value: napi::sys::napi_value,
+            ) -> Result<Self> {
+                unsafe { $convert(env, value).map(Self) }
+            }
+        }
+    };
+}
+
+impl_js_binding_arg!(
+    JsBindingTextArg,
+    BindingText,
+    binding_text_arg_from_napi,
+    "State | string | number | boolean"
+);
+impl_js_binding_arg!(
+    JsBindingBoolArg,
+    BindingBool,
+    binding_bool_arg_from_napi,
+    "State | boolean | number"
+);
+impl_js_binding_arg!(
+    JsBindingNumberArg,
+    BindingNumber,
+    binding_number_arg_from_napi,
+    "State | number | boolean"
+);
+
+unsafe fn state_or_value_from_napi(
+    env: napi::sys::napi_env,
+    value: napi::sys::napi_value,
+) -> Result<JsStateOrValue> {
+    let unknown = unsafe { Unknown::from_napi_value(env, value)? };
+    if unknown.get_type()? == ValueType::Object && state_instanceof(env, value)? {
+        let state = unsafe { <&JsState>::from_napi_value(env, value)? };
+        return Ok(JsStateOrValue::State(state.inner.clone()));
+    }
+
+    let value = match unknown.get_type()? {
+        ValueType::String => BindingValue::String(unsafe { String::from_napi_value(env, value)? }),
+        ValueType::Number => BindingValue::Number(unsafe { f64::from_napi_value(env, value)? }),
+        ValueType::Boolean => BindingValue::Bool(unsafe { bool::from_napi_value(env, value)? }),
+        _ => {
+            return Err(napi_invalid_arg(
+                "binding values must be a State, string, number, or boolean",
+            ));
+        }
+    };
+    Ok(JsStateOrValue::Value(value))
+}
+
+fn state_instanceof(env: napi::sys::napi_env, value: napi::sys::napi_value) -> Result<bool> {
+    let constructor = get_class_constructor("State\0")
+        .ok_or_else(|| napi_runtime_error("State constructor is not registered"))?;
+    let mut constructor_value = std::ptr::null_mut();
+    napi::check_status!(
+        unsafe { napi::sys::napi_get_reference_value(env, constructor, &mut constructor_value) },
+        "failed to retrieve the State constructor"
+    )?;
+    let mut is_instance = false;
+    napi::check_status!(
+        unsafe { napi::sys::napi_instanceof(env, value, constructor_value, &mut is_instance) },
+        "failed to test a State binding value"
+    )?;
+    Ok(is_instance)
+}
+
+unsafe fn binding_text_arg_from_napi(
+    env: napi::sys::napi_env,
+    value: napi::sys::napi_value,
+) -> Result<BindingText> {
+    match unsafe { state_or_value_from_napi(env, value)? } {
+        JsStateOrValue::State(state) => Ok(BindingText::State(state)),
+        JsStateOrValue::Value(value) => Ok(BindingText::Static(value.as_label_text())),
     }
 }
 
-fn binding_number_from_js(value: Either3<ClassInstance<'_, JsState>, f64, bool>) -> BindingNumber {
-    match value {
-        Either3::A(state) => BindingNumber::State(state.inner.clone()),
-        Either3::B(value) => BindingNumber::Static(value),
-        Either3::C(value) => BindingNumber::Static(if value { 1.0 } else { 0.0 }),
+unsafe fn binding_bool_arg_from_napi(
+    env: napi::sys::napi_env,
+    value: napi::sys::napi_value,
+) -> Result<BindingBool> {
+    match unsafe { state_or_value_from_napi(env, value)? } {
+        JsStateOrValue::State(state) => Ok(BindingBool::State(state)),
+        JsStateOrValue::Value(BindingValue::Bool(value)) => Ok(BindingBool::Static(value)),
+        JsStateOrValue::Value(BindingValue::Number(value)) => Ok(BindingBool::Static(value != 0.0)),
+        JsStateOrValue::Value(BindingValue::String(_)) => Err(napi_invalid_arg(
+            "boolean bindings must be a State, boolean, or number",
+        )),
     }
+}
+
+unsafe fn binding_number_arg_from_napi(
+    env: napi::sys::napi_env,
+    value: napi::sys::napi_value,
+) -> Result<BindingNumber> {
+    match unsafe { state_or_value_from_napi(env, value)? } {
+        JsStateOrValue::State(state) => Ok(BindingNumber::State(state)),
+        JsStateOrValue::Value(BindingValue::Number(value)) => Ok(BindingNumber::Static(value)),
+        JsStateOrValue::Value(BindingValue::Bool(value)) => {
+            Ok(BindingNumber::Static(if value { 1.0 } else { 0.0 }))
+        }
+        JsStateOrValue::Value(BindingValue::String(_)) => Err(napi_invalid_arg(
+            "number bindings must be a State, number, or boolean",
+        )),
+    }
+}
+
+fn binding_text_from_js(value: JsBindingTextArg) -> BindingText {
+    value.0
+}
+
+fn binding_bool_from_js(value: JsBindingBoolArg) -> BindingBool {
+    value.0
+}
+
+fn binding_number_from_js(value: JsBindingNumberArg) -> BindingNumber {
+    value.0
 }
 
 fn js_image_fit(value: &str) -> Result<BindingImageFit> {
@@ -2954,17 +3212,6 @@ fn parse_u64_string(value: &str, label: &str) -> Result<u64> {
     value
         .parse::<u64>()
         .map_err(|_| napi_invalid_arg(format!("{label} must be an unsigned 64-bit integer string")))
-}
-
-fn binding_text_from_js(
-    value: Either4<ClassInstance<'_, JsState>, String, f64, bool>,
-) -> BindingText {
-    match value {
-        Either4::A(state) => BindingText::State(state.inner.clone()),
-        Either4::B(value) => BindingText::Static(value),
-        Either4::C(value) => BindingText::Static(BindingValue::Number(value).as_label_text()),
-        Either4::D(value) => BindingText::Static(BindingValue::Bool(value).as_label_text()),
-    }
 }
 
 fn extract_binding_widgets(children: &Array<'_>) -> Result<Vec<BindingWidget>> {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt;
 use std::fs;
@@ -43,17 +43,18 @@ fn bindings_generate(check: bool) -> Result<(), String> {
     let spec_path = root.join("bindings/widgets.sui");
     let spec = fs::read_to_string(&spec_path)
         .map_err(|error| format!("failed to read {}: {error}", spec_path.display()))?;
-    let items = parse_binding_spec(&spec)?;
+    let spec = parse_binding_spec(&spec)?;
+    let items = &spec.items;
 
     let manifest_path = root.join("bindings/widgets.toml");
-    let manifest = render_manifest(&items);
+    let manifest = render_manifest(&spec);
     update_generated_file(&manifest_path, &manifest, check)?;
 
     let python_generated_path = root.join("crates/sui-python/src/generated_widgets.rs");
     let python_template_path = root.join("bindings/templates/python_widgets.rs.in");
     let python_template = fs::read_to_string(&python_template_path)
         .map_err(|error| format!("failed to read {}: {error}", python_template_path.display()))?;
-    validate_rust_template("python", &items, &python_template)?;
+    validate_rust_template("python", items, &python_template)?;
     let python_generated = render_generated_rust_template(
         "Python widget bindings",
         "bindings/templates/python_widgets.rs.in",
@@ -65,7 +66,7 @@ fn bindings_generate(check: bool) -> Result<(), String> {
     let js_template_path = root.join("bindings/templates/js_widgets.rs.in");
     let js_template = fs::read_to_string(&js_template_path)
         .map_err(|error| format!("failed to read {}: {error}", js_template_path.display()))?;
-    validate_rust_template("js", &items, &js_template)?;
+    validate_rust_template("js", items, &js_template)?;
     let js_generated = render_generated_rust_template(
         "JavaScript widget bindings",
         "bindings/templates/js_widgets.rs.in",
@@ -76,8 +77,8 @@ fn bindings_generate(check: bool) -> Result<(), String> {
     let ts_path = root.join("crates/sui-js/index.d.ts");
     let current_ts = fs::read_to_string(&ts_path)
         .map_err(|error| format!("failed to read {}: {error}", ts_path.display()))?;
-    let generated_ts = render_generated_ts(&items);
-    let next_ts = update_ts_index(&current_ts, &generated_ts, &items)?;
+    let generated_ts = render_generated_ts(items);
+    let next_ts = update_ts_index(&current_ts, &generated_ts, items)?;
     update_generated_file(&ts_path, &next_ts, check)?;
 
     if check {
@@ -100,7 +101,7 @@ fn bindings_coverage() -> Result<(), String> {
     let manifest_path = root.join("bindings/widgets.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
-    let items = parse_manifest(&manifest)?;
+    let manifest = parse_manifest(&manifest)?;
 
     let sources = Sources {
         core: read_source(&root, "crates/sui-bindings-core/src/lib.rs")?,
@@ -129,25 +130,41 @@ fn bindings_coverage() -> Result<(), String> {
         )?,
     };
 
-    let rows = items
+    let rows = manifest
+        .items
         .iter()
         .map(|item| CoverageRow::for_item(item, &sources))
         .collect::<Vec<_>>();
 
     print_report(&rows);
 
+    let public_widgets = inventory_public_widgets(&root)?;
+    let widget_issues =
+        validate_widget_classifications(&public_widgets, &manifest.rust_widgets, &manifest.items);
+    print_widget_classification_report(&public_widgets, &manifest.rust_widgets, &widget_issues);
+
     let missing = rows
         .iter()
         .filter(|row| row.has_required_gap())
         .collect::<Vec<_>>();
 
-    if missing.is_empty() {
+    if missing.is_empty() && widget_issues.is_empty() {
         Ok(())
     } else {
-        Err(format!(
-            "{} binding item(s) are missing required coverage",
-            missing.len()
-        ))
+        let mut failures = Vec::new();
+        if !missing.is_empty() {
+            failures.push(format!(
+                "{} binding item(s) are missing required coverage",
+                missing.len()
+            ));
+        }
+        if !widget_issues.is_empty() {
+            failures.push(format!(
+                "{} Rust widget classification issue(s)",
+                widget_issues.len()
+            ));
+        }
+        Err(failures.join("; "))
     }
 }
 
@@ -195,15 +212,78 @@ struct Item {
     compat: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+struct BindingSpec {
+    items: Vec<Item>,
+    rust_widgets: Vec<RustWidgetClassification>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BindingManifest {
+    items: Vec<Item>,
+    rust_widgets: Vec<RustWidgetClassification>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum RustWidgetClass {
+    Bound,
+    ManualWrapper,
+    Equivalent,
+    RustOnly,
+}
+
+impl RustWidgetClass {
+    fn parse(value: &str, line_number: usize) -> Result<Self, String> {
+        match value {
+            "bound" => Ok(Self::Bound),
+            "manual-wrapper" => Ok(Self::ManualWrapper),
+            "equivalent" => Ok(Self::Equivalent),
+            "rust-only" => Ok(Self::RustOnly),
+            _ => Err(format!(
+                "line {line_number}: unsupported Rust widget classification `{value}`"
+            )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::ManualWrapper => "manual-wrapper",
+            Self::Equivalent => "equivalent",
+            Self::RustOnly => "rust-only",
+        }
+    }
+}
+
+impl fmt::Display for RustWidgetClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RustWidgetClassification {
+    name: String,
+    classification: RustWidgetClass,
+    bindings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PublicWidget {
+    name: String,
+    source: String,
+    line: usize,
+}
+
 #[derive(Clone, Debug)]
 enum TsDecl {
     Class(Vec<String>),
     Function(String),
 }
 
-fn parse_manifest(input: &str) -> Result<Vec<Item>, String> {
-    let mut items = Vec::new();
-    let mut current: Option<BTreeMap<String, Value>> = None;
+fn parse_manifest(input: &str) -> Result<BindingManifest, String> {
+    let mut manifest = BindingManifest::default();
+    let mut current: Option<ManifestTable> = None;
 
     for (line_index, raw_line) in input.lines().enumerate() {
         let line_number = line_index + 1;
@@ -212,19 +292,24 @@ fn parse_manifest(input: &str) -> Result<Vec<Item>, String> {
             continue;
         }
 
-        if line == "[[item]]" {
+        if matches!(line, "[[item]]" | "[[rust_widget]]") {
             if let Some(table) = current.take() {
-                items.push(item_from_table(table, line_number)?);
+                finish_manifest_table(&mut manifest, table, line_number)?;
             }
-            current = Some(BTreeMap::new());
+            current = Some(if line == "[[item]]" {
+                ManifestTable::Item(BTreeMap::new())
+            } else {
+                ManifestTable::RustWidget(BTreeMap::new())
+            });
             continue;
         }
 
-        let Some(table) = current.as_mut() else {
+        let Some(current) = current.as_mut() else {
             return Err(format!(
-                "line {line_number}: key/value pair found before [[item]]"
+                "line {line_number}: key/value pair found before a manifest table"
             ));
         };
+        let table = current.values_mut();
 
         let (key, value) = line
             .split_once('=')
@@ -233,18 +318,60 @@ fn parse_manifest(input: &str) -> Result<Vec<Item>, String> {
         if key.is_empty() {
             return Err(format!("line {line_number}: empty key"));
         }
-        table.insert(key.to_string(), parse_value(value.trim(), line_number)?);
+        if table
+            .insert(key.to_string(), parse_value(value.trim(), line_number)?)
+            .is_some()
+        {
+            return Err(format!("line {line_number}: duplicate key `{key}`"));
+        }
     }
 
     if let Some(table) = current.take() {
-        items.push(item_from_table(table, input.lines().count())?);
+        finish_manifest_table(&mut manifest, table, input.lines().count().max(1))?;
     }
 
-    if items.is_empty() {
+    if manifest.items.is_empty() {
         return Err("manifest does not contain any [[item]] entries".to_string());
     }
+    if manifest.rust_widgets.is_empty() {
+        return Err("manifest does not contain any [[rust_widget]] entries".to_string());
+    }
 
-    Ok(items)
+    validate_classification_metadata(&manifest.rust_widgets, &manifest.items)?;
+
+    Ok(manifest)
+}
+
+#[derive(Clone, Debug)]
+enum ManifestTable {
+    Item(BTreeMap<String, Value>),
+    RustWidget(BTreeMap<String, Value>),
+}
+
+impl ManifestTable {
+    fn values_mut(&mut self) -> &mut BTreeMap<String, Value> {
+        match self {
+            Self::Item(values) | Self::RustWidget(values) => values,
+        }
+    }
+}
+
+fn finish_manifest_table(
+    manifest: &mut BindingManifest,
+    table: ManifestTable,
+    line_number: usize,
+) -> Result<(), String> {
+    match table {
+        ManifestTable::Item(values) => {
+            manifest.items.push(item_from_table(values, line_number)?);
+        }
+        ManifestTable::RustWidget(values) => {
+            manifest
+                .rust_widgets
+                .push(rust_widget_from_table(values, line_number)?);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -330,6 +457,32 @@ fn item_from_table(mut table: BTreeMap<String, Value>, line_number: usize) -> Re
     Ok(item)
 }
 
+fn rust_widget_from_table(
+    mut table: BTreeMap<String, Value>,
+    line_number: usize,
+) -> Result<RustWidgetClassification, String> {
+    let name = take_required_string(&mut table, "name", line_number)?;
+    let classification = RustWidgetClass::parse(
+        &take_required_string(&mut table, "classification", line_number)?,
+        line_number,
+    )?;
+    let bindings = take_optional_strings(&mut table, "bindings", line_number)?;
+
+    if !table.is_empty() {
+        return Err(format!(
+            "line {line_number}: Rust widget `{name}` has unsupported keys: {}",
+            table.keys().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+
+    validate_classification_shape(&name, classification, &bindings, line_number)?;
+    Ok(RustWidgetClassification {
+        name,
+        classification,
+        bindings,
+    })
+}
+
 fn take_required_string(
     table: &mut BTreeMap<String, Value>,
     key: &str,
@@ -377,8 +530,9 @@ fn take_optional_strings(
     }
 }
 
-fn parse_binding_spec(input: &str) -> Result<Vec<Item>, String> {
+fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
     let mut items = Vec::new();
+    let mut rust_widgets = Vec::new();
     let mut current: Option<Item> = None;
     let mut ts_class_lines: Option<Vec<String>> = None;
 
@@ -404,9 +558,16 @@ fn parse_binding_spec(input: &str) -> Result<Vec<Item>, String> {
         }
 
         if current.is_none() {
+            if line.split_whitespace().next() == Some("rust-widget") {
+                rust_widgets.push(parse_rust_widget_directive(line, line_number)?);
+                continue;
+            }
+
             let parts = line.split_whitespace().collect::<Vec<_>>();
             if parts.len() != 2 {
-                return Err(format!("line {line_number}: expected `<kind> <name>`"));
+                return Err(format!(
+                    "line {line_number}: expected `<kind> <name>` or a `rust-widget` directive"
+                ));
             }
             let kind = parts[0];
             if !matches!(
@@ -504,8 +665,105 @@ fn parse_binding_spec(input: &str) -> Result<Vec<Item>, String> {
     if items.is_empty() {
         return Err("binding spec does not contain any items".to_string());
     }
+    if rust_widgets.is_empty() {
+        return Err("binding spec does not contain any `rust-widget` classifications".to_string());
+    }
 
-    Ok(items)
+    validate_classification_metadata(&rust_widgets, &items)?;
+    Ok(BindingSpec {
+        items,
+        rust_widgets,
+    })
+}
+
+fn parse_rust_widget_directive(
+    line: &str,
+    line_number: usize,
+) -> Result<RustWidgetClassification, String> {
+    let parts = line.split_whitespace().collect::<Vec<_>>();
+    let Some(name) = parts.get(1) else {
+        return Err(format!(
+            "line {line_number}: `rust-widget` is missing the Rust type name"
+        ));
+    };
+    let Some(classification) = parts.get(2) else {
+        return Err(format!(
+            "line {line_number}: Rust widget `{name}` is missing its classification"
+        ));
+    };
+    let classification = RustWidgetClass::parse(classification, line_number)?;
+    let bindings = parts[3..]
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    validate_classification_shape(name, classification, &bindings, line_number)?;
+
+    Ok(RustWidgetClassification {
+        name: (*name).to_string(),
+        classification,
+        bindings,
+    })
+}
+
+fn validate_classification_shape(
+    name: &str,
+    classification: RustWidgetClass,
+    bindings: &[String],
+    line_number: usize,
+) -> Result<(), String> {
+    match classification {
+        RustWidgetClass::Bound if bindings.len() != 1 => Err(format!(
+            "line {line_number}: bound Rust widget `{name}` must name exactly one binding item"
+        )),
+        RustWidgetClass::ManualWrapper | RustWidgetClass::Equivalent if bindings.is_empty() => {
+            Err(format!(
+                "line {line_number}: {classification} Rust widget `{name}` must name at least one binding item"
+            ))
+        }
+        RustWidgetClass::RustOnly if !bindings.is_empty() => Err(format!(
+            "line {line_number}: rust-only widget `{name}` cannot name binding items"
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn validate_classification_metadata(
+    rust_widgets: &[RustWidgetClassification],
+    items: &[Item],
+) -> Result<(), String> {
+    let mut item_by_name = BTreeMap::new();
+    for item in items {
+        if item_by_name.insert(item.name.as_str(), item).is_some() {
+            return Err(format!("duplicate binding item `{}`", item.name));
+        }
+    }
+
+    let mut seen_widgets = BTreeSet::new();
+    for widget in rust_widgets {
+        if !seen_widgets.insert(widget.name.as_str()) {
+            return Err(format!(
+                "duplicate Rust widget classification for `{}`",
+                widget.name
+            ));
+        }
+
+        for binding in &widget.bindings {
+            let Some(item) = item_by_name.get(binding.as_str()) else {
+                return Err(format!(
+                    "Rust widget `{}` references unknown binding item `{binding}`",
+                    widget.name
+                ));
+            };
+            if item.python_kind.is_none() || item.js_kind.is_none() {
+                return Err(format!(
+                    "Rust widget `{}` references `{binding}`, which is not exposed to both Python and JavaScript",
+                    widget.name
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_word(value: &str, key: &str, line_number: usize) -> Result<String, String> {
@@ -557,12 +815,12 @@ fn validate_spec_item(item: &Item, line_number: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn render_manifest(items: &[Item]) -> String {
+fn render_manifest(spec: &BindingSpec) -> String {
     let mut output = String::new();
     output.push_str("# Generated by `cargo xtask bindings generate` from bindings/widgets.sui.\n");
     output.push_str("# Do not edit by hand.\n\n");
 
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in spec.items.iter().enumerate() {
         output.push_str("[[item]]\n");
         push_toml_string(&mut output, "name", &item.name);
         push_toml_string(&mut output, "kind", &item.kind);
@@ -605,7 +863,26 @@ fn render_manifest(items: &[Item]) -> String {
         if item.compat {
             output.push_str("compat = true\n");
         }
-        if index + 1 < items.len() {
+        if index + 1 < spec.items.len() {
+            output.push('\n');
+        }
+    }
+
+    let mut rust_widgets = spec.rust_widgets.iter().collect::<Vec<_>>();
+    rust_widgets.sort_by(|left, right| left.name.cmp(&right.name));
+    output.push_str("\n\n");
+    for (index, widget) in rust_widgets.iter().enumerate() {
+        output.push_str("[[rust_widget]]\n");
+        push_toml_string(&mut output, "name", &widget.name);
+        push_toml_string(
+            &mut output,
+            "classification",
+            widget.classification.as_str(),
+        );
+        if !widget.bindings.is_empty() {
+            push_toml_strings(&mut output, "bindings", &widget.bindings);
+        }
+        if index + 1 < rust_widgets.len() {
             output.push('\n');
         }
     }
@@ -618,6 +895,20 @@ fn push_toml_string(output: &mut String, key: &str, value: &str) {
     output.push_str(" = \"");
     output.push_str(value);
     output.push_str("\"\n");
+}
+
+fn push_toml_strings(output: &mut String, key: &str, values: &[String]) {
+    output.push_str(key);
+    output.push_str(" = [");
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            output.push_str(", ");
+        }
+        output.push('"');
+        output.push_str(value);
+        output.push('"');
+    }
+    output.push_str("]\n");
 }
 
 const GENERATED_TS_START: &str = "// BEGIN GENERATED SUI WIDGET BINDINGS";
@@ -901,6 +1192,249 @@ fn relative_display(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn inventory_public_widgets(root: &Path) -> Result<Vec<PublicWidget>, String> {
+    let widgets_root = root.join("crates/sui-widgets/src");
+    let mut rust_files = Vec::new();
+    collect_rust_files(&widgets_root, &mut rust_files)?;
+    rust_files.sort();
+
+    let mut public_structs: BTreeMap<String, Vec<(String, usize)>> = BTreeMap::new();
+    let mut widget_impls = BTreeSet::new();
+
+    for path in rust_files {
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let relative = relative_display(root, &path);
+        let (structs, impls) = public_widgets_in_source(&source);
+        for (name, line) in structs {
+            public_structs
+                .entry(name)
+                .or_default()
+                .push((relative.clone(), line));
+        }
+        widget_impls.extend(impls);
+    }
+
+    let mut inventory = Vec::new();
+    for name in widget_impls {
+        let Some(locations) = public_structs.get(&name) else {
+            continue;
+        };
+        if locations.len() != 1 {
+            let rendered = locations
+                .iter()
+                .map(|(source, line)| format!("{source}:{line}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "public Widget type `{name}` is declared more than once: {rendered}"
+            ));
+        }
+        let (source, line) = &locations[0];
+        inventory.push(PublicWidget {
+            name,
+            source: source.clone(),
+            line: *line,
+        });
+    }
+
+    Ok(inventory)
+}
+
+fn collect_rust_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("failed to read {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("failed to read entry in {}: {error}", directory.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        if file_type.is_dir() {
+            collect_rust_files(&path, output)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|value| value == "rs") {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn public_widgets_in_source(source: &str) -> (BTreeMap<String, usize>, BTreeSet<String>) {
+    let mut public_structs = BTreeMap::new();
+    let mut widget_impls = BTreeSet::new();
+    let mut impl_header: Option<String> = None;
+
+    for (line_index, raw_line) in source.lines().enumerate() {
+        let line_number = line_index + 1;
+        let line = raw_line.trim();
+
+        if let Some(rest) = line.strip_prefix("pub struct ")
+            && let Some(name) = rust_identifier(rest)
+        {
+            public_structs.insert(name.to_string(), line_number);
+        }
+
+        if let Some(header) = impl_header.as_mut() {
+            header.push(' ');
+            header.push_str(line);
+            if line.contains('{') {
+                if let Some(name) = widget_impl_name(header) {
+                    widget_impls.insert(name.to_string());
+                }
+                impl_header = None;
+            }
+        } else if line.starts_with("impl") {
+            if line.contains('{') {
+                if let Some(name) = widget_impl_name(line) {
+                    widget_impls.insert(name.to_string());
+                }
+            } else {
+                impl_header = Some(line.to_string());
+            }
+        }
+    }
+
+    (public_structs, widget_impls)
+}
+
+fn widget_impl_name(header: &str) -> Option<&str> {
+    let (_, rest) = header.split_once(" Widget for ")?;
+    rust_identifier(rest.trim_start())
+}
+
+fn rust_identifier(input: &str) -> Option<&str> {
+    let end = input
+        .char_indices()
+        .take_while(|(_, character)| character.is_ascii_alphanumeric() || *character == '_')
+        .last()
+        .map(|(index, character)| index + character.len_utf8())?;
+    let identifier = &input[..end];
+    identifier
+        .chars()
+        .next()
+        .filter(|character| character.is_ascii_alphabetic() || *character == '_')?;
+    Some(identifier)
+}
+
+fn validate_widget_classifications(
+    public_widgets: &[PublicWidget],
+    rust_widgets: &[RustWidgetClassification],
+    items: &[Item],
+) -> Vec<String> {
+    let public_names = public_widgets
+        .iter()
+        .map(|widget| widget.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut classifications = BTreeMap::new();
+    let mut issues = Vec::new();
+
+    for classification in rust_widgets {
+        if classifications
+            .insert(classification.name.as_str(), classification)
+            .is_some()
+        {
+            issues.push(format!(
+                "duplicate classification for public Widget `{}`",
+                classification.name
+            ));
+        }
+    }
+
+    for widget in public_widgets {
+        if !classifications.contains_key(widget.name.as_str()) {
+            issues.push(format!(
+                "unclassified public Widget `{}` at {}:{}",
+                widget.name, widget.source, widget.line
+            ));
+        }
+    }
+
+    for classification in rust_widgets {
+        if !public_names.contains(classification.name.as_str()) {
+            issues.push(format!(
+                "classification for `{}` is stale: no public Widget implementation was found",
+                classification.name
+            ));
+        }
+    }
+
+    if let Err(error) = validate_classification_metadata(rust_widgets, items) {
+        issues.push(error);
+    }
+
+    issues
+}
+
+fn print_widget_classification_report(
+    public_widgets: &[PublicWidget],
+    rust_widgets: &[RustWidgetClassification],
+    issues: &[String],
+) {
+    let classifications = rust_widgets
+        .iter()
+        .map(|widget| (widget.name.as_str(), widget))
+        .collect::<BTreeMap<_, _>>();
+
+    println!();
+    println!("Rust public Widget classification");
+    println!(
+        "{:<24} {:<15} {:<28} Source",
+        "Rust type", "Classification", "Binding item(s)"
+    );
+    println!("{}", "-".repeat(96));
+    for widget in public_widgets {
+        let classification = classifications.get(widget.name.as_str()).copied();
+        let class = classification
+            .map(|entry| entry.classification.as_str())
+            .unwrap_or("UNCLASSIFIED");
+        let bindings = classification
+            .map(|entry| entry.bindings.join(", "))
+            .unwrap_or_default();
+        println!(
+            "{:<24} {:<15} {:<28} {}:{}",
+            widget.name, class, bindings, widget.source, widget.line
+        );
+    }
+
+    let classified = public_widgets
+        .iter()
+        .filter(|widget| classifications.contains_key(widget.name.as_str()))
+        .count();
+    let mut counts = BTreeMap::new();
+    for widget in public_widgets {
+        if let Some(classification) = classifications.get(widget.name.as_str()) {
+            *counts
+                .entry(classification.classification)
+                .or_insert(0usize) += 1;
+        }
+    }
+
+    println!();
+    println!(
+        "Summary: {classified}/{} public Widget types classified (bound {}, manual-wrapper {}, equivalent {}, rust-only {})",
+        public_widgets.len(),
+        counts.get(&RustWidgetClass::Bound).copied().unwrap_or(0),
+        counts
+            .get(&RustWidgetClass::ManualWrapper)
+            .copied()
+            .unwrap_or(0),
+        counts
+            .get(&RustWidgetClass::Equivalent)
+            .copied()
+            .unwrap_or(0),
+        counts.get(&RustWidgetClass::RustOnly).copied().unwrap_or(0),
+    );
+
+    if !issues.is_empty() {
+        println!();
+        println!("Widget classification issues:");
+        for issue in issues {
+            println!("- {issue}");
+        }
+    }
+}
+
 struct Sources {
     core: String,
     python: String,
@@ -1150,5 +1684,131 @@ fn print_report(rows: &[CoverageRow<'_>]) {
             }
             println!("- {}: {}", row.item.name, columns.join(", "));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CLASSIFIED_SPEC: &str = r#"
+widget Alpha
+  python function py_alpha
+  js function js_alpha
+end
+
+rust-widget Direct bound Alpha
+rust-widget Wrapped manual-wrapper Alpha
+rust-widget FlexLike equivalent Alpha
+rust-widget Native rust-only
+"#;
+
+    #[test]
+    fn classification_spec_round_trips_through_manifest() {
+        let spec = parse_binding_spec(CLASSIFIED_SPEC).expect("spec should parse");
+        assert_eq!(spec.items.len(), 1);
+        assert_eq!(spec.rust_widgets.len(), 4);
+
+        let rendered = render_manifest(&spec);
+        let manifest = parse_manifest(&rendered).expect("rendered manifest should parse");
+        assert_eq!(manifest.items.len(), 1);
+        let mut expected = spec.rust_widgets;
+        expected.sort_by(|left, right| left.name.cmp(&right.name));
+        assert_eq!(manifest.rust_widgets, expected);
+    }
+
+    #[test]
+    fn manual_wrapper_requires_a_binding_target() {
+        let error = parse_binding_spec(
+            r#"
+widget Alpha
+  python function py_alpha
+  js function js_alpha
+end
+rust-widget Wrapped manual-wrapper
+"#,
+        )
+        .expect_err("targetless manual wrapper should fail");
+        assert!(error.contains("must name at least one binding item"));
+    }
+
+    #[test]
+    fn classification_target_must_be_cross_language_binding() {
+        let error = parse_binding_spec(
+            r#"
+widget Alpha
+  python function py_alpha
+end
+rust-widget Direct bound Alpha
+"#,
+        )
+        .expect_err("one-language target should fail");
+        assert!(error.contains("not exposed to both Python and JavaScript"));
+    }
+
+    #[test]
+    fn source_inventory_intersects_public_structs_and_widget_impls() {
+        let (structs, impls) = public_widgets_in_source(
+            r#"
+pub struct Plain;
+impl Widget for Plain {}
+
+pub struct Generic<T>(T);
+impl<T> Widget for Generic<T> {}
+
+struct Private;
+impl Widget for Private {}
+
+pub struct NotAWidget;
+"#,
+        );
+
+        let public_names = structs.keys().cloned().collect::<BTreeSet<_>>();
+        let public_widgets = impls
+            .intersection(&public_names)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            public_widgets,
+            BTreeSet::from(["Generic".to_string(), "Plain".to_string()])
+        );
+    }
+
+    #[test]
+    fn classification_gate_reports_missing_and_stale_types() {
+        let public_widgets = vec![
+            PublicWidget {
+                name: "Alpha".to_string(),
+                source: "alpha.rs".to_string(),
+                line: 10,
+            },
+            PublicWidget {
+                name: "Beta".to_string(),
+                source: "beta.rs".to_string(),
+                line: 20,
+            },
+        ];
+        let rust_widgets = vec![
+            RustWidgetClassification {
+                name: "Alpha".to_string(),
+                classification: RustWidgetClass::Bound,
+                bindings: vec!["Alpha".to_string()],
+            },
+            RustWidgetClassification {
+                name: "Ghost".to_string(),
+                classification: RustWidgetClass::RustOnly,
+                bindings: Vec::new(),
+            },
+        ];
+        let items = vec![Item {
+            name: "Alpha".to_string(),
+            python_kind: Some("function".to_string()),
+            js_kind: Some("function".to_string()),
+            ..Item::default()
+        }];
+
+        let issues = validate_widget_classifications(&public_widgets, &rust_widgets, &items);
+        assert!(issues.iter().any(|issue| issue.contains("`Beta`")));
+        assert!(issues.iter().any(|issue| issue.contains("`Ghost`")));
     }
 }

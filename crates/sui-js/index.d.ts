@@ -129,16 +129,16 @@ export type ToggleState = "checked" | "unchecked" | "mixed";
 
 export class Point {
   constructor(x: number, y: number);
-  readonly x: number;
-  readonly y: number;
+  x: number;
+  y: number;
 }
 
 export class Modifiers {
   constructor(shift?: boolean, control?: boolean, alt?: boolean, meta?: boolean);
-  readonly shift: boolean;
-  readonly control: boolean;
-  readonly alt: boolean;
-  readonly meta: boolean;
+  shift: boolean;
+  control: boolean;
+  alt: boolean;
+  meta: boolean;
 }
 
 export class Event {
@@ -150,16 +150,24 @@ export class Event {
     button?: string,
     buttons?: number,
     pointerKind?: "mouse" | "touch" | "pen" | "unknown",
-    isPrimary?: boolean
+    isPrimary?: boolean,
+    modifiers?: Modifiers
   ): Event;
-  static scroll(position: Point, delta: Point, mode?: "pixels" | "lines", pointerId?: string): Event;
+  static scroll(
+    position: Point,
+    delta: Point,
+    mode?: "pixels" | "lines",
+    pointerId?: string,
+    modifiers?: Modifiers
+  ): Event;
   static keyboard(
     key: string,
     state?: KeyState,
     code?: string,
     text?: string,
     repeat?: boolean,
-    isComposing?: boolean
+    isComposing?: boolean,
+    modifiers?: Modifiers
   ): Event;
   static ime(kind: string, text?: string, cursorStart?: number, cursorEnd?: number): Event;
   static window(
@@ -190,20 +198,28 @@ export class Event {
   readonly isComposing?: boolean;
   readonly customKind?: string;
   readonly payload?: string;
+  readonly cursorStart?: number;
+  readonly cursorEnd?: number;
+  readonly value?: boolean;
+  readonly size?: Size;
+  readonly scaleFactor?: number;
+  readonly rawDpi?: number;
+  readonly suggestedSize?: Size;
+  readonly filePath?: string;
 }
 
 export class Size {
   constructor(width: number, height: number);
-  readonly width: number;
-  readonly height: number;
+  width: number;
+  height: number;
 }
 
 export class Rect {
   constructor(x: number, y: number, width: number, height: number);
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   readonly origin: Point;
   readonly size: Size;
 }
@@ -240,20 +256,20 @@ export class Transform {
   static scale(x: number, y: number): Transform;
   static rotation(radians: number): Transform;
   then(next: Transform): Transform;
-  readonly xx: number;
-  readonly yx: number;
-  readonly xy: number;
-  readonly yy: number;
-  readonly dx: number;
-  readonly dy: number;
+  xx: number;
+  yx: number;
+  xy: number;
+  yy: number;
+  dx: number;
+  dy: number;
 }
 
 export class Color {
   constructor(red: number, green: number, blue: number, alpha?: number);
-  readonly red: number;
-  readonly green: number;
-  readonly blue: number;
-  readonly alpha: number;
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
 }
 
 export class Shadow {
@@ -348,11 +364,11 @@ export class ImageHandle {
 export class Shader {
   static colorWheel(): Shader;
   static hueBar(): Shader;
-  static saturationValuePlane(colorSpace: string, hue: number, maxValue?: number): Shader;
-  static saturationBar(colorSpace: string, hue: number, value: number, maxValue?: number): Shader;
-  static valueBar(colorSpace: string, hue: number, saturation: number, maxValue?: number): Shader;
-  static alphaBar(color: Color, colorSpace?: string): Shader;
-  static rgbChannelBar(color: Color, channel: number, colorSpace?: string): Shader;
+  static saturationValuePlane(hue: number, maxValue?: number, colorSpace?: string): Shader;
+  static saturationBar(hue: number, value: number, colorSpace?: string): Shader;
+  static valueBar(hue: number, saturation: number, maxValue?: number, colorSpace?: string): Shader;
+  static alphaBar(color: Color): Shader;
+  static rgbChannelBar(color: Color, channel: number, maxValue?: number): Shader;
 }
 
 export interface WidgetCallbacks {
@@ -442,6 +458,7 @@ export class RendererInteropCapabilities {
 export class ExternalBackendHandle {
   constructor(id: string);
   readonly id: string;
+  readonly isEmpty: boolean;
 }
 
 export class ExternalSync {
@@ -484,25 +501,25 @@ export class UiTaskQueue {
 }
 
 export class RenderSnapshot {
-  readonly commandCount: number;
-  readonly semanticsCount: number;
-  readonly semanticsRoles: string[];
-  readonly semanticsNames: string[];
-  readonly semanticsValues: string[];
-  readonly semanticsDescriptions: string[];
-  readonly semanticsChecked: string[];
-  readonly semanticsBusy: boolean[];
-  readonly semanticsEditableMultiline: boolean[];
-  readonly semanticsDisabled: boolean[];
-  readonly semanticsFocused: boolean[];
-  readonly semanticsHidden: boolean[];
-  readonly semanticsHovered: boolean[];
-  readonly semanticsSelected: boolean[];
-  readonly semanticsExpanded: string[];
-  readonly fillRectCount: number;
-  readonly drawImageCount: number;
-  readonly registeredFontCount: number;
-  readonly registeredImageCount: number;
+  commandCount: number;
+  semanticsCount: number;
+  semanticsRoles: string[];
+  semanticsNames: string[];
+  semanticsValues: string[];
+  semanticsDescriptions: string[];
+  semanticsChecked: string[];
+  semanticsBusy: boolean[];
+  semanticsEditableMultiline: boolean[];
+  semanticsDisabled: boolean[];
+  semanticsFocused: boolean[];
+  semanticsHidden: boolean[];
+  semanticsHovered: boolean[];
+  semanticsSelected: boolean[];
+  semanticsExpanded: string[];
+  fillRectCount: number;
+  drawImageCount: number;
+  registeredFontCount: number;
+  registeredImageCount: number;
 }
 
 export function renderWidget(widget: Widget, event?: Event): RenderSnapshot;
@@ -679,5 +696,57 @@ export function BrowserTabBar(name: string, tabs: string[], selected?: State | n
 export function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number): Widget;
 
 export function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+
+export class BrushPreviewSpec {
+  constructor(color: Color, size?: number, opacity?: number, shape?: "round" | "square");
+  readonly color: Color;
+  readonly size: number;
+  readonly opacity: number;
+  readonly shape: "round" | "square";
+}
+
+export function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+
+export function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+
+export function ActionCard(title: string, description: string, icon?: IconGlyph | string, tone?: SemanticTone | string, enabled?: State | boolean | number, onPress?: () => void): Widget;
+
+export function BrushPreview(name: string, spec: BrushPreviewSpec, kind?: string, size?: Size): Widget;
+
+export function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, spacing?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
+
+export function CoverageDots(name: string, current: number, target: number, tone?: SemanticTone | string, maxDots?: number, showLabel?: boolean, minWidth?: number): Widget;
+
+export function Dock(body: Widget, top?: Widget, topHeight?: number, bottom?: Widget, bottomHeight?: number, fallbackWidth?: number, fallbackBodyHeight?: number): Widget;
+
+export function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane?: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
+
+export function FramedField(child: Widget, name?: string, description?: string, padding?: number, minHeight?: number, fillWidth?: boolean, focused?: State | boolean | number, invalid?: State | boolean | number): Widget;
+
+export function MeasuredBottomDock(body: Widget, bottom: Widget, fallbackSize?: Size): Widget;
+
+export function PlacementBadge(label: State | BindingValue, icon?: IconGlyph | string, tone?: SemanticTone | string, current?: number, target?: number, minWidth?: number): Widget;
+
+export function PropertyRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
+
+export function SectionLabel(label: string, semanticName?: string, color?: Color): Widget;
+
+export function SideSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+
+export function SplitView(first: Widget, second: Widget, axis?: Axis, name?: string, ratio?: State | number | boolean, minFirst?: number, minSecond?: number, dividerThickness?: number, onChange?: (ratio: number) => void): Widget;
+
+export function SwitchView(children: Widget[], selected?: State | number | boolean): Widget;
+
+export function TrailingSlotRow(body: Widget, trailing: Widget, trailingWidth?: number, trailingHeight?: number, gap?: number): Widget;
+
+export class FloatingStackWindow {
+  constructor(bounds: Rect, child: Widget);
+}
+
+export function FloatingStack(windows: FloatingStackWindow[], name?: string): Widget;
+
+export function VirtualScrollView(children: Widget[], name?: string, padding?: number, spacing?: number): Widget;
+
+export function ReorderableList(name: string, children: Widget[], spacing?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: number, fromIndex: number, toIndex: number) => void): Widget;
 
 // END GENERATED SUI WIDGET BINDINGS

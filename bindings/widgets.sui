@@ -1,5 +1,101 @@
 # Common SUI binding API spec.
 
+# Every public Rust type that implements Widget must be classified here. `bound`
+# maps directly to a generated binding item, `manual-wrapper` records a binding
+# backed by a purpose-built adapter, `equivalent` names the portable binding
+# replacement, and `rust-only` is reserved for Rust-native contracts.
+rust-widget ActionCard manual-wrapper ActionCard
+rust-widget Align bound Align
+rust-widget Background bound Background
+rust-widget Breadcrumb bound Breadcrumb
+rust-widget BrowserTabBar bound BrowserTabBar
+rust-widget BrushPreview manual-wrapper BrushPreview
+rust-widget Button bound Button
+rust-widget Canvas rust-only
+rust-widget CanvasRuler rust-only
+rust-widget Checkbox bound Checkbox
+rust-widget ColorPalette bound ColorPalette
+rust-widget ColorPicker bound ColorPicker
+rust-widget ColorSwatch bound ColorSwatch
+rust-widget CommandGroup bound CommandGroup
+rust-widget ContextMenu bound ContextMenu
+rust-widget CoverageDots bound CoverageDots
+rust-widget DateTimeInput manual-wrapper DateTimeInput
+rust-widget DetailRow bound DetailRow
+rust-widget Dialog bound Dialog
+rust-widget Dock bound Dock
+rust-widget DockPanel bound DockPanel
+rust-widget DragDropHost rust-only
+rust-widget Draggable rust-only
+rust-widget DropTarget rust-only
+rust-widget EmptyState bound EmptyState
+rust-widget FieldGroup bound FieldGroup
+rust-widget FixedPaneSplit bound FixedPaneSplit
+rust-widget Flex equivalent Column Row
+rust-widget FloatingStack bound FloatingStack
+rust-widget FloatingWorkspace rust-only
+rust-widget FormRow bound FormRow
+rust-widget FormSection bound FormSection
+rust-widget FramedField bound FramedField
+rust-widget Icon bound Icon
+rust-widget IconButton bound IconButton
+rust-widget Image bound Image
+rust-widget Label bound Label
+rust-widget LayerList bound LayerList
+rust-widget Link bound Link
+rust-widget ListView bound ListView
+rust-widget MeasuredBottomDock bound MeasuredBottomDock
+rust-widget Menu bound Menu
+rust-widget NumberInput bound NumberInput
+rust-widget Padding bound Padding
+rust-widget PanelSection bound PanelSection
+rust-widget PasswordInput manual-wrapper PasswordInput
+rust-widget PixelCanvas rust-only
+rust-widget PlacementBadge bound PlacementBadge
+rust-widget Popover bound Popover
+rust-widget PresetStrip bound PresetStrip
+rust-widget ProgressBar bound ProgressBar
+rust-widget PropertyRow bound PropertyRow
+rust-widget RadioButton bound RadioButton
+rust-widget RadioGroup bound RadioGroup
+rust-widget RebuildOnChange rust-only
+rust-widget RebuildOnConstraints rust-only
+rust-widget ReorderableList manual-wrapper ReorderableList
+rust-widget RichText bound RichText
+rust-widget ScrollBar rust-only
+rust-widget ScrollView bound ScrollView
+rust-widget SectionLabel bound SectionLabel
+rust-widget SegmentedControl bound SegmentedControl
+rust-widget Select bound Select
+rust-widget SemanticRegion bound SemanticRegion
+rust-widget Separator bound Separator
+rust-widget SideSheet manual-wrapper SideSheet
+rust-widget SignalMeter bound SignalMeter
+rust-widget SizedBox bound SizedBox
+rust-widget Slider bound Slider
+rust-widget Spinner equivalent BusyIndicator
+rust-widget SplitView manual-wrapper SplitView
+rust-widget Stack bound Stack
+rust-widget StatusBadge bound StatusBadge
+rust-widget StatusBar bound StatusBar
+rust-widget StatusBarHost bound StatusBarHost
+rust-widget Surface bound Surface
+rust-widget Switch bound Switch
+rust-widget SwitchView bound SwitchView
+rust-widget TabBar bound TabBar
+rust-widget Table bound Table
+rust-widget Tabs bound Tabs
+rust-widget TextArea bound TextArea
+rust-widget TextInput bound TextInput
+rust-widget TextSurface equivalent TextArea
+rust-widget ToolPalette bound ToolPalette
+rust-widget Toolbar bound Toolbar
+rust-widget Tooltip bound Tooltip
+rust-widget TrailingSlotRow bound TrailingSlotRow
+rust-widget TreeView bound TreeView
+rust-widget VirtualScrollView bound VirtualScrollView
+rust-widget VirtualTable equivalent Table
+
 descriptor TextSpan
   core_descriptor BindingTextSpan
   python class
@@ -693,4 +789,228 @@ widget ColorPicker
   js function js_color_picker
   ts function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
   docs ColorPicker
+end
+
+descriptor BrushPreviewSpec
+  core_descriptor BindingBrushPreviewSpec
+  python class
+  js class
+  ts class
+    constructor(color: Color, size?: number, opacity?: number, shape?: "round" | "square");
+    readonly color: Color;
+    readonly size: number;
+    readonly opacity: number;
+    readonly shape: "round" | "square";
+  endts
+  docs BrushPreviewSpec
+end
+
+widget PasswordInput
+  core_kind PasswordInput
+  core_constructor password_input
+  python function py_password_input
+  js function js_password_input
+  ts function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  docs PasswordInput
+  compat
+end
+
+widget DateTimeInput
+  core_kind DateTimeInput
+  core_constructor datetime_input
+  python function py_datetime_input
+  js function js_datetime_input
+  ts function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  docs DateTimeInput
+  compat
+end
+
+widget ActionCard
+  core_kind ActionCard
+  core_constructor action_card
+  python function py_action_card
+  js function js_action_card
+  ts function ActionCard(title: string, description: string, icon?: IconGlyph | string, tone?: SemanticTone | string, enabled?: State | boolean | number, onPress?: () => void): Widget;
+  docs ActionCard
+  compat
+end
+
+widget BrushPreview
+  core_kind BrushPreview
+  core_constructor brush_preview
+  python function py_brush_preview
+  js function js_brush_preview
+  ts function BrushPreview(name: string, spec: BrushPreviewSpec, kind?: string, size?: Size): Widget;
+  docs BrushPreview
+  compat
+end
+
+widget CommandGroup
+  core_kind CommandGroup
+  core_constructor command_group
+  python function py_command_group
+  js function js_command_group
+  ts function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, spacing?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
+  docs CommandGroup
+  compat
+end
+
+widget CoverageDots
+  core_kind CoverageDots
+  core_constructor coverage_dots
+  python function py_coverage_dots
+  js function js_coverage_dots
+  ts function CoverageDots(name: string, current: number, target: number, tone?: SemanticTone | string, maxDots?: number, showLabel?: boolean, minWidth?: number): Widget;
+  docs CoverageDots
+  compat
+end
+
+widget Dock
+  core_kind Dock
+  core_constructor dock
+  python function py_dock
+  js function js_dock
+  ts function Dock(body: Widget, top?: Widget, topHeight?: number, bottom?: Widget, bottomHeight?: number, fallbackWidth?: number, fallbackBodyHeight?: number): Widget;
+  docs Dock
+  compat
+end
+
+widget FixedPaneSplit
+  core_kind FixedPaneSplit
+  core_constructor fixed_pane_split
+  python function py_fixed_pane_split
+  js function js_fixed_pane_split
+  ts function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane?: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
+  docs FixedPaneSplit
+  compat
+end
+
+widget FramedField
+  core_kind FramedField
+  core_constructor framed_field
+  python function py_framed_field
+  js function js_framed_field
+  ts function FramedField(child: Widget, name?: string, description?: string, padding?: number, minHeight?: number, fillWidth?: boolean, focused?: State | boolean | number, invalid?: State | boolean | number): Widget;
+  docs FramedField
+  compat
+end
+
+widget MeasuredBottomDock
+  core_kind MeasuredBottomDock
+  core_constructor measured_bottom_dock
+  python function py_measured_bottom_dock
+  js function js_measured_bottom_dock
+  ts function MeasuredBottomDock(body: Widget, bottom: Widget, fallbackSize?: Size): Widget;
+  docs MeasuredBottomDock
+  compat
+end
+
+widget PlacementBadge
+  core_kind PlacementBadge
+  core_constructor placement_badge
+  python function py_placement_badge
+  js function js_placement_badge
+  ts function PlacementBadge(label: State | BindingValue, icon?: IconGlyph | string, tone?: SemanticTone | string, current?: number, target?: number, minWidth?: number): Widget;
+  docs PlacementBadge
+  compat
+end
+
+widget PropertyRow
+  core_kind PropertyRow
+  core_constructor property_row
+  python function py_property_row
+  js function js_property_row
+  ts function PropertyRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
+  docs PropertyRow
+  compat
+end
+
+widget SectionLabel
+  core_kind SectionLabel
+  core_constructor section_label
+  python function py_section_label
+  js function js_section_label
+  ts function SectionLabel(label: string, semanticName?: string, color?: Color): Widget;
+  docs SectionLabel
+  compat
+end
+
+widget SideSheet
+  core_kind SideSheet
+  core_constructor side_sheet
+  python function py_side_sheet
+  js function js_side_sheet
+  ts function SideSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+  docs SideSheet
+  compat
+end
+
+widget SplitView
+  core_kind SplitView
+  core_constructor split_view
+  python function py_split_view
+  js function js_split_view
+  ts function SplitView(first: Widget, second: Widget, axis?: Axis, name?: string, ratio?: State | number | boolean, minFirst?: number, minSecond?: number, dividerThickness?: number, onChange?: (ratio: number) => void): Widget;
+  docs SplitView
+  compat
+end
+
+widget SwitchView
+  core_kind SwitchView
+  core_constructor switch_view
+  python function py_switch_view
+  js function js_switch_view
+  ts function SwitchView(children: Widget[], selected?: State | number | boolean): Widget;
+  docs SwitchView
+  compat
+end
+
+widget TrailingSlotRow
+  core_kind TrailingSlotRow
+  core_constructor trailing_slot_row
+  python function py_trailing_slot_row
+  js function js_trailing_slot_row
+  ts function TrailingSlotRow(body: Widget, trailing: Widget, trailingWidth?: number, trailingHeight?: number, gap?: number): Widget;
+  docs TrailingSlotRow
+  compat
+end
+
+descriptor FloatingStackWindow
+  core_descriptor BindingFloatingStackWindow
+  python class
+  js class
+  ts class
+    constructor(bounds: Rect, child: Widget);
+  endts
+  docs FloatingStackWindow
+end
+
+widget FloatingStack
+  core_kind FloatingStack
+  core_constructor floating_stack
+  python function py_floating_stack
+  js function js_floating_stack
+  ts function FloatingStack(windows: FloatingStackWindow[], name?: string): Widget;
+  docs FloatingStack
+  compat
+end
+
+widget VirtualScrollView
+  core_kind VirtualScrollView
+  core_constructor virtual_scroll_view
+  python function py_virtual_scroll_view
+  js function js_virtual_scroll_view
+  ts function VirtualScrollView(children: Widget[], name?: string, padding?: number, spacing?: number): Widget;
+  docs VirtualScrollView
+  compat
+end
+
+widget ReorderableList
+  core_kind ReorderableList
+  core_constructor reorderable_list
+  python function py_reorderable_list
+  js function js_reorderable_list
+  ts function ReorderableList(name: string, children: Widget[], spacing?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: number, fromIndex: number, toIndex: number) => void): Widget;
+  docs ReorderableList
+  compat
 end

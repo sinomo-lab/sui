@@ -16,25 +16,28 @@ use std::{
 
 use sui::containers::Padding as PaddingWidget;
 use sui::{
-    Align, Alignment, ArrangeCtx, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
-    BrowserTabBar, Brush, BusyIndicator, Button, Checkbox, Color, ColorPalette, ColorPaletteSwatch,
-    ColorPicker, ColorSpace, ColorSwatch, Constraints, ContextMenu, CustomEvent, DetailRow, Dialog,
-    DockPanel, DpiInfo, EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase, FieldGroup,
-    Flex, FontHandle, FormRow, FormSection, Icon, IconButton, IconGlyph, Image, ImageFit,
-    ImageHandle, ImageSource, ImeEvent, Insets, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, KeyState, KeyboardEvent, Label, LayerList, LayerListItem, Link, ListItem,
-    ListView, MeasureCtx, Menu, MenuItem, Modifiers, NumberInput, PaintCtx, PanelSection, Path,
+    ActionCard, Align, Alignment, ArrangeCtx, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
+    BrowserTabBar, Brush, BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator, Button,
+    Checkbox, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSpace, ColorSwatch,
+    CommandGroup, Constraints, ContextMenu, CoverageDots, CustomEvent, DateTimeInput, DetailRow,
+    Dialog, Dock, DockPanel, DpiInfo, EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase,
+    FieldGroup, FixedPaneSplit, Flex, FloatingStack, FontHandle, FormRow, FormSection, FramedField,
+    Icon, IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
+    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
+    LayerList, LayerListItem, Link, ListItem, ListView, MeasureCtx, MeasuredBottomDock, Menu,
+    MenuItem, Modifiers, NumberInput, PaintCtx, PanelSection, PasswordInput, Path, PlacementBadge,
     Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Popover,
-    PresetStrip, ProgressBar, RadioButton, RadioGroup, Rect, RegisteredFont, RegisteredImage,
-    RichText, Runtime, SceneCommand, ScrollDelta, ScrollView, SegmentedControl,
-    SegmentedControlItem, Select, SemanticRegion, SemanticTone, SemanticsCtx, SemanticsNode,
-    SemanticsRole, SemanticsValue, Separator, ShadowParams, SignalMeter, Size, SizedBox, Slider,
-    Stack, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle, Surface,
-    SurfaceBorder, SurfaceElevation, SurfaceRole, Switch, TabBar, Table, TableColumn,
+    PresetStrip, ProgressBar, PropertyRow, RadioButton, RadioGroup, Rect, RegisteredFont,
+    RegisteredImage, ReorderableList, RichText, Runtime, SceneCommand, ScrollDelta, ScrollView,
+    SectionLabel, SegmentedControl, SegmentedControlItem, Select, SemanticRegion, SemanticTone,
+    SemanticsCtx, SemanticsNode, SemanticsRole, SemanticsValue, Separator, ShadowParams, SideSheet,
+    SideSheetPlacement, SignalMeter, Size, SizedBox, Slider, SplitView, Stack, StatusBadge,
+    StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle, Surface, SurfaceBorder,
+    SurfaceElevation, SurfaceRole, Switch, SwitchView, TabBar, Table, TableColumn,
     TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextSpan, TextStyle, TimerToken,
-    ToggleState, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, Transform,
-    TreeItem, TreeView, Vector, Widget, WidgetId, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
-    WidgetShader, WindowBuilder, WindowEvent, WindowId,
+    ToggleState, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, TrailingSlotRow,
+    Transform, TreeItem, TreeView, Vector, VirtualScrollView, Widget, WidgetId, WidgetPod,
+    WidgetPodMutVisitor, WidgetPodVisitor, WidgetShader, WindowBuilder, WindowEvent, WindowId,
 };
 
 #[cfg(feature = "desktop")]
@@ -470,6 +473,32 @@ impl BindingNumberAction {
 impl fmt::Debug for BindingNumberAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BindingNumberAction")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone)]
+pub struct BindingReorderAction {
+    callback: Arc<dyn Fn(usize, usize, usize) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingReorderAction {
+    pub fn new(
+        callback: impl Fn(usize, usize, usize) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, item: usize, from: usize, to: usize) -> ForeignCallbackResult<()> {
+        (self.callback)(item, from, to)
+    }
+}
+
+impl fmt::Debug for BindingReorderAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingReorderAction")
             .finish_non_exhaustive()
     }
 }
@@ -1274,6 +1303,42 @@ pub enum BindingScrollAxes {
     Both,
 }
 
+/// Portable brush metadata used by [`BindingWidget::brush_preview`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingBrushPreviewSpec {
+    color: Color,
+    size: f32,
+    opacity: f32,
+    shape: BrushPreviewShape,
+}
+
+impl BindingBrushPreviewSpec {
+    pub fn new(color: Color, size: f32, opacity: f32, shape: BrushPreviewShape) -> Self {
+        Self {
+            color,
+            size,
+            opacity,
+            shape,
+        }
+    }
+
+    fn into_sui(self) -> BrushPreviewSpec {
+        BrushPreviewSpec::new(self.color, self.size, self.opacity, self.shape)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingFloatingStackWindow {
+    bounds: Rect,
+    child: BindingWidget,
+}
+
+impl BindingFloatingStackWindow {
+    pub fn new(bounds: Rect, child: BindingWidget) -> Self {
+        Self { bounds, child }
+    }
+}
+
 #[derive(Clone)]
 pub struct BindingWidget {
     inner: Arc<BindingWidgetKind>,
@@ -1375,6 +1440,12 @@ impl fmt::Debug for BindingWidget {
             BindingWidgetKind::TextInput { .. } => {
                 f.debug_tuple("BindingWidget::TextInput").finish()
             }
+            BindingWidgetKind::PasswordInput { .. } => {
+                f.debug_tuple("BindingWidget::PasswordInput").finish()
+            }
+            BindingWidgetKind::DateTimeInput { .. } => {
+                f.debug_tuple("BindingWidget::DateTimeInput").finish()
+            }
             BindingWidgetKind::TextArea { .. } => f.debug_tuple("BindingWidget::TextArea").finish(),
             BindingWidgetKind::RichText { .. } => f.debug_tuple("BindingWidget::RichText").finish(),
             BindingWidgetKind::Image { .. } => f.debug_tuple("BindingWidget::Image").finish(),
@@ -1395,6 +1466,119 @@ impl fmt::Debug for BindingWidget {
                 .debug_struct("BindingWidget::EmptyState")
                 .field("title", title)
                 .field("action", action)
+                .finish(),
+            BindingWidgetKind::ActionCard { title, .. } => f
+                .debug_struct("BindingWidget::ActionCard")
+                .field("title", title)
+                .finish(),
+            BindingWidgetKind::BrushPreview { name, spec, .. } => f
+                .debug_struct("BindingWidget::BrushPreview")
+                .field("name", name)
+                .field("spec", spec)
+                .finish(),
+            BindingWidgetKind::CommandGroup {
+                name,
+                axis,
+                children,
+                ..
+            } => f
+                .debug_struct("BindingWidget::CommandGroup")
+                .field("name", name)
+                .field("axis", axis)
+                .field("children", children)
+                .finish(),
+            BindingWidgetKind::CoverageDots { name, .. } => f
+                .debug_struct("BindingWidget::CoverageDots")
+                .field("name", name)
+                .finish(),
+            BindingWidgetKind::Dock {
+                body, top, bottom, ..
+            } => f
+                .debug_struct("BindingWidget::Dock")
+                .field("body", body)
+                .field("top", top)
+                .field("bottom", bottom)
+                .finish(),
+            BindingWidgetKind::FixedPaneSplit {
+                axis,
+                first,
+                divider,
+                second,
+                ..
+            } => f
+                .debug_struct("BindingWidget::FixedPaneSplit")
+                .field("axis", axis)
+                .field("first", first)
+                .field("divider", divider)
+                .field("second", second)
+                .finish(),
+            BindingWidgetKind::FramedField { child, name, .. } => f
+                .debug_struct("BindingWidget::FramedField")
+                .field("name", name)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::MeasuredBottomDock { body, bottom, .. } => f
+                .debug_struct("BindingWidget::MeasuredBottomDock")
+                .field("body", body)
+                .field("bottom", bottom)
+                .finish(),
+            BindingWidgetKind::PlacementBadge { label, .. } => f
+                .debug_struct("BindingWidget::PlacementBadge")
+                .field("label", label)
+                .finish(),
+            BindingWidgetKind::PropertyRow { label, control, .. } => f
+                .debug_struct("BindingWidget::PropertyRow")
+                .field("label", label)
+                .field("control", control)
+                .finish(),
+            BindingWidgetKind::SectionLabel { label, .. } => f
+                .debug_struct("BindingWidget::SectionLabel")
+                .field("label", label)
+                .finish(),
+            BindingWidgetKind::SideSheet { title, body, .. } => f
+                .debug_struct("BindingWidget::SideSheet")
+                .field("title", title)
+                .field("body", body)
+                .finish(),
+            BindingWidgetKind::SplitView {
+                name,
+                axis,
+                first,
+                second,
+                ..
+            } => f
+                .debug_struct("BindingWidget::SplitView")
+                .field("name", name)
+                .field("axis", axis)
+                .field("first", first)
+                .field("second", second)
+                .finish(),
+            BindingWidgetKind::SwitchView {
+                children, selected, ..
+            } => f
+                .debug_struct("BindingWidget::SwitchView")
+                .field("children", children)
+                .field("selected", selected)
+                .finish(),
+            BindingWidgetKind::TrailingSlotRow { body, trailing, .. } => f
+                .debug_struct("BindingWidget::TrailingSlotRow")
+                .field("body", body)
+                .field("trailing", trailing)
+                .finish(),
+            BindingWidgetKind::VirtualScrollView { children, name, .. } => f
+                .debug_struct("BindingWidget::VirtualScrollView")
+                .field("name", name)
+                .field("children", children)
+                .finish(),
+            BindingWidgetKind::FloatingStack { windows, name } => f
+                .debug_struct("BindingWidget::FloatingStack")
+                .field("name", name)
+                .field("windows", windows)
+                .finish(),
+            BindingWidgetKind::ReorderableList { name, children, .. } => f
+                .debug_struct("BindingWidget::ReorderableList")
+                .field("name", name)
+                .field("children", children)
                 .finish(),
             BindingWidgetKind::Surface { role, child, .. } => f
                 .debug_struct("BindingWidget::Surface")
@@ -1713,6 +1897,18 @@ enum BindingWidgetKind {
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
     },
+    PasswordInput {
+        name: BindingText,
+        value: BindingText,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+    },
+    DateTimeInput {
+        name: BindingText,
+        value: BindingText,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+    },
     TextArea {
         name: BindingText,
         value: BindingText,
@@ -1770,6 +1966,145 @@ enum BindingWidgetKind {
         action: Option<BindingWidget>,
         background: Option<Color>,
         transparent: bool,
+    },
+    ActionCard {
+        title: String,
+        description: String,
+        icon: Option<IconGlyph>,
+        tone: SemanticTone,
+        enabled: BindingBool,
+        action: Option<BindingAction>,
+    },
+    BrushPreview {
+        name: String,
+        kind: String,
+        spec: BindingBrushPreviewSpec,
+        size: Option<Size>,
+    },
+    CommandGroup {
+        name: String,
+        children: Vec<BindingWidget>,
+        axis: Axis,
+        padding: Option<Insets>,
+        spacing: Option<f32>,
+        corner_radius: Option<f32>,
+        background: Option<Color>,
+        border: Option<Color>,
+    },
+    CoverageDots {
+        name: String,
+        current: usize,
+        target: usize,
+        tone: SemanticTone,
+        max_dots: usize,
+        show_label: bool,
+        min_width: Option<f32>,
+    },
+    Dock {
+        body: BindingWidget,
+        top: Option<(f32, BindingWidget)>,
+        bottom: Option<(f32, BindingWidget)>,
+        fallback_width: f32,
+        fallback_body_height: f32,
+    },
+    FixedPaneSplit {
+        axis: Axis,
+        first: BindingWidget,
+        divider: BindingWidget,
+        second: BindingWidget,
+        fixed_second: bool,
+        fixed_extent: f32,
+        divider_extent: f32,
+        fallback_flexible_extent: f32,
+    },
+    FramedField {
+        child: BindingWidget,
+        name: Option<String>,
+        description: Option<String>,
+        padding: Option<Insets>,
+        min_height: Option<f32>,
+        fill_width: bool,
+        focused: BindingBool,
+        invalid: BindingBool,
+    },
+    MeasuredBottomDock {
+        body: BindingWidget,
+        bottom: BindingWidget,
+        fallback_size: Size,
+    },
+    PlacementBadge {
+        label: BindingText,
+        icon: Option<IconGlyph>,
+        tone: SemanticTone,
+        current: Option<usize>,
+        target: Option<usize>,
+        min_width: Option<f32>,
+    },
+    PropertyRow {
+        label: String,
+        control: BindingWidget,
+        stacked: bool,
+        label_width: Option<f32>,
+        control_width: Option<f32>,
+        gap: Option<f32>,
+    },
+    SectionLabel {
+        label: String,
+        semantic_name: Option<String>,
+        color: Option<Color>,
+    },
+    SideSheet {
+        title: String,
+        body: BindingWidget,
+        description: Option<String>,
+        shown: BindingBool,
+        modal: bool,
+        dismiss_on_scrim: bool,
+        placement: SideSheetPlacement,
+        width: Option<f32>,
+        header_action: Option<BindingWidget>,
+        actions: Vec<BindingWidget>,
+        on_dismiss: Option<BindingAction>,
+    },
+    SplitView {
+        name: Option<String>,
+        axis: Axis,
+        first: BindingWidget,
+        second: BindingWidget,
+        ratio: BindingNumber,
+        min_first: f32,
+        min_second: f32,
+        divider_thickness: Option<f32>,
+        on_change: Option<BindingNumberAction>,
+    },
+    SwitchView {
+        children: Vec<BindingWidget>,
+        selected: BindingNumber,
+    },
+    TrailingSlotRow {
+        body: BindingWidget,
+        trailing: BindingWidget,
+        trailing_width: f32,
+        trailing_height: f32,
+        gap: f32,
+    },
+    VirtualScrollView {
+        children: Vec<BindingWidget>,
+        name: Option<String>,
+        padding: Option<Insets>,
+        spacing: Option<f32>,
+    },
+    FloatingStack {
+        windows: Vec<BindingFloatingStackWindow>,
+        name: Option<String>,
+    },
+    ReorderableList {
+        name: String,
+        children: Vec<BindingWidget>,
+        spacing: f32,
+        drag_threshold: f32,
+        preview_label: Option<String>,
+        on_reorder: Option<BindingReorderAction>,
     },
     Surface {
         child: BindingWidget,
@@ -2358,6 +2693,34 @@ impl BindingWidget {
         })
     }
 
+    pub fn password_input(
+        name: impl Into<BindingText>,
+        value: impl Into<BindingText>,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::PasswordInput {
+            name: name.into(),
+            value: value.into(),
+            placeholder,
+            action,
+        })
+    }
+
+    pub fn datetime_input(
+        name: impl Into<BindingText>,
+        value: impl Into<BindingText>,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::DateTimeInput {
+            name: name.into(),
+            value: value.into(),
+            placeholder,
+            action,
+        })
+    }
+
     pub fn text_area(
         name: impl Into<BindingText>,
         value: impl Into<BindingText>,
@@ -2487,6 +2850,320 @@ impl BindingWidget {
             action,
             background,
             transparent,
+        })
+    }
+
+    pub fn action_card(
+        title: impl Into<String>,
+        description: impl Into<String>,
+        icon: Option<IconGlyph>,
+        tone: SemanticTone,
+        enabled: impl Into<BindingBool>,
+        action: Option<BindingAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ActionCard {
+            title: title.into(),
+            description: description.into(),
+            icon,
+            tone,
+            enabled: enabled.into(),
+            action,
+        })
+    }
+
+    pub fn brush_preview(
+        name: impl Into<String>,
+        kind: impl Into<String>,
+        spec: BindingBrushPreviewSpec,
+        size: Option<Size>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::BrushPreview {
+            name: name.into(),
+            kind: kind.into(),
+            spec,
+            size,
+        })
+    }
+
+    pub fn command_group(
+        name: impl Into<String>,
+        children: impl IntoIterator<Item = BindingWidget>,
+        axis: Axis,
+        padding: Option<Insets>,
+        spacing: Option<f32>,
+        corner_radius: Option<f32>,
+        background: Option<Color>,
+        border: Option<Color>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::CommandGroup {
+            name: name.into(),
+            children: children.into_iter().collect(),
+            axis,
+            padding,
+            spacing,
+            corner_radius,
+            background,
+            border,
+        })
+    }
+
+    pub fn coverage_dots(
+        name: impl Into<String>,
+        current: usize,
+        target: usize,
+        tone: SemanticTone,
+        max_dots: usize,
+        show_label: bool,
+        min_width: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::CoverageDots {
+            name: name.into(),
+            current,
+            target,
+            tone,
+            max_dots,
+            show_label,
+            min_width,
+        })
+    }
+
+    pub fn dock(
+        body: BindingWidget,
+        top: Option<(f32, BindingWidget)>,
+        bottom: Option<(f32, BindingWidget)>,
+        fallback_width: f32,
+        fallback_body_height: f32,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Dock {
+            body,
+            top,
+            bottom,
+            fallback_width,
+            fallback_body_height,
+        })
+    }
+
+    pub fn fixed_pane_split(
+        axis: Axis,
+        first: BindingWidget,
+        divider: BindingWidget,
+        second: BindingWidget,
+        fixed_second: bool,
+        fixed_extent: f32,
+        divider_extent: f32,
+        fallback_flexible_extent: f32,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::FixedPaneSplit {
+            axis,
+            first,
+            divider,
+            second,
+            fixed_second,
+            fixed_extent,
+            divider_extent,
+            fallback_flexible_extent,
+        })
+    }
+
+    pub fn framed_field(
+        child: BindingWidget,
+        name: Option<String>,
+        description: Option<String>,
+        padding: Option<Insets>,
+        min_height: Option<f32>,
+        fill_width: bool,
+        focused: impl Into<BindingBool>,
+        invalid: impl Into<BindingBool>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::FramedField {
+            child,
+            name,
+            description,
+            padding,
+            min_height,
+            fill_width,
+            focused: focused.into(),
+            invalid: invalid.into(),
+        })
+    }
+
+    pub fn measured_bottom_dock(
+        body: BindingWidget,
+        bottom: BindingWidget,
+        fallback_size: Size,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::MeasuredBottomDock {
+            body,
+            bottom,
+            fallback_size,
+        })
+    }
+
+    pub fn placement_badge(
+        label: impl Into<BindingText>,
+        icon: Option<IconGlyph>,
+        tone: SemanticTone,
+        current: Option<usize>,
+        target: Option<usize>,
+        min_width: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::PlacementBadge {
+            label: label.into(),
+            icon,
+            tone,
+            current,
+            target,
+            min_width,
+        })
+    }
+
+    pub fn property_row(
+        label: impl Into<String>,
+        control: BindingWidget,
+        stacked: bool,
+        label_width: Option<f32>,
+        control_width: Option<f32>,
+        gap: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::PropertyRow {
+            label: label.into(),
+            control,
+            stacked,
+            label_width,
+            control_width,
+            gap,
+        })
+    }
+
+    pub fn section_label(
+        label: impl Into<String>,
+        semantic_name: Option<String>,
+        color: Option<Color>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SectionLabel {
+            label: label.into(),
+            semantic_name,
+            color,
+        })
+    }
+
+    pub fn side_sheet(
+        title: impl Into<String>,
+        body: BindingWidget,
+        description: Option<String>,
+        shown: impl Into<BindingBool>,
+        modal: bool,
+        dismiss_on_scrim: bool,
+        placement: SideSheetPlacement,
+        width: Option<f32>,
+        header_action: Option<BindingWidget>,
+        actions: impl IntoIterator<Item = BindingWidget>,
+        on_dismiss: Option<BindingAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SideSheet {
+            title: title.into(),
+            body,
+            description,
+            shown: shown.into(),
+            modal,
+            dismiss_on_scrim,
+            placement,
+            width,
+            header_action,
+            actions: actions.into_iter().collect(),
+            on_dismiss,
+        })
+    }
+
+    pub fn split_view(
+        name: Option<String>,
+        axis: Axis,
+        first: BindingWidget,
+        second: BindingWidget,
+        ratio: impl Into<BindingNumber>,
+        min_first: f32,
+        min_second: f32,
+        divider_thickness: Option<f32>,
+        on_change: Option<BindingNumberAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SplitView {
+            name,
+            axis,
+            first,
+            second,
+            ratio: ratio.into(),
+            min_first,
+            min_second,
+            divider_thickness,
+            on_change,
+        })
+    }
+
+    pub fn switch_view(
+        children: impl IntoIterator<Item = BindingWidget>,
+        selected: impl Into<BindingNumber>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SwitchView {
+            children: children.into_iter().collect(),
+            selected: selected.into(),
+        })
+    }
+
+    pub fn trailing_slot_row(
+        body: BindingWidget,
+        trailing: BindingWidget,
+        trailing_width: f32,
+        trailing_height: f32,
+        gap: f32,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::TrailingSlotRow {
+            body,
+            trailing,
+            trailing_width,
+            trailing_height,
+            gap,
+        })
+    }
+
+    pub fn virtual_scroll_view(
+        children: impl IntoIterator<Item = BindingWidget>,
+        name: Option<String>,
+        padding: Option<Insets>,
+        spacing: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::VirtualScrollView {
+            children: children.into_iter().collect(),
+            name,
+            padding,
+            spacing,
+        })
+    }
+
+    pub fn floating_stack(
+        windows: impl IntoIterator<Item = BindingFloatingStackWindow>,
+        name: Option<String>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::FloatingStack {
+            windows: windows.into_iter().collect(),
+            name,
+        })
+    }
+
+    pub fn reorderable_list(
+        name: impl Into<String>,
+        children: impl IntoIterator<Item = BindingWidget>,
+        spacing: f32,
+        drag_threshold: f32,
+        preview_label: Option<String>,
+        on_reorder: Option<BindingReorderAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ReorderableList {
+            name: name.into(),
+            children: children.into_iter().collect(),
+            spacing,
+            drag_threshold,
+            preview_label,
+            on_reorder,
         })
     }
 
@@ -3018,7 +3695,9 @@ impl BindingWidget {
                     label.bind_ui_handle(handle);
                 }
             }
-            BindingWidgetKind::TextInput { name, value, .. } => {
+            BindingWidgetKind::TextInput { name, value, .. }
+            | BindingWidgetKind::PasswordInput { name, value, .. }
+            | BindingWidgetKind::DateTimeInput { name, value, .. } => {
                 name.bind_ui_handle(handle);
                 value.bind_ui_handle(handle);
             }
@@ -3039,6 +3718,99 @@ impl BindingWidget {
             BindingWidgetKind::EmptyState { action, .. } => {
                 if let Some(action) = action {
                     action.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::ActionCard { enabled, .. } => enabled.bind_ui_handle(handle),
+            BindingWidgetKind::BrushPreview { .. }
+            | BindingWidgetKind::CoverageDots { .. }
+            | BindingWidgetKind::SectionLabel { .. } => {}
+            BindingWidgetKind::CommandGroup { children, .. } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::SwitchView { children, selected } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+                selected.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::Dock {
+                body, top, bottom, ..
+            } => {
+                body.bind_ui_handle(handle);
+                if let Some((_, top)) = top {
+                    top.bind_ui_handle(handle);
+                }
+                if let Some((_, bottom)) = bottom {
+                    bottom.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::FixedPaneSplit {
+                first,
+                divider,
+                second,
+                ..
+            } => {
+                first.bind_ui_handle(handle);
+                divider.bind_ui_handle(handle);
+                second.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::FramedField {
+                child,
+                focused,
+                invalid,
+                ..
+            } => {
+                child.bind_ui_handle(handle);
+                focused.bind_ui_handle(handle);
+                invalid.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::MeasuredBottomDock { body, bottom, .. } => {
+                body.bind_ui_handle(handle);
+                bottom.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::PlacementBadge { label, .. } => label.bind_ui_handle(handle),
+            BindingWidgetKind::PropertyRow { control, .. } => control.bind_ui_handle(handle),
+            BindingWidgetKind::SideSheet {
+                body,
+                shown,
+                header_action,
+                actions,
+                ..
+            } => {
+                body.bind_ui_handle(handle);
+                shown.bind_ui_handle(handle);
+                if let Some(header_action) = header_action {
+                    header_action.bind_ui_handle(handle);
+                }
+                for action in actions {
+                    action.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::SplitView {
+                first,
+                second,
+                ratio,
+                ..
+            } => {
+                first.bind_ui_handle(handle);
+                second.bind_ui_handle(handle);
+                ratio.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::TrailingSlotRow { body, trailing, .. } => {
+                body.bind_ui_handle(handle);
+                trailing.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::VirtualScrollView { children, .. }
+            | BindingWidgetKind::ReorderableList { children, .. } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::FloatingStack { windows, .. } => {
+                for window in windows {
+                    window.child.bind_ui_handle(handle);
                 }
             }
             BindingWidgetKind::Surface { child, .. } => child.bind_ui_handle(handle),
@@ -3999,6 +4771,74 @@ impl BindingWidget {
                     value: value.clone(),
                 })
             }
+            BindingWidgetKind::PasswordInput {
+                name,
+                value,
+                placeholder,
+                action,
+            } => {
+                let mut password_input = PasswordInput::new(name.resolve()).value(value.resolve());
+                if let Some(placeholder) = placeholder {
+                    password_input = password_input.placeholder(placeholder.clone());
+                }
+                let state = value.state();
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    password_input = password_input.on_change(move |value| {
+                        if let Some(state) = &state {
+                            state.set(value.clone());
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(BindingPasswordInputWidget {
+                    inner: password_input,
+                    value: value.clone(),
+                })
+            }
+            BindingWidgetKind::DateTimeInput {
+                name,
+                value,
+                placeholder,
+                action,
+            } => {
+                let mut datetime_input = DateTimeInput::new(name.resolve()).value(value.resolve());
+                if let Some(placeholder) = placeholder {
+                    datetime_input = datetime_input.placeholder(placeholder.clone());
+                }
+                let state = value.state();
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    datetime_input = datetime_input.on_change(move |value| {
+                        if let Some(state) = &state {
+                            state.set(value.clone());
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(BindingDateTimeInputWidget {
+                    inner: datetime_input,
+                    value: value.clone(),
+                })
+            }
             BindingWidgetKind::TextArea {
                 name,
                 value,
@@ -4222,6 +5062,492 @@ impl BindingWidget {
                     empty_state = empty_state.action(action.into_runtime_widget(errors.clone()));
                 }
                 BindingRuntimeWidget::new(empty_state)
+            }
+            BindingWidgetKind::ActionCard {
+                title,
+                description,
+                icon,
+                tone,
+                enabled,
+                action,
+            } => {
+                let mut card = ActionCard::new(title.clone(), description.clone())
+                    .tone(*tone)
+                    .enabled(enabled.resolve());
+                if let Some(icon) = icon {
+                    card = card.icon(*icon);
+                }
+                if matches!(enabled, BindingBool::State(_)) {
+                    let enabled = enabled.clone();
+                    card = card.enabled_when(move || enabled.resolve());
+                }
+                if let Some(action) = action.clone() {
+                    let errors = errors.clone();
+                    card = card.on_press(move || {
+                        if let Err(error) = action.run() {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(card)
+            }
+            BindingWidgetKind::BrushPreview {
+                name,
+                kind,
+                spec,
+                size,
+            } => {
+                let mut preview = BrushPreview::new(name.clone())
+                    .kind(kind.clone())
+                    .spec(spec.into_sui());
+                if let Some(size) = size {
+                    preview = preview.size(*size);
+                }
+                BindingRuntimeWidget::new(preview)
+            }
+            BindingWidgetKind::CommandGroup {
+                name,
+                children,
+                axis,
+                padding,
+                spacing,
+                corner_radius,
+                background,
+                border,
+            } => {
+                let mut group = CommandGroup::new(*axis, name.clone());
+                if let Some(padding) = padding {
+                    group = group.padding(*padding);
+                }
+                if let Some(spacing) = spacing {
+                    group = group.spacing(*spacing);
+                }
+                if let Some(corner_radius) = corner_radius {
+                    group = group.corner_radius(*corner_radius);
+                }
+                if let Some(background) = background {
+                    group = group.background(*background);
+                }
+                if let Some(border) = border {
+                    group = group.border(*border);
+                }
+                for child in children {
+                    group = group.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(group)
+            }
+            BindingWidgetKind::CoverageDots {
+                name,
+                current,
+                target,
+                tone,
+                max_dots,
+                show_label,
+                min_width,
+            } => {
+                let mut dots = CoverageDots::new(name.clone(), *current, *target)
+                    .tone(*tone)
+                    .max_dots(*max_dots)
+                    .show_label(*show_label);
+                if let Some(min_width) = min_width {
+                    dots = dots.min_width(*min_width);
+                }
+                BindingRuntimeWidget::new(dots)
+            }
+            BindingWidgetKind::Dock {
+                body,
+                top,
+                bottom,
+                fallback_width,
+                fallback_body_height,
+            } => {
+                let mut dock = Dock::new(body.into_runtime_widget(errors.clone()))
+                    .fallback_width(*fallback_width)
+                    .fallback_body_height(*fallback_body_height);
+                if let Some((height, top)) = top {
+                    dock = dock.top(*height, top.into_runtime_widget(errors.clone()));
+                }
+                if let Some((height, bottom)) = bottom {
+                    dock = dock.bottom(*height, bottom.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(dock)
+            }
+            BindingWidgetKind::FixedPaneSplit {
+                axis,
+                first,
+                divider,
+                second,
+                fixed_second,
+                fixed_extent,
+                divider_extent,
+                fallback_flexible_extent,
+            } => {
+                let mut split = FixedPaneSplit::new(
+                    *axis,
+                    first.into_runtime_widget(errors.clone()),
+                    divider.into_runtime_widget(errors.clone()),
+                    second.into_runtime_widget(errors.clone()),
+                );
+                split = if *fixed_second {
+                    split.fixed_second(*fixed_extent)
+                } else {
+                    split.fixed_first(*fixed_extent)
+                };
+                BindingRuntimeWidget::new(
+                    split
+                        .divider_extent(*divider_extent)
+                        .fallback_flexible_extent(*fallback_flexible_extent),
+                )
+            }
+            BindingWidgetKind::FramedField {
+                child,
+                name,
+                description,
+                padding,
+                min_height,
+                fill_width,
+                focused,
+                invalid,
+            } => {
+                let mut field = FramedField::new(child.into_runtime_widget(errors.clone()))
+                    .focused(focused.resolve())
+                    .invalid(invalid.resolve());
+                if let Some(name) = name {
+                    field = field.name(name.clone());
+                }
+                if let Some(description) = description {
+                    field = field.description(description.clone());
+                }
+                if let Some(padding) = padding {
+                    field = field.padding(*padding);
+                }
+                if let Some(min_height) = min_height {
+                    field = field.min_height(*min_height);
+                }
+                if *fill_width {
+                    field = field.fill_width();
+                }
+                if matches!(focused, BindingBool::State(_)) {
+                    let focused = focused.clone();
+                    field = field.focused_when(move || focused.resolve());
+                }
+                if matches!(invalid, BindingBool::State(_)) {
+                    let invalid = invalid.clone();
+                    field = field.invalid_when(move || invalid.resolve());
+                }
+                BindingRuntimeWidget::new(field)
+            }
+            BindingWidgetKind::MeasuredBottomDock {
+                body,
+                bottom,
+                fallback_size,
+            } => BindingRuntimeWidget::new(
+                MeasuredBottomDock::new(
+                    body.into_runtime_widget(errors.clone()),
+                    bottom.into_runtime_widget(errors.clone()),
+                )
+                .fallback_size(*fallback_size),
+            ),
+            BindingWidgetKind::PlacementBadge {
+                label,
+                icon,
+                tone,
+                current,
+                target,
+                min_width,
+            } => {
+                let mut badge = if matches!(label, BindingText::State(_)) {
+                    PlacementBadge::dynamic(label.resolve(), {
+                        let label = label.clone();
+                        move || label.resolve()
+                    })
+                } else {
+                    PlacementBadge::new(label.resolve())
+                }
+                .tone(*tone);
+                if let Some(icon) = icon {
+                    badge = badge.icon(*icon);
+                }
+                if let (Some(current), Some(target)) = (current, target) {
+                    badge = badge.coverage(*current, *target);
+                }
+                if let Some(min_width) = min_width {
+                    badge = badge.min_width(*min_width);
+                }
+                BindingRuntimeWidget::new(badge)
+            }
+            BindingWidgetKind::PropertyRow {
+                label,
+                control,
+                stacked,
+                label_width,
+                control_width,
+                gap,
+            } => {
+                let mut row =
+                    PropertyRow::new(label.clone(), control.into_runtime_widget(errors.clone()));
+                if !stacked {
+                    row = row.inline();
+                }
+                if let Some(label_width) = label_width {
+                    row = row.label_width(*label_width);
+                }
+                if let Some(control_width) = control_width {
+                    row = row.control_width(*control_width);
+                }
+                if let Some(gap) = gap {
+                    row = row.gap(*gap);
+                }
+                BindingRuntimeWidget::new(row)
+            }
+            BindingWidgetKind::SectionLabel {
+                label,
+                semantic_name,
+                color,
+            } => {
+                let mut section = SectionLabel::new(label.clone());
+                if let Some(semantic_name) = semantic_name {
+                    section = section.semantic_name(semantic_name.clone());
+                }
+                if let Some(color) = color {
+                    section = section.color(*color);
+                }
+                BindingRuntimeWidget::new(section)
+            }
+            BindingWidgetKind::SideSheet {
+                title,
+                body,
+                description,
+                shown,
+                modal,
+                dismiss_on_scrim,
+                placement,
+                width,
+                header_action,
+                actions,
+                on_dismiss,
+            } => {
+                let title = title.clone();
+                let body = body.clone();
+                let description = description.clone();
+                let shown_state = shown.state();
+                let placement = *placement;
+                let width = *width;
+                let header_action = header_action.clone();
+                let actions = actions.clone();
+                let on_dismiss = on_dismiss.clone();
+                let modal = *modal;
+                let dismiss_on_scrim = *dismiss_on_scrim;
+                let build_errors = errors.clone();
+                let build = move |is_shown: bool| {
+                    let mut sheet = SideSheet::new(
+                        title.clone(),
+                        body.into_runtime_widget(build_errors.clone()),
+                    )
+                    .shown(is_shown)
+                    .modal(modal)
+                    .dismiss_on_scrim(dismiss_on_scrim)
+                    .placement(placement);
+                    if let Some(description) = &description {
+                        sheet = sheet.description(description.clone());
+                    }
+                    if let Some(width) = width {
+                        sheet = sheet.width(width);
+                    }
+                    if let Some(header_action) = &header_action {
+                        sheet = sheet
+                            .header_action(header_action.into_runtime_widget(build_errors.clone()));
+                    }
+                    for action in &actions {
+                        sheet = sheet.action(action.into_runtime_widget(build_errors.clone()));
+                    }
+                    if shown_state.is_some() || on_dismiss.is_some() {
+                        let shown_state = shown_state.clone();
+                        let on_dismiss = on_dismiss.clone();
+                        let callback_errors = build_errors.clone();
+                        sheet = sheet.on_dismiss(move || {
+                            if let Some(state) = &shown_state {
+                                state.set(false);
+                            }
+                            if let Some(action) = &on_dismiss
+                                && let Err(error) = action.run()
+                            {
+                                callback_errors.push(ForeignCallbackError::new(
+                                    ForeignWidgetId::new(0),
+                                    ForeignCallbackPhase::Event,
+                                    error.message,
+                                ));
+                            }
+                        });
+                    }
+                    sheet
+                };
+                if matches!(shown, BindingBool::State(_)) {
+                    BindingRuntimeWidget::new(BindingSideSheetWidget::new(shown.clone(), build))
+                } else {
+                    BindingRuntimeWidget::new(build(shown.resolve()))
+                }
+            }
+            BindingWidgetKind::SplitView {
+                name,
+                axis,
+                first,
+                second,
+                ratio,
+                min_first,
+                min_second,
+                divider_thickness,
+                on_change,
+            } => {
+                let name = name.clone();
+                let axis = *axis;
+                let first = first.clone();
+                let second = second.clone();
+                let min_first = *min_first;
+                let min_second = *min_second;
+                let divider_thickness = *divider_thickness;
+                let ratio_state = ratio.state();
+                let on_change = on_change.clone();
+                let build_errors = errors.clone();
+                let build = move |resolved_ratio: f32| {
+                    let mut split = SplitView::new(
+                        axis,
+                        first.into_runtime_widget(build_errors.clone()),
+                        second.into_runtime_widget(build_errors.clone()),
+                    )
+                    .ratio(resolved_ratio)
+                    .min_first(min_first)
+                    .min_second(min_second);
+                    if let Some(name) = &name {
+                        split = split.name(name.clone());
+                    }
+                    if let Some(divider_thickness) = divider_thickness {
+                        split = split.divider_thickness(divider_thickness);
+                    }
+                    if ratio_state.is_some() || on_change.is_some() {
+                        let ratio_state = ratio_state.clone();
+                        let on_change = on_change.clone();
+                        let callback_errors = build_errors.clone();
+                        split = split.on_change(move |value| {
+                            if let Some(state) = &ratio_state {
+                                state.set(f64::from(value));
+                            }
+                            if let Some(action) = &on_change
+                                && let Err(error) = action.run(f64::from(value))
+                            {
+                                callback_errors.push(ForeignCallbackError::new(
+                                    ForeignWidgetId::new(0),
+                                    ForeignCallbackPhase::Event,
+                                    error.message,
+                                ));
+                            }
+                        });
+                    }
+                    split
+                };
+                if matches!(ratio, BindingNumber::State(_)) {
+                    BindingRuntimeWidget::new(BindingSplitViewWidget::new(ratio.clone(), build))
+                } else {
+                    BindingRuntimeWidget::new(build(ratio.resolve() as f32))
+                }
+            }
+            BindingWidgetKind::SwitchView { children, selected } => {
+                let mut view = SwitchView::new()
+                    .selected(binding_number_to_index(selected.resolve()).unwrap_or(usize::MAX));
+                if matches!(selected, BindingNumber::State(_)) {
+                    let selected = selected.clone();
+                    view = view.selected_when(move || {
+                        binding_number_to_index(selected.resolve()).unwrap_or(usize::MAX)
+                    });
+                }
+                for child in children {
+                    view = view.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(view)
+            }
+            BindingWidgetKind::TrailingSlotRow {
+                body,
+                trailing,
+                trailing_width,
+                trailing_height,
+                gap,
+            } => BindingRuntimeWidget::new(
+                TrailingSlotRow::new(
+                    body.into_runtime_widget(errors.clone()),
+                    trailing.into_runtime_widget(errors.clone()),
+                )
+                .trailing_width(*trailing_width)
+                .trailing_height(*trailing_height)
+                .gap(*gap),
+            ),
+            BindingWidgetKind::VirtualScrollView {
+                children,
+                name,
+                padding,
+                spacing,
+            } => {
+                let mut view = VirtualScrollView::new();
+                if let Some(name) = name {
+                    view = view.name(name.clone());
+                }
+                if let Some(padding) = padding {
+                    view = view.padding(*padding);
+                }
+                if let Some(spacing) = spacing {
+                    view = view.spacing(*spacing);
+                }
+                for child in children {
+                    view = view.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(view)
+            }
+            BindingWidgetKind::FloatingStack { windows, name } => {
+                let mut stack = FloatingStack::new();
+                if let Some(name) = name {
+                    stack = stack.name(name.clone());
+                }
+                for window in windows {
+                    stack = stack.with_window(
+                        window.bounds,
+                        window.child.into_runtime_widget(errors.clone()),
+                    );
+                }
+                BindingRuntimeWidget::new(stack)
+            }
+            BindingWidgetKind::ReorderableList {
+                name,
+                children,
+                spacing,
+                drag_threshold,
+                preview_label,
+                on_reorder,
+            } => {
+                let mut list = ReorderableList::new(name.clone())
+                    .spacing(*spacing)
+                    .drag_threshold(*drag_threshold);
+                if let Some(preview_label) = preview_label {
+                    list = list.preview_label(preview_label.clone());
+                }
+                for child in children {
+                    list = list.item(child.into_runtime_widget(errors.clone()));
+                }
+                if let Some(action) = on_reorder.clone() {
+                    let errors = errors.clone();
+                    list = list.on_reorder(move |change| {
+                        if let Err(error) = action.run(change.item, change.from, change.to) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(list)
             }
             BindingWidgetKind::Surface {
                 child,
@@ -4758,6 +6084,158 @@ impl BindingWidget {
     }
 }
 
+struct BindingSideSheetWidget {
+    inner: SideSheet,
+    shown: BindingBool,
+    last_shown: bool,
+    build: Box<dyn Fn(bool) -> SideSheet>,
+}
+
+impl BindingSideSheetWidget {
+    fn new(
+        shown: BindingBool,
+        build: impl Fn(bool) -> SideSheet + 'static,
+    ) -> BindingSideSheetWidget {
+        let last_shown = shown.resolve();
+        let inner = build(last_shown);
+        Self {
+            inner,
+            shown,
+            last_shown,
+            build: Box::new(build),
+        }
+    }
+
+    fn sync_state(&mut self) {
+        let shown = self.shown.resolve();
+        if shown != self.last_shown {
+            self.inner = (self.build)(shown);
+            self.last_shown = shown;
+        }
+    }
+}
+
+impl Widget for BindingSideSheetWidget {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_state();
+        self.inner.event(ctx, event);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "sui_bindings_core::BindingSideSheetWidget"
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_state();
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_state();
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.sync_state();
+        self.inner.focus_changed(ctx, focused);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.inner.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.sync_state();
+        self.inner.visit_children_mut(visitor);
+    }
+}
+
+struct BindingSplitViewWidget {
+    inner: SplitView,
+    ratio: BindingNumber,
+    build: Box<dyn Fn(f32) -> SplitView>,
+}
+
+impl BindingSplitViewWidget {
+    fn new(
+        ratio: BindingNumber,
+        build: impl Fn(f32) -> SplitView + 'static,
+    ) -> BindingSplitViewWidget {
+        let inner = build(ratio.resolve() as f32);
+        Self {
+            inner,
+            ratio,
+            build: Box::new(build),
+        }
+    }
+
+    fn sync_state(&mut self) {
+        let ratio = (self.ratio.resolve() as f32).clamp(0.0, 1.0);
+        if (ratio - self.inner.current_ratio()).abs() > f32::EPSILON {
+            self.inner = (self.build)(ratio);
+        }
+    }
+}
+
+impl Widget for BindingSplitViewWidget {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_state();
+        self.inner.event(ctx, event);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "sui_bindings_core::BindingSplitViewWidget"
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_state();
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_state();
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.sync_state();
+        self.inner.focus_changed(ctx, focused);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.inner.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.sync_state();
+        self.inner.visit_children_mut(visitor);
+    }
+}
+
 struct BindingBusyIndicatorWidget {
     name: BindingText,
     label: Option<BindingText>,
@@ -5003,6 +6481,104 @@ impl Widget for BindingTextInputWidget {
 
     fn debug_name(&self) -> &'static str {
         "sui_bindings_core::BindingTextInputWidget"
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_state();
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
+    }
+}
+
+struct BindingPasswordInputWidget {
+    inner: PasswordInput,
+    value: BindingText,
+}
+
+impl BindingPasswordInputWidget {
+    fn sync_state(&mut self) {
+        if matches!(self.value, BindingText::State(_)) {
+            self.inner.set_value(self.value.resolve());
+        }
+    }
+}
+
+impl Widget for BindingPasswordInputWidget {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_state();
+        self.inner.event(ctx, event);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "sui_bindings_core::BindingPasswordInputWidget"
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_state();
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
+    }
+}
+
+struct BindingDateTimeInputWidget {
+    inner: DateTimeInput,
+    value: BindingText,
+}
+
+impl BindingDateTimeInputWidget {
+    fn sync_state(&mut self) {
+        if matches!(self.value, BindingText::State(_)) {
+            self.inner.set_value(self.value.resolve());
+        }
+    }
+}
+
+impl Widget for BindingDateTimeInputWidget {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_state();
+        self.inner.event(ctx, event);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "sui_bindings_core::BindingDateTimeInputWidget"
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -6024,7 +7600,19 @@ pub fn binding_semantics_names(nodes: &[SemanticsNode]) -> Vec<String> {
 pub fn binding_semantics_values(nodes: &[SemanticsNode]) -> Vec<String> {
     nodes
         .iter()
-        .map(|node| binding_semantics_value_text(node.value.as_ref()))
+        .map(|node| {
+            if node
+                .editable_text
+                .as_ref()
+                .is_some_and(|editable| editable.password)
+            {
+                return match node.value.as_ref() {
+                    Some(SemanticsValue::Text(value)) => "•".repeat(value.chars().count()),
+                    _ => String::new(),
+                };
+            }
+            binding_semantics_value_text(node.value.as_ref())
+        })
         .collect()
 }
 
@@ -8847,6 +10435,8 @@ mod tests {
             "Load progress",
             "Background work",
             "Name",
+            "Password",
+            "Scheduled for",
             "Notes",
             "Scrollable content",
             "Rich summary",
@@ -8883,6 +10473,8 @@ mod tests {
             "Final",
             "0.25:0:1",
             "Ada",
+            "••••••",
+            "2026-07-15 09:30",
             "Line one\nLine two",
             "Warm cool",
             "#4080BFFF",
@@ -8978,6 +10570,8 @@ mod tests {
         let count = BindingState::new(3.0);
         let progress = BindingState::new(0.25);
         let text = BindingState::new("Ada");
+        let password = BindingState::new("sëcret");
+        let scheduled_for = BindingState::new("2026-07-15 09:30");
         let notes = BindingState::new("Line one\nLine two");
         let root = BindingWidget::column(
             [
@@ -9146,6 +10740,13 @@ mod tests {
                     20.0,
                 ),
                 BindingWidget::text_input("Name", text, Some("Type a name".to_string()), None),
+                BindingWidget::password_input(
+                    "Password",
+                    password,
+                    Some("Enter a password".to_string()),
+                    None,
+                ),
+                BindingWidget::datetime_input("Scheduled for", scheduled_for, None, None),
                 BindingWidget::text_area("Notes", notes, Some("Type notes".to_string()), None),
                 BindingWidget::scroll_view(
                     BindingWidget::rich_text(
@@ -9180,6 +10781,168 @@ mod tests {
                     None,
                     Some(24.0),
                 ),
+                BindingWidget::action_card(
+                    "Create document",
+                    "Start from a blank canvas",
+                    Some(IconGlyph::Add),
+                    SemanticTone::Accent,
+                    true,
+                    None,
+                ),
+                BindingWidget::brush_preview(
+                    "Brush preview",
+                    "Ink brush",
+                    BindingBrushPreviewSpec::new(
+                        Color::rgba(0.2, 0.45, 0.8, 1.0),
+                        18.0,
+                        0.75,
+                        BrushPreviewShape::Round,
+                    ),
+                    Some(Size::new(48.0, 48.0)),
+                ),
+                BindingWidget::command_group(
+                    "Editing commands",
+                    [BindingWidget::button("Duplicate", None)],
+                    Axis::Horizontal,
+                    None,
+                    Some(4.0),
+                    None,
+                    None,
+                    None,
+                ),
+                BindingWidget::coverage_dots(
+                    "Replica coverage",
+                    2,
+                    3,
+                    SemanticTone::Success,
+                    4,
+                    true,
+                    Some(84.0),
+                ),
+                BindingWidget::dock(
+                    BindingWidget::label("Dock body"),
+                    Some((24.0, BindingWidget::label("Dock top"))),
+                    Some((24.0, BindingWidget::label("Dock bottom"))),
+                    240.0,
+                    120.0,
+                ),
+                BindingWidget::fixed_pane_split(
+                    Axis::Horizontal,
+                    BindingWidget::label("Fixed pane"),
+                    BindingWidget::separator(Axis::Vertical, None, 0.0, None, None),
+                    BindingWidget::label("Flexible pane"),
+                    false,
+                    96.0,
+                    1.0,
+                    160.0,
+                ),
+                BindingWidget::framed_field(
+                    BindingWidget::label("Framed value"),
+                    Some("Framed field".to_string()),
+                    Some("Reusable editor frame".to_string()),
+                    Some(Insets::all(6.0)),
+                    Some(32.0),
+                    true,
+                    false,
+                    false,
+                ),
+                BindingWidget::measured_bottom_dock(
+                    BindingWidget::label("Measured dock body"),
+                    BindingWidget::label("Measured dock footer"),
+                    Size::new(240.0, 120.0),
+                ),
+                BindingWidget::placement_badge(
+                    "Primary replica",
+                    Some(IconGlyph::Check),
+                    SemanticTone::Success,
+                    Some(2),
+                    Some(3),
+                    Some(120.0),
+                ),
+                BindingWidget::property_row(
+                    "Property",
+                    BindingWidget::label("Property value"),
+                    false,
+                    Some(100.0),
+                    Some(160.0),
+                    Some(8.0),
+                ),
+                BindingWidget::section_label(
+                    "Advanced",
+                    Some("Advanced section".to_string()),
+                    None,
+                ),
+                BindingWidget::side_sheet(
+                    "Inspector",
+                    BindingWidget::label("Inspector body"),
+                    Some("Document settings".to_string()),
+                    true,
+                    false,
+                    true,
+                    SideSheetPlacement::Right,
+                    Some(280.0),
+                    Some(BindingWidget::button("Close inspector", None)),
+                    [BindingWidget::button("Save inspector", None)],
+                    None,
+                ),
+                BindingWidget::split_view(
+                    Some("Document split".to_string()),
+                    Axis::Horizontal,
+                    BindingWidget::label("Split first"),
+                    BindingWidget::label("Split second"),
+                    0.4,
+                    40.0,
+                    40.0,
+                    Some(2.0),
+                    None,
+                ),
+                BindingWidget::switch_view(
+                    [
+                        BindingWidget::label("Switch first"),
+                        BindingWidget::label("Switch second"),
+                    ],
+                    0.0,
+                ),
+                BindingWidget::trailing_slot_row(
+                    BindingWidget::label("Trailing row body"),
+                    BindingWidget::button("Trailing action", None),
+                    96.0,
+                    28.0,
+                    6.0,
+                ),
+                BindingWidget::virtual_scroll_view(
+                    [
+                        BindingWidget::label("Virtual row one"),
+                        BindingWidget::label("Virtual row two"),
+                    ],
+                    Some("Virtual rows".to_string()),
+                    Some(Insets::all(4.0)),
+                    Some(2.0),
+                ),
+                BindingWidget::floating_stack(
+                    [
+                        BindingFloatingStackWindow::new(
+                            Rect::new(0.0, 0.0, 160.0, 48.0),
+                            BindingWidget::label("Floating first"),
+                        ),
+                        BindingFloatingStackWindow::new(
+                            Rect::new(24.0, 16.0, 160.0, 48.0),
+                            BindingWidget::label("Floating second"),
+                        ),
+                    ],
+                    Some("Floating windows".to_string()),
+                ),
+                BindingWidget::reorderable_list(
+                    "Reorderable tasks",
+                    [
+                        BindingWidget::label("First task"),
+                        BindingWidget::label("Second task"),
+                    ],
+                    4.0,
+                    4.0,
+                    Some("Reordering task".to_string()),
+                    None,
+                ),
                 BindingWidget::empty_state(
                     "No projects",
                     "Create a project to get started.",
@@ -9198,6 +10961,248 @@ mod tests {
         let snapshot = app.render_window(0).unwrap();
 
         assert_cross_language_snapshot_signature(&snapshot);
+    }
+
+    #[test]
+    fn binding_side_sheet_reads_bound_shown_state() {
+        let shown = BindingState::new(false);
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Side sheet state",
+            BindingWidget::side_sheet(
+                "Bound inspector",
+                BindingWidget::label("Inspector content"),
+                Some("State-driven drawer".to_string()),
+                shown.clone(),
+                true,
+                true,
+                SideSheetPlacement::Right,
+                Some(280.0),
+                None,
+                std::iter::empty(),
+                None,
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let hidden = runtime.render_window(window_id).unwrap();
+        assert!(shown.is_ui_bound());
+        assert!(!hidden.semantics_roles.iter().any(|role| role == "dialog"));
+        assert!(
+            !hidden
+                .semantics_names
+                .iter()
+                .any(|name| name == "Bound inspector")
+        );
+
+        shown.set(true);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        let visible = runtime.render_window(window_id).unwrap();
+        assert!(visible.semantics_roles.iter().any(|role| role == "dialog"));
+        assert!(
+            visible
+                .semantics_names
+                .iter()
+                .any(|name| name == "Bound inspector")
+        );
+
+        shown.set(false);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        let hidden_again = runtime.render_window(window_id).unwrap();
+        assert!(
+            !hidden_again
+                .semantics_names
+                .iter()
+                .any(|name| name == "Bound inspector")
+        );
+    }
+
+    #[test]
+    fn binding_split_view_reads_bound_ratio_state() {
+        let ratio = BindingState::new(0.25);
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Split view state",
+            BindingWidget::split_view(
+                Some("Bound split".to_string()),
+                Axis::Horizontal,
+                BindingWidget::label("First pane"),
+                BindingWidget::label("Second pane"),
+                ratio.clone(),
+                20.0,
+                20.0,
+                Some(2.0),
+                None,
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let initial = runtime.render_window(window_id).unwrap();
+        assert!(ratio.is_ui_bound());
+        assert!(
+            initial
+                .semantics_roles
+                .iter()
+                .any(|role| role == "splitter")
+        );
+        assert!(
+            initial
+                .semantics_names
+                .iter()
+                .any(|name| name == "Bound split")
+        );
+        assert!(initial.semantics_values.iter().any(|value| value == "0.25"));
+
+        ratio.set(0.75);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        let updated = runtime.render_window(window_id).unwrap();
+        assert!(updated.semantics_values.iter().any(|value| value == "0.75"));
+        assert!(!updated.semantics_values.iter().any(|value| value == "0.25"));
+    }
+
+    #[test]
+    fn binding_virtual_scroll_floating_stack_and_reorderable_list_render_children() {
+        let root = BindingWidget::column(
+            [
+                BindingWidget::sized_box(
+                    Some(BindingWidget::virtual_scroll_view(
+                        [
+                            BindingWidget::label("Virtual child one"),
+                            BindingWidget::label("Virtual child two"),
+                        ],
+                        Some("Virtual collection".to_string()),
+                        Some(Insets::all(4.0)),
+                        Some(2.0),
+                    )),
+                    Some(240.0),
+                    Some(80.0),
+                ),
+                BindingWidget::sized_box(
+                    Some(BindingWidget::floating_stack(
+                        [
+                            BindingFloatingStackWindow::new(
+                                Rect::new(0.0, 0.0, 160.0, 36.0),
+                                BindingWidget::label("Floating child one"),
+                            ),
+                            BindingFloatingStackWindow::new(
+                                Rect::new(20.0, 28.0, 160.0, 36.0),
+                                BindingWidget::label("Floating child two"),
+                            ),
+                        ],
+                        Some("Floating workspace".to_string()),
+                    )),
+                    Some(240.0),
+                    Some(80.0),
+                ),
+                BindingWidget::reorderable_list(
+                    "Queued work",
+                    [
+                        BindingWidget::sized_box(
+                            Some(BindingWidget::label("Queued first")),
+                            Some(200.0),
+                            Some(28.0),
+                        ),
+                        BindingWidget::sized_box(
+                            Some(BindingWidget::label("Queued second")),
+                            Some(200.0),
+                            Some(28.0),
+                        ),
+                    ],
+                    2.0,
+                    4.0,
+                    Some("Moving queued work".to_string()),
+                    None,
+                ),
+            ],
+            6.0,
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Portable containers", root));
+
+        let snapshot = app.render_window(0).unwrap();
+
+        assert!(snapshot.command_count > 0);
+        for name in [
+            "Virtual collection",
+            "Virtual child one",
+            "Floating workspace",
+            "Floating child one",
+            "Floating child two",
+            "Queued work",
+            "Queued first",
+            "Queued second",
+        ] {
+            assert!(
+                snapshot.semantics_names.iter().any(|found| found == name),
+                "missing semantics name {name:?} in {:?}",
+                snapshot.semantics_names
+            );
+        }
+        assert!(
+            snapshot
+                .semantics_roles
+                .iter()
+                .any(|role| role == "scroll_view")
+        );
+        assert!(snapshot.semantics_roles.iter().any(|role| role == "list"));
+    }
+
+    #[test]
+    fn binding_reorderable_list_reports_reorder_and_captures_callback_error() {
+        let changes = Arc::new(Mutex::new(Vec::new()));
+        let action = BindingReorderAction::new({
+            let changes = Arc::clone(&changes);
+            move |item, from, to| {
+                recover_lock(&changes).push((item, from, to));
+                Err(ForeignCallbackFailure::new("reorder callback failed"))
+            }
+        });
+        let root = BindingWidget::reorderable_list(
+            "Tasks",
+            [
+                BindingWidget::sized_box(None, Some(120.0), Some(30.0)),
+                BindingWidget::sized_box(None, Some(120.0), Some(30.0)),
+                BindingWidget::sized_box(None, Some(120.0), Some(30.0)),
+            ],
+            0.0,
+            4.0,
+            Some("Moving task".to_string()),
+            Some(action),
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Reorder", root));
+        let errors = app.error_sink();
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+        let _ = runtime.render_window(window_id).unwrap();
+
+        let mut down =
+            BindingPointerEvent::new(BindingPointerEventKind::Down, Point::new(10.0, 15.0));
+        down.button = Some(BindingPointerButton::Primary);
+        down.buttons = 1;
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(down))
+            .unwrap();
+
+        for position in [Point::new(10.0, 48.0), Point::new(10.0, 78.0)] {
+            let mut moved = BindingPointerEvent::new(BindingPointerEventKind::Move, position);
+            moved.button = Some(BindingPointerButton::Primary);
+            moved.buttons = 1;
+            runtime
+                .handle_event(window_id, BindingEvent::Pointer(moved))
+                .unwrap();
+        }
+
+        let mut up = BindingPointerEvent::new(BindingPointerEventKind::Up, Point::new(10.0, 78.0));
+        up.button = Some(BindingPointerButton::Primary);
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(up))
+            .unwrap();
+
+        assert_eq!(&*recover_lock(&changes), &[(0, 0, 2)]);
+        let errors = errors.snapshot();
+        assert!(errors.iter().any(|error| {
+            error.phase == ForeignCallbackPhase::Event
+                && error.message.contains("reorder callback failed")
+        }));
     }
 
     #[test]
@@ -10009,6 +12014,130 @@ mod tests {
             .unwrap();
 
         assert_eq!(text.get(), BindingValue::String("a".to_string()));
+    }
+
+    #[test]
+    fn binding_password_input_masks_semantics_and_updates_state_and_action() {
+        let text = BindingState::new("");
+        let changed = Arc::new(Mutex::new(None::<String>));
+        let action = BindingStringAction::new({
+            let changed = Arc::clone(&changed);
+            move |value| {
+                *changed.lock().unwrap() = Some(value);
+                Ok(())
+            }
+        });
+        let root = BindingWidget::password_input(
+            "Password",
+            text.clone(),
+            Some("Enter a password".to_string()),
+            Some(action),
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Password input", root));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        let password_index = snapshot
+            .semantics_names
+            .iter()
+            .position(|name| name == "Password")
+            .expect("password input semantics");
+        assert_eq!(snapshot.semantics_values[password_index], "");
+
+        let mut down =
+            BindingPointerEvent::new(BindingPointerEventKind::Down, Point::new(32.0, 18.0));
+        down.button = Some(BindingPointerButton::Primary);
+        down.buttons = 1;
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(down))
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                BindingEvent::Keyboard(BindingKeyboardEvent::new("s", BindingKeyState::Pressed)),
+            )
+            .unwrap();
+
+        assert_eq!(text.get(), BindingValue::String("s".to_string()));
+        assert_eq!(changed.lock().unwrap().as_deref(), Some("s"));
+        let snapshot = runtime.render_window(window_id).unwrap();
+        let password_index = snapshot
+            .semantics_names
+            .iter()
+            .position(|name| name == "Password")
+            .expect("password input semantics");
+        assert_eq!(snapshot.semantics_values[password_index], "•");
+        assert!(!snapshot.semantics_values.iter().any(|value| value == "s"));
+
+        text.set("sëcret");
+        let snapshot = runtime.render_window(window_id).unwrap();
+        let password_index = snapshot
+            .semantics_names
+            .iter()
+            .position(|name| name == "Password")
+            .expect("password input semantics");
+        assert_eq!(snapshot.semantics_values[password_index], "••••••");
+        assert!(
+            !snapshot
+                .semantics_values
+                .iter()
+                .any(|value| value == "sëcret")
+        );
+    }
+
+    #[test]
+    fn binding_datetime_input_preserves_local_string_and_updates_action() {
+        let text = BindingState::new("");
+        let changed = Arc::new(Mutex::new(None::<String>));
+        let action = BindingStringAction::new({
+            let changed = Arc::clone(&changed);
+            move |value| {
+                *changed.lock().unwrap() = Some(value);
+                Ok(())
+            }
+        });
+        let root = BindingWidget::datetime_input("Scheduled for", text.clone(), None, Some(action));
+        let app = BindingApp::new().with_window(BindingWindow::new("Date/time input", root));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(
+            snapshot
+                .semantics_names
+                .iter()
+                .any(|name| name == "Scheduled for")
+        );
+
+        let mut down =
+            BindingPointerEvent::new(BindingPointerEventKind::Down, Point::new(32.0, 18.0));
+        down.button = Some(BindingPointerButton::Primary);
+        down.buttons = 1;
+        runtime
+            .handle_event(window_id, BindingEvent::Pointer(down))
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                BindingEvent::Keyboard(BindingKeyboardEvent::new("2", BindingKeyState::Pressed)),
+            )
+            .unwrap();
+
+        assert_eq!(text.get(), BindingValue::String("2".to_string()));
+        assert_eq!(changed.lock().unwrap().as_deref(), Some("2"));
+
+        text.set("2026-07-15 09:30");
+        let snapshot = runtime.render_window(window_id).unwrap();
+        let datetime_index = snapshot
+            .semantics_names
+            .iter()
+            .position(|name| name == "Scheduled for")
+            .expect("date/time input semantics");
+        assert_eq!(
+            snapshot.semantics_values[datetime_index],
+            "2026-07-15 09:30"
+        );
     }
 
     #[test]

@@ -871,3 +871,727 @@ js_kind = "function"
 js_rust = "js_color_picker"
 ts_kind = "function"
 docs = ["ColorPicker"]
+
+[[item]]
+name = "BrushPreviewSpec"
+kind = "descriptor"
+core_descriptor = "BindingBrushPreviewSpec"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["BrushPreviewSpec"]
+
+[[item]]
+name = "PasswordInput"
+kind = "widget"
+core_kind = "PasswordInput"
+core_constructor = "password_input"
+python_kind = "function"
+python_rust = "py_password_input"
+js_kind = "function"
+js_rust = "js_password_input"
+ts_kind = "function"
+docs = ["PasswordInput"]
+compat = true
+
+[[item]]
+name = "DateTimeInput"
+kind = "widget"
+core_kind = "DateTimeInput"
+core_constructor = "datetime_input"
+python_kind = "function"
+python_rust = "py_datetime_input"
+js_kind = "function"
+js_rust = "js_datetime_input"
+ts_kind = "function"
+docs = ["DateTimeInput"]
+compat = true
+
+[[item]]
+name = "ActionCard"
+kind = "widget"
+core_kind = "ActionCard"
+core_constructor = "action_card"
+python_kind = "function"
+python_rust = "py_action_card"
+js_kind = "function"
+js_rust = "js_action_card"
+ts_kind = "function"
+docs = ["ActionCard"]
+compat = true
+
+[[item]]
+name = "BrushPreview"
+kind = "widget"
+core_kind = "BrushPreview"
+core_constructor = "brush_preview"
+python_kind = "function"
+python_rust = "py_brush_preview"
+js_kind = "function"
+js_rust = "js_brush_preview"
+ts_kind = "function"
+docs = ["BrushPreview"]
+compat = true
+
+[[item]]
+name = "CommandGroup"
+kind = "widget"
+core_kind = "CommandGroup"
+core_constructor = "command_group"
+python_kind = "function"
+python_rust = "py_command_group"
+js_kind = "function"
+js_rust = "js_command_group"
+ts_kind = "function"
+docs = ["CommandGroup"]
+compat = true
+
+[[item]]
+name = "CoverageDots"
+kind = "widget"
+core_kind = "CoverageDots"
+core_constructor = "coverage_dots"
+python_kind = "function"
+python_rust = "py_coverage_dots"
+js_kind = "function"
+js_rust = "js_coverage_dots"
+ts_kind = "function"
+docs = ["CoverageDots"]
+compat = true
+
+[[item]]
+name = "Dock"
+kind = "widget"
+core_kind = "Dock"
+core_constructor = "dock"
+python_kind = "function"
+python_rust = "py_dock"
+js_kind = "function"
+js_rust = "js_dock"
+ts_kind = "function"
+docs = ["Dock"]
+compat = true
+
+[[item]]
+name = "FixedPaneSplit"
+kind = "widget"
+core_kind = "FixedPaneSplit"
+core_constructor = "fixed_pane_split"
+python_kind = "function"
+python_rust = "py_fixed_pane_split"
+js_kind = "function"
+js_rust = "js_fixed_pane_split"
+ts_kind = "function"
+docs = ["FixedPaneSplit"]
+compat = true
+
+[[item]]
+name = "FramedField"
+kind = "widget"
+core_kind = "FramedField"
+core_constructor = "framed_field"
+python_kind = "function"
+python_rust = "py_framed_field"
+js_kind = "function"
+js_rust = "js_framed_field"
+ts_kind = "function"
+docs = ["FramedField"]
+compat = true
+
+[[item]]
+name = "MeasuredBottomDock"
+kind = "widget"
+core_kind = "MeasuredBottomDock"
+core_constructor = "measured_bottom_dock"
+python_kind = "function"
+python_rust = "py_measured_bottom_dock"
+js_kind = "function"
+js_rust = "js_measured_bottom_dock"
+ts_kind = "function"
+docs = ["MeasuredBottomDock"]
+compat = true
+
+[[item]]
+name = "PlacementBadge"
+kind = "widget"
+core_kind = "PlacementBadge"
+core_constructor = "placement_badge"
+python_kind = "function"
+python_rust = "py_placement_badge"
+js_kind = "function"
+js_rust = "js_placement_badge"
+ts_kind = "function"
+docs = ["PlacementBadge"]
+compat = true
+
+[[item]]
+name = "PropertyRow"
+kind = "widget"
+core_kind = "PropertyRow"
+core_constructor = "property_row"
+python_kind = "function"
+python_rust = "py_property_row"
+js_kind = "function"
+js_rust = "js_property_row"
+ts_kind = "function"
+docs = ["PropertyRow"]
+compat = true
+
+[[item]]
+name = "SectionLabel"
+kind = "widget"
+core_kind = "SectionLabel"
+core_constructor = "section_label"
+python_kind = "function"
+python_rust = "py_section_label"
+js_kind = "function"
+js_rust = "js_section_label"
+ts_kind = "function"
+docs = ["SectionLabel"]
+compat = true
+
+[[item]]
+name = "SideSheet"
+kind = "widget"
+core_kind = "SideSheet"
+core_constructor = "side_sheet"
+python_kind = "function"
+python_rust = "py_side_sheet"
+js_kind = "function"
+js_rust = "js_side_sheet"
+ts_kind = "function"
+docs = ["SideSheet"]
+compat = true
+
+[[item]]
+name = "SplitView"
+kind = "widget"
+core_kind = "SplitView"
+core_constructor = "split_view"
+python_kind = "function"
+python_rust = "py_split_view"
+js_kind = "function"
+js_rust = "js_split_view"
+ts_kind = "function"
+docs = ["SplitView"]
+compat = true
+
+[[item]]
+name = "SwitchView"
+kind = "widget"
+core_kind = "SwitchView"
+core_constructor = "switch_view"
+python_kind = "function"
+python_rust = "py_switch_view"
+js_kind = "function"
+js_rust = "js_switch_view"
+ts_kind = "function"
+docs = ["SwitchView"]
+compat = true
+
+[[item]]
+name = "TrailingSlotRow"
+kind = "widget"
+core_kind = "TrailingSlotRow"
+core_constructor = "trailing_slot_row"
+python_kind = "function"
+python_rust = "py_trailing_slot_row"
+js_kind = "function"
+js_rust = "js_trailing_slot_row"
+ts_kind = "function"
+docs = ["TrailingSlotRow"]
+compat = true
+
+[[item]]
+name = "FloatingStackWindow"
+kind = "descriptor"
+core_descriptor = "BindingFloatingStackWindow"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["FloatingStackWindow"]
+
+[[item]]
+name = "FloatingStack"
+kind = "widget"
+core_kind = "FloatingStack"
+core_constructor = "floating_stack"
+python_kind = "function"
+python_rust = "py_floating_stack"
+js_kind = "function"
+js_rust = "js_floating_stack"
+ts_kind = "function"
+docs = ["FloatingStack"]
+compat = true
+
+[[item]]
+name = "VirtualScrollView"
+kind = "widget"
+core_kind = "VirtualScrollView"
+core_constructor = "virtual_scroll_view"
+python_kind = "function"
+python_rust = "py_virtual_scroll_view"
+js_kind = "function"
+js_rust = "js_virtual_scroll_view"
+ts_kind = "function"
+docs = ["VirtualScrollView"]
+compat = true
+
+[[item]]
+name = "ReorderableList"
+kind = "widget"
+core_kind = "ReorderableList"
+core_constructor = "reorderable_list"
+python_kind = "function"
+python_rust = "py_reorderable_list"
+js_kind = "function"
+js_rust = "js_reorderable_list"
+ts_kind = "function"
+docs = ["ReorderableList"]
+compat = true
+
+
+[[rust_widget]]
+name = "ActionCard"
+classification = "manual-wrapper"
+bindings = ["ActionCard"]
+
+[[rust_widget]]
+name = "Align"
+classification = "bound"
+bindings = ["Align"]
+
+[[rust_widget]]
+name = "Background"
+classification = "bound"
+bindings = ["Background"]
+
+[[rust_widget]]
+name = "Breadcrumb"
+classification = "bound"
+bindings = ["Breadcrumb"]
+
+[[rust_widget]]
+name = "BrowserTabBar"
+classification = "bound"
+bindings = ["BrowserTabBar"]
+
+[[rust_widget]]
+name = "BrushPreview"
+classification = "manual-wrapper"
+bindings = ["BrushPreview"]
+
+[[rust_widget]]
+name = "Button"
+classification = "bound"
+bindings = ["Button"]
+
+[[rust_widget]]
+name = "Canvas"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "CanvasRuler"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "Checkbox"
+classification = "bound"
+bindings = ["Checkbox"]
+
+[[rust_widget]]
+name = "ColorPalette"
+classification = "bound"
+bindings = ["ColorPalette"]
+
+[[rust_widget]]
+name = "ColorPicker"
+classification = "bound"
+bindings = ["ColorPicker"]
+
+[[rust_widget]]
+name = "ColorSwatch"
+classification = "bound"
+bindings = ["ColorSwatch"]
+
+[[rust_widget]]
+name = "CommandGroup"
+classification = "bound"
+bindings = ["CommandGroup"]
+
+[[rust_widget]]
+name = "ContextMenu"
+classification = "bound"
+bindings = ["ContextMenu"]
+
+[[rust_widget]]
+name = "CoverageDots"
+classification = "bound"
+bindings = ["CoverageDots"]
+
+[[rust_widget]]
+name = "DateTimeInput"
+classification = "manual-wrapper"
+bindings = ["DateTimeInput"]
+
+[[rust_widget]]
+name = "DetailRow"
+classification = "bound"
+bindings = ["DetailRow"]
+
+[[rust_widget]]
+name = "Dialog"
+classification = "bound"
+bindings = ["Dialog"]
+
+[[rust_widget]]
+name = "Dock"
+classification = "bound"
+bindings = ["Dock"]
+
+[[rust_widget]]
+name = "DockPanel"
+classification = "bound"
+bindings = ["DockPanel"]
+
+[[rust_widget]]
+name = "DragDropHost"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "Draggable"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "DropTarget"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "EmptyState"
+classification = "bound"
+bindings = ["EmptyState"]
+
+[[rust_widget]]
+name = "FieldGroup"
+classification = "bound"
+bindings = ["FieldGroup"]
+
+[[rust_widget]]
+name = "FixedPaneSplit"
+classification = "bound"
+bindings = ["FixedPaneSplit"]
+
+[[rust_widget]]
+name = "Flex"
+classification = "equivalent"
+bindings = ["Column", "Row"]
+
+[[rust_widget]]
+name = "FloatingStack"
+classification = "bound"
+bindings = ["FloatingStack"]
+
+[[rust_widget]]
+name = "FloatingWorkspace"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "FormRow"
+classification = "bound"
+bindings = ["FormRow"]
+
+[[rust_widget]]
+name = "FormSection"
+classification = "bound"
+bindings = ["FormSection"]
+
+[[rust_widget]]
+name = "FramedField"
+classification = "bound"
+bindings = ["FramedField"]
+
+[[rust_widget]]
+name = "Icon"
+classification = "bound"
+bindings = ["Icon"]
+
+[[rust_widget]]
+name = "IconButton"
+classification = "bound"
+bindings = ["IconButton"]
+
+[[rust_widget]]
+name = "Image"
+classification = "bound"
+bindings = ["Image"]
+
+[[rust_widget]]
+name = "Label"
+classification = "bound"
+bindings = ["Label"]
+
+[[rust_widget]]
+name = "LayerList"
+classification = "bound"
+bindings = ["LayerList"]
+
+[[rust_widget]]
+name = "Link"
+classification = "bound"
+bindings = ["Link"]
+
+[[rust_widget]]
+name = "ListView"
+classification = "bound"
+bindings = ["ListView"]
+
+[[rust_widget]]
+name = "MeasuredBottomDock"
+classification = "bound"
+bindings = ["MeasuredBottomDock"]
+
+[[rust_widget]]
+name = "Menu"
+classification = "bound"
+bindings = ["Menu"]
+
+[[rust_widget]]
+name = "NumberInput"
+classification = "bound"
+bindings = ["NumberInput"]
+
+[[rust_widget]]
+name = "Padding"
+classification = "bound"
+bindings = ["Padding"]
+
+[[rust_widget]]
+name = "PanelSection"
+classification = "bound"
+bindings = ["PanelSection"]
+
+[[rust_widget]]
+name = "PasswordInput"
+classification = "manual-wrapper"
+bindings = ["PasswordInput"]
+
+[[rust_widget]]
+name = "PixelCanvas"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "PlacementBadge"
+classification = "bound"
+bindings = ["PlacementBadge"]
+
+[[rust_widget]]
+name = "Popover"
+classification = "bound"
+bindings = ["Popover"]
+
+[[rust_widget]]
+name = "PresetStrip"
+classification = "bound"
+bindings = ["PresetStrip"]
+
+[[rust_widget]]
+name = "ProgressBar"
+classification = "bound"
+bindings = ["ProgressBar"]
+
+[[rust_widget]]
+name = "PropertyRow"
+classification = "bound"
+bindings = ["PropertyRow"]
+
+[[rust_widget]]
+name = "RadioButton"
+classification = "bound"
+bindings = ["RadioButton"]
+
+[[rust_widget]]
+name = "RadioGroup"
+classification = "bound"
+bindings = ["RadioGroup"]
+
+[[rust_widget]]
+name = "RebuildOnChange"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "RebuildOnConstraints"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "ReorderableList"
+classification = "manual-wrapper"
+bindings = ["ReorderableList"]
+
+[[rust_widget]]
+name = "RichText"
+classification = "bound"
+bindings = ["RichText"]
+
+[[rust_widget]]
+name = "ScrollBar"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "ScrollView"
+classification = "bound"
+bindings = ["ScrollView"]
+
+[[rust_widget]]
+name = "SectionLabel"
+classification = "bound"
+bindings = ["SectionLabel"]
+
+[[rust_widget]]
+name = "SegmentedControl"
+classification = "bound"
+bindings = ["SegmentedControl"]
+
+[[rust_widget]]
+name = "Select"
+classification = "bound"
+bindings = ["Select"]
+
+[[rust_widget]]
+name = "SemanticRegion"
+classification = "bound"
+bindings = ["SemanticRegion"]
+
+[[rust_widget]]
+name = "Separator"
+classification = "bound"
+bindings = ["Separator"]
+
+[[rust_widget]]
+name = "SideSheet"
+classification = "manual-wrapper"
+bindings = ["SideSheet"]
+
+[[rust_widget]]
+name = "SignalMeter"
+classification = "bound"
+bindings = ["SignalMeter"]
+
+[[rust_widget]]
+name = "SizedBox"
+classification = "bound"
+bindings = ["SizedBox"]
+
+[[rust_widget]]
+name = "Slider"
+classification = "bound"
+bindings = ["Slider"]
+
+[[rust_widget]]
+name = "Spinner"
+classification = "equivalent"
+bindings = ["BusyIndicator"]
+
+[[rust_widget]]
+name = "SplitView"
+classification = "manual-wrapper"
+bindings = ["SplitView"]
+
+[[rust_widget]]
+name = "Stack"
+classification = "bound"
+bindings = ["Stack"]
+
+[[rust_widget]]
+name = "StatusBadge"
+classification = "bound"
+bindings = ["StatusBadge"]
+
+[[rust_widget]]
+name = "StatusBar"
+classification = "bound"
+bindings = ["StatusBar"]
+
+[[rust_widget]]
+name = "StatusBarHost"
+classification = "bound"
+bindings = ["StatusBarHost"]
+
+[[rust_widget]]
+name = "Surface"
+classification = "bound"
+bindings = ["Surface"]
+
+[[rust_widget]]
+name = "Switch"
+classification = "bound"
+bindings = ["Switch"]
+
+[[rust_widget]]
+name = "SwitchView"
+classification = "bound"
+bindings = ["SwitchView"]
+
+[[rust_widget]]
+name = "TabBar"
+classification = "bound"
+bindings = ["TabBar"]
+
+[[rust_widget]]
+name = "Table"
+classification = "bound"
+bindings = ["Table"]
+
+[[rust_widget]]
+name = "Tabs"
+classification = "bound"
+bindings = ["Tabs"]
+
+[[rust_widget]]
+name = "TextArea"
+classification = "bound"
+bindings = ["TextArea"]
+
+[[rust_widget]]
+name = "TextInput"
+classification = "bound"
+bindings = ["TextInput"]
+
+[[rust_widget]]
+name = "TextSurface"
+classification = "equivalent"
+bindings = ["TextArea"]
+
+[[rust_widget]]
+name = "ToolPalette"
+classification = "bound"
+bindings = ["ToolPalette"]
+
+[[rust_widget]]
+name = "Toolbar"
+classification = "bound"
+bindings = ["Toolbar"]
+
+[[rust_widget]]
+name = "Tooltip"
+classification = "bound"
+bindings = ["Tooltip"]
+
+[[rust_widget]]
+name = "TrailingSlotRow"
+classification = "bound"
+bindings = ["TrailingSlotRow"]
+
+[[rust_widget]]
+name = "TreeView"
+classification = "bound"
+bindings = ["TreeView"]
+
+[[rust_widget]]
+name = "VirtualScrollView"
+classification = "bound"
+bindings = ["VirtualScrollView"]
+
+[[rust_widget]]
+name = "VirtualTable"
+classification = "equivalent"
+bindings = ["Table"]

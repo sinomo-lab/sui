@@ -21,7 +21,9 @@
   ],
   "scripts": {
     "build": "napi build --platform --release",
-    "check:loader": "node --check index.js"
+    "check:loader": "node --check index.js",
+    "test": "npm run check:loader && npm run test:consumer",
+    "test:consumer": "cargo build --package sui-js && node tests/consumer.js"
   },
   "keywords": [
     "sui",

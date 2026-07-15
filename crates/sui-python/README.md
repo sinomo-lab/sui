@@ -157,9 +157,10 @@ implemented yet.
 ## Current limitations
 
 - Wheels and release automation are not published; users build from source.
-- The Python surface is intentionally smaller than the Rust facade. Some newer
-  specialized widgets, including `PasswordInput` and `DateTimeInput`, remain
-  Rust-only.
+- The Python surface intentionally omits Rust-native widgets whose contracts
+  require local `Widget` closures, `Any` payloads, shared `Rc` state, or custom
+  paint models. The checked binding manifest records those exclusions instead
+  of silently treating them as missing coverage.
 - Desktop `run` entry points exist, but the repository does not yet have broad
   real-window smoke coverage for every supported platform.
 - Custom WGSL, arbitrary shader resources, and uniforms are not exposed;

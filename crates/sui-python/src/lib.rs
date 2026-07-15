@@ -19,12 +19,13 @@ use pyo3::{
     types::PyModule,
 };
 use sui_bindings_core::{
-    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingColorAction,
-    BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent, BindingEvent,
-    BindingFontHandle, BindingImageFit, BindingImageHandle, BindingImeEvent, BindingKeyState,
-    BindingKeyboardEvent, BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber,
-    BindingNumberAction, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
-    BindingPointerKind, BindingRenderSnapshot, BindingRuntime, BindingScrollAxes,
+    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec,
+    BindingColorAction, BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent,
+    BindingEvent, BindingFloatingStackWindow, BindingFontHandle, BindingImageFit,
+    BindingImageHandle, BindingImeEvent, BindingKeyState, BindingKeyboardEvent,
+    BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber, BindingNumberAction,
+    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
+    BindingRenderSnapshot, BindingReorderAction, BindingRuntime, BindingScrollAxes,
     BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingShader,
     BindingState, BindingStatusBarSegment, BindingStringAction, BindingTableColumn,
     BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
@@ -2460,6 +2461,8 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMenuItem>()?;
     m.add_class::<PyToolPaletteItem>()?;
     m.add_class::<PyColorPaletteSwatch>()?;
+    m.add_class::<PyBrushPreviewSpec>()?;
+    m.add_class::<PyFloatingStackWindow>()?;
     m.add_function(wrap_pyfunction!(py_label, m)?)?;
     m.add_function(wrap_pyfunction!(py_button, m)?)?;
     m.add_function(wrap_pyfunction!(py_icon, m)?)?;
@@ -2484,7 +2487,27 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_status_bar, m)?)?;
     m.add_function(wrap_pyfunction!(py_detail_row, m)?)?;
     m.add_function(wrap_pyfunction!(py_busy_indicator, m)?)?;
+    m.add_function(wrap_pyfunction!(py_action_card, m)?)?;
+    m.add_function(wrap_pyfunction!(py_brush_preview, m)?)?;
+    m.add_function(wrap_pyfunction!(py_command_group, m)?)?;
+    m.add_function(wrap_pyfunction!(py_coverage_dots, m)?)?;
+    m.add_function(wrap_pyfunction!(py_dock, m)?)?;
+    m.add_function(wrap_pyfunction!(py_fixed_pane_split, m)?)?;
+    m.add_function(wrap_pyfunction!(py_framed_field, m)?)?;
+    m.add_function(wrap_pyfunction!(py_measured_bottom_dock, m)?)?;
+    m.add_function(wrap_pyfunction!(py_placement_badge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_property_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_section_label, m)?)?;
+    m.add_function(wrap_pyfunction!(py_side_sheet, m)?)?;
+    m.add_function(wrap_pyfunction!(py_split_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_switch_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_trailing_slot_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_floating_stack, m)?)?;
+    m.add_function(wrap_pyfunction!(py_virtual_scroll_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_reorderable_list, m)?)?;
     m.add_function(wrap_pyfunction!(py_text_input, m)?)?;
+    m.add_function(wrap_pyfunction!(py_password_input, m)?)?;
+    m.add_function(wrap_pyfunction!(py_datetime_input, m)?)?;
     m.add_function(wrap_pyfunction!(py_text_area, m)?)?;
     m.add_function(wrap_pyfunction!(py_rich_text, m)?)?;
     m.add_function(wrap_pyfunction!(py_image, m)?)?;
@@ -3747,7 +3770,22 @@ opacity = sui.State(0.5)
 count = sui.State(3.0)
 progress = sui.State(0.25)
 text = sui.State('Ada')
+password = sui.State('sëcret')
+scheduled_for = sui.State('2026-07-15 09:30')
 notes = sui.State('Line one' + chr(10) + 'Line two')
+card_enabled = sui.State(True)
+field_focused = sui.State(False)
+field_invalid = sui.State(False)
+placement = sui.State('Primary')
+sheet_shown = sui.State(False)
+split_ratio = sui.State(0.4)
+selected_view = sui.State(1)
+brush = sui.BrushPreviewSpec(
+    sui.Color.rgba(0.8, 0.2, 0.3, 1.0),
+    size=22,
+    opacity=0.75,
+    shape='round',
+)
 app = sui.App()
 root = sui.Column([
     sui.Label('Ready'),
@@ -3797,8 +3835,96 @@ root = sui.Column([
     sui.Select('Mode', ['Draft', 'Final', 'Review'], selected=1, placeholder='Choose mode'),
     sui.ProgressBar('Load progress', progress, min_value=0.0, max_value=1.0, show_value=True),
     sui.BusyIndicator('Background work', label='Loading assets', size=20),
+    sui.ActionCard('Create project', 'Start from a template', icon='plus', tone='accent', enabled=card_enabled),
+    sui.BrushPreview('Current brush', brush, kind='ink', size=sui.Size(72, 36)),
+    sui.CommandGroup('Editing commands', [
+        sui.Button('Cut'),
+        sui.Button('Copy'),
+    ], axis='horizontal', padding=4, spacing=2, corner_radius=5),
+    sui.CoverageDots('Coverage', 3, 4, tone='success', max_dots=4, min_width=72),
     sui.TextInput('Name', text, placeholder='Type a name'),
+    sui.PasswordInput('Password', password, placeholder='Enter a password'),
+    sui.DateTimeInput('Scheduled for', scheduled_for, placeholder='YYYY-MM-DD HH:MM'),
     sui.TextArea('Notes', notes, placeholder='Type notes'),
+    sui.Dock(
+        sui.Label('Dock body'),
+        top=sui.Label('Dock top'),
+        top_height=20,
+        bottom=sui.Label('Dock bottom'),
+        bottom_height=20,
+    ),
+    sui.FixedPaneSplit(
+        sui.Label('Fixed pane'),
+        sui.Separator('vertical'),
+        sui.Label('Flexible pane'),
+        fixed='first',
+        fixed_extent=72,
+    ),
+    sui.FramedField(
+        sui.TextInput('Framed editor'),
+        name='Framed field',
+        description='Compound editor frame',
+        padding=4,
+        min_height=32,
+        fill_width=True,
+        focused=field_focused,
+        invalid=field_invalid,
+    ),
+    sui.MeasuredBottomDock(
+        sui.Label('Measured body'),
+        sui.Label('Measured footer'),
+        fallback_size=sui.Size(240, 120),
+    ),
+    sui.PlacementBadge(placement, icon='brush', tone='info', current=2, target=3, min_width=96),
+    sui.PropertyRow('Property', sui.TextInput('Property value'), stacked=True, gap=3),
+    sui.SectionLabel('Advanced', semantic_name='Advanced section'),
+    sui.SideSheet(
+        'Inspector',
+        sui.Label('Sheet body'),
+        description='Selection details',
+        shown=sheet_shown,
+        placement='right',
+        header_action=sui.Button('Close inspector'),
+        actions=[sui.Button('Save inspector')],
+    ),
+    sui.SplitView(
+        sui.Label('Split first'),
+        sui.Label('Split second'),
+        axis='horizontal',
+        name='Workspace split',
+        ratio=split_ratio,
+        min_first=40,
+        min_second=40,
+        divider_thickness=4,
+    ),
+    sui.SwitchView([
+        sui.Label('Inactive view'),
+        sui.Label('Active view'),
+    ], selected=selected_view),
+    sui.TrailingSlotRow(
+        sui.Label('Trailing body'),
+        sui.Button('More'),
+        trailing_width=56,
+        trailing_height=24,
+        gap=4,
+    ),
+    sui.FloatingStack([
+        sui.FloatingStackWindow(
+            sui.Rect(4, 4, 120, 36),
+            sui.Label('Floating window'),
+        ),
+    ], name='Floating workspace'),
+    sui.VirtualScrollView([
+        sui.Label('Virtual row one'),
+        sui.Label('Virtual row two'),
+    ], name='Virtual results', padding=4, spacing=2),
+    sui.ReorderableList(
+        'Tasks',
+        [sui.Label('Task one'), sui.Label('Task two')],
+        spacing=4,
+        drag_threshold=4,
+        preview_label='Move task',
+    ),
     sui.ScrollView(
         sui.RichText([
             sui.TextSpan('Warm', color=sui.Color.rgba(0.9, 0.35, 0.2, 1.0)),
@@ -3827,10 +3953,10 @@ assert snapshot.semantics_count >= 30
 for role in ('generic_container', 'text', 'button', 'link', 'checkbox', 'switch', 'radio_button', 'radio_group', 'breadcrumb', 'list', 'list_item', 'table', 'slider', 'spin_box', 'combo_box', 'progress_bar', 'busy_indicator', 'text_input', 'image', 'scroll_view', 'color_swatch', 'separator'):
     assert role in snapshot.semantics_roles, (role, snapshot.semantics_roles)
 
-for name in ('Ready', 'Apply', 'Search icon', 'Download', 'Main surface', 'Surface content', 'Main toolbar', 'Toolbar action', 'Toolbar search', 'Documentation', 'Enabled', 'Airplane mode', 'Manual', 'Priority', 'View mode', 'Show list view', 'Gallery', 'Show map view', 'Workspace path', 'Assets', 'Brush', 'Canvas', 'Export', 'Build table', 'Input signal', 'Online', 'Editor status', 'Ln 12', 'Writable', 'UTF-8', 'Build', 'Opacity', 'Count', 'Mode', 'Load progress', 'Background work', 'Name', 'Notes', 'Scrollable content', 'Rich summary', 'Accent', 'Section divider', 'Projects empty', 'New project'):
+for name in ('Ready', 'Apply', 'Search icon', 'Download', 'Main surface', 'Surface content', 'Main toolbar', 'Toolbar action', 'Toolbar search', 'Documentation', 'Enabled', 'Airplane mode', 'Manual', 'Priority', 'View mode', 'Show list view', 'Gallery', 'Show map view', 'Workspace path', 'Assets', 'Brush', 'Canvas', 'Export', 'Build table', 'Input signal', 'Online', 'Editor status', 'Ln 12', 'Writable', 'UTF-8', 'Build', 'Opacity', 'Count', 'Mode', 'Load progress', 'Background work', 'Name', 'Password', 'Scheduled for', 'Notes', 'Scrollable content', 'Rich summary', 'Accent', 'Section divider', 'Projects empty', 'New project'):
     assert name in snapshot.semantics_names, (name, snapshot.semantics_names)
 
-for value in ('https://example.invalid/docs', '0.5:0:1', '3:0:10', 'Medium', 'Gallery', 'List', 'Map', 'sui', 'Canvas', 'Bindings', 'active', 'Online', 'All systems nominal', 'Ln 12', 'Writable', 'UTF-8', 'Debug profile with local bindings', 'Final', '0.25:0:1', 'Ada', 'Line one' + chr(10) + 'Line two', 'Warm cool', '#4080BFFF'):
+for value in ('https://example.invalid/docs', '0.5:0:1', '3:0:10', 'Medium', 'Gallery', 'List', 'Map', 'sui', 'Canvas', 'Bindings', 'active', 'Online', 'All systems nominal', 'Ln 12', 'Writable', 'UTF-8', 'Debug profile with local bindings', 'Final', '0.25:0:1', 'Ada', '••••••', '2026-07-15 09:30', 'Line one' + chr(10) + 'Line two', 'Warm cool', '#4080BFFF'):
     assert value in snapshot.semantics_values, (value, snapshot.semantics_values)
 
 assert 'Loading assets' in snapshot.semantics_descriptions, snapshot.semantics_descriptions
@@ -4364,6 +4490,126 @@ assert changes == ['a']
 ",
                 c"text_input.py",
                 c"text_input",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_password_and_datetime_inputs_update_bound_state() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+password = sui.State('')
+password_changes = []
+password_app = sui.App()
+password_app.window(sui.Window('Password').root(
+    sui.PasswordInput(
+        'Password',
+        password,
+        placeholder='Enter a password',
+        on_change=password_changes.append,
+    )
+))
+
+password_running = password_app.start()
+password_running.handle_event(sui.Event.pointer(
+    'down',
+    sui.Point(32, 18),
+    button='primary',
+    buttons=1,
+))
+password_running.handle_event(sui.Event.keyboard('s'))
+
+assert password.get() == 's'
+assert password_changes == ['s']
+password_snapshot = password_running.render()
+assert 's' not in password_snapshot.semantics_values
+assert '•' in password_snapshot.semantics_values
+
+scheduled_for = sui.State('')
+datetime_changes = []
+datetime_app = sui.App()
+datetime_app.window(sui.Window('Date/time').root(
+    sui.DateTimeInput(
+        'Scheduled for',
+        scheduled_for,
+        placeholder='YYYY-MM-DD HH:MM',
+        on_change=datetime_changes.append,
+    )
+))
+
+datetime_running = datetime_app.start()
+datetime_running.handle_event(sui.Event.pointer(
+    'down',
+    sui.Point(32, 18),
+    button='primary',
+    buttons=1,
+))
+datetime_running.handle_event(sui.Event.keyboard('2'))
+
+assert scheduled_for.get() == '2'
+assert datetime_changes == ['2']
+datetime_snapshot = datetime_running.render()
+assert '2' in datetime_snapshot.semantics_values
+",
+                c"password_datetime_input.py",
+                c"password_datetime_input",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_reorderable_list_reports_positional_callback_arguments() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+changes = []
+app = sui.App()
+app.window(sui.Window('Reorder').root(
+    sui.ReorderableList(
+        'Tasks',
+        [
+            sui.SizedBox(width=120, height=30),
+            sui.SizedBox(width=120, height=30),
+            sui.SizedBox(width=120, height=30),
+        ],
+        spacing=0,
+        drag_threshold=4,
+        on_reorder=lambda item, from_index, to_index: changes.append(
+            (item, from_index, to_index)
+        ),
+    )
+))
+
+running = app.start()
+running.render()
+running.handle_event(sui.Event.pointer(
+    'down', sui.Point(10, 15), pointer_id=1, button='primary', buttons=1,
+))
+running.handle_event(sui.Event.pointer(
+    'move', sui.Point(10, 48), pointer_id=1, button='primary', buttons=1,
+))
+running.handle_event(sui.Event.pointer(
+    'move', sui.Point(10, 78), pointer_id=1, button='primary', buttons=1,
+))
+running.handle_event(sui.Event.pointer(
+    'up', sui.Point(10, 78), pointer_id=1, button='primary', buttons=0,
+))
+
+assert changes == [(0, 0, 2)], changes
+",
+                c"reorderable_list.py",
+                c"reorderable_list",
             )?;
             Ok(())
         })
