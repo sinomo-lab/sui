@@ -3819,7 +3819,13 @@ impl Widget for ScrollView {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let theme = self.sync_overlay_theme();
+        let previous_offset = self.offset;
         self.sync_state(ctx, bounds.size);
+        // A bound scroll bar writes through shared state. Keep flattened content
+        // dirty when redraw handling eagerly consumes this arrange pass.
+        if self.offset != previous_offset && !self.retain_content {
+            ctx.request_paint();
+        }
         let measured = self.child.child().measured_size();
         let child_size = Size::new(
             if self.overflow_x == Overflow::Clip {
@@ -4048,7 +4054,12 @@ impl Widget for VirtualScrollView {
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let theme = self.sync_overlay_theme();
         let viewport = self.viewport_rect(bounds);
+        let previous_offset_y = self.offset_y;
         self.sync_state(ctx, viewport.size);
+        // Shared-state movement changes both row positions and the visible window.
+        if (self.offset_y - previous_offset_y).abs() > f32::EPSILON {
+            ctx.request_paint();
+        }
         let previous_visible_range = self.visible_range.clone();
         let previous_arranged_offset_y = self.last_arranged_offset_y;
         self.update_visible_range(viewport.height());
@@ -4475,7 +4486,7 @@ mod tests {
         Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
         PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect,
         ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
-        SemanticsValue, Size, Vector, WidgetId,
+        SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::{Alignment, Axis, Constraints, FlexItem, FlexWrap, Padding as Insets};
     use sui_runtime::{
@@ -5072,6 +5083,35 @@ mod tests {
             _ => {}
         }
         pointer
+    }
+
+    fn drag_vertical_scroll_bar(
+        runtime: &mut Runtime,
+        window_id: sui_core::WindowId,
+        bounds: Rect,
+        pointer_id: u64,
+        delta_y: f32,
+    ) {
+        let start = Point::new(bounds.x() + bounds.width() * 0.5, bounds.y() + 8.0);
+        let end = Point::new(start.x, start.y + delta_y);
+        let mut down = PointerEvent::new(PointerEventKind::Down, start);
+        down.pointer_id = pointer_id;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, end);
+        moved.pointer_id = pointer_id;
+        moved.delta = Vector::new(0.0, delta_y);
+        moved.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(moved))
+            .unwrap();
+        runtime
+            .handle_event(window_id, Event::Window(WindowEvent::RedrawRequested))
+            .unwrap();
     }
 
     fn scroll_view_content_with_height(
@@ -5985,6 +6025,131 @@ mod tests {
             .find(|node| node.bounds.size == Size::new(80.0, 180.0))
             .expect("scroll content present");
         assert_eq!(content.bounds.y(), -state.current_offset().y);
+    }
+
+    #[test]
+    fn overlay_scroll_bar_drag_repaints_non_retained_content_immediately() {
+        let state = ScrollState::new();
+        let counts = Rc::new(RefCell::new(vec![0usize]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+                ScrollView::vertical(PaintCounterBox::new(
+                    Size::new(80.0, 180.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    Rc::clone(&counts),
+                    0,
+                ))
+                .name("Results")
+                .state(state.clone()),
+            ),
+        );
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1]);
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Results vertical scroll bar"))
+            .expect("embedded scroll bar present");
+
+        drag_vertical_scroll_bar(&mut runtime, window_id, scroll_bar.bounds, 42, 20.0);
+        assert!(state.current_offset().y > 0.0);
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(
+            *counts.borrow(),
+            vec![2],
+            "the first frame after a scroll-bar drag must repaint moved flattened content"
+        );
+    }
+
+    #[test]
+    fn overlay_scroll_bar_drag_keeps_retained_content_transform_only() {
+        let state = ScrollState::new();
+        let counts = Rc::new(RefCell::new(vec![0usize]));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+                ScrollView::vertical(PaintCounterBox::new(
+                    Size::new(80.0, 180.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    Rc::clone(&counts),
+                    0,
+                ))
+                .name("Retained results")
+                .state(state.clone())
+                .retain_content_layer(),
+            ),
+        );
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1]);
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Retained results vertical scroll bar"))
+            .expect("embedded scroll bar present");
+
+        drag_vertical_scroll_bar(&mut runtime, window_id, scroll_bar.bounds, 43, 20.0);
+        assert!(state.current_offset().y > 0.0);
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(
+            *counts.borrow(),
+            vec![1],
+            "retained content should move without rebuilding its paint commands"
+        );
+        assert!(
+            output
+                .frame
+                .layer_updates
+                .iter()
+                .any(|update| { update.kind == sui_scene::SceneLayerUpdateKind::Transform })
+        );
+    }
+
+    #[test]
+    fn virtual_overlay_scroll_bar_drag_repaints_visible_content_immediately() {
+        let state = ScrollState::new();
+        let counts = Rc::new(RefCell::new(vec![0usize; 4]));
+        let mut scroll = VirtualScrollView::new()
+            .name("Virtual results")
+            .state(state.clone());
+        for (index, color) in [
+            Color::rgba(0.8, 0.2, 0.2, 1.0),
+            Color::rgba(0.2, 0.8, 0.2, 1.0),
+            Color::rgba(0.2, 0.2, 0.8, 1.0),
+            Color::rgba(0.8, 0.8, 0.2, 1.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            scroll.push(PaintCounterBox::new(
+                Size::new(80.0, 30.0),
+                color,
+                Rc::clone(&counts),
+                index,
+            ));
+        }
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 80.0))
+                .with_child(scroll),
+        );
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Virtual results vertical scroll bar"))
+            .expect("embedded scroll bar present");
+
+        drag_vertical_scroll_bar(&mut runtime, window_id, scroll_bar.bounds, 44, 20.0);
+        assert!(state.current_offset().y > 0.0);
+        let _ = runtime.render(window_id).unwrap();
+
+        assert_eq!(
+            *counts.borrow(),
+            vec![2, 2, 2, 2],
+            "the first frame after a virtual scroll-bar drag must repaint visible rows"
+        );
     }
 
     #[test]

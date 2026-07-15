@@ -8239,11 +8239,11 @@ mod tests {
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
-        KeyboardEvent, Point, PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
-        RenderOutput, RendererSubmissionDiagnostics, Result, SceneStatistics,
-        SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue, Size, SizedBox,
-        TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind, Vector, Widget,
-        WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
+        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        PresentationLatencyDiagnostics, Rect, RenderOutput, RendererSubmissionDiagnostics, Result,
+        SceneStatistics, SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue,
+        Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind,
+        Vector, Widget, WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
         WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
         window_scene_statistics_detail_mode,
     };
@@ -10853,6 +10853,76 @@ mod tests {
         let after = gallery.capture_screenshot()?;
 
         assert_ne!(before, after);
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_gallery_scroll_bar_drag_repaints_content_immediately() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+        let gallery = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME);
+        let snapshot = window.snapshot()?;
+        let scroll_bar = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_BAR_NAME)
+            })
+            .expect("widget book gallery scroll bar should be present");
+        let before_value = scroll_bar.value.clone();
+        let start = Point::new(
+            scroll_bar.bounds.x() + scroll_bar.bounds.width() * 0.5,
+            scroll_bar.bounds.y() + 24.0,
+        );
+        let end = Point::new(
+            start.x,
+            (start.y + 300.0).min(scroll_bar.bounds.max_y() - 24.0),
+        );
+
+        let root = window.root();
+        let mut down = PointerEvent::new(PointerEventKind::Down, start);
+        down.pointer_id = 73;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        root.dispatch_event(Event::Pointer(down))?;
+
+        let before = gallery.capture_screenshot()?;
+        let content_crop = Rect::new(
+            16.0,
+            16.0,
+            (before.width() as f32 - 64.0).max(1.0),
+            (before.height() as f32 - 32.0).max(1.0),
+        );
+        let before_content = before.crop(content_crop)?;
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, end);
+        moved.pointer_id = 73;
+        moved.buttons = PointerButtons::new(1);
+        moved.delta = end - start;
+        root.dispatch_event(Event::Pointer(moved))?;
+
+        let after_value = window
+            .snapshot()?
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(GALLERY_SCROLL_BAR_NAME)
+            })
+            .and_then(|node| node.value.clone());
+        let after_content = gallery.capture_screenshot()?.crop(content_crop)?;
+
+        assert_ne!(before_value, after_value, "the drag should move the thumb");
+        assert_ne!(
+            before_content, after_content,
+            "one captured mouse move must redraw gallery content, not only the thumb"
+        );
 
         Ok(())
     }
