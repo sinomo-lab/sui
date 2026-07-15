@@ -730,16 +730,15 @@ impl Widget for ListView {
             let hover_amount = self.hover_motion.amount_for(&index);
             let press_amount = self.press_motion.amount_for(&index);
 
-            if (selected
-                || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON)
-                && let Some(highlight) = row_highlight_rect(row, viewport)
-            {
-                ctx.fill_rect(
-                    highlight,
-                    data_row_state_fill(&theme, selected, hover_amount, press_amount),
-                );
-            }
+            paint_data_row_state(
+                ctx,
+                row,
+                viewport,
+                &theme,
+                selected,
+                hover_amount,
+                press_amount,
+            );
 
             let Some(item) = self.items.get(index) else {
                 continue;
@@ -1670,16 +1669,15 @@ impl LayerList {
         let row_hit = LayerListHit::Row(index);
         let row_hover_amount = self.hover_motion.amount_for(&row_hit);
         let row_press_amount = self.press_motion.amount_for(&row_hit);
-        if (selected
-            || row_hover_amount > AnimatedScalar::EPSILON
-            || row_press_amount > AnimatedScalar::EPSILON)
-            && let Some(highlight) = row_highlight_rect(row, viewport)
-        {
-            ctx.fill_rect(
-                highlight,
-                data_row_state_fill(theme, selected, row_hover_amount, row_press_amount),
-            );
-        }
+        paint_data_row_state(
+            ctx,
+            row,
+            viewport,
+            theme,
+            selected,
+            row_hover_amount,
+            row_press_amount,
+        );
 
         let visibility_hit = LayerListHit::Visibility(index);
         paint_layer_visibility_button(
@@ -2569,16 +2567,15 @@ impl Widget for TreeView {
                 .press_motion
                 .amount_for_by(|path| path.as_slice() == row.path.as_slice());
 
-            if (selected
-                || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON)
-                && let Some(highlight) = row_highlight_rect(row_rect, viewport)
-            {
-                ctx.fill_rect(
-                    highlight,
-                    data_row_state_fill(&theme, selected, hover_amount, press_amount),
-                );
-            }
+            paint_data_row_state(
+                ctx,
+                row_rect,
+                viewport,
+                &theme,
+                selected,
+                hover_amount,
+                press_amount,
+            );
 
             if row.has_children {
                 ctx.fill(
@@ -3182,15 +3179,15 @@ impl Widget for Table {
                 palette.surface_raised
             };
             ctx.fill_rect(row_rect, background);
-            if selected
-                || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON
-            {
-                ctx.fill_rect(
-                    row_rect,
-                    data_row_state_fill(&theme, selected, hover_amount, press_amount),
-                );
-            }
+            paint_data_row_state(
+                ctx,
+                row_rect,
+                body,
+                &theme,
+                selected,
+                hover_amount,
+                press_amount,
+            );
             ctx.stroke_rect(
                 row_rect,
                 palette.border.with_alpha(metrics.table_row_border_opacity),
@@ -3901,24 +3898,15 @@ impl Widget for VirtualTable {
             let row_selected = selected == Some(row_index);
             let row_hovered = self.hovered_row == Some(row_index);
             let row_pressed = self.pressed_row == Some(row_index);
-            let background = if row_selected {
-                data_row_state_fill(&theme, true, 0.0, 0.0)
-            } else if row_pressed || row_hovered {
-                data_row_state_fill(
-                    &theme,
-                    false,
-                    row_hovered as u8 as f32,
-                    row_pressed as u8 as f32,
-                )
-            } else {
-                Color::TRANSPARENT
-            };
-            if background.alpha > 0.0 {
-                ctx.fill(
-                    rounded_rect_path(row_rect, metrics.corner_radius),
-                    background,
-                );
-            }
+            paint_data_row_state(
+                ctx,
+                row_rect,
+                body,
+                &theme,
+                row_selected,
+                row_hovered as u8 as f32,
+                row_pressed as u8 as f32,
+            );
             let columns = self.column_rects(row_rect);
             if let Some(painter) = &self.row_painter {
                 let row = VirtualTableRowContext {
@@ -5196,10 +5184,6 @@ fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
         .filter(|rect| !rect.is_empty())
 }
 
-fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    crate::animation::Interpolate::interpolate(from, to, amount).clamped()
-}
-
 type AnimatedScalar = MotionScalar;
 
 fn set_animation_target(
@@ -5362,11 +5346,9 @@ fn data_row_state_fill(
     let palette = theme.palette;
     let interaction = theme.interaction;
     if selected {
-        mix_color(
-            palette.selection,
-            palette.accent,
-            interaction.selected_blend * 0.18,
-        )
+        // `selection` is already a translucent semantic accent token. Keeping
+        // it intact avoids turning selected rows into opaque accent slabs.
+        palette.selection
     } else {
         let overlay = theme.surfaces.hover;
         let hover_alpha = overlay.alpha * interaction.hover_blend * hover_amount.clamp(0.0, 1.0);
@@ -5377,6 +5359,48 @@ fn data_row_state_fill(
             overlay.with_alpha(alpha)
         } else {
             Color::TRANSPARENT
+        }
+    }
+}
+
+fn paint_data_row_state(
+    ctx: &mut PaintCtx,
+    row: Rect,
+    viewport: Rect,
+    theme: &DefaultTheme,
+    selected: bool,
+    hover_amount: f32,
+    press_amount: f32,
+) {
+    if !selected
+        && hover_amount <= AnimatedScalar::EPSILON
+        && press_amount <= AnimatedScalar::EPSILON
+    {
+        return;
+    }
+
+    let Some(highlight) = row_highlight_rect(row, viewport) else {
+        return;
+    };
+    ctx.fill_rect(
+        highlight,
+        data_row_state_fill(theme, selected, hover_amount, press_amount),
+    );
+
+    if selected {
+        let indicator_width = 2.0_f32.min(highlight.width());
+        let indicator_inset = (highlight.height() * 0.18).min(5.0);
+        let indicator = Rect::new(
+            highlight.x(),
+            highlight.y() + indicator_inset,
+            indicator_width,
+            (highlight.height() - indicator_inset * 2.0).max(0.0),
+        );
+        if !indicator.is_empty() {
+            ctx.fill(
+                rounded_rect_path(indicator, indicator_width * 0.5),
+                theme.palette.accent,
+            );
         }
     }
 }
@@ -5873,6 +5897,25 @@ mod tests {
                 _ => {}
             });
         colors
+    }
+
+    fn solid_fill_bounds_for_color(output: &RenderOutput, expected: Color) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    rect,
+                    brush: Brush::Solid(color),
+                } if *color == expected => rects.push(*rect),
+                SceneCommand::FillPath {
+                    path,
+                    brush: Brush::Solid(color),
+                } if *color == expected => rects.push(path.bounds()),
+                _ => {}
+            });
+        rects
     }
 
     fn solid_stroke_widths(output: &RenderOutput) -> Vec<f32> {
@@ -6406,6 +6449,86 @@ mod tests {
             "hovered table rows should paint a translucent overlay, not an opaque control fill"
         );
         Ok(())
+    }
+
+    #[test]
+    fn selected_data_rows_share_soft_fill_and_leading_indicator() {
+        let theme = DefaultTheme::default();
+        let outputs = [
+            (
+                "list view",
+                render(
+                    SizedBox::new().width(300.0).height(96.0).with_child(
+                        ListView::new("Assets")
+                            .theme(theme)
+                            .items([ListItem::new("Canvas"), ListItem::new("Lighting")])
+                            .selected(0),
+                    ),
+                ),
+            ),
+            (
+                "layer list",
+                render(
+                    SizedBox::new().width(300.0).height(96.0).with_child(
+                        LayerList::new("Layers")
+                            .theme(theme)
+                            .layers([LayerListItem::new("Canvas"), LayerListItem::new("Lighting")])
+                            .selected(0),
+                    ),
+                ),
+            ),
+            (
+                "tree view",
+                render(
+                    SizedBox::new().width(300.0).height(96.0).with_child(
+                        TreeView::new("Scene")
+                            .theme(theme)
+                            .items([TreeItem::new("Canvas"), TreeItem::new("Lighting")])
+                            .selected(0),
+                    ),
+                ),
+            ),
+            (
+                "table",
+                render(
+                    SizedBox::new().width(300.0).height(128.0).with_child(
+                        Table::new("Objects")
+                            .theme(theme)
+                            .columns([TableColumn::new("Name")])
+                            .rows([TableRow::new(["Canvas"]), TableRow::new(["Lighting"])])
+                            .selected(0),
+                    ),
+                ),
+            ),
+            (
+                "virtual table",
+                render(
+                    SizedBox::new().width(300.0).height(128.0).with_child(
+                        VirtualTable::new("Virtual objects")
+                            .theme(theme)
+                            .columns([VirtualTableColumn::new("Name")])
+                            .row_count(2)
+                            .selected(0),
+                    ),
+                ),
+            ),
+        ];
+
+        for (name, output) in outputs {
+            assert!(
+                solid_fill_colors(&output).contains(&theme.palette.selection),
+                "{name} should use the semantic soft selection fill"
+            );
+            let indicators = solid_fill_bounds_for_color(&output, theme.palette.accent)
+                .into_iter()
+                .filter(|rect| (rect.width() - 2.0).abs() < 0.01 && rect.height() > rect.width())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                indicators.len(),
+                1,
+                "{name} should paint one slim leading selection indicator; indicators={indicators:?}"
+            );
+        }
     }
 
     #[test]

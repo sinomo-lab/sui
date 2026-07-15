@@ -8999,9 +8999,18 @@ impl Widget for TabBar {
         let label_style = text_token_style(&theme, theme.text.sm, palette.text_muted);
         let selected_label_style = text_token_style(&theme, theme.text.sm, palette.text);
 
-        ctx.fill(
-            rounded_rect_path(ctx.bounds(), metrics.corner_radius),
-            palette.control,
+        // Navigation tabs share one flat strip. Selection is communicated by the
+        // animated underline below rather than by a second, raised tile.
+        ctx.fill_rect(ctx.bounds(), palette.control);
+        let divider_height = physical_pixels(ctx, metrics.border_width);
+        ctx.fill_rect(
+            Rect::new(
+                ctx.bounds().x(),
+                ctx.bounds().max_y() - divider_height,
+                ctx.bounds().width(),
+                divider_height,
+            ),
+            palette.border.with_alpha(0.72),
         );
 
         let focus_progress = self.focus_animation.value;
@@ -9015,14 +9024,15 @@ impl Widget for TabBar {
             let hover_amount = self.hover_amount_for(index);
             let press_amount = self.press_amount_for(index);
 
-            if let Some((background, border)) = tab_state_visuals(
-                &theme,
-                selected,
-                hovered,
-                pressed,
-                hover_amount,
-                press_amount,
-            ) {
+            // Hover and press remain local to each tab, but the steady selected
+            // state stays flat so it does not compete with the underline.
+            if (hovered
+                || pressed
+                || hover_amount > AnimatedScalar::EPSILON
+                || press_amount > AnimatedScalar::EPSILON)
+                && let Some((background, border)) =
+                    tab_state_visuals(&theme, false, hovered, pressed, hover_amount, press_amount)
+            {
                 draw_control_shape(
                     ctx,
                     rect,
@@ -15594,6 +15604,10 @@ mod tests {
             "selection thumb should have a 2 px bottom inset: group={:?}, thumb={thumb:?}",
             group.bounds
         );
+        assert!(
+            !solid_fill_colors(&output).contains(&theme.palette.accent),
+            "segmented controls should use a filled selection thumb without a tab underline"
+        );
     }
 
     #[test]
@@ -20160,7 +20174,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_tab_chrome_uses_interaction_token() {
+    fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
         let mut theme = DefaultTheme::default();
         theme.interaction.tab_selected_blend = 0.31;
         let selected_fill = super::mix_color(
@@ -20175,7 +20189,36 @@ mod tests {
                 .tabs(["Design", "Inspect"])
                 .selected(1),
         );
-        assert!(solid_fill_colors(&tab_bar).contains(&selected_fill));
+        let tab_bar_fills = solid_fill_colors(&tab_bar);
+        assert!(tab_bar_fills.contains(&theme.palette.control));
+        assert!(tab_bar_fills.contains(&theme.palette.accent));
+        assert!(
+            !tab_bar_fills.contains(&selected_fill),
+            "selected navigation tabs should not paint a raised selection tile"
+        );
+        let mut accent_bounds = Vec::new();
+        tab_bar
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    rect,
+                    brush: Brush::Solid(color),
+                } if *color == theme.palette.accent => accent_bounds.push(*rect),
+                SceneCommand::FillPath {
+                    path,
+                    brush: Brush::Solid(color),
+                } if *color == theme.palette.accent => accent_bounds.push(path.bounds()),
+                _ => {}
+            });
+        assert_eq!(
+            accent_bounds.len(),
+            1,
+            "navigation tab bars should paint exactly one accent underline"
+        );
+        let underline = accent_bounds[0];
+        assert!((underline.height() - theme.interaction.active_indicator_thickness).abs() < 0.01);
+        assert!((underline.max_y() - tab_bar.frame.viewport.height).abs() < 0.01);
         assert!(
             !solid_stroke_colors(&tab_bar).contains(&theme.palette.border_focus),
             "selected tab bar chrome should not use the focus border color"
@@ -20185,6 +20228,8 @@ mod tests {
             "unfocused selected tab bar chrome should not paint a focus ring"
         );
 
+        // Content-bearing `Tabs` keeps its existing selected-panel treatment;
+        // this test scopes the flat navigation grammar specifically to TabBar.
         let tabs = render_isolated(
             Tabs::new("Main tabs")
                 .theme(theme)

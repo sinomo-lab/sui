@@ -74,7 +74,7 @@ fn main() -> Result<()> {
                 .color(theme.palette.text_muted),
         )
         .with_child(
-            Button::new("Say hello")
+            Button::primary("Say hello")
                 .theme(theme)
                 .on_press(|| println!("Hello from SUI!")),
         );
@@ -159,7 +159,7 @@ Use `Stack` for a fixed row or column:
 let actions = Stack::horizontal()
     .spacing(8.0)
     .with_child(Button::new("Cancel"))
-    .with_child(Button::new("Save"));
+    .with_child(Button::primary("Save"));
 ```
 
 Use `Flex` when a child must consume remaining space:

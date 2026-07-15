@@ -1148,7 +1148,10 @@ fn mesh_roles(colors: &ThemeColors) -> Option<MeshRoles> {
             surface_2: rgb8(243, 245, 248),
             surface_3: rgb8(234, 238, 243),
             overlay: rgb8(255, 255, 255),
-            field: rgb8(255, 255, 255),
+            // A quiet inset well against the white card surface. Interactive
+            // fields lift back toward white on hover and use the soft accent
+            // surface while focused.
+            field: rgb8(248, 250, 252),
             border: rgb8(227, 232, 239),
             border_strong: rgb8(205, 213, 224),
             border_subtle: rgb8(238, 241, 246),
@@ -3151,7 +3154,8 @@ impl ControlMetrics {
             indicator_corner_radius: radius.sm + 1.0,
             border_width: 1.0,
             focus_ring_width: 2.0,
-            focus_ring_outset: 0.0,
+            // Keep the 2px ring wholly clear of the control border.
+            focus_ring_outset: 2.0,
             caret_width: 2.0,
         }
     }
@@ -3805,7 +3809,8 @@ mod tests {
         assert_eq!(light.palette.placeholder, rgb8(104, 115, 144));
         assert_eq!(light.palette.control, rgb8(243, 245, 248));
         assert_eq!(light.palette.control_hover, rgb8(234, 238, 243));
-        assert_eq!(light.palette.field, Color::WHITE);
+        assert_eq!(light.palette.field, rgb8(248, 250, 252));
+        assert_ne!(light.palette.field, light.palette.surface);
         assert_eq!(light.palette.focus, rgb8(9, 148, 198));
         assert_eq!(
             light.palette.selection,

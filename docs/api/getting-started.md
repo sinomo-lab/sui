@@ -35,7 +35,7 @@ fn main() -> Result<()> {
             .spacing(12.0)
             .alignment(Alignment::Start)
             .with_child(Label::new("Hello, SUI!").font_size(24.0))
-            .with_child(Button::new("Continue")),
+            .with_child(Button::primary("Continue")),
     );
 
     App::new().main_window("Hello SUI", root).run()

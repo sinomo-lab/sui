@@ -47,7 +47,7 @@ fn main() -> Result<()> {
             .with_wide_gamut(Color::display_p3(0.10, 0.82, 0.94, 1.0))
             .with_hdr(Color::linear_display_p3(0.14, 0.94, 1.08, 1.0));
 
-    let root = Button::new("Render")
+    let root = Button::primary("Render")
         .theme(theme)
         .on_press(|| println!("render requested"));
 

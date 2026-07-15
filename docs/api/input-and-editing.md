@@ -62,7 +62,7 @@ fn profile_form() -> impl Widget {
         .on_change(move |value| notes_draft.borrow_mut().notes = value);
 
     let submit_draft = Rc::clone(&draft);
-    let submit = Button::new("Save").on_press(move || {
+    let submit = Button::primary("Save").on_press(move || {
         let draft = submit_draft.borrow();
         // Validate and hand the draft to application code. Do not log the
         // password or keep extra plaintext copies.

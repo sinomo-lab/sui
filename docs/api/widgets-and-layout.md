@@ -56,7 +56,7 @@ fn account_form() -> impl Widget {
                     .value("2026-08-01 09:30")
                     .min_width(280.0),
             )
-            .with_child(Button::new("Create account")),
+            .with_child(Button::primary("Create account")),
     )
 }
 ```
@@ -87,7 +87,7 @@ fn search_bar() -> impl Widget {
             TextInput::new("Query").placeholder("Type a query"),
             FlexItem::flex(1.0).min_width(120.0),
         )
-        .with_child(Button::new("Run"))
+        .with_child(Button::primary("Run"))
 }
 ```
 
@@ -184,14 +184,14 @@ fn responsive_actions() -> impl Widget {
                 WidgetPod::new(
                     Stack::vertical()
                         .spacing(8.0)
-                        .with_child(Button::new("Save"))
+                        .with_child(Button::primary("Save"))
                         .with_child(Button::new("Cancel")),
                 )
             } else {
                 WidgetPod::new(
                     Flex::horizontal()
                         .gap(8.0)
-                        .with_child(Button::new("Save"))
+                        .with_child(Button::primary("Save"))
                         .with_child(Button::new("Cancel")),
                 )
             }

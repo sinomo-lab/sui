@@ -533,10 +533,10 @@ fn mix_color(from: Color, to: Color, t: f32) -> Color {
 /// control without remapping the application's theme palette.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ButtonAppearance {
-    /// A solid semantic-color fill. This is the default for [`Button`].
-    #[default]
+    /// A solid semantic-color fill for primary and high-emphasis actions.
     Filled,
     /// A soft semantic-color wash with semantic ink.
+    #[default]
     Tonal,
     /// A transparent surface with a visible semantic outline.
     Outline,
@@ -552,6 +552,100 @@ pub enum FieldAppearance {
     Framed,
     /// Paint only editor content. Intended for use inside [`crate::FramedField`].
     Bare,
+}
+
+/// The whole-row visual treatment used by checkbox, switch, and radio controls.
+///
+/// This affects only the row surrounding the label and indicator. The checkbox,
+/// switch track, or radio indicator always keeps its own stateful chrome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChoiceAppearance {
+    /// A quiet row that is transparent at rest and reveals a soft wash while
+    /// hovered, pressed, or focused.
+    #[default]
+    Plain,
+    /// A filled, bordered row suitable for inspectors and dense settings panes.
+    Framed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ChoiceFrameVisuals {
+    background: Color,
+    border: Color,
+}
+
+fn choice_frame_visuals(
+    theme: &DefaultTheme,
+    appearance: ChoiceAppearance,
+    framed_background: Color,
+    framed_border: Color,
+    hover_progress: f32,
+    press_progress: f32,
+    focus_progress: f32,
+) -> ChoiceFrameVisuals {
+    if appearance == ChoiceAppearance::Framed {
+        return ChoiceFrameVisuals {
+            background: framed_background,
+            border: framed_border,
+        };
+    }
+
+    let hover_wash = theme.surfaces.hover;
+    let press_wash = theme
+        .palette
+        .text
+        .with_alpha(if theme.surfaces.dark { 0.10 } else { 0.07 });
+    let focus_wash = theme
+        .palette
+        .accent
+        .with_alpha(if theme.surfaces.dark { 0.12 } else { 0.08 });
+    let background = mix_color(
+        mix_color(
+            mix_color(
+                Color::TRANSPARENT,
+                hover_wash,
+                hover_progress.clamp(0.0, 1.0),
+            ),
+            focus_wash,
+            focus_progress.clamp(0.0, 1.0),
+        ),
+        press_wash,
+        press_progress.clamp(0.0, 1.0),
+    );
+
+    ChoiceFrameVisuals {
+        background,
+        border: Color::TRANSPARENT,
+    }
+}
+
+fn field_background(
+    theme: &DefaultTheme,
+    read_only: bool,
+    hover_progress: f32,
+    focus_progress: f32,
+) -> Color {
+    let palette = theme.palette;
+    let base = if read_only {
+        palette.surface
+    } else {
+        palette.field
+    };
+    let hover_target = if !read_only && theme.colors.scheme == ThemeColorScheme::Light {
+        palette.surface
+    } else {
+        base
+    };
+    let hovered = mix_color(
+        base,
+        hover_target,
+        hover_progress.clamp(0.0, 1.0) * theme.interaction.hover_blend,
+    );
+    mix_color(
+        hovered,
+        palette.surface_focus,
+        focus_progress.clamp(0.0, 1.0),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2118,6 +2212,7 @@ struct ButtonVisuals {
 }
 
 impl Button {
+    /// Creates a neutral, tonal button for an ordinary action.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
@@ -2125,8 +2220,8 @@ impl Button {
             label: label.into(),
             semantic_name: None,
             semantic_description: None,
-            appearance: ButtonAppearance::Filled,
-            tone: SemanticTone::Accent,
+            appearance: ButtonAppearance::Tonal,
+            tone: SemanticTone::Neutral,
             text_style: None,
             icon: None,
             icon_size: None,
@@ -2148,6 +2243,16 @@ impl Button {
         }
     }
 
+    /// Creates a filled accent button for the primary action on a surface.
+    pub fn primary(label: impl Into<String>) -> Self {
+        Self::new(label).primary_action()
+    }
+
+    /// Creates a filled danger button for a destructive or irreversible action.
+    pub fn danger(label: impl Into<String>) -> Self {
+        Self::new(label).danger_action()
+    }
+
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -2167,16 +2272,30 @@ impl Button {
     }
 
     /// Selects the button's visual emphasis without changing its semantic
-    /// meaning. The default is [`ButtonAppearance::Filled`].
+    /// meaning. The default is [`ButtonAppearance::Tonal`].
     pub fn appearance(mut self, appearance: ButtonAppearance) -> Self {
         self.appearance = appearance;
         self
     }
 
     /// Selects the semantic color family used by this button. The default is
-    /// [`SemanticTone::Accent`].
+    /// [`SemanticTone::Neutral`].
     pub fn tone(mut self, tone: SemanticTone) -> Self {
         self.tone = tone;
+        self
+    }
+
+    /// Promotes this button to a filled accent primary action.
+    pub fn primary_action(mut self) -> Self {
+        self.appearance = ButtonAppearance::Filled;
+        self.tone = SemanticTone::Accent;
+        self
+    }
+
+    /// Promotes this button to a filled danger action.
+    pub fn danger_action(mut self) -> Self {
+        self.appearance = ButtonAppearance::Filled;
+        self.tone = SemanticTone::Danger;
         self
     }
 
@@ -2779,6 +2898,7 @@ pub struct Checkbox {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     checked: bool,
+    appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     indicator_size: Option<f32>,
@@ -2914,6 +3034,7 @@ impl Checkbox {
             theme_reader: None,
             label: label.into(),
             checked: false,
+            appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
             indicator_size: None,
@@ -2937,6 +3058,22 @@ impl Checkbox {
 
     pub fn is_checked(&self) -> bool {
         self.checked
+    }
+
+    /// Selects whether the complete checkbox row is plain or framed.
+    pub fn appearance(mut self, appearance: ChoiceAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    /// Uses the quiet, transparent-at-rest row treatment.
+    pub fn plain(self) -> Self {
+        self.appearance(ChoiceAppearance::Plain)
+    }
+
+    /// Uses the filled and bordered row treatment.
+    pub fn framed(self) -> Self {
+        self.appearance(ChoiceAppearance::Framed)
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -3175,12 +3312,12 @@ impl Widget for Checkbox {
         let press_progress = self.press_animation.value * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
-        let background = mix_color(
+        let framed_background = mix_color(
             mix_color(palette.control, palette.control_hover, hover_progress),
             palette.control_active,
             press_progress,
         );
-        let border = mix_color(
+        let framed_border = mix_color(
             mix_color(
                 palette.border,
                 palette.border_hover,
@@ -3189,17 +3326,26 @@ impl Widget for Checkbox {
             palette.border_focus,
             focus_progress,
         );
+        let frame_visuals = choice_frame_visuals(
+            &theme,
+            self.appearance,
+            framed_background,
+            framed_border,
+            hover_progress,
+            press_progress,
+            focus_progress,
+        );
         let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
         let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
 
-        draw_control_frame(
+        draw_choice_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            background,
-            border,
+            self.appearance,
+            frame_visuals,
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -3259,6 +3405,7 @@ pub struct Switch {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     on: bool,
+    appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     gap: Option<f32>,
@@ -3291,6 +3438,7 @@ impl Switch {
             theme_reader: None,
             label: label.into(),
             on: false,
+            appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
             gap: None,
@@ -3313,6 +3461,22 @@ impl Switch {
 
     pub fn is_on(&self) -> bool {
         self.on
+    }
+
+    /// Selects whether the complete switch row is plain or framed.
+    pub fn appearance(mut self, appearance: ChoiceAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    /// Uses the quiet, transparent-at-rest row treatment.
+    pub fn plain(self) -> Self {
+        self.appearance(ChoiceAppearance::Plain)
+    }
+
+    /// Uses the filled and bordered row treatment.
+    pub fn framed(self) -> Self {
+        self.appearance(ChoiceAppearance::Framed)
     }
 
     pub fn set_on(&mut self, on: bool) {
@@ -3415,7 +3579,7 @@ impl Switch {
         let interaction = theme.interaction;
         let hover_t = self.hover_animation.value * interaction.hover_blend;
         let press_t = self.press_animation.value * interaction.pressed_blend;
-        let frame_background = mix_color(
+        let framed_background = mix_color(
             mix_color(
                 palette.control,
                 palette.control_hover,
@@ -3424,18 +3588,27 @@ impl Switch {
             palette.control_active,
             press_t,
         );
-        let frame_background = if focused {
-            mix_color(frame_background, palette.surface_focus, 0.5)
+        let framed_background = if focused {
+            mix_color(framed_background, palette.surface_focus, 0.5)
         } else {
-            frame_background
+            framed_background
         };
-        let frame_border = mix_color(
+        let framed_border = mix_color(
             mix_color(
                 palette.border,
                 palette.border_hover,
                 self.hover_animation.value,
             ),
             palette.border_focus,
+            focused as u8 as f32,
+        );
+        let frame_visuals = choice_frame_visuals(
+            &theme,
+            self.appearance,
+            framed_background,
+            framed_border,
+            hover_t,
+            press_t,
             focused as u8 as f32,
         );
         let baseline_track_color = if on {
@@ -3469,8 +3642,8 @@ impl Switch {
 
         if matches!(theme.hdr.mode, HdrThemeMode::Disabled) || !on {
             return SwitchVisuals {
-                frame_background,
-                frame_border,
+                frame_background: frame_visuals.background,
+                frame_border: frame_visuals.border,
                 track_color: baseline_track_color,
                 track_border: baseline_track_border,
                 thumb_color,
@@ -3489,8 +3662,8 @@ impl Switch {
         ));
 
         SwitchVisuals {
-            frame_background,
-            frame_border,
+            frame_background: frame_visuals.background,
+            frame_border: frame_visuals.border,
             track_color: mix_color(
                 mix_color(indicator_style.color, palette.accent_hover, hover_t),
                 palette.accent_pressed,
@@ -3651,7 +3824,7 @@ impl Widget for Switch {
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
 
-        let frame_background = mix_color(
+        let framed_background = mix_color(
             mix_color(
                 mix_color(palette.control, palette.control_hover, hover_progress),
                 palette.surface_focus,
@@ -3660,19 +3833,28 @@ impl Widget for Switch {
             palette.control_active,
             press_progress,
         );
-        let frame_border = mix_color(
+        let framed_border = mix_color(
             mix_color(palette.border, palette.border_hover, hover_progress),
             palette.border_focus,
             focus_progress,
         );
+        let frame_visuals = choice_frame_visuals(
+            &theme,
+            self.appearance,
+            framed_background,
+            framed_border,
+            hover_progress,
+            press_progress,
+            focus_progress,
+        );
 
-        draw_control_frame(
+        draw_choice_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            frame_background,
-            frame_border,
+            self.appearance,
+            frame_visuals,
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -3771,6 +3953,7 @@ pub struct RadioButton {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     selected: bool,
+    appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
     indicator_size: Option<f32>,
@@ -3792,6 +3975,7 @@ impl RadioButton {
             theme_reader: None,
             label: label.into(),
             selected: false,
+            appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
             indicator_size: None,
@@ -3815,6 +3999,22 @@ impl RadioButton {
 
     pub fn is_selected(&self) -> bool {
         self.selected
+    }
+
+    /// Selects whether the complete radio row is plain or framed.
+    pub fn appearance(mut self, appearance: ChoiceAppearance) -> Self {
+        self.appearance = appearance;
+        self
+    }
+
+    /// Uses the quiet, transparent-at-rest row treatment.
+    pub fn plain(self) -> Self {
+        self.appearance(ChoiceAppearance::Plain)
+    }
+
+    /// Uses the filled and bordered row treatment.
+    pub fn framed(self) -> Self {
+        self.appearance(ChoiceAppearance::Framed)
     }
 
     pub fn set_selected(&mut self, selected: bool) {
@@ -4049,7 +4249,7 @@ impl Widget for RadioButton {
         let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
         let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
-        let frame_background = mix_color(
+        let framed_background = mix_color(
             mix_color(
                 mix_color(palette.control, palette.control_hover, hover_progress),
                 palette.surface_focus,
@@ -4058,19 +4258,28 @@ impl Widget for RadioButton {
             palette.control_active,
             press_progress,
         );
-        let frame_border = mix_color(
+        let framed_border = mix_color(
             mix_color(palette.border, palette.border_hover, hover_progress),
             palette.border_focus,
             focus_progress,
         );
+        let frame_visuals = choice_frame_visuals(
+            &theme,
+            self.appearance,
+            framed_background,
+            framed_border,
+            hover_progress,
+            press_progress,
+            focus_progress,
+        );
 
-        draw_control_frame(
+        draw_choice_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            frame_background,
-            frame_border,
+            self.appearance,
+            frame_visuals,
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -4096,7 +4305,7 @@ impl Widget for RadioButton {
         );
         ctx.stroke(
             Path::circle(rect_center(indicator), (indicator.width() * 0.5) - 0.5),
-            mix_color(frame_border, palette.accent_border_focus, toggle_progress),
+            mix_color(framed_border, palette.accent_border_focus, toggle_progress),
             StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
         );
         if toggle_progress > 0.0 {
@@ -6397,20 +6606,22 @@ impl Widget for TextArea {
         let content = inset_rect(ctx.bounds(), padding);
         let focus_progress = self.focus_animation.value;
 
-        // Mesh text areas are inset field wells: the background stays on the
-        // field token; hover animates the border, focus tints toward the halo.
-        let base_background = if self.read_only {
-            palette.surface
-        } else {
-            palette.field
-        };
+        // Light fields lift from their slightly recessed rest fill to the
+        // surface on hover. Focus then moves every scheme toward its soft
+        // accent well; dark and Void keep their established resting depth.
+        let background = field_background(
+            &theme,
+            self.read_only,
+            self.hover_animation.value,
+            focus_progress,
+        );
         if self.appearance == FieldAppearance::Framed {
             draw_control_frame(
                 ctx,
                 ctx.bounds(),
                 metrics.corner_radius,
                 metrics,
-                mix_color(base_background, palette.surface_focus, focus_progress),
+                background,
                 mix_color(
                     mix_color(
                         palette.border,
@@ -8383,17 +8594,16 @@ impl Widget for TextInput {
         let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
-        let interaction = theme.interaction;
-        let _ = interaction;
         let focus_progress = self.focus_animation.value;
-        // Mesh text inputs are inset field wells: the background stays on the
-        // field token; hover animates the border, focus tints toward the halo.
-        let base_background = if self.read_only {
-            palette.surface
-        } else {
-            palette.field
-        };
-        let background = mix_color(base_background, palette.surface_focus, focus_progress);
+        // Light fields lift from their slightly recessed rest fill to the
+        // surface on hover. Focus then moves every scheme toward its soft
+        // accent well; dark and Void keep their established resting depth.
+        let background = field_background(
+            &theme,
+            self.read_only,
+            self.hover_animation.value,
+            focus_progress,
+        );
         let border = mix_color(
             mix_color(
                 palette.border,
@@ -9127,6 +9337,44 @@ fn draw_control_frame(
         border,
     );
 
+    draw_control_focus_ring(ctx, bounds, radius, metrics, focus_ring);
+}
+
+fn draw_choice_control_frame(
+    ctx: &mut PaintCtx,
+    bounds: Rect,
+    radius: f32,
+    metrics: ControlMetrics,
+    appearance: ChoiceAppearance,
+    visuals: ChoiceFrameVisuals,
+    focus_ring: Option<Color>,
+) {
+    if appearance == ChoiceAppearance::Framed {
+        draw_control_frame(
+            ctx,
+            bounds,
+            radius,
+            metrics,
+            visuals.background,
+            visuals.border,
+            focus_ring,
+        );
+        return;
+    }
+
+    if visuals.background.alpha > f32::EPSILON {
+        ctx.fill(rounded_rect_path(bounds, radius), visuals.background);
+    }
+    draw_control_focus_ring(ctx, bounds, radius, metrics, focus_ring);
+}
+
+fn draw_control_focus_ring(
+    ctx: &mut PaintCtx,
+    bounds: Rect,
+    radius: f32,
+    metrics: ControlMetrics,
+    focus_ring: Option<Color>,
+) {
     if let Some(focus_ring) = focus_ring {
         let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
         ctx.stroke(
@@ -9285,10 +9533,10 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, DateTimeInput,
-        DefaultTheme, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label, Link,
-        NumberInput, PasswordInput, RadioButton, RadioGroup, Select, Separator, Slider, Switch,
-        TextArea, TextInput, paint_icon_button, rect_is_finite,
+        Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, ChoiceAppearance,
+        DateTimeInput, DefaultTheme, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
+        Label, Link, NumberInput, PasswordInput, RadioButton, RadioGroup, Select, Separator,
+        Slider, Switch, TextArea, TextInput, paint_icon_button, rect_is_finite,
     };
     use crate::{
         HdrThemeMode, SemanticColorToken, SemanticTone, WidgetLuminanceRole, resolve_luminance_role,
@@ -10384,6 +10632,101 @@ mod tests {
     }
 
     #[test]
+    fn button_defaults_are_quiet_and_explicit_action_helpers_are_filled() {
+        let theme = DefaultTheme::default();
+        assert_eq!(ButtonAppearance::default(), ButtonAppearance::Tonal);
+
+        let ordinary = Button::new("More options").theme(theme);
+        assert_eq!(ordinary.appearance, ButtonAppearance::Tonal);
+        assert_eq!(ordinary.tone, SemanticTone::Neutral);
+        let (neutral_fill, neutral_text) = theme.semantic_tone_soft_colors(SemanticTone::Neutral);
+        let ordinary_visuals = ordinary.resolved_visuals(false);
+        assert_eq!(ordinary_visuals.background, neutral_fill);
+        assert_eq!(ordinary_visuals.label_color, neutral_text);
+
+        let primary = Button::primary("Save").theme(theme);
+        assert_eq!(primary.appearance, ButtonAppearance::Filled);
+        assert_eq!(primary.tone, SemanticTone::Accent);
+        assert_eq!(
+            primary.resolved_visuals(false).background,
+            theme.palette.accent
+        );
+
+        let danger = Button::danger("Delete").theme(theme);
+        assert_eq!(danger.appearance, ButtonAppearance::Filled);
+        assert_eq!(danger.tone, SemanticTone::Danger);
+        assert_eq!(
+            danger.resolved_visuals(false).background,
+            theme.semantic_tone_color(SemanticTone::Danger)
+        );
+
+        let overridden = Button::new("Retry")
+            .primary_action()
+            .appearance(ButtonAppearance::Ghost)
+            .tone(SemanticTone::Warning);
+        assert_eq!(overridden.appearance, ButtonAppearance::Ghost);
+        assert_eq!(overridden.tone, SemanticTone::Warning);
+    }
+
+    #[test]
+    fn choice_controls_are_plain_by_default_and_framed_on_request() {
+        let theme = DefaultTheme::default();
+        let checkbox = Checkbox::new("Visible");
+        let switch = Switch::new("Wifi");
+        let radio = RadioButton::new("Automatic");
+        assert_eq!(checkbox.appearance, ChoiceAppearance::Plain);
+        assert_eq!(switch.appearance, ChoiceAppearance::Plain);
+        assert_eq!(radio.appearance, ChoiceAppearance::Plain);
+
+        for output in [render(checkbox), render(switch), render(radio)] {
+            assert!(
+                !solid_fill_colors(&output).contains(&theme.palette.control),
+                "plain choice rows should not paint the permanent control fill"
+            );
+        }
+
+        for output in [
+            render(Checkbox::new("Visible").framed()),
+            render(Switch::new("Wifi").appearance(ChoiceAppearance::Framed)),
+            render(RadioButton::new("Automatic").framed()),
+        ] {
+            assert!(
+                solid_fill_colors(&output).contains(&theme.palette.control),
+                "framed choice rows should preserve the control fill"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_choice_row_reveals_soft_hover_wash() -> Result<()> {
+        let theme = DefaultTheme::default();
+        let expected_wash = super::choice_frame_visuals(
+            &theme,
+            ChoiceAppearance::Plain,
+            theme.palette.control,
+            theme.palette.border,
+            theme.interaction.hover_blend,
+            0.0,
+            0.0,
+        )
+        .background;
+        let (mut runtime, window_id) = build_runtime(Checkbox::new("Visible"));
+
+        let rest = runtime.render(window_id)?;
+        assert!(!solid_fill_colors(&rest).contains(&expected_wash));
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(10.0, 10.0), false),
+        )?;
+        runtime.tick(hover_duration());
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+
+        let hovered = runtime.render(window_id)?;
+        assert!(solid_fill_colors(&hovered).contains(&expected_wash));
+        Ok(())
+    }
+
+    #[test]
     fn icon_button_appearance_and_tone_use_semantic_tokens() {
         let theme = DefaultTheme::default();
         let output = render(IconButtonPaintFixture {
@@ -10423,12 +10766,18 @@ mod tests {
     }
 
     #[test]
-    fn disabled_button_label_uses_readable_muted_text() {
+    fn disabled_button_label_uses_disabled_muted_text() {
         let theme = DefaultTheme::default();
         let output = render(Button::new("Save").enabled(false).theme(theme));
         let text = text_run_for(&output, "Save");
 
-        assert_eq!(text.style.color, theme.palette.text_muted);
+        assert_eq!(
+            text.style.color,
+            theme
+                .palette
+                .text_muted
+                .with_alpha(theme.interaction.disabled_content_opacity)
+        );
     }
 
     #[test]
@@ -10658,6 +11007,24 @@ mod tests {
     #[test]
     fn button_hover_animation_advances_over_multiple_frames() -> Result<()> {
         let theme = DefaultTheme::default();
+        let rest_background = super::semantic_button_visuals(
+            &theme,
+            ButtonAppearance::Tonal,
+            SemanticTone::Neutral,
+            true,
+            0.0,
+            0.0,
+        )
+        .background;
+        let settled_background = super::semantic_button_visuals(
+            &theme,
+            ButtonAppearance::Tonal,
+            SemanticTone::Neutral,
+            true,
+            1.0,
+            0.0,
+        )
+        .background;
         let (mut runtime, window_id) = build_runtime(Button::new("Hover"));
 
         let _ = runtime.render(window_id)?;
@@ -10670,22 +11037,15 @@ mod tests {
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
         let mid_background = solid_fill_colors(&mid)[0];
-        assert_ne!(mid_background, theme.palette.accent);
-        assert_ne!(mid_background, theme.palette.accent_hover);
+        assert_ne!(mid_background, rest_background);
+        assert_ne!(mid_background, settled_background);
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
         runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
         let end_background = solid_fill_colors(&end)[0];
-        assert_eq!(
-            end_background,
-            super::mix_color(
-                theme.palette.accent,
-                theme.palette.accent_hover,
-                theme.interaction.hover_blend
-            )
-        );
+        assert_eq!(end_background, settled_background);
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
     }
@@ -11000,8 +11360,11 @@ mod tests {
         runtime.tick(hover_duration() * 0.5);
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let mid = runtime.render(window_id)?;
-        // Mesh inputs keep the field well fixed; hover animates the border.
-        assert_eq!(solid_fill_colors(&mid)[0], theme.palette.field);
+        // The light field well lifts toward the card surface while the border
+        // strengthens, without snapping either transition.
+        let mid_background = solid_fill_colors(&mid)[0];
+        assert_ne!(mid_background, theme.palette.field);
+        assert_ne!(mid_background, theme.palette.surface);
         let mid_strokes = solid_stroke_colors(&mid);
         assert!(!mid_strokes.contains(&theme.palette.border));
         assert!(!mid_strokes.contains(&theme.palette.border_hover));
@@ -11010,7 +11373,14 @@ mod tests {
         runtime.tick(hover_duration());
         assert_eq!(handle_ready_events(&mut runtime)?, 1);
         let end = runtime.render(window_id)?;
-        assert_eq!(solid_fill_colors(&end)[0], theme.palette.field);
+        assert_eq!(
+            solid_fill_colors(&end)[0],
+            super::mix_color(
+                theme.palette.field,
+                theme.palette.surface,
+                theme.interaction.hover_blend,
+            )
+        );
         assert!(solid_stroke_colors(&end).contains(&theme.palette.border_hover));
         assert_eq!(runtime.next_wakeup_time(window_id)?, None);
         Ok(())
@@ -11324,9 +11694,9 @@ mod tests {
     }
 
     #[test]
-    fn focused_control_ring_path_matches_control_bounds() -> Result<()> {
+    fn focused_control_ring_path_sits_outside_control_bounds() -> Result<()> {
         let theme = DefaultTheme::default();
-        assert_eq!(theme.metrics.focus_ring_outset, 0.0);
+        assert_eq!(theme.metrics.focus_ring_outset, 2.0);
         let (mut runtime, window_id) = build_runtime(Button::new("Save").theme(theme));
 
         let _ = runtime.render(window_id)?;
@@ -11349,7 +11719,13 @@ mod tests {
             focus_bounds.len() == 1,
             "expected one focused control ring, got {focus_bounds:?}"
         );
-        assert_rect_approx_eq(focus_bounds[0], button.bounds);
+        assert_rect_approx_eq(
+            focus_bounds[0],
+            button.bounds.inflate(
+                theme.metrics.focus_ring_outset,
+                theme.metrics.focus_ring_outset,
+            ),
+        );
         Ok(())
     }
 
@@ -11358,7 +11734,7 @@ mod tests {
         let theme = DefaultTheme::default();
         let hover_time = hover_duration();
         let press_time = press_duration();
-        let (mut runtime, window_id) = build_runtime(Checkbox::new("Subscribe"));
+        let (mut runtime, window_id) = build_runtime(Checkbox::new("Subscribe").framed());
 
         let _ = runtime.render(window_id)?;
         let point = Point::new(10.0, 10.0);
@@ -12795,8 +13171,8 @@ mod tests {
         theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
             .with_hdr(Color::linear_display_p3(1.35, 0.28, 0.22, 1.0));
 
-        let visuals = Button::new("Go").theme(theme).resolved_visuals(true);
-        let fills = solid_fill_colors(&render(Button::new("Go").theme(theme)));
+        let visuals = Button::primary("Go").theme(theme).resolved_visuals(true);
+        let fills = solid_fill_colors(&render(Button::primary("Go").theme(theme)));
 
         assert_eq!(visuals.background, theme.palette.accent);
         assert_eq!(visuals.border, theme.palette.accent_border_focus);
@@ -12821,7 +13197,7 @@ mod tests {
         theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
             .with_hdr(Color::linear_display_p3(1.28, 0.42, 0.30, 1.0));
 
-        let visuals = Button::new("Go").theme(theme).resolved_visuals(true);
+        let visuals = Button::primary("Go").theme(theme).resolved_visuals(true);
         let chrome_style = visuals.chrome_style.expect("hdr accent style present");
 
         assert_eq!(visuals.background, chrome_style.color);
@@ -12841,7 +13217,7 @@ mod tests {
         theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
             .with_hdr(Color::linear_display_p3(1.20, 0.36, 0.30, 1.0));
 
-        let visuals = Button::new("Go").theme(theme).resolved_visuals(false);
+        let visuals = Button::primary("Go").theme(theme).resolved_visuals(false);
 
         assert_eq!(visuals.label_color, theme.palette.accent_text);
         assert_eq!(visuals.label_peak_lift, theme.hdr.luminance.reference_white);
@@ -13124,10 +13500,10 @@ mod tests {
         assert_eq!(constrained_peak, 1.3);
         assert_eq!(full_peak, 2.1);
         assert!(constrained_peak < full_peak);
-        assert_eq!(constrained_visuals.track_color, constrained_track[1]);
-        assert_eq!(full_visuals.track_color, full_track[1]);
-        assert!((constrained_track[1].red - constrained_peak).abs() < f32::EPSILON);
-        assert!((full_track[1].red - full_peak).abs() < f32::EPSILON);
+        assert!(constrained_track.contains(&constrained_visuals.track_color));
+        assert!(full_track.contains(&full_visuals.track_color));
+        assert!((constrained_visuals.track_color.red - constrained_peak).abs() < f32::EPSILON);
+        assert!((full_visuals.track_color.red - full_peak).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -13248,7 +13624,7 @@ mod tests {
         theme.typography.body_line_height = 24.0;
         theme.palette.accent_text = Color::rgba(0.10, 0.12, 0.15, 1.0);
 
-        let output = render(Button::new("Theme").theme(theme));
+        let output = render(Button::primary("Theme").theme(theme));
 
         assert_eq!(output.frame.viewport, Size::new(156.0, 52.0));
         let label = first_text_run(&output);

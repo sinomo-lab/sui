@@ -55,7 +55,7 @@ fn dark_form() -> impl Widget {
                 .with_child(Label::new("Sign in").theme(theme))
                 .with_child(TextInput::new("Email").theme(theme))
                 .with_child(PasswordInput::new("Password").theme(theme))
-                .with_child(Button::new("Continue").theme(theme)),
+                .with_child(Button::primary("Continue").theme(theme)),
         ),
     )
 }

@@ -1894,7 +1894,12 @@ impl ScrollState {
         changed
     }
 
-    fn set_offset(&self, offset: Vector) -> bool {
+    /// Updates the shared scroll offset, clamped to the current viewport and
+    /// content metrics. Returns whether the effective offset changed.
+    ///
+    /// Widgets bound to this state observe the new offset on their next layout
+    /// pass; event handlers should request the corresponding invalidation.
+    pub fn set_offset(&self, offset: Vector) -> bool {
         let mut inner = self.inner.borrow_mut();
         let next_offset = if inner.viewport == Size::ZERO && inner.content_size == Size::ZERO {
             axis_limited_offset(inner.axes, offset)
@@ -5644,6 +5649,22 @@ mod tests {
 
         assert_eq!(inner_content.bounds.y(), -64.0);
         assert_eq!(outer_content.bounds.y(), -24.0);
+    }
+
+    #[test]
+    fn shared_scroll_state_accepts_programmatic_offsets() {
+        let state = ScrollState::new();
+        state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+
+        assert!(state.set_offset(Vector::new(20.0, 32.0)));
+        assert_eq!(state.current_offset(), Vector::new(0.0, 32.0));
+        assert!(!state.set_offset(Vector::new(0.0, 32.0)));
+        assert!(state.set_offset(Vector::new(0.0, 200.0)));
+        assert_eq!(state.current_offset(), Vector::new(0.0, 80.0));
     }
 
     #[test]

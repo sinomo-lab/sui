@@ -201,7 +201,7 @@ callback mutates the same model and refreshes the dependent status label:
 let enabled_state = Rc::clone(&state);
 let submit_state = Rc::clone(&state);
 
-let submit = Button::new("Save profile")
+let submit = Button::primary("Save profile")
     .theme(theme)
     .enabled_when(move || enabled_state.borrow().can_submit())
     .on_press_with_ctx(move |ctx| {
@@ -254,7 +254,7 @@ shared ownership or theme state:
 ```rust,ignore
 let theme = DefaultTheme::dark();
 let field = TextInput::new("Name").theme(theme);
-let action = Button::new("Save").theme(theme);
+let action = Button::primary("Save").theme(theme);
 ```
 
 Use palette tokens such as `theme.palette.text` and

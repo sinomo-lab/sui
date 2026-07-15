@@ -112,7 +112,8 @@ That leads to the following baseline rules for first-party widgets:
 - Small visual elements such as checkbox indicators or drag affordances must not become tiny click targets. The visible glyph may stay compact, but the interactive row or surrounding surface should provide the larger target.
 - Hover, pressed, and focused states should be distinct without relying on dramatic motion or heavy skeuomorphic shading. Focus visibility is mandatory and should survive both mouse and keyboard navigation.
 - Text inputs should prioritize legibility and editing clarity: visible caret, readable placeholder styling, and strong focus treatment.
-- Buttons should default to a primary-action style that feels usable out of the box, while still allowing applications to layer richer theming later.
+- Buttons should default to a neutral tonal style so ordinary actions compose without competing for attention. Primary accent and destructive actions should be explicit through `Button::primary(...)`, `Button::danger(...)`, or the corresponding builders.
+- Checkbox, radio, and switch rows should remain visually plain at rest while preserving a generous hit target. Framed choice rows are an explicit appearance for inspector and settings surfaces rather than the universal default.
 
 These defaults are not meant to replace a future inherited theming system. They are the baseline that makes SUI usable before global theme propagation exists, and they should therefore live in first-party widgets rather than in example code alone.
 

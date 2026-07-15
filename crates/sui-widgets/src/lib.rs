@@ -61,11 +61,11 @@ pub use containers::{
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
 pub use controls::{
-    BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState, ComboBox,
-    DateTimeInput, Divider, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph, Label,
-    Link, MultilineTextInput, NumberInput, PasswordInput, RadioButton, RadioGroup, Select,
-    Separator, Slider, SpinBox, Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator,
-    paint_icon_button, register_builtin_icon_resources,
+    BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState,
+    ChoiceAppearance, ComboBox, DateTimeInput, Divider, FieldAppearance, Icon, IconButton,
+    IconButtonPaint, IconGlyph, Label, Link, MultilineTextInput, NumberInput, PasswordInput,
+    RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea, TextInput,
+    draw_glyph, paint_checkbox_indicator, paint_icon_button, register_builtin_icon_resources,
 };
 pub use data::{
     Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, LayerListReorderChange,
