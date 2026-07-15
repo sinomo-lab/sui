@@ -717,6 +717,7 @@ impl Widget for ColorSwatch {
         let outer_radius = metrics.corner_radius.min(body.height() * 0.5);
         let inner_inset = metrics.color_swatch_inner_inset + pressed_offset * 0.5;
         let inner_radius = (outer_radius - inner_inset).max(0.0);
+        let inner_body = inset_rect(body, Insets::all(inner_inset));
         let color = self.current_color();
 
         if self.focus_animation.value > 0.0 {
@@ -749,11 +750,14 @@ impl Widget for ColorSwatch {
             );
         }
 
-        draw_checkerboard(ctx, body, metrics.color_swatch_checker_size, &theme);
-        ctx.fill(
-            rounded_rect_path(inset_rect(body, Insets::all(inner_inset)), inner_radius),
-            color,
+        draw_rounded_checkerboard(
+            ctx,
+            inner_body,
+            inner_radius,
+            metrics.color_swatch_checker_size,
+            &theme,
         );
+        ctx.fill(rounded_rect_path(inner_body, inner_radius), color);
         ctx.stroke(
             rounded_rect_path(body, outer_radius),
             if ctx.is_focused() {
@@ -1290,7 +1294,13 @@ impl Widget for ColorPalette {
             } else if hover_amount > 0.0 || press_amount > 0.0 {
                 ctx.fill(rounded_rect_path(rect, radius), background);
             }
-            draw_checkerboard(ctx, fill_rect, metrics.color_palette_checker_size, &theme);
+            draw_rounded_checkerboard(
+                ctx,
+                fill_rect,
+                (radius - fill_inset).max(0.0),
+                metrics.color_palette_checker_size,
+                &theme,
+            );
             ctx.fill(
                 rounded_rect_path(fill_rect, (radius - fill_inset).max(0.0)),
                 swatch.color,
@@ -3408,6 +3418,18 @@ fn draw_checkerboard(ctx: &mut PaintCtx, rect: Rect, cell_size: f32, theme: &Def
     ctx.pop_clip();
 }
 
+fn draw_rounded_checkerboard(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    radius: f32,
+    cell_size: f32,
+    theme: &DefaultTheme,
+) {
+    ctx.push_clip(rounded_rect_path(rect, radius));
+    draw_checkerboard(ctx, rect, cell_size, theme);
+    ctx.pop_clip();
+}
+
 fn format_color(color: Color) -> String {
     format!(
         "#{:02X}{:02X}{:02X}{:02X}",
@@ -3531,6 +3553,7 @@ mod tests {
         PointerEventKind, Rect, Result, SemanticsAction, SemanticsRole, SemanticsValue, Size,
         Vector, WidgetId,
     };
+    use sui_layout::Padding as Insets;
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
     use sui_scene::{Brush, RegisteredImage, SceneCommand};
     use sui_text::{FontFeature, FontRegistry, TextSystem};
@@ -3610,6 +3633,26 @@ mod tests {
             }
         });
         colors
+    }
+
+    fn path_clip_bounds(output: &sui_runtime::RenderOutput) -> Vec<Rect> {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                SceneCommand::PushClipPath { path } => Some(path.bounds()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn rects_close(left: Rect, right: Rect) -> bool {
+        (left.x() - right.x()).abs() < 0.001
+            && (left.y() - right.y()).abs() < 0.001
+            && (left.width() - right.width()).abs() < 0.001
+            && (left.height() - right.height()).abs() < 0.001
     }
 
     fn stroke_path_bounds_with_color_and_width(
@@ -3975,6 +4018,55 @@ mod tests {
         assert_eq!(
             swatch.value,
             Some(SemanticsValue::Text("#3366CCFF".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_swatch_checkerboards_follow_the_rounded_color_shape() -> Result<()> {
+        let theme = DefaultTheme::dark();
+        let translucent = Color::rgba(0.16, 0.52, 0.88, 0.55);
+        let (mut runtime, window_id) =
+            build_runtime(ColorSwatch::new("Translucent accent", translucent).theme(theme));
+        let output = runtime.render(window_id)?;
+        let swatch = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorSwatch)
+            .expect("standalone color swatch semantics present");
+        let expected_inner = super::inset_rect(
+            swatch.bounds,
+            Insets::all(theme.metrics.color_swatch_inner_inset),
+        );
+        let clips = path_clip_bounds(&output);
+        assert!(
+            clips.iter().any(|clip| rects_close(*clip, expected_inner)),
+            "standalone swatch checkerboard should be clipped to its rounded inner color shape; expected {expected_inner:?}, clips={clips:?}"
+        );
+
+        let (mut runtime, window_id) = build_runtime(
+            ColorPalette::new("Dark palette")
+                .theme(theme)
+                .swatch(ColorPaletteSwatch::new("Selected accent", translucent))
+                .selected(0),
+        );
+        let output = runtime.render(window_id)?;
+        let selected = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch
+                    && node.name.as_deref() == Some("Selected accent")
+            })
+            .expect("selected palette swatch semantics present");
+        let expected_inner = super::inset_rect(
+            selected.bounds,
+            Insets::all(theme.metrics.color_palette_selected_swatch_inset),
+        );
+        let clips = path_clip_bounds(&output);
+        assert!(
+            clips.iter().any(|clip| rects_close(*clip, expected_inner)),
+            "selected palette checkerboard should be clipped to its rounded color shape; expected {expected_inner:?}, clips={clips:?}"
         );
         Ok(())
     }
