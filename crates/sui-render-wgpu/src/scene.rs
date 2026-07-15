@@ -3,6 +3,10 @@
 
 use super::*;
 
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+mod windows_surface;
+
 #[cfg(test)]
 pub(crate) fn build_vertices(
     frame: &SceneFrame,
@@ -4720,7 +4724,7 @@ fn configure_native_hdr_surface_color_space(
 
     #[cfg(target_os = "windows")]
     {
-        sui_platform_windows::set_native_hdr_surface_color_space(surface)
+        windows_surface::set_native_hdr_surface_color_space(surface)
             .map_err(|error| Error::new(format!("failed to configure native HDR surface: {error}")))
     }
 

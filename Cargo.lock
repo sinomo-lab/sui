@@ -3198,7 +3198,6 @@ dependencies = [
  "resvg",
  "sinomo-ui-core",
  "sinomo-ui-layout",
- "sinomo-ui-platform-windows",
  "sinomo-ui-render-wgpu",
  "sinomo-ui-runtime",
  "unicode-segmentation",
@@ -3207,15 +3206,8 @@ dependencies = [
  "web-sys",
  "web-time",
  "wgpu",
- "winit",
-]
-
-[[package]]
-name = "sinomo-ui-platform-windows"
-version = "0.1.0"
-dependencies = [
- "wgpu",
  "windows",
+ "winit",
 ]
 
 [[package]]
@@ -3238,7 +3230,6 @@ dependencies = [
  "lyon_tessellation",
  "pollster",
  "sinomo-ui-core",
- "sinomo-ui-platform-windows",
  "sinomo-ui-scene",
  "sinomo-ui-text",
  "swash",
@@ -3247,6 +3238,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-time",
  "wgpu",
+ "windows",
  "winit",
 ]
 

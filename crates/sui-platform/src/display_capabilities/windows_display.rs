@@ -16,7 +16,30 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromWindow};
 use windows::core::Interface;
 
-use crate::{WindowsAdvancedColorProbe, WindowsAdvancedColorSpace};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum WindowsAdvancedColorSpace {
+    #[default]
+    Srgb,
+    ScRgb,
+    Hdr10P2020,
+    Rgb2020,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct WindowsAdvancedColorProbe {
+    pub(super) device_name: Option<String>,
+    pub(super) bits_per_color: u32,
+    pub(super) color_space: WindowsAdvancedColorSpace,
+    pub(super) red_primary: Option<[f32; 2]>,
+    pub(super) green_primary: Option<[f32; 2]>,
+    pub(super) blue_primary: Option<[f32; 2]>,
+    pub(super) white_point: Option<[f32; 2]>,
+    pub(super) min_luminance_nits: Option<f32>,
+    pub(super) max_luminance_nits: Option<f32>,
+    pub(super) max_full_frame_luminance_nits: Option<f32>,
+    pub(super) sdr_white_nits: Option<f32>,
+}
 
 fn decode_wide_string(buffer: &[u16]) -> String {
     let end = buffer
@@ -51,6 +74,7 @@ fn query_active_display_paths() -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
     loop {
         let mut path_count = 0;
         let mut mode_count = 0;
+        // SAFETY: The API initializes the two scalar outputs and does not retain their pointers.
         let size_result =
             unsafe { GetDisplayConfigBufferSizes(flags, &mut path_count, &mut mode_count) };
         if size_result != ERROR_SUCCESS {
@@ -59,6 +83,8 @@ fn query_active_display_paths() -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
 
         let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
         let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
+        // SAFETY: Both buffers have the capacities reported by Windows, the counts are passed by
+        // pointer for update, and no pointer escapes the call.
         let query_result = unsafe {
             QueryDisplayConfig(
                 flags,
@@ -93,6 +119,8 @@ fn source_device_name_for_path(path: &DISPLAYCONFIG_PATH_INFO) -> Option<String>
         ..DISPLAYCONFIG_SOURCE_DEVICE_NAME::default()
     };
 
+    // SAFETY: The structure header describes its exact type and size, and the mutable pointer is
+    // valid exclusively for the duration of the call.
     let result = unsafe { DisplayConfigGetDeviceInfo(&mut source_name.header) };
     (result == ERROR_SUCCESS.0 as i32)
         .then(|| decode_wide_string(&source_name.viewGdiDeviceName))
@@ -110,6 +138,8 @@ fn sdr_white_nits_for_path(path: &DISPLAYCONFIG_PATH_INFO) -> Option<f32> {
         ..DISPLAYCONFIG_SDR_WHITE_LEVEL::default()
     };
 
+    // SAFETY: The structure header describes its exact type and size, and the mutable pointer is
+    // valid exclusively for the duration of the call.
     let result = unsafe { DisplayConfigGetDeviceInfo(&mut sdr_white.header) };
     (result == ERROR_SUCCESS.0 as i32)
         .then_some(sdr_white.SDRWhiteLevel)
@@ -126,23 +156,29 @@ fn query_sdr_white_nits_for_gdi_device(device_name: &str) -> Option<f32> {
         .and_then(sdr_white_nits_for_path)
 }
 
-pub fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> {
+pub(super) fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> {
     let hwnd = HWND(hwnd as *mut core::ffi::c_void);
+    // SAFETY: The HWND comes from winit's live Win32 window handle. The call only resolves its
+    // nearest monitor and does not take ownership of the handle.
     let target_monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
     if target_monitor.0.is_null() {
         return None;
     }
 
+    // SAFETY: The returned COM interface is owned by the windows crate and released on drop.
     let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1::<IDXGIFactory1>().ok()? };
     let mut adapter_index = 0;
+    // SAFETY: DXGI validates the adapter index and returns an owned COM interface on success.
     while let Ok(adapter) = unsafe { factory.EnumAdapters1(adapter_index) } {
         let adapter: IDXGIAdapter1 = adapter;
         let mut output_index = 0;
+        // SAFETY: DXGI validates the output index and returns an owned COM interface on success.
         while let Ok(output) = unsafe { adapter.EnumOutputs(output_index) } {
             let Ok(output6) = output.cast::<IDXGIOutput6>() else {
                 output_index += 1;
                 continue;
             };
+            // SAFETY: output6 is a valid owned COM interface and GetDesc1 only writes its result.
             let Ok(desc) = (unsafe { output6.GetDesc1() }) else {
                 output_index += 1;
                 continue;
@@ -170,16 +206,4 @@ pub fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColorProbe> 
     }
 
     None
-}
-
-pub fn set_native_hdr_surface_color_space(surface: &wgpu::Surface<'_>) -> Result<(), String> {
-    let Some(hal_surface) = (unsafe { surface.as_hal::<wgpu::hal::api::Dx12>() }) else {
-        return Ok(());
-    };
-    let Some(swap_chain) = hal_surface.swap_chain() else {
-        return Ok(());
-    };
-
-    unsafe { swap_chain.SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) }
-        .map_err(|error| format!("IDXGISwapChain3::SetColorSpace1(scRGB) failed: {error}"))
 }

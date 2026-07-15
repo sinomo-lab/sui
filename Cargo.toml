@@ -60,7 +60,6 @@ sui-js = { package = "sinomo-ui-js", version = "0.1.0", path = "crates/sui-js" }
 sui-layout = { package = "sinomo-ui-layout", version = "0.1.0", path = "crates/sui-layout" }
 sui-lucide = { package = "sinomo-ui-lucide", version = "1.17.0", path = "crates/sui-lucide" }
 sui-platform = { package = "sinomo-ui-platform", version = "0.1.0", path = "crates/sui-platform" }
-sui-platform-windows = { package = "sinomo-ui-platform-windows", version = "0.1.0", path = "crates/sui-platform-windows" }
 sui-python = { package = "sinomo-ui-python", version = "0.1.0", path = "crates/sui-python" }
 sui-render-wgpu = { package = "sinomo-ui-render-wgpu", version = "0.1.0", path = "crates/sui-render-wgpu" }
 sui-runtime = { package = "sinomo-ui-runtime", version = "0.1.0", path = "crates/sui-runtime" }

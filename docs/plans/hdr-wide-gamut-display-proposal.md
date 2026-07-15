@@ -270,9 +270,11 @@ This roadmap is complete when:
   `crates/sui-core/src/color.rs`
 - Public window policy: `crates/sui-runtime/src/diagnostics.rs`
 - Platform detection and diagnostics:
-  `crates/sui-platform/src/display_capabilities.rs`
+  `crates/sui-platform/src/display_capabilities.rs` and
+  `crates/sui-platform/src/display_capabilities/windows_display.rs`
 - Windows Advanced Color integration:
-  `crates/sui-platform-windows/src/dxgi.rs`
+  `crates/sui-platform/src/display_capabilities/windows_display.rs` and
+  `crates/sui-render-wgpu/src/scene/windows_surface.rs`
 - Output strategy and capture pipeline: `crates/sui-render-wgpu/src/lib.rs` and
   `crates/sui-render-wgpu/src/scene.rs`
 - Theme policy: `crates/sui-widgets/src/hdr_theme.rs`

@@ -13,6 +13,10 @@ use sui_runtime::{
 };
 use winit::window::Window;
 
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+mod windows_display;
+
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct WebCapabilityHints {
@@ -403,7 +407,7 @@ fn detect_windows_monitor_capabilities(
     window: &Window,
     monitor_name: &str,
 ) -> Option<DisplayCapabilities> {
-    use sui_platform_windows::{
+    use self::windows_display::{
         WindowsAdvancedColorProbe, WindowsAdvancedColorSpace, probe_monitor_for_hwnd,
     };
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -419,7 +423,7 @@ fn detect_windows_monitor_capabilities(
     }
 
     let hwnd = match window.window_handle().ok()?.as_raw() {
-        RawWindowHandle::Win32(handle) => handle.hwnd.get() as isize,
+        RawWindowHandle::Win32(handle) => handle.hwnd.get(),
         _ => return None,
     };
     let probe: WindowsAdvancedColorProbe = probe_monitor_for_hwnd(hwnd)?;
@@ -448,7 +452,7 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
 
     #[cfg(target_os = "windows")]
     {
-        return detect_windows_monitor_capabilities(window, &monitor_name).unwrap_or_else(|| {
+        detect_windows_monitor_capabilities(window, &monitor_name).unwrap_or_else(|| {
             DisplayCapabilities {
                 supports_wide_gamut: false,
                 supports_hdr: false,
@@ -458,12 +462,12 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
                 ),
                 ..DisplayCapabilities::default()
             }
-        });
+        })
     }
 
     #[cfg(target_os = "macos")]
     {
-        return DisplayCapabilities {
+        DisplayCapabilities {
             supports_wide_gamut: true,
             supports_hdr: false,
             preferred_primaries: DisplayColorPrimaries::DisplayP3,
@@ -471,7 +475,7 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
                 "macOS monitor {monitor_name}: conservative phase-2 heuristic assumes Display-P3 SDR; EDR headroom detection is not wired yet"
             ),
             ..DisplayCapabilities::default()
-        };
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -483,12 +487,7 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
         let media_wide_gamut = web_media_query_matches("(color-gamut: p3)")
             || web_media_query_matches("(color-gamut: rec2020)");
         let media_hdr = web_media_query_matches("(dynamic-range: high)");
-        return display_capabilities_from_web_signals(
-            &monitor_name,
-            hints,
-            media_wide_gamut,
-            media_hdr,
-        );
+        display_capabilities_from_web_signals(&monitor_name, hints, media_wide_gamut, media_hdr)
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_arch = "wasm32")))]
