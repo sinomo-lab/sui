@@ -1839,6 +1839,7 @@ struct ScrollStateInner {
     viewport: Size,
     content_size: Size,
     offset: Vector,
+    pending_virtual_item: Option<usize>,
     scroll_view_id: Option<WidgetId>,
     scroll_content_id: Option<WidgetId>,
     scroll_bar_ids: Vec<WidgetId>,
@@ -1913,6 +1914,56 @@ impl ScrollState {
         true
     }
 
+    /// Queues a virtual-scroll item to align with the viewport start on the
+    /// next layout pass. Returns whether the pending request changed.
+    ///
+    /// Resolving the request during layout keeps the target aligned with the
+    /// item's latest measured position, including requests made before the
+    /// first render.
+    pub fn scroll_to_item(&self, index: usize) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.pending_virtual_item == Some(index) {
+            return false;
+        }
+        inner.pending_virtual_item = Some(index);
+        true
+    }
+
+    /// Queues a virtual-scroll item and invalidates the bound viewport so the
+    /// jump is laid out and repainted in the frame requested by an event.
+    pub fn scroll_to_item_with_ctx(&self, index: usize, ctx: &mut EventCtx) -> bool {
+        if !self.scroll_to_item(index) {
+            return false;
+        }
+
+        let subscribers = self.subscribers();
+        if let Some(scroll_view_id) = subscribers.scroll_view_id {
+            for kind in [
+                InvalidationKind::Measure,
+                InvalidationKind::Paint,
+                InvalidationKind::HitTest,
+                InvalidationKind::Semantics,
+            ] {
+                ctx.request(InvalidationRequest::new(
+                    InvalidationTarget::Widget(scroll_view_id),
+                    kind,
+                ));
+            }
+        }
+        for scroll_bar_id in subscribers.scroll_bar_ids {
+            request_scroll_bar_refresh(ctx, scroll_bar_id);
+        }
+        true
+    }
+
+    fn take_pending_virtual_item(&self) -> Option<usize> {
+        self.inner.borrow_mut().pending_virtual_item.take()
+    }
+
+    fn pending_virtual_item(&self) -> Option<usize> {
+        self.inner.borrow().pending_virtual_item
+    }
+
     fn subscribers(&self) -> ScrollStateSubscribers {
         let inner = self.inner.borrow();
         ScrollStateSubscribers {
@@ -1931,6 +1982,7 @@ impl Default for ScrollState {
                 viewport: Size::ZERO,
                 content_size: Size::ZERO,
                 offset: Vector::ZERO,
+                pending_virtual_item: None,
                 scroll_view_id: None,
                 scroll_content_id: None,
                 scroll_bar_ids: Vec::new(),
@@ -3036,13 +3088,16 @@ impl VirtualScrollView {
 
         state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
         let content_size = Size::new(viewport.width, self.content_height);
-        if state.sync_metrics(ScrollAxes::Vertical, viewport, content_size) {
-            for scroll_bar_id in state.subscribers().scroll_bar_ids {
-                request_scroll_bar_refresh(ctx, scroll_bar_id);
-            }
+        let mut state_changed = state.sync_metrics(ScrollAxes::Vertical, viewport, content_size);
+        if let Some(index) = state.take_pending_virtual_item()
+            && let Some(item_offset) = self.item_offsets.get(index).copied()
+        {
+            let target_offset = self.clamp_offset(viewport.height, item_offset);
+            state_changed |= state.set_offset(Vector::new(0.0, target_offset));
         }
         self.offset_y = self.clamp_offset(viewport.height, state.current_offset().y);
-        if state.set_offset(Vector::new(0.0, self.offset_y)) {
+        state_changed |= state.set_offset(Vector::new(0.0, self.offset_y));
+        if state_changed {
             for scroll_bar_id in state.subscribers().scroll_bar_ids {
                 request_scroll_bar_refresh(ctx, scroll_bar_id);
             }
@@ -3076,9 +3131,11 @@ impl VirtualScrollView {
         &self.children.as_slice()[self.visible_range.clone()]
     }
 
-    fn visible_children_mut(&mut self) -> &mut [WidgetPod] {
-        let range = self.visible_range.clone();
-        &mut self.children.as_mut_slice()[range]
+    fn pending_visible_range(&self) -> Option<Range<usize>> {
+        let state = self.state.as_ref()?;
+        let index = state.pending_virtual_item()?;
+        let offset_y = self.item_offsets.get(index).copied()?;
+        Some(self.visible_range_for_offset(state.viewport_size().height, offset_y))
     }
 
     fn advance_focus_animation(&mut self, time: f64, ctx: &mut EventCtx) {
@@ -3499,14 +3556,29 @@ impl Widget for VirtualScrollView {
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        for child in self.visible_children() {
-            visitor.visit(child);
+        let pending_range = self.pending_visible_range();
+        for (index, child) in self.children.as_slice().iter().enumerate() {
+            if self.visible_range.contains(&index)
+                || pending_range
+                    .as_ref()
+                    .is_some_and(|range| range.contains(&index))
+            {
+                visitor.visit(child);
+            }
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        for child in self.visible_children_mut() {
-            visitor.visit(child);
+        let visible_range = self.visible_range.clone();
+        let pending_range = self.pending_visible_range();
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            if visible_range.contains(&index)
+                || pending_range
+                    .as_ref()
+                    .is_some_and(|range| range.contains(&index))
+            {
+                visitor.visit(child);
+            }
         }
     }
 }
@@ -5321,6 +5393,45 @@ mod tests {
             layer_descriptor_for(&output, scroll_id).expect("virtual scroll view layer present");
 
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
+    }
+
+    #[test]
+    fn virtual_scroll_state_scroll_to_item_aligns_item_at_viewport_top() {
+        let state = ScrollState::new();
+        assert!(state.scroll_to_item(2));
+
+        let (output, _) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .state(state.clone())
+                    .with_child(SemanticRegion::new(
+                        "Item 0",
+                        FixedBox::new(Size::new(80.0, 20.0), Color::rgba(0.8, 0.2, 0.2, 1.0)),
+                    ))
+                    .with_child(SemanticRegion::new(
+                        "Item 1",
+                        FixedBox::new(Size::new(80.0, 20.0), Color::rgba(0.2, 0.8, 0.2, 1.0)),
+                    ))
+                    .with_child(SemanticRegion::new(
+                        "Item 2",
+                        FixedBox::new(Size::new(80.0, 40.0), Color::rgba(0.2, 0.2, 0.8, 1.0)),
+                    )),
+            ),
+        );
+
+        let viewport = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ScrollView)
+            .expect("virtual scroll view semantics present");
+        let target = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Item 2"))
+            .expect("target item semantics present");
+
+        assert_eq!(state.current_offset(), Vector::new(0.0, 40.0));
+        assert_eq!(target.bounds.y(), viewport.bounds.y());
     }
 
     #[test]

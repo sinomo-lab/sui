@@ -129,9 +129,6 @@ pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book scroll bar";
 pub const WIDGET_BOOK_SHELL_NAME: &str = "Widget book shell";
 pub const WIDGET_BOOK_SEARCH_NAME: &str = "Filter widget stories";
 pub const WIDGET_BOOK_CATEGORY_NAV_NAME: &str = "Widget categories";
-pub const WIDGET_BOOK_CATEGORY_SELECT_NAME: &str = "Component category";
-pub const WIDGET_BOOK_THEME_SELECT_NAME: &str = "Preview theme";
-pub const WIDGET_BOOK_SIZE_SELECT_NAME: &str = "Control size";
 const GALLERY_TEXT_MAX_WIDTH: f32 = 980.0;
 const GALLERY_CONTENT_MAX_WIDTH: f32 = 1180.0;
 const WIDGET_BOOK_RAIL_WIDTH: f32 = 216.0;
@@ -510,10 +507,10 @@ impl WidgetBookCategory {
         Self::All,
         Self::Foundations,
         Self::Controls,
+        Self::Text,
         Self::Navigation,
         Self::Data,
         Self::Layout,
-        Self::Text,
         Self::Canvas,
     ];
 
@@ -540,50 +537,17 @@ impl WidgetBookCategory {
             .position(|category| *category == self)
             .unwrap_or(0)
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WidgetBookThemeChoice {
-    Light,
-    Dark,
-    Void,
-}
-
-impl WidgetBookThemeChoice {
-    const ALL: [Self; 3] = [Self::Light, Self::Dark, Self::Void];
-
-    const fn label(self) -> &'static str {
+    const fn gallery_item_index(self) -> usize {
         match self {
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-            Self::Void => "Void",
-        }
-    }
-
-    fn from_index(index: usize) -> Self {
-        Self::ALL.get(index).copied().unwrap_or(Self::Light)
-    }
-
-    fn index(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|choice| *choice == self)
-            .unwrap_or(0)
-    }
-
-    fn from_theme(theme: DefaultTheme) -> Self {
-        match theme.colors.name {
-            "dark" => Self::Dark,
-            "void" => Self::Void,
-            _ => Self::Light,
-        }
-    }
-
-    fn theme(self) -> DefaultTheme {
-        match self {
-            Self::Light => DefaultTheme::light(),
-            Self::Dark => DefaultTheme::dark(),
-            Self::Void => DefaultTheme::high_contrast(),
+            Self::All => 0,
+            Self::Foundations => 1,
+            Self::Controls => 3,
+            Self::Text => 7,
+            Self::Navigation => 8,
+            Self::Data => 14,
+            Self::Layout => 15,
+            Self::Canvas => 20,
         }
     }
 }
@@ -592,8 +556,6 @@ impl WidgetBookThemeChoice {
 struct WidgetBookShellState {
     query: String,
     category: WidgetBookCategory,
-    theme_override: Option<WidgetBookThemeChoice>,
-    size_override: Option<ControlSize>,
 }
 
 impl Default for WidgetBookCategory {
@@ -603,68 +565,12 @@ impl Default for WidgetBookCategory {
 }
 
 impl WidgetBookShellState {
-    fn category_matches(&self, category: WidgetBookCategory) -> bool {
-        self.category == WidgetBookCategory::All || self.category == category
-    }
-
-    fn section_matches(&self, category: WidgetBookCategory, search_text: &str) -> bool {
-        if !self.category_matches(category) {
-            return false;
-        }
-
+    fn section_matches(&self, search_text: &str) -> bool {
         let query = self.query.trim();
         query.is_empty()
             || search_text
                 .to_ascii_lowercase()
                 .contains(&query.to_ascii_lowercase())
-    }
-}
-
-fn widget_book_shell_theme_reader(
-    base_theme_reader: WidgetBookThemeReader,
-    shell_state: Rc<RefCell<WidgetBookShellState>>,
-) -> WidgetBookThemeReader {
-    Rc::new(move || {
-        let shell = shell_state.borrow();
-        let theme = shell
-            .theme_override
-            .map(WidgetBookThemeChoice::theme)
-            .unwrap_or_else(|| base_theme_reader());
-        shell
-            .size_override
-            .map(|size| theme.with_size(size))
-            .unwrap_or(theme)
-    })
-}
-
-fn widget_book_theme_choice_index(
-    base_theme_reader: &WidgetBookThemeReader,
-    shell_state: &Rc<RefCell<WidgetBookShellState>>,
-) -> usize {
-    shell_state
-        .borrow()
-        .theme_override
-        .unwrap_or_else(|| WidgetBookThemeChoice::from_theme(base_theme_reader()))
-        .index()
-}
-
-fn widget_book_size_index(
-    base_theme_reader: &WidgetBookThemeReader,
-    shell_state: &Rc<RefCell<WidgetBookShellState>>,
-) -> usize {
-    let base = base_theme_reader();
-    match shell_state
-        .borrow()
-        .size_override
-        .or(base.control_size)
-        .unwrap_or_else(|| match base.density {
-            ThemeDensity::Compact => ControlSize::Small,
-            ThemeDensity::Comfortable => ControlSize::Medium,
-            ThemeDensity::Touch => ControlSize::Large,
-        }) {
-        ControlSize::Small => 0,
-        ControlSize::Medium => 1,
-        ControlSize::Large => 2,
     }
 }
 
@@ -3102,150 +3008,33 @@ pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Wi
     build_widget_book_gallery_with_theme(state, default_widget_book_theme_reader())
 }
 
-fn build_widget_book_shell_header(
-    base_theme_reader: WidgetBookThemeReader,
-    theme_reader: WidgetBookThemeReader,
-    shell_state: Rc<RefCell<WidgetBookShellState>>,
-    gallery_scroll_state: ScrollState,
-) -> impl Widget {
-    let query_state = Rc::clone(&shell_state);
-    let query_scroll_state = gallery_scroll_state.clone();
-
-    let category_selected_state = Rc::clone(&shell_state);
-    let category_change_state = Rc::clone(&shell_state);
-    let category_scroll_state = gallery_scroll_state;
-
-    let theme_selected_base = Rc::clone(&base_theme_reader);
-    let theme_selected_state = Rc::clone(&shell_state);
-    let theme_change_state = Rc::clone(&shell_state);
-
-    let size_selected_base = Rc::clone(&base_theme_reader);
-    let size_selected_state = Rc::clone(&shell_state);
-    let size_change_state = Rc::clone(&shell_state);
-
-    Padding::symmetric(
-        18.0,
-        14.0,
-        Flex::horizontal()
-            .gap(12.0)
-            .wrap(FlexWrap::Wrap)
-            .align_items(Alignment::Center)
-            .align_content(FlexAlignContent::Center)
-            .with_item(
-                Stack::vertical()
-                    .spacing(2.0)
-                    .alignment(Alignment::Start)
-                    .with_child(demo_label(
-                        &theme_reader,
-                        WINDOW_TITLE,
-                        DemoTextRole::PageTitle,
-                        DemoTextColor::Text,
-                    ))
-                    .with_child(demo_label(
-                        &theme_reader,
-                        "Browse, compare, and exercise SUI components in one place.",
-                        DemoTextRole::Supporting,
-                        DemoTextColor::Muted,
-                    )),
-                FlexItem::new().grow(1.0).basis(300.0).min_width(260.0),
-            )
-            .with_item(
-                SizedBox::new().width(270.0).with_child(
-                    TextInput::new(WIDGET_BOOK_SEARCH_NAME)
-                        .placeholder("Filter components and stories")
-                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
-                        .on_change_with_ctx(move |ctx, value| {
-                            query_state.borrow_mut().query = value;
-                            reset_widget_book_gallery_scroll(&query_scroll_state, ctx);
-                        }),
-                ),
-                FlexItem::new()
-                    .grow(1.0)
-                    .basis(250.0)
-                    .min_width(220.0)
-                    .max_width(320.0),
-            )
-            .with_item(
-                shell_select_field(
-                    Rc::clone(&theme_reader),
-                    "Category",
-                    Select::new(WIDGET_BOOK_CATEGORY_SELECT_NAME)
-                        .options(WidgetBookCategory::ALL.map(WidgetBookCategory::label))
-                        .selected_when(move || {
-                            Some(category_selected_state.borrow().category.index())
-                        })
-                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
-                        .on_change_with_ctx(move |ctx, index, _| {
-                            category_change_state.borrow_mut().category =
-                                WidgetBookCategory::from_index(index);
-                            reset_widget_book_gallery_scroll(&category_scroll_state, ctx);
-                        }),
-                ),
-                FlexItem::fixed(184.0),
-            )
-            .with_item(
-                shell_select_field(
-                    Rc::clone(&theme_reader),
-                    "Theme",
-                    Select::new(WIDGET_BOOK_THEME_SELECT_NAME)
-                        .options(WidgetBookThemeChoice::ALL.map(WidgetBookThemeChoice::label))
-                        .selected_when(move || {
-                            Some(widget_book_theme_choice_index(
-                                &theme_selected_base,
-                                &theme_selected_state,
-                            ))
-                        })
-                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
-                        .on_change_with_ctx(move |ctx, index, _| {
-                            theme_change_state.borrow_mut().theme_override =
-                                Some(WidgetBookThemeChoice::from_index(index));
-                            request_widget_book_shell_refresh(ctx);
-                        }),
-                ),
-                FlexItem::fixed(128.0),
-            )
-            .with_item(
-                shell_select_field(
-                    Rc::clone(&theme_reader),
-                    "Size",
-                    Select::new(WIDGET_BOOK_SIZE_SELECT_NAME)
-                        .options(["Small", "Medium", "Large"])
-                        .selected_when(move || {
-                            Some(widget_book_size_index(
-                                &size_selected_base,
-                                &size_selected_state,
-                            ))
-                        })
-                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
-                        .on_change_with_ctx(move |ctx, index, _| {
-                            size_change_state.borrow_mut().size_override = Some(match index {
-                                0 => ControlSize::Small,
-                                2 => ControlSize::Large,
-                                _ => ControlSize::Medium,
-                            });
-                            request_widget_book_shell_refresh(ctx);
-                        }),
-                ),
-                FlexItem::fixed(120.0),
-            ),
+fn build_widget_book_intro(theme_reader: WidgetBookThemeReader) -> impl Widget {
+    CenteredContentWidth::new(
+        GALLERY_CONTENT_MAX_WIDTH,
+        Padding::new(
+            Insets {
+                left: 0.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: WIDGET_BOOK_SECTION_GAP,
+            },
+            Stack::vertical()
+                .spacing(4.0)
+                .alignment(Alignment::Start)
+                .with_child(demo_label(
+                    &theme_reader,
+                    WINDOW_TITLE,
+                    DemoTextRole::PageTitle,
+                    DemoTextColor::Text,
+                ))
+                .with_child(demo_label(
+                    &theme_reader,
+                    "Browse, compare, and exercise SUI components in one place.",
+                    DemoTextRole::Supporting,
+                    DemoTextColor::Muted,
+                )),
+        ),
     )
-}
-
-fn shell_select_field(
-    theme_reader: WidgetBookThemeReader,
-    label: &'static str,
-    select: Select,
-) -> impl Widget {
-    Stack::vertical()
-        .spacing(3.0)
-        .alignment(Alignment::Stretch)
-        .with_child(demo_label(
-            &theme_reader,
-            label,
-            DemoTextRole::Metadata,
-            DemoTextColor::Muted,
-        ))
-        .with_child(select)
 }
 
 fn build_widget_book_category_rail(
@@ -3253,51 +3042,47 @@ fn build_widget_book_category_rail(
     shell_state: Rc<RefCell<WidgetBookShellState>>,
     gallery_scroll_state: ScrollState,
 ) -> impl Widget {
+    let query_state = Rc::clone(&shell_state);
+    let query_scroll_state = gallery_scroll_state.clone();
     let selected_state = Rc::clone(&shell_state);
     let change_state = Rc::clone(&shell_state);
 
     Padding::all(
         14.0,
         Stack::vertical()
-            .spacing(10.0)
+            .spacing(12.0)
             .alignment(Alignment::Stretch)
-            .with_child(demo_label(
-                &theme_reader,
-                "Browse",
-                DemoTextRole::CardTitle,
-                DemoTextColor::Text,
-            ))
+            .with_child(
+                TextInput::new(WIDGET_BOOK_SEARCH_NAME)
+                    .placeholder("Search widgets")
+                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                    .on_change_with_ctx(move |ctx, value| {
+                        query_state.borrow_mut().query = value;
+                        reset_widget_book_gallery_scroll(&query_scroll_state, ctx);
+                    }),
+            )
             .with_child(
                 ListView::new(WIDGET_BOOK_CATEGORY_NAV_NAME)
-                    .items(
-                        WidgetBookCategory::ALL
-                            .map(|category| ListItem::new(category.label())),
-                    )
+                    .items(WidgetBookCategory::ALL.map(|category| ListItem::new(category.label())))
                     .selected_when(move || Some(selected_state.borrow().category.index()))
                     .row_height(34.0)
                     .theme_when(clone_widget_book_theme_reader(&theme_reader))
                     .on_change_with_ctx(move |index, _, ctx| {
-                        change_state.borrow_mut().category =
-                            WidgetBookCategory::from_index(index);
-                        reset_widget_book_gallery_scroll(&gallery_scroll_state, ctx);
+                        let category = WidgetBookCategory::from_index(index);
+                        change_state.borrow_mut().category = category;
+                        let _ = gallery_scroll_state
+                            .scroll_to_item_with_ctx(category.gallery_item_index(), ctx);
+                        request_widget_book_shell_refresh(ctx);
                     }),
-            )
-            .with_child(demo_label(
-                &theme_reader,
-                "Choose a category or type above to narrow the gallery. All stories stay mounted in the default view for stable visual artifacts.",
-                DemoTextRole::Metadata,
-                DemoTextColor::Muted,
-            )),
+            ),
     )
 }
 
 pub fn build_widget_book_gallery_with_theme(
     state: Rc<RefCell<WidgetBookState>>,
-    base_theme_reader: WidgetBookThemeReader,
+    theme_reader: WidgetBookThemeReader,
 ) -> impl Widget {
     let shell_state = Rc::new(RefCell::new(WidgetBookShellState::default()));
-    let theme_reader =
-        widget_book_shell_theme_reader(Rc::clone(&base_theme_reader), Rc::clone(&shell_state));
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
     let initial_password = snapshot.password.clone();
@@ -3340,6 +3125,7 @@ pub fn build_widget_book_gallery_with_theme(
         // Filterable sections own their trailing gap so hidden stories collapse
         // completely instead of leaving one virtual-scroll gap per match miss.
         .spacing(0.0)
+        .with_child(build_widget_book_intro(Rc::clone(&theme_reader)))
         .with_child(filterable_widget_book_section(
             Rc::clone(&shell_state),
             WidgetBookCategory::Foundations,
@@ -4139,19 +3925,13 @@ pub fn build_widget_book_gallery_with_theme(
             .name(GALLERY_SCROLL_BAR_NAME)
             .theme_when(clone_widget_book_theme_reader(&theme_reader)),
     );
-    let header = build_widget_book_shell_header(
-        Rc::clone(&base_theme_reader),
-        Rc::clone(&theme_reader),
-        Rc::clone(&shell_state),
-        scroll_state.clone(),
-    );
     let rail = build_widget_book_category_rail(
         Rc::clone(&theme_reader),
         Rc::clone(&shell_state),
         scroll_state,
     );
 
-    WidgetBookShell::new(theme_reader, header, rail, content)
+    WidgetBookShell::new(theme_reader, rail, content)
 }
 
 fn build_size_presets_gallery_with_theme(theme_reader: WidgetBookThemeReader) -> impl Widget {
@@ -7107,7 +6887,7 @@ where
     FilterableSection::new(
         shell_state,
         category,
-        format!("{} {title} {subtitle}", category.label()),
+        format!("{title} {subtitle}"),
         panel_with_theme(theme_reader, title, subtitle, body),
     )
 }
@@ -7434,7 +7214,6 @@ impl Widget for CenteredContentWidth {
 
 struct FilterableSection {
     shell_state: Rc<RefCell<WidgetBookShellState>>,
-    category: WidgetBookCategory,
     search_text: String,
     trailing_gap: f32,
     visible: bool,
@@ -7453,8 +7232,7 @@ impl FilterableSection {
     {
         Self {
             shell_state,
-            category,
-            search_text: search_text.into(),
+            search_text: format!("{} {}", category.label(), search_text.into()),
             trailing_gap: WIDGET_BOOK_SECTION_GAP,
             visible: true,
             child: SingleChild::new(child),
@@ -7462,9 +7240,7 @@ impl FilterableSection {
     }
 
     fn current_visibility(&self) -> bool {
-        self.shell_state
-            .borrow()
-            .section_matches(self.category, &self.search_text)
+        self.shell_state.borrow().section_matches(&self.search_text)
     }
 }
 
@@ -7530,44 +7306,25 @@ impl Widget for FilterableSection {
 
 struct WidgetBookShell {
     theme_reader: WidgetBookThemeReader,
-    header: SingleChild,
     rail: SingleChild,
     content: SingleChild,
-    header_height: f32,
     rail_width: f32,
     rail_visible: bool,
 }
 
 impl WidgetBookShell {
-    fn new<Header, Rail, Content>(
-        theme_reader: WidgetBookThemeReader,
-        header: Header,
-        rail: Rail,
-        content: Content,
-    ) -> Self
+    fn new<Rail, Content>(theme_reader: WidgetBookThemeReader, rail: Rail, content: Content) -> Self
     where
-        Header: Widget + 'static,
         Rail: Widget + 'static,
         Content: Widget + 'static,
     {
         Self {
             theme_reader,
-            header: SingleChild::new(header),
             rail: SingleChild::new(rail),
             content: SingleChild::new(content),
-            header_height: 0.0,
             rail_width: 0.0,
             rail_visible: true,
         }
-    }
-
-    fn body_rect(&self, bounds: Rect) -> Rect {
-        Rect::new(
-            bounds.x(),
-            bounds.y() + self.header_height.min(bounds.height()),
-            bounds.width(),
-            (bounds.height() - self.header_height).max(0.0),
-        )
     }
 }
 
@@ -7585,11 +7342,6 @@ impl Widget for WidgetBookShell {
         } else {
             constraints.min.height.max(760.0)
         };
-        let header_size = self.header.measure(
-            ctx,
-            Constraints::new(Size::new(width, 0.0), Size::new(width, height)),
-        );
-        self.header_height = header_size.height.min(height);
         self.rail_visible = width >= WIDGET_BOOK_RAIL_BREAKPOINT;
         self.rail_width = if self.rail_visible {
             WIDGET_BOOK_RAIL_WIDTH.min(width * 0.28)
@@ -7597,44 +7349,32 @@ impl Widget for WidgetBookShell {
             0.0
         };
 
-        let body_height = (height - self.header_height).max(0.0);
         if self.rail_visible {
-            self.rail.measure(
-                ctx,
-                Constraints::tight(Size::new(self.rail_width, body_height)),
-            );
+            self.rail
+                .measure(ctx, Constraints::tight(Size::new(self.rail_width, height)));
         }
         let content_width = (width - self.rail_width - self.rail_visible as u8 as f32).max(0.0);
-        self.content.measure(
-            ctx,
-            Constraints::tight(Size::new(content_width, body_height)),
-        );
+        self.content
+            .measure(ctx, Constraints::tight(Size::new(content_width, height)));
 
         constraints.clamp(Size::new(width, height))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let header_height = self.header_height.min(bounds.height());
-        self.header.arrange(
-            ctx,
-            Rect::new(bounds.x(), bounds.y(), bounds.width(), header_height),
-        );
-
-        let body = self.body_rect(bounds);
         if self.rail_visible {
             self.rail.arrange(
                 ctx,
-                Rect::new(body.x(), body.y(), self.rail_width, body.height()),
+                Rect::new(bounds.x(), bounds.y(), self.rail_width, bounds.height()),
             );
         }
         let divider = self.rail_visible as u8 as f32;
         self.content.arrange(
             ctx,
             Rect::new(
-                body.x() + self.rail_width + divider,
-                body.y(),
-                (body.width() - self.rail_width - divider).max(0.0),
-                body.height(),
+                bounds.x() + self.rail_width + divider,
+                bounds.y(),
+                (bounds.width() - self.rail_width - divider).max(0.0),
+                bounds.height(),
             ),
         );
     }
@@ -7642,27 +7382,22 @@ impl Widget for WidgetBookShell {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = (self.theme_reader)();
         let bounds = ctx.bounds();
-        let body = self.body_rect(bounds);
         ctx.fill_rect(bounds, theme.palette.surface);
-        ctx.fill_rect(
-            Rect::new(bounds.x(), bounds.y(), bounds.width(), self.header_height),
-            theme.palette.surface_raised,
-        );
-        ctx.fill_rect(
-            Rect::new(bounds.x(), body.y(), bounds.width(), 1.0),
-            theme.palette.border,
-        );
         if self.rail_visible {
             ctx.fill_rect(
-                Rect::new(body.x(), body.y(), self.rail_width, body.height()),
+                Rect::new(bounds.x(), bounds.y(), self.rail_width, bounds.height()),
                 theme.palette.surface,
             );
             ctx.fill_rect(
-                Rect::new(body.x() + self.rail_width, body.y(), 1.0, body.height()),
+                Rect::new(
+                    bounds.x() + self.rail_width,
+                    bounds.y(),
+                    1.0,
+                    bounds.height(),
+                ),
                 theme.palette.border,
             );
         }
-        self.header.paint(ctx);
         if self.rail_visible {
             self.rail.paint(ctx);
         }
@@ -7677,7 +7412,6 @@ impl Widget for WidgetBookShell {
         );
         node.name = Some(WIDGET_BOOK_SHELL_NAME.to_string());
         ctx.push(node);
-        self.header.semantics(ctx);
         if self.rail_visible {
             self.rail.semantics(ctx);
         }
@@ -7685,7 +7419,6 @@ impl Widget for WidgetBookShell {
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.header.visit_children(visitor);
         if self.rail_visible {
             self.rail.visit_children(visitor);
         }
@@ -7693,7 +7426,6 @@ impl Widget for WidgetBookShell {
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.header.visit_children_mut(visitor);
         if self.rail_visible {
             self.rail.visit_children_mut(visitor);
         }
@@ -8589,12 +8321,12 @@ mod tests {
         text_editing_benchmark_style_spans, theme_preview_card,
     };
     use sui::{
-        App, Application, ControlSize, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent,
-        KeyState, KeyboardEvent, Point, PointerEvent, PointerEventKind,
-        PresentationLatencyDiagnostics, RenderOutput, RendererSubmissionDiagnostics, Result,
-        SceneStatistics, SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue,
-        Size, SizedBox, TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind,
-        Vector, Widget, WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
+        App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
+        KeyboardEvent, Point, PointerEvent, PointerEventKind, PresentationLatencyDiagnostics,
+        RenderOutput, RendererSubmissionDiagnostics, Result, SceneStatistics,
+        SceneStatisticsDetailMode, ScrollDelta, SemanticsRole, SemanticsValue, Size, SizedBox,
+        TextCacheDeltaDiagnostics, TextCacheDiagnostics, TextSurfaceOverlayKind, Vector, Widget,
+        WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
         WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
         window_scene_statistics_detail_mode,
     };
@@ -10191,7 +9923,7 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_shell_exposes_fixed_navigation_and_view_controls() {
+    fn widget_book_shell_exposes_sidebar_navigation_without_duplicate_view_controls() {
         let mut runtime = build_widget_book_application(default_widget_book_state())
             .build()
             .expect("widget book runtime should build");
@@ -10207,15 +9939,6 @@ mod tests {
             ),
             (SemanticsRole::TextInput, super::WIDGET_BOOK_SEARCH_NAME),
             (SemanticsRole::List, super::WIDGET_BOOK_CATEGORY_NAV_NAME),
-            (
-                SemanticsRole::ComboBox,
-                super::WIDGET_BOOK_CATEGORY_SELECT_NAME,
-            ),
-            (
-                SemanticsRole::ComboBox,
-                super::WIDGET_BOOK_THEME_SELECT_NAME,
-            ),
-            (SemanticsRole::ComboBox, super::WIDGET_BOOK_SIZE_SELECT_NAME),
         ] {
             assert!(
                 output
@@ -10224,6 +9947,19 @@ mod tests {
                     .any(|node| { node.role == role && node.name.as_deref() == Some(name) })
             );
         }
+        for removed_control in ["Component category", "Preview theme", "Control size"] {
+            assert!(output.semantics.iter().all(|node| {
+                node.role != SemanticsRole::ComboBox
+                    || node.name.as_deref() != Some(removed_control)
+            }));
+        }
+        assert!(output.semantics.iter().all(|node| {
+            node.name.as_deref() != Some("Browse")
+                && !node
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with("Choose a category or type above"))
+        }));
 
         let category_rail = output
             .semantics
@@ -10243,26 +9979,6 @@ mod tests {
             .expect("gallery should remain available beside shell chrome");
 
         assert!(category_rail.bounds.max_x() <= gallery.bounds.x());
-    }
-
-    #[test]
-    fn widget_book_shell_theme_reader_applies_explicit_theme_and_size() {
-        let base = DefaultTheme::light().with_size(ControlSize::Small);
-        let base_reader: super::WidgetBookThemeReader = Rc::new(move || base);
-        let shell_state = Rc::new(RefCell::new(super::WidgetBookShellState::default()));
-        let reader = super::widget_book_shell_theme_reader(base_reader, Rc::clone(&shell_state));
-
-        assert_eq!(reader().colors.name, "light");
-        assert_eq!(reader().control_size, Some(ControlSize::Small));
-
-        {
-            let mut shell = shell_state.borrow_mut();
-            shell.theme_override = Some(super::WidgetBookThemeChoice::Dark);
-            shell.size_override = Some(ControlSize::Large);
-        }
-
-        assert_eq!(reader().colors.name, "dark");
-        assert_eq!(reader().control_size, Some(ControlSize::Large));
     }
 
     #[test]
@@ -10287,48 +10003,70 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_category_rail_filters_sections_without_rebuilding_stories() -> Result<()> {
+    fn widget_book_category_rail_navigates_without_filtering_stories() -> Result<()> {
         let app = build_default_widget_book_app()?;
         let window = app.main_window()?;
 
-        window
+        let gallery_locator = window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(GALLERY_SCROLL_NAME)
-            .scroll_pixels(Vector::new(0.0, -2_400.0))?;
-        window
-            .get_by_role(SemanticsRole::ListItem)
-            .with_name("Data views")
-            .click()?;
+            .with_name(GALLERY_SCROLL_NAME);
+        for (category_name, target_role, target_name) in [
+            ("All components", SemanticsRole::Text, WINDOW_TITLE),
+            (
+                "Foundations",
+                SemanticsRole::GenericContainer,
+                WIDGET_STATES_GALLERY_NAME,
+            ),
+            ("Controls", SemanticsRole::Text, "Common controls"),
+            ("Text", SemanticsRole::Text, "Typography"),
+            ("Navigation", SemanticsRole::Text, "Navigation surfaces"),
+            (
+                "Data views",
+                SemanticsRole::Text,
+                "Collections and hierarchy",
+            ),
+            ("Layout", SemanticsRole::Text, "Layout and pathing"),
+            (
+                "Canvas & media",
+                SemanticsRole::GenericContainer,
+                super::CANVAS_WIDGETS_GALLERY_NAME,
+            ),
+        ] {
+            window
+                .get_by_role(SemanticsRole::ListItem)
+                .with_name(category_name)
+                .click()?;
 
-        let snapshot = window.snapshot()?;
-        assert!(snapshot.accessibility.nodes.iter().all(|node| {
-            node.role != SemanticsRole::GenericContainer
-                || node.name.as_deref() != Some(WIDGET_STATES_GALLERY_NAME)
+            let snapshot = window.snapshot()?;
+            let gallery = snapshot
+                .accessibility
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::ScrollView
+                        && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
+                })
+                .expect("gallery should remain present after navigation");
+            let target = snapshot
+                .accessibility
+                .nodes
+                .iter()
+                .find(|node| node.role == target_role && node.name.as_deref() == Some(target_name))
+                .unwrap_or_else(|| panic!("{category_name} should expose {target_name}"));
+            assert!(
+                target.bounds.y() - gallery.bounds.y() < 96.0,
+                "{target_name} should align near the gallery top: gallery={:?}, target={:?}",
+                gallery.bounds,
+                target.bounds
+            );
+        }
+
+        gallery_locator.scroll_pixels(Vector::new(0.0, 100_000.0))?;
+        let reset = window.snapshot()?;
+        assert!(reset.accessibility.nodes.iter().any(|node| {
+            node.role == SemanticsRole::GenericContainer
+                && node.name.as_deref() == Some(WIDGET_STATES_GALLERY_NAME)
         }));
-        let gallery = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
-            })
-            .expect("filtered gallery should remain present");
-        let first_result = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Text
-                    && node.name.as_deref() == Some("Collections and hierarchy")
-            })
-            .expect("data category should expose its first matching section");
-        assert!(
-            first_result.bounds.y() - gallery.bounds.y() < 96.0,
-            "hidden virtual sections must not accumulate gaps above the first result: gallery={:?}, result={:?}",
-            gallery.bounds,
-            first_result.bounds
-        );
 
         Ok(())
     }
@@ -11320,7 +11058,7 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_shell_keeps_title_fixed_and_theme_root_starts_at_scroll_top() -> Result<()> {
+    fn widget_book_title_scrolls_with_gallery_and_theme_root_starts_at_scroll_top() -> Result<()> {
         fn assert_title_flush_with_scroll(output: &RenderOutput, scroll_name: &str, title: &str) {
             let scroll = output
                 .semantics
@@ -11346,36 +11084,38 @@ mod tests {
             );
         }
 
-        let mut widget_runtime =
-            build_widget_book_application(default_widget_book_state()).build()?;
-        let widget_window = widget_runtime.window_ids()[0];
-        let widget_output = widget_runtime.render(widget_window)?;
-        let shell = widget_output
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::GenericContainer
-                    && node.name.as_deref() == Some(super::WIDGET_BOOK_SHELL_NAME)
-            })
-            .expect("widget-book shell should be present");
-        let gallery = widget_output
-            .semantics
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+        let initial = window.snapshot()?;
+        let gallery = initial
+            .accessibility
+            .nodes
             .iter()
             .find(|node| {
                 node.role == SemanticsRole::ScrollView
                     && node.name.as_deref() == Some(GALLERY_SCROLL_NAME)
             })
             .expect("widget-book gallery should be present");
-        let title = widget_output
-            .semantics
+        let title = initial
+            .accessibility
+            .nodes
             .iter()
             .find(|node| {
                 node.role == SemanticsRole::Text && node.name.as_deref() == Some(WINDOW_TITLE)
             })
-            .expect("widget-book title should be present in fixed chrome");
+            .expect("widget-book title should be present in the gallery intro");
 
-        assert!((shell.bounds.y() - title.bounds.y()).abs() < 24.0);
-        assert!(title.bounds.max_y() <= gallery.bounds.y());
+        assert!(title.bounds.y() >= gallery.bounds.y());
+        assert!(title.bounds.max_y() <= gallery.bounds.max_y());
+
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(GALLERY_SCROLL_NAME)
+            .scroll_pixels(Vector::new(0.0, -3_000.0))?;
+        let scrolled = window.snapshot()?;
+        assert!(scrolled.accessibility.nodes.iter().all(|node| {
+            node.role != SemanticsRole::Text || node.name.as_deref() != Some(WINDOW_TITLE)
+        }));
 
         let mut theme_runtime =
             build_theme_demo_application(default_widget_book_state()).build()?;
