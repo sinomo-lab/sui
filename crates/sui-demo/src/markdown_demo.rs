@@ -12,7 +12,8 @@ use crate::app::{
 
 pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Markdown render";
 pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
-pub(crate) const MARKDOWN_RENDER_SCROLL_BAR_NAME: &str = "Markdown render scroll bar";
+#[cfg(test)]
+pub(crate) const MARKDOWN_RENDER_SCROLL_BAR_NAME: &str = "Markdown render demo vertical scroll bar";
 pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
 
 pub(crate) const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 0.5;
@@ -595,7 +596,6 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
     .padding(Insets::all(16.0))
     .min_height(360.0);
     let source = MarkdownSourceEditor::new(state, Rc::clone(&theme_reader));
-    let scroll_state = ScrollState::new();
     let scroll = ScrollView::vertical(Padding::all(
         18.0,
         Stack::vertical()
@@ -616,101 +616,12 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
             )),
     ))
     .name(MARKDOWN_RENDER_SCROLL_NAME)
-    .state(scroll_state.clone())
-    .theme(theme_reader());
-    let scroll_bar = ScrollBar::vertical(scroll_state)
-        .name(MARKDOWN_RENDER_SCROLL_BAR_NAME)
-        .theme_when(clone_dev_theme_reader(&theme_reader));
+    .theme_when(clone_dev_theme_reader(&theme_reader));
 
-    Background::new(
-        theme_reader().palette.surface,
-        MarkdownScrollPane::new(scroll, scroll_bar),
-    )
-    .brush_when(dev_theme_color(&theme_reader, |theme| {
-        theme.palette.surface
-    }))
-}
-
-struct MarkdownScrollPane {
-    spacing: f32,
-    content: SingleChild,
-    scroll_bar: SingleChild,
-}
-
-impl MarkdownScrollPane {
-    fn new<C, S>(content: C, scroll_bar: S) -> Self
-    where
-        C: Widget + 'static,
-        S: Widget + 'static,
-    {
-        Self {
-            spacing: 10.0,
-            content: SingleChild::new(content),
-            scroll_bar: SingleChild::new(scroll_bar),
-        }
-    }
-}
-
-impl Widget for MarkdownScrollPane {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let scroll_bar_size = self.scroll_bar.measure(
-            ctx,
-            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
-        );
-        let content_constraints = Constraints::new(
-            Size::new(
-                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
-                constraints.min.height,
-            ),
-            Size::new(
-                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
-                constraints.max.height,
-            ),
-        );
-        let content_size = self.content.measure(ctx, content_constraints);
-        constraints.clamp(Size::new(
-            content_size.width + scroll_bar_size.width + self.spacing,
-            content_size.height.max(scroll_bar_size.height),
-        ))
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let scroll_bar_size = self.scroll_bar.child().measured_size();
-        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
-        self.content.arrange(
-            ctx,
-            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
-        );
-        self.scroll_bar.arrange(
-            ctx,
-            Rect::new(
-                bounds.max_x() - scroll_bar_size.width,
-                bounds.y(),
-                scroll_bar_size.width,
-                bounds.height(),
-            ),
-        );
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-        self.scroll_bar.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-        self.scroll_bar.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-        self.scroll_bar.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-        self.scroll_bar.visit_children_mut(visitor);
-    }
+    Background::new(theme_reader().palette.surface, scroll)
+        .brush_when(dev_theme_color(&theme_reader, |theme| {
+            theme.palette.surface
+        }))
 }
 
 struct MarkdownPanelSplit {
@@ -898,10 +809,18 @@ mod tests {
     }
 
     fn render_markdown_demo_with_theme(width: f32, theme: DefaultTheme) -> RenderOutput {
+        render_markdown_demo_with_size(width, 900.0, theme)
+    }
+
+    fn render_markdown_demo_with_size(
+        width: f32,
+        height: f32,
+        theme: DefaultTheme,
+    ) -> RenderOutput {
         let theme_reader: DevThemeReader = Rc::new(move || theme);
         let root = SizedBox::new()
             .width(width)
-            .height(900.0)
+            .height(height)
             .with_child(build_markdown_render_demo_with_theme(theme_reader));
         let mut runtime = Application::new()
             .window(WindowBuilder::new().title("Markdown layout").root(root))
@@ -1059,7 +978,7 @@ mod tests {
     #[test]
     fn markdown_demo_exposes_themed_scroll_bar() {
         let theme = DefaultTheme::touch();
-        let output = render_markdown_demo_with_theme(900.0, theme);
+        let output = render_markdown_demo_with_size(900.0, 320.0, theme);
         let scroll_bar = output
             .semantics
             .iter()

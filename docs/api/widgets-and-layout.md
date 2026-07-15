@@ -166,6 +166,23 @@ content.
 needs to inspect or control an offset. Without it, the view retains its own
 scroll state.
 
+`ScrollView` and `VirtualScrollView` show interactive overlay scroll bars only
+when their content exceeds the viewport. The bars do not consume layout space,
+follow the view's static or dynamic theme, and support pointer dragging and
+accessibility range actions. Scrollable containers also support direct touch
+panning with nested inner-to-outer handoff at a scroll boundary.
+
+For a traditional gutter, bind a standalone `ScrollBar` to the same
+`ScrollState` and disable the built-in overlay:
+
+```rust
+let state = ScrollState::new();
+let content = ScrollView::vertical(log_rows)
+    .state(state.clone())
+    .overlay_scroll_bars(false);
+let gutter = ScrollBar::vertical(state);
+```
+
 ## Responsive Structure
 
 Most responsive changes only need `Flex` wrapping and item minimums. When the

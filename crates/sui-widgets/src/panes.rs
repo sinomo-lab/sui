@@ -941,6 +941,7 @@ impl FloatingViewHost {
         let scroll_state = ScrollState::new();
         let scroll_view = ScrollView::both(child)
             .state(scroll_state.clone())
+            .overlay_scroll_bars(false)
             .viewport_size_hint(true)
             .name("Floating view content");
         let vertical_scroll_bar = ScrollBar::vertical(scroll_state.clone());

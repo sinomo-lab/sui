@@ -96,7 +96,8 @@ const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
 const SETTINGS_SCROLL_NAME: &str = "Settings controls";
-const SETTINGS_SCROLL_BAR_NAME: &str = "Settings scroll bar";
+#[cfg(test)]
+const SETTINGS_SCROLL_BAR_NAME: &str = "Settings controls vertical scroll bar";
 const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
     ["Automatic", "Force SDR", "Prefer wide gamut", "Prefer HDR"];
 const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
@@ -127,7 +128,8 @@ const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
 const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 124.0;
 const DEV_SHELL_PICKER_TILE_GAP: f32 = 16.0;
 const DEV_SHELL_PICKER_SCROLL_NAME: &str = "Demo picker";
-const DEV_SHELL_PICKER_SCROLL_BAR_NAME: &str = "Demo picker scroll bar";
+#[cfg(test)]
+const DEV_SHELL_PICKER_SCROLL_BAR_NAME: &str = "Demo picker vertical scroll bar";
 const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
 const DEV_SHELL_SETTINGS_RESIZE_HANDLE: f32 = 18.0;
 const DEV_SHELL_MIN_SETTINGS_WIDTH: f32 = 320.0;
@@ -447,15 +449,9 @@ impl DevBrowserShell {
                     }),
             );
         }
-        let picker_scroll_state = ScrollState::new();
-        let picker = VerticalScrollPane::new(
-            ScrollView::vertical(DevDemoPickerGrid::new(demo_buttons))
-                .state(picker_scroll_state.clone())
-                .name(DEV_SHELL_PICKER_SCROLL_NAME),
-            ScrollBar::vertical(picker_scroll_state)
-                .name(DEV_SHELL_PICKER_SCROLL_BAR_NAME)
-                .theme_when(clone_dev_theme_reader(&theme_reader)),
-        );
+        let picker = ScrollView::vertical(DevDemoPickerGrid::new(demo_buttons))
+            .name(DEV_SHELL_PICKER_SCROLL_NAME)
+            .theme_when(clone_dev_theme_reader(&theme_reader));
 
         let tab_titles = demo_titles.clone();
         let tab_tabs_state = state.clone();
@@ -2375,88 +2371,6 @@ impl Widget for SdrContentBrightnessStatus {
     }
 }
 
-struct VerticalScrollPane {
-    spacing: f32,
-    content: SingleChild,
-    scroll_bar: SingleChild,
-}
-
-impl VerticalScrollPane {
-    fn new<W, S>(content: W, scroll_bar: S) -> Self
-    where
-        W: Widget + 'static,
-        S: Widget + 'static,
-    {
-        Self {
-            spacing: 10.0,
-            content: SingleChild::new(content),
-            scroll_bar: SingleChild::new(scroll_bar),
-        }
-    }
-}
-
-impl Widget for VerticalScrollPane {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let scroll_bar_size = self.scroll_bar.measure(
-            ctx,
-            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
-        );
-        let content_constraints = Constraints::new(
-            Size::new(
-                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
-                constraints.min.height,
-            ),
-            Size::new(
-                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
-                constraints.max.height,
-            ),
-        );
-        let content_size = self.content.measure(ctx, content_constraints);
-        constraints.clamp(Size::new(
-            content_size.width + scroll_bar_size.width + self.spacing,
-            content_size.height.max(scroll_bar_size.height),
-        ))
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let scroll_bar_size = self.scroll_bar.child().measured_size();
-        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
-        self.content.arrange(
-            ctx,
-            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
-        );
-        self.scroll_bar.arrange(
-            ctx,
-            Rect::new(
-                bounds.max_x() - scroll_bar_size.width,
-                bounds.y(),
-                scroll_bar_size.width,
-                bounds.height(),
-            ),
-        );
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-        self.scroll_bar.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-        self.scroll_bar.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-        self.scroll_bar.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-        self.scroll_bar.visit_children_mut(visitor);
-    }
-}
-
 struct RenderSettingsTab {
     content: SingleChild,
     state: Rc<RefCell<WindowRenderOptions>>,
@@ -2498,11 +2412,9 @@ impl RenderSettingsTab {
         let sdr_content_brightness_state = Rc::clone(&state);
         let system_sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
-        let scroll_state = ScrollState::new();
         let theme = theme_reader();
 
-        let content = VerticalScrollPane::new(
-            ScrollView::vertical(Padding::all(
+        let content = ScrollView::vertical(Padding::all(
                 28.0,
                 Stack::vertical()
                     .spacing(18.0)
@@ -2827,12 +2739,8 @@ impl RenderSettingsTab {
                         .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
                     ),
             ))
-            .state(scroll_state.clone())
-            .name(SETTINGS_SCROLL_NAME),
-            ScrollBar::vertical(scroll_state)
-                .name(SETTINGS_SCROLL_BAR_NAME)
-                .theme_when(clone_dev_theme_reader(&theme_reader)),
-        );
+            .name(SETTINGS_SCROLL_NAME)
+            .theme_when(clone_dev_theme_reader(&theme_reader));
 
         Self {
             content: SingleChild::new(content),
@@ -3831,8 +3739,9 @@ mod tests {
             "expected constrained demo picker to overflow vertically"
         );
         assert!(
-            scroll_bar.bounds.x() >= scroll.bounds.max_x(),
-            "expected picker scroll bar to sit to the right of the scroll view"
+            scroll_bar.bounds.x() >= scroll.bounds.x()
+                && scroll_bar.bounds.max_x() <= scroll.bounds.max_x(),
+            "expected picker scroll bar to overlay the scroll viewport"
         );
 
         Ok(())

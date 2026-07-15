@@ -2,8 +2,9 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
-    PointerButton, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
+    PointerButton, PointerEvent, PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WakeEvent,
+    WidgetId, WindowEvent,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexStyle, FlexWrap,
@@ -1810,6 +1811,40 @@ impl ScrollAxes {
     }
 }
 
+const TOUCH_SCROLL_DRAG_THRESHOLD: f32 = 4.0;
+
+#[derive(Debug, Clone, Copy)]
+struct TouchScrollGesture {
+    pointer_id: u64,
+    start_position: Point,
+    dragging: bool,
+}
+
+impl TouchScrollGesture {
+    fn new(pointer: &PointerEvent) -> Self {
+        Self {
+            pointer_id: pointer.pointer_id,
+            start_position: pointer.position,
+            dragging: false,
+        }
+    }
+
+    fn matches(self, pointer: &PointerEvent) -> bool {
+        self.pointer_id == pointer.pointer_id
+    }
+
+    fn passed_threshold(self, pointer: &PointerEvent, axes: ScrollAxes) -> bool {
+        let distance = pointer.position - self.start_position;
+        let distance_squared = match axes {
+            ScrollAxes::None => 0.0,
+            ScrollAxes::Vertical => distance.y * distance.y,
+            ScrollAxes::Horizontal => distance.x * distance.x,
+            ScrollAxes::Both => distance.x * distance.x + distance.y * distance.y,
+        };
+        distance_squared >= TOUCH_SCROLL_DRAG_THRESHOLD * TOUCH_SCROLL_DRAG_THRESHOLD
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overflow {
     Visible,
@@ -1893,6 +1928,14 @@ impl ScrollState {
         inner.content_size = content_size;
         inner.offset = next_offset;
         changed
+    }
+
+    fn sync_unmeasured_axes(&self, axes: ScrollAxes) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.viewport == Size::ZERO && inner.content_size == Size::ZERO {
+            inner.axes = axes;
+            inner.offset = axis_limited_offset(axes, inner.offset);
+        }
     }
 
     /// Updates the shared scroll offset, clamped to the current viewport and
@@ -2004,6 +2047,12 @@ enum ScrollBarAxis {
     Horizontal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollBarAppearance {
+    Gutter,
+    Overlay,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ScrollBarMetrics {
     track: Rect,
@@ -2086,6 +2135,8 @@ pub struct ScrollBar {
     focus_animation: AnimatedScalar,
     pointer_id: Option<u64>,
     drag_thumb_offset: f32,
+    appearance: ScrollBarAppearance,
+    focusable: bool,
 }
 
 impl ScrollBar {
@@ -2104,6 +2155,8 @@ impl ScrollBar {
             focus_animation: AnimatedScalar::new(0.0),
             pointer_id: None,
             drag_thumb_offset: 0.0,
+            appearance: ScrollBarAppearance::Gutter,
+            focusable: true,
         }
     }
 
@@ -2135,6 +2188,12 @@ impl ScrollBar {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width.max(8.0));
+        self
+    }
+
+    fn overlay(mut self) -> Self {
+        self.appearance = ScrollBarAppearance::Overlay;
+        self.focusable = false;
         self
     }
 
@@ -2437,7 +2496,9 @@ impl Widget for ScrollBar {
                     self.drag_thumb_offset,
                 );
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_focus();
+                if self.focusable {
+                    ctx.request_focus();
+                }
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2472,6 +2533,30 @@ impl Widget for ScrollBar {
                 self.pointer_id = None;
                 self.set_hovered(false, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let current = f64::from(self.axis_offset(self.state.current_offset()));
+                let next = match &semantics.action {
+                    SemanticsActionRequest::Increment => Some(current + 40.0),
+                    SemanticsActionRequest::Decrement => Some(current - 40.0),
+                    SemanticsActionRequest::SetValue(SemanticsValue::Number(value)) => Some(*value),
+                    SemanticsActionRequest::SetValue(SemanticsValue::Range { value, .. }) => {
+                        Some(*value)
+                    }
+                    _ => None,
+                };
+                let Some(next) = next.filter(|value| value.is_finite()) else {
+                    return;
+                };
+                let next = next as f32;
+                if !next.is_finite() {
+                    return;
+                }
+                if self.set_axis_offset(ctx, ctx.widget_id(), next) {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
                 ctx.set_handled();
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
@@ -2545,9 +2630,26 @@ impl Widget for ScrollBar {
         let thumb = metrics.thumb;
         let track_radius = (track.width() * 0.5).min(track.height() * 0.5);
         let thumb_radius = (thumb.width() * 0.5).min(thumb.height() * 0.5);
+        let interaction = self
+            .hover_animation
+            .value
+            .max(self.drag_animation.value)
+            .max(self.focus_animation.value);
+        let track_alpha = match self.appearance {
+            ScrollBarAppearance::Gutter => 0.7,
+            ScrollBarAppearance::Overlay => 0.08 + 0.32 * interaction,
+        };
+        let thumb_alpha = match self.appearance {
+            ScrollBarAppearance::Gutter => 0.95,
+            ScrollBarAppearance::Overlay => 0.68 + 0.27 * interaction,
+        };
+        let border_alpha = match self.appearance {
+            ScrollBarAppearance::Gutter => 0.9,
+            ScrollBarAppearance::Overlay => 0.42 + 0.36 * interaction,
+        };
         ctx.fill(
             Path::rounded_rect(track, track_radius),
-            palette.control_active.with_alpha(0.7),
+            palette.control_active.with_alpha(track_alpha),
         );
         ctx.fill(
             Path::rounded_rect(thumb, thumb_radius),
@@ -2560,12 +2662,12 @@ impl Widget for ScrollBar {
                 palette.accent_pressed,
                 self.drag_animation.value,
             )
-            .with_alpha(0.95),
+            .with_alpha(thumb_alpha),
         );
         ctx.stroke(
             Path::rounded_rect(thumb, thumb_radius),
             mix_color(
-                palette.border.with_alpha(0.9),
+                palette.border.with_alpha(border_alpha),
                 palette.focus_ring,
                 self.focus_animation.value,
             ),
@@ -2588,17 +2690,25 @@ impl Widget for ScrollBar {
         node.state.disabled = max_scroll <= f32::EPSILON;
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::Increment,
-            SemanticsAction::Decrement,
-            SemanticsAction::SetValue,
-        ];
+        node.actions = if self.focusable {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::Increment,
+                SemanticsAction::Decrement,
+                SemanticsAction::SetValue,
+            ]
+        } else {
+            vec![
+                SemanticsAction::Increment,
+                SemanticsAction::Decrement,
+                SemanticsAction::SetValue,
+            ]
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.focusable
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -2609,10 +2719,175 @@ impl Widget for ScrollBar {
     }
 }
 
+const OVERLAY_SCROLL_BAR_INSET: f32 = 3.0;
+
+struct OverlayScrollBars {
+    vertical: Option<SingleChild>,
+    horizontal: Option<SingleChild>,
+    show_vertical: bool,
+    show_horizontal: bool,
+}
+
+impl OverlayScrollBars {
+    fn new(
+        state: ScrollState,
+        theme: Rc<RefCell<DefaultTheme>>,
+        name: Option<&str>,
+        axes: ScrollAxes,
+    ) -> Self {
+        let vertical = axes.allows_vertical().then(|| {
+            let vertical_theme = Rc::clone(&theme);
+            let vertical_name = name
+                .map(|name| format!("{name} vertical scroll bar"))
+                .unwrap_or_else(|| "Vertical scroll bar".to_string());
+            SingleChild::new_with_paint_boundary(
+                ScrollBar::vertical(state.clone())
+                    .theme_when(move || *vertical_theme.borrow())
+                    .name(vertical_name)
+                    .overlay(),
+            )
+        });
+
+        let horizontal = axes.allows_horizontal().then(|| {
+            let horizontal_theme = Rc::clone(&theme);
+            let horizontal_name = name
+                .map(|name| format!("{name} horizontal scroll bar"))
+                .unwrap_or_else(|| "Horizontal scroll bar".to_string());
+            SingleChild::new_with_paint_boundary(
+                ScrollBar::horizontal(state)
+                    .theme_when(move || *horizontal_theme.borrow())
+                    .name(horizontal_name)
+                    .overlay(),
+            )
+        });
+
+        Self {
+            vertical,
+            horizontal,
+            show_vertical: false,
+            show_horizontal: false,
+        }
+    }
+
+    fn set_visibility(&mut self, axes: ScrollAxes, max_offset: Vector) {
+        let show_vertical =
+            self.vertical.is_some() && axes.allows_vertical() && max_offset.y > f32::EPSILON;
+        let show_horizontal =
+            self.horizontal.is_some() && axes.allows_horizontal() && max_offset.x > f32::EPSILON;
+        self.show_vertical = show_vertical;
+        self.show_horizontal = show_horizontal;
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, viewport: Size, thickness: f32) {
+        if let Some(vertical) = &mut self.vertical {
+            vertical.measure(
+                ctx,
+                Constraints::tight(Size::new(thickness, viewport.height.max(0.0))),
+            );
+        }
+        if let Some(horizontal) = &mut self.horizontal {
+            horizontal.measure(
+                ctx,
+                Constraints::tight(Size::new(viewport.width.max(0.0), thickness)),
+            );
+        }
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect, thickness: f32) {
+        let inset = OVERLAY_SCROLL_BAR_INSET
+            .min((bounds.width() * 0.5).min(bounds.height() * 0.5).max(0.0));
+        let vertical_height = (bounds.height()
+            - inset * 2.0
+            - if self.show_horizontal {
+                thickness + inset
+            } else {
+                0.0
+            })
+        .max(0.0);
+        let vertical_bounds = if self.show_vertical {
+            Rect::new(
+                (bounds.max_x() - inset - thickness).max(bounds.x()),
+                bounds.y() + inset,
+                thickness.min(bounds.width()),
+                vertical_height,
+            )
+        } else {
+            Rect::from_origin_size(Point::new(bounds.max_x(), bounds.max_y()), Size::ZERO)
+        };
+        if let Some(vertical) = &mut self.vertical {
+            vertical.arrange(ctx, vertical_bounds);
+        }
+
+        if let Some(horizontal) = &mut self.horizontal {
+            let horizontal_width = (bounds.width()
+                - inset * 2.0
+                - if self.show_vertical {
+                    thickness + inset
+                } else {
+                    0.0
+                })
+            .max(0.0);
+            let horizontal_bounds = if self.show_horizontal {
+                Rect::new(
+                    bounds.x() + inset,
+                    (bounds.max_y() - inset - thickness).max(bounds.y()),
+                    horizontal_width,
+                    thickness.min(bounds.height()),
+                )
+            } else {
+                Rect::from_origin_size(Point::new(bounds.max_x(), bounds.max_y()), Size::ZERO)
+            };
+            horizontal.arrange(ctx, horizontal_bounds);
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if let Some(vertical) = &self.vertical {
+            vertical.paint(ctx);
+        }
+        if let Some(horizontal) = &self.horizontal {
+            horizontal.paint(ctx);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if self.show_vertical
+            && let Some(vertical) = &self.vertical
+        {
+            vertical.semantics(ctx);
+        }
+        if self.show_horizontal
+            && let Some(horizontal) = &self.horizontal
+        {
+            horizontal.semantics(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(vertical) = &self.vertical {
+            vertical.visit_children(visitor);
+        }
+        if let Some(horizontal) = &self.horizontal {
+            horizontal.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(vertical) = &mut self.vertical {
+            vertical.visit_children_mut(visitor);
+        }
+        if let Some(horizontal) = &mut self.horizontal {
+            horizontal.visit_children_mut(visitor);
+        }
+    }
+}
+
 pub struct ScrollView {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Rc<dyn Fn() -> DefaultTheme>>,
+    overlay_theme: Rc<RefCell<DefaultTheme>>,
     name: Option<String>,
-    state: Option<ScrollState>,
+    state: ScrollState,
     overflow_x: Overflow,
     overflow_y: Overflow,
     viewport_width_hint: bool,
@@ -2621,6 +2896,9 @@ pub struct ScrollView {
     content_size: Size,
     focus_animation: AnimatedScalar,
     retain_content: bool,
+    overlay_scroll_bars: bool,
+    overlay_bars: Option<OverlayScrollBars>,
+    touch_scroll: Option<TouchScrollGesture>,
     child: SingleChild,
 }
 
@@ -2629,10 +2907,13 @@ impl ScrollView {
     where
         W: Widget + 'static,
     {
+        let theme = DefaultTheme::default();
         Self {
-            theme: Box::new(DefaultTheme::default()),
+            theme: Box::new(theme),
+            theme_reader: None,
+            overlay_theme: Rc::new(RefCell::new(theme)),
             name: None,
-            state: None,
+            state: ScrollState::new(),
             overflow_x: Overflow::Clip,
             overflow_y: Overflow::Auto,
             viewport_width_hint: false,
@@ -2641,6 +2922,9 @@ impl ScrollView {
             content_size: Size::ZERO,
             focus_animation: AnimatedScalar::new(0.0),
             retain_content: false,
+            overlay_scroll_bars: true,
+            overlay_bars: None,
+            touch_scroll: None,
             child: SingleChild::new(child),
         }
     }
@@ -2679,6 +2963,7 @@ impl ScrollView {
         };
         self.viewport_width_hint = false;
         self.viewport_height_hint = false;
+        self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
 
@@ -2686,17 +2971,20 @@ impl ScrollView {
         self.overflow_x = overflow;
         self.overflow_y = overflow;
         self.viewport_width_hint = overflow.is_scrollable();
+        self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
 
     pub fn overflow_x(mut self, overflow: Overflow) -> Self {
         self.overflow_x = overflow;
         self.viewport_width_hint = overflow.is_scrollable();
+        self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
 
     pub fn overflow_y(mut self, overflow: Overflow) -> Self {
         self.overflow_y = overflow;
+        self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
 
@@ -2707,11 +2995,34 @@ impl ScrollView {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        *self.overlay_theme.borrow_mut() = theme;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Rc::new(theme));
         self
     }
 
     pub fn state(mut self, state: ScrollState) -> Self {
-        self.state = Some(state);
+        self.state = state;
+        self.state.sync_unmeasured_axes(self.scroll_axes());
+        self.overlay_bars = None;
+        self
+    }
+
+    /// Controls the built-in scroll bars painted over overflowing content.
+    /// Disable this when composing a standalone [`ScrollBar`] with the same
+    /// [`ScrollState`].
+    pub fn overlay_scroll_bars(mut self, enabled: bool) -> Self {
+        self.overlay_scroll_bars = enabled;
+        if !enabled {
+            self.overlay_bars = None;
+        }
         self
     }
 
@@ -2749,12 +3060,9 @@ impl ScrollView {
     }
 
     pub fn set_offset(&mut self, offset: Vector) {
-        if let Some(state) = &self.state {
-            let _ = state.set_offset(offset);
-            self.offset = state.current_offset();
-        } else {
-            self.offset = offset;
-        }
+        self.state.sync_unmeasured_axes(self.scroll_axes());
+        let _ = self.state.set_offset(offset);
+        self.offset = self.state.current_offset();
     }
 
     pub fn child(&self) -> &WidgetPod {
@@ -2803,6 +3111,116 @@ impl ScrollView {
             (true, false) => ScrollAxes::Horizontal,
             (false, true) => ScrollAxes::Vertical,
             (false, false) => ScrollAxes::None,
+        }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(*self.theme)
+    }
+
+    fn sync_overlay_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        *self.overlay_theme.borrow_mut() = theme;
+        theme
+    }
+
+    fn ensure_overlay_bars(&mut self) {
+        let axes = self.scroll_axes();
+        if self.overlay_scroll_bars && axes != ScrollAxes::None && self.overlay_bars.is_none() {
+            self.overlay_bars = Some(OverlayScrollBars::new(
+                self.state.clone(),
+                Rc::clone(&self.overlay_theme),
+                self.name.as_deref(),
+                axes,
+            ));
+        }
+    }
+
+    fn touch_delta(&self, pointer: &PointerEvent) -> Vector {
+        let delta = Vector::new(-pointer.delta.x, -pointer.delta.y);
+        match self.scroll_axes() {
+            ScrollAxes::None => Vector::ZERO,
+            ScrollAxes::Vertical => Vector::new(0.0, delta.y),
+            ScrollAxes::Horizontal => Vector::new(delta.x, 0.0),
+            ScrollAxes::Both => delta,
+        }
+    }
+
+    fn has_touch_overflow(&self) -> bool {
+        let max_offset = self.state.max_offset();
+        (self.scroll_axes().allows_horizontal() && max_offset.x > f32::EPSILON)
+            || (self.scroll_axes().allows_vertical() && max_offset.y > f32::EPSILON)
+    }
+
+    fn handle_touch_pointer(&mut self, ctx: &mut EventCtx, pointer: &PointerEvent, viewport: Size) {
+        if pointer.pointer_kind != PointerKind::Touch {
+            return;
+        }
+
+        match pointer.kind {
+            PointerEventKind::Down
+                if pointer.is_primary
+                    && pointer.button == Some(PointerButton::Primary)
+                    && ctx.bounds().contains(pointer.position)
+                    && self.has_touch_overflow() =>
+            {
+                self.touch_scroll = Some(TouchScrollGesture::new(pointer));
+            }
+            PointerEventKind::Move => {
+                let Some(gesture) = self.touch_scroll else {
+                    return;
+                };
+                if !gesture.matches(pointer) || ctx.phase() == EventPhase::Capture {
+                    return;
+                }
+                if !gesture.dragging && !gesture.passed_threshold(pointer, self.scroll_axes()) {
+                    return;
+                }
+
+                let delta = self.touch_delta(pointer);
+                let relevant_delta = delta.x.abs().max(delta.y.abs());
+                if relevant_delta <= f32::EPSILON {
+                    if gesture.dragging {
+                        ctx.set_handled();
+                    }
+                    return;
+                }
+
+                if self.scroll_by(viewport, delta, ctx) {
+                    if !gesture.dragging {
+                        if let Some(gesture) = &mut self.touch_scroll {
+                            gesture.dragging = true;
+                        }
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                    }
+                    ctx.set_handled();
+                } else if !gesture.dragging {
+                    if let Some(gesture) = &mut self.touch_scroll {
+                        gesture.dragging = true;
+                    }
+                    // Claim the pan even at a hard boundary so controls beneath it receive
+                    // Cancel and the gesture can reverse direction. Leave the event unhandled
+                    // so an enclosing scroll view can still take ownership and move instead.
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                }
+            }
+            PointerEventKind::Up | PointerEventKind::Cancel => {
+                let Some(gesture) = self.touch_scroll else {
+                    return;
+                };
+                if !gesture.matches(pointer) {
+                    return;
+                }
+                self.touch_scroll = None;
+                if gesture.dragging && ctx.phase() != EventPhase::Capture {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2859,10 +3277,7 @@ impl ScrollView {
     where
         C: ScrollInvalidationCtx + ScrollWidgetCtx,
     {
-        let Some(state) = &self.state else {
-            self.offset = self.clamp_offset(viewport, self.offset);
-            return;
-        };
+        let state = &self.state;
 
         state.bind_scroll_view(ctx.widget_id(), self.child.child().id());
         if state.sync_metrics(self.scroll_axes(), viewport, self.content_size) {
@@ -2879,9 +3294,7 @@ impl ScrollView {
     }
 
     fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
-        let Some(state) = &self.state else {
-            return;
-        };
+        let state = &self.state;
 
         state.bind_scroll_view(ctx.widget_id(), self.child.child().id());
         let _ = state.sync_metrics(self.scroll_axes(), viewport, self.content_size);
@@ -2908,33 +3321,44 @@ impl ScrollView {
 
 pub struct VirtualScrollView {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Rc<dyn Fn() -> DefaultTheme>>,
+    overlay_theme: Rc<RefCell<DefaultTheme>>,
     name: Option<String>,
     padding: Insets,
     spacing: f32,
-    state: Option<ScrollState>,
+    state: ScrollState,
     offset_y: f32,
     last_arranged_offset_y: f32,
     content_height: f32,
     item_offsets: Vec<f32>,
     visible_range: Range<usize>,
     focus_animation: AnimatedScalar,
+    overlay_scroll_bars: bool,
+    overlay_bars: Option<OverlayScrollBars>,
+    touch_scroll: Option<TouchScrollGesture>,
     children: WidgetChildren,
 }
 
 impl VirtualScrollView {
     pub fn new() -> Self {
+        let theme = DefaultTheme::default();
         Self {
-            theme: Box::new(DefaultTheme::default()),
+            theme: Box::new(theme),
+            theme_reader: None,
+            overlay_theme: Rc::new(RefCell::new(theme)),
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
-            state: None,
+            state: ScrollState::new(),
             offset_y: 0.0,
             last_arranged_offset_y: 0.0,
             content_height: 0.0,
             item_offsets: Vec::new(),
             visible_range: 0..0,
             focus_animation: AnimatedScalar::new(0.0),
+            overlay_scroll_bars: true,
+            overlay_bars: None,
+            touch_scroll: None,
             children: WidgetChildren::new(),
         }
     }
@@ -2946,6 +3370,16 @@ impl VirtualScrollView {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        *self.overlay_theme.borrow_mut() = theme;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Rc::new(theme));
         self
     }
 
@@ -2960,7 +3394,20 @@ impl VirtualScrollView {
     }
 
     pub fn state(mut self, state: ScrollState) -> Self {
-        self.state = Some(state);
+        self.state = state;
+        self.state.sync_unmeasured_axes(ScrollAxes::Vertical);
+        self.overlay_bars = None;
+        self
+    }
+
+    /// Controls the built-in vertical scroll bar painted over overflowing
+    /// content. Disable this when composing a standalone [`ScrollBar`] with
+    /// the same [`ScrollState`].
+    pub fn overlay_scroll_bars(mut self, enabled: bool) -> Self {
+        self.overlay_scroll_bars = enabled;
+        if !enabled {
+            self.overlay_bars = None;
+        }
         self
     }
 
@@ -2985,9 +3432,100 @@ impl VirtualScrollView {
 
     pub fn set_offset(&mut self, offset: Vector) {
         self.offset_y = offset.y.max(0.0);
-        if let Some(state) = &self.state {
-            let _ = state.set_offset(Vector::new(0.0, self.offset_y));
-            self.offset_y = state.current_offset().y;
+        let _ = self.state.set_offset(Vector::new(0.0, self.offset_y));
+        self.offset_y = self.state.current_offset().y;
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(*self.theme)
+    }
+
+    fn sync_overlay_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        *self.overlay_theme.borrow_mut() = theme;
+        theme
+    }
+
+    fn ensure_overlay_bars(&mut self) {
+        if self.overlay_scroll_bars && self.overlay_bars.is_none() {
+            self.overlay_bars = Some(OverlayScrollBars::new(
+                self.state.clone(),
+                Rc::clone(&self.overlay_theme),
+                self.name.as_deref(),
+                ScrollAxes::Vertical,
+            ));
+        }
+    }
+
+    fn has_touch_overflow(&self) -> bool {
+        self.state.max_offset().y > f32::EPSILON
+    }
+
+    fn handle_touch_pointer(&mut self, ctx: &mut EventCtx, pointer: &PointerEvent, viewport: Rect) {
+        if pointer.pointer_kind != PointerKind::Touch {
+            return;
+        }
+
+        match pointer.kind {
+            PointerEventKind::Down
+                if pointer.is_primary
+                    && pointer.button == Some(PointerButton::Primary)
+                    && ctx.bounds().contains(pointer.position)
+                    && self.has_touch_overflow() =>
+            {
+                self.touch_scroll = Some(TouchScrollGesture::new(pointer));
+            }
+            PointerEventKind::Move => {
+                let Some(gesture) = self.touch_scroll else {
+                    return;
+                };
+                if !gesture.matches(pointer) || ctx.phase() == EventPhase::Capture {
+                    return;
+                }
+                if !gesture.dragging && !gesture.passed_threshold(pointer, ScrollAxes::Vertical) {
+                    return;
+                }
+
+                let delta_y = -pointer.delta.y;
+                if delta_y.abs() <= f32::EPSILON {
+                    if gesture.dragging {
+                        ctx.set_handled();
+                    }
+                    return;
+                }
+
+                if self.scroll_by(viewport, delta_y, ctx) {
+                    if !gesture.dragging {
+                        if let Some(gesture) = &mut self.touch_scroll {
+                            gesture.dragging = true;
+                        }
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                    }
+                    ctx.set_handled();
+                } else if !gesture.dragging {
+                    if let Some(gesture) = &mut self.touch_scroll {
+                        gesture.dragging = true;
+                    }
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                }
+            }
+            PointerEventKind::Up | PointerEventKind::Cancel => {
+                let Some(gesture) = self.touch_scroll else {
+                    return;
+                };
+                if !gesture.matches(pointer) {
+                    return;
+                }
+                self.touch_scroll = None;
+                if gesture.dragging && ctx.phase() != EventPhase::Capture {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3081,10 +3619,7 @@ impl VirtualScrollView {
     where
         C: ScrollInvalidationCtx + ScrollWidgetCtx,
     {
-        let Some(state) = &self.state else {
-            self.offset_y = self.clamp_offset(viewport.height, self.offset_y);
-            return;
-        };
+        let state = &self.state;
 
         state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
         let content_size = Size::new(viewport.width, self.content_height);
@@ -3105,9 +3640,7 @@ impl VirtualScrollView {
     }
 
     fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
-        let Some(state) = &self.state else {
-            return;
-        };
+        let state = &self.state;
 
         state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
         let content_size = Size::new(viewport.width, self.content_height);
@@ -3132,10 +3665,9 @@ impl VirtualScrollView {
     }
 
     fn pending_visible_range(&self) -> Option<Range<usize>> {
-        let state = self.state.as_ref()?;
-        let index = state.pending_virtual_item()?;
+        let index = self.state.pending_virtual_item()?;
         let offset_y = self.item_offsets.get(index).copied()?;
-        Some(self.visible_range_for_offset(state.viewport_size().height, offset_y))
+        Some(self.visible_range_for_offset(self.state.viewport_size().height, offset_y))
     }
 
     fn advance_focus_animation(&mut self, time: f64, ctx: &mut EventCtx) {
@@ -3158,7 +3690,11 @@ impl Default for VirtualScrollView {
 
 impl Widget for ScrollView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_overlay_theme();
         let viewport = ctx.bounds().size;
+        if let Event::Pointer(pointer) = event {
+            self.handle_touch_pointer(ctx, pointer, viewport);
+        }
 
         match event {
             Event::Pointer(pointer)
@@ -3218,6 +3754,8 @@ impl Widget for ScrollView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.sync_overlay_theme();
+        self.ensure_overlay_bars();
         let viewport_hint = Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -3269,11 +3807,18 @@ impl Widget for ScrollView {
             },
         ));
         self.sync_state(ctx, viewport);
+        let axes = self.scroll_axes();
+        let max_offset = self.state.max_offset();
+        if let Some(overlay_bars) = &mut self.overlay_bars {
+            overlay_bars.set_visibility(axes, max_offset);
+            overlay_bars.measure(ctx, viewport, theme.metrics.scroll_bar_thickness);
+        }
 
         viewport
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.sync_overlay_theme();
         self.sync_state(ctx, bounds.size);
         let measured = self.child.child().measured_size();
         let child_size = Size::new(
@@ -3295,15 +3840,27 @@ impl Widget for ScrollView {
                 child_size,
             ),
         );
+        let axes = self.scroll_axes();
+        let max_offset = self.state.max_offset();
+        if let Some(overlay_bars) = &mut self.overlay_bars {
+            overlay_bars.set_visibility(axes, max_offset);
+            overlay_bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        self.sync_overlay_theme();
         if self.should_clip_paint() {
             ctx.push_clip_rect(self.clip_rect(ctx.bounds()));
             self.child.paint(ctx);
             ctx.pop_clip();
         } else {
             self.child.paint(ctx);
+        }
+        if let Some(overlay_bars) = &self.overlay_bars {
+            ctx.push_clip_rect(ctx.bounds());
+            overlay_bars.paint(ctx);
+            ctx.pop_clip();
         }
     }
 
@@ -3325,6 +3882,9 @@ impl Widget for ScrollView {
         node.state.focused = ctx.is_focused();
         ctx.push(node);
         self.child.semantics(ctx);
+        if let Some(overlay_bars) = &self.overlay_bars {
+            overlay_bars.semantics(ctx);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -3332,28 +3892,34 @@ impl Widget for ScrollView {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        set_focus_animation_target(
-            &mut self.focus_animation,
-            focused as u8 as f32,
-            self.theme.as_ref(),
-            ctx,
-        );
+        let theme = self.sync_overlay_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.child.visit_children(visitor);
+        if let Some(overlay_bars) = &self.overlay_bars {
+            overlay_bars.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
+        if let Some(overlay_bars) = &mut self.overlay_bars {
+            overlay_bars.visit_children_mut(visitor);
+        }
     }
 }
 
 impl Widget for VirtualScrollView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_overlay_theme();
         let viewport = self.viewport_rect(ctx.bounds());
+        if let Event::Pointer(pointer) = event {
+            self.handle_touch_pointer(ctx, pointer, viewport);
+        }
 
         match event {
             Event::Pointer(pointer)
@@ -3408,6 +3974,8 @@ impl Widget for VirtualScrollView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let theme = self.sync_overlay_theme();
+        self.ensure_overlay_bars();
         let previous_content_height = self.content_height;
         let previous_item_offsets = std::mem::take(&mut self.item_offsets);
         let previous_visible_range = self.visible_range.clone();
@@ -3463,6 +4031,11 @@ impl Widget for VirtualScrollView {
         let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
         self.sync_state(ctx, viewport.size);
         self.update_visible_range(viewport.height());
+        let max_offset = self.state.max_offset();
+        if let Some(overlay_bars) = &mut self.overlay_bars {
+            overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
+            overlay_bars.measure(ctx, size, theme.metrics.scroll_bar_thickness);
+        }
         if previous_content_height != self.content_height
             || previous_item_offsets != self.item_offsets
             || previous_visible_range != self.visible_range
@@ -3473,6 +4046,7 @@ impl Widget for VirtualScrollView {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let theme = self.sync_overlay_theme();
         let viewport = self.viewport_rect(bounds);
         self.sync_state(ctx, viewport.size);
         let previous_visible_range = self.visible_range.clone();
@@ -3511,15 +4085,26 @@ impl Widget for VirtualScrollView {
                 ),
             );
         }
+        let max_offset = self.state.max_offset();
+        if let Some(overlay_bars) = &mut self.overlay_bars {
+            overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
+            overlay_bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        self.sync_overlay_theme();
         let viewport = self.viewport_rect(ctx.bounds());
         ctx.push_clip_rect(viewport);
         for child in self.visible_children() {
             child.paint(ctx);
         }
         ctx.pop_clip();
+        if let Some(overlay_bars) = &self.overlay_bars {
+            ctx.push_clip_rect(ctx.bounds());
+            overlay_bars.paint(ctx);
+            ctx.pop_clip();
+        }
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -3538,6 +4123,9 @@ impl Widget for VirtualScrollView {
         for child in self.visible_children() {
             child.semantics(ctx);
         }
+        if let Some(overlay_bars) = &self.overlay_bars {
+            overlay_bars.semantics(ctx);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -3545,12 +4133,8 @@ impl Widget for VirtualScrollView {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        set_focus_animation_target(
-            &mut self.focus_animation,
-            focused as u8 as f32,
-            self.theme.as_ref(),
-            ctx,
-        );
+        let theme = self.sync_overlay_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -3566,6 +4150,9 @@ impl Widget for VirtualScrollView {
                 visitor.visit(child);
             }
         }
+        if let Some(overlay_bars) = &self.overlay_bars {
+            overlay_bars.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
@@ -3579,6 +4166,9 @@ impl Widget for VirtualScrollView {
             {
                 visitor.visit(child);
             }
+        }
+        if let Some(overlay_bars) = &mut self.overlay_bars {
+            overlay_bars.visit_children_mut(visitor);
         }
     }
 }
@@ -3883,8 +4473,9 @@ mod tests {
     use crate::{DefaultTheme, SplitView};
     use sui_core::{
         Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, Point,
-        PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, ScrollDelta,
-        SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect,
+        ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
+        SemanticsValue, Size, Vector, WidgetId,
     };
     use sui_layout::{Alignment, Axis, Constraints, FlexItem, FlexWrap, Padding as Insets};
     use sui_runtime::{
@@ -4454,6 +5045,33 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    fn touch_pointer(
+        kind: PointerEventKind,
+        pointer_id: u64,
+        position: Point,
+        delta: Vector,
+    ) -> PointerEvent {
+        let mut pointer = PointerEvent::new(kind, position);
+        pointer.pointer_id = pointer_id;
+        pointer.pointer_kind = PointerKind::Touch;
+        pointer.delta = delta;
+        pointer.is_primary = true;
+        match kind {
+            PointerEventKind::Down => {
+                pointer.button = Some(PointerButton::Primary);
+                pointer.buttons = PointerButtons::new(1);
+            }
+            PointerEventKind::Move => {
+                pointer.buttons = PointerButtons::new(1);
+            }
+            PointerEventKind::Up => {
+                pointer.button = Some(PointerButton::Primary);
+            }
+            _ => {}
+        }
+        pointer
     }
 
     fn scroll_view_content_with_height(
@@ -5105,13 +5723,9 @@ mod tests {
         assert!(output.frame.layer_updates.iter().any(|update| {
             update.owner == content_id && update.kind == sui_scene::SceneLayerUpdateKind::Transform
         }));
-        assert!(
-            !output
-                .frame
-                .layer_updates
-                .iter()
-                .any(|update| update.kind == sui_scene::SceneLayerUpdateKind::Content)
-        );
+        assert!(!output.frame.layer_updates.iter().any(|update| {
+            update.owner == content_id && update.kind == sui_scene::SceneLayerUpdateKind::Content
+        }));
     }
 
     #[test]
@@ -5268,6 +5882,177 @@ mod tests {
             layer_descriptor_for(&output, scroll_id).expect("scroll view layer present");
 
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Scroll);
+    }
+
+    #[test]
+    fn scroll_view_overlays_scroll_bar_only_when_content_overflows() {
+        let theme = DefaultTheme::default();
+        let (overflowing, graph) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .name("Results")
+                .theme(theme),
+            ),
+        );
+
+        let scroll_view = overflowing
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ScrollView)
+            .expect("scroll view semantics present");
+        let scroll_bar = overflowing
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some("Results vertical scroll bar")
+            })
+            .expect("overflowing content should expose an overlay scroll bar");
+        assert_eq!(
+            scroll_bar.bounds.width(),
+            theme.metrics.scroll_bar_thickness
+        );
+        assert!(!scroll_bar.actions.contains(&SemanticsAction::Focus));
+        assert!(scroll_bar.actions.contains(&SemanticsAction::SetValue));
+        assert!(scroll_view.bounds.contains(scroll_bar.bounds.origin));
+        assert!(scroll_bar.bounds.max_x() <= scroll_view.bounds.max_x());
+        assert!(scroll_bar.bounds.max_y() <= scroll_view.bounds.max_y());
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.height() == 120.0 && node.bounds.width() == 80.0)
+            .expect("scroll content keeps the full viewport width");
+        assert_eq!(content.bounds.width(), scroll_view.bounds.width());
+
+        let (fitting, _) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(FixedBox::new(
+                    Size::new(80.0, 40.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .name("Results"),
+            ),
+        );
+        assert!(
+            fitting
+                .semantics
+                .iter()
+                .all(|node| node.role != SemanticsRole::Slider),
+            "fitting content should not expose scroll-bar chrome"
+        );
+    }
+
+    #[test]
+    fn embedded_overlay_scroll_bar_drags_the_shared_view_state() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 180.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .name("Results")
+                .state(state.clone()),
+            ),
+        );
+        let output = runtime.render(window_id).unwrap();
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Results vertical scroll bar"))
+            .expect("embedded scroll bar present");
+        let point = Point::new(
+            scroll_bar.bounds.x() + scroll_bar.bounds.width() * 0.5,
+            scroll_bar.bounds.max_y() - 1.0,
+        );
+        let mut down = PointerEvent::new(PointerEventKind::Down, point);
+        down.pointer_id = 41;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        assert!(state.current_offset().y > 0.0);
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.size == Size::new(80.0, 180.0))
+            .expect("scroll content present");
+        assert_eq!(content.bounds.y(), -state.current_offset().y);
+    }
+
+    #[test]
+    fn both_axis_overlay_scroll_bars_share_the_corner_without_reserving_space() {
+        let (output, graph) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::both(OverflowingBox::new(
+                    Size::new(160.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .name("Canvas"),
+            ),
+        );
+
+        let vertical = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Canvas vertical scroll bar"))
+            .expect("vertical overlay scroll bar present");
+        let horizontal = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Canvas horizontal scroll bar"))
+            .expect("horizontal overlay scroll bar present");
+        assert!(vertical.bounds.max_y() <= horizontal.bounds.y());
+        assert!(horizontal.bounds.max_x() <= vertical.bounds.x());
+
+        let content = graph
+            .nodes
+            .iter()
+            .find(|node| node.bounds.size == Size::new(160.0, 120.0))
+            .expect("two-axis content present");
+        assert_eq!(content.bounds.origin, Point::ZERO);
+    }
+
+    #[test]
+    fn virtual_scroll_view_overlays_a_synchronized_vertical_scroll_bar() {
+        let state = ScrollState::new();
+        let (output, _) = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .name("Timeline")
+                    .state(state.clone())
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.7, 0.3, 0.2, 1.0),
+                    )),
+            ),
+        );
+
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Timeline vertical scroll bar"))
+            .expect("virtual scroll bar present");
+        assert_eq!(
+            scroll_bar.value,
+            Some(SemanticsValue::Range {
+                value: 0.0,
+                min: 0.0,
+                max: 40.0,
+            })
+        );
+        assert_eq!(state.max_offset(), Vector::new(0.0, 40.0));
     }
 
     #[test]
@@ -5763,6 +6548,561 @@ mod tests {
     }
 
     #[test]
+    fn scroll_view_touch_drag_scrolls_content_after_drag_threshold() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Down,
+                    7,
+                    Point::new(20.0, 30.0),
+                    Vector::ZERO,
+                )),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Move,
+                    7,
+                    Point::new(20.0, 6.0),
+                    Vector::new(0.0, -24.0),
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(state.current_offset(), Vector::new(0.0, 24.0));
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Up,
+                    7,
+                    Point::new(20.0, 6.0),
+                    Vector::ZERO,
+                )),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn touch_move_below_threshold_or_from_another_pointer_does_not_scroll() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Down,
+                    1,
+                    Point::new(20.0, 20.0),
+                    Vector::ZERO,
+                )),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Move,
+                    1,
+                    Point::new(20.0, 17.0),
+                    Vector::new(0.0, -3.0),
+                )),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Move,
+                    2,
+                    Point::new(20.0, 4.0),
+                    Vector::new(0.0, -16.0),
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(state.current_offset(), Vector::ZERO);
+    }
+
+    #[test]
+    fn virtual_scroll_view_supports_touch_drag_and_cancelled_gesture_recovery() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .state(state.clone())
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.7, 0.3, 0.2, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.3, 0.7, 0.2, 1.0),
+                    )),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                3,
+                Point::new(20.0, 30.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                3,
+                Point::new(20.0, 10.0),
+                Vector::new(0.0, -20.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Cancel,
+                3,
+                Point::new(20.0, 10.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Down,
+                4,
+                Point::new(20.0, 30.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                4,
+                Point::new(20.0, 18.0),
+                Vector::new(0.0, -12.0),
+            ),
+        ] {
+            runtime
+                .handle_event(window_id, Event::Pointer(pointer))
+                .unwrap();
+        }
+
+        assert_eq!(state.current_offset(), Vector::new(0.0, 32.0));
+    }
+
+    #[test]
+    fn boundary_touch_gestures_keep_capture_for_reversal_and_accept_fresh_down() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                20,
+                Point::new(20.0, 30.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                20,
+                Point::new(20.0, 18.0),
+                Vector::new(0.0, -200.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Up,
+                20,
+                Point::new(20.0, -170.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Down,
+                21,
+                Point::new(20.0, 30.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                21,
+                Point::new(20.0, 18.0),
+                Vector::new(0.0, -12.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                21,
+                Point::new(20.0, 30.0),
+                Vector::new(0.0, 12.0),
+            ),
+        ] {
+            runtime
+                .handle_event(window_id, Event::Pointer(pointer))
+                .unwrap();
+        }
+        assert_eq!(
+            state.current_offset(),
+            Vector::new(0.0, 68.0),
+            "a captured pan should reverse away from a hard boundary"
+        );
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                21,
+                Point::new(20.0, 18.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                21,
+                Point::new(20.0, 30.0),
+                Vector::new(0.0, 12.0),
+            ),
+        ] {
+            runtime
+                .handle_event(window_id, Event::Pointer(pointer))
+                .unwrap();
+        }
+        assert_eq!(state.current_offset(), Vector::new(0.0, 56.0));
+
+        let virtual_state = ScrollState::new();
+        let (mut virtual_runtime, virtual_window) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .state(virtual_state.clone())
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.2, 0.3, 0.7, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.7, 0.3, 0.2, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.3, 0.7, 0.2, 1.0),
+                    )),
+            ),
+        );
+        let _ = virtual_runtime.render(virtual_window).unwrap();
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                30,
+                Point::new(20.0, 30.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                30,
+                Point::new(20.0, 18.0),
+                Vector::new(0.0, -200.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Up,
+                30,
+                Point::new(20.0, -170.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Down,
+                31,
+                Point::new(20.0, 30.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                31,
+                Point::new(20.0, 18.0),
+                Vector::new(0.0, -12.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                31,
+                Point::new(20.0, 30.0),
+                Vector::new(0.0, 12.0),
+            ),
+        ] {
+            virtual_runtime
+                .handle_event(virtual_window, Event::Pointer(pointer))
+                .unwrap();
+        }
+        assert_eq!(virtual_state.current_offset(), Vector::new(0.0, 68.0));
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                31,
+                Point::new(20.0, 18.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                31,
+                Point::new(20.0, 30.0),
+                Vector::new(0.0, 12.0),
+            ),
+        ] {
+            virtual_runtime
+                .handle_event(virtual_window, Event::Pointer(pointer))
+                .unwrap();
+        }
+        assert_eq!(virtual_state.current_offset(), Vector::new(0.0, 56.0));
+    }
+
+    #[test]
+    fn nested_touch_scroll_hands_off_from_inner_limit_to_parent() {
+        let outer_state = ScrollState::new();
+        let inner_state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .spacing(8.0)
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 32.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        ))
+                        .with_child(
+                            SizedBox::new().height(40.0).with_child(
+                                ScrollView::vertical(FixedBox::new(
+                                    Size::new(80.0, 120.0),
+                                    Color::rgba(0.2, 0.7, 0.3, 1.0),
+                                ))
+                                .state(inner_state.clone()),
+                            ),
+                        )
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 140.0),
+                            Color::rgba(0.2, 0.3, 0.8, 1.0),
+                        )),
+                )
+                .state(outer_state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                9,
+                Point::new(20.0, 52.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                9,
+                Point::new(20.0, 44.0),
+                Vector::new(0.0, -8.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                9,
+                Point::new(20.0, -56.0),
+                Vector::new(0.0, -100.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                9,
+                Point::new(20.0, -80.0),
+                Vector::new(0.0, -24.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Up,
+                9,
+                Point::new(20.0, -80.0),
+                Vector::ZERO,
+            ),
+        ] {
+            runtime
+                .handle_event(window_id, Event::Pointer(pointer))
+                .unwrap();
+        }
+
+        assert_eq!(inner_state.current_offset(), Vector::new(0.0, 80.0));
+        assert_eq!(outer_state.current_offset(), Vector::new(0.0, 24.0));
+        assert_eq!(runtime.pointer_capture_target(window_id, 9).unwrap(), None);
+    }
+
+    #[test]
+    fn touch_pan_starting_on_button_cancels_click_but_tap_still_activates() {
+        let pans = Rc::new(Cell::new(0usize));
+        let pan_count = Rc::clone(&pans);
+        let pan_state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(100.0, 48.0)).with_child(
+                ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(crate::Button::new("Open").on_press(move || {
+                            pan_count.set(pan_count.get() + 1);
+                        }))
+                        .with_child(FixedBox::new(
+                            Size::new(100.0, 120.0),
+                            Color::rgba(0.2, 0.3, 0.7, 1.0),
+                        )),
+                )
+                .state(pan_state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                12,
+                Point::new(20.0, 20.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Move,
+                12,
+                Point::new(20.0, 4.0),
+                Vector::new(0.0, -16.0),
+            ),
+            touch_pointer(
+                PointerEventKind::Up,
+                12,
+                Point::new(20.0, 4.0),
+                Vector::ZERO,
+            ),
+        ] {
+            runtime
+                .handle_event(window_id, Event::Pointer(pointer))
+                .unwrap();
+        }
+        assert_eq!(pans.get(), 0, "a pan must not activate the button");
+        assert_eq!(pan_state.current_offset(), Vector::new(0.0, 16.0));
+
+        let taps = Rc::new(Cell::new(0usize));
+        let tap_count = Rc::clone(&taps);
+        let (mut tap_runtime, tap_window) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(100.0, 48.0))
+                .with_child(ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(crate::Button::new("Open").on_press(move || {
+                            tap_count.set(tap_count.get() + 1);
+                        }))
+                        .with_child(FixedBox::new(
+                            Size::new(100.0, 120.0),
+                            Color::rgba(0.2, 0.3, 0.7, 1.0),
+                        )),
+                )),
+        );
+        let _ = tap_runtime.render(tap_window).unwrap();
+        for pointer in [
+            touch_pointer(
+                PointerEventKind::Down,
+                13,
+                Point::new(20.0, 20.0),
+                Vector::ZERO,
+            ),
+            touch_pointer(
+                PointerEventKind::Up,
+                13,
+                Point::new(20.0, 20.0),
+                Vector::ZERO,
+            ),
+        ] {
+            tap_runtime
+                .handle_event(tap_window, Event::Pointer(pointer))
+                .unwrap();
+        }
+        assert_eq!(taps.get(), 1, "a tap should still activate exactly once");
+    }
+
+    #[test]
+    fn touch_pan_at_scroll_boundary_cancels_underlying_button() {
+        let activations = Rc::new(Cell::new(0usize));
+        let activation_count = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(100.0, 48.0))
+                .with_child(ScrollView::vertical(
+                    Stack::vertical()
+                        .with_child(FixedBox::new(
+                            Size::new(100.0, 120.0),
+                            Color::rgba(0.2, 0.3, 0.7, 1.0),
+                        ))
+                        .with_child(crate::Button::new("Bottom").on_press(move || {
+                            activation_count.set(activation_count.get() + 1);
+                        })),
+                )),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -500.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let output = runtime.render(window_id).unwrap();
+        let button = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Bottom")
+            })
+            .expect("bottom button visible at the scroll boundary");
+        let down_position = Point::new(
+            button.bounds.x() + button.bounds.width() * 0.5,
+            button.bounds.y() + button.bounds.height() * 0.5,
+        );
+        let move_position = Point::new(down_position.x, down_position.y - 12.0);
+
+        for pointer in [
+            touch_pointer(PointerEventKind::Down, 14, down_position, Vector::ZERO),
+            touch_pointer(
+                PointerEventKind::Move,
+                14,
+                move_position,
+                Vector::new(0.0, -12.0),
+            ),
+            touch_pointer(PointerEventKind::Up, 14, move_position, Vector::ZERO),
+        ] {
+            runtime
+                .handle_event(window_id, Event::Pointer(pointer))
+                .unwrap();
+        }
+
+        assert_eq!(
+            activations.get(),
+            0,
+            "a boundary pan must cancel the pressed control even when content cannot move"
+        );
+    }
+
+    #[test]
     fn shared_scroll_state_accepts_programmatic_offsets() {
         let state = ScrollState::new();
         state.sync_metrics(
@@ -5790,6 +7130,7 @@ mod tests {
                         Color::rgba(0.2, 0.3, 0.7, 1.0),
                     ))
                     .state(state.clone())
+                    .overlay_scroll_bars(false)
                     .name("Scrollable content"),
                     ScrollBar::vertical(state).name("Scroll bar"),
                 )),
@@ -5826,6 +7167,78 @@ mod tests {
                 min: 0.0,
                 max: 80.0,
             })
+        );
+    }
+
+    #[test]
+    fn embedded_overlay_scroll_bar_applies_semantic_actions() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                ScrollView::vertical(FixedBox::new(
+                    Size::new(80.0, 120.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone())
+                .name("Semantic content"),
+            ),
+        );
+        let scroll_bar_id = runtime
+            .render(window_id)
+            .unwrap()
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some("Semantic content vertical scroll bar")
+            })
+            .expect("overlay scroll bar semantics present")
+            .id;
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    scroll_bar_id,
+                    SemanticsActionRequest::Increment,
+                )
+                .unwrap()
+        );
+        assert_eq!(state.current_offset(), Vector::new(0.0, 40.0));
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    scroll_bar_id,
+                    SemanticsActionRequest::SetValue(SemanticsValue::Range {
+                        value: 72.0,
+                        min: 0.0,
+                        max: 80.0,
+                    }),
+                )
+                .unwrap()
+        );
+        assert_eq!(state.current_offset(), Vector::new(0.0, 72.0));
+
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    scroll_bar_id,
+                    SemanticsActionRequest::Decrement,
+                )
+                .unwrap()
+        );
+        assert_eq!(state.current_offset(), Vector::new(0.0, 32.0));
+        assert!(
+            !runtime
+                .handle_semantics_action(
+                    window_id,
+                    scroll_bar_id,
+                    SemanticsActionRequest::SetValue(SemanticsValue::Text("invalid".to_string())),
+                )
+                .unwrap()
         );
     }
 
@@ -6078,7 +7491,8 @@ mod tests {
                         Size::new(80.0, 120.0),
                         Color::rgba(0.2, 0.3, 0.7, 1.0),
                     ))
-                    .state(state.clone()),
+                    .state(state.clone())
+                    .overlay_scroll_bars(false),
                     ScrollBar::vertical(state),
                 )),
         );

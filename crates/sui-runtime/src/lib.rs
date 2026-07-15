@@ -16,9 +16,9 @@ use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, CustomEvent, DirtyRegion, DragEvent,
     DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect, Error, Event,
     FontHandle, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
-    Point, PointerButton, PointerEvent, PointerEventKind, Rect, Result, SemanticsActionRequest,
-    SemanticsEvent, SemanticsNode, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent,
-    WindowId,
+    Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
+    SemanticsActionRequest, SemanticsEvent, SemanticsNode, Size, TimerToken, Vector, WakeEvent,
+    WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -1033,6 +1033,7 @@ struct WindowState {
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
     pointer_capture: HashMap<u64, WidgetId>,
+    last_pointer_events: HashMap<u64, PointerEvent>,
     pointer_hover_paths: HashMap<u64, Vec<WidgetId>>,
     active_drag: Option<ActiveDrag>,
     scheduled_timers: Vec<ScheduledTimer>,
@@ -1074,6 +1075,7 @@ impl WindowState {
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
             pointer_capture: HashMap::new(),
+            last_pointer_events: HashMap::new(),
             pointer_hover_paths: HashMap::new(),
             active_drag: None,
             scheduled_timers: Vec::new(),
@@ -1109,6 +1111,10 @@ impl WindowState {
         if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
             self.pending_animation_wake_count = self.pending_animation_wake_count.saturating_add(1);
         }
+        if let Event::Pointer(pointer) = &event {
+            self.last_pointer_events
+                .insert(pointer.pointer_id, pointer.clone());
+        }
 
         self.preprocess_window_event(&event);
         self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
@@ -1129,6 +1135,12 @@ impl WindowState {
         };
 
         let mut invalidations = Vec::new();
+        if matches!(event, Event::Window(WindowEvent::Focused(false))) {
+            self.cancel_all_pointer_captures(&mut invalidations);
+            self.pointer_capture.clear();
+            self.last_pointer_events.clear();
+            self.active_drag = None;
+        }
         let mut skip_primary_route = false;
         if let Event::Pointer(pointer) = &event {
             let hover_route = self.update_pointer_hover_path(pointer, hit_target);
@@ -1712,10 +1724,6 @@ impl WindowState {
             }
             WindowEvent::Focused(focused) => {
                 self.focus.window_focused = *focused;
-                if !focused {
-                    self.pointer_capture.clear();
-                    self.active_drag = None;
-                }
             }
             WindowEvent::RedrawRequested => {
                 self.schedule.mark(InvalidationKind::Paint);
@@ -1795,7 +1803,7 @@ impl WindowState {
     ) {
         invalidations.extend(effects.invalidations);
         self.apply_wake_requests(effects.wake_requests);
-        self.apply_pointer_capture_requests(effects.pointer_capture_requests);
+        self.apply_pointer_capture_requests(effects.pointer_capture_requests, invalidations);
         self.apply_drag_requests(effects.drag_requests, invalidations);
         self.apply_posted_events(effects.posted_events, invalidations);
     }
@@ -1817,14 +1825,20 @@ impl WindowState {
                 let dispatch = self.dispatch_direct_event(request.target, &request.event);
                 invalidations.extend(dispatch.invalidations);
                 self.apply_wake_requests(dispatch.wake_requests);
-                self.apply_pointer_capture_requests(dispatch.pointer_capture_requests);
+                self.apply_pointer_capture_requests(
+                    dispatch.pointer_capture_requests,
+                    invalidations,
+                );
                 self.apply_drag_requests(dispatch.drag_requests, invalidations);
                 posted.extend(dispatch.posted_events);
                 if let Some(request) = dispatch.focus_request {
                     let focus_effects = self.apply_focus_request(request);
                     invalidations.extend(focus_effects.invalidations);
                     self.apply_wake_requests(focus_effects.wake_requests);
-                    self.apply_pointer_capture_requests(focus_effects.pointer_capture_requests);
+                    self.apply_pointer_capture_requests(
+                        focus_effects.pointer_capture_requests,
+                        invalidations,
+                    );
                     self.apply_drag_requests(focus_effects.drag_requests, invalidations);
                     posted.extend(focus_effects.posted_events);
                 }
@@ -2047,16 +2061,92 @@ impl WindowState {
         }
     }
 
-    fn apply_pointer_capture_requests(&mut self, requests: Vec<PointerCaptureRequest>) {
+    fn apply_pointer_capture_requests(
+        &mut self,
+        requests: Vec<PointerCaptureRequest>,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
         for request in requests {
             match request {
                 PointerCaptureRequest::Capture { pointer_id, target } => {
-                    self.pointer_capture.insert(pointer_id, target);
+                    self.reconcile_pointer_capture(pointer_id, Some(target), invalidations);
                 }
                 PointerCaptureRequest::Release { pointer_id } => {
                     self.pointer_capture.remove(&pointer_id);
                 }
             }
+        }
+    }
+
+    fn cancel_all_pointer_captures(&mut self, invalidations: &mut Vec<InvalidationRequest>) {
+        let pointer_ids = self.pointer_capture.keys().copied().collect::<Vec<_>>();
+        for pointer_id in pointer_ids {
+            self.reconcile_pointer_capture(pointer_id, None, invalidations);
+        }
+    }
+
+    fn reconcile_pointer_capture(
+        &mut self,
+        pointer_id: u64,
+        requested_target: Option<WidgetId>,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
+        let mut cancelled_owners = HashSet::new();
+
+        loop {
+            let current = self.pointer_capture.get(&pointer_id).copied();
+            match (current, requested_target) {
+                (None, Some(target)) => {
+                    self.pointer_capture.insert(pointer_id, target);
+                    return;
+                }
+                (None, None) => return,
+                (Some(owner), Some(target)) if owner == target => return,
+                (Some(owner), _) => {
+                    self.pointer_capture.remove(&pointer_id);
+                    if !cancelled_owners.insert(owner) {
+                        // A cancellation handler may try to recapture synchronously. The original
+                        // request remains authoritative, so suppress repeated ownership without
+                        // dispatching an unbounded series of duplicate cancellation events.
+                        continue;
+                    }
+
+                    let cancel = self.pointer_cancel_event(pointer_id);
+                    let dispatch = self.dispatch_direct_event(owner, &Event::Pointer(cancel));
+                    self.apply_pointer_cancel_dispatch(dispatch, invalidations);
+                }
+            }
+        }
+    }
+
+    fn pointer_cancel_event(&self, pointer_id: u64) -> PointerEvent {
+        let mut pointer = self
+            .last_pointer_events
+            .get(&pointer_id)
+            .cloned()
+            .unwrap_or_else(|| PointerEvent::new(PointerEventKind::Cancel, Point::ZERO));
+        pointer.pointer_id = pointer_id;
+        pointer.kind = PointerEventKind::Cancel;
+        pointer.delta = Vector::ZERO;
+        pointer.scroll_delta = None;
+        pointer.button = None;
+        pointer.buttons = PointerButtons::NONE;
+        pointer
+    }
+
+    fn apply_pointer_cancel_dispatch(
+        &mut self,
+        dispatch: widget::EventDispatch,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
+        let focus_request = dispatch.focus_request;
+        let mut effects = EventEffects::default();
+        effects.extend(dispatch);
+        self.apply_event_effects(effects, invalidations);
+
+        if let Some(request) = focus_request {
+            let focus_effects = self.apply_focus_request(request);
+            self.apply_event_effects(focus_effects, invalidations);
         }
     }
 
@@ -2069,6 +2159,7 @@ impl WindowState {
                 ) =>
             {
                 self.pointer_capture.remove(&pointer.pointer_id);
+                self.last_pointer_events.remove(&pointer.pointer_id);
             }
             Event::Wake(WakeEvent::Timer { token, .. }) => {
                 self.delivering_timers.remove(token);
@@ -4186,8 +4277,8 @@ mod tests {
     };
 
     use super::{
-        Application, ArrangeCtx, EventCtx, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
-        PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
+        Application, ArrangeCtx, EventCtx, EventPhase, FocusState, FrameSchedule, LayerOptions,
+        MeasureCtx, PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
         SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
         WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
         WindowBuilder, WindowIcon, WindowRenderOptions, set_window_render_options,
@@ -4196,9 +4287,9 @@ mod tests {
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
         DragSessionId, DropEffect, Event, FontHandle, ImageHandle, KeyState, KeyboardEvent, Point,
-        PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, SemanticsAction,
-        SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken,
-        Vector, WakeEvent, WidgetId, WindowEvent,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect,
+        SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue,
+        Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_scene::{
@@ -5066,6 +5157,9 @@ mod tests {
     struct PointerCaptureState {
         moves: usize,
         ups: usize,
+        cancels: usize,
+        cancel_followups: usize,
+        last_cancel: Option<PointerEvent>,
     }
 
     #[derive(Debug, Default)]
@@ -5086,6 +5180,32 @@ mod tests {
 
     struct PointerCaptureLeaf {
         state: Rc<RefCell<PointerCaptureState>>,
+        recapture_on_move: bool,
+    }
+
+    struct PointerCaptureTransferRoot {
+        child: SingleChild,
+    }
+
+    #[derive(Default)]
+    struct ReentrantCaptureState {
+        intermediate_id: Option<WidgetId>,
+        pointer_id: Option<u64>,
+        source_cancels: usize,
+        intermediate_captures: usize,
+        intermediate_cancels: usize,
+    }
+
+    struct ReentrantCaptureSource {
+        state: Rc<RefCell<ReentrantCaptureState>>,
+    }
+
+    struct ReentrantCaptureIntermediate {
+        state: Rc<RefCell<ReentrantCaptureState>>,
+    }
+
+    struct ReentrantCaptureRoot {
+        children: WidgetChildren,
     }
 
     struct RuntimeDragSource {
@@ -5110,6 +5230,13 @@ mod tests {
 
     impl Widget for PointerCaptureLeaf {
         fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event
+                && custom.kind == "pointer-cancel-followup"
+            {
+                self.state.borrow_mut().cancel_followups += 1;
+                return;
+            }
+
             let Event::Pointer(pointer) = event else {
                 return;
             };
@@ -5121,10 +5248,26 @@ mod tests {
                 }
                 PointerEventKind::Move => {
                     self.state.borrow_mut().moves += 1;
+                    if self.recapture_on_move {
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                    }
                     ctx.set_handled();
                 }
                 PointerEventKind::Up => {
                     self.state.borrow_mut().ups += 1;
+                    ctx.set_handled();
+                }
+                PointerEventKind::Cancel => {
+                    let mut state = self.state.borrow_mut();
+                    state.cancels += 1;
+                    state.last_cancel = Some(pointer.clone());
+                    drop(state);
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.post_event(
+                        ctx.widget_id(),
+                        Event::Custom(CustomEvent::new("pointer-cancel-followup")),
+                    );
                     ctx.set_handled();
                 }
                 _ => {}
@@ -5133,6 +5276,159 @@ mod tests {
 
         fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    impl PointerCaptureTransferRoot {
+        fn new(child: PointerCaptureLeaf) -> Self {
+            Self {
+                child: SingleChild::new(child),
+            }
+        }
+    }
+
+    impl Widget for PointerCaptureTransferRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Move
+                && ctx.phase() == EventPhase::Capture
+            {
+                ctx.request_pointer_capture(pointer.pointer_id);
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    impl ReentrantCaptureRoot {
+        fn new(state: Rc<RefCell<ReentrantCaptureState>>) -> Self {
+            let mut children = WidgetChildren::with_capacity(2);
+            children.push(ReentrantCaptureSource {
+                state: Rc::clone(&state),
+            });
+            children.push(ReentrantCaptureIntermediate { state });
+            Self { children }
+        }
+    }
+
+    impl Widget for ReentrantCaptureRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Move
+                && ctx.phase() == EventPhase::Capture
+            {
+                ctx.request_pointer_capture(pointer.pointer_id);
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(320.0, 180.0));
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(80.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                Rect::new(bounds.x() + 180.0, bounds.y() + 24.0, 80.0, 40.0),
+            );
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
+        }
+    }
+
+    impl Widget for ReentrantCaptureSource {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            let Event::Pointer(pointer) = event else {
+                return;
+            };
+
+            match pointer.kind {
+                PointerEventKind::Down => {
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+                PointerEventKind::Move => {
+                    ctx.set_handled();
+                }
+                PointerEventKind::Cancel => {
+                    let intermediate_id = {
+                        let mut state = self.state.borrow_mut();
+                        state.source_cancels += 1;
+                        state.pointer_id = Some(pointer.pointer_id);
+                        state.intermediate_id.expect("intermediate measured")
+                    };
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.post_event(
+                        intermediate_id,
+                        Event::Custom(CustomEvent::new("capture-intermediate")),
+                    );
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 40.0))
+        }
+    }
+
+    impl Widget for ReentrantCaptureIntermediate {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Custom(custom) if custom.kind == "capture-intermediate" => {
+                    let pointer_id = self.state.borrow().pointer_id.expect("pointer recorded");
+                    self.state.borrow_mut().intermediate_captures += 1;
+                    ctx.request_pointer_capture(pointer_id);
+                }
+                Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                    self.state.borrow_mut().intermediate_cancels += 1;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.state.borrow_mut().intermediate_id = Some(ctx.widget_id());
+            constraints.clamp(Size::new(80.0, 40.0))
         }
     }
 
@@ -5835,6 +6131,7 @@ mod tests {
                     .title("Pointer Capture")
                     .root(ChildRoot::new(PointerCaptureLeaf {
                         state: Rc::clone(&state),
+                        recapture_on_move: false,
                     })),
             )
             .build()
@@ -7197,7 +7494,206 @@ mod tests {
 
         assert_eq!(state.borrow().moves, 1);
         assert_eq!(state.borrow().ups, 1);
+        assert_eq!(state.borrow().cancels, 0);
         assert_eq!(runtime.pointer_capture_target(window_id, 7).unwrap(), None);
+    }
+
+    #[test]
+    fn window_focus_loss_cancels_all_pointer_captures_and_applies_cleanup_effects() {
+        let (mut runtime, window_id, state) = build_pointer_capture_runtime();
+
+        let _ = runtime.render(window_id).unwrap();
+        let child_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+
+        for pointer_id in [31, 47] {
+            let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+            down.pointer_id = pointer_id;
+            down.pointer_kind = PointerKind::Touch;
+            down.button = Some(PointerButton::Primary);
+            down.buttons = PointerButtons::new(1);
+            runtime
+                .handle_event(window_id, Event::Pointer(down))
+                .unwrap();
+            assert_eq!(
+                runtime
+                    .pointer_capture_target(window_id, pointer_id)
+                    .unwrap(),
+                Some(child_id)
+            );
+        }
+
+        runtime
+            .handle_event(window_id, Event::Window(WindowEvent::Focused(false)))
+            .unwrap();
+
+        assert_eq!(state.borrow().cancels, 2);
+        assert_eq!(state.borrow().cancel_followups, 2);
+        assert!(runtime.needs_render(window_id).unwrap());
+        for pointer_id in [31, 47] {
+            assert_eq!(
+                runtime
+                    .pointer_capture_target(window_id, pointer_id)
+                    .unwrap(),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_capture_transfer_cancels_displaced_owner_and_preserves_new_owner() {
+        let state = Rc::new(RefCell::new(PointerCaptureState::default()));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Pointer Capture Transfer").root(
+                PointerCaptureTransferRoot::new(PointerCaptureLeaf {
+                    state: Rc::clone(&state),
+                    recapture_on_move: false,
+                }),
+            ))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let root_id = graph.root;
+        let child_id = graph_child(&graph).id;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 17;
+        down.pointer_kind = PointerKind::Touch;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+        assert_eq!(
+            runtime.pointer_capture_target(window_id, 17).unwrap(),
+            Some(child_id)
+        );
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, Point::new(48.0, 18.0));
+        moved.pointer_id = 17;
+        moved.pointer_kind = PointerKind::Touch;
+        moved.delta = Vector::new(0.0, -22.0);
+        moved.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(moved))
+            .unwrap();
+
+        assert_eq!(
+            runtime.pointer_capture_target(window_id, 17).unwrap(),
+            Some(root_id),
+            "the displaced owner's release request must not clear the new capture"
+        );
+        assert!(
+            runtime.needs_render(window_id).unwrap(),
+            "the displaced owner's invalidations must be applied"
+        );
+        let state = state.borrow();
+        assert_eq!(state.cancels, 1);
+        assert_eq!(state.cancel_followups, 1);
+        let cancel = state.last_cancel.as_ref().expect("cancel event recorded");
+        assert_eq!(cancel.pointer_id, 17);
+        assert_eq!(cancel.kind, PointerEventKind::Cancel);
+        assert_eq!(cancel.position, Point::new(48.0, 18.0));
+        assert_eq!(cancel.delta, Vector::ZERO);
+        assert_eq!(cancel.pointer_kind, PointerKind::Touch);
+        assert_eq!(cancel.button, None);
+        assert_eq!(cancel.buttons, PointerButtons::NONE);
+        assert_eq!(cancel.scroll_delta, None);
+    }
+
+    #[test]
+    fn pointer_capture_transfer_cancels_reentrant_intermediate_owner() {
+        let state = Rc::new(RefCell::new(ReentrantCaptureState::default()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Reentrant Pointer Capture Transfer")
+                    .root(ReentrantCaptureRoot::new(Rc::clone(&state))),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let root_id = graph.root;
+        let source_id = graph.nodes[1].id;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 59;
+        down.pointer_kind = PointerKind::Touch;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+        assert_eq!(
+            runtime.pointer_capture_target(window_id, 59).unwrap(),
+            Some(source_id)
+        );
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, Point::new(48.0, 18.0));
+        moved.pointer_id = 59;
+        moved.pointer_kind = PointerKind::Touch;
+        moved.delta = Vector::new(0.0, -22.0);
+        moved.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(moved))
+            .unwrap();
+
+        let state = state.borrow();
+        assert_eq!(state.source_cancels, 1);
+        assert_eq!(state.intermediate_captures, 1);
+        assert_eq!(state.intermediate_cancels, 1);
+        assert_eq!(
+            runtime.pointer_capture_target(window_id, 59).unwrap(),
+            Some(root_id),
+            "the original transfer target must win after intermediate cleanup"
+        );
+    }
+
+    #[test]
+    fn recapturing_pointer_for_same_owner_does_not_emit_cancel() {
+        let state = Rc::new(RefCell::new(PointerCaptureState::default()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Pointer Recapture")
+                    .root(ChildRoot::new(PointerCaptureLeaf {
+                        state: Rc::clone(&state),
+                        recapture_on_move: true,
+                    })),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        let _ = runtime.render(window_id).unwrap();
+        let child_id = graph_child(&runtime.widget_graph(window_id).unwrap()).id;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+        down.pointer_id = 23;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let mut moved = PointerEvent::new(PointerEventKind::Move, Point::new(80.0, 40.0));
+        moved.pointer_id = 23;
+        moved.delta = Vector::new(32.0, 0.0);
+        moved.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(moved))
+            .unwrap();
+
+        assert_eq!(state.borrow().cancels, 0);
+        assert_eq!(
+            runtime.pointer_capture_target(window_id, 23).unwrap(),
+            Some(child_id)
+        );
     }
 
     #[test]

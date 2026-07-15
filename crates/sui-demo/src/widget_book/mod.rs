@@ -125,7 +125,7 @@ pub const PROGRESS_NAME: &str = "Export progress";
 pub const SPINNER_NAME: &str = "Background work";
 pub const SUMMARY_NAME: &str = "Widget book summary";
 pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
-pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book scroll bar";
+pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book gallery vertical scroll bar";
 pub const WIDGET_BOOK_SHELL_NAME: &str = "Widget book shell";
 pub const WIDGET_BOOK_SEARCH_NAME: &str = "Filter widget stories";
 pub const WIDGET_BOOK_CATEGORY_NAV_NAME: &str = "Widget categories";
@@ -1004,88 +1004,6 @@ struct ProjectSettingsPreview {
     dialog: SingleChild,
     dialog_open: bool,
     trigger_pressed: bool,
-}
-
-struct WidgetBookGalleryScrollPane {
-    spacing: f32,
-    content: SingleChild,
-    scroll_bar: SingleChild,
-}
-
-impl WidgetBookGalleryScrollPane {
-    fn new<W, S>(content: W, scroll_bar: S) -> Self
-    where
-        W: Widget + 'static,
-        S: Widget + 'static,
-    {
-        Self {
-            spacing: 10.0,
-            content: SingleChild::new(content),
-            scroll_bar: SingleChild::new(scroll_bar),
-        }
-    }
-}
-
-impl Widget for WidgetBookGalleryScrollPane {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let scroll_bar_size = self.scroll_bar.measure(
-            ctx,
-            Constraints::new(Size::ZERO, Size::new(f32::INFINITY, constraints.max.height)),
-        );
-        let content_constraints = Constraints::new(
-            Size::new(
-                (constraints.min.width - scroll_bar_size.width - self.spacing).max(0.0),
-                constraints.min.height,
-            ),
-            Size::new(
-                (constraints.max.width - scroll_bar_size.width - self.spacing).max(0.0),
-                constraints.max.height,
-            ),
-        );
-        let content_size = self.content.measure(ctx, content_constraints);
-        constraints.clamp(Size::new(
-            content_size.width + scroll_bar_size.width + self.spacing,
-            content_size.height.max(scroll_bar_size.height),
-        ))
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let scroll_bar_size = self.scroll_bar.child().measured_size();
-        let content_width = (bounds.width() - scroll_bar_size.width - self.spacing).max(0.0);
-        self.content.arrange(
-            ctx,
-            Rect::new(bounds.x(), bounds.y(), content_width, bounds.height()),
-        );
-        self.scroll_bar.arrange(
-            ctx,
-            Rect::new(
-                bounds.max_x() - scroll_bar_size.width,
-                bounds.y(),
-                scroll_bar_size.width,
-                bounds.height(),
-            ),
-        );
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-        self.scroll_bar.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-        self.scroll_bar.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-        self.scroll_bar.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-        self.scroll_bar.visit_children_mut(visitor);
-    }
 }
 
 struct MinimumWidth {
@@ -3121,6 +3039,7 @@ pub fn build_widget_book_gallery_with_theme(
     let gallery = VirtualScrollView::new()
         .name(GALLERY_SCROLL_NAME)
         .state(scroll_state.clone())
+        .theme_when(clone_widget_book_theme_reader(&theme_reader))
         .padding(WIDGET_BOOK_GALLERY_PADDING)
         // Filterable sections own their trailing gap so hidden stories collapse
         // completely instead of leaving one virtual-scroll gap per match miss.
@@ -3919,12 +3838,7 @@ pub fn build_widget_book_gallery_with_theme(
                 build_color_and_imagery_story_with_theme(Rc::clone(&theme_reader)),
             ));
 
-    let content = WidgetBookGalleryScrollPane::new(
-        gallery,
-        ScrollBar::vertical(scroll_state.clone())
-            .name(GALLERY_SCROLL_BAR_NAME)
-            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
-    );
+    let content = gallery;
     let rail = build_widget_book_category_rail(
         Rc::clone(&theme_reader),
         Rc::clone(&shell_state),
@@ -5569,6 +5483,7 @@ pub fn build_retained_text_benchmark_with_theme(
             SizedBox::new().width(948.0).with_child(content),
         ))
         .state(scroll_state.clone())
+        .overlay_scroll_bars(false)
         .name(RETAINED_TEXT_BENCHMARK_SCROLL_NAME),
         ScrollBar::vertical(scroll_state)
             .name(RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME)
@@ -5648,6 +5563,7 @@ pub fn build_text_rendering_comparison_surface_with_theme(
         scroll_state.clone(),
         ScrollView::both(content)
             .state(scroll_state.clone())
+            .overlay_scroll_bars(false)
             .overflow_x(Overflow::Auto)
             .overflow_y(Overflow::Auto)
             .name(TEXT_RENDERING_COMPARISON_SCROLL_NAME),
@@ -5776,6 +5692,7 @@ pub fn build_color_validation_surface_with_theme(
         scroll_state.clone(),
         ScrollView::both(content)
             .state(scroll_state.clone())
+            .overlay_scroll_bars(false)
             .overflow_x(Overflow::Auto)
             .overflow_y(Overflow::Auto)
             .name(COLOR_VALIDATION_SCROLL_NAME),
@@ -11027,8 +10944,11 @@ mod tests {
             })
             .expect("widget book gallery scroll bar should be present");
 
-        assert!(scroll_bar.bounds.x() >= gallery.bounds.max_x());
-        assert!(scroll_bar.bounds.height() >= gallery.bounds.height() - 1.0);
+        assert!(scroll_bar.bounds.x() >= gallery.bounds.x());
+        assert!(scroll_bar.bounds.max_x() <= gallery.bounds.max_x());
+        assert!(scroll_bar.bounds.y() >= gallery.bounds.y());
+        assert!(scroll_bar.bounds.max_y() <= gallery.bounds.max_y());
+        assert!(scroll_bar.bounds.height() >= gallery.bounds.height() - 8.0);
     }
 
     #[test]
