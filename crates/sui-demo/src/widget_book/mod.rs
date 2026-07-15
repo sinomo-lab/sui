@@ -22,10 +22,10 @@ use sui::{
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};
 
-#[cfg(feature = "artifacts")]
+#[cfg(all(feature = "artifacts", not(target_arch = "wasm32")))]
 mod visual_artifacts;
 
-#[cfg(feature = "artifacts")]
+#[cfg(all(feature = "artifacts", not(target_arch = "wasm32")))]
 pub use visual_artifacts::write_visual_artifacts;
 
 pub const WINDOW_TITLE: &str = "SUI Widget Book";

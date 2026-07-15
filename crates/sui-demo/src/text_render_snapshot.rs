@@ -1,17 +1,24 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::{env, path::PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
 use sui::{
     Application, Color, Constraints, Event, FontHandle, MeasureCtx, PaintCtx, Point, Rect,
     SemanticsCtx, SemanticsNode, SemanticsRole, Size, TextStyle, Widget, WindowBuilder,
     WindowEvent, WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy,
     WindowTextHinting, WindowTextSubpixelOrder, set_window_render_options,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use sui_testing::TestApp;
 
+#[cfg(not(target_arch = "wasm32"))]
 const WIDTH: f32 = 480.0;
+#[cfg(not(target_arch = "wasm32"))]
 const HEIGHT: f32 = 260.0;
+#[cfg(not(target_arch = "wasm32"))]
 const FONT_BYTES: &[u8] = sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT;
 
+#[cfg(not(target_arch = "wasm32"))]
 struct TextSample {
     text: &'static str,
     x: f32,
@@ -22,6 +29,7 @@ struct TextSample {
     color: Color,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const SAMPLES: &[TextSample] = &[
     TextSample {
         text: "minimum ill scroll",
@@ -70,10 +78,12 @@ const SAMPLES: &[TextSample] = &[
     },
 ];
 
+#[cfg(not(target_arch = "wasm32"))]
 struct TextReferenceSurface {
     font: FontHandle,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl TextReferenceSurface {
     fn style(&self, sample: &TextSample) -> TextStyle {
         TextStyle {
@@ -86,6 +96,7 @@ impl TextReferenceSurface {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Widget for TextReferenceSurface {
     fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
         Size::new(WIDTH, HEIGHT)
@@ -111,6 +122,7 @@ impl Widget for TextReferenceSurface {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn output_dir() -> PathBuf {
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
@@ -123,6 +135,7 @@ fn output_dir() -> PathBuf {
     PathBuf::from("target/text-rendering-compare")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn dpi_scale() -> f64 {
     env::var("SUI_TEXT_COMPARE_DPI_SCALE")
         .ok()
@@ -131,6 +144,7 @@ fn dpi_scale() -> f64 {
         .unwrap_or(1.0)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_options() -> WindowRenderOptions {
     let mut options =
         WindowRenderOptions::new(true, 1.0).with_text_hinting(WindowTextHinting::default());
@@ -195,6 +209,7 @@ fn render_options() -> WindowRenderOptions {
     options
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> sui::Result<()> {
     let output_dir = output_dir();
     std::fs::create_dir_all(&output_dir).map_err(|error| {
@@ -245,3 +260,6 @@ fn main() -> sui::Result<()> {
     println!("wrote {}", path.display());
     Ok(())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}
