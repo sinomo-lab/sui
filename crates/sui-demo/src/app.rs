@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[cfg(test)]
 use crate::widget_book::build_widget_book_gallery;
@@ -13,7 +16,7 @@ use crate::widget_book::{
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextCoveragePolicy, TextHinting, ToggleState, WgpuRenderer, WidgetPodMutVisitor,
+    TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetPodMutVisitor,
     WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
     WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
     WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
@@ -128,6 +131,11 @@ const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_00
 const DEV_SHELL_LOGO_IMAGE_SIZE: u32 = 128;
 const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
 const DEV_SHELL_TAB_GAP: f32 = 6.0;
+const DEV_SHELL_TAB_VIEWPORT_PADDING: f32 = 4.0;
+const DEV_SHELL_TAB_SCROLL_BUTTON_SIZE: f32 = 30.0;
+const DEV_SHELL_TAB_SCROLL_BUTTON_GAP: f32 = 4.0;
+const DEV_SHELL_TAB_SCROLL_BACK_NAME: &str = "Scroll tabs left";
+const DEV_SHELL_TAB_SCROLL_FORWARD_NAME: &str = "Scroll tabs right";
 const DEV_SHELL_PLUS_BUTTON_SIZE: f32 = 30.0;
 const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 140.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
@@ -413,6 +421,10 @@ struct DevBrowserShell {
     demos: Vec<DevDemo>,
     picker: SingleChild,
     tab_bar: SingleChild,
+    tab_scroll_state: ScrollState,
+    tab_scroll_to_end: Rc<Cell<bool>>,
+    tab_scroll_back: SingleChild,
+    tab_scroll_forward: SingleChild,
     main_menu: SingleChild,
     plus_button: SingleChild,
     theme_toggle: SingleChild,
@@ -428,6 +440,8 @@ impl DevBrowserShell {
     fn with_initial_demo(render_options: WindowRenderOptions, initial_demo: Option<&str>) -> Self {
         set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
         let state = DevShellState::new();
+        let tab_scroll_state = ScrollState::new();
+        let tab_scroll_to_end = Rc::new(Cell::new(false));
         let theme_reader = state.theme_reader();
         let demos = build_dev_demo_entries(Rc::clone(&theme_reader));
         if let Some(index) =
@@ -441,6 +455,7 @@ impl DevBrowserShell {
         for (index, demo) in demos.iter().enumerate() {
             let open_state = state.clone();
             let theme_state = state.clone();
+            let scroll_to_end = Rc::clone(&tab_scroll_to_end);
             demo_buttons.push(
                 ActionCard::new(demo.title, demo.description)
                     .theme_when(move || theme_state.theme())
@@ -450,7 +465,11 @@ impl DevBrowserShell {
                     .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
                     .on_press_with_ctx(move |ctx| {
                         ctx.clear_focus();
+                        let newly_opened = !open_state.open_tabs().contains(&index);
                         open_state.open_demo(index);
+                        if newly_opened {
+                            scroll_to_end.set(true);
+                        }
                         request_window_refresh(ctx, true);
                     }),
             );
@@ -497,6 +516,33 @@ impl DevBrowserShell {
                     }
                 }
             });
+        let tab_bar = ScrollView::horizontal(Padding::all(DEV_SHELL_TAB_VIEWPORT_PADDING, tab_bar))
+            .name("Open demo tabs viewport")
+            .theme_when(clone_dev_theme_reader(&theme_reader))
+            .state(tab_scroll_state.clone())
+            .overlay_scroll_bars(false);
+
+        let scroll_back_state = tab_scroll_state.clone();
+        let tab_scroll_back =
+            IconButton::new(IconGlyph::ChevronLeft, DEV_SHELL_TAB_SCROLL_BACK_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
+                .appearance(ButtonAppearance::Ghost)
+                .size(DEV_SHELL_TAB_SCROLL_BUTTON_SIZE)
+                .icon_size(16.0)
+                .on_press_with_ctx(move |ctx| {
+                    scroll_dev_tab_strip(&scroll_back_state, -1.0, ctx);
+                });
+
+        let scroll_forward_state = tab_scroll_state.clone();
+        let tab_scroll_forward =
+            IconButton::new(IconGlyph::ChevronRight, DEV_SHELL_TAB_SCROLL_FORWARD_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader))
+                .appearance(ButtonAppearance::Ghost)
+                .size(DEV_SHELL_TAB_SCROLL_BUTTON_SIZE)
+                .icon_size(16.0)
+                .on_press_with_ctx(move |ctx| {
+                    scroll_dev_tab_strip(&scroll_forward_state, 1.0, ctx);
+                });
 
         let picker_state = state.clone();
         let plus_button = IconButton::new(IconGlyph::Add, "Open demo")
@@ -524,6 +570,10 @@ impl DevBrowserShell {
             demos,
             picker: SingleChild::new(picker),
             tab_bar: SingleChild::new(tab_bar),
+            tab_scroll_state,
+            tab_scroll_to_end,
+            tab_scroll_back: SingleChild::new(tab_scroll_back),
+            tab_scroll_forward: SingleChild::new(tab_scroll_forward),
             main_menu: SingleChild::new(main_menu),
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
@@ -590,9 +640,9 @@ impl DevBrowserShell {
         let right = Self::theme_rect(bounds).x() - 10.0;
         Rect::new(
             left,
-            bounds.y() + 6.0,
+            bounds.y() + 2.0,
             (right - left).max(0.0),
-            DEV_SHELL_TAB_HEIGHT,
+            DEV_SHELL_TAB_HEIGHT + (DEV_SHELL_TAB_VIEWPORT_PADDING * 2.0),
         )
     }
 
@@ -611,12 +661,63 @@ impl DevBrowserShell {
         let tab_zone = Self::tab_zone_rect(bounds);
         let max_tabs_width =
             (tab_zone.width() - DEV_SHELL_TAB_GAP - DEV_SHELL_PLUS_BUTTON_SIZE).max(0.0);
-        let tabs_size = self.tab_bar.child().measured_size();
-        let tabs_width = tabs_size.width.min(max_tabs_width);
-        let tabs_rect = Rect::new(tab_zone.x(), tab_zone.y(), tabs_width, tab_zone.height());
-        self.tab_bar.arrange(ctx, tabs_rect);
+        let content_width = if self.state.open_tabs().is_empty() {
+            0.0
+        } else {
+            self.tab_scroll_state.content_size().width
+        };
+        let overflowing = content_width > max_tabs_width + 0.5;
 
-        let plus_x = (tabs_rect.max_x() + DEV_SHELL_TAB_GAP)
+        let tabs_extent = if overflowing {
+            max_tabs_width
+        } else {
+            content_width.min(max_tabs_width)
+        };
+        let button_y =
+            tab_zone.y() + ((tab_zone.height() - DEV_SHELL_TAB_SCROLL_BUTTON_SIZE) * 0.5).max(0.0);
+
+        let tabs_rect = if overflowing {
+            let controls_width =
+                (DEV_SHELL_TAB_SCROLL_BUTTON_SIZE * 2.0) + (DEV_SHELL_TAB_SCROLL_BUTTON_GAP * 2.0);
+            let viewport_width = (tabs_extent - controls_width).max(0.0);
+            let back_rect = Rect::new(
+                tab_zone.x(),
+                button_y,
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+            );
+            let viewport = Rect::new(
+                back_rect.max_x() + DEV_SHELL_TAB_SCROLL_BUTTON_GAP,
+                tab_zone.y(),
+                viewport_width,
+                tab_zone.height(),
+            );
+            let forward_rect = Rect::new(
+                viewport.max_x() + DEV_SHELL_TAB_SCROLL_BUTTON_GAP,
+                button_y,
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+            );
+            self.tab_scroll_back.arrange(ctx, back_rect);
+            self.tab_scroll_forward.arrange(ctx, forward_rect);
+            viewport
+        } else {
+            self.tab_scroll_back.arrange(ctx, Rect::ZERO);
+            self.tab_scroll_forward.arrange(ctx, Rect::ZERO);
+            Rect::new(tab_zone.x(), tab_zone.y(), tabs_extent, tab_zone.height())
+        };
+        self.tab_bar.arrange(ctx, tabs_rect);
+        if self.tab_scroll_to_end.replace(false) {
+            let max_offset = self.tab_scroll_state.max_offset();
+            if self
+                .tab_scroll_state
+                .set_offset(Vector::new(max_offset.x, 0.0))
+            {
+                self.tab_bar.arrange(ctx, tabs_rect);
+            }
+        }
+
+        let plus_x = (tab_zone.x() + tabs_extent + DEV_SHELL_TAB_GAP)
             .min(tab_zone.max_x() - DEV_SHELL_PLUS_BUTTON_SIZE)
             .max(tab_zone.x());
 
@@ -626,6 +727,10 @@ impl DevBrowserShell {
             DEV_SHELL_PLUS_BUTTON_SIZE,
             DEV_SHELL_PLUS_BUTTON_SIZE,
         )
+    }
+
+    fn tabs_overflow(&self) -> bool {
+        self.tab_scroll_state.max_offset().x > 0.5
     }
 
     fn paint_toolbar(&self, ctx: &mut PaintCtx, theme: &DefaultTheme) {
@@ -814,9 +919,23 @@ impl Widget for DevBrowserShell {
                 Size::ZERO,
                 Size::new(
                     (tab_zone.width() - DEV_SHELL_TAB_GAP - DEV_SHELL_PLUS_BUTTON_SIZE).max(0.0),
-                    DEV_SHELL_TAB_HEIGHT,
+                    tab_zone.height(),
                 ),
             ),
+        );
+        self.tab_scroll_back.measure(
+            ctx,
+            Constraints::tight(Size::new(
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+            )),
+        );
+        self.tab_scroll_forward.measure(
+            ctx,
+            Constraints::tight(Size::new(
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+                DEV_SHELL_TAB_SCROLL_BUTTON_SIZE,
+            )),
         );
 
         self.main_menu.measure(ctx, constraints.loosen());
@@ -914,6 +1033,10 @@ impl Widget for DevBrowserShell {
 
         self.paint_toolbar(ctx, &theme);
         self.tab_bar.paint(ctx);
+        if self.tabs_overflow() {
+            self.tab_scroll_back.paint(ctx);
+            self.tab_scroll_forward.paint(ctx);
+        }
         self.plus_button.paint(ctx);
         self.theme_toggle.paint(ctx);
         self.settings_window.paint(ctx);
@@ -932,6 +1055,10 @@ impl Widget for DevBrowserShell {
         ctx.push(node);
 
         self.tab_bar.semantics(ctx);
+        if self.tabs_overflow() {
+            self.tab_scroll_back.semantics(ctx);
+            self.tab_scroll_forward.semantics(ctx);
+        }
         self.plus_button.semantics(ctx);
         self.theme_toggle.semantics(ctx);
         if self.state.picker_visible() {
@@ -949,6 +1076,8 @@ impl Widget for DevBrowserShell {
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.tab_bar.visit_children(visitor);
+        self.tab_scroll_back.visit_children(visitor);
+        self.tab_scroll_forward.visit_children(visitor);
         if self.state.picker_visible() {
             self.picker.visit_children(visitor);
         } else if let Some(active) = self.state.active_tab() {
@@ -964,6 +1093,8 @@ impl Widget for DevBrowserShell {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.tab_bar.visit_children_mut(visitor);
+        self.tab_scroll_back.visit_children_mut(visitor);
+        self.tab_scroll_forward.visit_children_mut(visitor);
         if self.state.picker_visible() {
             self.picker.visit_children_mut(visitor);
         } else if let Some(active) = self.state.active_tab() {
@@ -1846,6 +1977,16 @@ pub(crate) fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool)
         InvalidationTarget::Window(ctx.window_id()),
         InvalidationKind::Semantics,
     ));
+}
+
+fn scroll_dev_tab_strip(state: &ScrollState, direction: f32, ctx: &mut EventCtx) {
+    let current = state.current_offset();
+    let max_offset = state.max_offset();
+    let step = (state.viewport_size().width * 0.75).max(120.0);
+    let target_x = (current.x + (step * direction)).clamp(0.0, max_offset.x);
+    if state.set_offset(Vector::new(target_x, 0.0)) {
+        request_window_refresh(ctx, false);
+    }
 }
 
 fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting {
@@ -3884,6 +4025,104 @@ mod tests {
     }
 
     #[test]
+    fn dev_shell_overflow_tabs_keep_their_width_and_scroll_horizontally() {
+        let shell = DevBrowserShell::new(WindowRenderOptions::new(true, 1.0));
+        let tab_titles = shell
+            .demos
+            .iter()
+            .map(|demo| demo.title)
+            .collect::<Vec<_>>();
+        for index in 0..tab_titles.len() {
+            shell.state.open_demo(index);
+        }
+        shell.tab_scroll_to_end.set(true);
+
+        let mut runtime = finish_dev_application(shell)
+            .build()
+            .expect("overflowing dev application should build");
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime
+            .render(window_id)
+            .expect("overflowing dev application should render");
+        let back = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(DEV_SHELL_TAB_SCROLL_BACK_NAME))
+            .expect("overflowing tabs should show the back button")
+            .clone();
+        let forward = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(DEV_SHELL_TAB_SCROLL_FORWARD_NAME))
+            .expect("overflowing tabs should show the forward button")
+            .clone();
+        let tabs = tab_titles
+            .iter()
+            .map(|title| find_top_tab_button(&initial.semantics, title))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tabs.len(),
+            tab_titles.len(),
+            "overflow must preserve geometry and semantics for every open tab"
+        );
+        assert!(
+            tabs.iter()
+                .all(|tab| tab.bounds.width()
+                    >= DefaultTheme::default().metrics.tab_min_width - 0.01),
+            "overflowing tabs must keep their natural minimum width: {tabs:?}"
+        );
+
+        let viewport_left = back.bounds.max_x() + DEV_SHELL_TAB_SCROLL_BUTTON_GAP;
+        let viewport_right = forward.bounds.x() - DEV_SHELL_TAB_SCROLL_BUTTON_GAP;
+        let last = tabs.last().expect("at least one demo tab should exist");
+        assert!(
+            last.bounds.x() >= viewport_left - 0.01 && last.bounds.max_x() <= viewport_right + 0.01,
+            "a newly opened trailing tab should be revealed inside the viewport: last={:?}, viewport={viewport_left}..{viewport_right}",
+            last.bounds
+        );
+
+        let initial_first_x = tabs[0].bounds.x();
+        let mut scroll = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(
+                (viewport_left + viewport_right) * 0.5,
+                DEV_SHELL_TOOLBAR_HEIGHT * 0.5,
+            ),
+        );
+        scroll.scroll_delta = Some(sui::ScrollDelta::Pixels(Vector::new(180.0, 0.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .expect("horizontal tab scroll should be handled");
+        let scrolled_back = runtime
+            .render(window_id)
+            .expect("horizontally scrolled tabs should render");
+        let scrolled_first_x = find_top_tab_button(&scrolled_back.semantics, tab_titles[0])
+            .bounds
+            .x();
+        assert!(
+            scrolled_first_x > initial_first_x,
+            "horizontal scrolling should translate tab content: before={initial_first_x}, after={scrolled_first_x}"
+        );
+
+        let forward = scrolled_back
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(DEV_SHELL_TAB_SCROLL_FORWARD_NAME))
+            .expect("forward tab button should remain visible after scrolling");
+        click_runtime_point(&mut runtime, window_id, center_of(forward.bounds));
+        let scrolled_forward = runtime
+            .render(window_id)
+            .expect("forward tab control should scroll the viewport");
+        let forwarded_first_x = find_top_tab_button(&scrolled_forward.semantics, tab_titles[0])
+            .bounds
+            .x();
+        assert!(
+            forwarded_first_x < scrolled_first_x,
+            "forward tab control should translate content toward later tabs: before={scrolled_first_x}, after={forwarded_first_x}"
+        );
+    }
+
+    #[test]
     fn dev_shell_picker_card_transient_state_clears_after_opening_and_returning() {
         let mut runtime = build_dev_application()
             .build()
@@ -4038,6 +4277,38 @@ mod tests {
         assert!(
             !focused_strokes.contains(&theme.palette.border_focus),
             "focused active dev shell tab should still avoid selection border focus color"
+        );
+
+        let mut clips = Vec::new();
+        let mut focus_ring_is_inside_every_clip = false;
+        focused
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::PushClip { rect } => clips.push(*rect),
+                SceneCommand::PopClip => {
+                    clips.pop();
+                }
+                SceneCommand::StrokePath {
+                    path,
+                    brush: Brush::Solid(color),
+                    ..
+                } if *color == theme.palette.focus_ring
+                    && rects_overlap(path.bounds(), active_tab.bounds) =>
+                {
+                    let ring = path.bounds();
+                    focus_ring_is_inside_every_clip = clips.iter().all(|clip| {
+                        clip.x() <= ring.x() + 0.01
+                            && clip.y() <= ring.y() + 0.01
+                            && clip.max_x() + 0.01 >= ring.max_x()
+                            && clip.max_y() + 0.01 >= ring.max_y()
+                    });
+                }
+                _ => {}
+            });
+        assert!(
+            focus_ring_is_inside_every_clip,
+            "focused tab highlight should fit inside every enclosing clip"
         );
     }
 

@@ -9632,7 +9632,11 @@ impl Widget for BrowserTabBar {
         let selected_index = self.normalized_selected();
         let focus_progress = self.focus_animation.value;
 
-        ctx.push_clip_rect(ctx.bounds());
+        let clip_outset = physical_pixels(
+            ctx,
+            theme.metrics.focus_ring_outset + (theme.metrics.focus_ring_width * 0.5),
+        );
+        ctx.push_clip_rect(ctx.bounds().inflate(clip_outset, clip_outset));
         for (index, tab) in self.tabs.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
