@@ -86,8 +86,8 @@ and broader Linux native-HDR integration remain roadmap work.
 | Hello | `cargo run -p sinomo-ui --example hello` | Minimal application and window |
 | Quickstart | `cargo run -p sinomo-ui --example quickstart` | Layout, theming, and callbacks |
 | Stateful form | `cargo run -p sinomo-ui --example stateful_form` | External state and editable inputs |
-| Widget book | `cargo run -p sui-demo` | Built-in widgets, themes, renderer settings, and demos |
-| TUI | `cargo run -p sui-demo -- --tui` | Keyboard-driven semantic-tree interface |
+| Widget book | `cargo run -p sinomo-ui-demo` | Built-in widgets, themes, renderer settings, and demos |
+| TUI | `cargo run -p sinomo-ui-demo -- --tui` | Keyboard-driven semantic-tree interface |
 
 See the [complete examples catalog](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md) for Rust, testing,
 Python, and JavaScript examples.
@@ -137,7 +137,7 @@ cargo doc -p sinomo-ui --no-deps --open
 Launch the desktop widget book:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 Run the standard validation suite:
@@ -151,7 +151,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 Generate the visual validation bundle explicitly:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 Artifacts are written under `target/ui-artifacts/sui-demo/widget-book`.
@@ -166,5 +166,5 @@ before opening a change.
 ## License
 
 SUI is licensed under the [MIT License](https://github.com/sinomo-lab/sui/blob/main/LICENSE).
-The bundled `sui-lucide`
+The bundled `sinomo-ui-lucide`
 crate retains its upstream ISC license.

@@ -1,5 +1,5 @@
 [package]
-name = "sui-js"
+name = "sinomo-ui-js"
 version.workspace = true
 description = "JavaScript bindings for SUI."
 edition.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true

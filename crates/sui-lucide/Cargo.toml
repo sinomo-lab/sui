@@ -1,5 +1,5 @@
 [package]
-name = "sui-lucide"
+name = "sinomo-ui-lucide"
 version = "1.17.0"
 description = "Embedded Lucide SVG icon resources for SUI."
 edition.workspace = true
@@ -10,8 +10,11 @@ keywords.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-license = "ISC"
+license-file = "assets/LICENSE"
 build = "build.rs"
+
+[lib]
+name = "sui_lucide"
 
 [dependencies]
 sui-core = { workspace = true }

@@ -51,20 +51,20 @@ cargo check -p sinomo-ui --examples
 
 ## Demo and widget book
 
-The `sui-demo` application is the workspace's interactive development host. It
+The `sinomo-ui-demo` application is the workspace's interactive development host. It
 contains the widget book, theme and text-rendering surfaces, renderer controls,
 and focused performance views.
 
 Open the native demo:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 Generate review artifacts without navigating the desktop UI:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 Artifacts are written under `target/ui-artifacts/sui-demo/widget-book`. The
@@ -77,13 +77,13 @@ The same retained application can be projected from its accessibility tree
 into an interactive terminal UI:
 
 ```bash
-cargo run -p sui-demo -- --tui
+cargo run -p sinomo-ui-demo -- --tui
 ```
 
 For a non-interactive accessibility snapshot, run:
 
 ```bash
-cargo run -p sui-demo -- --tui-dump-accessibility
+cargo run -p sinomo-ui-demo -- --tui-dump-accessibility
 ```
 
 See the [TUI guide](tui.md) for structured versus spatial layouts, keyboard
@@ -115,7 +115,7 @@ use a hidden live backend when a display is available and otherwise uses the
 headless backend.
 
 ```bash
-cargo run -p sui-testing --example basic
+cargo run -p sinomo-ui-testing --example basic
 ```
 
 For test APIs and artifact capture, continue with the

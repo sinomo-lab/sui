@@ -40,7 +40,7 @@ The normal desktop flow is:
 6. Widgets request explicit invalidation, timers, animation frames, async wakeups, focus, and pointer capture through contexts.
 7. When a target needs work, the runtime runs measure, arrange, paint, semantics, and resource updates as needed.
 8. `Runtime::render(window_id)` returns `RenderOutput` containing a `SceneFrame`, semantics, IME state, title, and diagnostics.
-9. `sui-platform` submits the `SceneFrame` to `sui-render-wgpu` for the same `WindowId`.
+9. `sinomo-ui-platform` submits the `SceneFrame` to `sinomo-ui-render-wgpu` for the same `WindowId`.
 
 Headless tests use the same runtime-facing path through `HeadlessPlatform`.
 
@@ -89,7 +89,7 @@ threads, and request UI work through existing wake and invalidation contexts.
 
 ## Runtime Model
 
-`sui-runtime` is the default retained-widget coordinator.
+`sinomo-ui-runtime` is the default retained-widget coordinator.
 
 It owns:
 
@@ -118,13 +118,13 @@ utilities. Custom widgets can combine SUI layout primitives with custom spatial
 systems as long as they rejoin the retained runtime at the synchronization
 points they choose to expose.
 
-Widgets paint through `PaintCtx` into `sui-scene`. The renderer-facing payload is
+Widgets paint through `PaintCtx` into `sinomo-ui-scene`. The renderer-facing payload is
 `SceneFrame`, which carries `window_id`, viewport size, dirty regions, layer
 updates, scene commands, and resource snapshots.
 
 Semantics are produced through `SemanticsCtx` and included in `RenderOutput`.
 They are consumed by accessibility bridges, testing locators, debug tooling, and
-widget-book validation. On Windows desktop, `sui-platform` translates the same
+widget-book validation. On Windows desktop, `sinomo-ui-platform` translates the same
 immutable semantic snapshot into an AccessKit tree and publishes it through the
 native UI Automation provider. UI Automation actions return through the host
 event loop as typed semantic actions, so widget-owned state is still mutated by
@@ -132,7 +132,7 @@ the runtime's normal UI-thread event dispatch.
 
 ## Platform Boundary
 
-`sui-platform` is the host integration layer.
+`sinomo-ui-platform` is the host integration layer.
 
 It owns:
 
@@ -149,7 +149,7 @@ platforms continue to drive `sui_runtime::Runtime` directly.
 
 ## Renderer Boundary
 
-`sui-render-wgpu` is the only crate that owns `wgpu` concepts.
+`sinomo-ui-render-wgpu` is the only package that owns `wgpu` concepts.
 
 It provides:
 
@@ -174,26 +174,26 @@ Diagnostics are part of the real runtime path.
 
 The current stack includes:
 
-- `WindowPerformanceSnapshot` and related phase timings in `sui-runtime`
-- renderer submission stats published by `sui-platform`
+- `WindowPerformanceSnapshot` and related phase timings in `sinomo-ui-runtime`
+- renderer submission stats published by `sinomo-ui-platform`
 - animation counters for active widgets and frame wakeups
-- the widget book performance overlay in `sui-demo`
-- inspector widgets in `sui-debug`
-- semantics-first locators and artifact capture in `sui-testing`
+- the widget book performance overlay in `sinomo-ui-demo`
+- inspector widgets in `sinomo-ui-debug`
+- semantics-first locators and artifact capture in `sinomo-ui-testing`
 
 Tests and tools should reuse real runtime outputs instead of inventing a second
 widget or rendering model.
 
 ## Where To Start When Making Changes
 
-- Window/event target semantics: start in `sui-core`, then adapt `sui-runtime`
-  and `sui-platform`.
+- Window/event target semantics: start in `sinomo-ui-core`, then adapt `sinomo-ui-runtime`
+  and `sinomo-ui-platform`.
 - Widget protocol, routing, invalidation, or graph behavior: start in
-  `sui-runtime::widget` and `sui-runtime`.
-- Layout primitives: start in `sui-layout`.
-- Paint payloads or scene commands: start in `sui-scene`, then follow through
-  `sui-render-wgpu`.
+  `sui_runtime::widget` and `sinomo-ui-runtime`.
+- Layout primitives: start in `sinomo-ui-layout`.
+- Paint payloads or scene commands: start in `sinomo-ui-scene`, then follow through
+  `sinomo-ui-render-wgpu`.
 - Accessibility or locator behavior: start in semantics generation, then check
-  `sui-testing` and `sui-platform::accessibility`.
-- Renderer behavior or performance: start in `sui-render-wgpu`, then validate
+  `sinomo-ui-testing` and `sui_platform::accessibility`.
+- Renderer behavior or performance: start in `sinomo-ui-render-wgpu`, then validate
   with widget-book diagnostics and targeted tests.

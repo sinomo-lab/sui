@@ -1,9 +1,9 @@
 # Text System
 
 SUI has one text pipeline for ordinary labels, attributed documents, editable
-controls, and large editor surfaces. `sui-text` owns shaping and layout;
+controls, and large editor surfaces. `sinomo-ui-text` owns shaping and layout;
 widgets retain the resulting layouts; scene commands refer to those layouts by
-handle and version; and `sui-render-wgpu` turns the selected glyphs into atlas
+handle and version; and `sinomo-ui-render-wgpu` turns the selected glyphs into atlas
 instances.
 
 This document describes the implementation that ships today. For application
@@ -79,7 +79,7 @@ which is useful for rendered Markdown.
 
 ## Layout Results
 
-`TextSystem` is the lower-level `sui-text` entry point. The runtime exposes it
+`TextSystem` is the lower-level `sinomo-ui-text` entry point. The runtime exposes it
 to widgets as `LayoutContext`, with these current operations:
 
 - `measure_text` and `measure_document` return a `TextMeasurement`.
@@ -177,7 +177,7 @@ override earlier spans, and style overlays are applied after ordinary spans.
 
 ## Shared Editing Behavior
 
-`EditorState` and `EditorDocument` are private `sui-widgets` implementation
+`EditorState` and `EditorDocument` are private `sinomo-ui-widgets` implementation
 types, not application-facing state containers. They are shared by
 `TextInput`, `TextArea`, and `TextSurface` so the controls agree on:
 
@@ -259,25 +259,25 @@ policy.
 ## Diagnostics and Benchmark Workflow
 
 Set `SUI_PROFILE_TEXT_TIMINGS=1` before starting a native process to enable
-per-thread request, hit/miss, and layout-time collection in `sui-text`. Runtime
+per-thread request, hit/miss, and layout-time collection in `sinomo-ui-text`. Runtime
 performance snapshots also report layout and renderer text-cache deltas,
 glyph instances, and upload bytes.
 
 Run the focused correctness checks from the repository root:
 
 ```bash
-cargo test -p sui-text
-cargo test -p sui-widgets text_surface
-cargo test -p sui-demo --lib widget_book::tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
-cargo test -p sui-demo --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
-cargo test -p sui-demo --lib tests::parses_comparison_surface_alias -- --exact
+cargo test -p sinomo-ui-text
+cargo test -p sinomo-ui-widgets text_surface
+cargo test -p sinomo-ui-demo --lib widget_book::tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
+cargo test -p sinomo-ui-demo --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
+cargo test -p sinomo-ui-demo --lib tests::parses_comparison_surface_alias -- --exact
 ```
 
 For visual inspection, run the widget book and open its text rendering
 comparison surface:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 For browser profiling, serve the web demo:

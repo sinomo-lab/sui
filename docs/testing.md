@@ -8,7 +8,7 @@ The goal is to describe the current test layers, the harness behavior, and the p
 
 There are three main layers in the current workspace.
 
-### 1. Unit-style runtime tests with `sui-testing`
+### 1. Unit-style runtime tests with `sinomo-ui-testing`
 
 This layer covers most interaction tests.
 
@@ -24,13 +24,13 @@ This is the default choice for widget behavior, semantics behavior, focus handli
 
 ### 2. Headless platform validation
 
-`sui-platform::HeadlessPlatform` drives the real runtime with deterministic event pumping and manual time advancement.
+`sinomo-ui-platform`'s `HeadlessPlatform` drives the real runtime with deterministic event pumping and manual time advancement.
 
-This matters because `sui-testing` is not a fake UI model. It runs against the same runtime boundaries used by the real application path.
+This matters because `sinomo-ui-testing` is not a fake UI model. It runs against the same runtime boundaries used by the real application path.
 
 ### 3. Desktop harness and visual tests
 
-`sui-demo` includes the widget-book desktop tests and visual artifact generation. This layer covers cases that depend on the real desktop event loop, real surface presentation, or visual output reviewed as images.
+`sinomo-ui-demo` includes the widget-book desktop tests and visual artifact generation. This layer covers cases that depend on the real desktop event loop, real surface presentation, or visual output reviewed as images.
 
 ## Core Testing Model
 
@@ -46,7 +46,7 @@ That means tests should usually interact with the UI through:
 
 The semantics tree is the stable observable surface shared by accessibility, automation, and testing. Widget graph internals are available for debugging, but they are not the main test API.
 
-## `sui-testing` Object Model
+## `sinomo-ui-testing` Object Model
 
 The high-level object model is:
 
@@ -108,7 +108,7 @@ That style is already used by examples and tests in the repo.
 
 ## When To Use Which Layer
 
-`sui-testing` fits cases such as:
+`sinomo-ui-testing` fits cases such as:
 
 - you are testing widget behavior
 - you are testing focus, keyboard, pointer, or IME flows
@@ -121,7 +121,7 @@ Widget-book desktop tests fit cases such as:
 - scrolling, clipping, or rendering differs from headless output
 - you need visual artifacts for review
 
-Manual `sui-demo` runs fit cases such as:
+Manual `sinomo-ui-demo` runs fit cases such as:
 
 - the problem is exploratory
 - you need the performance overlay
@@ -131,20 +131,20 @@ Manual `sui-demo` runs fit cases such as:
 
 ```bash
 cargo test
-cargo test -p sui-testing
-cargo test -p sui-demo -- --nocapture
-cargo run -p sui-demo
+cargo test -p sinomo-ui-testing
+cargo test -p sinomo-ui-demo -- --nocapture
+cargo run -p sinomo-ui-demo
 ```
 
 Generate the widget-book visual artifacts explicitly when a change needs image
 review:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 The artifact command writes to `target/ui-artifacts/sui-demo/widget-book`.
-Ordinary `sui-demo` tests do not run this slow artifact generator.
+Ordinary `sinomo-ui-demo` tests do not run this slow artifact generator.
 
 For linear HDR captures, SDR previews, headroom maps, clip masks, and output
 diagnostics, follow the [HDR debugging guide](./hdr-debugging.md).
@@ -180,7 +180,7 @@ When a test fails, the useful sources are usually:
 - the latest semantics snapshot
 - widget-book visual artifacts
 - runtime and renderer diagnostics
-- targeted `sui-demo` reproduction in the desktop host
+- targeted `sinomo-ui-demo` reproduction in the desktop host
 
 If a change affects rendering, also check whether the semantics tree still matches what the image suggests. Many regressions are not purely visual or purely semantic; they often touch both.
 

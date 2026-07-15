@@ -174,7 +174,7 @@ implemented yet.
 Rust-side binding tests do not require an installed extension module:
 
 ```bash
-cargo test -p sui-python
+cargo test -p sinomo-ui-python
 ```
 
 After a Maturin build, run all three Python examples as the package-level smoke

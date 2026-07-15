@@ -95,7 +95,7 @@ SUI does not need to implement collaboration itself, but it should avoid archite
 
 ## Default Widget Style
 
-The built-in widgets in `sui-widgets` should ship with a clear default visual language rather than looking like unstyled placeholder controls.
+The built-in widgets in `sinomo-ui-widgets` should ship with a clear default visual language rather than looking like unstyled placeholder controls.
 
 The default style should balance three constraints:
 
@@ -117,7 +117,7 @@ That leads to the following baseline rules for first-party widgets:
 
 These defaults are not meant to replace a future inherited theming system. They are the baseline that makes SUI usable before global theme propagation exists, and they should therefore live in first-party widgets rather than in example code alone.
 
-The current public API for this is `DefaultTheme` in `sui-widgets` and the top-level `sui` facade. Applications can clone `DefaultTheme::default()` or start from `DefaultTheme::dark()`, adjust semantic color tokens, palette, metrics, or typography tokens, and apply the result to built-in widgets explicitly.
+The current public API for this is `DefaultTheme` in `sinomo-ui-widgets` and the top-level `sui` facade. Applications can clone `DefaultTheme::default()` or start from `DefaultTheme::dark()`, adjust semantic color tokens, palette, metrics, or typography tokens, and apply the result to built-in widgets explicitly.
 
 The broader theme container should also remain extensible. The top-level `Theme` type should support typed theme extensions so applications and third-party widget libraries can attach additional schema for their own widgets without needing SUI to predefine every possible theme field.
 

@@ -186,14 +186,14 @@ Check the CommonJS loader and Rust-side binding tests:
 
 ```bash
 npm run check:loader
-cargo test -p sui-js
+cargo test -p sinomo-ui-js
 ```
 
 From the workspace root, use:
 
 ```bash
 npm --prefix crates/sui-js run check:loader
-cargo test -p sui-js
+cargo test -p sinomo-ui-js
 ```
 
 After a native build, run all three JavaScript examples as the package-level

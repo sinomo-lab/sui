@@ -3,6 +3,9 @@
 
 // JavaScript widget bindings.
 
+type JsColorSelectCallback<'env> = Function<'env, FnArgs<(u32, String, JsColor)>, ()>;
+type JsReorderCallback<'env> = Function<'env, FnArgs<(u32, u32, u32)>, ()>;
+
 #[napi(js_name = "TextSpan")]
 #[derive(Debug, Clone)]
 pub struct JsTextSpan {
@@ -1837,7 +1840,7 @@ pub fn js_color_palette(
     name: String,
     swatches: Array<'_>,
     selected: Option<JsBindingNumberArg>,
-    on_change: Option<Function<'_, FnArgs<(u32, String, JsColor)>, ()>>,
+    on_change: Option<JsColorSelectCallback<'_>>,
     columns: Option<u32>,
     swatch_size: Option<f64>,
     gap: Option<f64>,
@@ -2363,7 +2366,7 @@ pub fn js_reorderable_list(
     spacing: Option<f64>,
     drag_threshold: Option<f64>,
     preview_label: Option<String>,
-    on_reorder: Option<Function<'_, FnArgs<(u32, u32, u32)>, ()>>,
+    on_reorder: Option<JsReorderCallback<'_>>,
 ) -> Result<JsWidget> {
     let action = on_reorder
         .map(|callback| {

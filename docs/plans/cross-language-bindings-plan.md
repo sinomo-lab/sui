@@ -13,10 +13,10 @@ in the [Python guide](../../crates/sui-python/README.md), the
 
 The workspace currently includes:
 
-- `sui-bindings-core`, a language-neutral retained widget, resource, event,
+- `sinomo-ui-bindings-core`, a language-neutral retained widget, resource, event,
   paint, semantics, and host-driven runtime bridge;
-- a PyO3/maturin package in `sui-python`;
-- a napi-rs package with TypeScript declarations in `sui-js`;
+- a PyO3/maturin package in `sinomo-ui-python`;
+- a napi-rs package with TypeScript declarations in `sinomo-ui-js`;
 - normal desktop `run`/`run_with_handle` entry points and host-driven
   `start`, `render`, event, callback-posting, and drain APIs;
 - binding-safe custom widget callbacks, paths, clips, transforms, text, image

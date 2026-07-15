@@ -1,5 +1,5 @@
 [package]
-name = "sui-core"
+name = "sinomo-ui-core"
 version.workspace = true
 description = "Shared core contracts and data types for SUI."
 edition.workspace = true
@@ -7,9 +7,12 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_core"
 
 [dependencies]

@@ -22,7 +22,9 @@ const nativePath = process.env.SUI_JS_NATIVE_PATH
   : path.join(workspace, "target", "debug", platformLibrary);
 
 if (!fs.existsSync(nativePath)) {
-  throw new Error(`Native SUI binding not found at ${nativePath}; run cargo build --package sui-js`);
+  throw new Error(
+    `Native SUI binding not found at ${nativePath}; run cargo build --package sinomo-ui-js`,
+  );
 }
 
 const nativeModule = new Module(nativePath, module);

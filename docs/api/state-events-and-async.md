@@ -251,4 +251,4 @@ window roots, and the root drains the application-owned queue. For multiple
 windows, route queued work in the application model to the appropriate root.
 
 `UiHandle` is available only with a platform event-loop feature. Headless code
-can drive `Runtime` or use `sui-testing` instead.
+can drive `Runtime` or use `sinomo-ui-testing` instead.

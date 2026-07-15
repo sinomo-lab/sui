@@ -16,7 +16,7 @@ Purpose: prove that coverage policy changes and text color animation do not dupl
 Run:
 
 ```bash
-cargo test -p sui-render-wgpu text_render_policy_cache_benchmark -- --ignored --nocapture
+cargo test -p sinomo-ui-render-wgpu text_render_policy_cache_benchmark -- --ignored --nocapture
 ```
 
 Scenarios to inspect:
@@ -49,7 +49,7 @@ Purpose: measure text-heavy retained scrolling through the normal desktop harnes
 Run on a machine with a desktop display:
 
 ```bash
-cargo test -p sui-demo --test desktop_e2e desktop_retained_text_scroll_upload_benchmark -- --ignored --exact --nocapture
+cargo test -p sinomo-ui-demo --test desktop_e2e desktop_retained_text_scroll_upload_benchmark -- --ignored --exact --nocapture
 ```
 
 Primary metrics:
@@ -74,7 +74,7 @@ Purpose: verify editor-style workloads where text is typed, selected, scrolled, 
 Run:
 
 ```bash
-cargo test -p sui-demo --test desktop_e2e desktop_text_editing_benchmark_reports_frame_samples -- --exact --nocapture
+cargo test -p sinomo-ui-demo --test desktop_e2e desktop_text_editing_benchmark_reports_frame_samples -- --exact --nocapture
 ```
 
 Primary metrics:
@@ -122,14 +122,14 @@ Purpose: verify perceptual text behavior across DPR and light/dark surfaces with
 Run:
 
 ```bash
-cargo test -p sui-render-wgpu text_coverage_quality_matrix_capture -- --nocapture
+cargo test -p sinomo-ui-render-wgpu text_coverage_quality_matrix_capture -- --nocapture
 ```
 
 To also write PNGs:
 
 ```bash
 SUI_TEXT_COVERAGE_WRITE_PNGS=1 \
-cargo test -p sui-render-wgpu text_coverage_quality_matrix_capture -- --nocapture
+cargo test -p sinomo-ui-render-wgpu text_coverage_quality_matrix_capture -- --nocapture
 ```
 
 Outputs:
@@ -161,16 +161,16 @@ Example commands:
 ```bash
 SUI_TEXT_COMPARE_DPI_SCALE=1.0 \
 SUI_TEXT_COMPARE_COVERAGE=perceptual \
-cargo run -p sui-demo --bin sui-text-render-snapshot
+cargo run -p sinomo-ui-demo --bin sui-text-render-snapshot
 
 SUI_TEXT_COMPARE_DPI_SCALE=1.5 \
 SUI_TEXT_COMPARE_COVERAGE=linear \
-cargo run -p sui-demo --bin sui-text-render-snapshot
+cargo run -p sinomo-ui-demo --bin sui-text-render-snapshot
 
 SUI_TEXT_COMPARE_DPI_SCALE=2.0 \
 SUI_TEXT_COMPARE_COVERAGE=perceptual \
 SUI_TEXT_COMPARE_SUBPIXEL_ORDER=rgb \
-cargo run -p sui-demo --bin sui-text-render-snapshot
+cargo run -p sinomo-ui-demo --bin sui-text-render-snapshot
 ```
 
 Use this matrix:

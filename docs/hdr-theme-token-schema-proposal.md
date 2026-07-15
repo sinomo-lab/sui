@@ -1,7 +1,7 @@
 # HDR Theme Tokens
 
 SUI's HDR theme layer lets an application author one semantic theme with SDR,
-wide-gamut, and HDR variants. It is implemented in `sui-widgets` and re-exported
+wide-gamut, and HDR variants. It is implemented in `sinomo-ui-widgets` and re-exported
 by the `sui` facade. This document is the current API guide and authoring
 tutorial; the original filename is retained for link stability.
 
@@ -278,19 +278,19 @@ keep them synchronized or establish one as the source of truth.
 Run the widget book and open **HDR theme mode lab** to compare all four modes:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 Generate retained HDR and SDR inspection artifacts with:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
-Focused unit coverage lives in `sui-widgets`:
+Focused unit coverage lives in `sinomo-ui-widgets`:
 
 ```bash
-cargo test -p sui-widgets hdr_theme
+cargo test -p sinomo-ui-widgets hdr_theme
 ```
 
 When adding a token or consumer, test at least:

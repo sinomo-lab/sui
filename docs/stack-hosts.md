@@ -67,7 +67,7 @@ Hit testing uses input bounds, while paint invalidation and damage defaulting us
 
 ## Runtime Implementation
 
-Primary implementation is in sui-runtime.
+Primary implementation is in `sinomo-ui-runtime`.
 
 ### Widget-side stack hooks
 
@@ -104,7 +104,7 @@ This allows widgets to request ordering changes through request_ordering when on
 
 ## Scene and Compositor Integration
 
-Primary implementation spans sui-scene, sui-runtime, and sui-render-wgpu.
+Primary implementation spans `sinomo-ui-scene`, `sinomo-ui-runtime`, and `sinomo-ui-render-wgpu`.
 
 ### Scene layer metadata
 
@@ -133,7 +133,7 @@ Retained compositor logic treats Ordering updates as non-content updates, so z-o
 
 ## Popup Host Resolution
 
-Current popup-like widgets in sui-widgets opt into transient surface behavior when active:
+Current popup-like widgets in `sinomo-ui-widgets` opt into transient surface behavior when active:
 
 - Tooltip when hovered
 - Popover when open
@@ -151,7 +151,7 @@ Scene statistics include layer update breakdowns, including Ordering updates.
 
 ### Debug widgets
 
-sui-debug surfaces stack metadata directly:
+`sinomo-ui-debug` surfaces stack metadata directly:
 
 - widget graph rows show host, surface, owner, order, and geometry bounds
 - window snapshot includes a stack-host summary panel
@@ -161,7 +161,7 @@ This makes ordering-only frames and popup ownership chains observable without re
 
 ## First Non-root Host User
 
-FloatingStack in sui-widgets is the first non-root host user with FocusFronted policy.
+FloatingStack in `sinomo-ui-widgets` is the first non-root host user with FocusFronted policy.
 
 Its bring-to-front path requests ordering invalidation rather than repaint invalidation, and host-local surface order is reflected through runtime graph and scene updates.
 
@@ -184,10 +184,10 @@ When touching stack host behavior, validate at three levels:
 
 Recommended targeted runs:
 
-1. cargo test -p sui-runtime
-2. cargo test -p sui-scene
-3. cargo test -p sui-render-wgpu
-4. cargo test -p sui-widgets with relevant popup and floating host tests
+1. cargo test -p sinomo-ui-runtime
+2. cargo test -p sinomo-ui-scene
+3. cargo test -p sinomo-ui-render-wgpu
+4. cargo test -p sinomo-ui-widgets with relevant popup and floating host tests
 
 ## Current Constraints
 
@@ -197,10 +197,10 @@ Recommended targeted runs:
 
 ## Where To Work
 
-- stack graph membership and ordering: sui-runtime
-- scene descriptor and update metadata: sui-scene and sui-runtime
-- retained compositor update handling: sui-render-wgpu
-- popup and floating widgets: sui-widgets
-- debug panels and inspection widgets: sui-debug
+- stack graph membership and ordering: `sinomo-ui-runtime`
+- scene descriptor and update metadata: `sinomo-ui-scene` and `sinomo-ui-runtime`
+- retained compositor update handling: `sinomo-ui-render-wgpu`
+- popup and floating widgets: `sinomo-ui-widgets`
+- debug panels and inspection widgets: `sinomo-ui-debug`
 
 This document should be treated as implementation guidance for current code paths, not as a speculative design note.

@@ -490,8 +490,9 @@ pub fn set_widget_book_hdr_theme_mode(mode: HdrThemeMode) {
         .expect("widget-book HDR theme mode lock should not be poisoned") = mode;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum WidgetBookCategory {
+    #[default]
     All,
     Foundations,
     Controls,
@@ -556,12 +557,6 @@ impl WidgetBookCategory {
 struct WidgetBookShellState {
     query: String,
     category: WidgetBookCategory,
-}
-
-impl Default for WidgetBookCategory {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl WidgetBookShellState {
@@ -11168,7 +11163,7 @@ mod tests {
 
     #[cfg(feature = "artifacts")]
     #[test]
-    #[ignore = "slow; run `cargo run -p sui-demo --bin sui-demo-artifacts` to generate artifacts"]
+    #[ignore = "slow; run `cargo run -p sinomo-ui-demo --bin sui-demo-artifacts` to generate artifacts"]
     fn widget_book_generates_visual_artifacts() -> Result<()> {
         let artifact_root = super::write_visual_artifacts()?;
 

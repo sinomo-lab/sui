@@ -87,7 +87,7 @@ cargo check -p sinomo-ui --examples
 Run the widget book to inspect real controls and their semantics:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 Generate browsable rustdoc for the checked-out version:

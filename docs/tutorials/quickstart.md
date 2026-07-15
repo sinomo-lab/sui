@@ -202,7 +202,7 @@ If compilation cannot find `sui`, check that the dependency key is `sui` and
 the package override is `package = "sinomo-ui"`.
 
 If the application builds but cannot create a window, first run the repository
-demo with `cargo run -p sui-demo`. A failure there usually points to missing
+demo with `cargo run -p sinomo-ui-demo`. A failure there usually points to missing
 system windowing or graphics dependencies rather than application code.
 
 If a widget is present but has the wrong colors, verify that the same

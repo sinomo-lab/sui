@@ -1,5 +1,5 @@
 [package]
-name = "sui-widgets"
+name = "sinomo-ui-widgets"
 version.workspace = true
 description = "Built-in widget library for SUI."
 edition.workspace = true
@@ -7,10 +7,13 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_widgets"
 
 [dependencies]
 palette = { workspace = true }

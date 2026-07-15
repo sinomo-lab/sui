@@ -7,9 +7,9 @@ renderer.
 
 The implementation is split between:
 
-- `sui-tui`, which turns an `AccessibilitySnapshot` into structured or spatial
+- `sinomo-ui-tui`, which turns an `AccessibilitySnapshot` into structured or spatial
   terminal text and validates the snapshot;
-- `sui-demo`, which provides an interactive Ratatui host over the real demo
+- `sinomo-ui-demo`, which provides an interactive Ratatui host over the real demo
   runtime.
 
 The accessibility tree remains the source of truth. The TUI does not inspect
@@ -17,10 +17,10 @@ private widget state or scene drawing commands.
 
 ## Run The Demo TUI
 
-The default `sui-demo` features include TUI support:
+The default `sinomo-ui-demo` features include TUI support:
 
 ```bash
-cargo run -p sui-demo -- --tui
+cargo run -p sinomo-ui-demo -- --tui
 ```
 
 The default spatial layout projects semantic bounds into a terminal canvas and
@@ -28,20 +28,20 @@ also exposes an actionable tree. Use the structured layout for a hierarchy-only
 view:
 
 ```bash
-cargo run -p sui-demo -- --tui --tui-layout=structured
+cargo run -p sinomo-ui-demo -- --tui --tui-layout=structured
 ```
 
 Print a single snapshot without entering the interactive host:
 
 ```bash
-cargo run -p sui-demo -- --tui-dump-accessibility
+cargo run -p sinomo-ui-demo -- --tui-dump-accessibility
 ```
 
 Hidden semantic nodes are omitted by default. Include them when diagnosing
 visibility or lifecycle problems:
 
 ```bash
-cargo run -p sui-demo -- --tui-dump-accessibility --tui-show-hidden
+cargo run -p sinomo-ui-demo -- --tui-dump-accessibility --tui-show-hidden
 ```
 
 ## Interactive Controls
@@ -64,7 +64,7 @@ mouse events.
 
 ## Library API
 
-Applications and tools can use `sui-tui` directly:
+Applications and tools can use `sinomo-ui-tui` directly:
 
 ```rust,no_run
 use sui_platform::AccessibilitySnapshot;
@@ -108,7 +108,7 @@ The primary public types are:
 - duplicate visible role/name pairs that make automation ambiguous.
 
 These checks are intentionally useful beyond the TUI. The same semantics tree
-drives platform accessibility and `sui-testing`, so a clean TUI validation pass
+drives platform accessibility and `sinomo-ui-testing`, so a clean TUI validation pass
 usually improves all three surfaces.
 
 ## Authoring Widgets For Automatic TUI Support

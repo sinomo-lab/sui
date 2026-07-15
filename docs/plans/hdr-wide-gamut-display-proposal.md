@@ -37,9 +37,9 @@ The pipeline deliberately separates six concerns:
    or full-HDR widget styling. Theme policy does not claim display support.
 3. **Window intent.** `WindowRenderOptions` records the application's preferred
    primaries, dynamic range, tone mapping, and SDR reference-white behavior.
-4. **Platform detection.** `sui-platform` builds a `DisplayCapabilities`
+4. **Platform detection.** `sinomo-ui-platform` builds a `DisplayCapabilities`
    snapshot for the window's current monitor.
-5. **Renderer resolution.** `sui-render-wgpu` combines intent, capabilities,
+5. **Renderer resolution.** `sinomo-ui-render-wgpu` combines intent, capabilities,
    and available surface formats into an `OutputStrategy`.
 6. **Diagnostics.** `WindowOutputDiagnostics` reports both the requested policy
    and the strategy that was actually selected.
@@ -198,7 +198,7 @@ The debug pipeline can inspect either `HdrIntermediate` or `FinalComposed`:
 Generate the full widget-book artifact set with:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 Artifacts are written below `target/ui-artifacts/sui-demo/widget-book/` and

@@ -27,7 +27,7 @@ path and its checked example sources.
 The fastest way to explore the complete widget set is the desktop widget book:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 ## API guide
@@ -130,7 +130,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check -p sinomo-ui --examples
 
 # Generate the widget-book artifact bundle
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 The artifact generator writes to

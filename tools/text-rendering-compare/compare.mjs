@@ -258,7 +258,7 @@ async function main() {
   run('cargo', [
     'run',
     '-p',
-    'sui-demo',
+    'sinomo-ui-demo',
     '--bin',
     'sui-text-render-snapshot',
     '--',

@@ -1,5 +1,5 @@
 [package]
-name = "sui-render-wgpu"
+name = "sinomo-ui-render-wgpu"
 version.workspace = true
 description = "wgpu renderer boundary for SUI scene frames."
 edition.workspace = true
@@ -7,10 +7,13 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_render_wgpu"
 
 [dependencies]
 bytemuck = { workspace = true }

@@ -23,7 +23,7 @@
     "build": "napi build --platform --release",
     "check:loader": "node --check index.js",
     "test": "npm run check:loader && npm run test:consumer",
-    "test:consumer": "cargo build --package sui-js && node tests/consumer.js"
+    "test:consumer": "cargo build --package sinomo-ui-js && node tests/consumer.js"
   },
   "keywords": [
     "sui",

@@ -1,5 +1,5 @@
 [package]
-name = "sui-scene"
+name = "sinomo-ui-scene"
 version.workspace = true
 description = "Rendering-neutral scene representation for SUI."
 edition.workspace = true
@@ -7,10 +7,13 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_scene"
 
 [dependencies]
 resvg = { workspace = true }

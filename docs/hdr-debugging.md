@@ -11,7 +11,7 @@ the [HDR output roadmap](./plans/hdr-wide-gamut-display-proposal.md).
 From the workspace root:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 The command writes under `target/ui-artifacts/sui-demo/widget-book`. Its HDR
@@ -50,7 +50,7 @@ mapping, gamut conversion, or presentation policy.
 
 ## Capture from a test
 
-Add `sui-testing` and `sui-render-wgpu` as development dependencies, build the
+Add `sinomo-ui-testing` and `sinomo-ui-render-wgpu` as development dependencies, build the
 application through `TestApp`, and capture only after the runtime reaches idle:
 
 ```rust,no_run
@@ -93,7 +93,7 @@ fn capture_hdr() -> Result<()> {
 }
 ```
 
-The `sui-testing` helpers create parent directories automatically. The `1.0`
+The `sinomo-ui-testing` helpers create parent directories automatically. The `1.0`
 reference in this example means scene-linear SDR white; use the same reference
 white convention as the render options under test.
 
@@ -147,10 +147,10 @@ For an output change:
 Useful commands:
 
 ```bash
-cargo test -p sui-core color
-cargo test -p sui-render-wgpu
-cargo test -p sui-testing
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo test -p sinomo-ui-core color
+cargo test -p sinomo-ui-render-wgpu
+cargo test -p sinomo-ui-testing
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 For architectural context, see [Rendering architecture](./renderer-architecture.md).

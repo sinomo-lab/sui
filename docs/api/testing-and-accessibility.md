@@ -10,11 +10,11 @@ operate.
 
 ## Add the Test Harness
 
-`sui-testing` is a separate crate rather than a `sui` module:
+`sinomo-ui-testing` is a separate package rather than a `sui` module:
 
 ```toml
 [dev-dependencies]
-sui-testing = { git = "https://github.com/sinomo-lab/sui" }
+sinomo-ui-testing = { git = "https://github.com/sinomo-lab/sui" }
 ```
 
 Import application types and test helpers independently:

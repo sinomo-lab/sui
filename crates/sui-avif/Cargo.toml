@@ -1,5 +1,5 @@
 [package]
-name = "sui-avif"
+name = "sinomo-ui-avif"
 version.workspace = true
 description = "Minimal AVIF encoding primitives for SUI, with HDR still-image support."
 edition.workspace = true
@@ -10,7 +10,10 @@ keywords.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license-file.workspace = true
+
+[lib]
+name = "sui_avif"
 
 [dependencies]
 avif-serialize = { workspace = true }

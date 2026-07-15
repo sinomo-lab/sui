@@ -1,5 +1,5 @@
 [package]
-name = "sui-text"
+name = "sinomo-ui-text"
 version.workspace = true
 description = "Text shaping, font registration, and layout for SUI."
 edition.workspace = true
@@ -7,10 +7,13 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_text"
 
 [dependencies]
 cosmic-text = { workspace = true }

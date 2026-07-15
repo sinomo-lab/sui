@@ -1,5 +1,5 @@
 [package]
-name = "sui-testing"
+name = "sinomo-ui-testing"
 version.workspace = true
 description = "Deterministic in-process UI automation for SUI."
 edition.workspace = true
@@ -7,10 +7,13 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_testing"
 
 [dependencies]
 png = { workspace = true }

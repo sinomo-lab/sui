@@ -15,9 +15,9 @@ that matches the host.
 | `wgpu` | Yes | `WgpuRenderer`, renderer capabilities, and external texture interop |
 | `web` | No | Browser/WebAssembly platform integration and `wgpu` |
 | `mobile` | No | Mobile platform integration and `wgpu`; current app entry point is Android |
-| `testing` | No | Currently an empty compatibility feature; high-level test APIs live in `sui-testing` |
+| `testing` | No | Currently an empty compatibility feature; high-level test APIs live in `sinomo-ui-testing` |
 
-`desktop`, `web`, and `mobile` all pull in `sui-platform`; each also enables
+`desktop`, `web`, and `mobile` all pull in `sinomo-ui-platform`; each also enables
 `wgpu`. The core facade, widgets, layout, scene, text, and retained runtime are
 available without those features.
 
@@ -56,7 +56,7 @@ sui = {
 
 `App::build()` remains available. `App::run()` is not part of this feature
 combination, because there is no selected event-loop host. Use the returned
-`Runtime` from an embedding layer, or add `sui-testing` as a dev dependency for
+`Runtime` from an embedding layer, or add `sinomo-ui-testing` as a dev dependency for
 the supported automation harness.
 
 The lower-level `Application::run()` has an explicit no-platform error path,
@@ -157,7 +157,7 @@ Before release, validate at least:
 ```bash
 cargo check -p sinomo-ui
 cargo check -p sinomo-ui --no-default-features
-cargo test -p sui-testing
+cargo test -p sinomo-ui-testing
 cargo test --workspace
 ```
 

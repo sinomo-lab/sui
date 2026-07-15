@@ -44,4 +44,4 @@ Behavior:
 Notes:
 - Trunk builds ../Cargo.toml as the Rust/WASM asset.
 - The config enables --no-default-features plus the web feature.
-- The watch config includes the sui-demo crate and the workspace root so edits in the Rust sources trigger rebuilds.
+- The watch config includes the `sinomo-ui-demo` package and the workspace root so edits in the Rust sources trigger rebuilds.

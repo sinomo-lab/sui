@@ -142,7 +142,7 @@ fn build_runtime() -> Result<Runtime> {
 
 The returned runtime contains the retained widget trees and registered
 resources. It does not create or run the default platform event loop. Prefer
-`sui-testing` for tests instead of manually driving `Runtime` unless the test
+`sinomo-ui-testing` for tests instead of manually driving `Runtime` unless the test
 is specifically about runtime or host integration.
 
 ## Application Errors

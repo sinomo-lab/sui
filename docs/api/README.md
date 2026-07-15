@@ -27,7 +27,7 @@ that keeps application code on the narrowest and most stable surface.
 6. [Custom widgets](custom-widgets.md) walks through the `Widget` lifecycle,
    accessible interaction, painting, and child ownership.
 7. [Testing and accessibility](testing-and-accessibility.md) uses
-   `sui-testing` for semantics-first, deterministic interaction tests and
+   `sinomo-ui-testing` for semantics-first, deterministic interaction tests and
    explains the public accessibility contract.
 8. [Platforms and Cargo features](platforms-and-features.md) lists the
    supported execution surfaces, feature gates, and current caveats.
@@ -41,7 +41,7 @@ that keeps application code on the narrowest and most stable surface.
 | Test or embed without an event loop | `App::build` | `Runtime` and `HeadlessPlatform` |
 | Custom drawing or interaction | Implement `Widget` | Scene and text types re-exported by `sui` |
 | Custom platform integration | `Application`, `WindowBuilder` | `Runtime` and platform crates |
-| UI automation | `sui-testing` | Direct normalized event dispatch |
+| UI automation | `sinomo-ui-testing` | Direct normalized event dispatch |
 
 `App` is the recommended application builder. `Application`, `Runtime`, and
 `WindowBuilder` are deliberately public for embedding, debug tools, and custom

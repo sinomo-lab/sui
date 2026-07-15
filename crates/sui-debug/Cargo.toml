@@ -1,5 +1,5 @@
 [package]
-name = "sui-debug"
+name = "sinomo-ui-debug"
 version.workspace = true
 description = "Debugging and inspection widgets for SUI applications."
 edition.workspace = true
@@ -7,10 +7,13 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[lib]
+name = "sui_debug"
 
 [dependencies]
 sui-core = { workspace = true }

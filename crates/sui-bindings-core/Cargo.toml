@@ -1,5 +1,5 @@
 [package]
-name = "sui-bindings-core"
+name = "sinomo-ui-bindings-core"
 version.workspace = true
 description = "Language-neutral binding infrastructure for SUI."
 edition.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 categories.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,9 @@ rust-version.workspace = true
 [features]
 default = []
 desktop = ["sui/desktop"]
+
+[lib]
+name = "sui_bindings_core"
 
 [dependencies]
 png = { workspace = true }

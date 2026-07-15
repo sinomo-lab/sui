@@ -32,7 +32,7 @@ environment.
 Launch the development host and widget book with:
 
 ```bash
-cargo run -p sui-demo
+cargo run -p sinomo-ui-demo
 ```
 
 For the browser build, install the `wasm32-unknown-unknown` target and Trunk:
@@ -92,14 +92,14 @@ one of those paths, also check an installed target for that platform. For
 example:
 
 ```bash
-cargo check -p sui-platform --target x86_64-pc-windows-gnu
-cargo check -p sui-demo --target wasm32-unknown-unknown --no-default-features --features web
+cargo check -p sinomo-ui-platform --target x86_64-pc-windows-gnu
+cargo check -p sinomo-ui-demo --target wasm32-unknown-unknown --no-default-features --features web
 ```
 
 Generate the widget-book artifacts only when the change needs visual review:
 
 ```bash
-cargo run -p sui-demo --bin sui-demo-artifacts
+cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 Artifacts are written below `target/ui-artifacts/sui-demo/widget-book` and

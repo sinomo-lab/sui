@@ -4,10 +4,10 @@
 
 The renderer boundary is:
 
-- widgets paint into `sui-scene`
+- widgets paint into `sinomo-ui-scene`
 - the runtime packages the result as a `SceneFrame`
-- `sui-render-wgpu` consumes the immutable frame snapshot
-- `sui-platform` presents the renderer output on desktop or captures it offscreen in headless mode
+- `sinomo-ui-render-wgpu` consumes the immutable frame snapshot
+- `sinomo-ui-platform` presents the renderer output on desktop or captures it offscreen in headless mode
 
 The renderer does not walk widget internals, compute layout, or own application state.
 
@@ -57,7 +57,7 @@ In practice, each window keeps retained state for:
 
 One important caveat is that retained-compositor cost still depends directly on where the runtime chooses to emit `SceneLayer` boundaries. That makes the runtime's boundary policy a first-order renderer concern even though the renderer itself does not walk widget internals.
 
-The animation fast path builds on that same contract. `sui-render-wgpu` can cheaply update retained presentation state only when the runtime has emitted an explicit paint boundary and the scene update is limited to presentation-only properties such as opacity or translation. If content, ordering, or resources change, the renderer still has to rebuild retained packets.
+The animation fast path builds on that same contract. `sinomo-ui-render-wgpu` can cheaply update retained presentation state only when the runtime has emitted an explicit paint boundary and the scene update is limited to presentation-only properties such as opacity or translation. If content, ordering, or resources change, the renderer still has to rebuild retained packets.
 
 ## Current Architectural State
 
@@ -109,9 +109,9 @@ Common UI shapes use analytic coverage rather than a global feather by default. 
 
 Text work is split across three crates.
 
-- `sui-text` owns font registration, shaping, and text layout.
-- `sui-scene` carries shaped text and text draw commands.
-- `sui-render-wgpu` resolves fonts from the frame snapshot and rasterizes the result.
+- `sinomo-ui-text` owns font registration, shaping, and text layout.
+- `sinomo-ui-scene` carries shaped text and text draw commands.
+- `sinomo-ui-render-wgpu` resolves fonts from the frame snapshot and rasterizes the result.
 
 There are two important caches today:
 
@@ -142,7 +142,7 @@ The renderer publishes metrics including:
 - text-atlas and analytic-path timings
 - GPU upload, encode, submit, and present timings
 
-Those metrics are surfaced by `sui-platform`, shown by the widget-book overlay, and available to tests and debugging tools.
+Those metrics are surfaced by `sinomo-ui-platform`, shown by the widget-book overlay, and available to tests and debugging tools.
 
 The current live diagnostics also pair renderer metrics with runtime animation counters, so the widget book can distinguish animation frames that repainted content from frames that only updated retained transform or opacity state.
 
@@ -206,17 +206,17 @@ The widget book benchmark surfaces and overlay are the preferred way to validate
 
 ## Where To Work On Common Problems
 
-- wrong layer invalidation or stale visuals: `sui-runtime` plus `sui-render-wgpu`
-- new scene command support: `sui-scene` plus `sui-render-wgpu`
-- cache behavior or memory growth: `sui-render-wgpu`
-- text rendering regressions: `sui-text`, `sui-scene`, and `sui-render-wgpu`
-- window presentation or surface issues: `sui-platform` plus `sui-render-wgpu`
+- wrong layer invalidation or stale visuals: `sinomo-ui-runtime` plus `sinomo-ui-render-wgpu`
+- new scene command support: `sinomo-ui-scene` plus `sinomo-ui-render-wgpu`
+- cache behavior or memory growth: `sinomo-ui-render-wgpu`
+- text rendering regressions: `sinomo-ui-text`, `sinomo-ui-scene`, and `sinomo-ui-render-wgpu`
+- window presentation or surface issues: `sinomo-ui-platform` plus `sinomo-ui-render-wgpu`
 
 ## Validation Workflow
 
 For renderer work, the usual validation loop is:
 
-1. run `cargo run -p sui-demo`
+1. run `cargo run -p sinomo-ui-demo`
 2. exercise the widget book and benchmark tabs
 3. check the live performance overlay
 4. run targeted tests, especially widget-book desktop tests when the change affects rendering or scrolling
