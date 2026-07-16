@@ -128,6 +128,7 @@ pub const GALLERY_SCROLL_NAME: &str = "Widget book gallery";
 pub const GALLERY_SCROLL_BAR_NAME: &str = "Widget book gallery vertical scroll bar";
 pub const WIDGET_BOOK_SHELL_NAME: &str = "Widget book shell";
 pub const WIDGET_BOOK_SEARCH_NAME: &str = "Filter widget stories";
+pub const WIDGET_BOOK_THEME_SELECT_NAME: &str = "Widget book theme";
 pub const WIDGET_BOOK_CATEGORY_NAV_NAME: &str = "Widget categories";
 const GALLERY_TEXT_MAX_WIDTH: f32 = 980.0;
 const GALLERY_CONTENT_MAX_WIDTH: f32 = 1180.0;
@@ -168,21 +169,23 @@ pub const TEXT_EDITING_BENCHMARK_SPLIT_NAME: &str = "Text editing benchmark spli
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
 pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
-pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Use dark theme variants";
 pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
 pub const NEUTRAL_THEME_PREVIEW_CARD_NAME: &str = "Neutral theme preview card";
 pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
 pub const NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME: &str = "Neutral dark theme preview card";
+pub const TRUE_BLACK_THEME_PREVIEW_CARD_NAME: &str = "True black theme preview card";
 pub const HDR_THEME_LAB_NAME: &str = "HDR theme mode lab";
 pub const HDR_THEME_LAB_ACTIVE_PREVIEW_NAME: &str = "Current HDR theme mode preview";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
 pub const NEUTRAL_PREVIEW_ACTION_LABEL: &str = "Neutral preview action";
 pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
 pub const NEUTRAL_DARK_PREVIEW_ACTION_LABEL: &str = "Neutral dark preview action";
+pub const TRUE_BLACK_PREVIEW_ACTION_LABEL: &str = "True black preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
 pub const NEUTRAL_PREVIEW_INPUT_LABEL: &str = "Neutral preview query";
 pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
 pub const NEUTRAL_DARK_PREVIEW_INPUT_LABEL: &str = "Neutral dark preview query";
+pub const TRUE_BLACK_PREVIEW_INPUT_LABEL: &str = "True black preview query";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -259,6 +262,14 @@ const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
 const BLEND_MODE_OPTIONS: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
 const TAB_BAR_OPTIONS: [&str; 3] = ["Canvas", "Inspector", "Export"];
 const TAB_PANEL_OPTIONS: [&str; 3] = ["Layout", "Data", "History"];
+const WIDGET_BOOK_THEME_OPTIONS: [&str; 6] = [
+    "Application theme",
+    "SUI light",
+    "Neutral light",
+    "SUI dark",
+    "Neutral dark",
+    "SUI true black",
+];
 const TEXT_RENDERING_COMPARISON_MIN_WIDTH: f32 = 1094.0;
 const TEXT_RENDERING_COMPARISON_CARD_WIDTH: f32 = 520.0;
 const TEXT_RENDERING_SAMPLE_TILE_WIDTH: f32 = 232.0;
@@ -556,10 +567,66 @@ impl WidgetBookCategory {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WidgetBookThemeSelection {
+    Application,
+    SuiLight,
+    NeutralLight,
+    SuiDark,
+    NeutralDark,
+    SuiTrueBlack,
+}
+
+impl WidgetBookThemeSelection {
+    fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::Application,
+            2 => Self::NeutralLight,
+            3 => Self::SuiDark,
+            4 => Self::NeutralDark,
+            5 => Self::SuiTrueBlack,
+            _ => Self::SuiLight,
+        }
+    }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Application => 0,
+            Self::SuiLight => 1,
+            Self::NeutralLight => 2,
+            Self::SuiDark => 3,
+            Self::NeutralDark => 4,
+            Self::SuiTrueBlack => 5,
+        }
+    }
+
+    fn resolve(self, application_theme: DefaultTheme) -> DefaultTheme {
+        match self {
+            Self::Application => application_theme,
+            Self::SuiLight => DefaultTheme::sui(),
+            Self::NeutralLight => DefaultTheme::neutral(),
+            Self::SuiDark => DefaultTheme::dark(),
+            Self::NeutralDark => DefaultTheme::neutral_dark(),
+            Self::SuiTrueBlack => DefaultTheme::high_contrast(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct WidgetBookShellState {
     query: String,
     category: WidgetBookCategory,
+    theme_selection: WidgetBookThemeSelection,
+}
+
+impl Default for WidgetBookShellState {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            category: WidgetBookCategory::default(),
+            theme_selection: WidgetBookThemeSelection::SuiLight,
+        }
+    }
 }
 
 impl WidgetBookShellState {
@@ -597,7 +664,6 @@ pub struct WidgetBookState {
     pub password: String,
     pub scheduled_for: String,
     pub subscribed: bool,
-    pub theme_preview_dark: bool,
     pub button_presses: usize,
     pub icon_button_presses: usize,
     pub switch_on: bool,
@@ -781,7 +847,6 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         password: "sui-demo".to_string(),
         scheduled_for: "2026-07-15 14:30".to_string(),
         subscribed: true,
-        theme_preview_dark: false,
         button_presses: 0,
         icon_button_presses: 0,
         switch_on: true,
@@ -1567,251 +1632,139 @@ impl Widget for ProjectSettingsPreview {
     }
 }
 
-struct ThemePreviewShowcase {
-    state: Rc<RefCell<WidgetBookState>>,
-    toggle: SingleChild,
-    light_card: SingleChild,
-    neutral_card: SingleChild,
-    dark_card: SingleChild,
-    neutral_dark_card: SingleChild,
+struct ThemePreviewGrid {
+    cards: WidgetChildren,
 }
 
-impl ThemePreviewShowcase {
-    fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
-        let dark_variants = state.borrow().theme_preview_dark;
-        let toggle_state = Rc::clone(&state);
+impl ThemePreviewGrid {
+    const GAP: f32 = 16.0;
+    const CARD_HEIGHT: f32 = 248.0;
 
-        Self {
-            state,
-            toggle: SingleChild::new(
-                Switch::new(THEME_PREVIEW_TOGGLE_LABEL)
-                    .on(dark_variants)
-                    .on_toggle(move |checked| {
-                        toggle_state.borrow_mut().theme_preview_dark = checked;
-                    }),
-            ),
-            light_card: SingleChild::new(NamedSection::new(
+    fn new() -> Self {
+        let mut cards = WidgetChildren::with_capacity(5);
+        for (name, theme, title, action_label, input_label) in [
+            (
                 LIGHT_THEME_PREVIEW_CARD_NAME,
-                theme_preview_card(
-                    DefaultTheme::sui(),
-                    "SUI light",
-                    LIGHT_PREVIEW_ACTION_LABEL,
-                    LIGHT_PREVIEW_INPUT_LABEL,
-                ),
-            )),
-            neutral_card: SingleChild::new(NamedSection::new(
+                DefaultTheme::sui(),
+                "SUI light",
+                LIGHT_PREVIEW_ACTION_LABEL,
+                LIGHT_PREVIEW_INPUT_LABEL,
+            ),
+            (
                 NEUTRAL_THEME_PREVIEW_CARD_NAME,
-                theme_preview_card(
-                    DefaultTheme::neutral(),
-                    "Neutral",
-                    NEUTRAL_PREVIEW_ACTION_LABEL,
-                    NEUTRAL_PREVIEW_INPUT_LABEL,
-                ),
-            )),
-            dark_card: SingleChild::new(NamedSection::new(
+                DefaultTheme::neutral(),
+                "Neutral light",
+                NEUTRAL_PREVIEW_ACTION_LABEL,
+                NEUTRAL_PREVIEW_INPUT_LABEL,
+            ),
+            (
                 DARK_THEME_PREVIEW_CARD_NAME,
-                theme_preview_card(
-                    DefaultTheme::dark(),
-                    "SUI dark",
-                    DARK_PREVIEW_ACTION_LABEL,
-                    DARK_PREVIEW_INPUT_LABEL,
-                ),
-            )),
-            neutral_dark_card: SingleChild::new(NamedSection::new(
+                DefaultTheme::dark(),
+                "SUI dark",
+                DARK_PREVIEW_ACTION_LABEL,
+                DARK_PREVIEW_INPUT_LABEL,
+            ),
+            (
                 NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME,
-                theme_preview_card(
-                    DefaultTheme::neutral_dark(),
-                    "Neutral dark",
-                    NEUTRAL_DARK_PREVIEW_ACTION_LABEL,
-                    NEUTRAL_DARK_PREVIEW_INPUT_LABEL,
-                ),
-            )),
+                DefaultTheme::neutral_dark(),
+                "Neutral dark",
+                NEUTRAL_DARK_PREVIEW_ACTION_LABEL,
+                NEUTRAL_DARK_PREVIEW_INPUT_LABEL,
+            ),
+            (
+                TRUE_BLACK_THEME_PREVIEW_CARD_NAME,
+                DefaultTheme::high_contrast(),
+                "SUI true black",
+                TRUE_BLACK_PREVIEW_ACTION_LABEL,
+                TRUE_BLACK_PREVIEW_INPUT_LABEL,
+            ),
+        ] {
+            cards.push(NamedSection::new(
+                name,
+                theme_preview_card(theme, title, action_label, input_label),
+            ));
+        }
+        Self { cards }
+    }
+
+    fn columns_for_width(width: f32) -> usize {
+        if width >= 1040.0 {
+            3
+        } else if width >= 680.0 {
+            2
+        } else {
+            1
         }
     }
 
-    fn card_height() -> f32 {
-        320.0
+    fn column_width(width: f32, columns: usize) -> f32 {
+        ((width - Self::GAP * columns.saturating_sub(1) as f32).max(0.0) / columns as f32).max(0.0)
     }
 
-    fn dark_variants(&self) -> bool {
-        self.state.borrow().theme_preview_dark
+    fn content_height(&self, columns: usize) -> f32 {
+        let rows = self.cards.len().div_ceil(columns) as f32;
+        rows * Self::CARD_HEIGHT + (rows - 1.0).max(0.0) * Self::GAP
     }
 }
 
-impl Widget for ThemePreviewShowcase {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if ctx.phase() != sui::EventPhase::Capture {
-            return;
-        }
-
-        match event {
-            Event::Pointer(pointer)
-                if matches!(
-                    pointer.kind,
-                    sui::PointerEventKind::Down | sui::PointerEventKind::Up
-                ) && self.toggle.child().bounds().contains(pointer.position) =>
-            {
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-            }
-            _ => {}
-        }
-    }
-
+impl Widget for ThemePreviewGrid {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let dark_variants = self.dark_variants();
-        let max_width = if constraints.max.width.is_finite() {
-            constraints.max.width.max(320.0)
+        let width = if constraints.max.width.is_finite() {
+            constraints.max.width
         } else {
-            1080.0
+            constraints.min.width.max(1120.0)
         };
-        let toggle_size = self.toggle.measure(ctx, constraints.loosen());
-        let top = toggle_size.height + 16.0;
-        let gap = 16.0;
-        let card_height = Self::card_height();
-
-        let stacked = max_width < 720.0;
-        let card_width = if stacked {
-            max_width
-        } else {
-            ((max_width - gap) / 2.0).max(320.0)
-        };
-        let (branded_size, neutral_size) = if dark_variants {
-            (
-                self.dark_card
-                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
-                self.neutral_dark_card
-                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
-            )
-        } else {
-            (
-                self.light_card
-                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
-                self.neutral_card
-                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
-            )
-        };
-
-        if stacked {
-            constraints.clamp(Size::new(
-                max_width,
-                top + branded_size.height + gap + neutral_size.height,
-            ))
-        } else {
-            constraints.clamp(Size::new(
-                branded_size.width + gap + neutral_size.width,
-                top + branded_size.height.max(neutral_size.height),
-            ))
+        let columns = Self::columns_for_width(width);
+        let column_width = Self::column_width(width, columns);
+        let card_constraints = Constraints::tight(Size::new(column_width, Self::CARD_HEIGHT));
+        for index in 0..self.cards.len() {
+            self.cards.measure_child(index, ctx, card_constraints);
         }
+        constraints.clamp(Size::new(width, self.content_height(columns)))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let dark_variants = self.dark_variants();
-        let toggle_size = self.toggle.child().measured_size();
-        let snapped_origin = Point::new(bounds.x().round(), bounds.y().round());
-        self.toggle
-            .arrange(ctx, Rect::from_origin_size(snapped_origin, toggle_size));
-
-        let top = (bounds.y() + toggle_size.height + 16.0).round();
-        let gap = 16.0;
-        let (branded, neutral) = if dark_variants {
-            (&mut self.dark_card, &mut self.neutral_dark_card)
-        } else {
-            (&mut self.light_card, &mut self.neutral_card)
-        };
-        let branded_size = branded.child().measured_size();
-        let neutral_size = neutral.child().measured_size();
-        branded.arrange(
-            ctx,
-            Rect::new(
-                bounds.x().round(),
-                top,
-                branded_size.width,
-                branded_size.height,
-            ),
-        );
-        if bounds.width() < 720.0 {
-            neutral.arrange(
+        let columns = Self::columns_for_width(bounds.width());
+        let column_width = Self::column_width(bounds.width(), columns);
+        for index in 0..self.cards.len() {
+            let column = index % columns;
+            let row = index / columns;
+            self.cards.arrange_child(
+                index,
                 ctx,
                 Rect::new(
-                    bounds.x().round(),
-                    top + branded_size.height + gap,
-                    neutral_size.width,
-                    neutral_size.height,
-                ),
-            );
-        } else {
-            neutral.arrange(
-                ctx,
-                Rect::new(
-                    (bounds.x() + branded_size.width + gap).round(),
-                    top,
-                    neutral_size.width,
-                    neutral_size.height,
+                    bounds.x() + column as f32 * (column_width + Self::GAP),
+                    bounds.y() + row as f32 * (Self::CARD_HEIGHT + Self::GAP),
+                    column_width,
+                    Self::CARD_HEIGHT,
                 ),
             );
         }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let dark_variants = self.dark_variants();
-        self.toggle.paint(ctx);
-        if dark_variants {
-            self.dark_card.paint(ctx);
-            self.neutral_dark_card.paint(ctx);
-        } else {
-            self.light_card.paint(ctx);
-            self.neutral_card.paint(ctx);
-        }
+        self.cards.paint(ctx);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let dark_variants = self.dark_variants();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
             ctx.bounds(),
         );
         node.name = Some(THEME_PREVIEW_NAME.to_string());
-        node.description = Some(if dark_variants {
-            "SUI dark and neutral dark professional preview cards are visible.".to_string()
-        } else {
-            "SUI light and neutral light professional preview cards are visible.".to_string()
-        });
+        node.description =
+            Some("Five built-in theme preview cards are visible in a responsive grid.".to_string());
         ctx.push(node);
-        self.toggle.semantics(ctx);
-        if dark_variants {
-            self.dark_card.semantics(ctx);
-            self.neutral_dark_card.semantics(ctx);
-        } else {
-            self.light_card.semantics(ctx);
-            self.neutral_card.semantics(ctx);
-        }
+        self.cards.semantics(ctx);
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        let dark_variants = self.dark_variants();
-        self.toggle.visit_children(visitor);
-        if dark_variants {
-            self.dark_card.visit_children(visitor);
-            self.neutral_dark_card.visit_children(visitor);
-        } else {
-            self.light_card.visit_children(visitor);
-            self.neutral_card.visit_children(visitor);
-        }
+        self.cards.visit_children(visitor);
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        let dark_variants = self.dark_variants();
-        self.toggle.visit_children_mut(visitor);
-        if dark_variants {
-            self.dark_card.visit_children_mut(visitor);
-            self.neutral_dark_card.visit_children_mut(visitor);
-        } else {
-            self.light_card.visit_children_mut(visitor);
-            self.neutral_card.visit_children_mut(visitor);
-        }
+        self.cards.visit_children_mut(visitor);
     }
 }
 
@@ -2851,7 +2804,7 @@ pub fn build_theme_demo_surface(state: Rc<RefCell<WidgetBookState>>) -> impl Wid
 }
 
 pub fn build_theme_demo_surface_with_theme(
-    state: Rc<RefCell<WidgetBookState>>,
+    _state: Rc<RefCell<WidgetBookState>>,
     theme_reader: WidgetBookThemeReader,
 ) -> impl Widget {
     let scroll_state = ScrollState::new();
@@ -2886,9 +2839,9 @@ pub fn build_theme_demo_surface_with_theme(
         )
         .with_child(panel_with_theme(
             Rc::clone(&theme_reader),
-            "Theme preview",
-            "Switch between light and dark variants while comparing the branded SUI and neutral professional presets with the same control composition.",
-            ThemePreviewShowcase::new(Rc::clone(&state)),
+            "Built-in themes",
+            "Compare every built-in theme with the same compact set of controls and source color swatches.",
+            ThemePreviewGrid::new(),
         ))
         .with_child(panel_with_theme(
             Rc::clone(&theme_reader),
@@ -2899,7 +2852,11 @@ pub fn build_theme_demo_surface_with_theme(
 }
 
 pub fn build_widget_book_gallery(state: Rc<RefCell<WidgetBookState>>) -> impl Widget {
-    build_widget_book_gallery_with_theme(state, default_widget_book_theme_reader())
+    build_widget_book_gallery_with_theme_selection(
+        state,
+        default_widget_book_theme_reader(),
+        WidgetBookThemeSelection::SuiLight,
+    )
 }
 
 fn build_widget_book_intro(theme_reader: WidgetBookThemeReader) -> impl Widget {
@@ -2936,6 +2893,8 @@ fn build_widget_book_category_rail(
     shell_state: Rc<RefCell<WidgetBookShellState>>,
     gallery_scroll_state: ScrollState,
 ) -> impl Widget {
+    let theme_selection_state = Rc::clone(&shell_state);
+    let theme_change_state = Rc::clone(&shell_state);
     let query_state = Rc::clone(&shell_state);
     let query_scroll_state = gallery_scroll_state.clone();
     let selected_state = Rc::clone(&shell_state);
@@ -2946,6 +2905,30 @@ fn build_widget_book_category_rail(
         Stack::vertical()
             .spacing(12.0)
             .alignment(Alignment::Stretch)
+            .with_child(
+                Stack::vertical()
+                    .spacing(6.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(demo_label(
+                        &theme_reader,
+                        "Theme",
+                        DemoTextRole::Metadata,
+                        DemoTextColor::Muted,
+                    ))
+                    .with_child(
+                        Select::new(WIDGET_BOOK_THEME_SELECT_NAME)
+                            .options(WIDGET_BOOK_THEME_OPTIONS)
+                            .selected_when(move || {
+                                Some(theme_selection_state.borrow().theme_selection.index())
+                            })
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                            .on_change_with_ctx(move |ctx, index, _| {
+                                theme_change_state.borrow_mut().theme_selection =
+                                    WidgetBookThemeSelection::from_index(index);
+                                request_widget_book_shell_refresh(ctx);
+                            }),
+                    ),
+            )
             .with_child(
                 TextInput::new(WIDGET_BOOK_SEARCH_NAME)
                     .placeholder("Search widgets")
@@ -2976,7 +2959,29 @@ pub fn build_widget_book_gallery_with_theme(
     state: Rc<RefCell<WidgetBookState>>,
     theme_reader: WidgetBookThemeReader,
 ) -> impl Widget {
-    let shell_state = Rc::new(RefCell::new(WidgetBookShellState::default()));
+    build_widget_book_gallery_with_theme_selection(
+        state,
+        theme_reader,
+        WidgetBookThemeSelection::Application,
+    )
+}
+
+fn build_widget_book_gallery_with_theme_selection(
+    state: Rc<RefCell<WidgetBookState>>,
+    application_theme_reader: WidgetBookThemeReader,
+    initial_theme_selection: WidgetBookThemeSelection,
+) -> impl Widget {
+    let shell_state = Rc::new(RefCell::new(WidgetBookShellState {
+        theme_selection: initial_theme_selection,
+        ..WidgetBookShellState::default()
+    }));
+    let selected_theme_state = Rc::clone(&shell_state);
+    let theme_reader: WidgetBookThemeReader = Rc::new(move || {
+        selected_theme_state
+            .borrow()
+            .theme_selection
+            .resolve(application_theme_reader())
+    });
     let snapshot = state.borrow().clone();
     let initial_name = snapshot.name.clone();
     let initial_password = snapshot.password.clone();
@@ -7375,8 +7380,8 @@ fn theme_preview_card(
 ) -> impl Widget {
     let theme_name = theme.colors.name.replace('-', " ");
     let body = Stack::vertical()
-        .spacing(12.0)
-        .alignment(Alignment::Start)
+        .spacing(10.0)
+        .alignment(Alignment::Stretch)
         .with_child(
             Label::new(format!("{title} theme")).style(widget_book_theme_text_style(
                 theme,
@@ -7397,42 +7402,15 @@ fn theme_preview_card(
             )),
         ))
         .with_child(
-            SizedBox::new().width(220.0).with_child(
-                TextInput::new(input_label)
-                    .placeholder("Find layer, panel, or asset")
-                    .theme(theme),
-            ),
+            TextInput::new(input_label)
+                .placeholder("Find layer, panel, or asset")
+                .theme(theme),
         )
+        .with_child(Button::primary(action_label).theme(theme))
         .with_child(
-            Stack::horizontal()
-                .spacing(12.0)
-                .alignment(Alignment::Center)
-                .with_child(Button::primary(action_label).theme(theme))
-                .with_child(MaximumWidth::new(
-                    280.0,
-                    Label::new(
-                        "Reusable controls should stay coherent across all theme directions.",
-                    )
-                    .style(widget_book_theme_text_style(
-                        theme,
-                        theme.text.sm,
-                        theme.palette.placeholder,
-                    )),
-                )),
-        )
-        .with_child(
-            SizedBox::new().width(310.0).with_child(
-                Checkbox::new(format!("{title} preview snap to grid"))
-                    .checked(true)
-                    .theme(theme),
-            ),
-        )
-        .with_child(
-            SizedBox::new().width(310.0).with_child(
-                Switch::new(format!("{title} preview live updates"))
-                    .on(true)
-                    .theme(theme),
-            ),
+            Switch::new(format!("{title} preview live updates"))
+                .on(true)
+                .theme(theme),
         )
         .with_child(
             Stack::horizontal()
@@ -7468,7 +7446,7 @@ impl ThemePreviewCardFrame {
     {
         Self {
             theme,
-            padding: Insets::all(18.0),
+            padding: Insets::all(16.0),
             child: SingleChild::new(child),
         }
     }
@@ -8182,31 +8160,31 @@ mod tests {
     use super::{
         ANIMATION_BENCHMARK_REPAINT_NAME, ANIMATION_BENCHMARK_RETAINED_NAME,
         ANIMATION_BENCHMARK_SCALE_NAME, ANIMATION_BENCHMARK_TITLE, COLOR_PICKER_NAME,
-        DATETIME_INPUT_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME,
-        GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL,
-        LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay, LivePerformanceFrameSample,
-        LivePerformancePanel, NAME_INPUT_LABEL, NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME,
-        NEUTRAL_THEME_PREVIEW_CARD_NAME, NUMBER_INPUT_NAME, PASSWORD_INPUT_LABEL, POPOVER_NAME,
-        POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME,
-        RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME,
-        SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL, TEXT_AREA_LABEL,
-        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
+        DARK_THEME_PREVIEW_CARD_NAME, DATETIME_INPUT_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL,
+        GALLERY_SCROLL_BAR_NAME, GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL,
+        LIGHT_PREVIEW_INPUT_LABEL, LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay,
+        LivePerformanceFrameSample, LivePerformancePanel, NAME_INPUT_LABEL,
+        NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME, NEUTRAL_THEME_PREVIEW_CARD_NAME, NUMBER_INPUT_NAME,
+        PASSWORD_INPUT_LABEL, POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
+        RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
+        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL,
+        TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
         TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
         TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
-        THEME_DEMO_SCROLL_NAME, THEME_DEMO_TITLE, THEME_PREVIEW_TOGGLE_LABEL, TOOLTIP_TEXT,
-        TOOLTIP_TRIGGER_LABEL, WIDGET_STATES_BUTTON_LABEL, WIDGET_STATES_CHECKBOX_LABEL,
-        WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME, WIDGET_STATES_POPOVER_NAME,
-        WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME, WIDGET_STATES_SWITCH_LABEL,
-        WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL, WIDGET_STATES_TEXT_INPUT_LABEL,
-        WINDOW_TITLE, build_animation_benchmark_application, build_color_and_imagery_story,
-        build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-        build_text_rendering_comparison_application, build_text_validation_surface,
-        build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
-        default_widget_book_state, frame_phase_index, register_widget_book_images,
-        text_editing_benchmark_document, text_editing_benchmark_style_overlays,
-        text_editing_benchmark_style_spans, text_editing_syntax_preview_content,
-        theme_preview_card,
+        THEME_DEMO_SCROLL_NAME, THEME_DEMO_TITLE, TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL,
+        TRUE_BLACK_THEME_PREVIEW_CARD_NAME, WIDGET_STATES_BUTTON_LABEL,
+        WIDGET_STATES_CHECKBOX_LABEL, WIDGET_STATES_GALLERY_NAME, WIDGET_STATES_MENU_NAME,
+        WIDGET_STATES_POPOVER_NAME, WIDGET_STATES_SELECT_NAME, WIDGET_STATES_SLIDER_NAME,
+        WIDGET_STATES_SWITCH_LABEL, WIDGET_STATES_TABS_NAME, WIDGET_STATES_TEXT_AREA_LABEL,
+        WIDGET_STATES_TEXT_INPUT_LABEL, WINDOW_TITLE, build_animation_benchmark_application,
+        build_color_and_imagery_story, build_retained_text_benchmark_application,
+        build_text_editing_benchmark_application, build_text_rendering_comparison_application,
+        build_text_validation_surface, build_theme_demo_application, build_widget_book_application,
+        build_widget_book_gallery, default_widget_book_state, frame_phase_index,
+        register_widget_book_images, text_editing_benchmark_document,
+        text_editing_benchmark_style_overlays, text_editing_benchmark_style_spans,
+        text_editing_syntax_preview_content, theme_preview_card,
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -8808,6 +8786,16 @@ mod tests {
     #[test]
     fn focused_demo_surfaces_repaint_when_theme_reader_changes() -> Result<()> {
         assert_widget_repaints_after_theme_change(
+            super::WINDOW_TITLE,
+            Size::new(1280.0, 760.0),
+            |theme_reader| {
+                super::build_widget_book_gallery_with_theme(
+                    default_widget_book_state(),
+                    theme_reader,
+                )
+            },
+        )?;
+        assert_widget_repaints_after_theme_change(
             super::THEME_DEMO_TITLE,
             Size::new(760.0, 520.0),
             |theme_reader| {
@@ -8948,7 +8936,7 @@ mod tests {
                             24.0,
                             SizedBox::new()
                                 .width(card_width)
-                                .height(super::ThemePreviewShowcase::card_height())
+                                .height(super::ThemePreviewGrid::CARD_HEIGHT)
                                 .with_child(super::NamedSection::new(
                                     LIGHT_THEME_PREVIEW_CARD_NAME,
                                     theme_preview_card(
@@ -9835,6 +9823,10 @@ mod tests {
                 super::WIDGET_BOOK_SHELL_NAME,
             ),
             (SemanticsRole::TextInput, super::WIDGET_BOOK_SEARCH_NAME),
+            (
+                SemanticsRole::ComboBox,
+                super::WIDGET_BOOK_THEME_SELECT_NAME,
+            ),
             (SemanticsRole::List, super::WIDGET_BOOK_CATEGORY_NAV_NAME),
         ] {
             assert!(
@@ -9844,6 +9836,11 @@ mod tests {
                     .any(|node| { node.role == role && node.name.as_deref() == Some(name) })
             );
         }
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::ComboBox
+                && node.name.as_deref() == Some(super::WIDGET_BOOK_THEME_SELECT_NAME)
+                && node.value == Some(SemanticsValue::Text("SUI light".to_string()))
+        }));
         for removed_control in ["Component category", "Preview theme", "Control size"] {
             assert!(output.semantics.iter().all(|node| {
                 node.role != SemanticsRole::ComboBox
@@ -9876,6 +9873,38 @@ mod tests {
             .expect("gallery should remain available beside shell chrome");
 
         assert!(category_rail.bounds.max_x() <= gallery.bounds.x());
+    }
+
+    #[test]
+    fn widget_book_sidebar_theme_selector_switches_the_live_theme() -> Result<()> {
+        let app = build_default_widget_book_app()?;
+        let window = app.main_window()?;
+        let selector = window
+            .get_by_role(SemanticsRole::ComboBox)
+            .with_name(super::WIDGET_BOOK_THEME_SELECT_NAME);
+
+        assert_eq!(
+            combo_box_text_value(&window, super::WIDGET_BOOK_THEME_SELECT_NAME)?,
+            "SUI light"
+        );
+        let before = window.capture_screenshot()?;
+
+        for _ in 0..3 {
+            selector.press("ArrowDown")?;
+        }
+        selector.press("Enter")?;
+
+        assert_eq!(
+            combo_box_text_value(&window, super::WIDGET_BOOK_THEME_SELECT_NAME)?,
+            "Neutral dark"
+        );
+        let after = window.capture_screenshot()?;
+        assert_ne!(
+            before, after,
+            "changing the sidebar theme should repaint the full widget book"
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -10526,32 +10555,47 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_theme_preview_toggle_switches_to_dark_variants() -> Result<()> {
+    fn widget_book_theme_preview_grid_exposes_all_builtin_themes() -> Result<()> {
         let app = build_default_theme_demo_app()?;
         let window = app.main_window()?;
 
         scroll_to_story_target(&window, StoryCase::ThemePreview, 2)?;
-        window
-            .get_by_role(SemanticsRole::GenericContainer)
-            .with_name(NEUTRAL_THEME_PREVIEW_CARD_NAME)
-            .expect()
-            .to_be_visible()?;
-        let before = window.capture_screenshot()?;
+        let snapshot = window.snapshot()?;
+        let card_bounds = [
+            LIGHT_THEME_PREVIEW_CARD_NAME,
+            NEUTRAL_THEME_PREVIEW_CARD_NAME,
+            DARK_THEME_PREVIEW_CARD_NAME,
+            NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME,
+            TRUE_BLACK_THEME_PREVIEW_CARD_NAME,
+        ]
+        .map(|name| {
+            snapshot
+                .accessibility
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::GenericContainer
+                        && node.name.as_deref() == Some(name)
+                })
+                .unwrap_or_else(|| panic!("missing theme preview card {name}"))
+                .bounds
+        });
 
-        window
-            .get_by_role(SemanticsRole::Switch)
-            .with_name(THEME_PREVIEW_TOGGLE_LABEL)
-            .click()?;
-
-        window
-            .get_by_role(SemanticsRole::GenericContainer)
-            .with_name(NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME)
-            .expect()
-            .to_be_visible()?;
-        let after = window.capture_screenshot()?;
-        assert_ne!(before, after);
+        assert_eq!(card_bounds[0].y(), card_bounds[1].y());
+        assert_eq!(card_bounds[1].y(), card_bounds[2].y());
+        assert!(card_bounds[0].x() < card_bounds[1].x());
+        assert!(card_bounds[1].x() < card_bounds[2].x());
+        assert!(card_bounds[3].y() > card_bounds[0].y());
+        assert_eq!(card_bounds[3].y(), card_bounds[4].y());
 
         Ok(())
+    }
+
+    #[test]
+    fn widget_book_theme_preview_grid_uses_responsive_columns() {
+        assert_eq!(super::ThemePreviewGrid::columns_for_width(1200.0), 3);
+        assert_eq!(super::ThemePreviewGrid::columns_for_width(900.0), 2);
+        assert_eq!(super::ThemePreviewGrid::columns_for_width(520.0), 1);
     }
 
     #[test]
