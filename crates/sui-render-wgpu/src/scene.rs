@@ -3240,20 +3240,17 @@ fn append_painted_path(
         return Ok(FillPathRenderMode::SolidOnly);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
-        let lyon_path = build_lyon_path(path, state.current_transform);
-        if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
-            append_analytic_path_quad(
-                overlay_vertices,
-                transformed_bounds.inflate(coverage_outset, coverage_outset),
-                color,
-                viewport,
-            );
-            let id = draw_ops.insert_analytic_path(data);
-            return Ok(FillPathRenderMode::SolidPlusAnalytic { id });
-        }
+    let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
+    let lyon_path = build_lyon_path(path, state.current_transform);
+    if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
+        append_analytic_path_quad(
+            overlay_vertices,
+            transformed_bounds.inflate(coverage_outset, coverage_outset),
+            color,
+            viewport,
+        );
+        let id = draw_ops.insert_analytic_path(data);
+        return Ok(FillPathRenderMode::SolidPlusAnalytic { id });
     }
 
     let mesh = path_cache.cached_fill_mesh(path, state.current_transform, feather_width)?;
@@ -3291,15 +3288,15 @@ fn append_stroked_path(
         return Ok(None);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
+    let analytic_stroke_supported = matches!(
+        (stroke.cap, stroke.join),
+        (sui_scene::StrokeCap::Butt, sui_scene::StrokeJoin::Miter)
+            | (sui_scene::StrokeCap::Round, sui_scene::StrokeJoin::Round)
+    );
+    if analytic_stroke_supported {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
-        if stroke.cap == sui_scene::StrokeCap::Butt
-            && stroke.join == sui_scene::StrokeJoin::Miter
-            && let Some(data) =
-                build_analytic_stroke_path_data(&lyon_path, line_width, feather_width)
-        {
+        if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
             append_analytic_path_quad(
                 overlay_vertices,
                 transformed_bounds.inflate(stroke_outset, stroke_outset),
@@ -3311,20 +3308,10 @@ fn append_stroked_path(
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mesh = path_cache.cached_stroke_mesh(path, state.current_transform, stroke, 0.0)?;
-        append_cached_path_mesh(vertices, mesh, color, viewport);
-        return Ok(None);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mesh =
-            path_cache.cached_stroke_mesh(path, state.current_transform, stroke, feather_width)?;
-        append_cached_path_mesh(vertices, mesh, color, viewport);
-        Ok(None)
-    }
+    let mesh =
+        path_cache.cached_stroke_mesh(path, state.current_transform, stroke, feather_width)?;
+    append_cached_path_mesh(vertices, mesh, color, viewport);
+    Ok(None)
 }
 
 fn build_analytic_fill_path_data(

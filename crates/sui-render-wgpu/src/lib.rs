@@ -4835,7 +4835,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
 
-    let derivative_width = length(vec2<f32>(fwidth(point.x), fwidth(point.y)));
+    let distance_gradient = vec2<f32>(dpdx(min_distance), dpdy(min_distance));
+    let derivative_width = max(length(distance_gradient), 1e-4);
     let feather = max(path_meta.feather_width, derivative_width);
     var coverage = 0.0;
 
@@ -6999,6 +7000,9 @@ mod tests {
     fn analytic_path_fill_shader_uses_symmetric_signed_distance() {
         assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("let signed_distance"));
         assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("0.5 - (signed_distance"));
+        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("dpdx(min_distance)"));
+        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("dpdy(min_distance)"));
+        assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("fwidth(point.x)"));
         assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("1.0 - (min_distance"));
     }
 
@@ -12083,6 +12087,72 @@ mod tests {
         assert!(
             visible_rows <= 3,
             "analytic one-pixel stroke expanded across too many rows (visible_rows={visible_rows})"
+        );
+    }
+
+    #[test]
+    fn round_stroke_path_uses_analytic_antialiasing() {
+        let mut builder = PathBuilder::new();
+        builder
+            .move_to(Point::new(6.0, 25.0))
+            .line_to(Point::new(25.0, 6.0));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(9901),
+            viewport: Size::new(32.0, 32.0),
+            surface_size: Size::new(32.0, 32.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: {
+                let mut scene = Scene::new();
+                scene.push(SceneCommand::StrokePath {
+                    path: builder.build(),
+                    brush: Color::WHITE.into(),
+                    stroke: StrokeStyle::new(2.0)
+                        .with_cap(sui_scene::StrokeCap::Round)
+                        .with_join(sui_scene::StrokeJoin::Round),
+                });
+                scene
+            },
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let draw_ops = prepare_with_compositor(&frame, &mut text_engine, &mut compositor).unwrap();
+        assert_eq!(draw_ops.analytic_paths.len(), 1);
+        assert_eq!(compositor.path_cache.stats(), (0, 0, 0));
+        assert!(
+            draw_ops
+                .draw_ops
+                .iter()
+                .any(|draw| matches!(draw.kind, DrawOpKind::AnalyticPath { .. }))
+        );
+
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&frame).unwrap();
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        let partial_coverage = pixels
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0 && pixel[3] < 255)
+            .count();
+        let opaque_coverage = pixels
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] == 255)
+            .count();
+
+        assert!(
+            partial_coverage > 0,
+            "round stroke edges should contain partial alpha coverage"
+        );
+        assert!(
+            opaque_coverage > 0,
+            "round stroke center should retain fully covered pixels"
         );
     }
 
