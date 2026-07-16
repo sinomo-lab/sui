@@ -1985,7 +1985,7 @@ impl ScrollState {
         shared_max_offset(inner.viewport, inner.content_size)
     }
 
-    fn bind_scroll_view(&self, scroll_view_id: WidgetId, scroll_content_id: WidgetId) {
+    pub(crate) fn bind_scroll_view(&self, scroll_view_id: WidgetId, scroll_content_id: WidgetId) {
         let mut inner = self.inner.borrow_mut();
         inner.scroll_view_id = Some(scroll_view_id);
         inner.scroll_content_id = Some(scroll_content_id);
@@ -1998,7 +1998,12 @@ impl ScrollState {
         }
     }
 
-    fn sync_metrics(&self, axes: ScrollAxes, viewport: Size, content_size: Size) -> bool {
+    pub(crate) fn sync_metrics(
+        &self,
+        axes: ScrollAxes,
+        viewport: Size,
+        content_size: Size,
+    ) -> bool {
         let mut inner = self.inner.borrow_mut();
         let next_offset = clamp_shared_offset(axes, viewport, content_size, inner.offset);
         let changed = inner.axes != axes
@@ -2081,7 +2086,7 @@ impl ScrollState {
         true
     }
 
-    fn take_pending_virtual_item(&self) -> Option<usize> {
+    pub(crate) fn take_pending_virtual_item(&self) -> Option<usize> {
         self.inner.borrow_mut().pending_virtual_item.take()
     }
 
@@ -2089,7 +2094,7 @@ impl ScrollState {
         self.inner.borrow().pending_virtual_item
     }
 
-    fn subscribers(&self) -> ScrollStateSubscribers {
+    pub(crate) fn subscribers(&self) -> ScrollStateSubscribers {
         let inner = self.inner.borrow();
         ScrollStateSubscribers {
             scroll_view_id: inner.scroll_view_id,
@@ -2117,10 +2122,10 @@ impl Default for ScrollState {
 }
 
 #[derive(Debug, Clone)]
-struct ScrollStateSubscribers {
-    scroll_view_id: Option<WidgetId>,
-    scroll_content_id: Option<WidgetId>,
-    scroll_bar_ids: Vec<WidgetId>,
+pub(crate) struct ScrollStateSubscribers {
+    pub(crate) scroll_view_id: Option<WidgetId>,
+    pub(crate) scroll_content_id: Option<WidgetId>,
+    pub(crate) scroll_bar_ids: Vec<WidgetId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2803,7 +2808,7 @@ impl Widget for ScrollBar {
 
 const OVERLAY_SCROLL_BAR_INSET: f32 = 3.0;
 
-struct OverlayScrollBars {
+pub(crate) struct OverlayScrollBars {
     vertical: Option<SingleChild>,
     horizontal: Option<SingleChild>,
     show_vertical: bool,
@@ -2811,7 +2816,7 @@ struct OverlayScrollBars {
 }
 
 impl OverlayScrollBars {
-    fn new(
+    pub(crate) fn new(
         state: ScrollState,
         theme: Rc<RefCell<DefaultTheme>>,
         name: Option<&str>,
@@ -2851,7 +2856,7 @@ impl OverlayScrollBars {
         }
     }
 
-    fn set_visibility(&mut self, axes: ScrollAxes, max_offset: Vector) {
+    pub(crate) fn set_visibility(&mut self, axes: ScrollAxes, max_offset: Vector) {
         let show_vertical =
             self.vertical.is_some() && axes.allows_vertical() && max_offset.y > f32::EPSILON;
         let show_horizontal =
@@ -2860,7 +2865,7 @@ impl OverlayScrollBars {
         self.show_horizontal = show_horizontal;
     }
 
-    fn measure(&mut self, ctx: &mut MeasureCtx, viewport: Size, thickness: f32) {
+    pub(crate) fn measure(&mut self, ctx: &mut MeasureCtx, viewport: Size, thickness: f32) {
         if let Some(vertical) = &mut self.vertical {
             vertical.measure(
                 ctx,
@@ -2875,7 +2880,7 @@ impl OverlayScrollBars {
         }
     }
 
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect, thickness: f32) {
+    pub(crate) fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect, thickness: f32) {
         let inset = OVERLAY_SCROLL_BAR_INSET
             .min((bounds.width() * 0.5).min(bounds.height() * 0.5).max(0.0));
         let vertical_height = (bounds.height()
@@ -2923,7 +2928,7 @@ impl OverlayScrollBars {
         }
     }
 
-    fn paint(&self, ctx: &mut PaintCtx) {
+    pub(crate) fn paint(&self, ctx: &mut PaintCtx) {
         if let Some(vertical) = &self.vertical {
             vertical.paint(ctx);
         }
@@ -2932,7 +2937,7 @@ impl OverlayScrollBars {
         }
     }
 
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
+    pub(crate) fn semantics(&self, ctx: &mut SemanticsCtx) {
         if self.show_vertical
             && let Some(vertical) = &self.vertical
         {
@@ -2945,7 +2950,7 @@ impl OverlayScrollBars {
         }
     }
 
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+    pub(crate) fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         if let Some(vertical) = &self.vertical {
             vertical.visit_children(visitor);
         }
@@ -2954,7 +2959,7 @@ impl OverlayScrollBars {
         }
     }
 
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+    pub(crate) fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         if let Some(vertical) = &mut self.vertical {
             vertical.visit_children_mut(visitor);
         }
@@ -4316,11 +4321,11 @@ fn clamp_shared_offset(
     )
 }
 
-trait ScrollInvalidationCtx {
+pub(crate) trait ScrollInvalidationCtx {
     fn push_invalidation(&mut self, request: InvalidationRequest);
 }
 
-trait ScrollWidgetCtx {
+pub(crate) trait ScrollWidgetCtx {
     fn widget_id(&self) -> WidgetId;
 }
 
@@ -4360,7 +4365,7 @@ impl ScrollWidgetCtx for ArrangeCtx {
     }
 }
 
-fn request_scroll_bar_refresh<C>(ctx: &mut C, widget_id: WidgetId)
+pub(crate) fn request_scroll_bar_refresh<C>(ctx: &mut C, widget_id: WidgetId)
 where
     C: ScrollInvalidationCtx,
 {

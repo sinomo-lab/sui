@@ -4,6 +4,7 @@
 
 pub mod animation;
 pub mod canvas;
+pub mod collection;
 pub mod composites;
 pub mod containers;
 pub mod controls;
@@ -36,6 +37,11 @@ pub use canvas::{
     Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
     PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
     PixelCanvasTool,
+};
+pub use collection::{
+    CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,
+    CollectionExtentIndex, CollectionModelError, CollectionSync, ScrollAlignment,
+    VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListState,
 };
 pub use composites::{
     ActionCard, ActionTilePaint, BrowserTabBar, BusyIndicator, CalloutPaint, CodePanelPaint,

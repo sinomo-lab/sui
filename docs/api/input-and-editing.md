@@ -1,6 +1,6 @@
 # Input and Text Editing
 
-[Previous: widgets and layout](widgets-and-layout.md) · [API guide](README.md) ·
+[Previous: virtual collections](virtual-collections.md) · [API guide](README.md) ·
 [Next: state and events](state-events-and-async.md)
 
 SUI's input widgets share the same retained editor behavior: keyboard and IME

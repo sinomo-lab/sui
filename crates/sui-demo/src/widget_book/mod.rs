@@ -5040,10 +5040,41 @@ fn build_data_and_interaction_gallery_with_theme(
                         control_story_with_theme(
                             Rc::clone(&theme_reader),
                             "Tables",
-                            "DataGrid aliases Table, and VirtualTable renders large row counts through row painters.",
+                            "VirtualList realizes keyed widget rows; DataGrid and VirtualTable cover eager and painter-delegate tables.",
                             Stack::vertical()
                                 .spacing(12.0)
                                 .alignment(Alignment::Stretch)
+                                .with_child({
+                                    let rows = VirtualCollectionModel::from_items(
+                                        "Widget book virtual rows",
+                                        (0_u64..2_000)
+                                            .map(|index| (index, format!("Retained row {index}"))),
+                                    )
+                                    .expect("widget-book row keys are unique");
+                                    let row_theme = Rc::clone(&theme_reader);
+                                    SizedBox::new().width(420.0).height(132.0).with_child(
+                                        VirtualList::new(
+                                            "Virtual retained rows",
+                                            rows,
+                                            move |_key, text| {
+                                                Surface::field(
+                                                    Label::new("").text_from(text),
+                                                )
+                                                .padding(Insets {
+                                                    left: 8.0,
+                                                    top: 5.0,
+                                                    right: 8.0,
+                                                    bottom: 5.0,
+                                                })
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &row_theme,
+                                                ))
+                                            },
+                                        )
+                                        .estimated_row_height(30.0)
+                                        .row_name(|key, _| format!("Virtual retained row {key}")),
+                                    )
+                                })
                                 .with_child(SizedBox::new().width(420.0).height(150.0).with_child(
                                     DataGrid::new(DATA_GRID_NAME)
                                         .theme_when(clone_widget_book_theme_reader(&theme_reader))

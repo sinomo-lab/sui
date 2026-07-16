@@ -93,6 +93,7 @@ rust-widget Toolbar bound Toolbar
 rust-widget Tooltip bound Tooltip
 rust-widget TrailingSlotRow bound TrailingSlotRow
 rust-widget TreeView bound TreeView
+rust-widget VirtualList rust-only
 rust-widget VirtualScrollView bound VirtualScrollView
 rust-widget VirtualTable equivalent Table
 

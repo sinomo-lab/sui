@@ -1,7 +1,7 @@
 # Widgets and Layout
 
 [Previous: getting started](getting-started.md) · [API guide](README.md) ·
-[Next: input and text editing](input-and-editing.md)
+[Next: virtual collections](virtual-collections.md)
 
 SUI widgets are retained Rust values. A window owns one root widget, container
 widgets own child `WidgetPod`s, and the runtime revisits that tree for events,
@@ -20,7 +20,7 @@ families to learn rather than an exhaustive symbol inventory.
 | Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Background` | Size and position ordinary widget trees |
 | Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `Dock`, `SwitchView` | Overflow, panes, and alternate content |
 | Overlays and shells | `Dialog`, `Modal`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet` | Transient or elevated interface layers |
-| Data and navigation | `ListView`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`, `Tabs` | Collections and navigation state |
+| Data and navigation | `ListView`, `VirtualList`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`, `Tabs` | Collections and navigation state |
 | Creative tools | `Canvas`, `PixelCanvas`, `ColorPicker`, `LayerList`, `BrushPreview` | Editor-style and graphics interfaces |
 
 Constructors generally take the accessible label or name first. Choose names
@@ -157,10 +157,13 @@ fn log_view(lines: impl IntoIterator<Item = String>) -> impl Widget {
 }
 ```
 
-Use `VirtualScrollView`, `VirtualTable`, or another virtualized data widget
-when a collection is large enough that constructing and laying out every row
-would be wasteful. Use an ordinary `ScrollView` for modest, heterogeneous
-content.
+Use `VirtualList` or `VirtualTable` when a collection is large enough that
+constructing and laying out every row would be wasteful. `VirtualScrollView`
+keeps a static retained child set and virtualizes arrangement, visitation, and
+paint, but still measures every child to obtain exact heterogeneous heights.
+Use an ordinary `ScrollView` for modest content. See
+[Virtual collections](virtual-collections.md) for keyed incremental data,
+anchoring, follow-end, and retained-row policies.
 
 `ScrollState` can be shared with `ScrollView::state` when application code
 needs to inspect or control an offset. Without it, the view retains its own

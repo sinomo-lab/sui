@@ -1,5 +1,7 @@
 use std::{
+    cell::Cell,
     fmt,
+    ops::Range,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -21,6 +23,7 @@ use sui_text::{
 
 use crate::{
     DefaultTheme, MotionScalar, ThemeTextToken,
+    collection::CollectionExtentIndex,
     controls::{IconGlyph, draw_icon_glyph},
     text_align::{paint_aligned_text, vertically_centered_text_rect_y},
 };
@@ -2078,6 +2081,7 @@ impl Widget for LayerList {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeItem {
+    key: Option<u64>,
     label: String,
     detail: Option<String>,
     children: Vec<TreeItem>,
@@ -2088,12 +2092,18 @@ pub struct TreeItem {
 impl TreeItem {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
+            key: None,
             label: label.into(),
             detail: None,
             children: Vec::new(),
             expanded: false,
             disabled: false,
         }
+    }
+
+    pub fn key(mut self, key: u64) -> Self {
+        self.key = Some(key);
+        self
     }
 
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
@@ -2142,6 +2152,8 @@ pub struct TreeView {
     focus_animation: AnimatedScalar,
     row_height: Option<f32>,
     scroll_y: f32,
+    visible_rows: Vec<TreeRow>,
+    visible_rows_dirty: Cell<bool>,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
 }
 
@@ -2160,6 +2172,8 @@ impl TreeView {
             focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
             scroll_y: 0.0,
+            visible_rows: Vec::new(),
+            visible_rows_dirty: Cell::new(true),
             on_change: None,
         }
     }
@@ -2180,6 +2194,7 @@ impl TreeView {
 
     pub fn item(mut self, item: TreeItem) -> Self {
         self.items.push(item);
+        self.visible_rows_dirty.set(true);
         self
     }
 
@@ -2188,6 +2203,7 @@ impl TreeView {
         I: IntoIterator<Item = TreeItem>,
     {
         self.items.extend(items);
+        self.visible_rows_dirty.set(true);
         self
     }
 
@@ -2219,7 +2235,7 @@ impl TreeView {
     fn resolved_row_height(&self) -> f32 {
         let theme = self.resolved_theme();
         let base = self.row_height.unwrap_or(theme.metrics.tree_row_height);
-        if self.visible_rows().iter().any(|row| row.detail.is_some()) {
+        if self.visible_rows.iter().any(|row| row.detail.is_some()) {
             base.max(two_line_row_height(
                 theme.body_text_style().line_height,
                 caption_style(&theme).line_height,
@@ -2233,15 +2249,16 @@ impl TreeView {
         inset_rect(bounds, self.resolved_theme().metrics.data_viewport_padding)
     }
 
-    fn visible_rows(&self) -> Vec<TreeRow> {
-        let mut rows = Vec::new();
-        let mut path = Vec::new();
-        flatten_tree(&self.items, 0, &mut path, &mut rows);
-        rows
+    fn sync_visible_rows(&mut self) {
+        if !self.visible_rows_dirty.replace(false) {
+            return;
+        }
+        self.visible_rows.clear();
+        flatten_tree(&self.items, 0, &mut Vec::new(), &mut self.visible_rows);
     }
 
     fn content_height(&self) -> f32 {
-        self.visible_rows().len() as f32 * self.resolved_row_height()
+        self.visible_rows.len() as f32 * self.resolved_row_height()
     }
 
     fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
@@ -2258,7 +2275,7 @@ impl TreeView {
         let row_height = self.resolved_row_height();
         let y = position.y - viewport.y() + self.scroll_y;
         let index = (y / row_height).floor() as usize;
-        self.visible_rows().into_iter().nth(index)
+        self.visible_rows.get(index).cloned()
     }
 
     fn select_path(&mut self, path: &[usize]) {
@@ -2282,12 +2299,12 @@ impl TreeView {
             return false;
         }
         item.expanded = !item.expanded;
+        self.visible_rows_dirty.set(true);
         true
     }
 
     fn ensure_visible(&mut self, viewport_height: f32, path: &[usize]) {
-        let rows = self.visible_rows();
-        let Some(index) = rows.iter().position(|row| row.path == path) else {
+        let Some(index) = self.visible_rows.iter().position(|row| row.path == path) else {
             return;
         };
         let row_height = self.resolved_row_height();
@@ -2341,6 +2358,7 @@ impl TreeView {
 
 impl Widget for TreeView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_visible_rows();
         let viewport = self.viewport_rect(ctx.bounds());
 
         match event {
@@ -2392,7 +2410,7 @@ impl Widget for TreeView {
                     let row_height = self.resolved_row_height();
                     let viewport_rect = self.viewport_rect(ctx.bounds());
                     let index = self
-                        .visible_rows()
+                        .visible_rows
                         .iter()
                         .position(|candidate| candidate.path == row.path)
                         .unwrap_or(0);
@@ -2432,7 +2450,7 @@ impl Widget for TreeView {
                 self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
-                let rows = self.visible_rows();
+                let rows = self.visible_rows.clone();
                 if rows.is_empty() {
                     return;
                 }
@@ -2496,16 +2514,75 @@ impl Widget for TreeView {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
+            Event::Semantics(semantics) => {
+                if semantics.target == ctx.widget_id() {
+                    let delta = match semantics.action {
+                        sui_core::SemanticsActionRequest::Increment => {
+                            Some(viewport.height() * 0.85)
+                        }
+                        sui_core::SemanticsActionRequest::Decrement => {
+                            Some(-viewport.height() * 0.85)
+                        }
+                        _ => None,
+                    };
+                    if let Some(delta) = delta {
+                        let next = self.clamp_scroll(viewport.height(), self.scroll_y + delta);
+                        if (next - self.scroll_y).abs() > f32::EPSILON {
+                            self.scroll_y = next;
+                            ctx.request_paint();
+                            ctx.request_semantics();
+                        }
+                        ctx.set_handled();
+                    }
+                    return;
+                }
+
+                let Some(row) = self
+                    .visible_rows
+                    .iter()
+                    .find(|row| tree_view_row_id(ctx.widget_id(), row.key) == semantics.target)
+                    .cloned()
+                else {
+                    return;
+                };
+                match semantics.action {
+                    sui_core::SemanticsActionRequest::Activate
+                    | sui_core::SemanticsActionRequest::Focus => {
+                        self.select_path(&row.path);
+                        self.ensure_visible(viewport.height(), &row.path);
+                        ctx.request_focus();
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                        ctx.set_handled();
+                    }
+                    sui_core::SemanticsActionRequest::Expand if !row.expanded => {
+                        if self.toggle_path(&row.path) {
+                            ctx.request_measure();
+                            ctx.request_semantics();
+                        }
+                        ctx.set_handled();
+                    }
+                    sui_core::SemanticsActionRequest::Collapse if row.expanded => {
+                        if self.toggle_path(&row.path) {
+                            ctx.request_measure();
+                            ctx.request_semantics();
+                        }
+                        ctx.set_handled();
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_visible_rows();
         let theme = self.resolved_theme();
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
         let width = self
-            .visible_rows()
+            .visible_rows
             .iter()
             .map(|row| {
                 let label_start = tree_label_offset(&theme, row.depth);
@@ -2547,7 +2624,7 @@ impl Widget for TreeView {
         let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
         let row_height = self.resolved_row_height();
-        let rows = self.visible_rows();
+        let rows = &self.visible_rows;
 
         draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.push_clip_rect(viewport);
@@ -2635,18 +2712,71 @@ impl Widget for TreeView {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tree, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
+        let viewport = self.viewport_rect(ctx.bounds());
+        let row_height = self.resolved_row_height();
+        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
+        let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
+            .min(self.visible_rows.len());
         node.value = self
             .selected
             .as_ref()
             .and_then(|path| tree_item(&self.items, path))
             .map(|item| SemanticsValue::Text(item.label.clone()));
+        node.description = Some(format!(
+            "{} visible tree items; showing {} through {}",
+            self.visible_rows.len(),
+            start.saturating_add(1).min(self.visible_rows.len()),
+            end,
+        ));
         node.actions = vec![
             SemanticsAction::Focus,
             SemanticsAction::SetValue,
             SemanticsAction::Expand,
             SemanticsAction::Collapse,
+            SemanticsAction::Increment,
+            SemanticsAction::Decrement,
         ];
         ctx.push(node);
+
+        for (index, row) in self.visible_rows.iter().enumerate().take(end).skip(start) {
+            let row_rect = Rect::new(
+                viewport.x(),
+                viewport.y() + index as f32 * row_height - self.scroll_y,
+                viewport.width(),
+                row_height,
+            );
+            let mut item = SemanticsNode::new(
+                tree_view_row_id(ctx.widget_id(), row.key),
+                SemanticsRole::ListItem,
+                row_rect,
+            );
+            item.parent = Some(ctx.widget_id());
+            item.name = Some(row.label.clone());
+            item.description = Some(format!(
+                "Tree item {} of {}, level {}{}",
+                index + 1,
+                self.visible_rows.len(),
+                row.depth + 1,
+                row.detail
+                    .as_deref()
+                    .map(|detail| format!("; {detail}"))
+                    .unwrap_or_default(),
+            ));
+            item.state.disabled = row.disabled;
+            item.state.selected = self.selected.as_deref() == Some(row.path.as_slice());
+            item.state.expanded = row.has_children.then_some(row.expanded);
+            if !row.disabled {
+                item.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+                if row.has_children {
+                    item.actions.push(if row.expanded {
+                        SemanticsAction::Collapse
+                    } else {
+                        SemanticsAction::Expand
+                    });
+                }
+            }
+            ctx.push(item);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -3267,6 +3397,9 @@ pub struct VirtualTableColumn {
     title: String,
     width: Option<f32>,
     min_width: f32,
+    max_width: Option<f32>,
+    resizable: bool,
+    pinned: bool,
     alignment: TableColumnAlignment,
     sort_direction: Option<VirtualTableSortDirection>,
 }
@@ -3277,6 +3410,9 @@ impl VirtualTableColumn {
             title: title.into(),
             width: None,
             min_width: 96.0,
+            max_width: None,
+            resizable: true,
+            pinned: false,
             alignment: TableColumnAlignment::Start,
             sort_direction: None,
         }
@@ -3289,6 +3425,21 @@ impl VirtualTableColumn {
 
     pub fn min_width(mut self, min_width: f32) -> Self {
         self.min_width = min_width.max(32.0);
+        self
+    }
+
+    pub fn max_width(mut self, max_width: f32) -> Self {
+        self.max_width = Some(max_width.max(self.min_width));
+        self
+    }
+
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.resizable = resizable;
+        self
+    }
+
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
         self
     }
 
@@ -3311,6 +3462,7 @@ pub enum VirtualTableRowActivationKind {
 
 pub struct VirtualTableRowContext<'a> {
     pub row_index: usize,
+    pub row_key: u64,
     pub row_rect: Rect,
     pub column_rects: &'a [Rect],
     pub selected: bool,
@@ -3326,6 +3478,14 @@ type VirtualTableRowDescription = Box<dyn Fn(usize) -> String>;
 type VirtualTableCellActivation =
     Box<dyn FnMut(usize, usize, VirtualTableRowActivationKind) -> bool>;
 
+#[derive(Clone, Copy)]
+struct VirtualTableColumnResize {
+    column_index: usize,
+    pointer_id: u64,
+    start_x: f32,
+    start_width: f32,
+}
+
 pub struct VirtualTable {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -3338,8 +3498,13 @@ pub struct VirtualTable {
     pressed_row: Option<usize>,
     pressed_header: Option<usize>,
     row_height: Option<f32>,
+    row_heights: Option<Vec<f32>>,
+    row_extents: CollectionExtentIndex,
+    row_extents_default_height: f32,
+    row_key: Option<Box<dyn Fn(usize) -> u64>>,
     header_height: Option<f32>,
     scroll_y: f32,
+    scroll_x: f32,
     column_widths: Vec<f32>,
     focus_animation: AnimatedScalar,
     row_painter: Option<VirtualTableRowPainter>,
@@ -3348,8 +3513,10 @@ pub struct VirtualTable {
     on_row_activate: Option<Box<dyn FnMut(usize, VirtualTableRowActivationKind)>>,
     on_cell_activate: Option<VirtualTableCellActivation>,
     on_header_activate: Option<Box<dyn FnMut(usize)>>,
+    on_column_resize: Option<Box<dyn FnMut(usize, f32)>>,
     on_near_end: Option<Box<dyn FnMut()>>,
     last_click: Option<(usize, Instant)>,
+    column_resize: Option<VirtualTableColumnResize>,
 }
 
 impl VirtualTable {
@@ -3368,8 +3535,13 @@ impl VirtualTable {
             pressed_row: None,
             pressed_header: None,
             row_height: None,
+            row_heights: None,
+            row_extents: CollectionExtentIndex::new(),
+            row_extents_default_height: 0.0,
+            row_key: None,
             header_height: None,
             scroll_y: 0.0,
+            scroll_x: 0.0,
             column_widths: Vec::new(),
             focus_animation: AnimatedScalar::new(0.0),
             row_painter: None,
@@ -3378,8 +3550,10 @@ impl VirtualTable {
             on_row_activate: None,
             on_cell_activate: None,
             on_header_activate: None,
+            on_column_resize: None,
             on_near_end: None,
             last_click: None,
+            column_resize: None,
         }
     }
 
@@ -3407,11 +3581,40 @@ impl VirtualTable {
 
     pub fn row_count(mut self, row_count: usize) -> Self {
         self.row_count = row_count;
+        self.row_extents.clear();
         self
     }
 
     pub fn row_height(mut self, row_height: f32) -> Self {
         self.row_height = Some(row_height.max(1.0));
+        self.row_heights = None;
+        self.row_extents.clear();
+        self
+    }
+
+    pub fn row_heights<I>(mut self, row_heights: I) -> Self
+    where
+        I: IntoIterator<Item = f32>,
+    {
+        self.row_heights = Some(
+            row_heights
+                .into_iter()
+                .map(|height| height.max(1.0))
+                .collect(),
+        );
+        self.row_extents.clear();
+        self
+    }
+
+    /// Provide a stable row identity independent of the current sorted index.
+    ///
+    /// The key is used for accessibility identity and remains stable when the
+    /// application reorders its row source.
+    pub fn row_key<F>(mut self, row_key: F) -> Self
+    where
+        F: Fn(usize) -> u64 + 'static,
+    {
+        self.row_key = Some(Box::new(row_key));
         self
     }
 
@@ -3481,6 +3684,14 @@ impl VirtualTable {
         self
     }
 
+    pub fn on_column_resize<F>(mut self, on_resize: F) -> Self
+    where
+        F: FnMut(usize, f32) + 'static,
+    {
+        self.on_column_resize = Some(Box::new(on_resize));
+        self
+    }
+
     pub fn on_near_end<F>(mut self, on_near_end: F) -> Self
     where
         F: FnMut() + 'static,
@@ -3507,6 +3718,35 @@ impl VirtualTable {
     fn resolved_row_height(&self) -> f32 {
         self.row_height
             .unwrap_or(self.resolved_theme().metrics.table_row_height)
+    }
+
+    fn row_height_at(&self, index: usize) -> f32 {
+        self.row_heights
+            .as_ref()
+            .and_then(|heights| heights.get(index).copied())
+            .unwrap_or_else(|| self.resolved_row_height())
+            .max(1.0)
+    }
+
+    fn sync_row_extents(&mut self) {
+        let default_height = self.resolved_row_height();
+        let needs_rebuild = self.row_extents.len() != self.row_count
+            || (self.row_heights.is_none()
+                && (self.row_extents_default_height - default_height).abs() > f32::EPSILON);
+        if needs_rebuild {
+            let heights = (0..self.row_count)
+                .map(|index| self.row_height_at(index))
+                .collect::<Vec<_>>();
+            self.row_extents.rebuild(heights);
+            self.row_extents_default_height = default_height;
+        }
+    }
+
+    fn resolved_row_key(&self, index: usize) -> u64 {
+        self.row_key
+            .as_ref()
+            .map(|row_key| row_key(index))
+            .unwrap_or(index as u64)
     }
 
     fn resolved_header_height(&self) -> f32 {
@@ -3539,12 +3779,40 @@ impl VirtualTable {
     }
 
     fn content_height(&self) -> f32 {
-        self.row_count as f32 * self.resolved_row_height()
+        if self.row_extents.len() == self.row_count {
+            self.row_extents.total()
+        } else {
+            self.row_count as f32 * self.resolved_row_height()
+        }
     }
 
     fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
         let max_scroll = (self.content_height() - viewport_height).max(0.0);
         scroll_y.clamp(0.0, max_scroll)
+    }
+
+    fn pinned_width(&self) -> f32 {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.pinned)
+            .map(|(index, column)| *self.column_widths.get(index).unwrap_or(&column.min_width))
+            .sum()
+    }
+
+    fn unpinned_content_width(&self) -> f32 {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| !column.pinned)
+            .map(|(index, column)| *self.column_widths.get(index).unwrap_or(&column.min_width))
+            .sum()
+    }
+
+    fn clamp_horizontal_scroll(&self, viewport_width: f32, scroll_x: f32) -> f32 {
+        let unpinned_viewport = (viewport_width - self.pinned_width()).max(0.0);
+        let max_scroll = (self.unpinned_content_width() - unpinned_viewport).max(0.0);
+        scroll_x.clamp(0.0, max_scroll)
     }
 
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -3553,8 +3821,9 @@ impl VirtualTable {
             return None;
         }
         let y = position.y - body.y() + self.scroll_y;
-        let index = (y / self.resolved_row_height()).floor() as usize;
-        (index < self.row_count).then_some(index)
+        self.row_extents
+            .index_at_offset(y)
+            .filter(|index| *index < self.row_count)
     }
 
     fn body_column_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -3562,15 +3831,9 @@ impl VirtualTable {
         if !body.contains(position) {
             return None;
         }
-        let mut x = body.x();
-        for (index, column) in self.columns.iter().enumerate() {
-            let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
-            if Rect::new(x, body.y(), width, body.height()).contains(position) {
-                return Some(index);
-            }
-            x += width;
-        }
-        None
+        self.column_rects(body)
+            .iter()
+            .position(|rect| rect.contains(position))
     }
 
     fn header_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -3578,16 +3841,9 @@ impl VirtualTable {
         if !header.contains(position) {
             return None;
         }
-        let mut x = header.x();
-        for (index, column) in self.columns.iter().enumerate() {
-            let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
-            let cell = Rect::new(x, header.y(), width, header.height());
-            if cell.contains(position) {
-                return Some(index);
-            }
-            x += width;
-        }
-        None
+        self.column_rects(header)
+            .iter()
+            .position(|rect| rect.contains(position))
     }
 
     fn resolve_column_widths(&mut self, ctx: &mut MeasureCtx, available_width: f32) {
@@ -3597,11 +3853,14 @@ impl VirtualTable {
             .columns
             .iter()
             .map(|column| {
-                column.width.unwrap_or(
+                let width = column.width.unwrap_or_else(|| {
                     (measure_text(ctx, &column.title, &header_style).width
                         + (theme.metrics.table_cell_padding * 2.0))
-                        .max(column.min_width),
-                )
+                        .max(column.min_width)
+                });
+                width
+                    .max(32.0)
+                    .min(column.max_width.unwrap_or(f32::INFINITY))
             })
             .collect();
 
@@ -3610,24 +3869,44 @@ impl VirtualTable {
         }
 
         let total = self.column_widths.iter().sum::<f32>();
-        if total < available_width {
-            let extra = (available_width - total) / self.column_widths.len() as f32;
-            for width in &mut self.column_widths {
-                *width += extra;
+        let flexible = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, column)| column.width.is_none().then_some(index))
+            .collect::<Vec<_>>();
+        if total < available_width && !flexible.is_empty() {
+            let extra = (available_width - total) / flexible.len() as f32;
+            for index in flexible {
+                self.column_widths[index] += extra;
             }
         }
     }
 
     fn column_rects(&self, row_rect: Rect) -> Vec<Rect> {
-        let mut x = row_rect.x();
+        let pinned_width = self.pinned_width().min(row_rect.width());
+        let unpinned_clip = Rect::new(
+            row_rect.x() + pinned_width,
+            row_rect.y(),
+            (row_rect.width() - pinned_width).max(0.0),
+            row_rect.height(),
+        );
+        let mut pinned_x = row_rect.x();
+        let mut unpinned_x = row_rect.x() + pinned_width - self.scroll_x;
         self.columns
             .iter()
             .enumerate()
             .map(|(index, column)| {
                 let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
-                let rect = Rect::new(x, row_rect.y(), width, row_rect.height());
-                x += width;
-                rect
+                if column.pinned {
+                    let rect = Rect::new(pinned_x, row_rect.y(), width, row_rect.height());
+                    pinned_x += width;
+                    rect.intersection(row_rect).unwrap_or(Rect::ZERO)
+                } else {
+                    let rect = Rect::new(unpinned_x, row_rect.y(), width, row_rect.height());
+                    unpinned_x += width;
+                    rect.intersection(unpinned_clip).unwrap_or(Rect::ZERO)
+                }
             })
             .collect()
     }
@@ -3643,6 +3922,87 @@ impl VirtualTable {
             self.last_click = Some((row_index, now));
             VirtualTableRowActivationKind::Single
         }
+    }
+
+    fn row_rect(&self, body: Rect, row_index: usize) -> Rect {
+        let row_y = body.y() + self.row_extents.offset_of(row_index) - self.scroll_y;
+        Rect::new(
+            body.x(),
+            row_y,
+            body.width(),
+            self.row_extents
+                .extent(row_index)
+                .unwrap_or_else(|| self.row_height_at(row_index)),
+        )
+    }
+
+    fn visible_row_range(&self, body: Rect) -> Range<usize> {
+        if self.row_count == 0 {
+            return 0..0;
+        }
+        let start = self.row_extents.index_at_offset(self.scroll_y).unwrap_or(0);
+        let end = self
+            .row_extents
+            .index_at_offset(self.scroll_y + body.height())
+            .map_or(self.row_count, |index| index + 2)
+            .min(self.row_count);
+        start..end
+    }
+
+    fn ensure_row_visible(&mut self, body_height: f32, row_index: usize) {
+        if row_index >= self.row_count {
+            return;
+        }
+        let top = self.row_extents.offset_of(row_index);
+        let bottom = top
+            + self
+                .row_extents
+                .extent(row_index)
+                .unwrap_or_else(|| self.row_height_at(row_index));
+        if top < self.scroll_y {
+            self.scroll_y = top;
+        } else if bottom > self.scroll_y + body_height {
+            self.scroll_y = bottom - body_height;
+        }
+        self.scroll_y = self.clamp_scroll(body_height, self.scroll_y);
+    }
+
+    fn column_separator_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
+        let header = self.header_rect(bounds);
+        if !header.contains(position) {
+            return None;
+        }
+        for (index, (column, rect)) in self
+            .columns
+            .iter()
+            .zip(self.column_rects(header))
+            .enumerate()
+        {
+            if !rect.is_empty() && column.resizable && (position.x - rect.max_x()).abs() <= 5.0 {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    fn resize_column(&mut self, resize: VirtualTableColumnResize, position_x: f32) -> bool {
+        let Some(column) = self.columns.get_mut(resize.column_index) else {
+            return false;
+        };
+        let maximum = column.max_width.unwrap_or(f32::INFINITY);
+        let width =
+            (resize.start_width + position_x - resize.start_x).clamp(column.min_width, maximum);
+        if (column.width.unwrap_or(resize.start_width) - width).abs() <= f32::EPSILON {
+            return false;
+        }
+        column.width = Some(width);
+        if let Some(current) = self.column_widths.get_mut(resize.column_index) {
+            *current = width;
+        }
+        if let Some(on_resize) = &mut self.on_column_resize {
+            on_resize(resize.column_index, width);
+        }
+        true
     }
 
     fn activate_row(&mut self, row_index: usize, column_index: Option<usize>) {
@@ -3688,6 +4048,20 @@ impl Widget for VirtualTable {
         let body = self.body_rect(bounds);
 
         match event {
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Move
+                    && self
+                        .column_resize
+                        .is_some_and(|resize| resize.pointer_id == pointer.pointer_id) =>
+            {
+                let resize = self.column_resize.expect("checked resize gesture");
+                if self.resize_column(resize, pointer.position.x) {
+                    ctx.request_measure();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                }
+                ctx.set_handled();
+            }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.row_at_position(bounds, pointer.position);
                 if self.hovered_row != hovered {
@@ -3703,9 +4077,13 @@ impl Widget for VirtualTable {
                     .scroll_delta
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
-                let next = self.clamp_scroll(body.height(), self.scroll_y - delta.y);
-                if (next - self.scroll_y).abs() > f32::EPSILON {
-                    self.scroll_y = next;
+                let next_y = self.clamp_scroll(body.height(), self.scroll_y - delta.y);
+                let next_x = self.clamp_horizontal_scroll(body.width(), self.scroll_x - delta.x);
+                if (next_y - self.scroll_y).abs() > f32::EPSILON
+                    || (next_x - self.scroll_x).abs() > f32::EPSILON
+                {
+                    self.scroll_y = next_y;
+                    self.scroll_x = next_x;
                     self.maybe_notify_near_end(body.height());
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -3716,7 +4094,21 @@ impl Widget for VirtualTable {
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary) =>
             {
-                if let Some(header) = self.header_at_position(bounds, pointer.position) {
+                if let Some(column_index) =
+                    self.column_separator_at_position(bounds, pointer.position)
+                {
+                    let start_width = self.column_widths[column_index];
+                    self.column_resize = Some(VirtualTableColumnResize {
+                        column_index,
+                        pointer_id: pointer.pointer_id,
+                        start_x: pointer.position.x,
+                        start_width,
+                    });
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.set_handled();
+                } else if let Some(header) = self.header_at_position(bounds, pointer.position) {
                     self.pressed_header = Some(header);
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
@@ -3736,6 +4128,17 @@ impl Widget for VirtualTable {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                if self
+                    .column_resize
+                    .take()
+                    .is_some_and(|resize| resize.pointer_id == pointer.pointer_id)
+                {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                    return;
+                }
                 let header = self.header_at_position(bounds, pointer.position);
                 if let Some(index) = self
                     .pressed_header
@@ -3773,7 +4176,10 @@ impl Widget for VirtualTable {
                 }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed_row.take().is_some() || self.pressed_header.take().is_some() {
+                if self.column_resize.take().is_some()
+                    || self.pressed_row.take().is_some()
+                    || self.pressed_header.take().is_some()
+                {
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
                     ctx.set_handled();
@@ -3789,15 +4195,54 @@ impl Widget for VirtualTable {
                 }
                 let current = self.resolved_selected().unwrap_or(0);
                 match key.key.as_str() {
-                    "ArrowUp" => self.activate_row(current.saturating_sub(1), None),
-                    "ArrowDown" => self.activate_row((current + 1).min(self.row_count - 1), None),
-                    "Home" => self.activate_row(0, None),
-                    "End" => self.activate_row(self.row_count - 1, None),
+                    "ArrowUp" => {
+                        let next = current.saturating_sub(1);
+                        self.activate_row(next, None);
+                        self.ensure_row_visible(body.height(), next);
+                    }
+                    "ArrowDown" => {
+                        let next = (current + 1).min(self.row_count - 1);
+                        self.activate_row(next, None);
+                        self.ensure_row_visible(body.height(), next);
+                    }
+                    "Home" => {
+                        self.activate_row(0, None);
+                        self.ensure_row_visible(body.height(), 0);
+                    }
+                    "End" => {
+                        let last = self.row_count - 1;
+                        self.activate_row(last, None);
+                        self.ensure_row_visible(body.height(), last);
+                    }
+                    "PageUp" => {
+                        self.scroll_y =
+                            self.clamp_scroll(body.height(), self.scroll_y - body.height() * 0.85);
+                    }
+                    "PageDown" => {
+                        self.scroll_y =
+                            self.clamp_scroll(body.height(), self.scroll_y + body.height() * 0.85);
+                    }
                     _ => return,
                 }
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let delta = match semantics.action {
+                    sui_core::SemanticsActionRequest::Increment => Some(body.height() * 0.85),
+                    sui_core::SemanticsActionRequest::Decrement => Some(-body.height() * 0.85),
+                    _ => None,
+                };
+                if let Some(delta) = delta {
+                    let next = self.clamp_scroll(body.height(), self.scroll_y + delta);
+                    if (next - self.scroll_y).abs() > f32::EPSILON {
+                        self.scroll_y = next;
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                    }
+                    ctx.set_handled();
+                }
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
                 self.advance_animations(*time, ctx);
@@ -3807,6 +4252,7 @@ impl Widget for VirtualTable {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_row_extents();
         let desired_width = if constraints.max.width.is_finite() {
             constraints.max.width
         } else {
@@ -3833,6 +4279,11 @@ impl Widget for VirtualTable {
                 .height(),
             self.scroll_y,
         );
+        self.scroll_x = self.clamp_horizontal_scroll(
+            self.body_rect(Rect::from_origin_size(Point::ZERO, size))
+                .width(),
+            self.scroll_x,
+        );
         size
     }
 
@@ -3844,7 +4295,6 @@ impl Widget for VirtualTable {
         let bounds = ctx.bounds();
         let body = self.body_rect(bounds);
         let header = self.header_rect(bounds);
-        let row_height = self.resolved_row_height();
         let selected = self.resolved_selected();
 
         draw_surface(ctx, bounds, &theme, self.focus_animation.value);
@@ -3853,10 +4303,26 @@ impl Widget for VirtualTable {
             palette.control,
         );
 
-        let mut x = header.x();
-        for (index, column) in self.columns.iter().enumerate() {
-            let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
-            let cell = Rect::new(x, header.y(), width, header.height());
+        let header_cells = self.column_rects(header);
+        let paint_order = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, column)| (!column.pinned).then_some(index))
+            .chain(
+                self.columns
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, column)| column.pinned.then_some(index)),
+            )
+            .collect::<Vec<_>>();
+        ctx.push_clip_rect(header);
+        for index in paint_order {
+            let column = &self.columns[index];
+            let cell = header_cells[index];
+            if cell.is_empty() {
+                continue;
+            }
             if index > 0 {
                 let separator_inset = metrics
                     .table_header_separator_inset
@@ -3884,17 +4350,12 @@ impl Widget for VirtualTable {
                 &header_style,
                 column.alignment,
             );
-            x += width;
         }
+        ctx.pop_clip();
 
         ctx.push_clip_rect(body);
-        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let end = (((self.scroll_y + body.height()) / row_height).ceil() as usize + 1)
-            .min(self.row_count);
-
-        for row_index in start..end {
-            let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
-            let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
+        for row_index in self.visible_row_range(body) {
+            let row_rect = self.row_rect(body, row_index);
             let row_selected = selected == Some(row_index);
             let row_hovered = self.hovered_row == Some(row_index);
             let row_pressed = self.pressed_row == Some(row_index);
@@ -3911,6 +4372,7 @@ impl Widget for VirtualTable {
             if let Some(painter) = &self.row_painter {
                 let row = VirtualTableRowContext {
                     row_index,
+                    row_key: self.resolved_row_key(row_index),
                     row_rect,
                     column_rects: &columns,
                     selected: row_selected,
@@ -3946,27 +4408,30 @@ impl Widget for VirtualTable {
             })
             .collect::<Vec<_>>();
         if !columns.is_empty() {
-            node.description = Some(format!("Columns: {}", columns.join(", ")));
+            let visible = self.visible_row_range(self.body_rect(ctx.bounds()));
+            node.description = Some(format!(
+                "Columns: {}; showing rows {} through {} of {}",
+                columns.join(", "),
+                visible.start.saturating_add(1).min(self.row_count),
+                visible.end.min(self.row_count),
+                self.row_count,
+            ));
         }
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        node.actions = vec![
+            SemanticsAction::Focus,
+            SemanticsAction::Increment,
+            SemanticsAction::Decrement,
+            SemanticsAction::SetValue,
+        ];
         ctx.push(node);
 
         let body = self.body_rect(ctx.bounds());
-        let row_height = self.resolved_row_height();
-        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let end = (((self.scroll_y + body.height()) / row_height).ceil() as usize + 1)
-            .min(self.row_count);
         let selected = self.resolved_selected();
-        for row_index in start..end {
-            let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
-            let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
+        for row_index in self.visible_row_range(body) {
+            let row_rect = self.row_rect(body, row_index);
+            let row_key = self.resolved_row_key(row_index);
             let mut row = SemanticsNode::new(
-                WidgetId::new(
-                    ctx.widget_id()
-                        .get()
-                        .wrapping_mul(67)
-                        .wrapping_add(row_index as u64),
-                ),
+                virtual_table_row_id(ctx.widget_id(), row_key),
                 SemanticsRole::ListItem,
                 row_rect,
             );
@@ -3975,7 +4440,15 @@ impl Widget for VirtualTable {
             row.description = self
                 .row_description
                 .as_ref()
-                .map(|description| description(row_index));
+                .map(|description| {
+                    format!(
+                        "{}; row {} of {}",
+                        description(row_index),
+                        row_index + 1,
+                        self.row_count
+                    )
+                })
+                .or_else(|| Some(format!("Row {} of {}", row_index + 1, self.row_count)));
             row.state.selected = selected == Some(row_index);
             row.state.hovered = self.hovered_row == Some(row_index);
             row.actions = vec![SemanticsAction::Activate];
@@ -4502,6 +4975,7 @@ impl Widget for Breadcrumb {
 
 #[derive(Debug, Clone, PartialEq)]
 struct TreeRow {
+    key: u64,
     path: Vec<usize>,
     depth: usize,
     label: String,
@@ -4515,6 +4989,7 @@ fn flatten_tree(items: &[TreeItem], depth: usize, path: &mut Vec<usize>, rows: &
     for (index, item) in items.iter().enumerate() {
         path.push(index);
         rows.push(TreeRow {
+            key: item.key.unwrap_or_else(|| tree_path_key(path.as_slice())),
             path: path.clone(),
             depth,
             label: item.label.clone(),
@@ -4528,6 +5003,21 @@ fn flatten_tree(items: &[TreeItem], depth: usize, path: &mut Vec<usize>, rows: &
         }
         path.pop();
     }
+}
+
+fn tree_path_key(path: &[usize]) -> u64 {
+    path.iter().fold(0xcbf2_9ce4_8422_2325, |hash, index| {
+        (hash ^ (*index as u64).wrapping_add(1)).wrapping_mul(0x1000_0000_01b3)
+    })
+}
+
+fn tree_view_row_id(parent: WidgetId, key: u64) -> WidgetId {
+    const TAG: u64 = 8_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+    let mixed = key
+        .wrapping_add(parent.get().rotate_left(23))
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    WidgetId::new(TAG | ((mixed ^ (mixed >> 29)) & LOW_MASK))
 }
 
 fn tree_item<'a>(items: &'a [TreeItem], path: &[usize]) -> Option<&'a TreeItem> {
@@ -4600,7 +5090,12 @@ fn chevron_path(rect: Rect) -> Path {
     builder.build()
 }
 
-fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, _focus_progress: f32) {
+pub(crate) fn draw_surface(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    theme: &DefaultTheme,
+    _focus_progress: f32,
+) {
     let palette = theme.palette;
     let metrics = theme.metrics;
     ctx.fill(
@@ -5363,7 +5858,7 @@ fn data_row_state_fill(
     }
 }
 
-fn paint_data_row_state(
+pub(crate) fn paint_data_row_state(
     ctx: &mut PaintCtx,
     row: Rect,
     viewport: Rect,
@@ -5416,6 +5911,18 @@ fn list_view_row_id(parent: WidgetId, index: usize) -> WidgetId {
             .wrapping_add(index as u64 + 1)
             & LOW_MASK),
     )
+}
+
+fn virtual_table_row_id(parent: WidgetId, row_key: u64) -> WidgetId {
+    const TAG: u64 = 7_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+
+    let mixed = row_key
+        .wrapping_add(0x9e37_79b9_7f4a_7c15)
+        .wrapping_add(parent.get().rotate_left(17));
+    let mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    WidgetId::new(TAG | ((mixed ^ (mixed >> 31)) & LOW_MASK))
 }
 
 fn layer_list_row_id(parent: WidgetId, index: usize) -> WidgetId {
@@ -5638,7 +6145,8 @@ mod tests {
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
-        SemanticsRole, SemanticsValue, Size, ToggleState, Vector, WidgetId, WindowEvent,
+        SemanticsActionRequest, SemanticsRole, SemanticsValue, Size, ToggleState, Vector, WidgetId,
+        WindowEvent,
     };
     use sui_layout::{Constraints, Padding as Insets};
     use sui_runtime::{Application, PaintCtx, RenderOutput, Runtime, Widget, WindowBuilder};
@@ -7480,6 +7988,59 @@ mod tests {
     }
 
     #[test]
+    fn tree_view_keyed_rows_support_accessible_expansion_and_activation() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(140.0).with_child(
+                TreeView::new("Scene")
+                    .item(
+                        TreeItem::new("Root")
+                            .key(42)
+                            .with_child(TreeItem::new("Child").key(7)),
+                    )
+                    .on_change(move |path, label| on_change.borrow_mut().push((path, label))),
+            ),
+        );
+        let before = runtime.render(window_id)?;
+        let root = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Root")
+            })
+            .expect("root tree item");
+        let root_id = root.id;
+        assert!(root.actions.contains(&SemanticsAction::Expand));
+
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            root_id,
+            SemanticsActionRequest::Expand,
+        )?);
+        let expanded = runtime.render(window_id)?;
+        let expanded_root = expanded
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Root"))
+            .expect("expanded root");
+        assert_eq!(expanded_root.id, root_id);
+        let child = expanded
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Child"))
+            .expect("child tree item");
+
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            child.id,
+            SemanticsActionRequest::Activate,
+        )?);
+        assert!(changes.borrow().iter().any(|(_, label)| label == "Child"));
+        Ok(())
+    }
+
+    #[test]
     fn table_keyboard_selects_next_row() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
@@ -7543,7 +8104,9 @@ mod tests {
             table.value,
             Some(SemanticsValue::Text("100 rows".to_string()))
         );
-        assert_eq!(table.description.as_deref(), Some("Columns: Name, Kind"));
+        assert!(table.description.as_deref().is_some_and(|description| {
+            description.contains("Columns: Name, Kind") && description.contains("of 100")
+        }));
 
         let rows = output
             .semantics
@@ -7557,7 +8120,175 @@ mod tests {
             rows.len()
         );
         assert_eq!(rows[0].name.as_deref(), Some("Row 0"));
-        assert_eq!(rows[0].description.as_deref(), Some("File row 0"));
+        assert_eq!(
+            rows[0].description.as_deref(),
+            Some("File row 0; row 1 of 100")
+        );
+    }
+
+    #[test]
+    fn virtual_table_supports_variable_row_heights() {
+        let output = render(
+            SizedBox::new().width(360.0).height(180.0).with_child(
+                VirtualTable::new("Variable rows")
+                    .columns([VirtualTableColumn::new("Name")])
+                    .row_count(3)
+                    .row_heights([20.0, 44.0, 28.0])
+                    .row_name(|index| format!("Row {index}")),
+            ),
+        );
+        let rows = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticsRole::ListItem)
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].bounds.height(), 20.0);
+        assert_eq!(rows[1].bounds.height(), 44.0);
+        assert_eq!(rows[2].bounds.height(), 28.0);
+        assert_eq!(rows[1].bounds.y(), rows[0].bounds.max_y());
+    }
+
+    #[test]
+    fn virtual_table_row_keys_stabilize_semantics_across_reordering() -> Result<()> {
+        let keys = Rc::new(RefCell::new(vec![42_u64, 7]));
+        let key_reader = Rc::clone(&keys);
+        let name_reader = Rc::clone(&keys);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(140.0).with_child(
+                VirtualTable::new("Keyed rows")
+                    .columns([VirtualTableColumn::new("Name")])
+                    .row_count(2)
+                    .row_key(move |index| key_reader.borrow()[index])
+                    .row_name(move |index| format!("Row {}", name_reader.borrow()[index])),
+            ),
+        );
+        let before = runtime.render(window_id)?;
+        let before_id = before
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Row 42"))
+            .expect("row 42 semantics")
+            .id;
+
+        keys.borrow_mut().swap(0, 1);
+        runtime.handle_event(
+            window_id,
+            Event::Pointer(PointerEvent::new(
+                PointerEventKind::Move,
+                Point::new(20.0, 80.0),
+            )),
+        )?;
+        let after = runtime.render(window_id)?;
+        let after_id = after
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Row 42"))
+            .expect("reordered row 42 semantics")
+            .id;
+        assert_eq!(before_id, after_id);
+        Ok(())
+    }
+
+    #[test]
+    fn virtual_table_column_separator_drag_resizes_column() -> Result<()> {
+        let resized = Rc::new(RefCell::new(Vec::new()));
+        let resize_events = Rc::clone(&resized);
+        let theme = DefaultTheme::default();
+        let width = 360.0;
+        let padding = theme.metrics.data_viewport_padding;
+        let available = width - padding.left - padding.right;
+        let separator_x = padding.left + available - 80.0;
+        let header_y = padding.top + theme.metrics.table_header_height * 0.5;
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(width).height(140.0).with_child(
+                VirtualTable::new("Resizable")
+                    .theme(theme)
+                    .columns([
+                        VirtualTableColumn::new("Name").min_width(120.0),
+                        VirtualTableColumn::new("Kind").width(80.0).resizable(false),
+                    ])
+                    .row_count(2)
+                    .on_column_resize(move |index, width| {
+                        resize_events.borrow_mut().push((index, width));
+                    }),
+            ),
+        );
+        runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(
+                PointerEventKind::Down,
+                Point::new(separator_x, header_y),
+                true,
+            ),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(
+                PointerEventKind::Move,
+                Point::new(separator_x + 32.0, header_y),
+                true,
+            ),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(
+                PointerEventKind::Up,
+                Point::new(separator_x + 32.0, header_y),
+                false,
+            ),
+        )?;
+
+        let events = resized.borrow();
+        assert!(!events.is_empty());
+        assert_eq!(events.last().map(|event| event.0), Some(0));
+        assert!(
+            events
+                .last()
+                .is_some_and(|event| event.1 > available - 80.0)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn virtual_table_pinned_columns_hold_position_during_horizontal_scroll() -> Result<()> {
+        let painted = Rc::new(RefCell::new(Vec::<Vec<Rect>>::new()));
+        let row_rects = Rc::clone(&painted);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(220.0).height(140.0).with_child(
+                VirtualTable::new("Pinned")
+                    .columns([
+                        VirtualTableColumn::new("Name").width(100.0).pinned(true),
+                        VirtualTableColumn::new("Kind").width(100.0),
+                        VirtualTableColumn::new("Status").width(100.0),
+                    ])
+                    .row_count(2)
+                    .row_painter(move |_ctx, row| {
+                        if row.row_index == 0 {
+                            row_rects.borrow_mut().push(row.column_rects.to_vec());
+                        }
+                    }),
+            ),
+        );
+        runtime.render(window_id)?;
+        let before = painted.borrow().last().cloned().expect("first row painted");
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(120.0, 80.0), Vector::new(-80.0, 0.0)),
+        )?;
+        runtime.render(window_id)?;
+        let after = painted
+            .borrow()
+            .last()
+            .cloned()
+            .expect("scrolled row painted");
+
+        assert_eq!(before[0].x(), after[0].x());
+        assert!(after[1].width() < before[1].width());
+        assert!(after[2].x() < before[2].x());
+        Ok(())
     }
 
     #[test]

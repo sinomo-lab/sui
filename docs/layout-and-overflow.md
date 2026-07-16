@@ -36,7 +36,13 @@ Text and other wrapping content should usually receive a finite width so it can 
 
 `Scroll` and `Auto` currently share the same core layout and input behavior. When content actually exceeds the viewport, `ScrollView` paints interactive scroll bars over the content without reserving layout space. Mouse wheels, trackpad scrolling, keyboard navigation, scroll-bar dragging, accessibility range actions, and direct touch panning all update the same scroll state. Touch panning waits for a short drag threshold and hands an exhausted gesture to an enclosing scroll view, so nested scrolling remains inner-first.
 
-`VirtualScrollView` provides the same built-in vertical overlay and touch behavior while continuing to arrange and paint only its visible rows. To use a permanently allocated gutter instead, share a `ScrollState` with a standalone `ScrollBar` and call `.overlay_scroll_bars(false)` on the scroll view to avoid duplicate controls.
+`VirtualScrollView` provides the same built-in vertical overlay and touch
+behavior while arranging, visiting, and painting only its visible rows. It
+still owns and measures every static child. Use `VirtualList` for data-backed
+keyed realization where off-screen rows should not be constructed. To use a
+permanently allocated gutter instead, share a `ScrollState` with a standalone
+`ScrollBar` and call `.overlay_scroll_bars(false)` on the scroll view to avoid
+duplicate controls.
 
 ## ScrollView Sizing
 

@@ -17,19 +17,22 @@ that keeps application code on the narrowest and most stable surface.
 2. [Widgets and layout](widgets-and-layout.md) covers the built-in widget
    families and the `Stack`, `Flex`, constraint, scrolling, and responsive
    layout contracts.
-3. [Input and text editing](input-and-editing.md) covers editable fields,
+3. [Virtual collections](virtual-collections.md) covers keyed incremental
+   models, variable-height realization, anchoring, follow-end, row retention,
+   virtual tables, and tree accessibility.
+4. [Input and text editing](input-and-editing.md) covers editable fields,
    selection, clipboard commands, IME, form state, and security boundaries.
-4. [State, events, and background work](state-events-and-async.md) explains
+5. [State, events, and background work](state-events-and-async.md) explains
    retained local state, external reader/callback state, invalidation, timers,
    animation frames, and `UiHandle`.
-5. [Themes and resources](themes-and-resources.md) shows static and live
+6. [Themes and resources](themes-and-resources.md) shows static and live
    themes, control sizing, typed theme extensions, fonts, images, and icons.
-6. [Custom widgets](custom-widgets.md) walks through the `Widget` lifecycle,
+7. [Custom widgets](custom-widgets.md) walks through the `Widget` lifecycle,
    accessible interaction, painting, and child ownership.
-7. [Testing and accessibility](testing-and-accessibility.md) uses
+8. [Testing and accessibility](testing-and-accessibility.md) uses
    `sinomo-ui-testing` for semantics-first, deterministic interaction tests and
    explains the public accessibility contract.
-8. [Platforms and Cargo features](platforms-and-features.md) lists the
+9. [Platforms and Cargo features](platforms-and-features.md) lists the
    supported execution surfaces, feature gates, and current caveats.
 
 ## Which API Level Should I Use?

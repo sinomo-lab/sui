@@ -1587,6 +1587,10 @@ classification = "bound"
 bindings = ["TreeView"]
 
 [[rust_widget]]
+name = "VirtualList"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "VirtualScrollView"
 classification = "bound"
 bindings = ["VirtualScrollView"]
