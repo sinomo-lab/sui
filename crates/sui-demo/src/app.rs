@@ -61,14 +61,16 @@ const WINDOW_TITLE: &str = "SUI Demo";
 const WINDOW_DESCRIPTION: &str =
     "Browser-style development workspace for the widget book and focused performance demos.";
 #[cfg(any(target_arch = "wasm32", test))]
+// Keep these tiny subsets in the module for fast built-in samples and as a
+// fallback when the browser cannot fetch the complete fonts copied by Trunk.
 const DEV_WEB_FALLBACK_FONTS: &[(&str, &[u8])] = &[
     (
         "Noto Sans CJK SC",
-        include_bytes!("../assets/NotoSansCJKsc-Regular.otf"),
+        include_bytes!("../assets/NotoSansCJKsc-DemoSubset.otf"),
     ),
     (
         "Noto Color Emoji",
-        include_bytes!("../assets/NotoColorEmoji.ttf"),
+        include_bytes!("../assets/NotoColorEmoji-DemoSubset.ttf"),
     ),
 ];
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
@@ -3131,7 +3133,7 @@ mod tests {
     const FRONTING_TEST_TITLE: &str = "Fronting test";
 
     #[test]
-    fn dev_web_fallback_fonts_shape_cjk_and_emoji_samples() {
+    fn embedded_dev_web_font_subsets_shape_cjk_and_emoji_samples() {
         let cjk_handle = sui::FontHandle::new(41_001);
         let emoji_handle = sui::FontHandle::new(41_002);
         let mut fonts = sui::FontRegistry::new();
@@ -3147,7 +3149,7 @@ mod tests {
         let text_system = sui_text::TextSystem::new();
         let cjk_layout = text_system
             .shape_text(
-                "你好 日本語 한국어",
+                "你好 日本語 한국어 中文 候補を",
                 sui::Size::new(360.0, 32.0),
                 sui::TextStyle {
                     font: Some(cjk_handle),

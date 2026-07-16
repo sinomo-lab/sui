@@ -3059,6 +3059,58 @@ pub fn run_desktop() -> sui::Result<()> {
 use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
+const DEV_WEB_FONT_URLS: &[(&str, &str)] = &[
+    ("Noto Sans CJK SC", "NotoSansCJKsc-Regular.otf"),
+    ("Noto Color Emoji", "NotoColorEmoji.ttf"),
+];
+
+#[cfg(target_arch = "wasm32")]
+async fn load_dev_web_fonts() -> Vec<(&'static str, Vec<u8>)> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let Some(window) = web_sys::window() else {
+        web_sys::console::warn_1(&JsValue::from_str(
+            "SUI could not load external fonts because no browser window is available",
+        ));
+        return Vec::new();
+    };
+
+    // Calling fetch for every font before awaiting starts both downloads in parallel.
+    let pending = DEV_WEB_FONT_URLS
+        .iter()
+        .map(|&(name, url)| (name, url, window.fetch_with_str(url)))
+        .collect::<Vec<_>>();
+    let mut fonts = Vec::with_capacity(pending.len());
+
+    for (name, url, response) in pending {
+        let result: Result<Vec<u8>, JsValue> = async {
+            let response = JsFuture::from(response)
+                .await?
+                .dyn_into::<web_sys::Response>()?;
+            if !response.ok() {
+                return Err(JsValue::from_str(&format!(
+                    "HTTP {} while fetching {url}",
+                    response.status()
+                )));
+            }
+            let buffer = JsFuture::from(response.array_buffer()?).await?;
+            Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+        }
+        .await;
+
+        match result {
+            Ok(bytes) => fonts.push((name, bytes)),
+            Err(error) => web_sys::console::warn_1(&JsValue::from_str(&format!(
+                "SUI could not load the {name} web font from {url}; the demo subset will be used: {error:?}"
+            ))),
+        }
+    }
+
+    fonts
+}
+
+#[cfg(target_arch = "wasm32")]
 fn current_web_launch_mode() -> WebLaunchMode {
     let query = web_sys::window()
         .and_then(|window| window.location().search().ok())
@@ -3269,10 +3321,17 @@ pub fn sui_web_non_hdr_canvas_capture_url() -> String {
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
-pub fn start() -> Result<(), JsValue> {
+pub async fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
     let mode = current_web_launch_mode();
-    build_application_for_web_mode(&mode)
+    let fonts = load_dev_web_fonts().await;
+    let mut application = build_application_for_web_mode(&mode);
+    for (name, bytes) in fonts {
+        application.register_font_bytes(bytes).map_err(|error| {
+            JsValue::from_str(&format!("could not register the {name} web font: {error}"))
+        })?;
+    }
+    application
         .run()
         .map_err(|error| JsValue::from_str(&error.to_string()))
 }

@@ -58,8 +58,10 @@ sui-tui = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
+js-sys = { workspace = true }
 wasm-bindgen = { workspace = true }
-web-sys = { workspace = true, features = ["Window", "Location", "Document", "Navigator", "HtmlCollection", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData"] }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = ["console", "Window", "Location", "Document", "Navigator", "HtmlCollection", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Response"] }
 
 [dev-dependencies]
 png = "0.17"

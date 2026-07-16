@@ -3139,6 +3139,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "crossterm 0.29.0",
+ "js-sys",
  "png 0.17.16",
  "pulldown-cmark",
  "ratatui",
@@ -3152,6 +3153,7 @@ dependencies = [
  "sinomo-ui-text",
  "sinomo-ui-tui",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "winit",
 ]

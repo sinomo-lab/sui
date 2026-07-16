@@ -1,0 +1,77 @@
+name: Deploy SUI demo to Pages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Install the WebAssembly target and Trunk
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install --locked trunk --version 0.21.14
+
+      - name: Build the web demo
+        run: >-
+          trunk build
+          --config crates/sui-demo/web/Trunk.toml
+          --release
+          --locked
+          --filehash true
+          --public-url "${{ steps.pages.outputs.base_path }}/"
+
+      - name: Enforce the web demo size budget
+        shell: bash
+        run: |
+          wasm_file=$(find crates/sui-demo/web/dist -maxdepth 1 -name '*.wasm' -print -quit)
+          if [[ -z "$wasm_file" ]]; then
+            echo '::error::The Trunk build did not produce a WebAssembly module.'
+            exit 1
+          fi
+
+          wasm_bytes=$(wc -c < "$wasm_file")
+          wasm_limit=$((12 * 1024 * 1024))
+          echo "WebAssembly size: $wasm_bytes bytes (budget: $wasm_limit bytes)"
+          if (( wasm_bytes > wasm_limit )); then
+            echo "::error::WebAssembly bundle exceeds the 12 MiB Pages budget."
+            exit 1
+          fi
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: crates/sui-demo/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
