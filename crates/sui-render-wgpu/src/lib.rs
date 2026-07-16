@@ -4792,6 +4792,13 @@ fn segment_distance(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // Derivatives must be evaluated before path-indexed storage-buffer access introduces
+    // potentially non-uniform control flow. The larger scene-space pixel axis gives a stable
+    // one-physical-pixel coverage transition without the sqrt(2) over-blur of combining axes.
+    let scene_dx = dpdx(in.scene_position);
+    let scene_dy = dpdy(in.scene_position);
+    let derivative_width = max(max(length(scene_dx), length(scene_dy)), 1e-4);
+
     let path_meta = path_metas[in.path_index];
     if path_meta.contour_count == 0u {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -4835,8 +4842,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
 
-    let distance_gradient = vec2<f32>(dpdx(min_distance), dpdy(min_distance));
-    let derivative_width = max(length(distance_gradient), 1e-4);
     let feather = max(path_meta.feather_width, derivative_width);
     var coverage = 0.0;
 
@@ -7000,10 +7005,33 @@ mod tests {
     fn analytic_path_fill_shader_uses_symmetric_signed_distance() {
         assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("let signed_distance"));
         assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("0.5 - (signed_distance"));
-        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("dpdx(min_distance)"));
-        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("dpdy(min_distance)"));
+        let derivative = ANALYTIC_PATH_SHADER_SOURCE
+            .find("let scene_dx = dpdx(in.scene_position)")
+            .expect("analytic shader should derive AA width from scene position");
+        let path_lookup = ANALYTIC_PATH_SHADER_SOURCE
+            .find("let path_meta = path_metas[in.path_index]")
+            .expect("analytic shader should load path metadata");
+        assert!(
+            derivative < path_lookup,
+            "derivatives must precede path-indexed non-uniform control flow"
+        );
+        assert!(ANALYTIC_PATH_SHADER_SOURCE.contains("let scene_dy = dpdy(in.scene_position)"));
+        assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("dpdx(min_distance)"));
+        assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("dpdy(min_distance)"));
         assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("fwidth(point.x)"));
         assert!(!ANALYTIC_PATH_SHADER_SOURCE.contains("1.0 - (min_distance"));
+    }
+
+    #[test]
+    fn analytic_path_shader_passes_wgsl_uniformity_validation() {
+        let module = naga::front::wgsl::parse_str(ANALYTIC_PATH_SHADER_SOURCE)
+            .expect("analytic path WGSL should parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("analytic path WGSL should satisfy uniform-control-flow validation");
     }
 
     #[test]

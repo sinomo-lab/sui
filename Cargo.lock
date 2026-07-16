@@ -3232,6 +3232,7 @@ dependencies = [
  "half",
  "lyon_path",
  "lyon_tessellation",
+ "naga",
  "pollster",
  "sinomo-ui-core",
  "sinomo-ui-scene",
