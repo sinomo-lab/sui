@@ -396,6 +396,7 @@ pub(crate) struct RetainedCompositorState {
     pub(crate) next_clip_node: u64,
     pub(crate) next_effect_node: u64,
     pub(crate) viewport: Size,
+    pub(crate) surface_size: Size,
     pub(crate) feather_width_bits: u32,
     pub(crate) frame_index: u64,
     pub(crate) last_frame_stats: RetainedCompositorFrameStats,
@@ -416,6 +417,7 @@ impl Default for RetainedCompositorState {
             next_clip_node: 0,
             next_effect_node: 0,
             viewport: Size::ZERO,
+            surface_size: Size::ZERO,
             feather_width_bits: 0,
             frame_index: 0,
             last_frame_stats: RetainedCompositorFrameStats::default(),
@@ -443,9 +445,11 @@ impl RetainedCompositorState {
     ) -> Result<DrawOpArena> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
         let composition_started = self.diagnostics_enabled.then(Instant::now);
-        let draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
+        let mut draw_ops = self.compose_draw_ops(frame.viewport, &mut frame_stats)?;
+        draw_ops.finalize_image_draws(frame.viewport, frame.surface_size);
         self.finish_frame(
             frame.viewport,
+            frame.surface_size,
             feather_width,
             &mut frame_stats,
             composition_started,
@@ -461,9 +465,17 @@ impl RetainedCompositorState {
     ) -> Result<RetainedFrameSubmission> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
         let composition_started = self.diagnostics_enabled.then(Instant::now);
-        let submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
+        let mut submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
+        for fragment in &mut submission.fragments {
+            match fragment {
+                RetainedFrameFragment::Transient(draw_ops) => {
+                    draw_ops.finalize_image_draws(frame.viewport, frame.surface_size);
+                }
+            }
+        }
         self.finish_frame(
             frame.viewport,
+            frame.surface_size,
             feather_width,
             &mut frame_stats,
             composition_started,
@@ -478,6 +490,7 @@ impl RetainedCompositorState {
         feather_width: f32,
     ) -> Result<RetainedCompositorFrameStats> {
         let viewport_changed = self.viewport != frame.viewport;
+        let surface_size_changed = self.surface_size != frame.surface_size;
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
         self.frame_index = self.frame_index.wrapping_add(1);
         let mut frame_stats = RetainedCompositorFrameStats::default();
@@ -492,7 +505,7 @@ impl RetainedCompositorState {
             snapshot,
             text_engine,
             feather_width,
-            viewport_changed || feather_changed,
+            viewport_changed || surface_size_changed || feather_changed,
             &mut frame_stats,
         )?;
         if let Some(started) = state_update_started {
@@ -504,6 +517,7 @@ impl RetainedCompositorState {
     fn finish_frame(
         &mut self,
         viewport: Size,
+        surface_size: Size,
         feather_width: f32,
         frame_stats: &mut RetainedCompositorFrameStats,
         composition_started: Option<Instant>,
@@ -515,6 +529,7 @@ impl RetainedCompositorState {
             self.last_frame_stats = RetainedCompositorFrameStats::default();
         }
         self.viewport = viewport;
+        self.surface_size = surface_size;
         self.feather_width_bits = feather_width.to_bits();
     }
 
@@ -940,6 +955,7 @@ impl RetainedCompositorState {
             &snapshot.scene,
             &snapshot.initial_state,
             frame.viewport,
+            frame.surface_size,
             feather_width,
         );
         let signature_time_ms = signature_started
@@ -1568,6 +1584,7 @@ fn packet_signature(
     scene: &Scene,
     initial_state: &ResolvedRasterState,
     viewport: Size,
+    surface_size: Size,
     feather_width: f32,
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -1576,6 +1593,8 @@ fn packet_signature(
     initial_state.signature().hash(&mut hasher);
     viewport.width.to_bits().hash(&mut hasher);
     viewport.height.to_bits().hash(&mut hasher);
+    surface_size.width.to_bits().hash(&mut hasher);
+    surface_size.height.to_bits().hash(&mut hasher);
     feather_width.to_bits().hash(&mut hasher);
     hasher.finish()
 }
@@ -1606,6 +1625,8 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             hash_rect(hasher, *rect);
             hash_brush(brush, hasher);
             stroke.width.to_bits().hash(hasher);
+            stroke.cap.hash(hasher);
+            stroke.join.hash(hasher);
         }
         SceneCommand::FillPath { path, brush } => {
             3u8.hash(hasher);
@@ -1621,6 +1642,8 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             hash_path(path, Transform::IDENTITY).hash(hasher);
             hash_brush(brush, hasher);
             stroke.width.to_bits().hash(hasher);
+            stroke.cap.hash(hasher);
+            stroke.join.hash(hasher);
         }
         SceneCommand::DrawText(text) => {
             5u8.hash(hasher);
@@ -1651,6 +1674,7 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             hash_rect(hasher, *rect);
             source.image.get().hash(hasher);
             source.sampling.hash(hasher);
+            source.pixel_snap.hash(hasher);
             source
                 .source_rect
                 .map(|rect| {
@@ -1673,6 +1697,7 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
             }
             source.image.get().hash(hasher);
             source.sampling.hash(hasher);
+            source.pixel_snap.hash(hasher);
             source
                 .source_rect
                 .map(|rect| {
@@ -2001,6 +2026,7 @@ mod tests {
             &packet.scene,
             &packet.initial_state,
             compositor.viewport,
+            compositor.surface_size,
             f32::from_bits(compositor.feather_width_bits),
         )
     }

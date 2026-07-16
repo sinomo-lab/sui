@@ -21,5 +21,9 @@ sui-core = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 
+[build-dependencies]
+roxmltree = "0.20"
+svgtypes = "0.16"
+
 [dev-dependencies]
 sui-layout = { workspace = true }

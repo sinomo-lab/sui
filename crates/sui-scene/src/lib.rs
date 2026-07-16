@@ -56,20 +56,52 @@ impl From<Color> for Brush {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum StrokeCap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum StrokeJoin {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StrokeStyle {
     pub width: f32,
+    pub cap: StrokeCap,
+    pub join: StrokeJoin,
 }
 
 impl StrokeStyle {
     pub const fn new(width: f32) -> Self {
-        Self { width }
+        Self {
+            width,
+            cap: StrokeCap::Butt,
+            join: StrokeJoin::Miter,
+        }
+    }
+
+    pub const fn with_cap(mut self, cap: StrokeCap) -> Self {
+        self.cap = cap;
+        self
+    }
+
+    pub const fn with_join(mut self, join: StrokeJoin) -> Self {
+        self.join = join;
+        self
     }
 }
 
 impl Default for StrokeStyle {
     fn default() -> Self {
-        Self { width: 1.0 }
+        Self::new(1.0)
     }
 }
 
@@ -79,6 +111,7 @@ pub struct ImageSource {
     pub source_rect: Option<Rect>,
     pub tint: Option<Color>,
     pub sampling: ImageSampling,
+    pub pixel_snap: ImagePixelSnap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -88,6 +121,13 @@ pub enum ImageSampling {
     Linear,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ImagePixelSnap {
+    None,
+    #[default]
+    Physical,
+}
+
 impl ImageSource {
     pub const fn new(image: ImageHandle) -> Self {
         Self {
@@ -95,6 +135,7 @@ impl ImageSource {
             source_rect: None,
             tint: None,
             sampling: ImageSampling::Linear,
+            pixel_snap: ImagePixelSnap::Physical,
         }
     }
 
@@ -110,6 +151,11 @@ impl ImageSource {
 
     pub const fn with_sampling(mut self, sampling: ImageSampling) -> Self {
         self.sampling = sampling;
+        self
+    }
+
+    pub const fn with_pixel_snap(mut self, pixel_snap: ImagePixelSnap) -> Self {
+        self.pixel_snap = pixel_snap;
         self
     }
 }
@@ -1124,6 +1170,7 @@ pub struct RegisteredImage {
     width: u32,
     height: u32,
     format: RegisteredImageFormat,
+    svg: Option<Arc<[u8]>>,
 }
 
 /// Renderer-neutral metadata for an image whose pixels are owned outside the
@@ -1164,14 +1211,20 @@ impl RegisteredImage {
     }
 
     pub fn from_svg(svg: impl AsRef<[u8]>) -> Result<Self> {
-        let tree = parse_svg_image(svg.as_ref())?;
+        let svg = Arc::<[u8]>::from(svg.as_ref());
+        let tree = parse_svg_image(&svg)?;
         let size = tree.size().to_int_size();
-        Self::from_svg_tree_at_size(&tree, size.width(), size.height())
+        let mut image = Self::from_svg_tree_at_size(&tree, size.width(), size.height())?;
+        image.svg = Some(svg);
+        Ok(image)
     }
 
     pub fn from_svg_at_size(width: u32, height: u32, svg: impl AsRef<[u8]>) -> Result<Self> {
-        let tree = parse_svg_image(svg.as_ref())?;
-        Self::from_svg_tree_at_size(&tree, width, height)
+        let svg = Arc::<[u8]>::from(svg.as_ref());
+        let tree = parse_svg_image(&svg)?;
+        let mut image = Self::from_svg_tree_at_size(&tree, width, height)?;
+        image.svg = Some(svg);
+        Ok(image)
     }
 
     pub fn from_pixels(
@@ -1198,6 +1251,7 @@ impl RegisteredImage {
             width,
             height,
             format,
+            svg: None,
         })
     }
 
@@ -1215,6 +1269,22 @@ impl RegisteredImage {
 
     pub const fn format(&self) -> RegisteredImageFormat {
         self.format
+    }
+
+    pub fn is_svg(&self) -> bool {
+        self.svg.is_some()
+    }
+
+    pub fn svg_bytes(&self) -> Option<&[u8]> {
+        self.svg.as_deref()
+    }
+
+    pub fn rasterize_svg_at_size(&self, width: u32, height: u32) -> Result<Option<Self>> {
+        let Some(svg) = &self.svg else {
+            return Ok(None);
+        };
+        let tree = parse_svg_image(svg)?;
+        Self::from_svg_tree_at_size(&tree, width, height).map(Some)
     }
 
     fn from_svg_tree_at_size(tree: &resvg::usvg::Tree, width: u32, height: u32) -> Result<Self> {
@@ -1599,6 +1669,15 @@ mod tests {
         assert_eq!(image.format(), RegisteredImageFormat::Rgba8);
         assert_eq!(image.bytes().len(), 4 * 2 * 4);
         assert_eq!(&image.bytes()[0..4], &[0x33, 0x66, 0x99, 0xff]);
+        assert!(image.is_svg());
+        assert_eq!(image.svg_bytes(), Some(svg.as_slice()));
+
+        let larger = image
+            .rasterize_svg_at_size(12, 6)
+            .unwrap()
+            .expect("retained SVG should rerasterize");
+        assert_eq!((larger.width(), larger.height()), (12, 6));
+        assert!(!larger.is_svg());
     }
 
     #[test]

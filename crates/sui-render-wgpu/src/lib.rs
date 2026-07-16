@@ -1076,7 +1076,7 @@ pub struct WgpuRenderer {
     last_frame_stats: HashMap<WindowId, RendererFrameStats>,
     shared: Option<SharedRenderer>,
     text_engine: Option<TextEngine>,
-    image_cache: HashMap<ImageHandle, CachedImageTexture>,
+    image_cache: HashMap<ImageTextureCacheKey, CachedImageTexture>,
     external_texture_registry: Option<WgpuExternalTextureRegistry>,
     external_image_cache: HashMap<ImageHandle, CachedExternalTextureBindGroup>,
     text_atlas_array: Option<CachedTextAtlasTexture>,
@@ -1240,6 +1240,100 @@ impl HdrRgbaImage {
 
 const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const DEFAULT_FEATHER_WIDTH: f32 = 0.0;
+
+struct ImageMipLevel {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+fn image_mip_level_count(width: u32, height: u32) -> u32 {
+    width.max(height).max(1).ilog2() + 1
+}
+
+fn image_mip_chain(image: &RegisteredImage, mipmapped: bool) -> Vec<ImageMipLevel> {
+    let mut levels = vec![ImageMipLevel {
+        width: image.width(),
+        height: image.height(),
+        pixels: image.bytes().to_vec(),
+    }];
+    if !mipmapped {
+        return levels;
+    }
+
+    while let Some(previous) = levels.last() {
+        if previous.width == 1 && previous.height == 1 {
+            break;
+        }
+        levels.push(downsample_rgba8_srgb(previous));
+    }
+    levels
+}
+
+fn downsample_rgba8_srgb(source: &ImageMipLevel) -> ImageMipLevel {
+    let width = (source.width / 2).max(1);
+    let height = (source.height / 2).max(1);
+    let mut pixels = vec![0; width as usize * height as usize * 4];
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut premultiplied = [0.0f32; 3];
+            let mut alpha_sum = 0.0f32;
+            let mut sample_count = 0.0f32;
+            let source_y_start = y * source.height / height;
+            let source_y_end = ((y + 1) * source.height / height).max(source_y_start + 1);
+            let source_x_start = x * source.width / width;
+            let source_x_end = ((x + 1) * source.width / width).max(source_x_start + 1);
+            for source_y in source_y_start..source_y_end {
+                for source_x in source_x_start..source_x_end {
+                    let offset = ((source_y * source.width + source_x) * 4) as usize;
+                    let alpha = source.pixels[offset + 3] as f32 / 255.0;
+                    for channel in 0..3 {
+                        premultiplied[channel] +=
+                            srgb_u8_to_linear(source.pixels[offset + channel]) * alpha;
+                    }
+                    alpha_sum += alpha;
+                    sample_count += 1.0;
+                }
+            }
+
+            let output = ((y * width + x) * 4) as usize;
+            let alpha = alpha_sum / sample_count.max(1.0);
+            if alpha_sum > f32::EPSILON {
+                for channel in 0..3 {
+                    pixels[output + channel] =
+                        linear_to_srgb_u8(premultiplied[channel] / alpha_sum);
+                }
+            }
+            pixels[output + 3] = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    ImageMipLevel {
+        width,
+        height,
+        pixels,
+    }
+}
+
+fn srgb_u8_to_linear(value: u8) -> f32 {
+    let value = value as f32 / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb_u8(value: f32) -> u8 {
+    let value = value.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0).round().clamp(0.0, 255.0) as u8
+}
 
 /// Bind group layout for the multi-page glyph atlas: a filtering sampler plus a
 /// `texture_2d_array` (one layer per atlas page). Distinct from the image layout, which is `D2`.
@@ -1745,6 +1839,8 @@ impl WgpuRenderer {
         self.last_frame_stats.insert(frame.window_id, frame_stats);
         self.analytic_path_cache
             .retain(|_, entry| self.frames_rendered.saturating_sub(entry.last_used_frame) <= 120);
+        self.image_cache
+            .retain(|_, entry| self.frames_rendered.saturating_sub(entry.last_used_frame) <= 120);
         Ok(())
     }
 
@@ -2074,7 +2170,7 @@ impl WgpuRenderer {
             label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let image_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2082,6 +2178,7 @@ impl WgpuRenderer {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            lod_max_clamp: 0.0,
             ..Default::default()
         });
         let text_atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2241,7 +2338,7 @@ impl WgpuRenderer {
             label: Some("SUI linear image sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let image_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2249,6 +2346,7 @@ impl WgpuRenderer {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            lod_max_clamp: 0.0,
             ..Default::default()
         });
         let text_atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2876,16 +2974,19 @@ impl WgpuRenderer {
 
         let image_bind_group_started = diagnostics_enabled.then(Instant::now);
         let mut image_bind_groups = HashMap::new();
-        for (handle, sampling) in image_resources {
-            let bind_group = if let Some(image) = frame.image_registry.get_external(handle) {
-                self.ensure_external_image_bind_group(handle, sampling, *image)?
+        for key in image_resources {
+            let bind_group = if let Some(image) = frame.image_registry.get_external(key.handle) {
+                self.ensure_external_image_bind_group(key.handle, key.sampling, *image)?
             } else {
-                let image = frame.image_registry.get(handle).ok_or_else(|| {
-                    Error::new(format!("image handle {} is not registered", handle.get()))
+                let image = frame.image_registry.get(key.handle).ok_or_else(|| {
+                    Error::new(format!(
+                        "image handle {} is not registered",
+                        key.handle.get()
+                    ))
                 })?;
-                self.ensure_image_bind_group(handle, sampling, image)?
+                self.ensure_image_bind_group(key, image)?
             };
-            image_bind_groups.insert((handle, sampling), bind_group);
+            image_bind_groups.insert(key, bind_group);
         }
         let image_bind_group_time_us = image_bind_group_started
             .map(|started| started.elapsed().as_micros() as u64)
@@ -3124,49 +3225,75 @@ impl WgpuRenderer {
         queue: &wgpu::Queue,
         texture: &wgpu::Texture,
         image: &RegisteredImage,
+        mipmapped: bool,
     ) {
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            image.bytes(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(image.width() * 4),
-                rows_per_image: Some(image.height()),
-            },
-            wgpu::Extent3d {
-                width: image.width(),
-                height: image.height(),
-                depth_or_array_layers: 1,
-            },
-        );
+        let mip_chain = image_mip_chain(image, mipmapped);
+        for (mip_level, level) in mip_chain.iter().enumerate() {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: mip_level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &level.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(level.width * 4),
+                    rows_per_image: Some(level.height),
+                },
+                wgpu::Extent3d {
+                    width: level.width,
+                    height: level.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     fn ensure_image_bind_group(
         &mut self,
-        handle: ImageHandle,
-        sampling: ImageSampling,
+        key: ImageBindGroupKey,
         image: &RegisteredImage,
     ) -> Result<wgpu::BindGroup> {
-        if let Some(cached) = self.image_cache.get_mut(&handle) {
+        let texture_key = ImageTextureCacheKey {
+            handle: key.handle,
+            raster_size: image.is_svg().then_some(key.raster_size),
+        };
+        if let Some(cached) = self.image_cache.get_mut(&texture_key) {
+            cached.last_used_frame = self.frames_rendered;
             if Self::registered_image_data_identity_eq(&cached.image, image) {
-                return Ok(Self::image_bind_group_for_sampling(cached, sampling));
+                return Ok(Self::image_bind_group_for_sampling(cached, key.sampling));
             }
-            if cached.image.width() == image.width()
-                && cached.image.height() == image.height()
+        }
+
+        let rasterized;
+        let upload_image = if image.is_svg() {
+            rasterized = image
+                .rasterize_svg_at_size(key.raster_size.width, key.raster_size.height)?
+                .ok_or_else(|| Error::new("registered SVG lost its retained vector source"))?;
+            &rasterized
+        } else {
+            image
+        };
+
+        if let Some(cached) = self.image_cache.get_mut(&texture_key) {
+            if cached.texture.width() == upload_image.width()
+                && cached.texture.height() == upload_image.height()
                 && cached.image.format() == image.format()
             {
                 let shared = self
                     .shared
                     .as_ref()
                     .expect("renderer shared state initialized");
-                Self::write_registered_image_texture(&shared.queue, &cached.texture, image);
+                Self::write_registered_image_texture(
+                    &shared.queue,
+                    &cached.texture,
+                    upload_image,
+                    !image.is_svg(),
+                );
                 cached.image = image.clone();
-                return Ok(Self::image_bind_group_for_sampling(cached, sampling));
+                return Ok(Self::image_bind_group_for_sampling(cached, key.sampling));
             }
         }
 
@@ -3174,42 +3301,53 @@ impl WgpuRenderer {
             .shared
             .as_ref()
             .expect("renderer shared state initialized");
-        let texture_format = match image.format() {
+        let texture_format = match upload_image.format() {
             RegisteredImageFormat::Rgba8 => wgpu::TextureFormat::Rgba8UnormSrgb,
+        };
+        let mip_level_count = if image.is_svg() {
+            1
+        } else {
+            image_mip_level_count(upload_image.width(), upload_image.height())
         };
         let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("SUI image texture"),
             size: wgpu::Extent3d {
-                width: image.width(),
-                height: image.height(),
+                width: upload_image.width(),
+                height: upload_image.height(),
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: texture_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        Self::write_registered_image_texture(&shared.queue, &texture, image);
+        Self::write_registered_image_texture(
+            &shared.queue,
+            &texture,
+            upload_image,
+            !image.is_svg(),
+        );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let linear_bind_group =
             Self::create_image_bind_group(shared, &view, &shared.image_linear_sampler);
         let nearest_bind_group =
             Self::create_image_bind_group(shared, &view, &shared.image_nearest_sampler);
-        let bind_group = match sampling {
+        let bind_group = match key.sampling {
             ImageSampling::Nearest => nearest_bind_group.clone(),
             ImageSampling::Linear => linear_bind_group.clone(),
         };
 
         self.image_cache.insert(
-            handle,
+            texture_key,
             CachedImageTexture {
                 texture,
                 _view: view,
                 linear_bind_group,
                 nearest_bind_group,
                 image: image.clone(),
+                last_used_frame: self.frames_rendered,
             },
         );
 
@@ -4824,7 +4962,8 @@ mod tests {
         TextAtlasPages, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
         TextSubpixelOrder, VERTEX_SIZE, Vertex, WgpuExternalTextureRegistry, WgpuRenderer,
         append_cached_path_mesh, batch_draw_ops, build_vertices, decode_rgba16f_pixels,
-        encode_hdr_debug_artifact, hdr_image_to_sdr_rgba, prepare_frame_batches,
+        encode_hdr_debug_artifact, hdr_image_to_sdr_rgba, image_mip_chain, image_mip_level_count,
+        prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
@@ -4879,6 +5018,24 @@ mod tests {
 
         assert_eq!(rebuilds, RetainedPacketRebuildStats::new(1, 1, 1, 1, 1));
         assert_eq!(rebuilds.total_count(), 5);
+    }
+
+    #[test]
+    fn bitmap_mip_chain_reaches_one_pixel_and_preserves_transparent_edge_color() {
+        let image = RegisteredImage::from_rgba8(
+            2,
+            2,
+            vec![255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0],
+        )
+        .unwrap();
+
+        assert_eq!(image_mip_level_count(8, 4), 4);
+        let levels = image_mip_chain(&image, true);
+        assert_eq!(levels.len(), 2);
+        assert_eq!((levels[1].width, levels[1].height), (1, 1));
+        assert_eq!(&levels[1].pixels[0..3], &[255, 0, 0]);
+        assert_eq!(levels[1].pixels[3], 64);
+        assert_eq!(image_mip_chain(&image, false).len(), 1);
     }
 
     #[test]
@@ -7379,12 +7536,14 @@ mod tests {
                         vertices: PreparedVertices { start: 0, len: 3 },
                         clip_rect: Some(Rect::new(2.0, 4.0, 20.0, 10.0)),
                         clip_state_index: 0,
+                        image: None,
                     },
                     DrawOp {
                         kind: DrawOpKind::Solid,
                         vertices: PreparedVertices { start: 3, len: 3 },
                         clip_rect: Some(Rect::new(2.0, 4.0, 20.0, 10.0)),
                         clip_state_index: 0,
+                        image: None,
                     },
                 ],
                 analytic_paths: std::collections::HashMap::new(),
@@ -7422,6 +7581,7 @@ mod tests {
                     clip_rect: Some(Rect::new(5.0, 8.0, 20.0, 10.0)),
                     vertices: PreparedVertices { start: 0, len: 6 },
                     clip_state_index: 0,
+                    image: None,
                 }],
                 analytic_paths: std::collections::HashMap::new(),
                 next_analytic_path_id: 0,
@@ -7488,6 +7648,10 @@ mod tests {
                     kind: PreparedDrawKind::Image {
                         handle: ImageHandle::new(99),
                         sampling: ImageSampling::Linear,
+                        raster_size: crate::scene::ImageRasterSize {
+                            width: 1,
+                            height: 1,
+                        },
                     },
                     clip_rect: None,
                     vertices: PreparedVertices { start: 0, len: 6 },
@@ -7524,6 +7688,10 @@ mod tests {
                     kind: PreparedDrawKind::Image {
                         handle: ImageHandle::new(100),
                         sampling: ImageSampling::Linear,
+                        raster_size: crate::scene::ImageRasterSize {
+                            width: 1,
+                            height: 1,
+                        },
                     },
                     clip_rect: Some(Rect::new(70.0, 70.0, 20.0, 20.0)),
                     vertices: PreparedVertices { start: 0, len: 6 },
@@ -7578,6 +7746,10 @@ mod tests {
                         kind: PreparedDrawKind::Image {
                             handle: ImageHandle::new(1),
                             sampling: ImageSampling::Linear,
+                            raster_size: crate::scene::ImageRasterSize {
+                                width: 1,
+                                height: 1,
+                            },
                         },
                         clip_rect: None,
                         vertices: PreparedVertices { start: 0, len: 3 },
@@ -11185,7 +11357,7 @@ mod tests {
             image_scene.push(SceneCommand::StrokePath {
                 path: Path::rounded_rect(Rect::new(363.0, image_y, 220.0, 220.0), 12.0),
                 brush: Color::rgba(0.8335978, 0.8335974, 0.835042, 1.0).into(),
-                stroke: StrokeStyle { width: 1.0 },
+                stroke: StrokeStyle::new(1.0),
             });
             let image_layer = SceneLayer::from_descriptor(image_descriptor.clone(), image_scene);
 
@@ -12846,9 +13018,134 @@ mod tests {
         assert_eq!(ops.draw_ops.len(), 1);
         let op = &ops.draw_ops[0];
         assert!(
-            matches!(op.kind, DrawOpKind::Image { handle: value, sampling: ImageSampling::Linear } if value == handle)
+            matches!(op.kind, DrawOpKind::Image { handle: value, sampling: ImageSampling::Linear, .. } if value == handle)
         );
         assert_eq!(op.vertices.len, 6);
+    }
+
+    #[test]
+    fn retained_svg_draws_track_physical_size_and_snap_after_dpi_changes() {
+        let handle = ImageHandle::new(24);
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4"><path d="M0 0h4v4H0z" fill="#fff"/></svg>"##;
+        let mut images = ImageRegistry::new();
+        images.insert(handle, RegisteredImage::from_svg(svg).unwrap());
+        let images = Arc::new(images);
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawImage {
+            rect: Rect::new(10.2, 5.3, 14.0, 12.0),
+            source: ImageSource::new(handle),
+        });
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let make_frame = |surface_size| SceneFrame {
+            window_id: WindowId::new(8),
+            viewport: Size::new(100.0, 100.0),
+            surface_size,
+            scale_factor: surface_size.width / 100.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene: scene.clone(),
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::clone(&images),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let one_x = prepare_with_compositor(
+            &make_frame(Size::new(100.0, 100.0)),
+            &mut text_engine,
+            &mut compositor,
+        )
+        .unwrap();
+        let DrawOpKind::Image {
+            raster_size: one_x_raster,
+            ..
+        } = one_x.draw_ops[0].kind
+        else {
+            panic!("expected image draw op");
+        };
+        assert_eq!((one_x_raster.width, one_x_raster.height), (14, 12));
+
+        let two_x = prepare_with_compositor(
+            &make_frame(Size::new(200.0, 200.0)),
+            &mut text_engine,
+            &mut compositor,
+        )
+        .unwrap();
+        let op = &two_x.draw_ops[0];
+        let DrawOpKind::Image { raster_size, .. } = op.kind else {
+            panic!("expected image draw op");
+        };
+        assert_eq!((raster_size.width, raster_size.height), (28, 24));
+        assert_eq!(
+            op.image.expect("image metadata").bounds,
+            Rect::new(10.0, 5.5, 14.0, 12.0)
+        );
+    }
+
+    #[test]
+    fn renderer_caches_physical_svg_variants_and_bitmap_mip_levels() {
+        let svg_handle = ImageHandle::new(25);
+        let bitmap_handle = ImageHandle::new(26);
+        let mut images = ImageRegistry::new();
+        images.insert(
+            svg_handle,
+            RegisteredImage::from_svg(
+                br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4"><circle cx="2" cy="2" r="2" fill="#fff"/></svg>"##,
+            )
+            .unwrap(),
+        );
+        images.insert(
+            bitmap_handle,
+            RegisteredImage::from_rgba8(8, 4, vec![255; 8 * 4 * 4]).unwrap(),
+        );
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::DrawImage {
+            rect: Rect::new(2.0, 2.0, 14.0, 12.0),
+            source: ImageSource::new(svg_handle),
+        });
+        scene.push(SceneCommand::DrawImage {
+            rect: Rect::new(20.0, 2.0, 8.0, 4.0),
+            source: ImageSource::new(bitmap_handle),
+        });
+        let frame = SceneFrame {
+            window_id: WindowId::new(9),
+            viewport: Size::new(50.0, 30.0),
+            surface_size: Size::new(100.0, 60.0),
+            scale_factor: 2.0,
+            dirty_regions: Vec::new(),
+            layer_updates: Vec::new(),
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(images),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&frame).unwrap();
+
+        let (svg_key, svg_texture) = renderer
+            .image_cache
+            .iter()
+            .find(|(key, _)| key.handle == svg_handle)
+            .expect("physical SVG texture cached");
+        let svg_size = svg_key.raster_size.expect("SVG cache key has raster size");
+        assert_eq!((svg_size.width, svg_size.height), (28, 24));
+        assert_eq!(
+            (svg_texture.texture.width(), svg_texture.texture.height()),
+            (28, 24)
+        );
+        assert_eq!(svg_texture.texture.mip_level_count(), 1);
+
+        let (bitmap_key, bitmap_texture) = renderer
+            .image_cache
+            .iter()
+            .find(|(key, _)| key.handle == bitmap_handle)
+            .expect("bitmap texture cached");
+        assert_eq!(bitmap_key.raster_size, None);
+        assert_eq!(bitmap_texture.texture.mip_level_count(), 4);
     }
 
     #[test]

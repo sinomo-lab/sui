@@ -32,6 +32,7 @@ pub(crate) enum DrawOpKind {
     Image {
         handle: ImageHandle,
         sampling: ImageSampling,
+        raster_size: ImageRasterSize,
     },
     TextAtlas,
     AnalyticPath {
@@ -42,7 +43,33 @@ pub(crate) enum DrawOpKind {
     GradientRect,
 }
 
-pub(crate) type ImageBindGroupKey = (ImageHandle, ImageSampling);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ImageRasterSize {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+impl ImageRasterSize {
+    fn new(width: f32, height: f32) -> Self {
+        Self {
+            width: width.round().max(1.0) as u32,
+            height: height.round().max(1.0) as u32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ImageBindGroupKey {
+    pub(crate) handle: ImageHandle,
+    pub(crate) sampling: ImageSampling,
+    pub(crate) raster_size: ImageRasterSize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ImageDrawMetadata {
+    pub(crate) bounds: Rect,
+    pub(crate) pixel_snap: sui_scene::ImagePixelSnap,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct DrawOp {
@@ -50,6 +77,7 @@ pub(crate) struct DrawOp {
     pub(crate) vertices: PreparedVertices,
     pub(crate) clip_rect: Option<Rect>,
     pub(crate) clip_state_index: usize,
+    pub(crate) image: Option<ImageDrawMetadata>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -218,6 +246,7 @@ pub(crate) enum PreparedDrawKind {
     Image {
         handle: ImageHandle,
         sampling: ImageSampling,
+        raster_size: ImageRasterSize,
     },
     TextAtlas,
     AnalyticPath {
@@ -468,7 +497,15 @@ pub(crate) fn prepare_cached_passes(
 fn prepared_draw_kind(draw_ops: &DrawOpArena, op: &DrawOp) -> PreparedDrawKind {
     match op.kind {
         DrawOpKind::Solid => PreparedDrawKind::Solid,
-        DrawOpKind::Image { handle, sampling } => PreparedDrawKind::Image { handle, sampling },
+        DrawOpKind::Image {
+            handle,
+            sampling,
+            raster_size,
+        } => PreparedDrawKind::Image {
+            handle,
+            sampling,
+            raster_size,
+        },
         DrawOpKind::TextAtlas => PreparedDrawKind::TextAtlas,
         DrawOpKind::AnalyticPath { id } => PreparedDrawKind::AnalyticPath {
             resource_signature: draw_ops.analytic_paths[&id].resource_signature,
@@ -488,8 +525,16 @@ pub(crate) fn collect_draw_op_resources(
     for draw in &draw_ops.draw_ops {
         match draw.kind {
             DrawOpKind::Solid => {}
-            DrawOpKind::Image { handle, sampling } => {
-                image_resources.insert((handle, sampling));
+            DrawOpKind::Image {
+                handle,
+                sampling,
+                raster_size,
+            } => {
+                image_resources.insert(ImageBindGroupKey {
+                    handle,
+                    sampling,
+                    raster_size,
+                });
             }
             DrawOpKind::TextAtlas => {
                 uses_text_atlas = true;
@@ -899,9 +944,17 @@ fn encode_draws_for_pass(
 
         match draw.kind {
             PreparedDrawKind::Solid => {}
-            PreparedDrawKind::Image { handle, sampling } => {
+            PreparedDrawKind::Image {
+                handle,
+                sampling,
+                raster_size,
+            } => {
                 let bind_group = image_bind_groups
-                    .get(&(handle, sampling))
+                    .get(&ImageBindGroupKey {
+                        handle,
+                        sampling,
+                        raster_size,
+                    })
                     .expect("image bind group prepared before retained render pass");
                 render_pass.set_bind_group(0, bind_group, &[]);
             }
@@ -1276,14 +1329,35 @@ impl SceneDrawOpBuilder<'_> {
                     image_size,
                     viewport,
                 );
-                push_draw_op(
+                let (bounds, raster_size) = image_rect_raster_metadata(
+                    state.current_transform,
+                    *rect,
+                    source.source_rect,
+                    image_size,
+                    viewport,
+                    self.frame.surface_size,
+                );
+                push_image_draw_op(
                     draw_ops,
                     DrawOpKind::Image {
                         handle: source.image,
                         sampling: source.sampling,
+                        raster_size,
                     },
                     &self.scratch_vertices,
                     state,
+                    ImageDrawMetadata {
+                        bounds,
+                        pixel_snap: if state.current_transform.xy.abs() < 0.0001
+                            && state.current_transform.yx.abs() < 0.0001
+                            && state.current_transform.xx >= 0.0
+                            && state.current_transform.yy >= 0.0
+                        {
+                            source.pixel_snap
+                        } else {
+                            sui_scene::ImagePixelSnap::None
+                        },
+                    },
                 );
                 diagnostics.image_command_count += 1;
                 Ok(())
@@ -1308,14 +1382,27 @@ impl SceneDrawOpBuilder<'_> {
                     image_size,
                     viewport,
                 );
-                push_draw_op(
+                let (bounds, raster_size) = image_quad_raster_metadata(
+                    state.current_transform,
+                    *points,
+                    source.source_rect,
+                    image_size,
+                    viewport,
+                    self.frame.surface_size,
+                );
+                push_image_draw_op(
                     draw_ops,
                     DrawOpKind::Image {
                         handle: source.image,
                         sampling: source.sampling,
+                        raster_size,
                     },
                     &self.scratch_vertices,
                     state,
+                    ImageDrawMetadata {
+                        bounds,
+                        pixel_snap: sui_scene::ImagePixelSnap::None,
+                    },
                 );
                 diagnostics.image_command_count += 1;
                 Ok(())
@@ -3190,7 +3277,11 @@ fn append_stroked_path(
         return Ok(None);
     }
 
-    let line_width = stroke.width.max(1.0);
+    let stroke = StrokeStyle {
+        width: stroke.width.max(1.0),
+        ..stroke
+    };
+    let line_width = stroke.width;
     let coverage_outset = analytic_coverage_outset(feather_width);
     let stroke_outset = (line_width * 0.5) + coverage_outset;
     if state
@@ -3204,7 +3295,11 @@ fn append_stroked_path(
     {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let lyon_path = build_lyon_path(path, state.current_transform);
-        if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
+        if stroke.cap == sui_scene::StrokeCap::Butt
+            && stroke.join == sui_scene::StrokeJoin::Miter
+            && let Some(data) =
+                build_analytic_stroke_path_data(&lyon_path, line_width, feather_width)
+        {
             append_analytic_path_quad(
                 overlay_vertices,
                 transformed_bounds.inflate(stroke_outset, stroke_outset),
@@ -3218,19 +3313,15 @@ fn append_stroked_path(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let mesh = path_cache.cached_stroke_mesh(path, state.current_transform, line_width, 0.0)?;
+        let mesh = path_cache.cached_stroke_mesh(path, state.current_transform, stroke, 0.0)?;
         append_cached_path_mesh(vertices, mesh, color, viewport);
         return Ok(None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mesh = path_cache.cached_stroke_mesh(
-            path,
-            state.current_transform,
-            line_width,
-            feather_width,
-        )?;
+        let mesh =
+            path_cache.cached_stroke_mesh(path, state.current_transform, stroke, feather_width)?;
         append_cached_path_mesh(vertices, mesh, color, viewport);
         Ok(None)
     }
@@ -3631,6 +3722,81 @@ fn append_image_quad(
     ]);
 }
 
+fn image_rect_raster_metadata(
+    transform: Transform,
+    rect: Rect,
+    source_rect: Option<Rect>,
+    image_size: (u32, u32),
+    viewport: Size,
+    surface_size: Size,
+) -> (Rect, ImageRasterSize) {
+    let points = [
+        transform.transform_point(rect.origin),
+        transform.transform_point(Point::new(rect.max_x(), rect.y())),
+        transform.transform_point(Point::new(rect.x(), rect.max_y())),
+        transform.transform_point(Point::new(rect.max_x(), rect.max_y())),
+    ];
+    image_points_raster_metadata(points, source_rect, image_size, viewport, surface_size)
+}
+
+fn image_quad_raster_metadata(
+    transform: Transform,
+    points: [Point; 4],
+    source_rect: Option<Rect>,
+    image_size: (u32, u32),
+    viewport: Size,
+    surface_size: Size,
+) -> (Rect, ImageRasterSize) {
+    image_points_raster_metadata(
+        points.map(|point| transform.transform_point(point)),
+        source_rect,
+        image_size,
+        viewport,
+        surface_size,
+    )
+}
+
+fn image_points_raster_metadata(
+    points: [Point; 4],
+    source_rect: Option<Rect>,
+    image_size: (u32, u32),
+    viewport: Size,
+    surface_size: Size,
+) -> (Rect, ImageRasterSize) {
+    let bounds = points_bounds(&points);
+    let scale_x = if viewport.width > 0.0 {
+        surface_size.width / viewport.width
+    } else {
+        1.0
+    };
+    let scale_y = if viewport.height > 0.0 {
+        surface_size.height / viewport.height
+    } else {
+        1.0
+    };
+    let physical_distance = |a: Point, b: Point| {
+        let dx = (b.x - a.x) * scale_x;
+        let dy = (b.y - a.y) * scale_y;
+        (dx.mul_add(dx, dy * dy)).sqrt()
+    };
+    let draw_width =
+        physical_distance(points[0], points[1]).max(physical_distance(points[2], points[3]));
+    let draw_height =
+        physical_distance(points[0], points[2]).max(physical_distance(points[1], points[3]));
+    let image_width = image_size.0.max(1) as f32;
+    let image_height = image_size.1.max(1) as f32;
+    let source_rect = source_rect.unwrap_or(Rect::new(0.0, 0.0, image_width, image_height));
+    let source_min_x = source_rect.x().clamp(0.0, image_width);
+    let source_min_y = source_rect.y().clamp(0.0, image_height);
+    let source_max_x = source_rect.max_x().clamp(source_min_x, image_width);
+    let source_max_y = source_rect.max_y().clamp(source_min_y, image_height);
+    let source_width = (source_max_x - source_min_x).max(1.0);
+    let source_height = (source_max_y - source_min_y).max(1.0);
+    let full_width = draw_width * (image_width / source_width);
+    let full_height = draw_height * (image_height / source_height);
+    (bounds, ImageRasterSize::new(full_width, full_height))
+}
+
 fn append_widget_shader_rect(
     vertices: &mut Vec<Vertex>,
     state: &SceneRasterState,
@@ -4017,6 +4183,28 @@ fn push_draw_op(
         vertices: vertex_span,
         clip_rect: state.current_clip_bounds(),
         clip_state_index: state.clip_state_index,
+        image: None,
+    });
+}
+
+fn push_image_draw_op(
+    draw_ops: &mut DrawOpArena,
+    kind: DrawOpKind,
+    vertices: &[Vertex],
+    state: &SceneRasterState,
+    image: ImageDrawMetadata,
+) {
+    if vertices.is_empty() {
+        return;
+    }
+
+    let vertex_span = draw_ops.push_scene_vertices(vertices);
+    draw_ops.draw_ops.push(DrawOp {
+        kind,
+        vertices: vertex_span,
+        clip_rect: state.current_clip_bounds(),
+        clip_state_index: state.clip_state_index,
+        image: Some(image),
     });
 }
 
@@ -4035,6 +4223,7 @@ fn push_text_draw_op(
         vertices: instance_span,
         clip_rect: state.current_clip_bounds(),
         clip_state_index: state.clip_state_index,
+        image: None,
     });
 }
 
@@ -4091,9 +4280,68 @@ impl DrawOpArena {
         }
         for draw_op in &mut self.draw_ops {
             draw_op.clip_rect = draw_op.clip_rect.map(|rect| rect.translate(translation));
+            if let Some(image) = &mut draw_op.image {
+                image.bounds = image.bounds.translate(translation);
+            }
         }
         for path in self.analytic_paths.values_mut() {
             Arc::make_mut(path).translate(translation);
+        }
+    }
+
+    pub(crate) fn finalize_image_draws(&mut self, viewport: Size, surface_size: Size) {
+        if viewport.is_empty() || surface_size.is_empty() {
+            return;
+        }
+
+        let scale_x = surface_size.width / viewport.width;
+        let scale_y = surface_size.height / viewport.height;
+        if scale_x <= 0.0 || scale_y <= 0.0 {
+            return;
+        }
+
+        for draw_op in &mut self.draw_ops {
+            let Some(mut image) = draw_op.image else {
+                continue;
+            };
+            if image.pixel_snap != sui_scene::ImagePixelSnap::Physical || image.bounds.is_empty() {
+                continue;
+            }
+
+            let old = image.bounds;
+            let left_px = (old.x() * scale_x).round();
+            let top_px = (old.y() * scale_y).round();
+            let mut right_px = (old.max_x() * scale_x).round();
+            let mut bottom_px = (old.max_y() * scale_y).round();
+            if right_px <= left_px {
+                right_px = left_px + 1.0;
+            }
+            if bottom_px <= top_px {
+                bottom_px = top_px + 1.0;
+            }
+            let snapped = Rect::new(
+                left_px / scale_x,
+                top_px / scale_y,
+                (right_px - left_px) / scale_x,
+                (bottom_px - top_px) / scale_y,
+            );
+            if snapped == old {
+                continue;
+            }
+
+            let start = draw_op.vertices.start as usize;
+            let end = start + draw_op.vertices.len as usize;
+            for vertex in &mut self.scene_vertices[start..end] {
+                let logical_x = ((vertex.position[0] + 1.0) * 0.5) * viewport.width;
+                let logical_y = ((1.0 - vertex.position[1]) * 0.5) * viewport.height;
+                let relative_x = (logical_x - old.x()) / old.width();
+                let relative_y = (logical_y - old.y()) / old.height();
+                let snapped_x = snapped.x() + relative_x * snapped.width();
+                let snapped_y = snapped.y() + relative_y * snapped.height();
+                vertex.position = to_ndc(snapped_x, snapped_y, viewport);
+            }
+            image.bounds = snapped;
+            draw_op.image = Some(image);
         }
     }
 
@@ -4228,6 +4476,7 @@ impl DrawOpArena {
                 },
                 clip_rect,
                 clip_state_index: merged_clip_state,
+                image: draw_op.image,
             });
             if let DrawOpKind::AnalyticPath { id } = draw_op.kind {
                 let last = self.draw_ops.last_mut().expect("analytic draw op inserted");

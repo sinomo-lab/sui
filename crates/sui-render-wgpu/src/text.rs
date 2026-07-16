@@ -624,7 +624,11 @@ mod page_tests {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PathCacheKind {
     Fill,
-    Stroke { line_width_bits: u32 },
+    Stroke {
+        line_width_bits: u32,
+        cap: sui_scene::StrokeCap,
+        join: sui_scene::StrokeJoin,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -643,11 +647,18 @@ impl PathCacheKey {
         }
     }
 
-    fn stroke(path: &ScenePath, transform: Transform, line_width: f32, feather_width: f32) -> Self {
+    fn stroke(
+        path: &ScenePath,
+        transform: Transform,
+        stroke: StrokeStyle,
+        feather_width: f32,
+    ) -> Self {
         Self {
             signature: hash_path(path, transform),
             kind: PathCacheKind::Stroke {
-                line_width_bits: line_width.to_bits(),
+                line_width_bits: stroke.width.to_bits(),
+                cap: stroke.cap,
+                join: stroke.join,
             },
             feather_width_bits: feather_width.to_bits(),
         }
@@ -707,10 +718,10 @@ impl PathMeshCache {
         &mut self,
         path: &ScenePath,
         transform: Transform,
-        line_width: f32,
+        stroke: StrokeStyle,
         feather_width: f32,
     ) -> Result<&CachedGlyphMesh> {
-        let key = PathCacheKey::stroke(path, transform, line_width, feather_width);
+        let key = PathCacheKey::stroke(path, transform, stroke, feather_width);
         match self.meshes.entry(key) {
             Entry::Occupied(entry) => {
                 if self.diagnostics_enabled {
@@ -723,8 +734,7 @@ impl PathMeshCache {
                     self.misses += 1;
                 }
                 let lyon_path = build_lyon_path(path, transform);
-                let mesh =
-                    feathering::build_local_stroke_mesh(&lyon_path, line_width, feather_width)?;
+                let mesh = feathering::build_local_stroke_mesh(&lyon_path, stroke, feather_width)?;
                 Ok(entry.insert(mesh))
             }
         }

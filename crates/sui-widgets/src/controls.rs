@@ -13,7 +13,7 @@ use crate::{
     text_command::TextCommand,
     text_surface::paste_command,
 };
-use std::{cell::RefCell, collections::BTreeSet, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
@@ -26,7 +26,7 @@ use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{ImageSource, LayerCompositionMode, LayerProperties, StrokeStyle};
+use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
     FontFeature, PersistentTextLayout, TextCursor, TextMeasurement, TextSelection, TextStyle,
 };
@@ -199,17 +199,11 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
 ];
 
 pub fn register_builtin_icon_resources(
-    application: &mut sui_runtime::Application,
+    _application: &mut sui_runtime::Application,
 ) -> sui_core::Result<()> {
-    let mut seen = BTreeSet::new();
-    sui_lucide::register_icons(
-        application,
-        BUILTIN_ICON_GLYPHS
-            .iter()
-            .copied()
-            .map(IconGlyph::lucide_icon)
-            .filter(|icon| seen.insert(*icon)),
-    )
+    // Built-in widgets paint Lucide geometry directly. Keep this compatibility hook so
+    // applications do not need to change their startup path.
+    Ok(())
 }
 
 pub struct Separator {
@@ -9268,23 +9262,13 @@ fn is_numeric_input_char(ch: char) -> bool {
 
 /// Draw an [`IconGlyph`] tinted `color`, centered and fit within `bounds`. Exposed for bespoke
 /// painters (application chrome) that draw an icon mark without composing an [`Icon`] widget; the
-/// glyph's Lucide image resource self-registers on first use, so no pre-registration is required.
+/// glyph is painted directly as native SUI path geometry.
 pub fn draw_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
     draw_icon_glyph(ctx, glyph, bounds, color);
 }
 
 pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
-    let icon = glyph.lucide_icon();
-    let resource = icon.resource();
-    if !ctx.image_registered(resource.handle())
-        && let Ok(image) = icon.registered_mask_image()
-    {
-        ctx.register_image(resource.handle(), image);
-    }
-
-    let side = bounds.width().min(bounds.height());
-    let rect = center_square(bounds, side);
-    ctx.draw_image_source(rect, ImageSource::new(resource.handle()).with_tint(color));
+    glyph.lucide_icon().paint(ctx, bounds, color);
 }
 
 fn line_path(start: Point, end: Point) -> Path {
@@ -9791,6 +9775,30 @@ mod tests {
         colors
     }
 
+    fn non_lucide_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+        let mut colors = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(color),
+                    ..
+                } => colors.push(*color),
+                SceneCommand::StrokePath {
+                    brush: Brush::Solid(color),
+                    stroke,
+                    ..
+                } if stroke.cap != sui_scene::StrokeCap::Round
+                    || stroke.join != sui_scene::StrokeJoin::Round =>
+                {
+                    colors.push(*color);
+                }
+                _ => {}
+            });
+        colors
+    }
+
     fn solid_stroke_path_bounds(output: &RenderOutput, expected_color: Color) -> Vec<Rect> {
         let mut bounds = Vec::new();
         output.frame.scene.visit_commands(&mut |command| {
@@ -9818,33 +9826,35 @@ mod tests {
         );
     }
 
-    fn image_tint_colors(output: &RenderOutput) -> Vec<Color> {
-        let mut colors = Vec::new();
-        output
-            .frame
-            .scene
-            .visit_commands(&mut |command| match command {
-                SceneCommand::DrawImage { source, .. }
-                | SceneCommand::DrawImageQuad { source, .. } => {
-                    if let Some(color) = source.tint {
-                        colors.push(color);
-                    }
-                }
-                _ => {}
-            });
-        colors
-    }
-
-    fn first_image_rect(output: &RenderOutput) -> Rect {
-        let mut found = None;
+    fn lucide_strokes(output: &RenderOutput) -> Vec<(Rect, Color, sui_scene::StrokeStyle)> {
+        let mut strokes = Vec::new();
         output.frame.scene.visit_commands(&mut |command| {
-            if found.is_none()
-                && let SceneCommand::DrawImage { rect, .. } = command
+            if let SceneCommand::StrokePath {
+                path,
+                brush: Brush::Solid(color),
+                stroke,
+            } = command
+                && stroke.cap == sui_scene::StrokeCap::Round
+                && stroke.join == sui_scene::StrokeJoin::Round
             {
-                found = Some(*rect);
+                strokes.push((path.bounds(), *color, *stroke));
             }
         });
-        found.expect("expected an image command")
+        strokes
+    }
+
+    fn first_lucide_icon_rect(output: &RenderOutput) -> Rect {
+        let (ink_bounds, _, stroke) = lucide_strokes(output)
+            .into_iter()
+            .next()
+            .expect("Lucide icon should paint as a native stroked path");
+        let side = stroke.width * 12.0;
+        Rect::new(
+            ink_bounds.x() + (ink_bounds.width() - side) * 0.5,
+            ink_bounds.y() + (ink_bounds.height() - side) * 0.5,
+            side,
+            side,
+        )
     }
 
     fn assert_color_approx_eq(actual: Color, expected: Color) {
@@ -10131,7 +10141,11 @@ mod tests {
         );
 
         let output = runtime.render(window_id)?;
-        assert!(image_tint_colors(&output).contains(&Color::rgba(0.2, 0.5, 0.9, 1.0)));
+        assert!(
+            lucide_strokes(&output)
+                .iter()
+                .any(|(_, stroke_color, _)| *stroke_color == Color::rgba(0.2, 0.5, 0.9, 1.0))
+        );
 
         assert!(
             output
@@ -10741,7 +10755,7 @@ mod tests {
             super::mix_color(Color::TRANSPARENT, soft_fill, theme.interaction.hover_blend);
         assert_color_approx_eq(solid_fill_colors(&output)[0], expected);
         assert!(
-            solid_stroke_colors(&output)
+            non_lucide_stroke_colors(&output)
                 .iter()
                 .all(|color| color.alpha <= f32::EPSILON)
         );
@@ -10804,7 +10818,6 @@ mod tests {
     #[test]
     fn button_with_icon_keeps_label_semantics_and_paints_icon() {
         let plain = render(Button::new("Export").min_width(96.0));
-        let icon_handle = IconGlyph::Download.lucide_icon().handle();
         let with_icon = render_isolated(
             Button::new("Export")
                 .icon(IconGlyph::Download)
@@ -10821,18 +10834,7 @@ mod tests {
             with_icon.frame.scene.commands().len() > plain.frame.scene.commands().len(),
             "icon button should add visible icon ink"
         );
-        let icon_rect = with_icon
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
-                    Some(*rect)
-                }
-                _ => None,
-            })
-            .expect("button icon should paint as a Lucide image");
+        let icon_rect = first_lucide_icon_rect(&with_icon);
         let text = text_run_for(&with_icon, "Export");
         let layout = TextSystem::new()
             .shape_text_run(&text, &FontRegistry::new())
@@ -10856,7 +10858,6 @@ mod tests {
             color: Color::rgba(0.95, 0.98, 1.0, 1.0),
             ..TextStyle::default()
         };
-        let icon_handle = IconGlyph::Download.lucide_icon().handle();
         let output = render_isolated(
             Button::new("Export")
                 .icon(IconGlyph::Download)
@@ -10864,18 +10865,7 @@ mod tests {
                 .min_width(220.0)
                 .min_height(64.0),
         );
-        let icon_rect = output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
-                    Some(*rect)
-                }
-                _ => None,
-            })
-            .expect("button icon should paint as a Lucide image");
+        let icon_rect = first_lucide_icon_rect(&output);
         let text = text_run_for(&output, "Export");
         let layout = shaped_text_layout_for(&output, "Export");
         let line = layout
@@ -11059,7 +11049,7 @@ mod tests {
         let rest = runtime.render(window_id)?;
         let rest_background = solid_fill_colors(&rest)[0];
         let rest_label = text_run_for(&rest, "Press").rect;
-        let rest_icon = first_image_rect(&rest);
+        let rest_icon = first_lucide_icon_rect(&rest);
         let point = Point::new(12.0, 12.0);
 
         runtime.handle_event(
@@ -11072,7 +11062,7 @@ mod tests {
         let pressed = runtime.render(window_id)?;
         assert_ne!(solid_fill_colors(&pressed)[0], rest_background);
         assert_eq!(text_run_for(&pressed, "Press").rect, rest_label);
-        assert_eq!(first_image_rect(&pressed), rest_icon);
+        assert_eq!(first_lucide_icon_rect(&pressed), rest_icon);
         Ok(())
     }
 
@@ -11443,14 +11433,7 @@ mod tests {
             solid_fill_colors(&output)[0],
             super::mix_color(selected_base, selected_hover, theme.interaction.hover_blend),
         );
-        assert!(
-            output
-                .frame
-                .scene
-                .commands()
-                .iter()
-                .any(|command| matches!(command, SceneCommand::DrawImage { .. }))
-        );
+        assert!(!lucide_strokes(&output).is_empty());
     }
 
     #[test]
@@ -11467,7 +11450,10 @@ mod tests {
         });
 
         assert_ne!(solid_fill_colors(&pressed)[0], solid_fill_colors(&rest)[0]);
-        assert_eq!(first_image_rect(&pressed), first_image_rect(&rest));
+        assert_eq!(
+            first_lucide_icon_rect(&pressed),
+            first_lucide_icon_rect(&rest)
+        );
     }
 
     #[test]
@@ -11613,18 +11599,22 @@ mod tests {
     }
 
     #[test]
-    fn icon_button_paints_lucide_svg_resource() {
+    fn icon_button_paints_lucide_native_path() {
         let glyph = IconGlyph::Brush;
         let handle = glyph.lucide_icon().handle();
         let output = render(IconButton::new(glyph, "Brush tool"));
 
-        assert!(output.frame.image_registry.contains(handle));
+        assert!(!output.frame.image_registry.contains(handle));
         assert!(
-            output.frame.scene.commands().iter().any(|command| matches!(
+            !lucide_strokes(&output).is_empty(),
+            "{glyph:?} should paint native Lucide path geometry"
+        );
+        assert!(
+            !output.frame.scene.commands().iter().any(|command| matches!(
                 command,
                 SceneCommand::DrawImage { source, .. } if source.image == handle
             )),
-            "{glyph:?} should paint its Lucide SVG image"
+            "{glyph:?} should bypass the raster image path"
         );
     }
 
@@ -12472,7 +12462,6 @@ mod tests {
 
     #[test]
     fn text_input_leading_icon_offsets_placeholder_and_keeps_editing() -> Result<()> {
-        let icon_handle = IconGlyph::Search.lucide_icon().handle();
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
         let (mut runtime, window_id) = build_runtime(
@@ -12484,18 +12473,7 @@ mod tests {
         );
 
         let output = runtime.render(window_id)?;
-        let icon_rect = output
-            .frame
-            .scene
-            .commands()
-            .iter()
-            .find_map(|command| match command {
-                SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
-                    Some(*rect)
-                }
-                _ => None,
-            })
-            .expect("leading icon should paint as a Lucide image");
+        let icon_rect = first_lucide_icon_rect(&output);
         let placeholder = text_run_for(&output, "Search conversations");
         assert!(
             placeholder.rect.x() >= icon_rect.max_x() + 4.0,
@@ -15313,23 +15291,19 @@ mod tests {
             super::SELECT_CHEVRON_SLOT_WIDTH,
             select.bounds.height(),
         );
-        let mut chevron = None;
-        output.frame.scene.visit_commands(&mut |command| {
-            if chevron.is_some() {
-                return;
-            }
-            chevron = match command {
-                SceneCommand::DrawImage { rect, .. }
-                    if slot.contains(super::rect_center(*rect))
-                        && (rect.width() - super::SELECT_CHEVRON_ICON_SIZE).abs() < 0.75
-                        && (rect.height() - super::SELECT_CHEVRON_ICON_SIZE).abs() < 0.75 =>
-                {
-                    Some(*rect)
-                }
-                _ => chevron,
-            };
-        });
-        let chevron = chevron.expect("select chevron should paint as a Lucide image");
+        let chevron = lucide_strokes(&output)
+            .into_iter()
+            .map(|(bounds, _, stroke)| {
+                let side = stroke.width * 12.0;
+                Rect::new(
+                    bounds.x() + (bounds.width() - side) * 0.5,
+                    bounds.y() + (bounds.height() - side) * 0.5,
+                    side,
+                    side,
+                )
+            })
+            .find(|rect| slot.contains(super::rect_center(*rect)))
+            .expect("select chevron should paint as a native Lucide path");
 
         assert!((super::rect_center(chevron).x - super::rect_center(slot).x).abs() < 0.75);
         assert!((super::rect_center(chevron).y - super::rect_center(slot).y).abs() < 0.75);

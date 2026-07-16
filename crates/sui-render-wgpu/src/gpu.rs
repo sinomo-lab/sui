@@ -462,6 +462,13 @@ pub(crate) struct CachedImageTexture {
     pub(crate) linear_bind_group: wgpu::BindGroup,
     pub(crate) nearest_bind_group: wgpu::BindGroup,
     pub(crate) image: sui_scene::RegisteredImage,
+    pub(crate) last_used_frame: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ImageTextureCacheKey {
+    pub(crate) handle: sui_core::ImageHandle,
+    pub(crate) raster_size: Option<ImageRasterSize>,
 }
 
 pub(crate) struct CachedExternalTextureBindGroup {

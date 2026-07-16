@@ -3,9 +3,58 @@
 pub const LUCIDE_VERSION: &str = "1.17.0";
 pub const LUCIDE_IMAGE_HANDLE_BASE: u64 = 0x4c55_4349_0000_0000;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LucidePathCommand {
+    MoveTo(f32, f32),
+    LineTo(f32, f32),
+    QuadTo(f32, f32, f32, f32),
+    CubicTo(f32, f32, f32, f32, f32, f32),
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LucidePathData {
+    pub stroke: &'static [LucidePathCommand],
+    pub fill: &'static [LucidePathCommand],
+}
+
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 impl LucideIcon {
+    pub fn paint(
+        self,
+        ctx: &mut sui_runtime::PaintCtx,
+        bounds: sui_core::Rect,
+        color: sui_core::Color,
+    ) {
+        if bounds.is_empty() {
+            return;
+        }
+
+        let pixels_per_point = ctx.dpi().pixels_per_point().max(f32::EPSILON);
+        let side = bounds.width().min(bounds.height());
+        let side = (side * pixels_per_point).round().max(1.0) / pixels_per_point;
+        let x = ((bounds.x() + (bounds.width() - side) * 0.5) * pixels_per_point).round()
+            / pixels_per_point;
+        let y = ((bounds.y() + (bounds.height() - side) * 0.5) * pixels_per_point).round()
+            / pixels_per_point;
+        let scale = side / 24.0;
+        let data = self.path_data();
+
+        if !data.fill.is_empty() {
+            ctx.fill(build_path(data.fill, x, y, scale), color);
+        }
+        if !data.stroke.is_empty() {
+            ctx.stroke(
+                build_path(data.stroke, x, y, scale),
+                color,
+                sui_scene::StrokeStyle::new(2.0 * scale)
+                    .with_cap(sui_scene::StrokeCap::Round)
+                    .with_join(sui_scene::StrokeJoin::Round),
+            );
+        }
+    }
+
     /// Rasterize a Lucide SVG as a white alpha mask.
     ///
     /// Lucide sources use `currentColor`, which `resvg` resolves to black by default. SUI's
@@ -25,6 +74,31 @@ impl LucideIcon {
         }
         sui_scene::RegisteredImage::from_rgba8(image.width(), image.height(), pixels)
     }
+}
+
+fn build_path(commands: &[LucidePathCommand], x: f32, y: f32, scale: f32) -> sui_core::Path {
+    let point = |px: f32, py: f32| sui_core::Point::new(x + px * scale, y + py * scale);
+    let mut builder = sui_core::PathBuilder::new();
+    for command in commands {
+        match *command {
+            LucidePathCommand::MoveTo(px, py) => {
+                builder.move_to(point(px, py));
+            }
+            LucidePathCommand::LineTo(px, py) => {
+                builder.line_to(point(px, py));
+            }
+            LucidePathCommand::QuadTo(cx, cy, px, py) => {
+                builder.quad_to(point(cx, cy), point(px, py));
+            }
+            LucidePathCommand::CubicTo(c1x, c1y, c2x, c2y, px, py) => {
+                builder.cubic_to(point(c1x, c1y), point(c2x, c2y), point(px, py));
+            }
+            LucidePathCommand::Close => {
+                builder.close();
+            }
+        }
+    }
+    builder.build()
 }
 
 pub fn icon_named(name: &str) -> Option<LucideIcon> {
@@ -69,6 +143,21 @@ mod tests {
     fn icon_lookup_finds_local_assets_by_kebab_name() {
         assert_eq!(icon_named("zoom-in"), Some(LucideIcon::ZoomIn));
         assert_eq!(icon_named("not-a-lucide-icon"), None);
+    }
+
+    #[test]
+    fn generated_icons_expose_native_stroke_and_fill_paths() {
+        let search = LucideIcon::Search.path_data();
+        assert!(search.fill.is_empty());
+        assert!(search.stroke.len() >= 8);
+        assert!(matches!(
+            search.stroke.first(),
+            Some(LucidePathCommand::MoveTo(_, _))
+        ));
+
+        let scatter = LucideIcon::ChartScatter.path_data();
+        assert!(!scatter.stroke.is_empty());
+        assert!(!scatter.fill.is_empty());
     }
 
     #[test]

@@ -3182,10 +3182,12 @@ dependencies = [
 name = "sinomo-ui-lucide"
 version = "1.17.0"
 dependencies = [
+ "roxmltree 0.20.0",
  "sinomo-ui-core",
  "sinomo-ui-layout",
  "sinomo-ui-runtime",
  "sinomo-ui-scene",
+ "svgtypes",
 ]
 
 [[package]]

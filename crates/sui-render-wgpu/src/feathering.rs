@@ -1,6 +1,7 @@
 use lyon_path::{PathEvent, iterator::PathIterator};
 use lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, StrokeOptions, StrokeTessellator, VertexBuffers,
+    BuffersBuilder, FillOptions, FillTessellator, LineCap, LineJoin, StrokeOptions,
+    StrokeTessellator, VertexBuffers,
 };
 
 use super::*;
@@ -35,30 +36,43 @@ pub(super) fn build_local_fill_mesh(
 
 pub(super) fn build_local_stroke_mesh(
     path: &LyonPath,
-    line_width: f32,
+    stroke: StrokeStyle,
     _feather_width: f32,
 ) -> Result<CachedGlyphMesh> {
     let mut mesh = CachedGlyphMesh::default();
-    if line_width <= 0.0 {
+    if stroke.width <= 0.0 {
         return Ok(mesh);
     }
 
-    append_local_hard_stroked_lyon_path(&mut mesh, path, line_width)?;
+    append_local_hard_stroked_lyon_path(&mut mesh, path, stroke)?;
     Ok(mesh)
 }
 
 fn append_local_hard_stroked_lyon_path(
     mesh: &mut CachedGlyphMesh,
     path: &LyonPath,
-    line_width: f32,
+    stroke: StrokeStyle,
 ) -> Result<()> {
     let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
     let mut builder = BuffersBuilder::new(&mut buffers, TessellatedPoint);
     let mut tessellator = StrokeTessellator::new();
+    let cap = match stroke.cap {
+        sui_scene::StrokeCap::Butt => LineCap::Butt,
+        sui_scene::StrokeCap::Round => LineCap::Round,
+        sui_scene::StrokeCap::Square => LineCap::Square,
+    };
+    let join = match stroke.join {
+        sui_scene::StrokeJoin::Miter => LineJoin::Miter,
+        sui_scene::StrokeJoin::Round => LineJoin::Round,
+        sui_scene::StrokeJoin::Bevel => LineJoin::Bevel,
+    };
     tessellator
         .tessellate_path(
             path,
-            &StrokeOptions::default().with_line_width(line_width),
+            &StrokeOptions::default()
+                .with_line_width(stroke.width)
+                .with_line_cap(cap)
+                .with_line_join(join),
             &mut builder,
         )
         .map_err(|error| Error::new(format!("failed to tessellate stroked path: {error}")))?;
