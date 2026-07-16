@@ -2901,7 +2901,7 @@ impl PropertyRow {
 
     fn with_form_defaults(mut self) -> Self {
         self.defaults = PropertyRowDefaults::Form;
-        self.auto_control_width = false;
+        self.auto_control_width = true;
         self
     }
 
@@ -18883,6 +18883,36 @@ mod tests {
         let id = super::property_row_label_id(WidgetId::new(402)).get();
 
         assert!(id < (1_u64 << 53));
+    }
+
+    #[test]
+    fn form_row_control_uses_full_available_width_by_default() {
+        let theme = DefaultTheme::default();
+        let width = 760.0;
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(width, 36.0))
+                .with_child(FormRow::new(
+                    "Model",
+                    crate::TextInput::new("provider-model"),
+                )),
+        );
+
+        let control = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::TextInput
+                    && node.name.as_deref() == Some("provider-model")
+            })
+            .expect("form row control semantics should exist");
+        let expected_width =
+            width - theme.metrics.form_row_label_width - theme.metrics.form_row_gap;
+        assert!(
+            (control.bounds.width() - expected_width).abs() < 0.01,
+            "form controls should use the card's available row width"
+        );
+        assert!((control.bounds.max_x() - width).abs() < 0.01);
     }
 
     #[test]
