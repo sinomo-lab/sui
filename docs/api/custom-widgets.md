@@ -225,7 +225,10 @@ invalidation, retained caches, and semantics. Painting a child but omitting it
 from traversal creates a visually present subtree the runtime cannot fully
 address.
 
-Use `SingleChild` for a wrapper and `WidgetChildren` for a normal collection.
+Use `SingleChild` for a wrapper and `WidgetChildren` for a normal fixed
+collection. Use `KeyedChildren<K, T>` when collection membership or ordering
+changes and existing child `WidgetPod`s must retain focus, animation,
+selection, or editor state across reconciliation.
 Virtualized widgets may expose only the mounted subset, but their generated
 semantics still need stable IDs and correct parent relationships.
 

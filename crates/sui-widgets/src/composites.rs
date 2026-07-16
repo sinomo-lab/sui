@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path,
@@ -7,6 +7,7 @@ use sui_core::{
     WidgetId,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
+use sui_reactive::Observable;
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPod,
@@ -8582,6 +8583,7 @@ pub struct TabBar {
     tabs: Vec<String>,
     selected: usize,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
+    selected_source: Option<Arc<dyn Observable<Option<usize>>>>,
     selection_from: usize,
     selection_animation: AnimatedScalar,
     hovered: Option<usize>,
@@ -8606,6 +8608,7 @@ impl TabBar {
             tabs: Vec::new(),
             selected: 0,
             selected_reader: None,
+            selected_source: None,
             selection_from: 0,
             selection_animation: AnimatedScalar::new(1.0),
             hovered: None,
@@ -8653,6 +8656,7 @@ impl TabBar {
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = index;
         self.selected_reader = None;
+        self.selected_source = None;
         self.selection_from = index;
         self.selection_animation = AnimatedScalar::new(1.0);
         self
@@ -8667,6 +8671,22 @@ impl TabBar {
             self.selection_from = index;
         }
         self.selected_reader = Some(Box::new(selected));
+        self.selected_source = None;
+        self
+    }
+
+    /// Bind the selected tab to an observable value without rebuilding the
+    /// retained tab bar.
+    pub fn selected_from<O>(mut self, selected: O) -> Self
+    where
+        O: Observable<Option<usize>> + 'static,
+    {
+        if let Some(index) = selected.get() {
+            self.selected = index;
+            self.selection_from = index;
+        }
+        self.selected_reader = None;
+        self.selected_source = Some(Arc::new(selected));
         self
     }
 
@@ -8695,9 +8715,10 @@ impl TabBar {
 
     fn normalized_selected(&self) -> usize {
         let selected = self
-            .selected_reader
+            .selected_source
             .as_ref()
-            .and_then(|reader| reader())
+            .and_then(|source| source.get())
+            .or_else(|| self.selected_reader.as_ref().and_then(|reader| reader()))
             .unwrap_or(self.selected);
         if self.tabs.is_empty() {
             0
@@ -8745,8 +8766,15 @@ impl TabBar {
     }
 
     fn sync_external_selected(&mut self, ctx: &mut EventCtx) {
-        if self.selected_reader.is_none() || self.tabs.is_empty() {
+        if (self.selected_reader.is_none() && self.selected_source.is_none())
+            || self.tabs.is_empty()
+        {
             return;
+        }
+
+        if let Some(source) = &self.selected_source {
+            let _ = ctx.observe(source.as_ref(), InvalidationKind::Paint);
+            let _ = ctx.observe(source.as_ref(), InvalidationKind::Semantics);
         }
 
         let previous = self.selected.min(self.tabs.len() - 1);
@@ -8968,6 +8996,13 @@ impl Widget for TabBar {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(source) = &self.selected_source {
+            let selected = ctx.observe_with(source.as_ref(), InvalidationKind::Paint);
+            let _ = ctx.observe_with(source.as_ref(), InvalidationKind::Semantics);
+            if let Some(selected) = selected {
+                self.selected = selected;
+            }
+        }
         let theme = self.resolved_theme();
         let style = text_token_style(&theme, theme.text.sm, theme.palette.text);
         let padding = theme.metrics.tab_padding;
@@ -15405,6 +15440,7 @@ mod tests {
         SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::{Alignment, Constraints};
+    use sui_reactive::Signal;
     use sui_runtime::{
         Application, ArrangeCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
         WindowBuilder,
@@ -20703,6 +20739,62 @@ mod tests {
             Some(SemanticsValue::Text("Inspect".to_string()))
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn tab_bar_observable_selection_animates_without_redraw_polling() -> Result<(), String> {
+        let mut theme = DefaultTheme::default();
+        theme.motion.duration_fast = 0.6;
+        theme.motion.duration_normal = 0.0;
+        let switch_duration = theme.motion.tab_switch_duration();
+        let selected = Signal::named("active_tab", Some(0_usize));
+        let (mut runtime, window_id) = build_runtime(
+            TabBar::new("Main tabs")
+                .theme(theme)
+                .tabs(["Design", "Inspect"])
+                .selected_from(selected.clone()),
+        );
+
+        runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(selected.set(Some(1)));
+        let changed = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            changed
+                .diagnostics
+                .reactive_invalidations
+                .iter()
+                .any(|sample| sample.source_name == "active_tab")
+        );
+
+        runtime.tick(switch_duration * 0.5);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert!(
+            runtime
+                .next_wakeup_time(window_id)
+                .map_err(|error| error.to_string())?
+                .is_some(),
+            "observable tab selection should retain its in-flight animation"
+        );
+
+        runtime.tick(switch_duration);
+        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        let tabs = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TabBar)
+            .expect("tab semantics present");
+        assert_eq!(
+            tabs.value,
+            Some(SemanticsValue::Text("Inspect".to_string()))
+        );
         Ok(())
     }
 

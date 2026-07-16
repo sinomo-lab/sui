@@ -76,6 +76,7 @@ use crate::windows_accessibility::{AccessKitSnapshot, build_accesskit_snapshot};
 #[derive(Debug)]
 enum DesktopUserEvent {
     ExternalWake(WakeSignal),
+    ReactiveWake(WakeSignal),
     #[cfg(target_os = "windows")]
     AccessKit(AccessKitEvent),
 }
@@ -244,7 +245,7 @@ impl DesktopPlatform {
     /// wakes the UI from any thread — used to drive non-blocking startup work.
     pub fn run_with(
         self,
-        runtime: Runtime,
+        mut runtime: Runtime,
         on_ready: impl FnOnce(Waker),
     ) -> Result<Vec<PlatformWindow>> {
         let event_loop = EventLoop::<DesktopUserEvent>::with_user_event()
@@ -252,10 +253,19 @@ impl DesktopPlatform {
             .map_err(map_event_loop_error)?;
         let event_loop_proxy = event_loop.create_proxy();
         let external_wake_pending = Arc::new(AtomicBool::new(false));
-        on_ready(Waker {
-            proxy: event_loop_proxy.clone(),
-            pending: external_wake_pending.clone(),
-        });
+        let reactive_wake_pending = Arc::new(AtomicBool::new(false));
+        let waker = Waker::new(
+            event_loop_proxy.clone(),
+            external_wake_pending.clone(),
+            WakeKind::External,
+        );
+        let reactive_waker = Waker::new(
+            event_loop_proxy.clone(),
+            reactive_wake_pending.clone(),
+            WakeKind::Reactive,
+        );
+        runtime.set_external_waker(move || reactive_waker.wake());
+        on_ready(waker);
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -265,6 +275,7 @@ impl DesktopPlatform {
                 self.automation,
                 event_loop_proxy,
                 external_wake_pending,
+                reactive_wake_pending,
             );
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(error) = app.renderer.initialize_async(None).await {
@@ -284,6 +295,7 @@ impl DesktopPlatform {
                 self.automation,
                 event_loop_proxy,
                 external_wake_pending,
+                reactive_wake_pending,
             );
             event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
@@ -298,7 +310,7 @@ impl DesktopPlatform {
     #[cfg(target_os = "android")]
     pub fn run_android_with(
         self,
-        runtime: Runtime,
+        mut runtime: Runtime,
         android_app: AndroidApp,
         on_ready: impl FnOnce(Waker),
     ) -> Result<Vec<PlatformWindow>> {
@@ -307,10 +319,19 @@ impl DesktopPlatform {
         let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
         let event_loop_proxy = event_loop.create_proxy();
         let external_wake_pending = Arc::new(AtomicBool::new(false));
-        on_ready(Waker {
-            proxy: event_loop_proxy.clone(),
-            pending: external_wake_pending.clone(),
-        });
+        let reactive_wake_pending = Arc::new(AtomicBool::new(false));
+        let waker = Waker::new(
+            event_loop_proxy.clone(),
+            external_wake_pending.clone(),
+            WakeKind::External,
+        );
+        let reactive_waker = Waker::new(
+            event_loop_proxy.clone(),
+            reactive_wake_pending.clone(),
+            WakeKind::Reactive,
+        );
+        runtime.set_external_waker(move || reactive_waker.wake());
+        on_ready(waker);
 
         let mut app = DesktopApp::new(
             runtime,
@@ -318,6 +339,7 @@ impl DesktopPlatform {
             self.automation,
             event_loop_proxy,
             external_wake_pending,
+            reactive_wake_pending,
         );
         event_loop.run_app(&mut app).map_err(map_event_loop_error)?;
 
@@ -341,6 +363,7 @@ struct DesktopApp {
     host_to_runtime: HashMap<HostWindowId, WindowId>,
     last_error: Option<Error>,
     external_wake_pending: Arc<AtomicBool>,
+    reactive_wake_pending: Arc<AtomicBool>,
 }
 
 impl DesktopApp {
@@ -492,6 +515,7 @@ impl DesktopApp {
         automation: Option<DesktopAutomationConfig>,
         event_loop_proxy: EventLoopProxy<DesktopUserEvent>,
         external_wake_pending: Arc<AtomicBool>,
+        reactive_wake_pending: Arc<AtomicBool>,
     ) -> Self {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
@@ -511,6 +535,7 @@ impl DesktopApp {
             host_to_runtime: HashMap::new(),
             last_error: None,
             external_wake_pending,
+            reactive_wake_pending,
         }
     }
 
@@ -1910,9 +1935,28 @@ pub struct WakeSignal;
 pub struct Waker {
     proxy: EventLoopProxy<DesktopUserEvent>,
     pending: Arc<AtomicBool>,
+    kind: WakeKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WakeKind {
+    External,
+    Reactive,
 }
 
 impl Waker {
+    fn new(
+        proxy: EventLoopProxy<DesktopUserEvent>,
+        pending: Arc<AtomicBool>,
+        kind: WakeKind,
+    ) -> Self {
+        Self {
+            proxy,
+            pending,
+            kind,
+        }
+    }
+
     pub fn wake(&self) {
         if self
             .pending
@@ -1921,11 +1965,11 @@ impl Waker {
         {
             return;
         }
-        if self
-            .proxy
-            .send_event(DesktopUserEvent::ExternalWake(WakeSignal))
-            .is_err()
-        {
+        let event = match self.kind {
+            WakeKind::External => DesktopUserEvent::ExternalWake(WakeSignal),
+            WakeKind::Reactive => DesktopUserEvent::ReactiveWake(WakeSignal),
+        };
+        if self.proxy.send_event(event).is_err() {
             self.pending.store(false, Ordering::Release);
         }
     }
@@ -1950,6 +1994,13 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
                         return;
                     }
                 }
+                if let Err(error) = self.drive_runtime(event_loop) {
+                    self.handle_error(event_loop, error);
+                }
+            }
+            DesktopUserEvent::ReactiveWake(_signal) => {
+                self.reactive_wake_pending.store(false, Ordering::Release);
+                self.runtime.process_reactive_updates();
                 if let Err(error) = self.drive_runtime(event_loop) {
                     self.handle_error(event_loop, error);
                 }

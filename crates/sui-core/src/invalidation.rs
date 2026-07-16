@@ -1,6 +1,6 @@
 use crate::{Rect, SurfaceId, WidgetId, WindowId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InvalidationKind {
     Measure,
     Arrange,

@@ -1,0 +1,16 @@
+[package]
+name = "sinomo-ui-reactive"
+version.workspace = true
+description = "Architecture-neutral observable signals and selectors for SUI."
+edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license-file.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "sui_reactive"

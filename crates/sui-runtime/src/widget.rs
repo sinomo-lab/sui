@@ -18,6 +18,7 @@ use sui_core::{
     Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
 };
 use sui_layout::{Constraints, LayoutContext};
+use sui_reactive::{Observable, Signal};
 use sui_scene::{
     Border, Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
     RegisteredExternalImage, RegisteredImage, Scene, SceneCommand, SceneLayer,
@@ -324,6 +325,138 @@ impl WidgetChildren {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeyedReconcile {
+    pub inserted: usize,
+    pub removed: usize,
+    pub moved: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+    pub duplicate_keys: usize,
+}
+
+struct KeyedChild<K, T> {
+    key: K,
+    value: Signal<T>,
+    child: WidgetPod,
+}
+
+/// Layout-neutral retained child collection reconciled by stable application
+/// keys.
+///
+/// Existing [`WidgetPod`] instances are moved rather than recreated. Each
+/// child also receives a per-item [`Signal`] so changing item data can update
+/// the retained widget without replacing it.
+pub struct KeyedChildren<K, T> {
+    entries: Vec<KeyedChild<K, T>>,
+}
+
+impl<K, T> KeyedChildren<K, T> {
+    pub const fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &Signal<T>, &WidgetPod)> {
+        self.entries
+            .iter()
+            .map(|entry| (&entry.key, &entry.value, &entry.child))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &Signal<T>, &mut WidgetPod)> {
+        self.entries
+            .iter_mut()
+            .map(|entry| (&entry.key, &entry.value, &mut entry.child))
+    }
+
+    pub fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        for entry in &self.entries {
+            visitor.visit(&entry.child);
+        }
+    }
+
+    pub fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        for entry in &mut self.entries {
+            visitor.visit(&mut entry.child);
+        }
+    }
+}
+
+impl<K, T> KeyedChildren<K, T>
+where
+    K: Clone + Eq + Hash,
+    T: Clone + PartialEq + 'static,
+{
+    pub fn reconcile<I, KF, B, W>(
+        &mut self,
+        items: I,
+        mut key_for: KF,
+        mut build: B,
+    ) -> KeyedReconcile
+    where
+        I: IntoIterator<Item = T>,
+        KF: FnMut(&T) -> K,
+        B: FnMut(&K, Signal<T>) -> W,
+        W: Widget + 'static,
+    {
+        let previous_len = self.entries.len();
+        let mut previous = std::mem::take(&mut self.entries)
+            .into_iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.key.clone(), (index, entry)))
+            .collect::<HashMap<_, _>>();
+        let mut seen = HashSet::new();
+        let mut next = Vec::new();
+        let mut report = KeyedReconcile::default();
+
+        for item in items {
+            let key = key_for(&item);
+            if !seen.insert(key.clone()) {
+                report.duplicate_keys += 1;
+                continue;
+            }
+
+            let next_index = next.len();
+            if let Some((previous_index, entry)) = previous.remove(&key) {
+                if previous_index != next_index {
+                    report.moved += 1;
+                }
+                if entry.value.set(item) {
+                    report.updated += 1;
+                } else {
+                    report.unchanged += 1;
+                }
+                next.push(entry);
+            } else {
+                let value = Signal::named("Keyed item", item);
+                let child = WidgetPod::new(build(&key, value.clone()));
+                next.push(KeyedChild { key, value, child });
+                report.inserted += 1;
+            }
+        }
+
+        report.removed = previous.len();
+        debug_assert_eq!(previous_len + report.inserted, next.len() + report.removed);
+        self.entries = next;
+        report
+    }
+}
+
+impl<K, T> Default for KeyedChildren<K, T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Standard retained-widget adapter used by the SUI runtime.
 ///
 /// `WidgetPod` gives a `Widget` stable identity, cached layout state, event
@@ -336,6 +469,12 @@ pub struct WidgetPod {
     layout_state: LayoutState,
     force_paint_boundary: bool,
     widget: Box<dyn Widget>,
+}
+
+impl Drop for WidgetPod {
+    fn drop(&mut self) {
+        crate::reactive::clear_widget(self.id);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1016,6 +1155,25 @@ impl EventCtx {
         self.widget_id
     }
 
+    /// Read an observable and subscribe this widget to the requested
+    /// invalidation kind.
+    pub fn observe<T, O>(&self, observable: &O, kind: InvalidationKind) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        crate::reactive::observe(self.window_id, self.widget_id, observable, kind)
+    }
+
+    /// Record a development diagnostic explaining a structural widget rebuild.
+    pub fn record_rebuild(&self, widget_name: &'static str, reason: impl Into<String>) {
+        crate::diagnostics::record_widget_rebuild(
+            self.window_id,
+            self.widget_id,
+            widget_name,
+            reason,
+        );
+    }
+
     pub const fn bounds(&self) -> Rect {
         self.bounds
     }
@@ -1434,6 +1592,32 @@ impl MeasureCtx {
         self.widget_id
     }
 
+    /// Read an observable whose changes affect measurement.
+    pub fn observe<T, O>(&self, observable: &O) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        self.observe_with(observable, InvalidationKind::Measure)
+    }
+
+    /// Read an observable and explicitly declare the resulting invalidation.
+    pub fn observe_with<T, O>(&self, observable: &O, kind: InvalidationKind) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        crate::reactive::observe(self.window_id, self.widget_id, observable, kind)
+    }
+
+    /// Record a development diagnostic explaining a structural widget rebuild.
+    pub fn record_rebuild(&self, widget_name: &'static str, reason: impl Into<String>) {
+        crate::diagnostics::record_widget_rebuild(
+            self.window_id,
+            self.widget_id,
+            widget_name,
+            reason,
+        );
+    }
+
     pub const fn bounds(&self) -> Rect {
         self.bounds
     }
@@ -1532,6 +1716,22 @@ impl ArrangeCtx {
 
     pub const fn widget_id(&self) -> WidgetId {
         self.widget_id
+    }
+
+    /// Read an observable whose changes affect arrangement.
+    pub fn observe<T, O>(&self, observable: &O) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        self.observe_with(observable, InvalidationKind::Arrange)
+    }
+
+    /// Read an observable and explicitly declare the resulting invalidation.
+    pub fn observe_with<T, O>(&self, observable: &O, kind: InvalidationKind) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        crate::reactive::observe(self.window_id, self.widget_id, observable, kind)
     }
 
     pub const fn dpi(&self) -> DpiInfo {
@@ -1635,6 +1835,22 @@ impl PaintCtx {
 
     pub const fn widget_id(&self) -> WidgetId {
         self.widget_id
+    }
+
+    /// Read an observable whose changes affect painting.
+    pub fn observe<T, O>(&self, observable: &O) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        self.observe_with(observable, InvalidationKind::Paint)
+    }
+
+    /// Read an observable and explicitly declare the resulting invalidation.
+    pub fn observe_with<T, O>(&self, observable: &O, kind: InvalidationKind) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        crate::reactive::observe(self.window_id, self.widget_id, observable, kind)
     }
 
     pub const fn focused_widget_id(&self) -> Option<WidgetId> {
@@ -2110,6 +2326,22 @@ impl SemanticsCtx {
         self.widget_id
     }
 
+    /// Read an observable whose changes affect semantics.
+    pub fn observe<T, O>(&self, observable: &O) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        self.observe_with(observable, InvalidationKind::Semantics)
+    }
+
+    /// Read an observable and explicitly declare the resulting invalidation.
+    pub fn observe_with<T, O>(&self, observable: &O, kind: InvalidationKind) -> T
+    where
+        O: Observable<T> + ?Sized,
+    {
+        crate::reactive::observe(self.window_id, self.widget_id, observable, kind)
+    }
+
     pub const fn root_widget_id(&self) -> WidgetId {
         self.root_widget_id
     }
@@ -2148,12 +2380,12 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        ArrangeCtx, EventCtx, EventPhase, MeasureCtx, MeasureScope, PaintCtx, SemanticsCtx,
-        SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
-        WidgetPodVisitor,
+        ArrangeCtx, EventCtx, EventPhase, KeyedChildren, MeasureCtx, MeasureScope, PaintCtx,
+        SemanticsCtx, SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod,
+        WidgetPodMutVisitor, WidgetPodVisitor,
     };
     use std::cell::Cell;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
     use sui_core::{
         Clipboard, Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode,
@@ -2625,6 +2857,48 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert_eq!(paint.scene().commands().len(), 2);
         assert_eq!(semantics.nodes().len(), 2);
+    }
+
+    #[test]
+    fn keyed_children_preserve_pods_and_update_item_signals() {
+        let mut children = KeyedChildren::<u64, (u64, String)>::new();
+        let first = children.reconcile(
+            [(1, "one".to_string()), (2, "two".to_string())],
+            |item| item.0,
+            |_key, _value| LabelWidget,
+        );
+        assert_eq!(first.inserted, 2);
+        let first_ids = children
+            .iter()
+            .map(|(key, _, child)| (*key, child.id()))
+            .collect::<HashMap<_, _>>();
+
+        let second = children.reconcile(
+            [
+                (2, "two updated".to_string()),
+                (1, "one".to_string()),
+                (3, "three".to_string()),
+            ],
+            |item| item.0,
+            |_key, _value| LabelWidget,
+        );
+        assert_eq!(second.inserted, 1);
+        assert_eq!(second.removed, 0);
+        assert_eq!(second.moved, 2);
+        assert_eq!(second.updated, 1);
+        assert_eq!(second.unchanged, 1);
+
+        let entries = children
+            .iter()
+            .map(|(key, value, child)| (*key, value.get(), child.id()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(),
+            vec![2, 1, 3]
+        );
+        assert_eq!(entries[0].1.1, "two updated");
+        assert_eq!(entries[0].2, first_ids[&2]);
+        assert_eq!(entries[1].2, first_ids[&1]);
     }
 
     #[test]

@@ -18,6 +18,7 @@ name = "sui_runtime"
 [dependencies]
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
+sui-reactive = { workspace = true }
 sui-scene = { workspace = true }
 sui-text = { workspace = true }
 web-time = { workspace = true }

@@ -13,7 +13,7 @@ use crate::{
     text_command::TextCommand,
     text_surface::paste_command,
 };
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
@@ -22,6 +22,7 @@ use sui_core::{
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
+use sui_reactive::Observable;
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
@@ -1321,6 +1322,7 @@ impl Widget for IconButton {
 pub struct Label {
     text: String,
     text_reader: Option<Box<dyn Fn() -> String>>,
+    text_source: Option<Arc<dyn Observable<String>>>,
     semantic_name: Option<String>,
     style: TextStyle,
     color_reader: Option<Box<dyn Fn() -> Color>>,
@@ -1336,6 +1338,7 @@ impl Label {
         Self {
             text: text.into(),
             text_reader: None,
+            text_source: None,
             semantic_name: None,
             style: DefaultTheme::default().body_text_style(),
             color_reader: None,
@@ -1359,6 +1362,21 @@ impl Label {
         F: Fn() -> String + 'static,
     {
         self.text_reader = Some(Box::new(reader));
+        self.text_source = None;
+        self
+    }
+
+    /// Bind label text to an observable value.
+    ///
+    /// Changes automatically invalidate text measurement, paint, and
+    /// semantics for this retained label instance.
+    pub fn text_from<O>(mut self, source: O) -> Self
+    where
+        O: Observable<String> + 'static,
+    {
+        self.text = source.get();
+        self.text_reader = None;
+        self.text_source = Some(Arc::new(source));
         self
     }
 
@@ -1388,6 +1406,7 @@ impl Label {
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
         self.text_reader = None;
+        self.text_source = None;
     }
 
     pub fn color(mut self, color: Color) -> Self {
@@ -1420,10 +1439,18 @@ impl Label {
     }
 
     fn current_text(&self) -> String {
-        self.text_reader
+        self.text_source
             .as_ref()
-            .map(|reader| reader())
+            .map(|source| source.get())
+            .or_else(|| self.text_reader.as_ref().map(|reader| reader()))
             .unwrap_or_else(|| self.text.clone())
+    }
+
+    fn observed_text(&self, ctx: &MeasureCtx) -> String {
+        self.text_source
+            .as_ref()
+            .map(|source| ctx.observe_with(source.as_ref(), InvalidationKind::Text))
+            .unwrap_or_else(|| self.current_text())
     }
 
     fn resolved_style(&self) -> TextStyle {
@@ -1663,7 +1690,7 @@ impl Widget for Label {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let text = self.current_text();
+        let text = self.observed_text(ctx);
         let style = self.resolved_style();
         let natural_measurement = measure_text(ctx, &text, &style);
         let max_width = constraints.max.width;
@@ -9537,6 +9564,7 @@ mod tests {
         WidgetId, WindowEvent,
     };
     use sui_layout::{Constraints, Padding as TestPadding};
+    use sui_reactive::Signal;
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
         Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, Widget, WindowBuilder,
@@ -10313,6 +10341,37 @@ mod tests {
         assert_eq!(
             output.semantics[0].value,
             Some(SemanticsValue::Text("Zoom 50%".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn label_observable_text_invalidates_without_window_refresh() -> Result<()> {
+        let text = Signal::named("zoom_label", "Zoom 25%".to_string());
+        let (mut runtime, window_id) = build_runtime(
+            Label::new("Zoom --")
+                .text_from(text.clone())
+                .semantic_name("Zoom level"),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(
+            output.semantics[0].value,
+            Some(SemanticsValue::Text("Zoom 25%".to_string()))
+        );
+
+        assert!(text.set("Zoom 50%".to_string()));
+        let output = runtime.render(window_id)?;
+        assert_eq!(
+            output.semantics[0].value,
+            Some(SemanticsValue::Text("Zoom 50%".to_string()))
+        );
+        assert!(
+            output
+                .diagnostics
+                .reactive_invalidations
+                .iter()
+                .any(|sample| sample.source_name == "zoom_label")
         );
         Ok(())
     }

@@ -61,6 +61,7 @@ sui-layout = { package = "sinomo-ui-layout", version = "0.1.0", path = "crates/s
 sui-lucide = { package = "sinomo-ui-lucide", version = "1.17.0", path = "crates/sui-lucide" }
 sui-platform = { package = "sinomo-ui-platform", version = "0.1.0", path = "crates/sui-platform" }
 sui-python = { package = "sinomo-ui-python", version = "0.1.0", path = "crates/sui-python" }
+sui-reactive = { package = "sinomo-ui-reactive", version = "0.1.0", path = "crates/sui-reactive" }
 sui-render-wgpu = { package = "sinomo-ui-render-wgpu", version = "0.1.0", path = "crates/sui-render-wgpu" }
 sui-runtime = { package = "sinomo-ui-runtime", version = "0.1.0", path = "crates/sui-runtime" }
 sui-scene = { package = "sinomo-ui-scene", version = "0.1.0", path = "crates/sui-scene" }

@@ -21,6 +21,7 @@ sui-animation = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-lucide = { workspace = true }
+sui-reactive = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 sui-text = { workspace = true }

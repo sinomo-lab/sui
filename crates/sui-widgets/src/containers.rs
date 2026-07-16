@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
@@ -10,10 +10,11 @@ use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexStyle, FlexWrap,
     Padding as Insets, arrange_flex, flex_layout,
 };
+use sui_reactive::Observable;
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor,
-    WidgetPodVisitor,
+    REACTIVE_CHANGE_KIND, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
 
@@ -1502,6 +1503,7 @@ impl Widget for Flex {
 pub struct SwitchView {
     selected: usize,
     selected_reader: Option<Box<dyn Fn() -> usize>>,
+    selected_source: Option<Arc<dyn Observable<usize>>>,
     children: WidgetChildren,
 }
 
@@ -1510,6 +1512,7 @@ impl SwitchView {
         Self {
             selected: 0,
             selected_reader: None,
+            selected_source: None,
             children: WidgetChildren::new(),
         }
     }
@@ -1517,6 +1520,7 @@ impl SwitchView {
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = selected;
         self.selected_reader = None;
+        self.selected_source = None;
         self
     }
 
@@ -1525,6 +1529,19 @@ impl SwitchView {
         F: Fn() -> usize + 'static,
     {
         self.selected_reader = Some(Box::new(selected));
+        self.selected_source = None;
+        self
+    }
+
+    /// Bind the active child index to an observable value while retaining all
+    /// child widget pods and their local state.
+    pub fn selected_from<O>(mut self, selected: O) -> Self
+    where
+        O: Observable<usize> + 'static,
+    {
+        self.selected = selected.get();
+        self.selected_reader = None;
+        self.selected_source = Some(Arc::new(selected));
         self
     }
 
@@ -1557,9 +1574,10 @@ impl SwitchView {
 
     fn active_index(&self) -> Option<usize> {
         let selected = self
-            .selected_reader
+            .selected_source
             .as_ref()
-            .map(|reader| reader())
+            .map(|source| source.get())
+            .or_else(|| self.selected_reader.as_ref().map(|reader| reader()))
             .unwrap_or(self.selected);
         (selected < self.children.as_slice().len()).then_some(selected)
     }
@@ -1573,6 +1591,9 @@ impl Default for SwitchView {
 
 impl Widget for SwitchView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(source) = &self.selected_source {
+            self.selected = ctx.observe(source.as_ref());
+        }
         let Some(index) = self.active_index() else {
             return constraints.clamp(Size::ZERO);
         };
@@ -1618,7 +1639,8 @@ impl Widget for SwitchView {
 /// measure, on pointer release, and on redraw. When the key changes it replaces the child pod and
 /// requests a fresh layout/paint pass.
 pub struct RebuildOnChange<K: PartialEq + Clone> {
-    key_fn: Box<dyn Fn() -> K>,
+    key_fn: Option<Box<dyn Fn() -> K>>,
+    key_source: Option<Arc<dyn Observable<K>>>,
     build: Box<dyn Fn(&K) -> WidgetPod>,
     last_key: K,
     child: WidgetPod,
@@ -1633,15 +1655,45 @@ impl<K: PartialEq + Clone> RebuildOnChange<K> {
         let last_key = key_fn();
         let child = build(&last_key);
         Self {
-            key_fn: Box::new(key_fn),
+            key_fn: Some(Box::new(key_fn)),
+            key_source: None,
             build: Box::new(build),
             last_key,
             child,
         }
     }
 
+    /// Rebuild from an observable structural key.
+    ///
+    /// Unlike [`Self::new`], this form wakes the runtime and targets this host
+    /// automatically when the key changes.
+    pub fn new_observable<O, BF>(key_source: O, build: BF) -> Self
+    where
+        O: Observable<K> + 'static,
+        BF: Fn(&K) -> WidgetPod + 'static,
+        K: 'static,
+    {
+        let last_key = key_source.get();
+        let child = build(&last_key);
+        Self {
+            key_fn: None,
+            key_source: Some(Arc::new(key_source)),
+            build: Box::new(build),
+            last_key,
+            child,
+        }
+    }
+
+    fn current_key(&self) -> K {
+        self.key_source
+            .as_ref()
+            .map(|source| source.get())
+            .or_else(|| self.key_fn.as_ref().map(|key_fn| key_fn()))
+            .expect("RebuildOnChange requires a key reader or observable")
+    }
+
     pub fn refresh(&mut self) -> bool {
-        let key = (self.key_fn)();
+        let key = self.current_key();
         if key != self.last_key {
             self.child = (self.build)(&key);
             self.last_key = key;
@@ -1662,20 +1714,40 @@ impl<K: PartialEq + Clone> RebuildOnChange<K> {
 
 impl<K: PartialEq + Clone + 'static> Widget for RebuildOnChange<K> {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Some(source) = &self.key_source {
+            let _ = ctx.observe(source.as_ref(), InvalidationKind::Measure);
+        }
         let pointer_up = matches!(
             event,
             Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Up)
         );
         let redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
-        if (pointer_up || redraw) && self.refresh() {
+        let reactive = matches!(
+            event,
+            Event::Custom(custom) if custom.kind == REACTIVE_CHANGE_KIND
+        );
+        if (pointer_up || redraw || reactive) && self.refresh() {
+            ctx.record_rebuild(
+                std::any::type_name::<Self>(),
+                "caller-supplied structural key changed",
+            );
             ctx.request_measure();
             ctx.request_arrange();
             ctx.request_paint();
+            ctx.request_semantics();
         }
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.refresh();
+        if let Some(source) = &self.key_source {
+            let _ = ctx.observe(source.as_ref());
+        }
+        if self.refresh() {
+            ctx.record_rebuild(
+                std::any::type_name::<Self>(),
+                "caller-supplied structural key changed during measure",
+            );
+        }
         self.child.measure(ctx, constraints)
     }
 
@@ -1761,14 +1833,24 @@ impl<K: PartialEq + Clone + 'static> Widget for RebuildOnConstraints<K> {
                 bounds.height(),
             )))
         {
+            ctx.record_rebuild(
+                std::any::type_name::<Self>(),
+                "constraint-derived structural key changed",
+            );
             ctx.request_measure();
             ctx.request_arrange();
             ctx.request_paint();
+            ctx.request_semantics();
         }
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.refresh_for_constraints(constraints);
+        if self.refresh_for_constraints(constraints) {
+            ctx.record_rebuild(
+                std::any::type_name::<Self>(),
+                "constraint-derived structural key changed during measure",
+            );
+        }
         self.child.measure(ctx, constraints)
     }
 
@@ -4489,6 +4571,7 @@ mod tests {
         SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::{Alignment, Axis, Constraints, FlexItem, FlexWrap, Padding as Insets};
+    use sui_reactive::Signal;
     use sui_runtime::{
         Application, ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
         PaintCtx, RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetGraphSnapshot,
@@ -4550,6 +4633,58 @@ mod tests {
         key.set(2);
         assert!(host.refresh());
         assert_eq!(*builds.borrow(), vec![1, 2]);
+    }
+
+    #[test]
+    fn rebuild_on_change_reports_structural_reason() -> sui_core::Result<()> {
+        let key = Rc::new(Cell::new(1usize));
+        let key_reader = Rc::clone(&key);
+        let (mut runtime, window_id) = build_runtime(RebuildOnChange::new(
+            move || key_reader.get(),
+            |value| {
+                WidgetPod::new(FixedBox::new(
+                    Size::new(*value as f32 * 20.0, 20.0),
+                    Color::BLACK,
+                ))
+            },
+        ));
+
+        runtime.render(window_id)?;
+        key.set(2);
+        runtime.handle_event(window_id, Event::Window(WindowEvent::RedrawRequested))?;
+        let output = runtime.render(window_id)?;
+
+        assert!(output.diagnostics.widget_rebuilds.iter().any(|sample| {
+            sample
+                .reason
+                .contains("caller-supplied structural key changed")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_on_change_observable_rebuilds_without_redraw_polling() -> sui_core::Result<()> {
+        let key = Signal::named("structural_mode", 1usize);
+        let (mut runtime, window_id) =
+            build_runtime(RebuildOnChange::new_observable(key.clone(), |value| {
+                WidgetPod::new(FixedBox::new(
+                    Size::new(*value as f32 * 20.0, 20.0),
+                    Color::BLACK,
+                ))
+            }));
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.frame.viewport, Size::new(20.0, 20.0));
+
+        assert!(key.set(2));
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.frame.viewport, Size::new(40.0, 20.0));
+        assert!(output.diagnostics.widget_rebuilds.iter().any(|sample| {
+            sample
+                .reason
+                .contains("caller-supplied structural key changed")
+        }));
+        Ok(())
     }
 
     #[test]
@@ -5261,6 +5396,43 @@ mod tests {
         assert!(!output.semantics.iter().any(|node| {
             node.role == SemanticsRole::Text && node.name.as_deref() == Some("Brush options")
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn switch_view_observable_selection_relayouts_retained_child() -> sui_core::Result<()> {
+        let selected = Signal::named("active_panel", 0_usize);
+        let (mut runtime, window_id) = build_runtime(
+            SwitchView::new()
+                .selected_from(selected.clone())
+                .with_child(
+                    SizedBox::new()
+                        .size(Size::new(80.0, 24.0))
+                        .with_child(crate::Label::new("Brush options")),
+                )
+                .with_child(
+                    SizedBox::new()
+                        .size(Size::new(120.0, 36.0))
+                        .with_child(crate::Label::new("Fill options")),
+                ),
+        );
+
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.frame.viewport, Size::new(80.0, 24.0));
+
+        assert!(selected.set(1));
+        let output = runtime.render(window_id)?;
+        assert_eq!(output.frame.viewport, Size::new(120.0, 36.0));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Fill options")
+        }));
+        assert!(
+            output
+                .diagnostics
+                .reactive_invalidations
+                .iter()
+                .any(|sample| sample.source_name == "active_panel")
+        );
         Ok(())
     }
 

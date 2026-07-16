@@ -5,7 +5,9 @@
 
 SUI keeps widgets and their interaction state on the UI thread. Rust
 application code chooses where domain state lives; the facade does not impose
-a global store or a framework-specific `State<T>` type.
+a global store. The optional `Signal<T>` implementation and the
+architecture-neutral `Observable<T>` trait connect changing application data
+to retained widgets without requiring a particular store design.
 
 ## Two Kinds of State
 
@@ -16,9 +18,13 @@ and similar details. Application state usually lives outside the widget in an
 
 Connect external state through two complementary APIs:
 
+- An observable binding such as `Label::text_from`,
+  `TabBar::selected_from`, or `SwitchView::selected_from` subscribes the
+  retained widget to targeted automatic invalidation.
 - A reader builder such as `Label::text_when`, `Slider::value_when`,
   `Select::selected_when`, `Button::enabled_when`, or `SwitchView::selected_when`
-  reads the current value when the relevant runtime phase runs.
+  reads the current value when the relevant runtime phase runs. Readers remain
+  useful for adapting existing state that does not emit notifications.
 - A callback such as `on_press`, `on_change`, `on_toggle`, or a
   `*_with_ctx` variant updates the application model.
 
@@ -28,30 +34,19 @@ callback to invalidate other observable output after changing shared state.
 ## Tutorial: External State Without Rebuilding
 
 ```rust
-use std::{cell::Cell, rc::Rc};
 use sui::prelude::*;
-use sui::{InvalidationKind, InvalidationRequest, InvalidationTarget};
 
 fn counter() -> impl Widget {
-    let count = Rc::new(Cell::new(0_i32));
-
-    let label_count = Rc::clone(&count);
-    let label = Label::dynamic("Count: 0", move || {
-        format!("Count: {}", label_count.get())
+    let count = Signal::named("counter", 0_i32);
+    let label_text = count.select_named("counter label", |count| {
+        format!("Count: {count}")
     });
 
-    let button_count = Rc::clone(&count);
-    let increment = Button::new("Increment").on_press_with_ctx(move |ctx| {
-        button_count.set(button_count.get() + 1);
+    let label = Label::new("Count: 0").text_from(label_text);
 
-        // The reader lives in a sibling, so invalidate the window rather than
-        // only the button that received this event.
-        for kind in [InvalidationKind::Measure, InvalidationKind::Semantics] {
-            ctx.request(InvalidationRequest::new(
-                InvalidationTarget::Window(ctx.window_id()),
-                kind,
-            ));
-        }
+    let increment_count = count.clone();
+    let increment = Button::new("Increment").on_press(move || {
+        increment_count.update(|count| *count += 1);
     });
 
     Stack::vertical()
@@ -62,11 +57,42 @@ fn counter() -> impl Widget {
 ```
 
 The tree remains retained: the label and button are not recreated for each
-increment. The label's reader observes the latest value during the next pass.
+increment. The selector suppresses notifications when its derived value is
+unchanged, and the label automatically requests text measurement, paint, and
+semantics when the selected value changes.
+
+Signal writes from a background thread wake the running platform event loop.
+Writes made in an event callback join the current runtime turn. Repeated
+changes are coalesced by the platform wake path and equality checks.
 
 Reader closures must be fast, deterministic, and non-blocking. They run on the
 UI thread and may be evaluated in more than one phase. Do not perform I/O,
 network access, or expensive parsing inside them.
+
+## Observing Values in Custom Widgets
+
+Widget contexts can subscribe directly to any `Observable<T>`:
+
+```rust
+fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+    let document = ctx.observe_with(&self.document, InvalidationKind::Text);
+    measure_document(ctx, constraints, &document)
+}
+
+fn paint(&self, ctx: &mut PaintCtx) {
+    let highlight = ctx.observe(&self.highlight);
+    paint_highlight(ctx, highlight);
+}
+```
+
+`MeasureCtx::observe`, `ArrangeCtx::observe`, `PaintCtx::observe`, and
+`SemanticsCtx::observe` infer their phase's invalidation kind.
+`observe_with` declares a different consequence explicitly. `EventCtx::observe`
+always accepts an explicit invalidation kind because event handling alone does
+not reveal which cached output depends on the value.
+
+Subscriptions belong to the retained `WidgetPod` identity and are released
+when that pod is dropped.
 
 ## Controlled and Locally Retained Widgets
 
@@ -84,6 +110,31 @@ Not every widget has a reader for every property.
 Rebuilding a subtree resets its local focus, animation, selection, and editing
 state. Use `RebuildOnChange` for genuinely structural changes, not as the
 default way to update a label or selected value.
+
+When a structural key is observable, prefer
+`RebuildOnChange::new_observable(selector, build)`. It subscribes the host,
+wakes the runtime, rebuilds only when the selected key changes, and reports the
+reason through rebuild diagnostics. The closure-based constructor remains
+available for existing state adapters that are polled during a runtime pass.
+
+For dynamic collections, `KeyedChildren<K, T>` reconciles items by stable key.
+Existing `WidgetPod`s move into their new order instead of being recreated.
+Each entry exposes a per-item `Signal<T>`, allowing changed row data to update
+the retained row widget while preserving focus, selection, and animation.
+
+## Reactive Diagnostics
+
+Every `RenderOutput` includes:
+
+- `diagnostics.reactive_invalidations`, identifying the source name, version,
+  target widget, invalidation kind, and whether the target was active.
+- `diagnostics.widget_rebuilds`, recording structural replacement reasons
+  reported by `RebuildOnChange`, `RebuildOnConstraints`, or custom widgets
+  through `ctx.record_rebuild(...)`.
+
+Name application-facing signals and selectors with `Signal::named` and
+`select_named` so diagnostics explain the state dependency rather than showing
+only a generic source label.
 
 ## Event Delivery
 

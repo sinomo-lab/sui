@@ -3,11 +3,12 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
-    sync::{OnceLock, RwLock},
+    sync::{Mutex, OnceLock, RwLock},
     time::Duration,
 };
 
-use sui_core::{DirtyRegion, Size, WidgetId, WindowId};
+use sui_core::{DirtyRegion, InvalidationKind, Size, WidgetId, WindowId};
+use sui_reactive::SourceId;
 use sui_scene::{LayerCompositionMode, SceneCommand, SceneFrame, SceneLayerUpdateKind};
 use sui_text::RuntimeTextTimingDiagnostics;
 
@@ -84,17 +85,75 @@ pub struct WidgetTimingSample {
     pub calls: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReactiveInvalidationSample {
+    pub widget_id: WidgetId,
+    pub source_id: SourceId,
+    pub source_name: String,
+    pub version: u64,
+    pub kind: InvalidationKind,
+    /// False when the target is currently outside the active retained graph.
+    pub delivered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WidgetRebuildSample {
+    pub widget_id: WidgetId,
+    pub widget_name: &'static str,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RenderDiagnostics {
     pub phase_timings: Vec<FramePhaseSample>,
     pub text_caches: TextCacheDiagnostics,
     pub runtime_text_timing: RuntimeTextTimingDiagnostics,
     pub widget_timings: Vec<WidgetTimingSample>,
+    pub reactive_invalidations: Vec<ReactiveInvalidationSample>,
+    pub widget_rebuilds: Vec<WidgetRebuildSample>,
     pub widget_count: usize,
     pub active_animated_widget_count: usize,
     pub animation_frame_wake_count: usize,
     pub animation_repaint_frame_count: usize,
     pub animation_transform_effect_only_frame_count: usize,
+}
+
+fn rebuild_diagnostics() -> &'static Mutex<HashMap<WindowId, Vec<WidgetRebuildSample>>> {
+    static REBUILDS: OnceLock<Mutex<HashMap<WindowId, Vec<WidgetRebuildSample>>>> = OnceLock::new();
+    REBUILDS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn record_widget_rebuild(
+    window_id: WindowId,
+    widget_id: WidgetId,
+    widget_name: &'static str,
+    reason: impl Into<String>,
+) {
+    rebuild_diagnostics()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(window_id)
+        .or_default()
+        .push(WidgetRebuildSample {
+            widget_id,
+            widget_name,
+            reason: reason.into(),
+        });
+}
+
+pub(crate) fn take_widget_rebuilds(window_id: WindowId) -> Vec<WidgetRebuildSample> {
+    rebuild_diagnostics()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&window_id)
+        .unwrap_or_default()
+}
+
+pub(crate) fn clear_widget_rebuilds(window_id: WindowId) {
+    rebuild_diagnostics()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&window_id);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

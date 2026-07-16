@@ -2,6 +2,7 @@
 
 mod diagnostics;
 mod logo;
+mod reactive;
 mod widget;
 
 use std::{
@@ -30,12 +31,13 @@ use web_time::Instant;
 
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
-    RenderDiagnostics, RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
-    RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
-    TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetTimingPhase, WidgetTimingSample,
-    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowPerformanceSnapshot, WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening,
-    WindowTextCoveragePolicy, WindowTextHinting, WindowTextSubpixelOrder, WindowToneMappingMode,
+    ReactiveInvalidationSample, RenderDiagnostics, RendererSubmissionDiagnostics,
+    RetainedPacketHotspotDiagnostics, RetainedPacketRebuildDiagnostics, SceneStatistics,
+    SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+    WidgetRebuildSample, WidgetTimingPhase, WidgetTimingSample, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
+    WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy,
+    WindowTextHinting, WindowTextSubpixelOrder, WindowToneMappingMode,
     clear_window_performance_snapshot, clear_window_performance_snapshots,
     clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
@@ -43,14 +45,15 @@ pub use diagnostics::{
     window_scene_statistics_detail_mode,
 };
 pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
+pub use reactive::REACTIVE_CHANGE_KIND;
 use std::rc::Rc;
 pub use sui_core::DpiInfo;
 pub use sui_layout::LayoutContext;
 use widget::MeasureScope;
 pub use widget::{
-    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
-    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, KeyedChildren, KeyedReconcile, LayerOptions, MeasureCtx,
+    PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy,
+    StackSurfaceOptions, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{
     BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PaintImageResource,
@@ -415,6 +418,7 @@ pub struct Runtime {
     text_system: Arc<TextSystem>,
     clipboard: Clipboard,
     windows: Vec<WindowState>,
+    external_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Runtime {
@@ -441,6 +445,7 @@ impl Runtime {
             text_system: Arc::new(TextSystem::new()),
             clipboard: Clipboard::new(),
             windows: Vec::new(),
+            external_waker: None,
         }
     }
 
@@ -448,8 +453,29 @@ impl Runtime {
         let window_id = self.alloc_window_id();
         let mut window = builder.build(window_id)?;
         window.clipboard = self.clipboard.clone();
+        window.reactive_hub.set_waker(self.external_waker.clone());
         self.windows.push(window);
         Ok(window_id)
+    }
+
+    /// Install the platform callback used to wake the UI after an observable
+    /// invalidates one or more subscribed widgets.
+    pub fn set_external_waker(&mut self, waker: impl Fn() + Send + Sync + 'static) {
+        let waker: Arc<dyn Fn() + Send + Sync> = Arc::new(waker);
+        self.external_waker = Some(Arc::clone(&waker));
+        for window in &self.windows {
+            window.reactive_hub.set_waker(Some(Arc::clone(&waker)));
+        }
+    }
+
+    /// Drain observable changes into targeted widget invalidations without
+    /// delivering an application-level external wake event.
+    ///
+    /// Platform integrations call this after their reactive wake signal.
+    pub fn process_reactive_updates(&mut self) {
+        for window in &mut self.windows {
+            window.drain_reactive_invalidations();
+        }
     }
 
     /// Shared clipboard handle used by every window in this runtime.
@@ -485,7 +511,9 @@ impl Runtime {
         let font_registry = Arc::clone(&self.font_registry);
         let image_registry = Arc::clone(&self.image_registry);
         let window = self.window_mut(window_id)?;
+        window.drain_reactive_invalidations();
         window.handle_event(event, text_system, font_registry, image_registry);
+        window.drain_reactive_invalidations();
         Ok(())
     }
 
@@ -681,6 +709,7 @@ impl Runtime {
         let font_registry = Arc::clone(&self.font_registry);
         let image_registry = Arc::clone(&self.image_registry);
         let window = self.window_mut(window_id)?;
+        window.drain_reactive_invalidations();
         Ok(window.render(text_system, font_registry, image_registry))
     }
 
@@ -1032,6 +1061,8 @@ struct WindowState {
     last_paint_bounds_by_widget: HashMap<WidgetId, Rect>,
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
+    pending_reactive_diagnostics: Vec<ReactiveInvalidationSample>,
+    reactive_hub: Arc<reactive::ReactiveInvalidationHub>,
     pointer_capture: HashMap<u64, WidgetId>,
     last_pointer_events: HashMap<u64, PointerEvent>,
     pointer_hover_paths: HashMap<u64, Vec<WidgetId>>,
@@ -1057,6 +1088,8 @@ impl WindowState {
             window_focused: true,
         };
 
+        let reactive_hub = reactive::ReactiveInvalidationHub::new();
+        reactive::register_window(id, &reactive_hub);
         Self {
             id,
             title,
@@ -1074,6 +1107,8 @@ impl WindowState {
             last_paint_bounds_by_widget: HashMap::new(),
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
+            pending_reactive_diagnostics: Vec::new(),
+            reactive_hub,
             pointer_capture: HashMap::new(),
             last_pointer_events: HashMap::new(),
             pointer_hover_paths: HashMap::new(),
@@ -1093,8 +1128,50 @@ impl WindowState {
         }
     }
 
+    fn drain_reactive_invalidations(&mut self) {
+        const MAX_REACTIVE_ROUNDS: usize = 8;
+
+        for _ in 0..MAX_REACTIVE_ROUNDS {
+            let pending = self.reactive_hub.drain();
+            if pending.is_empty() {
+                break;
+            }
+
+            let mut invalidations = Vec::new();
+            let mut targets = BTreeSet::new();
+            for (request, mut sample) in pending {
+                let InvalidationTarget::Widget(widget_id) = request.target else {
+                    continue;
+                };
+                let delivered = self.graph.is_empty() || self.graph.contains(widget_id);
+                sample.delivered = delivered;
+                self.pending_reactive_diagnostics.push(sample);
+                if delivered {
+                    targets.insert(widget_id);
+                    invalidations.push(request);
+                }
+            }
+
+            let event = Event::Custom(CustomEvent::new(REACTIVE_CHANGE_KIND));
+            for target in targets {
+                let dispatch = self.dispatch_direct_event(target, &event);
+                let focus_request = dispatch.focus_request;
+                let mut effects = EventEffects::default();
+                effects.extend(dispatch);
+                self.apply_event_effects(effects, &mut invalidations);
+                if let Some(request) = focus_request {
+                    let focus_effects = self.apply_focus_request(request);
+                    self.apply_event_effects(focus_effects, &mut invalidations);
+                }
+            }
+
+            self.schedule.extend(&invalidations);
+            self.pending_invalidations.extend(invalidations);
+        }
+    }
+
     fn needs_render(&self) -> bool {
-        self.last_frame.is_none() || self.schedule.needs_render()
+        self.last_frame.is_none() || self.schedule.needs_render() || self.reactive_hub.has_pending()
     }
 
     fn handle_event(
@@ -2759,6 +2836,8 @@ impl WindowState {
         diagnostics.widget_count = self.graph.nodes.len();
         diagnostics.runtime_text_timing = sui_text::take_text_timing_collection();
         diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
+        diagnostics.reactive_invalidations = std::mem::take(&mut self.pending_reactive_diagnostics);
+        diagnostics.widget_rebuilds = diagnostics::take_widget_rebuilds(self.id);
         diagnostics.active_animated_widget_count = self.active_animated_widget_count();
         diagnostics.animation_frame_wake_count = self.pending_animation_wake_count;
         diagnostics.animation_repaint_frame_count =
@@ -3534,6 +3613,13 @@ impl WindowState {
     }
 }
 
+impl Drop for WindowState {
+    fn drop(&mut self) {
+        reactive::unregister_window(self.id);
+        diagnostics::clear_widget_rebuilds(self.id);
+    }
+}
+
 fn normalize_scale_factor(scale_factor: f32) -> f32 {
     if scale_factor.is_finite() && scale_factor > 0.0 {
         scale_factor
@@ -4273,7 +4359,10 @@ mod tests {
         collections::VecDeque,
         path::PathBuf,
         rc::Rc,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use super::{
@@ -4286,12 +4375,13 @@ mod tests {
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
-        DragSessionId, DropEffect, Event, FontHandle, ImageHandle, KeyState, KeyboardEvent, Point,
-        PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect,
-        SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue,
-        Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent,
+        DragSessionId, DropEffect, Event, FontHandle, ImageHandle, InvalidationKind, KeyState,
+        KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        PointerKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
+        SemanticsValue, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent,
     };
     use sui_layout::Constraints;
+    use sui_reactive::Signal;
     use sui_scene::{
         LayerCompositionMode, LayerProperties, RegisteredExternalImage, RegisteredImage, Scene,
         SceneCommand, SceneLayerUpdateKind,
@@ -8009,6 +8099,69 @@ mod tests {
         let graph = runtime.widget_graph(window_id).unwrap();
 
         assert_eq!(output.diagnostics.widget_count, graph.nodes.len());
+    }
+
+    struct ReactiveTextLeaf {
+        text: Signal<String>,
+        measures: Arc<AtomicUsize>,
+    }
+
+    impl Widget for ReactiveTextLeaf {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let text = ctx.observe_with(&self.text, InvalidationKind::Text);
+            self.measures.fetch_add(1, Ordering::Relaxed);
+            constraints.clamp(Size::new(text.len() as f32 * 8.0, 24.0))
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
+            node.name = Some(self.text.get());
+            ctx.push(node);
+        }
+    }
+
+    #[test]
+    fn observable_change_targets_widget_and_reports_diagnostics() {
+        let text = Signal::named("status_text", "Ready".to_string());
+        let measures = Arc::new(AtomicUsize::new(0));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().root(ReactiveTextLeaf {
+                text: text.clone(),
+                measures: Arc::clone(&measures),
+            }))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let wake_count = Arc::clone(&wakes);
+        runtime.set_external_waker(move || {
+            wake_count.fetch_add(1, Ordering::Relaxed);
+        });
+
+        let first = runtime.render(window_id).unwrap();
+        assert_eq!(measures.load(Ordering::Relaxed), 1);
+        assert_eq!(first.semantics[0].name.as_deref(), Some("Ready"));
+
+        assert!(text.set("Connecting".to_string()));
+        assert!(text.set("Connected".to_string()));
+        assert_eq!(wakes.load(Ordering::Relaxed), 1);
+        assert!(runtime.needs_render(window_id).unwrap());
+
+        let second = runtime.render(window_id).unwrap();
+        assert_eq!(measures.load(Ordering::Relaxed), 2);
+        assert_eq!(second.semantics[0].name.as_deref(), Some("Connected"));
+        let samples = second
+            .diagnostics
+            .reactive_invalidations
+            .iter()
+            .filter(|sample| {
+                sample.source_name == "status_text"
+                    && sample.kind == InvalidationKind::Text
+                    && sample.delivered
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].version, 2);
     }
 
     #[test]

@@ -28,6 +28,7 @@ wgpu = ["dep:sui-render-wgpu"]
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-platform = { workspace = true, optional = true }
+sui-reactive = { workspace = true }
 sui-render-wgpu = { workspace = true, optional = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
