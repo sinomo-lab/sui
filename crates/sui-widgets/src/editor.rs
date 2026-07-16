@@ -3,6 +3,12 @@ use std::ops::Range;
 use sui_text::{TextCursor, TextSelection};
 use unicode_segmentation::UnicodeSegmentation;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EditorTextEdit {
+    pub range: Range<usize>,
+    pub replacement_len: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EditorDocument {
     text: String,
@@ -10,6 +16,7 @@ pub(crate) struct EditorDocument {
     revision: u64,
     dirty_line_range: Range<usize>,
     line_offsets_dirty_from: Option<usize>,
+    pending_text_edit: Option<EditorTextEdit>,
 }
 
 impl EditorDocument {
@@ -23,6 +30,7 @@ impl EditorDocument {
             revision: 0,
             dirty_line_range: 0..line_count,
             line_offsets_dirty_from: Some(0),
+            pending_text_edit: None,
         }
     }
 
@@ -79,6 +87,10 @@ impl EditorDocument {
         self.line_offsets_dirty_from = None;
     }
 
+    pub(crate) fn take_text_edit(&mut self) -> Option<EditorTextEdit> {
+        self.pending_text_edit.take()
+    }
+
     fn replace_range(&mut self, range: Range<usize>, replacement: &str) {
         let old_line_count = self.line_count();
         let pending_dirty = self.dirty_line_range.clone();
@@ -96,6 +108,10 @@ impl EditorDocument {
         let removed_len = range.end - range.start;
 
         self.text.replace_range(range.clone(), replacement);
+        self.pending_text_edit = Some(EditorTextEdit {
+            range: range.clone(),
+            replacement_len: replacement.len(),
+        });
         self.line_starts.splice(
             retained_prefix_end..shifted_suffix_start,
             replacement_line_starts.iter().copied(),
@@ -197,6 +213,10 @@ impl EditorState {
 
     pub(crate) fn clear_document_dirty(&mut self) {
         self.document.clear_dirty();
+    }
+
+    pub(crate) fn take_text_edit(&mut self) -> Option<EditorTextEdit> {
+        self.document.take_text_edit()
     }
 
     pub(crate) fn set_text(&mut self, text: impl Into<String>) {

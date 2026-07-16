@@ -6632,108 +6632,100 @@ fn text_editing_word_boundary(ch: Option<char>) -> bool {
 fn build_text_editing_syntax_preview_with_theme(
     theme_reader: WidgetBookThemeReader,
 ) -> impl Widget {
-    let mut content = Stack::vertical().spacing(2.0).alignment(Alignment::Stretch);
+    let theme = theme_reader();
+    let (document, style_spans) = text_editing_syntax_preview_content(theme);
 
-    for line_index in 0..220 {
-        content = content.with_child(build_text_editing_syntax_line_with_theme(
-            Rc::clone(&theme_reader),
-            line_index,
-        ));
-    }
-
-    ScrollView::vertical(Padding::all(
-        12.0,
-        SizedBox::new().width(520.0).with_child(content),
-    ))
-    .name(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME)
+    TextSurface::new(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME)
+        .value(document)
+        .read_only()
+        .min_width(520.0)
+        .min_height(700.0)
+        .style_spans(style_spans)
+        .theme_when(clone_widget_book_theme_reader(&theme_reader))
+        .text_style_when(|theme| {
+            widget_book_theme_mono_text_style(theme, theme.text.sm, theme.palette.text)
+        })
 }
 
-fn build_text_editing_syntax_line_with_theme(
-    theme_reader: WidgetBookThemeReader,
-    line_index: usize,
-) -> impl Widget {
-    let keyword = ["fn", "let", "match", "if", "while", "return"][line_index % 6];
-    let type_name =
-        ["Editor", "Glyphs", "Select", "Syntax", "Window", "Frame"][(line_index * 7) % 6];
-    let method = ["shape", "cache", "cursor", "paint", "fallback", "commit"][(line_index * 11) % 6];
-    let accent = ["keyword", "type", "comment", "number"][line_index % 4];
-    let line = Stack::horizontal()
-        .spacing(0.0)
-        .alignment(Alignment::Start)
-        .with_child(SizedBox::new().width(44.0).with_child(demo_mono_label(
-            &theme_reader,
-            format!("{:>3}", line_index + 1),
-            DemoTextRole::Metadata,
-            |theme| theme.palette.text_muted,
-        )))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            format!("{keyword} "),
-            DemoTextRole::Supporting,
-            |theme| theme.palette.accent,
-        ))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            format!("sample_{line_index:03}"),
-            DemoTextRole::Supporting,
-            |theme| theme.palette.text,
-        ))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            format!(": {type_name}"),
-            DemoTextRole::Supporting,
-            |theme| theme.palette.text_muted,
-        ))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            format!(" = {method}("),
-            DemoTextRole::Supporting,
-            |theme| theme.palette.text,
-        ))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            format!("{:.2}", 0.5 + ((line_index % 17) as f32 * 0.125)),
-            DemoTextRole::Supporting,
-            |theme| theme.palette.success,
-        ))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            "); ",
-            DemoTextRole::Supporting,
-            |theme| theme.palette.text,
-        ))
-        .with_child(demo_mono_label(
-            &theme_reader,
-            format!("// {accent} glyph {}", line_index % 9),
-            DemoTextRole::Supporting,
-            |theme| theme.palette.text_muted,
-        ));
+fn text_editing_syntax_preview_content(theme: DefaultTheme) -> (String, Vec<TextSurfaceStyleSpan>) {
+    let text = widget_book_theme_mono_text_style(theme, theme.text.sm, theme.palette.text);
+    let muted = widget_book_theme_mono_text_style(theme, theme.text.sm, theme.palette.text_muted);
+    let accent = widget_book_theme_mono_text_style(theme, theme.text.sm, theme.palette.accent);
+    let success = widget_book_theme_mono_text_style(theme, theme.text.sm, theme.palette.success);
+    let mut document = String::new();
+    let mut spans = Vec::with_capacity(220 * 8);
 
-    let even = line_index.is_multiple_of(2);
-    let initial_theme = theme_reader();
-    if line_index.is_multiple_of(2) {
-        Background::new(initial_theme.palette.surface, Padding::all(6.0, line)).brush_when(
-            widget_book_theme_color(&theme_reader, move |theme| {
-                if even {
-                    theme.palette.surface
-                } else {
-                    theme.palette.surface_raised
-                }
-            }),
-        )
-    } else {
-        Background::new(
-            initial_theme.palette.surface_raised,
-            Padding::all(6.0, line),
-        )
-        .brush_when(widget_book_theme_color(&theme_reader, move |theme| {
-            if even {
-                theme.palette.surface
-            } else {
-                theme.palette.surface_raised
-            }
-        }))
+    for line_index in 0..220 {
+        let keyword = ["fn", "let", "match", "if", "while", "return"][line_index % 6];
+        let type_name =
+            ["Editor", "Glyphs", "Select", "Syntax", "Window", "Frame"][(line_index * 7) % 6];
+        let method =
+            ["shape", "cache", "cursor", "paint", "fallback", "commit"][(line_index * 11) % 6];
+        let color_name = ["keyword", "type", "comment", "number"][line_index % 4];
+
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!("{:>3} ", line_index + 1),
+            &muted,
+        );
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!("{keyword} "),
+            &accent,
+        );
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!("sample_{line_index:03}"),
+            &text,
+        );
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!(": {type_name}"),
+            &muted,
+        );
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!(" = {method}("),
+            &text,
+        );
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!("{:.2}", 0.5 + ((line_index % 17) as f32 * 0.125)),
+            &success,
+        );
+        push_text_editing_syntax_segment(&mut document, &mut spans, "); ", &text);
+        push_text_editing_syntax_segment(
+            &mut document,
+            &mut spans,
+            &format!("// {color_name} glyph {}", line_index % 9),
+            &muted,
+        );
+        if line_index + 1 < 220 {
+            document.push('\n');
+        }
     }
+
+    (document, spans)
+}
+
+fn push_text_editing_syntax_segment(
+    document: &mut String,
+    spans: &mut Vec<TextSurfaceStyleSpan>,
+    segment: &str,
+    style: &TextStyle,
+) {
+    let start = document.len();
+    document.push_str(segment);
+    spans.push(TextSurfaceStyleSpan::new(
+        start..document.len(),
+        style.clone(),
+    ));
 }
 
 fn widget_book_demo_image_pixels() -> Vec<u8> {
@@ -8230,7 +8222,8 @@ mod tests {
         build_theme_demo_application, build_widget_book_application, build_widget_book_gallery,
         default_widget_book_state, frame_phase_index, register_widget_book_images,
         text_editing_benchmark_document, text_editing_benchmark_style_overlays,
-        text_editing_benchmark_style_spans, theme_preview_card,
+        text_editing_benchmark_style_spans, text_editing_syntax_preview_content,
+        theme_preview_card,
     };
     use sui::{
         App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample, ImeEvent, KeyState,
@@ -8588,6 +8581,15 @@ mod tests {
                 .all(|overlay| overlay.range.start < overlay.range.end
                     && overlay.range.end <= document.len())
         );
+
+        let (preview, preview_spans) = text_editing_syntax_preview_content(DefaultTheme::default());
+        assert_eq!(preview.lines().count(), 220);
+        assert!(preview_spans.len() > 1_500);
+        assert!(
+            preview_spans
+                .iter()
+                .all(|span| span.range.start < span.range.end && span.range.end <= preview.len())
+        );
     }
 
     #[test]
@@ -8671,7 +8673,7 @@ mod tests {
             .semantics
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::ScrollView
+                node.role == SemanticsRole::TextInput
                     && node.name.as_deref() == Some(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME)
             })
             .expect("text editing syntax preview should be present");
@@ -9225,7 +9227,7 @@ mod tests {
             .get_by_role(SemanticsRole::TextInput)
             .with_name(TEXT_EDITING_BENCHMARK_EDITOR_NAME);
         let syntax_scroll = window
-            .get_by_role(SemanticsRole::ScrollView)
+            .get_by_role(SemanticsRole::TextInput)
             .with_name(TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME);
         editor.focus()?;
 

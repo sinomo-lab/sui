@@ -20,7 +20,7 @@ use sui_text::{
 use crate::{
     DefaultTheme, MotionScalar, ThemeColorScheme,
     editor::{
-        EditorCommand, EditorCommandResult, EditorDocument, EditorState,
+        EditorCommand, EditorCommandResult, EditorDocument, EditorState, EditorTextEdit,
         clamp_to_grapheme_boundary, selection_range,
     },
     selection::{SelectionChange, SelectionOwnerId, SelectionScope},
@@ -402,6 +402,33 @@ impl TextSurface {
         self.invalidate_line_layouts();
     }
 
+    fn rebase_style_ranges_after_edit(&mut self, edit: &EditorTextEdit) {
+        self.style_spans.retain_mut(|span| {
+            let Some(range) = rebased_text_range(&span.range, edit) else {
+                return false;
+            };
+            span.range = range;
+            true
+        });
+        self.style_overlays.retain_mut(|overlay| {
+            let Some(range) = rebased_text_range(&overlay.range, edit) else {
+                return false;
+            };
+            overlay.range = range;
+            true
+        });
+        self.style_span_index.rebuild(
+            self.style_spans
+                .iter()
+                .map(|span| (span.range.start, span.range.end)),
+        );
+        self.style_overlay_index.rebuild(
+            self.style_overlays
+                .iter()
+                .map(|overlay| (overlay.range.start, overlay.range.end)),
+        );
+    }
+
     fn invalidate_line_layouts(&mut self) {
         self.layout = None;
         self.line_layouts.clear();
@@ -443,26 +470,89 @@ impl TextSurface {
         self.line_layouts = next_layouts;
     }
 
+    fn single_line_composition_display_line(&self) -> Option<(usize, String)> {
+        let composition = self.editor.composition()?;
+        if composition.text.contains('\n') {
+            return None;
+        }
+
+        let document = self.editor.document();
+        let line_index = document.line_index_for_offset(composition.replacement_range.start);
+        let line_range = document.line_range(line_index);
+        if composition.replacement_range.end > line_range.end {
+            return None;
+        }
+
+        let mut line_text = document.line_text(line_index).to_string();
+        let local_range = composition
+            .replacement_range
+            .start
+            .saturating_sub(line_range.start)
+            ..composition
+                .replacement_range
+                .end
+                .saturating_sub(line_range.start);
+        line_text.replace_range(local_range, &composition.text);
+        Some((line_index, line_text))
+    }
+
+    fn reconcile_single_line_composition_layouts(
+        &mut self,
+        composition_line: usize,
+        composition_line_len: usize,
+        line_box_size: Size,
+        line_style: &TextStyle,
+    ) {
+        let line_count = self.editor.document().line_count();
+        let can_reuse = self.line_layout_box_size == Some(line_box_size)
+            && self.line_layout_style.as_ref() == Some(line_style)
+            && self.line_layout_style_revision == self.style_revision
+            && self.line_layouts.len() == line_count
+            && self.line_offsets.len() == line_count
+            && self.line_lengths.len() == line_count;
+        if !can_reuse {
+            self.line_layouts = vec![None; line_count];
+            self.line_offsets.resize(line_count, 0);
+            self.line_lengths.resize(line_count, 0);
+        }
+
+        let document_line_len = self.editor.document().line_range(composition_line).len();
+        let inserted_delta = composition_line_len.saturating_sub(document_line_len);
+        let removed_delta = document_line_len.saturating_sub(composition_line_len);
+
+        for index in 0..line_count {
+            let document_range = self.editor.document().line_range(index);
+            let display_start = if index <= composition_line {
+                document_range.start
+            } else if inserted_delta > 0 {
+                document_range.start + inserted_delta
+            } else {
+                document_range.start - removed_delta
+            };
+            let display_len = if index == composition_line {
+                composition_line_len
+            } else {
+                document_range.len()
+            };
+            self.line_offsets[index] = display_start;
+            self.line_lengths[index] = display_len;
+            if !can_reuse || index == composition_line {
+                self.line_layouts[index] = None;
+            }
+        }
+    }
+
     fn refresh_reusable_document_line_metadata(
         document: &EditorDocument,
         line_layouts: &mut [Option<PersistentTextLayout>],
         line_offsets: &mut [usize],
         line_lengths: &mut [usize],
-        style_ranges_present: bool,
     ) {
         if let Some(start) = document.line_offsets_dirty_from() {
             for index in start.min(document.line_count())..document.line_count() {
                 let line_range = document.line_range(index);
-                let metadata_changed = line_offsets[index] != line_range.start
-                    || line_lengths[index] != line_range.len();
                 line_offsets[index] = line_range.start;
                 line_lengths[index] = line_range.len();
-                if style_ranges_present && metadata_changed {
-                    // Styled layouts depend on their global byte range. A shifted
-                    // but text-identical line must be reshaped against the current
-                    // span/overlay ranges.
-                    line_layouts[index] = None;
-                }
             }
         }
 
@@ -542,17 +632,21 @@ impl TextSurface {
             ctx.set_clipboard_text(text);
         }
         if result.text_changed {
+            if let Some(edit) = self.editor.take_text_edit() {
+                self.rebase_style_ranges_after_edit(&edit);
+            }
             self.commit_text_change();
         }
         if result.layout_changed() {
-            ctx.request_measure();
             ctx.request_text();
         } else if result.overlay_changed() {
             self.request_after_overlay_change(ctx);
         }
         if result.text_changed || result.selection_changed || result.composition_changed {
             sync_editor_selection_scope(ctx, self.selection_scope.as_ref(), &self.editor);
-            ctx.request_semantics();
+            if !result.layout_changed() {
+                ctx.request_semantics();
+            }
         }
         if result.handled && !(copied_to_clipboard && self.selection_scope.is_some()) {
             ctx.set_handled();
@@ -900,14 +994,13 @@ impl TextSurface {
         Some(layout.hit_test_point(local))
     }
 
-    fn visible_line_range(&self, viewport_height: f32) -> Range<usize> {
+    fn line_range_with_overdraw(&self, viewport_height: f32, overdraw: f32) -> Range<usize> {
         if self.has_line_layout_cache() {
             if viewport_height <= 0.0 {
                 return 0..0;
             }
 
             let line_height = self.line_height().max(1.0);
-            let overdraw = viewport_height * 0.5;
             let visible_top = (self.editor.scroll_y() - overdraw).max(0.0);
             let visible_bottom = self.editor.scroll_y() + viewport_height + overdraw;
             let start = (visible_top / line_height).floor() as usize;
@@ -924,7 +1017,6 @@ impl TextSurface {
             return 0..0;
         }
 
-        let overdraw = viewport_height * 0.5;
         let visible_top = (self.editor.scroll_y() - overdraw).max(0.0);
         let visible_bottom = self.editor.scroll_y() + viewport_height + overdraw;
         let mut start = 0usize;
@@ -944,6 +1036,33 @@ impl TextSurface {
         }
 
         start..end.max(start + usize::from(start < layout.lines().len()))
+    }
+
+    fn visible_line_range(&self, viewport_height: f32) -> Range<usize> {
+        self.line_range_with_overdraw(viewport_height, 0.0)
+    }
+
+    fn prefetched_line_range(&self, viewport_height: f32) -> Range<usize> {
+        let overdraw = self.line_height().max(1.0) * 6.0;
+        self.line_range_with_overdraw(viewport_height, overdraw)
+    }
+
+    fn visible_line_layouts_are_ready(&self, viewport_height: f32) -> bool {
+        if !self.has_line_layout_cache() {
+            return self.layout.is_some();
+        }
+
+        self.visible_line_range(viewport_height)
+            .all(|index| self.line_layouts.get(index).is_some_and(Option::is_some))
+    }
+
+    fn request_view_refresh(&self, ctx: &mut EventCtx) {
+        let viewport_height = self.content_viewport_size(ctx.bounds()).height;
+        if self.visible_line_layouts_are_ready(viewport_height) {
+            ctx.request_paint();
+        } else {
+            ctx.request_measure();
+        }
     }
 
     fn clamp_scroll_to_bounds(&mut self, viewport_size: Size) -> bool {
@@ -1016,7 +1135,7 @@ impl TextSurface {
 
     fn request_after_overlay_change(&mut self, ctx: &mut EventCtx) {
         if self.ensure_caret_visible(ctx.bounds()) {
-            ctx.request_text();
+            self.request_view_refresh(ctx);
         } else {
             ctx.request_paint();
         }
@@ -1183,10 +1302,11 @@ impl TextSurface {
     }
 
     fn multi_line_content_size(&self) -> Size {
+        let estimated_advance = self.resolved_text_style().font_size * 0.55;
         let estimated_width = self
             .line_lengths
             .iter()
-            .map(|length| *length as f32 * self.resolved_text_style().font_size * 0.55)
+            .map(|length| *length as f32 * estimated_advance)
             .fold(0.0_f32, f32::max);
         let measured_width = self
             .line_layouts
@@ -1295,7 +1415,8 @@ impl Widget for TextSurface {
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
                 if self.scroll_by(ctx.bounds(), Vector::new(-delta.x, -delta.y)) {
-                    ctx.request_text();
+                    self.request_view_refresh(ctx);
+                    ctx.request_semantics();
                     ctx.set_handled();
                 }
             }
@@ -1458,9 +1579,6 @@ impl Widget for TextSurface {
         if !composition_active {
             let document = self.editor.document();
             let line_count = document.line_count();
-            let style_ranges_present =
-                !self.style_spans.is_empty() || !self.style_overlays.is_empty();
-
             if cache_lines_individually && line_count > 1 {
                 let can_reuse_lines = self.line_layout_revision != u64::MAX
                     && self.line_layout_box_size == Some(line_box_size)
@@ -1487,11 +1605,10 @@ impl Widget for TextSurface {
                         &mut self.line_layouts,
                         &mut self.line_offsets,
                         &mut self.line_lengths,
-                        style_ranges_present,
                     );
                 }
 
-                let visible_lines = self.visible_line_range(viewport_height);
+                let visible_lines = self.prefetched_line_range(viewport_height);
                 let caret_line =
                     self.line_index_for_offset(self.display_selection().focus.utf8_offset);
                 let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
@@ -1539,23 +1656,25 @@ impl Widget for TextSurface {
                 self.line_layout_style_revision = u64::MAX;
             }
         } else {
-            let display_text = self.display_text();
-            let (line_texts, line_offsets, line_lengths) = split_lines_with_offsets(&display_text);
-            if cache_lines_individually && line_texts.len() > 1 {
-                self.reconcile_composition_line_layouts(
-                    &line_texts,
-                    line_offsets,
-                    line_lengths,
+            let single_line_composition = self.single_line_composition_display_line();
+            if cache_lines_individually
+                && self.editor.document().line_count() > 1
+                && let Some((composition_line, composition_line_text)) = single_line_composition
+            {
+                self.reconcile_single_line_composition_layouts(
+                    composition_line,
+                    composition_line_text.len(),
                     line_box_size,
                     &line_style,
                 );
 
-                let visible_lines = self.visible_line_range(viewport_height);
+                let visible_lines = self.prefetched_line_range(viewport_height);
                 let caret_line =
                     self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                let line_count = self.editor.document().line_count();
                 let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
                 lines_to_shape.extend(visible_lines);
-                if caret_line < line_texts.len() && !lines_to_shape.contains(&caret_line) {
+                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
                     lines_to_shape.push(caret_line);
                 }
 
@@ -1563,12 +1682,21 @@ impl Widget for TextSurface {
                     if self.line_layouts[index].is_some() {
                         continue;
                     }
-                    let line_range = self.line_offsets[index]
-                        ..self.line_offsets[index] + self.line_lengths[index];
+                    let line_range = if index == composition_line {
+                        self.line_offsets[index]
+                            ..self.line_offsets[index] + self.line_lengths[index]
+                    } else {
+                        self.editor.document().line_range(index)
+                    };
+                    let line_text = if index == composition_line {
+                        composition_line_text.as_str()
+                    } else {
+                        self.editor.document().line_text(index)
+                    };
                     match self.shape_line_layout(
                         ctx,
                         None,
-                        &line_texts[index],
+                        line_text,
                         line_range,
                         line_box_size,
                         line_style.clone(),
@@ -1589,13 +1717,66 @@ impl Widget for TextSurface {
                     self.layout = None;
                 }
             } else {
-                self.line_layouts.clear();
-                self.line_offsets.clear();
-                self.line_lengths.clear();
-                self.line_layout_box_size = None;
-                self.line_layout_style = None;
-                self.line_layout_revision = u64::MAX;
-                self.line_layout_style_revision = u64::MAX;
+                let display_text = self.display_text();
+                let (line_texts, line_offsets, line_lengths) =
+                    split_lines_with_offsets(&display_text);
+                if cache_lines_individually && line_texts.len() > 1 {
+                    self.reconcile_composition_line_layouts(
+                        &line_texts,
+                        line_offsets,
+                        line_lengths,
+                        line_box_size,
+                        &line_style,
+                    );
+
+                    let visible_lines = self.prefetched_line_range(viewport_height);
+                    let caret_line =
+                        self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                    let mut lines_to_shape =
+                        Vec::with_capacity(visible_lines.len().saturating_add(1));
+                    lines_to_shape.extend(visible_lines);
+                    if caret_line < line_texts.len() && !lines_to_shape.contains(&caret_line) {
+                        lines_to_shape.push(caret_line);
+                    }
+
+                    for index in lines_to_shape {
+                        if self.line_layouts[index].is_some() {
+                            continue;
+                        }
+                        let line_range = self.line_offsets[index]
+                            ..self.line_offsets[index] + self.line_lengths[index];
+                        match self.shape_line_layout(
+                            ctx,
+                            None,
+                            &line_texts[index],
+                            line_range,
+                            line_box_size,
+                            line_style.clone(),
+                        ) {
+                            Ok(layout) => self.line_layouts[index] = Some(layout),
+                            Err(_) => {
+                                line_layout_failed = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !line_layout_failed {
+                        self.line_layout_box_size = Some(line_box_size);
+                        self.line_layout_style = Some(line_style.clone());
+                        self.line_layout_revision = u64::MAX;
+                        self.line_layout_style_revision = self.style_revision;
+                        self.layout = None;
+                    }
+                } else {
+                    self.line_layouts.clear();
+                    self.line_offsets.clear();
+                    self.line_lengths.clear();
+                    self.line_layout_box_size = None;
+                    self.line_layout_style = None;
+                    self.line_layout_revision = u64::MAX;
+                    self.line_layout_style_revision = u64::MAX;
+                }
             }
         }
 
@@ -1866,7 +2047,6 @@ impl Widget for TextSurface {
         if !focused {
             let result = self.editor.execute(EditorCommand::ClearComposition);
             if result.layout_changed() {
-                ctx.request_measure();
                 ctx.request_text();
             }
         }
@@ -2015,6 +2195,25 @@ fn layout_content_size(layout: &PersistentTextLayout) -> Size {
 
 fn ranges_intersect(left: &Range<usize>, right: &Range<usize>) -> bool {
     left.start < right.end && right.start < left.end
+}
+
+fn rebased_text_range(range: &Range<usize>, edit: &EditorTextEdit) -> Option<Range<usize>> {
+    let replacement_end = edit.range.start.saturating_add(edit.replacement_len);
+    let start = if range.start < edit.range.start {
+        range.start
+    } else if range.start >= edit.range.end {
+        replacement_end.saturating_add(range.start.saturating_sub(edit.range.end))
+    } else {
+        edit.range.start
+    };
+    let end = if range.end <= edit.range.start {
+        range.end
+    } else if range.end >= edit.range.end {
+        replacement_end.saturating_add(range.end.saturating_sub(edit.range.end))
+    } else {
+        replacement_end
+    };
+    (start < end).then_some(start..end)
 }
 
 fn request_selection_change(ctx: &mut EventCtx, change: SelectionChange) {
@@ -2442,7 +2641,6 @@ mod tests {
             &mut surface.line_layouts,
             &mut surface.line_offsets,
             &mut surface.line_lengths,
-            false,
         );
 
         assert_eq!(surface.line_offsets, vec![0, 5, 7]);
@@ -2457,8 +2655,14 @@ mod tests {
     }
 
     #[test]
-    fn shifted_styled_suffix_layouts_are_invalidated_after_edit() {
-        let mut surface = TextSurface::new("Editor").value("a\nb");
+    fn shifted_style_ranges_preserve_unchanged_suffix_layouts_after_edit() {
+        let mut surface =
+            TextSurface::new("Editor")
+                .value("a\nb")
+                .style_spans(vec![TextSurfaceStyleSpan::new(
+                    2..3,
+                    TextStyle::new(Color::rgba(1.0, 0.0, 0.0, 1.0)),
+                )]);
         let (line_texts, line_offsets, line_lengths) =
             split_lines_with_offsets(surface.current_value());
         let style = surface.resolved_text_style();
@@ -2482,16 +2686,40 @@ mod tests {
         surface
             .editor
             .execute(EditorCommand::InsertText("XYZ".to_string()));
+        let edit = surface
+            .editor
+            .take_text_edit()
+            .expect("text insertion should report its edited range");
+        surface.rebase_style_ranges_after_edit(&edit);
 
         TextSurface::refresh_reusable_document_line_metadata(
             surface.editor.document(),
             &mut surface.line_layouts,
             &mut surface.line_offsets,
             &mut surface.line_lengths,
-            true,
         );
 
-        assert!(surface.line_layouts[1].is_none());
+        assert!(surface.line_layouts[1].is_some());
+        assert_eq!(surface.style_spans[0].range, 5..6);
+    }
+
+    #[test]
+    fn text_style_range_rebasing_respects_insertion_boundaries() {
+        let insertion = EditorTextEdit {
+            range: 3..3,
+            replacement_len: 2,
+        };
+
+        assert_eq!(rebased_text_range(&(1..3), &insertion), Some(1..3));
+        assert_eq!(rebased_text_range(&(3..5), &insertion), Some(5..7));
+        assert_eq!(rebased_text_range(&(2..5), &insertion), Some(2..7));
+
+        let deletion = EditorTextEdit {
+            range: 2..5,
+            replacement_len: 0,
+        };
+        assert_eq!(rebased_text_range(&(3..4), &deletion), None);
+        assert_eq!(rebased_text_range(&(5..7), &deletion), Some(2..4));
     }
 
     #[test]
