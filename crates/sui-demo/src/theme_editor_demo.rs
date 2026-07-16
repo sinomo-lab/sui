@@ -22,13 +22,20 @@ const THEME_RADIUS_SCALE_NAME: &str = "Corner radius scale";
 const THEME_TEXT_SCALE_NAME: &str = "Typography scale";
 const THEME_MOTION_SCALE_NAME: &str = "Motion speed";
 const THEME_RESET_NAME: &str = "Reset current preset";
-const THEME_PRESET_OPTIONS: [&str; 4] = ["SUI light", "Neutral", "SUI dark", "SUI true black"];
+const THEME_PRESET_OPTIONS: [&str; 5] = [
+    "SUI light",
+    "Neutral light",
+    "SUI dark",
+    "Neutral dark",
+    "SUI true black",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThemeEditorPreset {
     SuiLight,
     Neutral,
     SuiDark,
+    NeutralDark,
     SuiTrueBlack,
 }
 
@@ -37,7 +44,8 @@ impl ThemeEditorPreset {
         match index {
             1 => Self::Neutral,
             2 => Self::SuiDark,
-            3 => Self::SuiTrueBlack,
+            3 => Self::NeutralDark,
+            4 => Self::SuiTrueBlack,
             _ => Self::SuiLight,
         }
     }
@@ -47,7 +55,8 @@ impl ThemeEditorPreset {
             Self::SuiLight => 0,
             Self::Neutral => 1,
             Self::SuiDark => 2,
-            Self::SuiTrueBlack => 3,
+            Self::NeutralDark => 3,
+            Self::SuiTrueBlack => 4,
         }
     }
 
@@ -56,6 +65,7 @@ impl ThemeEditorPreset {
             Self::SuiLight => DefaultTheme::sui(),
             Self::Neutral => DefaultTheme::neutral(),
             Self::SuiDark => DefaultTheme::dark(),
+            Self::NeutralDark => DefaultTheme::neutral_dark(),
             Self::SuiTrueBlack => DefaultTheme::high_contrast(),
         }
     }
@@ -1026,5 +1036,16 @@ mod tests {
 
         assert_eq!(state.theme(), DefaultTheme::neutral());
         assert_eq!(state.preset_index(), 1);
+    }
+
+    #[test]
+    fn neutral_dark_preset_is_selectable_and_resettable() {
+        let state = ThemeEditorState::new();
+        state.set_preset(3);
+        state.set_color_channel(0, 0.2);
+        state.reset_current_preset();
+
+        assert_eq!(state.theme(), DefaultTheme::neutral_dark());
+        assert_eq!(state.preset_index(), 3);
     }
 }

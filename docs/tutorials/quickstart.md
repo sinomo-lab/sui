@@ -143,7 +143,8 @@ let panel = Surface::panel(
 Available starting points include:
 
 - `DefaultTheme::sui()` or `DefaultTheme::light()` for the branded light interface;
-- `DefaultTheme::neutral()` for an achromatic professional interface;
+- `DefaultTheme::neutral()` for an achromatic light professional interface;
+- `DefaultTheme::neutral_dark()` for its dark companion;
 - `DefaultTheme::dark()` for the standard dark interface;
 - `DefaultTheme::void()` for a true-black OLED-oriented interface;
 - `DefaultTheme::touch()` for larger touch-oriented control metrics.

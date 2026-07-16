@@ -17,7 +17,8 @@ color schemes, a true-black alias, and three contextual control sizes:
 use sui::prelude::*;
 
 let sui = DefaultTheme::sui();
-let neutral = DefaultTheme::neutral();
+let neutral_light = DefaultTheme::neutral();
+let neutral_dark = DefaultTheme::neutral_dark();
 let light = DefaultTheme::light();
 let dark = DefaultTheme::dark();
 let high_contrast = DefaultTheme::high_contrast();
@@ -32,11 +33,11 @@ assert!(standard.metrics.min_height <= touch.metrics.min_height);
 ```
 
 `sui()` is the explicit name for the default branded light preset and is
-equivalent to `light()`. `neutral()` keeps surfaces, text, primary actions,
-focus, selection, and elevation achromatic while retaining conventional
-semantic colors for informational, success, warning, and danger feedback. It
-is the standard starting point when a professional interface has no product
-color preference.
+equivalent to `light()`. `neutral()` and `neutral_dark()` keep surfaces, text,
+primary actions, focus, selection, elevation, and live-signal glows achromatic
+while retaining conventional semantic colors for informational, success,
+warning, and danger feedback. They are the standard starting points when a
+professional interface has no product color preference.
 
 `void()` is the true-black/OLED alias for `high_contrast()`. The older
 `with_density(ThemeDensity)` API remains public, but new interfaces should

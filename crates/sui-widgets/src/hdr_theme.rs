@@ -126,8 +126,9 @@ impl HdrColorRoles {
         // The neutral preset intentionally remains achromatic across output
         // modes. Its semantic status colors still use their SDR definitions,
         // but its primary and secondary roles must not inherit SUI's cyan and
-        // violet wide-gamut variants merely because it is a light scheme.
-        if colors.name == "neutral" {
+        // violet wide-gamut variants merely because it shares the same light
+        // or dark scheme classification.
+        if matches!(colors.name, "neutral" | "neutral-dark") {
             return;
         }
 

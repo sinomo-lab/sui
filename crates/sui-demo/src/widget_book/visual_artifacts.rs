@@ -213,7 +213,7 @@ impl StoryCase {
             Self::ColorSwatch => "Color swatch crop for palette chips and compact property rows.",
             Self::ColorPicker => "Color picker crop for interactive color adjustment workflows.",
             Self::ThemePreview => {
-                "Theme preview panel with the light and dark comparison cards visible."
+                "Theme preview panel comparing the SUI and neutral dark variants."
             }
             Self::ImageWidget => "Image widget crop for previews, thumbnails, and asset panels.",
         }
@@ -221,9 +221,9 @@ impl StoryCase {
 
     pub(crate) fn build_app(self) -> Result<TestApp> {
         if matches!(self, Self::ThemePreview) {
-            return TestApp::from_runtime(
-                build_theme_demo_application(default_widget_book_state()).build()?,
-            );
+            let state = default_widget_book_state();
+            state.borrow_mut().theme_preview_dark = true;
+            return TestApp::from_runtime(build_theme_demo_application(state).build()?);
         }
 
         let state = match self {
@@ -688,7 +688,7 @@ pub(crate) fn configured_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         password: "compiler".to_string(),
         scheduled_for: "2026-07-16 09:00".to_string(),
         subscribed: false,
-        theme_preview_comparison: true,
+        theme_preview_dark: false,
         button_presses: 1,
         icon_button_presses: 2,
         switch_on: false,
@@ -712,7 +712,7 @@ pub(crate) fn blank_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         password: String::new(),
         scheduled_for: String::new(),
         subscribed: false,
-        theme_preview_comparison: true,
+        theme_preview_dark: false,
         button_presses: 0,
         icon_button_presses: 0,
         switch_on: false,

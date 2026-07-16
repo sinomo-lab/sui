@@ -168,15 +168,21 @@ pub const TEXT_EDITING_BENCHMARK_SPLIT_NAME: &str = "Text editing benchmark spli
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
 pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
-pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare SUI and neutral presets";
+pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Use dark theme variants";
 pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
 pub const NEUTRAL_THEME_PREVIEW_CARD_NAME: &str = "Neutral theme preview card";
+pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
+pub const NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME: &str = "Neutral dark theme preview card";
 pub const HDR_THEME_LAB_NAME: &str = "HDR theme mode lab";
 pub const HDR_THEME_LAB_ACTIVE_PREVIEW_NAME: &str = "Current HDR theme mode preview";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
 pub const NEUTRAL_PREVIEW_ACTION_LABEL: &str = "Neutral preview action";
+pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
+pub const NEUTRAL_DARK_PREVIEW_ACTION_LABEL: &str = "Neutral dark preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
 pub const NEUTRAL_PREVIEW_INPUT_LABEL: &str = "Neutral preview query";
+pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
+pub const NEUTRAL_DARK_PREVIEW_INPUT_LABEL: &str = "Neutral dark preview query";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -591,7 +597,7 @@ pub struct WidgetBookState {
     pub password: String,
     pub scheduled_for: String,
     pub subscribed: bool,
-    pub theme_preview_comparison: bool,
+    pub theme_preview_dark: bool,
     pub button_presses: usize,
     pub icon_button_presses: usize,
     pub switch_on: bool,
@@ -775,7 +781,7 @@ pub fn default_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
         password: "sui-demo".to_string(),
         scheduled_for: "2026-07-15 14:30".to_string(),
         subscribed: true,
-        theme_preview_comparison: true,
+        theme_preview_dark: false,
         button_presses: 0,
         icon_button_presses: 0,
         switch_on: true,
@@ -1566,20 +1572,22 @@ struct ThemePreviewShowcase {
     toggle: SingleChild,
     light_card: SingleChild,
     neutral_card: SingleChild,
+    dark_card: SingleChild,
+    neutral_dark_card: SingleChild,
 }
 
 impl ThemePreviewShowcase {
     fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
-        let comparison_enabled = state.borrow().theme_preview_comparison;
+        let dark_variants = state.borrow().theme_preview_dark;
         let toggle_state = Rc::clone(&state);
 
         Self {
             state,
             toggle: SingleChild::new(
                 Switch::new(THEME_PREVIEW_TOGGLE_LABEL)
-                    .on(comparison_enabled)
+                    .on(dark_variants)
                     .on_toggle(move |checked| {
-                        toggle_state.borrow_mut().theme_preview_comparison = checked;
+                        toggle_state.borrow_mut().theme_preview_dark = checked;
                     }),
             ),
             light_card: SingleChild::new(NamedSection::new(
@@ -1600,6 +1608,24 @@ impl ThemePreviewShowcase {
                     NEUTRAL_PREVIEW_INPUT_LABEL,
                 ),
             )),
+            dark_card: SingleChild::new(NamedSection::new(
+                DARK_THEME_PREVIEW_CARD_NAME,
+                theme_preview_card(
+                    DefaultTheme::dark(),
+                    "SUI dark",
+                    DARK_PREVIEW_ACTION_LABEL,
+                    DARK_PREVIEW_INPUT_LABEL,
+                ),
+            )),
+            neutral_dark_card: SingleChild::new(NamedSection::new(
+                NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME,
+                theme_preview_card(
+                    DefaultTheme::neutral_dark(),
+                    "Neutral dark",
+                    NEUTRAL_DARK_PREVIEW_ACTION_LABEL,
+                    NEUTRAL_DARK_PREVIEW_INPUT_LABEL,
+                ),
+            )),
         }
     }
 
@@ -1607,8 +1633,8 @@ impl ThemePreviewShowcase {
         320.0
     }
 
-    fn comparison_enabled(&self) -> bool {
-        self.state.borrow().theme_preview_comparison
+    fn dark_variants(&self) -> bool {
+        self.state.borrow().theme_preview_dark
     }
 }
 
@@ -1634,7 +1660,7 @@ impl Widget for ThemePreviewShowcase {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let comparison_enabled = self.comparison_enabled();
+        let dark_variants = self.dark_variants();
         let max_width = if constraints.max.width.is_finite() {
             constraints.max.width.max(320.0)
         } else {
@@ -1645,46 +1671,43 @@ impl Widget for ThemePreviewShowcase {
         let gap = 16.0;
         let card_height = Self::card_height();
 
-        if comparison_enabled {
-            let stacked = max_width < 720.0;
-            if stacked {
-                let light_size = self
-                    .light_card
-                    .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
-                let neutral_size = self
-                    .neutral_card
-                    .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
+        let stacked = max_width < 720.0;
+        let card_width = if stacked {
+            max_width
+        } else {
+            ((max_width - gap) / 2.0).max(320.0)
+        };
+        let (branded_size, neutral_size) = if dark_variants {
+            (
+                self.dark_card
+                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
+                self.neutral_dark_card
+                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
+            )
+        } else {
+            (
+                self.light_card
+                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
+                self.neutral_card
+                    .measure(ctx, Constraints::tight(Size::new(card_width, card_height))),
+            )
+        };
 
-                return constraints.clamp(Size::new(
-                    max_width,
-                    top + light_size.height + gap + neutral_size.height,
-                ));
-            }
-
-            let card_width = ((max_width - gap) / 2.0).max(320.0);
-            let light_size = self
-                .light_card
-                .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
-            let neutral_size = self
-                .neutral_card
-                .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
-
-            return constraints.clamp(Size::new(
-                light_size.width + gap + neutral_size.width,
-                top + light_size.height.max(neutral_size.height),
-            ));
+        if stacked {
+            constraints.clamp(Size::new(
+                max_width,
+                top + branded_size.height + gap + neutral_size.height,
+            ))
+        } else {
+            constraints.clamp(Size::new(
+                branded_size.width + gap + neutral_size.width,
+                top + branded_size.height.max(neutral_size.height),
+            ))
         }
-
-        let light_width = max_width.min(420.0);
-        let light_size = self
-            .light_card
-            .measure(ctx, Constraints::tight(Size::new(light_width, card_height)));
-
-        constraints.clamp(Size::new(light_size.width, top + light_size.height))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let comparison_enabled = self.comparison_enabled();
+        let dark_variants = self.dark_variants();
         let toggle_size = self.toggle.child().measured_size();
         let snapped_origin = Point::new(bounds.x().round(), bounds.y().round());
         self.toggle
@@ -1692,93 +1715,101 @@ impl Widget for ThemePreviewShowcase {
 
         let top = (bounds.y() + toggle_size.height + 16.0).round();
         let gap = 16.0;
-        if comparison_enabled {
-            if bounds.width() < 720.0 {
-                let light_size = self.light_card.child().measured_size();
-                let neutral_size = self.neutral_card.child().measured_size();
-                self.light_card.arrange(
-                    ctx,
-                    Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
-                );
-                self.neutral_card.arrange(
-                    ctx,
-                    Rect::new(
-                        bounds.x().round(),
-                        top + light_size.height + gap,
-                        neutral_size.width,
-                        neutral_size.height,
-                    ),
-                );
-            } else {
-                let light_size = self.light_card.child().measured_size();
-                let neutral_size = self.neutral_card.child().measured_size();
-                self.light_card.arrange(
-                    ctx,
-                    Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
-                );
-                self.neutral_card.arrange(
-                    ctx,
-                    Rect::new(
-                        (bounds.x() + light_size.width + gap).round(),
-                        top,
-                        neutral_size.width,
-                        neutral_size.height,
-                    ),
-                );
-            }
+        let (branded, neutral) = if dark_variants {
+            (&mut self.dark_card, &mut self.neutral_dark_card)
         } else {
-            let light_size = self.light_card.child().measured_size();
-            self.light_card.arrange(
+            (&mut self.light_card, &mut self.neutral_card)
+        };
+        let branded_size = branded.child().measured_size();
+        let neutral_size = neutral.child().measured_size();
+        branded.arrange(
+            ctx,
+            Rect::new(
+                bounds.x().round(),
+                top,
+                branded_size.width,
+                branded_size.height,
+            ),
+        );
+        if bounds.width() < 720.0 {
+            neutral.arrange(
                 ctx,
-                Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
+                Rect::new(
+                    bounds.x().round(),
+                    top + branded_size.height + gap,
+                    neutral_size.width,
+                    neutral_size.height,
+                ),
+            );
+        } else {
+            neutral.arrange(
+                ctx,
+                Rect::new(
+                    (bounds.x() + branded_size.width + gap).round(),
+                    top,
+                    neutral_size.width,
+                    neutral_size.height,
+                ),
             );
         }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let comparison_enabled = self.comparison_enabled();
+        let dark_variants = self.dark_variants();
         self.toggle.paint(ctx);
-        self.light_card.paint(ctx);
-        if comparison_enabled {
+        if dark_variants {
+            self.dark_card.paint(ctx);
+            self.neutral_dark_card.paint(ctx);
+        } else {
+            self.light_card.paint(ctx);
             self.neutral_card.paint(ctx);
         }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let comparison_enabled = self.comparison_enabled();
+        let dark_variants = self.dark_variants();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
             ctx.bounds(),
         );
         node.name = Some(THEME_PREVIEW_NAME.to_string());
-        node.description = Some(if comparison_enabled {
-            "SUI light and neutral professional preview cards are visible.".to_string()
+        node.description = Some(if dark_variants {
+            "SUI dark and neutral dark professional preview cards are visible.".to_string()
         } else {
-            "Only the SUI light preview card is visible.".to_string()
+            "SUI light and neutral light professional preview cards are visible.".to_string()
         });
         ctx.push(node);
         self.toggle.semantics(ctx);
-        self.light_card.semantics(ctx);
-        if comparison_enabled {
+        if dark_variants {
+            self.dark_card.semantics(ctx);
+            self.neutral_dark_card.semantics(ctx);
+        } else {
+            self.light_card.semantics(ctx);
             self.neutral_card.semantics(ctx);
         }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        let comparison_enabled = self.comparison_enabled();
+        let dark_variants = self.dark_variants();
         self.toggle.visit_children(visitor);
-        self.light_card.visit_children(visitor);
-        if comparison_enabled {
+        if dark_variants {
+            self.dark_card.visit_children(visitor);
+            self.neutral_dark_card.visit_children(visitor);
+        } else {
+            self.light_card.visit_children(visitor);
             self.neutral_card.visit_children(visitor);
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        let comparison_enabled = self.comparison_enabled();
+        let dark_variants = self.dark_variants();
         self.toggle.visit_children_mut(visitor);
-        self.light_card.visit_children_mut(visitor);
-        if comparison_enabled {
+        if dark_variants {
+            self.dark_card.visit_children_mut(visitor);
+            self.neutral_dark_card.visit_children_mut(visitor);
+        } else {
+            self.light_card.visit_children_mut(visitor);
             self.neutral_card.visit_children_mut(visitor);
         }
     }
@@ -2856,7 +2887,7 @@ pub fn build_theme_demo_surface_with_theme(
         .with_child(panel_with_theme(
             Rc::clone(&theme_reader),
             "Theme preview",
-            "Flip the compare toggle to inspect the branded SUI and neutral professional presets with the same control composition.",
+            "Switch between light and dark variants while comparing the branded SUI and neutral professional presets with the same control composition.",
             ThemePreviewShowcase::new(Rc::clone(&state)),
         ))
         .with_child(panel_with_theme(
@@ -7342,6 +7373,7 @@ fn theme_preview_card(
     action_label: &'static str,
     input_label: &'static str,
 ) -> impl Widget {
+    let theme_name = theme.colors.name.replace('-', " ");
     let body = Stack::vertical()
         .spacing(12.0)
         .alignment(Alignment::Start)
@@ -7356,7 +7388,7 @@ fn theme_preview_card(
             520.0,
             Label::new(format!(
                 "{} base surface with {} accent for primary actions.",
-                theme.colors.name, theme.colors.name
+                theme_name, theme_name
             ))
             .style(widget_book_theme_text_style(
                 theme,
@@ -8153,11 +8185,12 @@ mod tests {
         DATETIME_INPUT_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME,
         GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL,
         LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay, LivePerformanceFrameSample,
-        LivePerformancePanel, NAME_INPUT_LABEL, NEUTRAL_THEME_PREVIEW_CARD_NAME, NUMBER_INPUT_NAME,
-        PASSWORD_INPUT_LABEL, POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
-        RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
-        RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL,
-        TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
+        LivePerformancePanel, NAME_INPUT_LABEL, NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME,
+        NEUTRAL_THEME_PREVIEW_CARD_NAME, NUMBER_INPUT_NAME, PASSWORD_INPUT_LABEL, POPOVER_NAME,
+        POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL, RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME,
+        RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME,
+        SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL, TEXT_AREA_LABEL,
+        TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
         TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME, TEXT_EDITING_BENCHMARK_TITLE,
         TEXT_RENDERING_COMPARISON_SCROLL_NAME, TEXT_RENDERING_COMPARISON_TITLE,
         TEXT_VALIDATION_EDITOR_NAME, TEXT_VALIDATION_SCROLL_NAME, TEXT_VALIDATION_VIEW_TITLE,
@@ -10493,7 +10526,7 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_theme_preview_toggle_hides_neutral_card() -> Result<()> {
+    fn widget_book_theme_preview_toggle_switches_to_dark_variants() -> Result<()> {
         let app = build_default_theme_demo_app()?;
         let window = app.main_window()?;
 
@@ -10510,6 +10543,11 @@ mod tests {
             .with_name(THEME_PREVIEW_TOGGLE_LABEL)
             .click()?;
 
+        window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name(NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME)
+            .expect()
+            .to_be_visible()?;
         let after = window.capture_screenshot()?;
         assert_ne!(before, after);
 

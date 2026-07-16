@@ -355,6 +355,35 @@ impl ThemeColors {
         }
     }
 
+    /// Dark companion to [`Self::neutral`], using achromatic surfaces,
+    /// controls, focus, selection, and primary actions.
+    pub fn neutral_dark() -> Self {
+        Self {
+            name: "neutral-dark",
+            scheme: ThemeColorScheme::Dark,
+            base_100: rgb8(10, 10, 10),
+            base_200: rgb8(23, 23, 23),
+            base_300: rgb8(38, 38, 38),
+            base_content: rgb8(245, 245, 245),
+            primary: rgb8(245, 245, 245),
+            primary_content: rgb8(23, 23, 23),
+            secondary: rgb8(163, 163, 163),
+            secondary_content: rgb8(23, 23, 23),
+            accent: rgb8(245, 245, 245),
+            accent_content: rgb8(23, 23, 23),
+            neutral: rgb8(38, 38, 38),
+            neutral_content: rgb8(245, 245, 245),
+            info: rgb8(96, 165, 250),
+            info_content: rgb8(23, 37, 84),
+            success: rgb8(74, 222, 128),
+            success_content: rgb8(5, 46, 22),
+            warning: rgb8(251, 191, 36),
+            warning_content: rgb8(66, 32, 6),
+            error: rgb8(248, 113, 113),
+            error_content: rgb8(69, 10, 10),
+        }
+    }
+
     pub fn dark() -> Self {
         Self {
             name: "dark",
@@ -868,10 +897,7 @@ impl Default for ThemeShadows {
 impl ThemeShadows {
     /// Choose the elevation treatment for a complete built-in color palette.
     pub fn for_colors(colors: &ThemeColors) -> Self {
-        if matches!(
-            (colors.name, colors.scheme),
-            ("neutral", ThemeColorScheme::Light)
-        ) {
+        if is_neutral_theme(colors) && matches!(colors.scheme, ThemeColorScheme::Light) {
             Self::neutral()
         } else {
             Self::for_scheme(colors.scheme)
@@ -1052,12 +1078,22 @@ pub struct ThemeGlows {
 }
 
 impl ThemeGlows {
+    /// Choose glow tokens for a complete built-in color palette.
+    pub fn for_colors(colors: &ThemeColors) -> Self {
+        if is_neutral_theme(colors) {
+            match colors.scheme {
+                ThemeColorScheme::Light => Self::none(),
+                ThemeColorScheme::Dark => Self::neutral_dark(),
+                ThemeColorScheme::HighContrast => Self::none(),
+            }
+        } else {
+            Self::for_scheme(colors.scheme)
+        }
+    }
+
     pub fn for_scheme(scheme: ThemeColorScheme) -> Self {
         match scheme {
-            ThemeColorScheme::Light => Self {
-                accent: ThemeShadow::empty(),
-                secondary: ThemeShadow::empty(),
-            },
+            ThemeColorScheme::Light => Self::none(),
             ThemeColorScheme::Dark => Self {
                 accent: ThemeShadow::single(shadow_layer(
                     0.0,
@@ -1094,6 +1130,35 @@ impl ThemeGlows {
                     false,
                 )),
             },
+        }
+    }
+
+    pub fn none() -> Self {
+        Self {
+            accent: ThemeShadow::empty(),
+            secondary: ThemeShadow::empty(),
+        }
+    }
+
+    /// Subtle achromatic halos for live signals in the neutral dark preset.
+    pub fn neutral_dark() -> Self {
+        Self {
+            accent: ThemeShadow::single(shadow_layer(
+                0.0,
+                0.0,
+                12.0,
+                0.0,
+                rgb8(245, 245, 245).with_alpha(0.12),
+                false,
+            )),
+            secondary: ThemeShadow::single(shadow_layer(
+                0.0,
+                0.0,
+                14.0,
+                0.0,
+                rgb8(163, 163, 163).with_alpha(0.12),
+                false,
+            )),
         }
     }
 }
@@ -1266,6 +1331,37 @@ fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
             focus: rgb8(64, 64, 64),
             selection: rgba8(23, 23, 23, 0.12),
             scrim: Color::BLACK.with_alpha(0.45),
+        }),
+        ("neutral-dark", ThemeColorScheme::Dark) => Some(BuiltinColorRoles {
+            bg_subtle: rgb8(10, 10, 10),
+            surface: rgb8(23, 23, 23),
+            surface_2: rgb8(38, 38, 38),
+            surface_3: rgb8(51, 51, 51),
+            overlay: rgb8(31, 31, 31),
+            field: rgb8(18, 18, 18),
+            border: Color::WHITE.with_alpha(0.14),
+            border_strong: Color::WHITE.with_alpha(0.22),
+            border_subtle: Color::WHITE.with_alpha(0.08),
+            text_2: rgb8(212, 212, 212),
+            text_3: rgb8(163, 163, 163),
+            text_disabled: rgb8(115, 115, 115),
+            text_invert: rgb8(23, 23, 23),
+            accent_hover: Color::WHITE,
+            accent_text: rgb8(245, 245, 245),
+            accent_soft: Color::WHITE.with_alpha(0.10),
+            accent_border: Color::WHITE.with_alpha(0.28),
+            ok_text: rgb8(74, 222, 128),
+            ok_soft: rgba8(74, 222, 128, 0.12),
+            warn_text: rgb8(251, 191, 36),
+            warn_soft: rgba8(251, 191, 36, 0.12),
+            danger_text: rgb8(248, 113, 113),
+            danger_soft: rgba8(248, 113, 113, 0.12),
+            danger_hover: rgb8(252, 165, 165),
+            info_text: rgb8(147, 197, 253),
+            info_soft: rgba8(96, 165, 250, 0.12),
+            focus: rgb8(212, 212, 212),
+            selection: Color::WHITE.with_alpha(0.16),
+            scrim: Color::BLACK.with_alpha(0.65),
         }),
         ("dark", ThemeColorScheme::Dark) => Some(BuiltinColorRoles {
             bg_subtle: rgb8(14, 18, 26),
@@ -1651,10 +1747,7 @@ impl SurfacePalette {
             colors.scheme,
             ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
         );
-        let neutral = matches!(
-            (colors.name, colors.scheme),
-            ("neutral", ThemeColorScheme::Light)
-        );
+        let neutral = is_neutral_theme(colors);
         let roles = builtin_color_roles(colors);
         let text_muted = controls.text_muted;
         let text_faint = controls.placeholder;
@@ -1722,12 +1815,12 @@ impl SurfacePalette {
             },
             pixel_canvas_document_edge: controls.text.with_alpha(if dark { 0.82 } else { 0.72 }),
             pixel_canvas_shadow_near: if neutral {
-                Color::BLACK.with_alpha(0.16)
+                Color::BLACK.with_alpha(if dark { 0.30 } else { 0.16 })
             } else {
                 Color::rgba(0.05, 0.07, 0.10, if dark { 0.30 } else { 0.16 })
             },
             pixel_canvas_shadow_far: if neutral {
-                Color::BLACK.with_alpha(0.08)
+                Color::BLACK.with_alpha(if dark { 0.18 } else { 0.08 })
             } else {
                 Color::rgba(0.05, 0.07, 0.10, if dark { 0.18 } else { 0.08 })
             },
@@ -3327,6 +3420,11 @@ impl DefaultTheme {
         Self::from_colors(ThemeColors::neutral())
     }
 
+    /// Dark companion to [`Self::neutral`].
+    pub fn neutral_dark() -> Self {
+        Self::from_colors(ThemeColors::neutral_dark())
+    }
+
     pub fn dark() -> Self {
         Self::from_colors(ThemeColors::dark())
     }
@@ -3376,7 +3474,7 @@ impl DefaultTheme {
             leading: ThemeLeading::default(),
             radius,
             shadows: ThemeShadows::for_colors(&colors),
-            glows: ThemeGlows::for_scheme(colors.scheme),
+            glows: ThemeGlows::for_colors(&colors),
             blur: ThemeBlurScale::default(),
             perspective: ThemePerspective::default(),
             aspect: ThemeAspectRatios::default(),
@@ -3446,7 +3544,7 @@ impl DefaultTheme {
         self.palette = ControlPalette::from_colors(&self.colors);
         self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
         self.shadows = ThemeShadows::for_colors(&self.colors);
-        self.glows = ThemeGlows::for_scheme(self.colors.scheme);
+        self.glows = ThemeGlows::for_colors(&self.colors);
         self.sync_density_fields();
     }
 
@@ -3565,6 +3663,10 @@ fn rgb8(red: u8, green: u8, blue: u8) -> Color {
 
 fn rgba8(red: u8, green: u8, blue: u8, alpha: f32) -> Color {
     rgb8(red, green, blue).with_alpha(alpha)
+}
+
+fn is_neutral_theme(colors: &ThemeColors) -> bool {
+    matches!(colors.name, "neutral" | "neutral-dark")
 }
 
 fn shadow_layer(
@@ -3917,9 +4019,9 @@ mod tests {
     }
 
     #[test]
-    fn neutral_theme_is_an_achromatic_professional_preset() {
-        let theme = DefaultTheme::neutral();
-        let colors = theme.colors;
+    fn neutral_themes_are_achromatic_professional_presets() {
+        let light = DefaultTheme::neutral();
+        let colors = light.colors;
 
         assert_eq!(DefaultTheme::sui(), DefaultTheme::light());
         assert_eq!(ThemeColors::sui(), ThemeColors::light());
@@ -3929,16 +4031,16 @@ mod tests {
         assert_eq!(colors.primary_content, Color::WHITE);
         assert_eq!(colors.secondary, rgb8(64, 64, 64));
         assert_eq!(colors.accent, colors.primary);
-        assert_eq!(theme.palette.accent, colors.primary);
-        assert_eq!(theme.palette.control, rgb8(245, 245, 245));
-        assert_eq!(theme.palette.border, rgb8(229, 229, 229));
-        assert_eq!(theme.palette.focus, rgb8(64, 64, 64));
-        assert_eq!(theme.surfaces.window_subtle, rgb8(250, 250, 250));
-        assert_eq!(theme.surfaces.checkerboard_dark, rgb8(229, 229, 229));
-        assert_eq!(theme.hdr.color_roles.accent.wide_gamut, None);
-        assert_eq!(theme.hdr.color_roles.accent.hdr, None);
+        assert_eq!(light.palette.accent, colors.primary);
+        assert_eq!(light.palette.control, rgb8(245, 245, 245));
+        assert_eq!(light.palette.border, rgb8(229, 229, 229));
+        assert_eq!(light.palette.focus, rgb8(64, 64, 64));
+        assert_eq!(light.surfaces.window_subtle, rgb8(250, 250, 250));
+        assert_eq!(light.surfaces.checkerboard_dark, rgb8(229, 229, 229));
+        assert_eq!(light.hdr.color_roles.accent.wide_gamut, None);
+        assert_eq!(light.hdr.color_roles.accent.hdr, None);
 
-        let shadow = theme
+        let shadow = light
             .shadows
             .box_shadow
             .xs
@@ -3955,8 +4057,47 @@ mod tests {
             colors.primary,
             colors.secondary,
             colors.accent,
-            theme.palette.focus,
-            theme.palette.selection,
+            light.palette.focus,
+            light.palette.selection,
+        ] {
+            assert_eq!(color.red, color.green);
+            assert_eq!(color.green, color.blue);
+        }
+
+        let dark = DefaultTheme::neutral_dark();
+        let dark_colors = dark.colors;
+        assert_eq!(dark_colors.name, "neutral-dark");
+        assert_eq!(dark_colors.scheme, ThemeColorScheme::Dark);
+        assert_eq!(dark_colors.base_100, rgb8(10, 10, 10));
+        assert_eq!(dark_colors.base_content, rgb8(245, 245, 245));
+        assert_eq!(dark_colors.primary, rgb8(245, 245, 245));
+        assert_eq!(dark_colors.primary_content, rgb8(23, 23, 23));
+        assert_eq!(dark.palette.surface_raised, rgb8(23, 23, 23));
+        assert_eq!(dark.palette.control, rgb8(38, 38, 38));
+        assert_eq!(dark.palette.control_hover, rgb8(51, 51, 51));
+        assert_eq!(dark.palette.focus, rgb8(212, 212, 212));
+        assert_eq!(dark.surfaces.window_subtle, rgb8(10, 10, 10));
+        assert_eq!(dark.hdr.color_roles.accent.wide_gamut, None);
+        assert_eq!(dark.hdr.color_roles.accent.hdr, None);
+
+        let glow = dark
+            .glows
+            .accent
+            .first
+            .expect("neutral dark should retain a restrained live-signal glow");
+        assert_eq!(glow.color.red, glow.color.green);
+        assert_eq!(glow.color.green, glow.color.blue);
+
+        for color in [
+            dark_colors.base_100,
+            dark_colors.base_200,
+            dark_colors.base_300,
+            dark_colors.base_content,
+            dark_colors.primary,
+            dark_colors.secondary,
+            dark_colors.accent,
+            dark.palette.focus,
+            dark.palette.selection,
         ] {
             assert_eq!(color.red, color.green);
             assert_eq!(color.green, color.blue);
