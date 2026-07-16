@@ -4,6 +4,14 @@ SUI is a retained-mode UI toolkit for Rust. It combines a renderer-neutral
 scene model, a `wgpu` renderer, accessible built-in widgets, deterministic UI
 testing, and native Python and Node/Electron bindings in one workspace.
 
+## Live WASM demo
+
+**[Open the SUI widget book in your browser →](https://sinomo-lab.github.io/sui/)**
+
+Explore SUI's widgets, themes, text editing, canvas and media surfaces, and
+retained `wgpu` renderer in a WebGPU-capable browser. No installation is
+required.
+
 > **Release status:** SUI is pre-release software. The Rust desktop API and
 > testing stack are usable today, while browser, mobile, Python, JavaScript,
 > and native HDR support have the limitations listed below. The crates and
@@ -69,7 +77,7 @@ public building blocks and points to focused API guides.
 | Rust desktop | Available | `winit` + `wgpu` on Linux, macOS, and Windows |
 | Headless/testing | Available | Deterministic runtime, semantics, rendering, and screenshots |
 | Accessibility TUI | Available | Generated from the same semantic tree as assistive technologies |
-| Rust browser | Alpha | WebAssembly demo through the `web` feature and Trunk |
+| Rust browser | Alpha | [Live WebAssembly widget book](https://sinomo-lab.github.io/sui/) built through the `web` feature and Trunk |
 | Rust Android | Experimental | Native-activity entry point through the `mobile` feature |
 | Python | Alpha | Local PyO3/maturin build; packages are not published |
 | Node/Electron | Alpha | Local napi-rs build; packages are not published |
