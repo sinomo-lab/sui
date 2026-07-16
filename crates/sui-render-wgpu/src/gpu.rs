@@ -469,6 +469,7 @@ pub(crate) struct CachedImageTexture {
 pub(crate) struct ImageTextureCacheKey {
     pub(crate) handle: sui_core::ImageHandle,
     pub(crate) raster_size: Option<ImageRasterSize>,
+    pub(crate) mipmapped: bool,
 }
 
 pub(crate) struct CachedExternalTextureBindGroup {

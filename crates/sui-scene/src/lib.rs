@@ -1171,6 +1171,7 @@ pub struct RegisteredImage {
     height: u32,
     format: RegisteredImageFormat,
     svg: Option<Arc<[u8]>>,
+    mipmaps_enabled: bool,
 }
 
 /// Renderer-neutral metadata for an image whose pixels are owned outside the
@@ -1252,7 +1253,22 @@ impl RegisteredImage {
             height,
             format,
             svg: None,
+            mipmaps_enabled: true,
         })
+    }
+
+    /// Disables mipmap generation for this image.
+    ///
+    /// This is useful for frequently updated bitmap resources such as paint
+    /// canvases, where rebuilding a full mip pyramid for every content update
+    /// costs more than base-level linear filtering.
+    pub const fn without_mipmaps(mut self) -> Self {
+        self.mipmaps_enabled = false;
+        self
+    }
+
+    pub const fn mipmaps_enabled(&self) -> bool {
+        self.mipmaps_enabled
     }
 
     pub fn bytes(&self) -> &[u8] {

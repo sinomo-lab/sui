@@ -1,15 +1,14 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    KeyState, PointerButton, PointerEventKind, ScrollDelta, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsValue, Vector, WidgetId, prelude::*,
+    Border, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, PointerButton,
+    PointerEventKind, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
+    Vector, WidgetId, prelude::*,
 };
 
 #[cfg(test)]
 use crate::app::default_dev_theme_reader;
-use crate::app::{
-    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
-};
+use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
 
 pub(crate) const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const VECTOR_DOCUMENT_NAME: &str = "Wave mark.svg";
@@ -240,10 +239,6 @@ impl VectorObject {
             self.local_to_document(Point::new(half_width, half_height)),
             self.local_to_document(Point::new(-half_width, half_height)),
         ]
-    }
-
-    fn top_center(self) -> Point {
-        self.local_to_document(Point::new(0.0, -self.size.height * 0.5))
     }
 
     fn rotate_handle(self) -> Point {
@@ -954,7 +949,7 @@ fn build_vector_document_bar(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             fit_state.request_fit_view();
-                            request_window_refresh(ctx, true);
+                            request_vector_view_refresh(ctx);
                         }),
                 )
                 .with_child(
@@ -964,7 +959,7 @@ fn build_vector_document_bar(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             actual_size_state.request_actual_size_view();
-                            request_window_refresh(ctx, true);
+                            request_vector_view_refresh(ctx);
                         }),
                 ),
         )
@@ -977,7 +972,7 @@ fn build_vector_document_bar(
                         .icon_size(12.0)
                         .on_press_with_ctx(move |ctx| {
                             zoom_out_state.request_zoom_out();
-                            request_window_refresh(ctx, true);
+                            request_vector_view_refresh(ctx);
                         }),
                 )
                 .with_child(
@@ -1001,7 +996,7 @@ fn build_vector_document_bar(
                         .icon_size(12.0)
                         .on_press_with_ctx(move |ctx| {
                             zoom_in_state.request_zoom_in();
-                            request_window_refresh(ctx, true);
+                            request_vector_view_refresh(ctx);
                         }),
                 ),
         )
@@ -1084,21 +1079,21 @@ fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeRead
             .row_height(46.0)
             .on_select_with_ctx(move |ctx, index, _| {
                 state.set_selected_visual_object(index);
-                request_window_refresh(ctx, true);
+                request_vector_structure_refresh(ctx);
             })
             .on_visibility_change_with_ctx(move |ctx, index, visible| {
                 let object = visibility_state.object_at_visual_index(index);
                 visibility_state.set_object_visible(object, visible);
-                request_window_refresh(ctx, true);
+                request_vector_refresh(ctx);
             })
             .on_lock_change_with_ctx(move |ctx, index, locked| {
                 let object = lock_state.object_at_visual_index(index);
                 lock_state.set_object_locked(object, locked);
-                request_window_refresh(ctx, true);
+                request_vector_refresh(ctx);
             })
             .on_reorder_with_ctx(move |ctx, change| {
                 reorder_state.reorder_objects(change.from, change.to);
-                request_window_refresh(ctx, true);
+                request_vector_structure_refresh(ctx);
             }),
     )
 }
@@ -1149,7 +1144,7 @@ fn build_vector_transform_panel(
                 .value_when(move || x_reader_state.selected_center_x() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     x_change_state.set_selected_center_x(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0}", x_label_state.selected_center_x()),
         ))
@@ -1164,7 +1159,7 @@ fn build_vector_transform_panel(
                 .value_when(move || y_reader_state.selected_center_y() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     y_change_state.set_selected_center_y(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0}", y_label_state.selected_center_y()),
         ))
@@ -1182,7 +1177,7 @@ fn build_vector_transform_panel(
                 .value_when(move || width_reader_state.selected_width() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     width_change_state.set_selected_width(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0}", width_label_state.selected_width()),
         ))
@@ -1200,7 +1195,7 @@ fn build_vector_transform_panel(
                 .value_when(move || height_reader_state.selected_height() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     height_change_state.set_selected_height(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0}", height_label_state.selected_height()),
         ))
@@ -1215,7 +1210,7 @@ fn build_vector_transform_panel(
                 .value_when(move || rotation_reader_state.selected_rotation() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     rotation_change_state.set_selected_rotation(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0} deg", rotation_label_state.selected_rotation()),
         ))
@@ -1227,7 +1222,7 @@ fn build_vector_transform_panel(
                     .icon_size(14.0)
                     .on_press_with_ctx(move |ctx| {
                         reset_state.reset_selected_transform();
-                        request_window_refresh(ctx, true);
+                        request_vector_refresh(ctx);
                     }),
             ),
         )
@@ -1274,7 +1269,7 @@ fn build_vector_appearance_panel(
                 .value_when(move || stroke_reader_state.stroke_width() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     stroke_change_state.set_stroke_width(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.1}", stroke_label_state.stroke_width()),
         ))
@@ -1289,7 +1284,7 @@ fn build_vector_appearance_panel(
                 .value_when(move || opacity_reader_state.opacity() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     opacity_change_state.set_opacity(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0}%", opacity_label_state.opacity() * 100.0),
         ))
@@ -1304,7 +1299,7 @@ fn build_vector_appearance_panel(
                 .value_when(move || corner_reader_state.corner_radius() as f64)
                 .on_change_with_ctx(move |ctx, value| {
                     corner_change_state.set_corner_radius(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
             move || format!("{:.0}", corner_label_state.corner_radius()),
         ))
@@ -1318,7 +1313,7 @@ fn build_vector_appearance_panel(
                 .selected_when(move || Some(fill_reader_state.fill_rule()))
                 .on_change_with_ctx(move |ctx, index, _| {
                     fill_change_state.set_fill_rule(index);
-                    request_window_refresh(ctx, true);
+                    request_vector_refresh(ctx);
                 }),
         ))
 }
@@ -1346,7 +1341,7 @@ fn build_vector_alignment_panel(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             left_state.align_selected(VectorAlignment::Left);
-                            request_window_refresh(ctx, true);
+                            request_vector_refresh(ctx);
                         }),
                 )
                 .with_child(
@@ -1356,7 +1351,7 @@ fn build_vector_alignment_panel(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             center_state.align_selected(VectorAlignment::Center);
-                            request_window_refresh(ctx, true);
+                            request_vector_refresh(ctx);
                         }),
                 )
                 .with_child(
@@ -1366,7 +1361,7 @@ fn build_vector_alignment_panel(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             right_state.align_selected(VectorAlignment::Right);
-                            request_window_refresh(ctx, true);
+                            request_vector_refresh(ctx);
                         }),
                 ),
         )
@@ -1379,7 +1374,7 @@ fn build_vector_alignment_panel(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             top_state.align_selected(VectorAlignment::Top);
-                            request_window_refresh(ctx, true);
+                            request_vector_refresh(ctx);
                         }),
                 )
                 .with_child(
@@ -1389,7 +1384,7 @@ fn build_vector_alignment_panel(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             middle_state.align_selected(VectorAlignment::Middle);
-                            request_window_refresh(ctx, true);
+                            request_vector_refresh(ctx);
                         }),
                 )
                 .with_child(
@@ -1399,7 +1394,7 @@ fn build_vector_alignment_panel(
                         .icon_size(14.0)
                         .on_press_with_ctx(move |ctx| {
                             bottom_state.align_selected(VectorAlignment::Bottom);
-                            request_window_refresh(ctx, true);
+                            request_vector_refresh(ctx);
                         }),
                 ),
         )
@@ -1551,14 +1546,20 @@ impl VectorEditorCanvas {
         viewport: CanvasViewport,
         point: Point,
     ) -> Point {
+        Self::document_to_screen_transform(bounds, viewport).transform_point(point)
+    }
+
+    fn document_to_screen_transform(bounds: Rect, viewport: CanvasViewport) -> Transform {
         let center = Self::viewport_center(bounds, viewport);
-        let scaled = Vector::new(point.x * viewport.zoom, point.y * viewport.zoom);
-        let (sin, cos) = viewport.rotation.sin_cos();
-        let rotated = Vector::new(
-            (scaled.x * cos) - (scaled.y * sin),
-            (scaled.x * sin) + (scaled.y * cos),
-        );
-        center + rotated
+        Transform::scale(viewport.zoom, viewport.zoom)
+            .then(Transform::rotation(viewport.rotation))
+            .then(Transform::translation(center.x, center.y))
+    }
+
+    fn object_to_screen_transform(&self, bounds: Rect, object: VectorObject) -> Transform {
+        Transform::rotation(object.rotation_degrees.to_radians())
+            .then(Transform::translation(object.center.x, object.center.y))
+            .then(Self::document_to_screen_transform(bounds, self.viewport))
     }
 
     fn screen_to_document_with_viewport(
@@ -1752,7 +1753,7 @@ impl VectorEditorCanvas {
     }
 
     fn request_edit_update(ctx: &mut EventCtx) {
-        request_window_refresh(ctx, true);
+        request_vector_refresh(ctx);
     }
 
     fn paint_grid(
@@ -1765,6 +1766,9 @@ impl VectorEditorCanvas {
         let center = Self::viewport_center(bounds, viewport);
         let grid_minor = theme.palette.text_muted.with_alpha(0.18);
         let grid_major = theme.palette.text_muted.with_alpha(0.30);
+        let scale_factor = ctx.dpi().scale_factor;
+        let line_width = ctx.dpi().hairline_width();
+        let snap = |value: f32| (value * scale_factor).round() / scale_factor;
 
         let mut x = center.x;
         while x > bounds.x() {
@@ -1773,10 +1777,15 @@ impl VectorEditorCanvas {
         let mut column = ((x - center.x) / minor).round() as i32;
         while x < bounds.max_x() {
             let is_major = column.rem_euclid(4) == 0;
-            ctx.stroke(
-                vector_line_path(Point::new(x, bounds.y()), Point::new(x, bounds.max_y())),
+            let snapped_x = snap(x);
+            ctx.fill_rect(
+                Rect::new(
+                    snapped_x - line_width * 0.5,
+                    bounds.y(),
+                    line_width,
+                    bounds.height(),
+                ),
                 if is_major { grid_major } else { grid_minor },
-                StrokeStyle::new(1.0),
             );
             x += minor;
             column += 1;
@@ -1789,10 +1798,15 @@ impl VectorEditorCanvas {
         let mut row = ((y - center.y) / minor).round() as i32;
         while y < bounds.max_y() {
             let is_major = row.rem_euclid(4) == 0;
-            ctx.stroke(
-                vector_line_path(Point::new(bounds.x(), y), Point::new(bounds.max_x(), y)),
+            let snapped_y = snap(y);
+            ctx.fill_rect(
+                Rect::new(
+                    bounds.x(),
+                    snapped_y - line_width * 0.5,
+                    bounds.width(),
+                    line_width,
+                ),
                 if is_major { grid_major } else { grid_minor },
-                StrokeStyle::new(1.0),
             );
             y += minor;
             row += 1;
@@ -1812,36 +1826,30 @@ impl VectorEditorCanvas {
             .corners()
             .map(|corner| self.to_screen(bounds, corner));
         let artboard_bounds = vector_points_bounds(&corners);
-        ctx.fill(
-            Path::rounded_rect(
-                Rect::new(
-                    artboard_bounds.x() + 8.0,
-                    artboard_bounds.y() + 10.0,
-                    artboard_bounds.width(),
-                    artboard_bounds.height(),
-                ),
-                3.0,
-            ),
+        ctx.fill_rrect(
+            artboard_bounds.translate(Vector::new(8.0, 10.0)),
+            [3.0; 4],
             Color::rgba(0.04, 0.06, 0.10, 0.14),
         );
-        ctx.fill(
-            Path::rounded_rect(artboard_bounds, object.corner_radius * self.viewport.zoom),
+        let radius = object.corner_radius * self.viewport.zoom;
+        ctx.fill_rrect_bordered(
+            artboard_bounds,
+            [radius; 4],
             vector_object_color_with_opacity(object.fill.unwrap_or(Color::WHITE), object.opacity),
-        );
-        ctx.stroke(
-            Path::rounded_rect(artboard_bounds, object.corner_radius * self.viewport.zoom),
-            vector_object_color_with_opacity(object.stroke, object.opacity),
-            StrokeStyle::new(object.stroke_width * self.viewport.zoom),
+            Border {
+                width: object.stroke_width * self.viewport.zoom,
+                color: vector_object_color_with_opacity(object.stroke, object.opacity),
+            },
         );
     }
 
     fn paint_ellipse(&self, ctx: &mut PaintCtx, bounds: Rect, object: VectorObject) {
-        let path = vector_ellipse_path(bounds, self.viewport, object);
+        let path = vector_ellipse_path(object);
         let stroke_width = (object.stroke_width * self.viewport.zoom).max(1.0);
+        ctx.push_transform(self.object_to_screen_transform(bounds, object));
         if let Some(fill) = object.fill {
-            let fill_path =
-                vector_ellipse_fill_path(bounds, self.viewport, object, object.stroke_width)
-                    .unwrap_or_else(|| path.clone());
+            let fill_path = vector_ellipse_fill_path(object, object.stroke_width)
+                .unwrap_or_else(|| path.clone());
             ctx.fill(
                 fill_path,
                 vector_object_color_with_opacity(fill, object.opacity),
@@ -1852,37 +1860,24 @@ impl VectorEditorCanvas {
             vector_object_color_with_opacity(object.stroke, object.opacity),
             StrokeStyle::new(stroke_width),
         );
+        ctx.pop_transform();
     }
 
     fn paint_bezier(&self, ctx: &mut PaintCtx, bounds: Rect, object: VectorObject) {
-        let start = object.local_to_document(Point::new(
-            -object.size.width * 0.5,
-            object.size.height * 0.32,
-        ));
-        let ctrl1 = object.local_to_document(Point::new(
-            -object.size.width * 0.30,
-            -object.size.height * 0.48,
-        ));
-        let ctrl2 = object.local_to_document(Point::new(
-            object.size.width * 0.28,
-            object.size.height * 0.56,
-        ));
-        let end = object.local_to_document(Point::new(
-            object.size.width * 0.5,
-            -object.size.height * 0.30,
-        ));
+        let start = Point::new(-object.size.width * 0.5, object.size.height * 0.32);
+        let ctrl1 = Point::new(-object.size.width * 0.30, -object.size.height * 0.48);
+        let ctrl2 = Point::new(object.size.width * 0.28, object.size.height * 0.56);
+        let end = Point::new(object.size.width * 0.5, -object.size.height * 0.30);
 
         let mut path = PathBuilder::new();
-        path.move_to(self.to_screen(bounds, start)).cubic_to(
-            self.to_screen(bounds, ctrl1),
-            self.to_screen(bounds, ctrl2),
-            self.to_screen(bounds, end),
-        );
+        path.move_to(start).cubic_to(ctrl1, ctrl2, end);
+        ctx.push_transform(self.object_to_screen_transform(bounds, object));
         ctx.stroke(
             path.build(),
             vector_object_color_with_opacity(object.stroke, object.opacity),
             StrokeStyle::new((object.stroke_width * self.viewport.zoom).max(1.0)),
         );
+        ctx.pop_transform();
     }
 
     fn paint_selection(&self, ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme) {
@@ -1892,40 +1887,62 @@ impl VectorEditorCanvas {
         }
 
         let object = self.state.selected_object_snapshot();
-        let corners = object
-            .corners()
-            .map(|corner| self.to_screen(bounds, corner));
-        let selection = vector_closed_polyline_path(&corners);
+        let half_width = object.size.width * 0.5;
+        let half_height = object.size.height * 0.5;
+        let local_corners = [
+            Point::new(-half_width, -half_height),
+            Point::new(half_width, -half_height),
+            Point::new(half_width, half_height),
+            Point::new(-half_width, half_height),
+        ];
+        let object_transform = self.object_to_screen_transform(bounds, object);
         let accent = theme.palette.accent_border_focus;
-        ctx.stroke(selection, accent, StrokeStyle::new(1.5));
-
-        let top_center = self.to_screen(bounds, object.top_center());
-        let rotate_handle = self.to_screen(bounds, object.rotate_handle());
+        let local_top_center = Point::new(0.0, -half_height);
+        let local_rotate_handle = Point::new(
+            0.0,
+            -half_height - VECTOR_ROTATE_HANDLE_OFFSET / self.viewport.zoom.max(0.01),
+        );
+        ctx.push_transform(object_transform);
         ctx.stroke(
-            vector_line_path(top_center, rotate_handle),
+            vector_closed_polyline_path(&local_corners),
+            accent,
+            StrokeStyle::new(1.5),
+        );
+        ctx.stroke(
+            vector_line_path(local_top_center, local_rotate_handle),
             accent.with_alpha(0.82),
             StrokeStyle::new(1.2),
         );
-        ctx.fill(
-            Path::circle(rotate_handle, VECTOR_HANDLE_SIZE * 0.62),
+        ctx.pop_transform();
+
+        let corners = local_corners.map(|corner| object_transform.transform_point(corner));
+        let rotate_handle = object_transform.transform_point(local_rotate_handle);
+        let rotate_radius = VECTOR_HANDLE_SIZE * 0.62;
+        ctx.fill_rrect_bordered(
+            Rect::new(
+                rotate_handle.x - rotate_radius,
+                rotate_handle.y - rotate_radius,
+                rotate_radius * 2.0,
+                rotate_radius * 2.0,
+            ),
+            [rotate_radius; 4],
             Color::rgba(0.98, 0.995, 1.0, 1.0),
-        );
-        ctx.stroke(
-            Path::circle(rotate_handle, VECTOR_HANDLE_SIZE * 0.62),
-            accent,
-            StrokeStyle::new(1.4),
+            Border {
+                width: 1.4,
+                color: accent,
+            },
         );
 
         for corner in corners {
             let handle = Self::resize_handle_rect(corner);
-            ctx.fill(
-                Path::rounded_rect(handle, 2.0),
+            ctx.fill_rrect_bordered(
+                handle,
+                [2.0; 4],
                 Color::rgba(0.98, 0.995, 1.0, 1.0),
-            );
-            ctx.stroke(
-                Path::rounded_rect(handle, 2.0),
-                accent,
-                StrokeStyle::new(1.2),
+                Border {
+                    width: 1.2,
+                    color: accent,
+                },
             );
         }
     }
@@ -2010,6 +2027,7 @@ impl Widget for VectorEditorCanvas {
                     && pointer.button == Some(PointerButton::Primary)
                     && ctx.bounds().contains(pointer.position) =>
             {
+                let previous_selected = self.state.selected_object();
                 let document = self.from_screen(ctx.bounds(), pointer.position);
                 let mode = if let Some(handle) =
                     self.selection_handle_at(ctx.bounds(), pointer.position)
@@ -2040,7 +2058,11 @@ impl Widget for VectorEditorCanvas {
 
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                Self::request_edit_update(ctx);
+                if self.state.selected_object() != previous_selected {
+                    request_vector_structure_refresh(ctx);
+                } else {
+                    Self::request_edit_update(ctx);
+                }
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -2297,50 +2319,64 @@ fn vector_scroll_delta_to_offset(scroll_delta: Option<ScrollDelta>, fallback: Ve
     }
 }
 
+fn request_vector_refresh(ctx: &mut EventCtx) {
+    for kind in [InvalidationKind::Paint, InvalidationKind::Semantics] {
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Window(ctx.window_id()),
+            kind,
+        ));
+    }
+}
+
+fn request_vector_view_refresh(ctx: &mut EventCtx) {
+    for kind in [
+        InvalidationKind::Arrange,
+        InvalidationKind::Paint,
+        InvalidationKind::Semantics,
+    ] {
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Window(ctx.window_id()),
+            kind,
+        ));
+    }
+}
+
+fn request_vector_structure_refresh(ctx: &mut EventCtx) {
+    for kind in [
+        InvalidationKind::Measure,
+        InvalidationKind::Ordering,
+        InvalidationKind::Paint,
+        InvalidationKind::HitTest,
+        InvalidationKind::Semantics,
+    ] {
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Window(ctx.window_id()),
+            kind,
+        ));
+    }
+}
+
 fn vector_object_color_with_opacity(color: Color, opacity: f32) -> Color {
     color.with_alpha(color.alpha * opacity.clamp(0.0, 1.0))
 }
 
-fn vector_ellipse_path(bounds: Rect, viewport: CanvasViewport, object: VectorObject) -> Path {
-    vector_ellipse_path_for_radii(
-        bounds,
-        viewport,
-        object,
-        object.size.width * 0.5,
-        object.size.height * 0.5,
-    )
+fn vector_ellipse_path(object: VectorObject) -> Path {
+    vector_ellipse_path_for_radii(object.size.width * 0.5, object.size.height * 0.5)
 }
 
-fn vector_ellipse_fill_path(
-    bounds: Rect,
-    viewport: CanvasViewport,
-    object: VectorObject,
-    stroke_width: f32,
-) -> Option<Path> {
+fn vector_ellipse_fill_path(object: VectorObject, stroke_width: f32) -> Option<Path> {
     let inset = (stroke_width * 0.5).max(0.0);
     let radius_x = (object.size.width * 0.5) - inset;
     let radius_y = (object.size.height * 0.5) - inset;
-    (radius_x > 0.0 && radius_y > 0.0)
-        .then(|| vector_ellipse_path_for_radii(bounds, viewport, object, radius_x, radius_y))
+    (radius_x > 0.0 && radius_y > 0.0).then(|| vector_ellipse_path_for_radii(radius_x, radius_y))
 }
 
-fn vector_ellipse_path_for_radii(
-    bounds: Rect,
-    viewport: CanvasViewport,
-    object: VectorObject,
-    radius_x: f32,
-    radius_y: f32,
-) -> Path {
+fn vector_ellipse_path_for_radii(radius_x: f32, radius_y: f32) -> Path {
     let mut path = PathBuilder::new();
     let segments = 56;
     for segment in 0..=segments {
         let angle = (segment as f32 / segments as f32) * std::f32::consts::TAU;
-        let local = Point::new(angle.cos() * radius_x, angle.sin() * radius_y);
-        let point = VectorEditorCanvas::document_to_screen_with_viewport(
-            bounds,
-            viewport,
-            object.local_to_document(local),
-        );
+        let point = Point::new(angle.cos() * radius_x, angle.sin() * radius_y);
         if segment == 0 {
             path.move_to(point);
         } else {
@@ -2356,9 +2392,9 @@ mod tests {
     use super::*;
 
     use sui::{
-        Application, Brush, Event, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        RenderOutput, Result, SceneCommand, ScrollDelta, SemanticsRole, SemanticsValue, Vector,
-        WindowBuilder,
+        Application, Brush, Event, FramePhase, PointerButton, PointerButtons, PointerEvent,
+        PointerEventKind, RenderOutput, Result, SceneCommand, ScrollDelta, SemanticsRole,
+        SemanticsValue, Vector, WgpuRenderer, WindowBuilder,
     };
     use sui_testing::{TestApp, TestWindow, WindowSnapshot};
 
@@ -2401,10 +2437,8 @@ mod tests {
             0.45,
             0.0,
         );
-        let bounds = Rect::new(0.0, 0.0, 240.0, 180.0);
-        let viewport = CanvasViewport::new().zoom(1.0);
-        let stroke_path = vector_ellipse_path(bounds, viewport, object);
-        let fill_path = vector_ellipse_fill_path(bounds, viewport, object, object.stroke_width)
+        let stroke_path = vector_ellipse_path(object);
+        let fill_path = vector_ellipse_fill_path(object, object.stroke_width)
             .expect("stroked ellipse should keep a fillable interior");
 
         assert!(
@@ -2599,6 +2633,157 @@ mod tests {
             amber_zoomed.bounds
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn vector_editor_canvas_uses_batched_grid_and_native_handles() -> Result<()> {
+        let mut runtime = build_vector_canvas_test_application().build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let mut fill_rect_count = 0;
+        let mut rounded_rect_count = 0;
+        let mut path_count = 0;
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect { .. } => fill_rect_count += 1,
+                SceneCommand::FillRoundedRect { .. } => rounded_rect_count += 1,
+                SceneCommand::FillPath { .. } | SceneCommand::StrokePath { .. } => path_count += 1,
+                _ => {}
+            });
+
+        assert!(
+            fill_rect_count >= 20,
+            "vector grid should use batchable fill rectangles"
+        );
+        assert!(
+            rounded_rect_count >= 7,
+            "artboard and selection handles should use native rounded primitives"
+        );
+        assert!(
+            path_count <= 8,
+            "the vector canvas should reserve analytic paths for actual vector geometry"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn vector_editor_drag_skips_layout_and_hit_test_rebuilds() -> Result<()> {
+        let mut runtime = build_vector_canvas_test_application().build()?;
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime.render(window_id)?;
+        let blue = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Image && node.name.as_deref() == Some("Blue ellipse")
+            })
+            .expect("blue ellipse semantics");
+        let from = Point::new(
+            blue.bounds.x() + blue.bounds.width() * 0.5,
+            blue.bounds.y() + blue.bounds.height() * 0.5,
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, from);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        let to = from + Vector::new(40.0, 20.0);
+        let mut moved = PointerEvent::new(PointerEventKind::Move, to);
+        moved.buttons = PointerButtons::new(1);
+        moved.delta = to - from;
+        runtime.handle_event(window_id, Event::Pointer(moved))?;
+        let output = runtime.render(window_id)?;
+
+        assert!(
+            output.diagnostics.phase_timings.iter().all(|sample| {
+                !matches!(
+                    sample.phase,
+                    FramePhase::MeasureArrange | FramePhase::HitTest
+                )
+            }),
+            "object dragging should repaint visuals without rebuilding layout or hit testing: {:?}",
+            output.diagnostics.phase_timings
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for vector-editor runtime and renderer drag frames"]
+    fn vector_editor_gpu_drag_current_status_benchmark() -> Result<()> {
+        let mut runtime = build_vector_editor_test_application().build()?;
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime.render(window_id)?;
+        let blue = initial
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Image && node.name.as_deref() == Some("Blue ellipse")
+            })
+            .expect("blue ellipse semantics");
+        let from = Point::new(
+            blue.bounds.x() + blue.bounds.width() * 0.5,
+            blue.bounds.y() + blue.bounds.height() * 0.5,
+        );
+        let to = from + Vector::new(280.0, 140.0);
+
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&initial.frame)?;
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, from);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime.handle_event(window_id, Event::Pointer(down))?;
+
+        const FRAMES: usize = 120;
+        let mut runtime_time = std::time::Duration::ZERO;
+        let mut renderer_time = std::time::Duration::ZERO;
+        let mut draw_count = 0;
+        let mut path_miss_count = 0;
+        let mut path_upload_bytes = 0;
+        let mut previous = from;
+        for step in 1..=FRAMES {
+            let progress = step as f32 / FRAMES as f32;
+            let position = Point::new(
+                from.x + ((to.x - from.x) * progress),
+                from.y + ((to.y - from.y) * progress),
+            );
+            let mut moved = PointerEvent::new(PointerEventKind::Move, position);
+            moved.buttons = PointerButtons::new(1);
+            moved.delta = position - previous;
+            runtime.handle_event(window_id, Event::Pointer(moved))?;
+
+            let runtime_started = std::time::Instant::now();
+            let output = runtime.render(window_id)?;
+            runtime_time += runtime_started.elapsed();
+
+            let renderer_started = std::time::Instant::now();
+            renderer.render(&output.frame)?;
+            renderer_time += renderer_started.elapsed();
+            let stats = renderer
+                .last_frame_stats(window_id)
+                .expect("renderer frame stats");
+            draw_count += stats.draw_count;
+            path_miss_count += stats.analytic_path_bind_group_miss_count;
+            path_upload_bytes += stats.analytic_path_bind_group_upload_bytes;
+            previous = position;
+        }
+
+        let mut up = PointerEvent::new(PointerEventKind::Up, to);
+        up.button = Some(PointerButton::Primary);
+        runtime.handle_event(window_id, Event::Pointer(up))?;
+
+        println!(
+            "VECTOR_EDITOR_GPU_DRAG_BENCHMARK frames={FRAMES} runtime_average_ms={:.3} renderer_average_ms={:.3} draw_average={:.1} path_miss_average={:.1} path_upload_average_bytes={:.1}",
+            runtime_time.as_secs_f64() * 1000.0 / FRAMES as f64,
+            renderer_time.as_secs_f64() * 1000.0 / FRAMES as f64,
+            draw_count as f64 / FRAMES as f64,
+            path_miss_count as f64 / FRAMES as f64,
+            path_upload_bytes as f64 / FRAMES as f64,
+        );
         Ok(())
     }
 

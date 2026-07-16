@@ -178,18 +178,6 @@ impl AnalyticPathCpuData {
         }
     }
 
-    pub(crate) fn translate(&mut self, delta: Vector) {
-        if delta == Vector::ZERO {
-            return;
-        }
-
-        for point in &mut self.points {
-            point.position[0] += delta.x;
-            point.position[1] += delta.y;
-        }
-        self.resource_signature = self.compute_signature();
-    }
-
     pub(crate) fn byte_size(&self) -> usize {
         std::mem::size_of::<AnalyticPathMetaGpu>()
             + self.contours.len() * std::mem::size_of::<AnalyticContourGpu>()
@@ -3241,13 +3229,16 @@ fn append_painted_path(
     }
 
     let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
-    let lyon_path = build_lyon_path(path, state.current_transform);
+    let (analytic_transform, path_origin) =
+        analytic_path_transform_without_translation(state.current_transform);
+    let lyon_path = build_lyon_path(path, analytic_transform);
     if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
         append_analytic_path_quad(
             overlay_vertices,
             transformed_bounds.inflate(coverage_outset, coverage_outset),
             color,
             viewport,
+            path_origin,
         );
         let id = draw_ops.insert_analytic_path(data);
         return Ok(FillPathRenderMode::SolidPlusAnalytic { id });
@@ -3295,13 +3286,16 @@ fn append_stroked_path(
     );
     if analytic_stroke_supported {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
-        let lyon_path = build_lyon_path(path, state.current_transform);
+        let (analytic_transform, path_origin) =
+            analytic_path_transform_without_translation(state.current_transform);
+        let lyon_path = build_lyon_path(path, analytic_transform);
         if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
             append_analytic_path_quad(
                 overlay_vertices,
                 transformed_bounds.inflate(stroke_outset, stroke_outset),
                 color,
                 viewport,
+                path_origin,
             );
             let id = draw_ops.insert_analytic_path(data);
             return Ok(Some(id));
@@ -3312,6 +3306,20 @@ fn append_stroked_path(
         path_cache.cached_stroke_mesh(path, state.current_transform, stroke, feather_width)?;
     append_cached_path_mesh(vertices, mesh, color, viewport);
     Ok(None)
+}
+
+fn analytic_path_transform_without_translation(transform: Transform) -> (Transform, Vector) {
+    (
+        Transform::new(
+            transform.xx,
+            transform.yx,
+            transform.xy,
+            transform.yy,
+            0.0,
+            0.0,
+        ),
+        Vector::new(transform.dx, transform.dy),
+    )
 }
 
 fn build_analytic_fill_path_data(
@@ -3416,7 +3424,13 @@ fn build_analytic_stroke_path_data(
     ))
 }
 
-fn append_analytic_path_quad(vertices: &mut Vec<Vertex>, rect: Rect, color: Color, viewport: Size) {
+fn append_analytic_path_quad(
+    vertices: &mut Vec<Vertex>,
+    rect: Rect,
+    color: Color,
+    viewport: Size,
+    path_origin: Vector,
+) {
     if rect.is_empty() || viewport.is_empty() {
         return;
     }
@@ -3430,12 +3444,42 @@ fn append_analytic_path_quad(vertices: &mut Vec<Vertex>, rect: Rect, color: Colo
     let y1 = rect.max_y();
 
     vertices.extend_from_slice(&[
-        Vertex::basic([min[0], min[1]], rgba, [x0, y0], [0.0; 4]),
-        Vertex::basic([max[0], min[1]], rgba, [x1, y0], [0.0; 4]),
-        Vertex::basic([min[0], max[1]], rgba, [x0, y1], [0.0; 4]),
-        Vertex::basic([min[0], max[1]], rgba, [x0, y1], [0.0; 4]),
-        Vertex::basic([max[0], min[1]], rgba, [x1, y0], [0.0; 4]),
-        Vertex::basic([max[0], max[1]], rgba, [x1, y1], [0.0; 4]),
+        Vertex::basic(
+            [min[0], min[1]],
+            rgba,
+            [x0 - path_origin.x, y0 - path_origin.y],
+            [0.0; 4],
+        ),
+        Vertex::basic(
+            [max[0], min[1]],
+            rgba,
+            [x1 - path_origin.x, y0 - path_origin.y],
+            [0.0; 4],
+        ),
+        Vertex::basic(
+            [min[0], max[1]],
+            rgba,
+            [x0 - path_origin.x, y1 - path_origin.y],
+            [0.0; 4],
+        ),
+        Vertex::basic(
+            [min[0], max[1]],
+            rgba,
+            [x0 - path_origin.x, y1 - path_origin.y],
+            [0.0; 4],
+        ),
+        Vertex::basic(
+            [max[0], min[1]],
+            rgba,
+            [x1 - path_origin.x, y0 - path_origin.y],
+            [0.0; 4],
+        ),
+        Vertex::basic(
+            [max[0], max[1]],
+            rgba,
+            [x1 - path_origin.x, y1 - path_origin.y],
+            [0.0; 4],
+        ),
     ]);
 }
 
@@ -4245,18 +4289,6 @@ impl DrawOpArena {
             vertex.position[0] += delta_x;
             vertex.position[1] += delta_y;
         }
-        for draw_op in &self.draw_ops {
-            if !matches!(draw_op.kind, DrawOpKind::AnalyticPath { .. }) {
-                continue;
-            }
-
-            let start = draw_op.vertices.start as usize;
-            let end = start + draw_op.vertices.len as usize;
-            for vertex in &mut self.scene_vertices[start..end] {
-                vertex.tex_coords[0] += translation.x;
-                vertex.tex_coords[1] += translation.y;
-            }
-        }
         for vertex in &mut self.clip_vertices {
             vertex.position[0] += delta_x;
             vertex.position[1] += delta_y;
@@ -4270,9 +4302,6 @@ impl DrawOpArena {
             if let Some(image) = &mut draw_op.image {
                 image.bounds = image.bounds.translate(translation);
             }
-        }
-        for path in self.analytic_paths.values_mut() {
-            Arc::make_mut(path).translate(translation);
         }
     }
 
@@ -4989,4 +5018,32 @@ pub(crate) fn configure_surface(
     let config =
         configure_surface_for_strategy(surface, adapter, device, size, vsync_enabled, strategy)?;
     Ok((config, strategy))
+}
+
+#[cfg(test)]
+mod analytic_path_cache_tests {
+    use super::*;
+
+    #[test]
+    fn analytic_path_resource_identity_ignores_translation() {
+        let path = ScenePath::circle(Point::ZERO, 18.0);
+        let (first_transform, first_origin) =
+            analytic_path_transform_without_translation(Transform::translation(32.0, 48.0));
+        let (translated_transform, translated_origin) =
+            analytic_path_transform_without_translation(Transform::translation(312.0, 196.0));
+        let first =
+            build_analytic_stroke_path_data(&build_lyon_path(&path, first_transform), 2.0, 1.0)
+                .expect("circle should use analytic path rendering");
+        let translated = build_analytic_stroke_path_data(
+            &build_lyon_path(&path, translated_transform),
+            2.0,
+            1.0,
+        )
+        .expect("translated circle should use analytic path rendering");
+
+        assert_eq!(first.contours, translated.contours);
+        assert_eq!(first.points, translated.points);
+        assert_eq!(first.resource_signature, translated.resource_signature);
+        assert_eq!(translated_origin - first_origin, Vector::new(280.0, 148.0));
+    }
 }

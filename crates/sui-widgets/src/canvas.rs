@@ -2192,7 +2192,8 @@ impl PixelCanvas {
             } => self.display_image_data(display, paper, display_above_paper, paper_color),
         };
         let image = RegisteredImage::from_rgba8(self.width as u32, self.height as u32, data)
-            .expect("pixel canvas image data should match its dimensions");
+            .expect("pixel canvas image data should match its dimensions")
+            .without_mipmaps();
         *self.paint_image_cache.borrow_mut() = Some(PixelCanvasImageCache {
             key,
             image: image.clone(),
@@ -4912,6 +4913,10 @@ mod tests {
             .expect("pixel canvas image should be registered");
         assert_eq!(image.width(), 1920);
         assert_eq!(image.height(), 1080);
+        assert!(
+            !image.mipmaps_enabled(),
+            "mutable pixel canvases should not rebuild mipmaps for every brush update"
+        );
     }
 
     #[test]

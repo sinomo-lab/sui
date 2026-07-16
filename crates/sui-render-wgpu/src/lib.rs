@@ -3227,6 +3227,29 @@ impl WgpuRenderer {
         image: &RegisteredImage,
         mipmapped: bool,
     ) {
+        if !mipmapped {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                image.bytes(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(image.width() * 4),
+                    rows_per_image: Some(image.height()),
+                },
+                wgpu::Extent3d {
+                    width: image.width(),
+                    height: image.height(),
+                    depth_or_array_layers: 1,
+                },
+            );
+            return;
+        }
+
         let mip_chain = image_mip_chain(image, mipmapped);
         for (mip_level, level) in mip_chain.iter().enumerate() {
             queue.write_texture(
@@ -3256,9 +3279,11 @@ impl WgpuRenderer {
         key: ImageBindGroupKey,
         image: &RegisteredImage,
     ) -> Result<wgpu::BindGroup> {
+        let mipmapped = !image.is_svg() && image.mipmaps_enabled();
         let texture_key = ImageTextureCacheKey {
             handle: key.handle,
             raster_size: image.is_svg().then_some(key.raster_size),
+            mipmapped,
         };
         if let Some(cached) = self.image_cache.get_mut(&texture_key) {
             cached.last_used_frame = self.frames_rendered;
@@ -3290,7 +3315,7 @@ impl WgpuRenderer {
                     &shared.queue,
                     &cached.texture,
                     upload_image,
-                    !image.is_svg(),
+                    mipmapped,
                 );
                 cached.image = image.clone();
                 return Ok(Self::image_bind_group_for_sampling(cached, key.sampling));
@@ -3304,10 +3329,10 @@ impl WgpuRenderer {
         let texture_format = match upload_image.format() {
             RegisteredImageFormat::Rgba8 => wgpu::TextureFormat::Rgba8UnormSrgb,
         };
-        let mip_level_count = if image.is_svg() {
-            1
-        } else {
+        let mip_level_count = if mipmapped {
             image_mip_level_count(upload_image.width(), upload_image.height())
+        } else {
+            1
         };
         let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("SUI image texture"),
@@ -3323,12 +3348,7 @@ impl WgpuRenderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        Self::write_registered_image_texture(
-            &shared.queue,
-            &texture,
-            upload_image,
-            !image.is_svg(),
-        );
+        Self::write_registered_image_texture(&shared.queue, &texture, upload_image, mipmapped);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let linear_bind_group =
             Self::create_image_bind_group(shared, &view, &shared.image_linear_sampler);
@@ -13186,6 +13206,7 @@ mod tests {
     fn renderer_caches_physical_svg_variants_and_bitmap_mip_levels() {
         let svg_handle = ImageHandle::new(25);
         let bitmap_handle = ImageHandle::new(26);
+        let dynamic_bitmap_handle = ImageHandle::new(27);
         let mut images = ImageRegistry::new();
         images.insert(
             svg_handle,
@@ -13198,6 +13219,12 @@ mod tests {
             bitmap_handle,
             RegisteredImage::from_rgba8(8, 4, vec![255; 8 * 4 * 4]).unwrap(),
         );
+        images.insert(
+            dynamic_bitmap_handle,
+            RegisteredImage::from_rgba8(8, 4, vec![255; 8 * 4 * 4])
+                .unwrap()
+                .without_mipmaps(),
+        );
 
         let mut scene = Scene::new();
         scene.push(SceneCommand::DrawImage {
@@ -13207,6 +13234,10 @@ mod tests {
         scene.push(SceneCommand::DrawImage {
             rect: Rect::new(20.0, 2.0, 8.0, 4.0),
             source: ImageSource::new(bitmap_handle),
+        });
+        scene.push(SceneCommand::DrawImage {
+            rect: Rect::new(30.0, 2.0, 8.0, 4.0),
+            source: ImageSource::new(dynamic_bitmap_handle),
         });
         let frame = SceneFrame {
             window_id: WindowId::new(9),
@@ -13243,7 +13274,17 @@ mod tests {
             .find(|(key, _)| key.handle == bitmap_handle)
             .expect("bitmap texture cached");
         assert_eq!(bitmap_key.raster_size, None);
+        assert!(bitmap_key.mipmapped);
         assert_eq!(bitmap_texture.texture.mip_level_count(), 4);
+
+        let (dynamic_bitmap_key, dynamic_bitmap_texture) = renderer
+            .image_cache
+            .iter()
+            .find(|(key, _)| key.handle == dynamic_bitmap_handle)
+            .expect("dynamic bitmap texture cached");
+        assert_eq!(dynamic_bitmap_key.raster_size, None);
+        assert!(!dynamic_bitmap_key.mipmapped);
+        assert_eq!(dynamic_bitmap_texture.texture.mip_level_count(), 1);
     }
 
     #[test]
