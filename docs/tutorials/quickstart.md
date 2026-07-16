@@ -125,8 +125,8 @@ such as `Save profile` over vague labels such as `Click here`.
 
 ## 4. Theme consistently
 
-SUI's built-in Mesh themes are plain values. `DefaultTheme` is `Copy`, so one
-theme value can be applied to every widget in a subtree:
+SUI's built-in themes are plain values. `DefaultTheme` is `Copy`, so one theme
+value can be applied to every widget in a subtree:
 
 ```rust,ignore
 let theme = DefaultTheme::dark();
@@ -142,7 +142,8 @@ let panel = Surface::panel(
 
 Available starting points include:
 
-- `DefaultTheme::light()` for a light interface;
+- `DefaultTheme::sui()` or `DefaultTheme::light()` for the branded light interface;
+- `DefaultTheme::neutral()` for an achromatic professional interface;
 - `DefaultTheme::dark()` for the standard dark interface;
 - `DefaultTheme::void()` for a true-black OLED-oriented interface;
 - `DefaultTheme::touch()` for larger touch-oriented control metrics.

@@ -57,8 +57,8 @@ then build an editable [stateful form](https://github.com/sinomo-lab/sui/blob/ma
 - Retained widgets with explicit measure, arrange, event, paint, and semantics
   passes.
 - Common controls, form inputs, layout containers, composite application
-  widgets, and the built-in Mesh light, dark, high-contrast, void/OLED, and
-  touch themes.
+  widgets, the built-in SUI and neutral presets, branded light, dark,
+  high-contrast and void/OLED schemes, and contextual control sizes.
 - Editable text, text areas, password fields, and local date/time fields with
   caret movement, selection, clipboard operations, and IME input.
 - A renderer-neutral scene representation and retained `wgpu` compositor.

@@ -22,6 +22,48 @@ const THEME_RADIUS_SCALE_NAME: &str = "Corner radius scale";
 const THEME_TEXT_SCALE_NAME: &str = "Typography scale";
 const THEME_MOTION_SCALE_NAME: &str = "Motion speed";
 const THEME_RESET_NAME: &str = "Reset current preset";
+const THEME_PRESET_OPTIONS: [&str; 4] = ["SUI light", "Neutral", "SUI dark", "SUI true black"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThemeEditorPreset {
+    SuiLight,
+    Neutral,
+    SuiDark,
+    SuiTrueBlack,
+}
+
+impl ThemeEditorPreset {
+    fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Neutral,
+            2 => Self::SuiDark,
+            3 => Self::SuiTrueBlack,
+            _ => Self::SuiLight,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::SuiLight => 0,
+            Self::Neutral => 1,
+            Self::SuiDark => 2,
+            Self::SuiTrueBlack => 3,
+        }
+    }
+
+    fn theme(self) -> DefaultTheme {
+        match self {
+            Self::SuiLight => DefaultTheme::sui(),
+            Self::Neutral => DefaultTheme::neutral(),
+            Self::SuiDark => DefaultTheme::dark(),
+            Self::SuiTrueBlack => DefaultTheme::high_contrast(),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        THEME_PRESET_OPTIONS[self.index()]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThemeColorVariable {
@@ -136,7 +178,7 @@ struct ThemeEditorState {
 
 struct ThemeEditorStateInner {
     theme: DefaultTheme,
-    scheme: ThemeColorScheme,
+    preset: ThemeEditorPreset,
     selected_color: ThemeColorVariable,
     control_size: ControlSize,
     radius_scale: f32,
@@ -148,8 +190,8 @@ impl ThemeEditorState {
     fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(ThemeEditorStateInner {
-                theme: DefaultTheme::light(),
-                scheme: ThemeColorScheme::Light,
+                theme: DefaultTheme::sui(),
+                preset: ThemeEditorPreset::SuiLight,
                 selected_color: ThemeColorVariable::Primary,
                 control_size: ControlSize::Medium,
                 radius_scale: 1.0,
@@ -169,27 +211,14 @@ impl ThemeEditorState {
     }
 
     fn preset_index(&self) -> usize {
-        match self.inner.borrow().scheme {
-            ThemeColorScheme::Light => 0,
-            ThemeColorScheme::Dark => 1,
-            ThemeColorScheme::HighContrast => 2,
-        }
+        self.inner.borrow().preset.index()
     }
 
     fn set_preset(&self, index: usize) {
-        let scheme = match index {
-            1 => ThemeColorScheme::Dark,
-            2 => ThemeColorScheme::HighContrast,
-            _ => ThemeColorScheme::Light,
-        };
-        let theme = match scheme {
-            ThemeColorScheme::Light => DefaultTheme::light(),
-            ThemeColorScheme::Dark => DefaultTheme::dark(),
-            ThemeColorScheme::HighContrast => DefaultTheme::high_contrast(),
-        };
+        let preset = ThemeEditorPreset::from_index(index);
         let mut inner = self.inner.borrow_mut();
-        inner.theme = theme;
-        inner.scheme = scheme;
+        inner.theme = preset.theme();
+        inner.preset = preset;
         inner.control_size = ControlSize::Medium;
         inner.radius_scale = 1.0;
         inner.text_scale = 1.0;
@@ -321,18 +350,14 @@ impl ThemeEditorState {
 
     fn theme_summary(&self) -> String {
         let inner = self.inner.borrow();
-        let scheme = match inner.scheme {
-            ThemeColorScheme::Light => "Light",
-            ThemeColorScheme::Dark => "Dark",
-            ThemeColorScheme::HighContrast => "True black",
-        };
+        let preset = inner.preset.label();
         let size = match inner.control_size {
             ControlSize::Small => "small",
             ControlSize::Medium => "medium",
             ControlSize::Large => "large",
         };
         format!(
-            "{scheme} · {size} controls · {:.0}% type · {:.0}% motion",
+            "{preset} · {size} controls · {:.0}% type · {:.0}% motion",
             inner.text_scale * 100.0,
             inner.motion_scale * 100.0,
         )
@@ -497,7 +522,7 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
                 PropertyRow::new(
                     "Preset",
                     Select::new(THEME_PRESET_NAME)
-                        .options(["Light", "Dark", "True black"])
+                        .options(THEME_PRESET_OPTIONS)
                         .selected_when(move || Some(preset_reader.preset_index()))
                         .theme_when(clone_dev_theme_reader(&shell_theme))
                         .on_change_with_ctx(move |ctx, index, _| {
@@ -983,12 +1008,23 @@ mod tests {
     #[test]
     fn reset_restores_the_selected_preset() {
         let state = ThemeEditorState::new();
-        state.set_preset(1);
+        state.set_preset(2);
         state.set_spacing(9.0);
         state.set_text_scale(1.4);
         state.reset_current_preset();
 
         assert_eq!(state.theme(), DefaultTheme::dark());
+        assert_eq!(state.preset_index(), 2);
+    }
+
+    #[test]
+    fn neutral_preset_is_selectable_and_resettable() {
+        let state = ThemeEditorState::new();
+        state.set_preset(1);
+        state.set_color_channel(0, 0.8);
+        state.reset_current_preset();
+
+        assert_eq!(state.theme(), DefaultTheme::neutral());
         assert_eq!(state.preset_index(), 1);
     }
 }

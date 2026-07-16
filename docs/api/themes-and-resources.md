@@ -10,12 +10,14 @@ runtime starts.
 
 ## Built-in Themes
 
-SUI provides three color schemes, a true-black alias, and three contextual
-control sizes:
+SUI provides a branded preset, a neutral professional preset, three branded
+color schemes, a true-black alias, and three contextual control sizes:
 
 ```rust
 use sui::prelude::*;
 
+let sui = DefaultTheme::sui();
+let neutral = DefaultTheme::neutral();
 let light = DefaultTheme::light();
 let dark = DefaultTheme::dark();
 let high_contrast = DefaultTheme::high_contrast();
@@ -28,6 +30,13 @@ let touch = dark.with_size(ControlSize::Large);
 assert!(compact.metrics.min_height <= standard.metrics.min_height);
 assert!(standard.metrics.min_height <= touch.metrics.min_height);
 ```
+
+`sui()` is the explicit name for the default branded light preset and is
+equivalent to `light()`. `neutral()` keeps surfaces, text, primary actions,
+focus, selection, and elevation achromatic while retaining conventional
+semantic colors for informational, success, warning, and danger feedback. It
+is the standard starting point when a professional interface has no product
+color preference.
 
 `void()` is the true-black/OLED alias for `high_contrast()`. The older
 `with_density(ThemeDensity)` API remains public, but new interfaces should

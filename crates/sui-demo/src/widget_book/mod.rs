@@ -148,7 +148,7 @@ const WIDGET_BOOK_GALLERY_PADDING: Insets = Insets {
 };
 pub const THEME_DEMO_TITLE: &str = "Themes";
 pub const THEME_DEMO_DESCRIPTION: &str =
-    "Dedicated theme previews for SDR, wide-gamut, and HDR UI styling.";
+    "Compare the SUI and neutral presets across standard, dark, OLED, and HDR UI styling.";
 pub const THEME_DEMO_SCROLL_NAME: &str = "Theme demo gallery";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_NAME: &str = "Retained text benchmark scroll";
 pub const RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME: &str =
@@ -168,18 +168,15 @@ pub const TEXT_EDITING_BENCHMARK_SPLIT_NAME: &str = "Text editing benchmark spli
 pub const TEXT_EDITING_BENCHMARK_EDITOR_NAME: &str = "Text editing benchmark editor";
 pub const TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME: &str = "Text editing benchmark syntax preview";
 pub const THEME_PREVIEW_NAME: &str = "Theme preview showcase";
-pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare default themes";
+pub const THEME_PREVIEW_TOGGLE_LABEL: &str = "Compare SUI and neutral presets";
 pub const LIGHT_THEME_PREVIEW_CARD_NAME: &str = "Light theme preview card";
-pub const DARK_THEME_PREVIEW_CARD_NAME: &str = "Dark theme preview card";
-pub const HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME: &str = "True black theme preview card";
+pub const NEUTRAL_THEME_PREVIEW_CARD_NAME: &str = "Neutral theme preview card";
 pub const HDR_THEME_LAB_NAME: &str = "HDR theme mode lab";
 pub const HDR_THEME_LAB_ACTIVE_PREVIEW_NAME: &str = "Current HDR theme mode preview";
 pub const LIGHT_PREVIEW_ACTION_LABEL: &str = "Light preview action";
-pub const DARK_PREVIEW_ACTION_LABEL: &str = "Dark preview action";
-pub const HIGH_CONTRAST_PREVIEW_ACTION_LABEL: &str = "True black preview action";
+pub const NEUTRAL_PREVIEW_ACTION_LABEL: &str = "Neutral preview action";
 pub const LIGHT_PREVIEW_INPUT_LABEL: &str = "Light preview query";
-pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
-pub const HIGH_CONTRAST_PREVIEW_INPUT_LABEL: &str = "True black preview query";
+pub const NEUTRAL_PREVIEW_INPUT_LABEL: &str = "Neutral preview query";
 pub const LIST_VIEW_NAME: &str = "Assets list";
 pub const TREE_VIEW_NAME: &str = "Scene tree";
 pub const TABLE_NAME: &str = "Material table";
@@ -1568,8 +1565,7 @@ struct ThemePreviewShowcase {
     state: Rc<RefCell<WidgetBookState>>,
     toggle: SingleChild,
     light_card: SingleChild,
-    dark_card: SingleChild,
-    high_contrast_card: SingleChild,
+    neutral_card: SingleChild,
 }
 
 impl ThemePreviewShowcase {
@@ -1589,28 +1585,19 @@ impl ThemePreviewShowcase {
             light_card: SingleChild::new(NamedSection::new(
                 LIGHT_THEME_PREVIEW_CARD_NAME,
                 theme_preview_card(
-                    DefaultTheme::light(),
-                    "Light",
+                    DefaultTheme::sui(),
+                    "SUI light",
                     LIGHT_PREVIEW_ACTION_LABEL,
                     LIGHT_PREVIEW_INPUT_LABEL,
                 ),
             )),
-            dark_card: SingleChild::new(NamedSection::new(
-                DARK_THEME_PREVIEW_CARD_NAME,
+            neutral_card: SingleChild::new(NamedSection::new(
+                NEUTRAL_THEME_PREVIEW_CARD_NAME,
                 theme_preview_card(
-                    DefaultTheme::dark(),
-                    "Dark",
-                    DARK_PREVIEW_ACTION_LABEL,
-                    DARK_PREVIEW_INPUT_LABEL,
-                ),
-            )),
-            high_contrast_card: SingleChild::new(NamedSection::new(
-                HIGH_CONTRAST_THEME_PREVIEW_CARD_NAME,
-                theme_preview_card(
-                    DefaultTheme::high_contrast(),
-                    "True black",
-                    HIGH_CONTRAST_PREVIEW_ACTION_LABEL,
-                    HIGH_CONTRAST_PREVIEW_INPUT_LABEL,
+                    DefaultTheme::neutral(),
+                    "Neutral",
+                    NEUTRAL_PREVIEW_ACTION_LABEL,
+                    NEUTRAL_PREVIEW_INPUT_LABEL,
                 ),
             )),
         }
@@ -1659,45 +1646,32 @@ impl Widget for ThemePreviewShowcase {
         let card_height = Self::card_height();
 
         if comparison_enabled {
-            let stacked = max_width < 1020.0;
+            let stacked = max_width < 720.0;
             if stacked {
                 let light_size = self
                     .light_card
                     .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
-                let dark_size = self
-                    .dark_card
-                    .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
-                let high_contrast_size = self
-                    .high_contrast_card
+                let neutral_size = self
+                    .neutral_card
                     .measure(ctx, Constraints::tight(Size::new(max_width, card_height)));
 
                 return constraints.clamp(Size::new(
                     max_width,
-                    top + light_size.height
-                        + gap
-                        + dark_size.height
-                        + gap
-                        + high_contrast_size.height,
+                    top + light_size.height + gap + neutral_size.height,
                 ));
             }
 
-            let card_width = ((max_width - (gap * 2.0)) / 3.0).max(280.0);
+            let card_width = ((max_width - gap) / 2.0).max(320.0);
             let light_size = self
                 .light_card
                 .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
-            let dark_size = self
-                .dark_card
-                .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
-            let high_contrast_size = self
-                .high_contrast_card
+            let neutral_size = self
+                .neutral_card
                 .measure(ctx, Constraints::tight(Size::new(card_width, card_height)));
 
             return constraints.clamp(Size::new(
-                light_size.width + gap + dark_size.width + gap + high_contrast_size.width,
-                top + light_size
-                    .height
-                    .max(dark_size.height)
-                    .max(high_contrast_size.height),
+                light_size.width + gap + neutral_size.width,
+                top + light_size.height.max(neutral_size.height),
             ));
         }
 
@@ -1719,56 +1693,36 @@ impl Widget for ThemePreviewShowcase {
         let top = (bounds.y() + toggle_size.height + 16.0).round();
         let gap = 16.0;
         if comparison_enabled {
-            if bounds.width() < 1020.0 {
+            if bounds.width() < 720.0 {
                 let light_size = self.light_card.child().measured_size();
-                let dark_size = self.dark_card.child().measured_size();
-                let high_contrast_size = self.high_contrast_card.child().measured_size();
+                let neutral_size = self.neutral_card.child().measured_size();
                 self.light_card.arrange(
                     ctx,
                     Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
                 );
-                self.dark_card.arrange(
+                self.neutral_card.arrange(
                     ctx,
                     Rect::new(
                         bounds.x().round(),
                         top + light_size.height + gap,
-                        dark_size.width,
-                        dark_size.height,
-                    ),
-                );
-                self.high_contrast_card.arrange(
-                    ctx,
-                    Rect::new(
-                        bounds.x().round(),
-                        top + light_size.height + gap + dark_size.height + gap,
-                        high_contrast_size.width,
-                        high_contrast_size.height,
+                        neutral_size.width,
+                        neutral_size.height,
                     ),
                 );
             } else {
                 let light_size = self.light_card.child().measured_size();
-                let dark_size = self.dark_card.child().measured_size();
-                let high_contrast_size = self.high_contrast_card.child().measured_size();
+                let neutral_size = self.neutral_card.child().measured_size();
                 self.light_card.arrange(
                     ctx,
                     Rect::new(bounds.x().round(), top, light_size.width, light_size.height),
                 );
-                self.dark_card.arrange(
+                self.neutral_card.arrange(
                     ctx,
                     Rect::new(
                         (bounds.x() + light_size.width + gap).round(),
                         top,
-                        dark_size.width,
-                        dark_size.height,
-                    ),
-                );
-                self.high_contrast_card.arrange(
-                    ctx,
-                    Rect::new(
-                        (bounds.x() + light_size.width + gap + dark_size.width + gap).round(),
-                        top,
-                        high_contrast_size.width,
-                        high_contrast_size.height,
+                        neutral_size.width,
+                        neutral_size.height,
                     ),
                 );
             }
@@ -1786,8 +1740,7 @@ impl Widget for ThemePreviewShowcase {
         self.toggle.paint(ctx);
         self.light_card.paint(ctx);
         if comparison_enabled {
-            self.dark_card.paint(ctx);
-            self.high_contrast_card.paint(ctx);
+            self.neutral_card.paint(ctx);
         }
     }
 
@@ -1800,16 +1753,15 @@ impl Widget for ThemePreviewShowcase {
         );
         node.name = Some(THEME_PREVIEW_NAME.to_string());
         node.description = Some(if comparison_enabled {
-            "Light, dark, and true black OLED preview cards are visible.".to_string()
+            "SUI light and neutral professional preview cards are visible.".to_string()
         } else {
-            "Only the light preview card is visible.".to_string()
+            "Only the SUI light preview card is visible.".to_string()
         });
         ctx.push(node);
         self.toggle.semantics(ctx);
         self.light_card.semantics(ctx);
         if comparison_enabled {
-            self.dark_card.semantics(ctx);
-            self.high_contrast_card.semantics(ctx);
+            self.neutral_card.semantics(ctx);
         }
     }
 
@@ -1818,8 +1770,7 @@ impl Widget for ThemePreviewShowcase {
         self.toggle.visit_children(visitor);
         self.light_card.visit_children(visitor);
         if comparison_enabled {
-            self.dark_card.visit_children(visitor);
-            self.high_contrast_card.visit_children(visitor);
+            self.neutral_card.visit_children(visitor);
         }
     }
 
@@ -1828,8 +1779,7 @@ impl Widget for ThemePreviewShowcase {
         self.toggle.visit_children_mut(visitor);
         self.light_card.visit_children_mut(visitor);
         if comparison_enabled {
-            self.dark_card.visit_children_mut(visitor);
-            self.high_contrast_card.visit_children_mut(visitor);
+            self.neutral_card.visit_children_mut(visitor);
         }
     }
 }
@@ -2906,7 +2856,7 @@ pub fn build_theme_demo_surface_with_theme(
         .with_child(panel_with_theme(
             Rc::clone(&theme_reader),
             "Theme preview",
-            "Flip the compare toggle to inspect light, dark, and true black OLED themes with the same control composition.",
+            "Flip the compare toggle to inspect the branded SUI and neutral professional presets with the same control composition.",
             ThemePreviewShowcase::new(Rc::clone(&state)),
         ))
         .with_child(panel_with_theme(
@@ -8203,8 +8153,8 @@ mod tests {
         DATETIME_INPUT_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_BAR_NAME,
         GALLERY_SCROLL_NAME, LIGHT_PREVIEW_ACTION_LABEL, LIGHT_PREVIEW_INPUT_LABEL,
         LIGHT_THEME_PREVIEW_CARD_NAME, LivePerformanceDisplay, LivePerformanceFrameSample,
-        LivePerformancePanel, NAME_INPUT_LABEL, NUMBER_INPUT_NAME, PASSWORD_INPUT_LABEL,
-        POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
+        LivePerformancePanel, NAME_INPUT_LABEL, NEUTRAL_THEME_PREVIEW_CARD_NAME, NUMBER_INPUT_NAME,
+        PASSWORD_INPUT_LABEL, POPOVER_NAME, POPOVER_TRIGGER_LABEL, RADIO_BUTTON_LABEL,
         RETAINED_TEXT_BENCHMARK_SCROLL_BAR_NAME, RETAINED_TEXT_BENCHMARK_SCROLL_NAME,
         RETAINED_TEXT_BENCHMARK_TITLE, SELECT_NAME, SLIDER_NAME, SUMMARY_NAME, SWITCH_LABEL,
         TEXT_AREA_LABEL, TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SPLIT_NAME,
@@ -8969,8 +8919,8 @@ mod tests {
                                 .with_child(super::NamedSection::new(
                                     LIGHT_THEME_PREVIEW_CARD_NAME,
                                     theme_preview_card(
-                                        DefaultTheme::light(),
-                                        "Light",
+                                        DefaultTheme::sui(),
+                                        "SUI light",
                                         LIGHT_PREVIEW_ACTION_LABEL,
                                         LIGHT_PREVIEW_INPUT_LABEL,
                                     ),
@@ -10543,11 +10493,16 @@ mod tests {
     }
 
     #[test]
-    fn widget_book_theme_preview_toggle_hides_dark_card() -> Result<()> {
+    fn widget_book_theme_preview_toggle_hides_neutral_card() -> Result<()> {
         let app = build_default_theme_demo_app()?;
         let window = app.main_window()?;
 
         scroll_to_story_target(&window, StoryCase::ThemePreview, 2)?;
+        window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name(NEUTRAL_THEME_PREVIEW_CARD_NAME)
+            .expect()
+            .to_be_visible()?;
         let before = window.capture_screenshot()?;
 
         window
@@ -11214,7 +11169,7 @@ mod tests {
         let live_light_card = live_light_card_locator.capture_screenshot()?;
         let live_switch = live_window
             .get_by_role(SemanticsRole::Switch)
-            .with_name("Light preview live updates")
+            .with_name("SUI light preview live updates")
             .capture_screenshot()?;
         write_screenshot(artifact_dir.join("live-light-card.png"), &live_light_card)?;
         write_screenshot(artifact_dir.join("live-light-switch.png"), &live_switch)?;
@@ -11244,7 +11199,7 @@ mod tests {
             .capture_screenshot()?;
         let reference_switch = reference_window
             .get_by_role(SemanticsRole::Switch)
-            .with_name("Light preview live updates")
+            .with_name("SUI light preview live updates")
             .capture_screenshot()?;
         write_screenshot(
             artifact_dir.join("reference-light-card.png"),

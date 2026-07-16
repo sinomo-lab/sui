@@ -123,6 +123,14 @@ impl HdrColorRoles {
     }
 
     fn apply_mesh_display_variants(&mut self, colors: ThemeColors) {
+        // The neutral preset intentionally remains achromatic across output
+        // modes. Its semantic status colors still use their SDR definitions,
+        // but its primary and secondary roles must not inherit SUI's cyan and
+        // violet wide-gamut variants merely because it is a light scheme.
+        if colors.name == "neutral" {
+            return;
+        }
+
         match colors.scheme {
             crate::theme::ThemeColorScheme::Light => {
                 self.accent = self

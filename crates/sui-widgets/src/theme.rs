@@ -289,6 +289,13 @@ pub struct ThemeColors {
 }
 
 impl ThemeColors {
+    /// SUI's branded light palette. This is an explicit alias for
+    /// [`Self::light`] so applications can distinguish the SUI preset from
+    /// other built-in light themes.
+    pub fn sui() -> Self {
+        Self::light()
+    }
+
     pub fn light() -> Self {
         Self {
             name: "light",
@@ -312,6 +319,38 @@ impl ThemeColors {
             warning: rgb8(220, 154, 16),
             warning_content: rgb8(36, 22, 0),
             error: rgb8(217, 45, 32),
+            error_content: Color::WHITE,
+        }
+    }
+
+    /// Neutral black, white, and gray tokens for professional interfaces that
+    /// do not have an application-specific color preference.
+    ///
+    /// Status colors remain semantic so success, warning, danger, and
+    /// informational feedback do not lose meaning.
+    pub fn neutral() -> Self {
+        Self {
+            name: "neutral",
+            scheme: ThemeColorScheme::Light,
+            base_100: Color::WHITE,
+            base_200: rgb8(250, 250, 250),
+            base_300: rgb8(229, 229, 229),
+            base_content: rgb8(23, 23, 23),
+            primary: rgb8(23, 23, 23),
+            primary_content: Color::WHITE,
+            secondary: rgb8(64, 64, 64),
+            secondary_content: Color::WHITE,
+            accent: rgb8(23, 23, 23),
+            accent_content: Color::WHITE,
+            neutral: rgb8(38, 38, 38),
+            neutral_content: Color::WHITE,
+            info: rgb8(37, 99, 235),
+            info_content: Color::WHITE,
+            success: rgb8(21, 128, 61),
+            success_content: Color::WHITE,
+            warning: rgb8(180, 83, 9),
+            warning_content: Color::WHITE,
+            error: rgb8(185, 28, 28),
             error_content: Color::WHITE,
         }
     }
@@ -827,6 +866,18 @@ impl Default for ThemeShadows {
 }
 
 impl ThemeShadows {
+    /// Choose the elevation treatment for a complete built-in color palette.
+    pub fn for_colors(colors: &ThemeColors) -> Self {
+        if matches!(
+            (colors.name, colors.scheme),
+            ("neutral", ThemeColorScheme::Light)
+        ) {
+            Self::neutral()
+        } else {
+            Self::for_scheme(colors.scheme)
+        }
+    }
+
     /// Scheme-aware elevation per the Mesh design language: Light casts faint
     /// ink-tinted shadows, Dark casts deeper black shadows, and the true-black
     /// OLED theme casts none at all — elevation there is drawn with borders,
@@ -842,7 +893,11 @@ impl ThemeShadows {
     /// Mesh Light ladder: `0 1px 2px 6%`, `0 2px 10px 8%`, `0 16px 40px 16%`
     /// anchors interpolated across the scale, tinted with ink `#0d1220`.
     pub fn light() -> Self {
-        let ink = |alpha: f32| rgb8(13, 18, 32).with_alpha(alpha);
+        Self::light_with_ink(rgb8(13, 18, 32))
+    }
+
+    fn light_with_ink(shadow_ink: Color) -> Self {
+        let ink = |alpha: f32| shadow_ink.with_alpha(alpha);
 
         Self {
             box_shadow: ThemeBoxShadowScale {
@@ -887,6 +942,12 @@ impl ThemeShadows {
                 ),
             },
         }
+    }
+
+    /// Neutral light elevation uses the same restrained geometry as the SUI
+    /// light theme with pure-black shadow ink.
+    pub fn neutral() -> Self {
+        Self::light_with_ink(Color::BLACK)
     }
 
     /// Mesh Dark ladder: `0 1px 2px 30%`, `0 4px 16px 40%`, `0 20px 48px 55%`
@@ -1100,13 +1161,12 @@ impl Default for ThemeAspectRatios {
     }
 }
 
-/// The exact Mesh semantic role values for a built-in theme. The Mesh design
-/// language specifies these directly (several are translucent so they compose
-/// over any surface), so the built-in light/dark/void themes consume this
-/// table instead of the generic mix-based derivation, which remains the
-/// fallback for custom [`ThemeColors`].
+/// Exact semantic role values for built-in themes. The SUI design language
+/// specifies its light/dark/void roles directly, and the neutral preset uses
+/// its own grayscale role table. Custom [`ThemeColors`] continue to use the
+/// generic mix-based derivation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct MeshRoles {
+struct BuiltinColorRoles {
     bg_subtle: Color,
     surface: Color,
     surface_2: Color,
@@ -1138,11 +1198,11 @@ struct MeshRoles {
     scrim: Color,
 }
 
-/// Look up the Mesh role table for one of the built-in themes. Returns `None`
-/// for custom palettes, which fall back to derived roles.
-fn mesh_roles(colors: &ThemeColors) -> Option<MeshRoles> {
+/// Look up the exact role table for one of the built-in themes. Returns
+/// `None` for custom palettes, which fall back to derived roles.
+fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
     match (colors.name, colors.scheme) {
-        ("light", ThemeColorScheme::Light) => Some(MeshRoles {
+        ("light", ThemeColorScheme::Light) => Some(BuiltinColorRoles {
             bg_subtle: rgb8(247, 248, 250),
             surface: rgb8(255, 255, 255),
             surface_2: rgb8(243, 245, 248),
@@ -1176,7 +1236,38 @@ fn mesh_roles(colors: &ThemeColors) -> Option<MeshRoles> {
             selection: rgba8(8, 124, 164, 0.18),
             scrim: rgba8(9, 12, 20, 0.45),
         }),
-        ("dark", ThemeColorScheme::Dark) => Some(MeshRoles {
+        ("neutral", ThemeColorScheme::Light) => Some(BuiltinColorRoles {
+            bg_subtle: rgb8(250, 250, 250),
+            surface: Color::WHITE,
+            surface_2: rgb8(245, 245, 245),
+            surface_3: rgb8(229, 229, 229),
+            overlay: Color::WHITE,
+            field: rgb8(250, 250, 250),
+            border: rgb8(229, 229, 229),
+            border_strong: rgb8(212, 212, 212),
+            border_subtle: rgb8(240, 240, 240),
+            text_2: rgb8(82, 82, 82),
+            text_3: rgb8(115, 115, 115),
+            text_disabled: rgb8(163, 163, 163),
+            text_invert: Color::WHITE,
+            accent_hover: rgb8(38, 38, 38),
+            accent_text: rgb8(23, 23, 23),
+            accent_soft: rgba8(23, 23, 23, 0.06),
+            accent_border: rgba8(23, 23, 23, 0.28),
+            ok_text: rgb8(21, 128, 61),
+            ok_soft: rgba8(21, 128, 61, 0.10),
+            warn_text: rgb8(146, 64, 14),
+            warn_soft: rgba8(180, 83, 9, 0.10),
+            danger_text: rgb8(185, 28, 28),
+            danger_soft: rgba8(185, 28, 28, 0.08),
+            danger_hover: rgb8(153, 27, 27),
+            info_text: rgb8(29, 78, 216),
+            info_soft: rgba8(37, 99, 235, 0.09),
+            focus: rgb8(64, 64, 64),
+            selection: rgba8(23, 23, 23, 0.12),
+            scrim: Color::BLACK.with_alpha(0.45),
+        }),
+        ("dark", ThemeColorScheme::Dark) => Some(BuiltinColorRoles {
             bg_subtle: rgb8(14, 18, 26),
             surface: rgb8(18, 22, 31),
             surface_2: rgb8(23, 28, 39),
@@ -1207,7 +1298,7 @@ fn mesh_roles(colors: &ThemeColors) -> Option<MeshRoles> {
             selection: rgba8(53, 210, 238, 0.24),
             scrim: rgba8(2, 4, 8, 0.6),
         }),
-        ("void", ThemeColorScheme::HighContrast) => Some(MeshRoles {
+        ("void", ThemeColorScheme::HighContrast) => Some(BuiltinColorRoles {
             bg_subtle: Color::BLACK,
             surface: Color::BLACK,
             surface_2: rgb8(11, 14, 20),
@@ -1308,7 +1399,7 @@ impl ControlPalette {
             colors.scheme,
             ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
         );
-        let roles = mesh_roles(colors);
+        let roles = builtin_color_roles(colors);
         let surface = colors.base_100;
         let surface_raised = roles.map(|r| r.surface).unwrap_or(colors.base_200);
         // Mesh authors its translucent tokens as CSS rgba values, which
@@ -1560,7 +1651,11 @@ impl SurfacePalette {
             colors.scheme,
             ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
         );
-        let roles = mesh_roles(colors);
+        let neutral = matches!(
+            (colors.name, colors.scheme),
+            ("neutral", ThemeColorScheme::Light)
+        );
+        let roles = builtin_color_roles(colors);
         let text_muted = controls.text_muted;
         let text_faint = controls.placeholder;
         let window_subtle = roles
@@ -1620,12 +1715,22 @@ impl SurfacePalette {
             canvas_axis_y: colors.success.with_alpha(if dark { 0.72 } else { 0.55 }),
             pixel_canvas_paper: if dark {
                 mix(controls.surface_raised, controls.text, 0.10)
+            } else if neutral {
+                rgb8(250, 250, 250)
             } else {
                 Color::rgba(0.975, 0.980, 0.988, 1.0)
             },
             pixel_canvas_document_edge: controls.text.with_alpha(if dark { 0.82 } else { 0.72 }),
-            pixel_canvas_shadow_near: Color::rgba(0.05, 0.07, 0.10, if dark { 0.30 } else { 0.16 }),
-            pixel_canvas_shadow_far: Color::rgba(0.05, 0.07, 0.10, if dark { 0.18 } else { 0.08 }),
+            pixel_canvas_shadow_near: if neutral {
+                Color::BLACK.with_alpha(0.16)
+            } else {
+                Color::rgba(0.05, 0.07, 0.10, if dark { 0.30 } else { 0.16 })
+            },
+            pixel_canvas_shadow_far: if neutral {
+                Color::BLACK.with_alpha(0.08)
+            } else {
+                Color::rgba(0.05, 0.07, 0.10, if dark { 0.18 } else { 0.08 })
+            },
             pixel_canvas_grid: controls.text.with_alpha(if dark { 0.32 } else { 0.28 }),
             canvas_ruler: controls.surface_raised,
             canvas_ruler_border: controls.border.with_alpha(0.78),
@@ -1633,11 +1738,15 @@ impl SurfacePalette {
             canvas_ruler_text: controls.text.with_alpha(0.76),
             checkerboard_light: if dark {
                 mix(controls.surface_raised, controls.text, 0.18)
+            } else if neutral {
+                rgb8(250, 250, 250)
             } else {
                 Color::rgba(0.980, 0.980, 0.990, 1.0)
             },
             checkerboard_dark: if dark {
                 mix(controls.surface_raised, controls.text, 0.10)
+            } else if neutral {
+                rgb8(229, 229, 229)
             } else {
                 Color::rgba(0.900, 0.920, 0.950, 1.0)
             },
@@ -3203,8 +3312,19 @@ impl DefaultTheme {
         Self::default()
     }
 
+    /// SUI's branded default theme.
+    pub fn sui() -> Self {
+        Self::light()
+    }
+
     pub fn light() -> Self {
         Self::from_colors(ThemeColors::light())
+    }
+
+    /// A neutral light theme for serious, professional interfaces without an
+    /// application-specific color preference.
+    pub fn neutral() -> Self {
+        Self::from_colors(ThemeColors::neutral())
     }
 
     pub fn dark() -> Self {
@@ -3255,7 +3375,7 @@ impl DefaultTheme {
             tracking: ThemeTracking::default(),
             leading: ThemeLeading::default(),
             radius,
-            shadows: ThemeShadows::for_scheme(colors.scheme),
+            shadows: ThemeShadows::for_colors(&colors),
             glows: ThemeGlows::for_scheme(colors.scheme),
             blur: ThemeBlurScale::default(),
             perspective: ThemePerspective::default(),
@@ -3325,7 +3445,7 @@ impl DefaultTheme {
         self.hdr.sync_semantic_defaults(self.colors);
         self.palette = ControlPalette::from_colors(&self.colors);
         self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
-        self.shadows = ThemeShadows::for_scheme(self.colors.scheme);
+        self.shadows = ThemeShadows::for_colors(&self.colors);
         self.glows = ThemeGlows::for_scheme(self.colors.scheme);
         self.sync_density_fields();
     }
@@ -3403,7 +3523,7 @@ impl DefaultTheme {
 
 impl Default for DefaultTheme {
     fn default() -> Self {
-        Self::light()
+        Self::sui()
     }
 }
 
@@ -3794,6 +3914,53 @@ mod tests {
         assert_eq!(void.accent_content, void.primary_content);
         assert_eq!(void.base_100, Color::BLACK);
         assert_eq!(void.base_300, rgb8(19, 23, 34));
+    }
+
+    #[test]
+    fn neutral_theme_is_an_achromatic_professional_preset() {
+        let theme = DefaultTheme::neutral();
+        let colors = theme.colors;
+
+        assert_eq!(DefaultTheme::sui(), DefaultTheme::light());
+        assert_eq!(ThemeColors::sui(), ThemeColors::light());
+        assert_eq!(colors.name, "neutral");
+        assert_eq!(colors.scheme, ThemeColorScheme::Light);
+        assert_eq!(colors.primary, rgb8(23, 23, 23));
+        assert_eq!(colors.primary_content, Color::WHITE);
+        assert_eq!(colors.secondary, rgb8(64, 64, 64));
+        assert_eq!(colors.accent, colors.primary);
+        assert_eq!(theme.palette.accent, colors.primary);
+        assert_eq!(theme.palette.control, rgb8(245, 245, 245));
+        assert_eq!(theme.palette.border, rgb8(229, 229, 229));
+        assert_eq!(theme.palette.focus, rgb8(64, 64, 64));
+        assert_eq!(theme.surfaces.window_subtle, rgb8(250, 250, 250));
+        assert_eq!(theme.surfaces.checkerboard_dark, rgb8(229, 229, 229));
+        assert_eq!(theme.hdr.color_roles.accent.wide_gamut, None);
+        assert_eq!(theme.hdr.color_roles.accent.hdr, None);
+
+        let shadow = theme
+            .shadows
+            .box_shadow
+            .xs
+            .first
+            .expect("neutral theme should retain restrained elevation");
+        assert_eq!(shadow.color.red, shadow.color.green);
+        assert_eq!(shadow.color.green, shadow.color.blue);
+
+        for color in [
+            colors.base_100,
+            colors.base_200,
+            colors.base_300,
+            colors.base_content,
+            colors.primary,
+            colors.secondary,
+            colors.accent,
+            theme.palette.focus,
+            theme.palette.selection,
+        ] {
+            assert_eq!(color.red, color.green);
+            assert_eq!(color.green, color.blue);
+        }
     }
 
     #[test]
