@@ -1,5 +1,6 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    collections::HashMap,
     fmt,
     ops::Range,
     rc::Rc,
@@ -12,6 +13,7 @@ use sui_core::{
     Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
+use sui_reactive::Signal;
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
     WidgetPodMutVisitor, WidgetPodVisitor,
@@ -23,7 +25,11 @@ use sui_text::{
 
 use crate::{
     DefaultTheme, MotionScalar, ThemeTextToken,
-    collection::CollectionExtentIndex,
+    collection::{
+        CollectionAnchor, CollectionAnchorGravity, CollectionExtentIndex, CollectionWindow,
+        ScrollAlignment, VirtualViewportSnapshot,
+    },
+    containers::{ScrollAxes, ScrollState},
     controls::{IconGlyph, draw_icon_glyph},
     text_align::{paint_aligned_text, vertically_centered_text_rect_y},
 };
@@ -3392,8 +3398,123 @@ pub enum VirtualTableSortDirection {
     Descending,
 }
 
+/// Retained interaction state shared by rebuilt [`VirtualTable`] instances.
+///
+/// Row selection and pending scroll requests use stable row keys, while column
+/// widths use the explicit key assigned to each [`VirtualTableColumn`].
+#[derive(Clone)]
+pub struct VirtualTableState {
+    inner: Rc<RefCell<VirtualTableStateInner>>,
+    revision: Signal<u64>,
+    viewport: Signal<VirtualViewportSnapshot<u64>>,
+    scroll: ScrollState,
+}
+
+#[derive(Default)]
+struct VirtualTableStateInner {
+    selected_key: Option<u64>,
+    pending_scroll: Option<(u64, ScrollAlignment)>,
+    column_widths: HashMap<u64, f32>,
+}
+
+impl VirtualTableState {
+    pub fn new() -> Self {
+        let scroll = ScrollState::new();
+        scroll.sync_unmeasured_axes(ScrollAxes::Both);
+        Self {
+            inner: Rc::new(RefCell::new(VirtualTableStateInner::default())),
+            revision: Signal::named("VirtualTableState", 0),
+            viewport: Signal::named("VirtualTableViewport", VirtualViewportSnapshot::default()),
+            scroll,
+        }
+    }
+
+    pub fn selected_key(&self) -> Option<u64> {
+        self.inner.borrow().selected_key
+    }
+
+    pub fn select_key(&self, key: Option<u64>) -> bool {
+        let changed = {
+            let mut inner = self.inner.borrow_mut();
+            if inner.selected_key == key {
+                false
+            } else {
+                inner.selected_key = key;
+                true
+            }
+        };
+        if changed {
+            self.bump();
+        }
+        changed
+    }
+
+    pub fn scroll_to(&self, key: u64, alignment: ScrollAlignment) {
+        self.inner.borrow_mut().pending_scroll = Some((key, alignment));
+        self.bump();
+    }
+
+    pub fn column_width(&self, key: u64) -> Option<f32> {
+        self.inner.borrow().column_widths.get(&key).copied()
+    }
+
+    pub fn set_column_width(&self, key: u64, width: f32) -> bool {
+        let width = width.max(32.0);
+        let changed = {
+            let mut inner = self.inner.borrow_mut();
+            if inner
+                .column_widths
+                .get(&key)
+                .is_some_and(|current| (*current - width).abs() <= f32::EPSILON)
+            {
+                false
+            } else {
+                inner.column_widths.insert(key, width);
+                true
+            }
+        };
+        if changed {
+            self.bump();
+        }
+        changed
+    }
+
+    pub fn scroll_state(&self) -> ScrollState {
+        self.scroll.clone()
+    }
+
+    pub fn viewport(&self) -> VirtualViewportSnapshot<u64> {
+        self.viewport.get()
+    }
+
+    pub fn viewport_signal(&self) -> Signal<VirtualViewportSnapshot<u64>> {
+        self.viewport.clone()
+    }
+
+    fn bump(&self) {
+        let _ = self.revision.update(|revision| {
+            *revision = revision.wrapping_add(1);
+        });
+    }
+
+    fn take_pending_scroll(&self) -> Option<(u64, ScrollAlignment)> {
+        self.inner.borrow_mut().pending_scroll.take()
+    }
+
+    fn publish_viewport(&self, viewport: VirtualViewportSnapshot<u64>) {
+        let _ = self.viewport.set(viewport);
+    }
+}
+
+impl Default for VirtualTableState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualTableColumn {
+    key: Option<u64>,
     title: String,
     width: Option<f32>,
     min_width: f32,
@@ -3407,6 +3528,7 @@ pub struct VirtualTableColumn {
 impl VirtualTableColumn {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
+            key: None,
             title: title.into(),
             width: None,
             min_width: 96.0,
@@ -3416,6 +3538,12 @@ impl VirtualTableColumn {
             alignment: TableColumnAlignment::Start,
             sort_direction: None,
         }
+    }
+
+    /// Assign a stable identity used to retain resized width across rebuilds.
+    pub fn key(mut self, key: u64) -> Self {
+        self.key = Some(key);
+        self
     }
 
     pub fn width(mut self, width: f32) -> Self {
@@ -3491,6 +3619,9 @@ pub struct VirtualTable {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
     columns: Vec<VirtualTableColumn>,
+    state: Option<VirtualTableState>,
+    window: CollectionWindow,
+    window_explicit: bool,
     row_count: usize,
     selected: Option<usize>,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
@@ -3528,6 +3659,9 @@ impl VirtualTable {
             theme_reader: None,
             name: name.into(),
             columns: Vec::new(),
+            state: None,
+            window: CollectionWindow::complete(0),
+            window_explicit: false,
             row_count: 0,
             selected: None,
             selected_reader: None,
@@ -3579,8 +3713,24 @@ impl VirtualTable {
         self
     }
 
+    /// Attach retained keyed interaction and viewport state.
+    pub fn state(mut self, state: VirtualTableState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
+    /// Describe where the currently loaded rows sit in the full dataset.
+    pub fn collection_window(mut self, window: CollectionWindow) -> Self {
+        self.window = window;
+        self.window_explicit = true;
+        self
+    }
+
     pub fn row_count(mut self, row_count: usize) -> Self {
         self.row_count = row_count;
+        if !self.window_explicit {
+            self.window = CollectionWindow::complete(row_count);
+        }
         self.row_extents.clear();
         self
     }
@@ -3708,11 +3858,22 @@ impl VirtualTable {
     }
 
     fn resolved_selected(&self) -> Option<usize> {
-        self.selected_reader
-            .as_ref()
-            .and_then(|selected| selected())
-            .or(self.selected)
-            .filter(|index| *index < self.row_count)
+        let selected = if let Some(selected_reader) = &self.selected_reader {
+            selected_reader()
+        } else if let Some(state) = &self.state {
+            state.selected_key().and_then(|selected_key| {
+                (0..self.row_count).find(|index| self.resolved_row_key(*index) == selected_key)
+            })
+        } else {
+            self.selected
+        };
+        selected.filter(|index| *index < self.row_count)
+    }
+
+    fn normalized_window(&self) -> CollectionWindow {
+        self.window
+            .clone()
+            .normalized_for_loaded_count(self.row_count)
     }
 
     fn resolved_row_height(&self) -> f32 {
@@ -3746,6 +3907,13 @@ impl VirtualTable {
         self.row_key
             .as_ref()
             .map(|row_key| row_key(index))
+            .unwrap_or(index as u64)
+    }
+
+    fn resolved_column_key(&self, index: usize) -> u64 {
+        self.columns
+            .get(index)
+            .and_then(|column| column.key)
             .unwrap_or(index as u64)
     }
 
@@ -3852,8 +4020,13 @@ impl VirtualTable {
         self.column_widths = self
             .columns
             .iter()
-            .map(|column| {
-                let width = column.width.unwrap_or_else(|| {
+            .enumerate()
+            .map(|(index, column)| {
+                let retained_width = self
+                    .state
+                    .as_ref()
+                    .and_then(|state| state.column_width(self.resolved_column_key(index)));
+                let width = retained_width.or(column.width).unwrap_or_else(|| {
                     (measure_text(ctx, &column.title, &header_style).width
                         + (theme.metrics.table_cell_padding * 2.0))
                         .max(column.min_width)
@@ -3873,7 +4046,13 @@ impl VirtualTable {
             .columns
             .iter()
             .enumerate()
-            .filter_map(|(index, column)| column.width.is_none().then_some(index))
+            .filter_map(|(index, column)| {
+                let retained = self
+                    .state
+                    .as_ref()
+                    .and_then(|state| state.column_width(self.resolved_column_key(index)));
+                (column.width.is_none() && retained.is_none()).then_some(index)
+            })
             .collect::<Vec<_>>();
         if total < available_width && !flexible.is_empty() {
             let extra = (available_width - total) / flexible.len() as f32;
@@ -3949,6 +4128,130 @@ impl VirtualTable {
         start..end
     }
 
+    fn viewport_row_range(&self, body: Rect) -> Range<usize> {
+        if self.row_count == 0 || body.height() <= 0.0 {
+            return 0..0;
+        }
+        let start = self.row_extents.index_at_offset(self.scroll_y).unwrap_or(0);
+        let end = self
+            .row_extents
+            .index_at_offset(self.scroll_y + body.height())
+            .map_or(self.row_count, |index| index + 1)
+            .min(self.row_count);
+        start..end
+    }
+
+    fn offset_for_row_alignment(
+        &self,
+        row_index: usize,
+        viewport_height: f32,
+        alignment: ScrollAlignment,
+    ) -> f32 {
+        let top = self.row_extents.offset_of(row_index);
+        let height = self
+            .row_extents
+            .extent(row_index)
+            .unwrap_or_else(|| self.row_height_at(row_index));
+        let bottom = top + height;
+        let offset = match alignment {
+            ScrollAlignment::Nearest if top < self.scroll_y => top,
+            ScrollAlignment::Nearest if bottom > self.scroll_y + viewport_height => {
+                bottom - viewport_height
+            }
+            ScrollAlignment::Nearest => self.scroll_y,
+            ScrollAlignment::Start => top,
+            ScrollAlignment::Center => top - (viewport_height - height) * 0.5,
+            ScrollAlignment::End => bottom - viewport_height,
+        };
+        self.clamp_scroll(viewport_height, offset)
+    }
+
+    fn apply_pending_keyed_scroll(&mut self, body_height: f32) {
+        let Some((key, alignment)) = self
+            .state
+            .as_ref()
+            .and_then(VirtualTableState::take_pending_scroll)
+        else {
+            return;
+        };
+        let Some(index) = (0..self.row_count).find(|index| self.resolved_row_key(*index) == key)
+        else {
+            return;
+        };
+        self.scroll_y = self.offset_for_row_alignment(index, body_height, alignment);
+    }
+
+    fn sync_retained_scroll_state<C>(&mut self, ctx: &mut C, body: Rect)
+    where
+        C: crate::containers::ScrollInvalidationCtx + crate::containers::ScrollWidgetCtx,
+    {
+        let Some(state) = self.state.as_ref() else {
+            return;
+        };
+        state
+            .scroll
+            .bind_scroll_view(ctx.widget_id(), ctx.widget_id());
+        let content_width = self.column_widths.iter().sum::<f32>();
+        let changed = state.scroll.sync_metrics(
+            ScrollAxes::Both,
+            body.size,
+            Size::new(content_width, self.content_height()),
+        );
+        if changed {
+            for scroll_bar_id in state.scroll.subscribers().scroll_bar_ids {
+                crate::containers::request_scroll_bar_refresh(ctx, scroll_bar_id);
+            }
+        }
+    }
+
+    fn sync_retained_offset(&self) {
+        if let Some(state) = &self.state {
+            let _ = state
+                .scroll
+                .set_offset(Vector::new(self.scroll_x, self.scroll_y));
+        }
+    }
+
+    fn publish_retained_viewport(&self, body: Rect) {
+        let Some(state) = &self.state else {
+            return;
+        };
+        let window = self.normalized_window();
+        let local_visible = self.viewport_row_range(body);
+        let visible_range = window
+            .loaded_range
+            .start
+            .saturating_add(local_visible.start)
+            ..window.loaded_range.start.saturating_add(local_visible.end);
+        let visible_keys = local_visible
+            .clone()
+            .map(|index| self.resolved_row_key(index))
+            .collect::<Vec<_>>();
+        let anchor = (local_visible.start < self.row_count).then(|| {
+            let index = local_visible.start;
+            CollectionAnchor {
+                key: self.resolved_row_key(index),
+                offset_within_item: self.scroll_y - self.row_extents.offset_of(index),
+                gravity: CollectionAnchorGravity::Start,
+            }
+        });
+        let max_offset = (self.content_height() - body.height()).max(0.0);
+        state.publish_viewport(VirtualViewportSnapshot {
+            loaded_range: window.loaded_range,
+            visible_range,
+            visible_keys,
+            total_count: window.total_count,
+            has_before: window.has_before,
+            has_after: window.has_after,
+            anchor,
+            offset: self.scroll_y,
+            max_offset,
+            at_loaded_start: self.scroll_y <= f32::EPSILON,
+            at_loaded_end: max_offset - self.scroll_y <= f32::EPSILON,
+            following_end: false,
+        });
+    }
+
     fn ensure_row_visible(&mut self, body_height: f32, row_index: usize) {
         if row_index >= self.row_count {
             return;
@@ -3999,6 +4302,9 @@ impl VirtualTable {
         if let Some(current) = self.column_widths.get_mut(resize.column_index) {
             *current = width;
         }
+        if let Some(state) = &self.state {
+            let _ = state.set_column_width(self.resolved_column_key(resize.column_index), width);
+        }
         if let Some(on_resize) = &mut self.on_column_resize {
             on_resize(resize.column_index, width);
         }
@@ -4010,6 +4316,9 @@ impl VirtualTable {
             return;
         }
         self.selected = Some(row_index);
+        if let Some(state) = &self.state {
+            let _ = state.select_key(Some(self.resolved_row_key(row_index)));
+        }
         let kind = self.row_activation_kind(row_index);
         if let Some(column_index) = column_index
             && let Some(on_activate) = &mut self.on_cell_activate
@@ -4084,6 +4393,8 @@ impl Widget for VirtualTable {
                 {
                     self.scroll_y = next_y;
                     self.scroll_x = next_x;
+                    self.sync_retained_offset();
+                    self.publish_retained_viewport(body);
                     self.maybe_notify_near_end(body.height());
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -4224,6 +4535,8 @@ impl Widget for VirtualTable {
                     }
                     _ => return,
                 }
+                self.sync_retained_offset();
+                self.publish_retained_viewport(body);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -4238,6 +4551,8 @@ impl Widget for VirtualTable {
                     let next = self.clamp_scroll(body.height(), self.scroll_y + delta);
                     if (next - self.scroll_y).abs() > f32::EPSILON {
                         self.scroll_y = next;
+                        self.sync_retained_offset();
+                        self.publish_retained_viewport(body);
                         ctx.request_paint();
                         ctx.request_semantics();
                     }
@@ -4252,6 +4567,9 @@ impl Widget for VirtualTable {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(state) = &self.state {
+            let _ = ctx.observe(&state.revision);
+        }
         self.sync_row_extents();
         let desired_width = if constraints.max.width.is_finite() {
             constraints.max.width
@@ -4274,17 +4592,37 @@ impl Widget for VirtualTable {
         let padding = theme.metrics.data_viewport_padding;
         self.resolve_column_widths(ctx, (desired_width - padding.left - padding.right).max(0.0));
         let size = constraints.clamp(Size::new(desired_width, desired_height));
-        self.scroll_y = self.clamp_scroll(
-            self.body_rect(Rect::from_origin_size(Point::ZERO, size))
-                .height(),
-            self.scroll_y,
-        );
-        self.scroll_x = self.clamp_horizontal_scroll(
-            self.body_rect(Rect::from_origin_size(Point::ZERO, size))
-                .width(),
-            self.scroll_x,
-        );
+        let body = self.body_rect(Rect::from_origin_size(Point::ZERO, size));
+        self.sync_retained_scroll_state(ctx, body);
+        if let Some(state) = &self.state {
+            let offset = state.scroll.current_offset();
+            self.scroll_y = offset.y;
+            self.scroll_x = offset.x;
+        }
+        self.apply_pending_keyed_scroll(body.height());
+        self.scroll_y = self.clamp_scroll(body.height(), self.scroll_y);
+        self.scroll_x = self.clamp_horizontal_scroll(body.width(), self.scroll_x);
+        self.sync_retained_offset();
+        self.publish_retained_viewport(body);
         size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let body = self.body_rect(bounds);
+        let previous = Vector::new(self.scroll_x, self.scroll_y);
+        self.sync_retained_scroll_state(ctx, body);
+        if let Some(state) = &self.state {
+            let offset = state.scroll.current_offset();
+            self.scroll_y = self.clamp_scroll(body.height(), offset.y);
+            self.scroll_x = self.clamp_horizontal_scroll(body.width(), offset.x);
+        }
+        self.apply_pending_keyed_scroll(body.height());
+        self.sync_retained_offset();
+        self.publish_retained_viewport(body);
+        if previous != Vector::new(self.scroll_x, self.scroll_y) {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -4395,10 +4733,16 @@ impl Widget for VirtualTable {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let window = self.normalized_window();
+        let total_count = window.total_count;
+        let described_count = total_count.unwrap_or(window.loaded_range.end);
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Table, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
-        node.value = Some(SemanticsValue::Text(format!("{} rows", self.row_count)));
+        node.value = Some(SemanticsValue::Text(match total_count {
+            Some(total_count) => format!("{total_count} rows"),
+            None => format!("{} loaded rows", self.row_count),
+        }));
         let columns = self
             .columns
             .iter()
@@ -4408,14 +4752,33 @@ impl Widget for VirtualTable {
             })
             .collect::<Vec<_>>();
         if !columns.is_empty() {
-            let visible = self.visible_row_range(self.body_rect(ctx.bounds()));
-            node.description = Some(format!(
-                "Columns: {}; showing rows {} through {} of {}",
-                columns.join(", "),
-                visible.start.saturating_add(1).min(self.row_count),
-                visible.end.min(self.row_count),
-                self.row_count,
-            ));
+            let visible = self.viewport_row_range(self.body_rect(ctx.bounds()));
+            let visible_start = window
+                .loaded_range
+                .start
+                .saturating_add(visible.start)
+                .saturating_add(1)
+                .min(described_count);
+            let visible_end = window
+                .loaded_range
+                .start
+                .saturating_add(visible.end)
+                .min(described_count);
+            node.description = Some(match total_count {
+                Some(total_count) => format!(
+                    "Columns: {}; showing rows {} through {} of {}",
+                    columns.join(", "),
+                    visible_start,
+                    visible_end,
+                    total_count,
+                ),
+                None => format!(
+                    "Columns: {}; showing loaded rows {} through {}",
+                    columns.join(", "),
+                    visible_start,
+                    visible_end,
+                ),
+            });
         }
         node.actions = vec![
             SemanticsAction::Focus,
@@ -4430,6 +4793,7 @@ impl Widget for VirtualTable {
         for row_index in self.visible_row_range(body) {
             let row_rect = self.row_rect(body, row_index);
             let row_key = self.resolved_row_key(row_index);
+            let dataset_index = window.loaded_range.start.saturating_add(row_index);
             let mut row = SemanticsNode::new(
                 virtual_table_row_id(ctx.widget_id(), row_key),
                 SemanticsRole::ListItem,
@@ -4441,14 +4805,22 @@ impl Widget for VirtualTable {
                 .row_description
                 .as_ref()
                 .map(|description| {
-                    format!(
-                        "{}; row {} of {}",
-                        description(row_index),
-                        row_index + 1,
-                        self.row_count
-                    )
+                    let position = match total_count {
+                        Some(total_count) => {
+                            format!("row {} of {}", dataset_index + 1, total_count)
+                        }
+                        None => format!("loaded row {}", dataset_index + 1),
+                    };
+                    format!("{}; {}", description(row_index), position)
                 })
-                .or_else(|| Some(format!("Row {} of {}", row_index + 1, self.row_count)));
+                .or_else(|| {
+                    Some(match total_count {
+                        Some(total_count) => {
+                            format!("Row {} of {}", dataset_index + 1, total_count)
+                        }
+                        None => format!("Loaded row {}", dataset_index + 1),
+                    })
+                });
             row.state.selected = selected == Some(row_index);
             row.state.hovered = self.hovered_row == Some(row_index);
             row.actions = vec![SemanticsAction::Activate];
@@ -6139,9 +6511,12 @@ mod tests {
         Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, LayerListReorderChange,
         LeadingLabelCellPaint, ListItem, ListView, Table, TableColumn, TableColumnAlignment,
         TableRow, TextBlockPaint, TextCellPaint, TreeItem, TreeView, VirtualTable,
-        VirtualTableColumn,
+        VirtualTableColumn, VirtualTableState,
     };
-    use crate::{Button, Label, ScrollView, SizedBox, Stack, ThemeTextToken};
+    use crate::{
+        Button, CollectionWindow, Label, ScrollAlignment, ScrollView, SizedBox, Stack,
+        ThemeTextToken,
+    };
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
         PointerEvent, PointerEventKind, PointerKind, Rect, Result, ScrollDelta, SemanticsAction,
@@ -8188,6 +8563,145 @@ mod tests {
             .id;
         assert_eq!(before_id, after_id);
         Ok(())
+    }
+
+    #[test]
+    fn virtual_table_state_retains_keyed_selection_across_reordering() -> Result<()> {
+        let keys = Rc::new(RefCell::new(vec![42_u64, 7]));
+        let key_reader = Rc::clone(&keys);
+        let name_reader = Rc::clone(&keys);
+        let state = VirtualTableState::new();
+        state.select_key(Some(42));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(140.0).with_child(
+                VirtualTable::new("Retained keyed rows")
+                    .state(state.clone())
+                    .columns([VirtualTableColumn::new("Name")])
+                    .row_count(2)
+                    .row_key(move |index| key_reader.borrow()[index])
+                    .row_name(move |index| format!("Row {}", name_reader.borrow()[index])),
+            ),
+        );
+
+        let before = runtime.render(window_id)?;
+        assert!(
+            before
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some("Row 42"))
+                .is_some_and(|node| node.state.selected)
+        );
+
+        keys.borrow_mut().swap(0, 1);
+        runtime.handle_event(
+            window_id,
+            Event::Pointer(PointerEvent::new(
+                PointerEventKind::Move,
+                Point::new(20.0, 80.0),
+            )),
+        )?;
+        let after = runtime.render(window_id)?;
+        assert!(
+            after
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some("Row 42"))
+                .is_some_and(|node| node.state.selected)
+        );
+        assert_eq!(state.selected_key(), Some(42));
+
+        state.select_key(None);
+        let cleared = runtime.render(window_id)?;
+        assert!(
+            cleared
+                .semantics
+                .iter()
+                .filter(|node| node.role == SemanticsRole::ListItem)
+                .all(|node| !node.state.selected)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paged_virtual_table_reports_global_range_and_supports_keyed_scroll() -> Result<()> {
+        let state = VirtualTableState::new();
+        state.scroll_to(900, ScrollAlignment::Start);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(140.0).with_child(
+                VirtualTable::new("Files")
+                    .state(state.clone())
+                    .columns([VirtualTableColumn::new("Name")])
+                    .collection_window(CollectionWindow::loaded(
+                        500..1_012,
+                        Some(5_000),
+                        true,
+                        true,
+                    ))
+                    .row_count(512)
+                    .row_height(20.0)
+                    .row_key(|index| 500 + index as u64)
+                    .row_name(|index| format!("File {}", 500 + index)),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let viewport = state.viewport();
+        assert_eq!(viewport.loaded_range, 500..1_012);
+        assert_eq!(viewport.visible_range.start, 900);
+        assert_eq!(viewport.total_count, Some(5_000));
+        assert_eq!(viewport.anchor.as_ref().map(|anchor| anchor.key), Some(900));
+
+        let table = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Table)
+            .expect("table semantics");
+        assert_eq!(
+            table.value,
+            Some(SemanticsValue::Text("5000 rows".to_string()))
+        );
+        assert!(
+            table
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("of 5000"))
+        );
+        let first_visible = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ListItem)
+            .expect("visible table row");
+        assert!(
+            first_visible
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("901 of 5000"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn virtual_table_state_retains_width_by_column_key() {
+        let state = VirtualTableState::new();
+        state.set_column_width(11, 184.0);
+        let painted_width = Rc::new(RefCell::new(0.0));
+        let width = Rc::clone(&painted_width);
+        let _ = render(
+            SizedBox::new().width(360.0).height(140.0).with_child(
+                VirtualTable::new("Retained widths")
+                    .state(state.clone())
+                    .columns([
+                        VirtualTableColumn::new("Name").key(11),
+                        VirtualTableColumn::new("Kind").key(12).width(80.0),
+                    ])
+                    .row_count(1)
+                    .row_painter(move |_ctx, row| {
+                        *width.borrow_mut() = row.column_rects[0].width();
+                    }),
+            ),
+        );
+        assert_eq!(*painted_width.borrow(), 184.0);
+        assert_eq!(state.column_width(11), Some(184.0));
     }
 
     #[test]

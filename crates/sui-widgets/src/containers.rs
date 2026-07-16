@@ -2017,7 +2017,7 @@ impl ScrollState {
         changed
     }
 
-    fn sync_unmeasured_axes(&self, axes: ScrollAxes) {
+    pub(crate) fn sync_unmeasured_axes(&self, axes: ScrollAxes) {
         let mut inner = self.inner.borrow_mut();
         if inner.viewport == Size::ZERO && inner.content_size == Size::ZERO {
             inner.axes = axes;

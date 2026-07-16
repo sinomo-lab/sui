@@ -40,8 +40,9 @@ pub use canvas::{
 };
 pub use collection::{
     CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,
-    CollectionExtentIndex, CollectionModelError, CollectionSync, ScrollAlignment,
-    VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListState,
+    CollectionExtentIndex, CollectionModelError, CollectionSync, CollectionWindow, ScrollAlignment,
+    VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListChrome,
+    VirtualListSelectionMode, VirtualListState, VirtualViewportSnapshot,
 };
 pub use composites::{
     ActionCard, ActionTilePaint, BrowserTabBar, BusyIndicator, CalloutPaint, CodePanelPaint,
@@ -78,7 +79,7 @@ pub use data::{
     LeadingLabelCellPaint, ListItem, ListView, PathBar, Table, TableColumn, TableColumnAlignment,
     TableRow, TextBlockPaint, TextCellPaint, TreeItem, TreeView, VirtualTable, VirtualTableColumn,
     VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
-    paint_leading_label_cell, paint_text_block, paint_text_cell,
+    VirtualTableState, paint_leading_label_cell, paint_text_block, paint_text_cell,
 };
 pub use drag_drop::{DragDropHost, Draggable, DropTarget};
 pub use hdr_theme::{

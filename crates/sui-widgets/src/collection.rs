@@ -77,6 +77,65 @@ pub enum CollectionSync<K> {
     },
 }
 
+/// Describes the loaded slice of a potentially larger collection.
+///
+/// Indices are zero-based and `loaded_range` is expressed in dataset space,
+/// not in the source's local `keys()` vector. A complete in-memory collection
+/// therefore uses `0..len`. Windowed sources can report, for example,
+/// `400..800` with a larger `total_count` while exposing 400 loaded keys.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionWindow {
+    pub loaded_range: Range<usize>,
+    pub total_count: Option<usize>,
+    pub has_before: bool,
+    pub has_after: bool,
+}
+
+impl CollectionWindow {
+    pub fn complete(count: usize) -> Self {
+        Self {
+            loaded_range: 0..count,
+            total_count: Some(count),
+            has_before: false,
+            has_after: false,
+        }
+    }
+
+    pub fn loaded(
+        loaded_range: Range<usize>,
+        total_count: Option<usize>,
+        has_before: bool,
+        has_after: bool,
+    ) -> Self {
+        Self {
+            loaded_range,
+            total_count,
+            has_before,
+            has_after,
+        }
+    }
+
+    pub fn loaded_count(&self) -> usize {
+        self.loaded_range
+            .end
+            .saturating_sub(self.loaded_range.start)
+    }
+
+    pub(crate) fn normalized_for_loaded_count(mut self, loaded_count: usize) -> Self {
+        self.loaded_range.end = self.loaded_range.start.saturating_add(loaded_count);
+        if let Some(total_count) = &mut self.total_count {
+            *total_count = (*total_count).max(self.loaded_range.end);
+        }
+        self
+    }
+}
+
+impl Default for CollectionWindow {
+    fn default() -> Self {
+        Self::complete(0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CollectionModelError {
     DuplicateKey,
@@ -109,6 +168,10 @@ pub trait VirtualCollectionSource<K, T>: Observable<u64> {
     fn keys(&self) -> Vec<K>;
     fn item(&self, key: &K) -> Option<T>;
     fn changes_since(&self, revision: u64) -> CollectionSync<K>;
+
+    fn window(&self) -> CollectionWindow {
+        CollectionWindow::complete(self.keys().len())
+    }
 }
 
 #[derive(Clone)]
@@ -442,6 +505,10 @@ where
             .map(|(_, item)| item.clone())
     }
 
+    fn window(&self) -> CollectionWindow {
+        CollectionWindow::complete(self.len())
+    }
+
     fn changes_since(&self, revision: u64) -> CollectionSync<K> {
         let inner = self
             .inner
@@ -769,10 +836,66 @@ pub enum ScrollAlignment {
     End,
 }
 
+/// Observable projection of a virtual collection viewport.
+///
+/// `loaded_range` and `visible_range` use dataset-space indices. The key list
+/// only contains items intersecting the viewport, making this snapshot
+/// suitable for paging UI, diagnostics, and prefetch decisions without
+/// exposing internal widget pods.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VirtualViewportSnapshot<K> {
+    pub loaded_range: Range<usize>,
+    pub visible_range: Range<usize>,
+    pub visible_keys: Vec<K>,
+    pub total_count: Option<usize>,
+    pub has_before: bool,
+    pub has_after: bool,
+    pub anchor: Option<CollectionAnchor<K>>,
+    pub offset: f32,
+    pub max_offset: f32,
+    pub at_loaded_start: bool,
+    pub at_loaded_end: bool,
+    pub following_end: bool,
+}
+
+impl<K> Default for VirtualViewportSnapshot<K> {
+    fn default() -> Self {
+        Self {
+            loaded_range: 0..0,
+            visible_range: 0..0,
+            visible_keys: Vec::new(),
+            total_count: Some(0),
+            has_before: false,
+            has_after: false,
+            anchor: None,
+            offset: 0.0,
+            max_offset: 0.0,
+            at_loaded_start: true,
+            at_loaded_end: true,
+            following_end: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VirtualListSelectionMode {
+    None,
+    #[default]
+    Single,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VirtualListChrome {
+    #[default]
+    Default,
+    Transparent,
+}
+
 #[derive(Clone)]
 pub struct VirtualListState<K> {
     inner: Rc<RefCell<VirtualListStateInner<K>>>,
     revision: Signal<u64>,
+    viewport: Signal<VirtualViewportSnapshot<K>>,
     scroll: ScrollState,
 }
 
@@ -798,6 +921,7 @@ where
                 following_end: false,
             })),
             revision: Signal::named("Virtual list state", 0),
+            viewport: Signal::named("Virtual list viewport", VirtualViewportSnapshot::default()),
             scroll: ScrollState::new(),
         }
     }
@@ -883,6 +1007,14 @@ where
         self.scroll.clone()
     }
 
+    pub fn viewport(&self) -> VirtualViewportSnapshot<K> {
+        self.viewport.get()
+    }
+
+    pub fn viewport_signal(&self) -> Signal<VirtualViewportSnapshot<K>> {
+        self.viewport.clone()
+    }
+
     fn bump(&self) {
         let _ = self.revision.update(|revision| {
             *revision = revision.wrapping_add(1);
@@ -921,6 +1053,10 @@ where
         if changed {
             self.bump();
         }
+    }
+
+    fn publish_viewport(&self, viewport: VirtualViewportSnapshot<K>) {
+        let _ = self.viewport.set(viewport);
     }
 }
 
@@ -969,6 +1105,11 @@ struct CapturedAnchor<K> {
     fallback_index: usize,
 }
 
+type VirtualListChange<K> = Box<dyn FnMut(K)>;
+type VirtualListContextChange<K> = Box<dyn FnMut(K, &mut EventCtx)>;
+type VirtualListEdge = Box<dyn FnMut()>;
+type VirtualListContextEdge = Box<dyn FnMut(&mut EventCtx)>;
+
 /// Data-backed retained virtual list with stable keyed row identity.
 ///
 /// Only the visible and overscanned rows are realized and measured. Recently
@@ -984,10 +1125,14 @@ pub struct VirtualList<K, T> {
     row_builder: Box<dyn Fn(&K, Signal<T>) -> WidgetPod>,
     row_name: Option<Box<dyn Fn(&K, &T) -> String>>,
     row_description: Option<Box<dyn Fn(&K, &T) -> String>>,
-    on_change: Option<Box<dyn FnMut(K)>>,
-    on_near_start: Option<Box<dyn FnMut()>>,
-    on_near_end: Option<Box<dyn FnMut()>>,
+    on_change: Option<VirtualListChange<K>>,
+    on_change_with_ctx: Option<VirtualListContextChange<K>>,
+    on_near_start: Option<VirtualListEdge>,
+    on_near_start_with_ctx: Option<VirtualListContextEdge>,
+    on_near_end: Option<VirtualListEdge>,
+    on_near_end_with_ctx: Option<VirtualListContextEdge>,
     keys: Vec<K>,
+    window: CollectionWindow,
     index_by_key: HashMap<K, usize>,
     semantic_ids: HashMap<K, WidgetId>,
     realized: HashMap<K, RealizedRow<T>>,
@@ -1001,6 +1146,8 @@ pub struct VirtualList<K, T> {
     padding: Option<Insets>,
     overscan_viewports: f32,
     cache_capacity: usize,
+    selection_mode: VirtualListSelectionMode,
+    chrome: VirtualListChrome,
     epoch: u64,
     hovered: Option<K>,
     pressed: Option<K>,
@@ -1035,9 +1182,13 @@ where
             row_name: None,
             row_description: None,
             on_change: None,
+            on_change_with_ctx: None,
             on_near_start: None,
+            on_near_start_with_ctx: None,
             on_near_end: None,
+            on_near_end_with_ctx: None,
             keys: Vec::new(),
+            window: CollectionWindow::default(),
             index_by_key: HashMap::new(),
             semantic_ids: HashMap::new(),
             realized: HashMap::new(),
@@ -1051,6 +1202,8 @@ where
             padding: None,
             overscan_viewports: DEFAULT_OVERSCAN_VIEWPORTS,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
+            selection_mode: VirtualListSelectionMode::Single,
+            chrome: VirtualListChrome::Default,
             epoch: 0,
             hovered: None,
             pressed: None,
@@ -1109,6 +1262,19 @@ where
         self
     }
 
+    pub fn selection_mode(mut self, mode: VirtualListSelectionMode) -> Self {
+        self.selection_mode = mode;
+        if mode == VirtualListSelectionMode::None {
+            let _ = self.state.select(None);
+        }
+        self
+    }
+
+    pub fn chrome(mut self, chrome: VirtualListChrome) -> Self {
+        self.chrome = chrome;
+        self
+    }
+
     pub fn stick_to_end(self, enabled: bool) -> Self {
         self.state.set_follow_end(enabled);
         self
@@ -1143,6 +1309,16 @@ where
         F: FnMut(K) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self.on_change_with_ctx = None;
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(K, &mut EventCtx) + 'static,
+    {
+        self.on_change = None;
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -1151,6 +1327,16 @@ where
         F: FnMut() + 'static,
     {
         self.on_near_start = Some(Box::new(on_near_start));
+        self.on_near_start_with_ctx = None;
+        self
+    }
+
+    pub fn on_near_start_with_ctx<F>(mut self, on_near_start: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_near_start = None;
+        self.on_near_start_with_ctx = Some(Box::new(on_near_start));
         self
     }
 
@@ -1159,6 +1345,16 @@ where
         F: FnMut() + 'static,
     {
         self.on_near_end = Some(Box::new(on_near_end));
+        self.on_near_end_with_ctx = None;
+        self
+    }
+
+    pub fn on_near_end_with_ctx<F>(mut self, on_near_end: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_near_end = None;
+        self.on_near_end_with_ctx = Some(Box::new(on_near_end));
         self
     }
 
@@ -1365,7 +1561,7 @@ where
             }
         };
 
-        match sync {
+        let changed = match sync {
             CollectionSync::Unchanged { revision } => {
                 self.source_revision = revision;
                 self.initialized = true;
@@ -1389,7 +1585,14 @@ where
                 self.initialized = true;
                 true
             }
-        }
+        };
+        let window = self
+            .source
+            .window()
+            .normalized_for_loaded_count(self.keys.len());
+        let window_changed = self.window != window;
+        self.window = window;
+        changed || window_changed
     }
 
     fn capture_anchor(&self) -> Option<CapturedAnchor<K>> {
@@ -1428,10 +1631,21 @@ where
     }
 
     fn visible_range(&self, viewport_height: f32, offset_y: f32) -> Range<usize> {
+        self.range_at_offset(
+            viewport_height,
+            offset_y,
+            viewport_height * self.overscan_viewports,
+        )
+    }
+
+    fn viewport_item_range(&self, viewport_height: f32) -> Range<usize> {
+        self.range_at_offset(viewport_height, self.offset_y, 0.0)
+    }
+
+    fn range_at_offset(&self, viewport_height: f32, offset_y: f32, overdraw: f32) -> Range<usize> {
         if self.keys.is_empty() {
             return 0..0;
         }
-        let overdraw = viewport_height * self.overscan_viewports;
         let top = (offset_y - overdraw).max(0.0);
         let bottom = offset_y + viewport_height + overdraw;
         let start = self.extents.index_at_offset(top).unwrap_or(0);
@@ -1599,12 +1813,17 @@ where
     }
 
     fn activate_index(&mut self, index: usize, ctx: &mut EventCtx) {
+        if self.selection_mode == VirtualListSelectionMode::None {
+            return;
+        }
         let Some(key) = self.keys.get(index).cloned() else {
             return;
         };
         let changed = self.state.select(Some(key.clone()));
         if changed {
-            if let Some(on_change) = &mut self.on_change {
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(key, ctx);
+            } else if let Some(on_change) = &mut self.on_change {
                 on_change(key);
             }
             ctx.request_paint();
@@ -1663,11 +1882,11 @@ where
         for scroll_bar_id in self.state.scroll.subscribers().scroll_bar_ids {
             request_scroll_bar_refresh(ctx, scroll_bar_id);
         }
-        self.notify_near_edges(viewport.height());
+        self.notify_near_edges(viewport.height(), ctx);
         true
     }
 
-    fn notify_near_edges(&mut self, viewport_height: f32) {
+    fn notify_near_edges(&mut self, viewport_height: f32, ctx: &mut EventCtx) {
         let threshold = viewport_height.max(self.estimated_extent() * 8.0);
         let near_start = self.offset_y <= threshold;
         let remaining = (self.content_height() - viewport_height - self.offset_y).max(0.0);
@@ -1675,7 +1894,9 @@ where
 
         if near_start && !self.near_start_notified {
             self.near_start_notified = true;
-            if let Some(on_near_start) = &mut self.on_near_start {
+            if let Some(on_near_start) = &mut self.on_near_start_with_ctx {
+                on_near_start(ctx);
+            } else if let Some(on_near_start) = &mut self.on_near_start {
                 on_near_start();
             }
         } else if !near_start {
@@ -1684,12 +1905,38 @@ where
 
         if near_end && !self.near_end_notified {
             self.near_end_notified = true;
-            if let Some(on_near_end) = &mut self.on_near_end {
+            if let Some(on_near_end) = &mut self.on_near_end_with_ctx {
+                on_near_end(ctx);
+            } else if let Some(on_near_end) = &mut self.on_near_end {
                 on_near_end();
             }
         } else if !near_end {
             self.near_end_notified = false;
         }
+    }
+
+    fn publish_viewport(&self, viewport_height: f32) {
+        let local = self.viewport_item_range(viewport_height);
+        let global_start = self.window.loaded_range.start.saturating_add(local.start);
+        let global_end = self.window.loaded_range.start.saturating_add(local.end);
+        let max_offset = (self.content_height() - viewport_height).max(0.0);
+        self.state.publish_viewport(VirtualViewportSnapshot {
+            loaded_range: self.window.loaded_range.clone(),
+            visible_range: global_start..global_end,
+            visible_keys: local
+                .clone()
+                .filter_map(|index| self.keys.get(index).cloned())
+                .collect(),
+            total_count: self.window.total_count,
+            has_before: self.window.has_before,
+            has_after: self.window.has_after,
+            anchor: self.capture_anchor().map(|captured| captured.anchor),
+            offset: self.offset_y,
+            max_offset,
+            at_loaded_start: self.offset_y <= f32::EPSILON,
+            at_loaded_end: max_offset - self.offset_y <= f32::EPSILON,
+            following_end: self.state.is_following_end(),
+        });
     }
 
     fn sync_focused_row(&self, focused: Option<WidgetId>) {
@@ -1848,6 +2095,7 @@ where
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary)
                     && viewport.contains(pointer.position)
+                    && self.selection_mode != VirtualListSelectionMode::None
                     && !ctx.is_handled() =>
             {
                 self.pressed = self
@@ -1902,13 +2150,23 @@ where
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowUp" => self.move_selection(-1, viewport.height(), ctx),
-                    "ArrowDown" => self.move_selection(1, viewport.height(), ctx),
-                    "Home" if !self.keys.is_empty() => {
+                    "ArrowUp" if self.selection_mode == VirtualListSelectionMode::Single => {
+                        self.move_selection(-1, viewport.height(), ctx);
+                    }
+                    "ArrowDown" if self.selection_mode == VirtualListSelectionMode::Single => {
+                        self.move_selection(1, viewport.height(), ctx);
+                    }
+                    "Home"
+                        if self.selection_mode == VirtualListSelectionMode::Single
+                            && !self.keys.is_empty() =>
+                    {
                         self.activate_index(0, ctx);
                         self.ensure_index_visible(0, viewport.height());
                     }
-                    "End" if !self.keys.is_empty() => {
+                    "End"
+                        if self.selection_mode == VirtualListSelectionMode::Single
+                            && !self.keys.is_empty() =>
+                    {
                         let last = self.keys.len() - 1;
                         self.activate_index(last, ctx);
                         self.ensure_index_visible(last, viewport.height());
@@ -1952,8 +2210,17 @@ where
                     return;
                 };
                 match semantics.action {
-                    SemanticsActionRequest::Activate | SemanticsActionRequest::Focus => {
+                    SemanticsActionRequest::Activate
+                        if self.selection_mode == VirtualListSelectionMode::Single =>
+                    {
                         self.activate_index(index, ctx);
+                        self.ensure_index_visible(index, viewport.height());
+                        ctx.request_focus();
+                        ctx.request_measure();
+                        ctx.request_arrange();
+                        ctx.set_handled();
+                    }
+                    SemanticsActionRequest::Focus => {
                         self.ensure_index_visible(index, viewport.height());
                         ctx.request_focus();
                         ctx.request_measure();
@@ -2033,6 +2300,7 @@ where
         self.clamp_offset(viewport.height());
         self.active_range = self.visible_range(viewport.height(), self.offset_y);
         self.evict_rows();
+        self.publish_viewport(viewport.height());
 
         let max_offset = self.state.scroll.max_offset();
         if let Some(overlay_bars) = &mut self.overlay_bars {
@@ -2089,6 +2357,7 @@ where
             overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
             overlay_bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
         }
+        self.publish_viewport(viewport.height());
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -2097,7 +2366,9 @@ where
         let theme = self.resolved_theme();
         let viewport = self.viewport_rect(ctx.bounds());
         let selected = self.state.selected_key();
-        draw_surface(ctx, ctx.bounds(), &theme, 0.0);
+        if self.chrome == VirtualListChrome::Default {
+            draw_surface(ctx, ctx.bounds(), &theme, 0.0);
+        }
         ctx.push_clip_rect(viewport);
         for index in self.active_range.clone() {
             let Some(key) = self.keys.get(index) else {
@@ -2109,15 +2380,18 @@ where
             let Some(rect) = self.row_rect(ctx.bounds(), index) else {
                 continue;
             };
-            paint_data_row_state(
-                ctx,
-                rect,
-                viewport,
-                &theme,
-                selected.as_ref() == Some(key),
-                (self.hovered.as_ref() == Some(key)) as u8 as f32,
-                (self.pressed.as_ref() == Some(key)) as u8 as f32,
-            );
+            if self.chrome == VirtualListChrome::Default {
+                paint_data_row_state(
+                    ctx,
+                    rect,
+                    viewport,
+                    &theme,
+                    self.selection_mode == VirtualListSelectionMode::Single
+                        && selected.as_ref() == Some(key),
+                    (self.hovered.as_ref() == Some(key)) as u8 as f32,
+                    (self.pressed.as_ref() == Some(key)) as u8 as f32,
+                );
+            }
             row.pod.paint(ctx);
         }
         ctx.pop_clip();
@@ -2136,24 +2410,40 @@ where
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let total = self.keys.len();
-        let visible_start = self.active_range.start.min(total);
-        let visible_end = self.active_range.end.min(total);
+        let loaded_count = self.keys.len();
+        let visible_start = self.active_range.start.min(loaded_count);
+        let visible_end = self.active_range.end.min(loaded_count);
+        let global_start = self.window.loaded_range.start.saturating_add(visible_start);
+        let global_end = self.window.loaded_range.start.saturating_add(visible_end);
         let mut list = SemanticsNode::new(ctx.widget_id(), SemanticsRole::List, ctx.bounds());
         list.name = Some(self.name.clone());
         list.state.focused = ctx.is_focused();
-        list.value = Some(SemanticsValue::Text(format!("{total} items")));
-        list.description = Some(if total == 0 {
-            "Empty collection".to_string()
-        } else {
-            format!(
-                "Showing items {} through {} of {}; {} before and {} after the realized range",
-                visible_start + 1,
-                visible_end.max(visible_start + 1),
-                total,
-                visible_start,
-                total.saturating_sub(visible_end),
-            )
+        list.value = Some(SemanticsValue::Text(match self.window.total_count {
+            Some(total_count) => format!("{total_count} items"),
+            None => format!("{loaded_count} loaded items"),
+        }));
+        list.description = Some(match (loaded_count, self.window.total_count) {
+            (0, Some(0)) => "Empty collection".to_string(),
+            (0, Some(total_count)) => {
+                format!("No loaded items of {total_count}; more items are available")
+            }
+            (0, None) => "No loaded items".to_string(),
+            (_, Some(total_count)) => format!(
+                "Showing items {} through {} of {}; loaded window {} through {}",
+                global_start.saturating_add(1).min(total_count),
+                global_end
+                    .max(global_start.saturating_add(1))
+                    .min(total_count),
+                total_count,
+                self.window.loaded_range.start.saturating_add(1),
+                self.window.loaded_range.end,
+            ),
+            (_, None) => format!(
+                "Showing loaded items {} through {}; {} loaded",
+                global_start + 1,
+                global_end.max(global_start + 1),
+                loaded_count,
+            ),
         });
         list.actions = vec![
             SemanticsAction::Focus,
@@ -2185,16 +2475,24 @@ where
                     .map(|name| name(key, &item))
                     .unwrap_or_else(|| format!("Item {}", index + 1)),
             );
-            let position = format!("Item {} of {total}", index + 1);
+            let global_index = self.window.loaded_range.start.saturating_add(index);
+            let position = self.window.total_count.map_or_else(
+                || format!("Loaded item {}", global_index + 1),
+                |total_count| format!("Item {} of {total_count}", global_index + 1),
+            );
             node.description = Some(
                 self.row_description
                     .as_ref()
                     .map(|description| format!("{}; {position}", description(key, &item)))
                     .unwrap_or(position),
             );
-            node.state.selected = selected.as_ref() == Some(key);
+            node.state.selected = self.selection_mode == VirtualListSelectionMode::Single
+                && selected.as_ref() == Some(key);
             node.state.hovered = self.hovered.as_ref() == Some(key);
-            node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+            node.actions = vec![SemanticsAction::Focus];
+            if self.selection_mode == VirtualListSelectionMode::Single {
+                node.actions.push(SemanticsAction::Activate);
+            }
             ctx.push(node);
             row.pod.semantics(ctx);
         }
@@ -2294,11 +2592,12 @@ impl SaturatingSubF32 for f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::Cell, rc::Rc, sync::Arc};
 
     use super::{
-        CollectionChange, CollectionDelta, CollectionExtentIndex, CollectionSync, ScrollAlignment,
-        VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListState,
+        CollectionChange, CollectionDelta, CollectionExtentIndex, CollectionSync, CollectionWindow,
+        ScrollAlignment, VirtualCollectionModel, VirtualCollectionSource, VirtualList,
+        VirtualListChrome, VirtualListSelectionMode, VirtualListState,
     };
     use crate::SizedBox;
     use sui_core::{
@@ -2306,12 +2605,59 @@ mod tests {
         ScrollDelta, SemanticsActionRequest, SemanticsNode, SemanticsRole, Size, Vector,
     };
     use sui_layout::Constraints;
+    use sui_reactive::{Observable, Observer, SourceId, Subscription};
     use sui_runtime::{
         Application, MeasureCtx, PaintCtx, Runtime, SemanticsCtx, Widget, WindowBuilder,
     };
 
     struct RowBox {
         value: sui_reactive::Signal<(u64, f32)>,
+    }
+
+    #[derive(Clone)]
+    struct WindowedRows {
+        model: VirtualCollectionModel<u64, (u64, f32)>,
+        window: CollectionWindow,
+    }
+
+    impl Observable<u64> for WindowedRows {
+        fn source_id(&self) -> SourceId {
+            self.model.source_id()
+        }
+
+        fn source_name(&self) -> Arc<str> {
+            self.model.source_name()
+        }
+
+        fn get(&self) -> u64 {
+            self.model.get()
+        }
+
+        fn subscribe(&self, observer: Observer) -> Subscription {
+            self.model.subscribe(observer)
+        }
+    }
+
+    impl VirtualCollectionSource<u64, (u64, f32)> for WindowedRows {
+        fn revision(&self) -> u64 {
+            self.model.revision()
+        }
+
+        fn keys(&self) -> Vec<u64> {
+            self.model.keys()
+        }
+
+        fn item(&self, key: &u64) -> Option<(u64, f32)> {
+            self.model.item(key)
+        }
+
+        fn changes_since(&self, revision: u64) -> CollectionSync<u64> {
+            self.model.changes_since(revision)
+        }
+
+        fn window(&self) -> CollectionWindow {
+            self.window.clone()
+        }
     }
 
     impl Widget for RowBox {
@@ -2371,6 +2717,16 @@ mod tests {
         assert_eq!(index.total(), 55.0);
         assert!(index.move_item(0, 2));
         assert_eq!(index.offset_of(2), 45.0);
+    }
+
+    #[test]
+    fn collection_window_normalizes_count_without_inventing_page_availability() {
+        let window = CollectionWindow::loaded(50..60, Some(100), false, false)
+            .normalized_for_loaded_count(5);
+        assert_eq!(window.loaded_range, 50..55);
+        assert_eq!(window.total_count, Some(100));
+        assert!(!window.has_before);
+        assert!(!window.has_after);
     }
 
     #[test]
@@ -2634,6 +2990,127 @@ mod tests {
                 .as_deref()
                 .is_some_and(|description| description.contains("of 20"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn windowed_list_reports_dataset_space_viewport_and_total() -> Result<()> {
+        let model = VirtualCollectionModel::from_items(
+            "rows",
+            (400_u64..800).map(|index| (index, (index, 20.0))),
+        )
+        .unwrap();
+        let source = WindowedRows {
+            model,
+            window: CollectionWindow::loaded(400..800, Some(1_200), true, true),
+        };
+        let state = VirtualListState::new();
+        let list = VirtualList::new("History", source, |_key, value| RowBox { value })
+            .state(state.clone())
+            .estimated_row_height(20.0)
+            .overscan_viewports(0.0);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(240.0, 100.0))
+                .with_child(list),
+        );
+
+        let output = runtime.render(window_id)?;
+        let viewport = state.viewport();
+        assert_eq!(viewport.loaded_range, 400..800);
+        assert_eq!(viewport.visible_range.start, 400);
+        assert!(viewport.visible_range.end <= 406);
+        assert_eq!(viewport.total_count, Some(1_200));
+        assert!(viewport.has_before);
+        assert!(viewport.has_after);
+
+        let list = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::List)
+            .expect("list semantics");
+        assert_eq!(
+            list.value,
+            Some(sui_core::SemanticsValue::Text("1200 items".into()))
+        );
+        assert!(
+            list.description
+                .as_deref()
+                .is_some_and(|description| description.contains("loaded window 401 through 800"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn presentation_list_disables_selection_but_keeps_focus_semantics() -> Result<()> {
+        let model = VirtualCollectionModel::from_items(
+            "rows",
+            (0_u64..4).map(|index| (index, (index, 20.0))),
+        )
+        .unwrap();
+        let state = VirtualListState::new();
+        let list = VirtualList::new("Transcript", model, |_key, value| RowBox { value })
+            .state(state.clone())
+            .selection_mode(VirtualListSelectionMode::None)
+            .chrome(VirtualListChrome::Transparent)
+            .estimated_row_height(20.0);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(240.0, 100.0))
+                .with_child(list),
+        );
+
+        let output = runtime.render(window_id)?;
+        let first_item = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ListItem)
+            .expect("virtual row semantics");
+        assert!(
+            first_item
+                .actions
+                .contains(&sui_core::SemanticsAction::Focus)
+        );
+        assert!(
+            !first_item
+                .actions
+                .contains(&sui_core::SemanticsAction::Activate)
+        );
+        assert!(!first_item.state.selected);
+        assert_eq!(state.selected_key(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn contextual_selection_callback_receives_the_event_context() -> Result<()> {
+        let model = VirtualCollectionModel::from_items("rows", [(7_u64, (7, 20.0))]).unwrap();
+        let selected = Rc::new(Cell::new(None));
+        let selected_key = Rc::clone(&selected);
+        let list = VirtualList::new("Rows", model, |_key, value| RowBox { value })
+            .estimated_row_height(20.0)
+            .on_change_with_ctx(move |key, ctx| {
+                selected_key.set(Some(key));
+                ctx.request_semantics();
+            });
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(240.0, 100.0))
+                .with_child(list),
+        );
+
+        let output = runtime.render(window_id)?;
+        let item_id = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ListItem)
+            .expect("virtual row semantics")
+            .id;
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            item_id,
+            SemanticsActionRequest::Activate,
+        )?);
+        assert_eq!(selected.get(), Some(7));
         Ok(())
     }
 

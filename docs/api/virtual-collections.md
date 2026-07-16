@@ -83,6 +83,25 @@ Applications do not have to use this model. Implement
 snapshot, or another observable store. A source without an incremental journal
 may return `CollectionSync::Reset` after each revision.
 
+Paged sources should also report the dataset-space window represented by their
+current keys:
+
+```rust
+fn window(&self) -> CollectionWindow {
+    CollectionWindow::loaded(
+        self.page_start..self.page_start + self.rows.len(),
+        self.total_count,
+        self.has_previous_page,
+        self.has_next_page,
+    )
+}
+```
+
+The default implementation describes a complete collection, so existing
+sources remain source-compatible. SUI normalizes the end of `loaded_range` to
+the actual key count and uses the window for dataset-relative accessibility and
+viewport reporting.
+
 ## Variable Heights and Visible Ranges
 
 `CollectionExtentIndex` is a safe implicit-tree prefix-sum index. It supports:
@@ -133,6 +152,12 @@ state.scroll_to(message_id, ScrollAlignment::Center);
 The underlying `ScrollState` is available through `state.scroll_state()` for a
 standalone scroll bar or general offset inspection.
 
+`state.viewport()` returns a `VirtualViewportSnapshot<K>`. Its loaded and
+visible ranges are dataset-space ranges, not indices into the current page. It
+also reports visible keys, known total count, paging edges, scroll offsets, the
+current anchor, and follow-end state. Use `state.viewport_signal()` when other
+widgets should react to those changes.
+
 ## Retained Rows and Recycling
 
 Visible rows receive a per-item `Signal<T>` and a stable `WidgetPod` while
@@ -171,6 +196,21 @@ assert_eq!(state.selected_key(), Some(task_id));
 
 Pointer activation and Up, Down, Home, End, Page Up, and Page Down navigation
 use the same keyed selection. `on_change` reports the selected key.
+
+Presentation collections such as transcripts can keep virtual scrolling and
+row-local semantics without imposing list selection or SUI's default row
+surface:
+
+```rust
+VirtualList::new("Transcript", messages, build_message)
+    .selection_mode(VirtualListSelectionMode::None)
+    .chrome(VirtualListChrome::Transparent)
+```
+
+Use `on_change_with_ctx`, `on_near_start_with_ctx`, or
+`on_near_end_with_ctx` when a callback must request targeted invalidation or
+start context-bound work. The context-free callback variants remain available
+for architecture-neutral application actions.
 
 Paged sources may use `on_near_start` and `on_near_end`. Notifications are
 edge-triggered and reset after the viewport leaves the threshold:
@@ -215,6 +255,35 @@ therefore remain accessible without realizing off-screen siblings.
 - leading pinned columns that remain fixed during horizontal trackpad scrolling
 - application-owned sorting through sort indicators and header activation
 
+Attach `VirtualTableState` when a table is rebuilt from application snapshots:
+
+```rust
+let state = VirtualTableState::new();
+
+VirtualTable::new("Files")
+    .state(state.clone())
+    .columns([
+        VirtualTableColumn::new("Name").key(1),
+        VirtualTableColumn::new("Kind").key(2),
+    ])
+    .collection_window(CollectionWindow::loaded(
+        page_start..page_start + rows.len(),
+        Some(total_rows),
+        page_start > 0,
+        page_start + rows.len() < total_rows,
+    ))
+    .row_count(rows.len())
+    .row_key(move |index| rows[index].stable_key);
+```
+
+The state retains selection by row key and resized width by column key, exposes
+the shared two-axis `ScrollState`, accepts keyed `scroll_to` requests, and
+publishes the same dataset-space viewport snapshot used by `VirtualList`.
+When attached, keyed state is authoritative for selection unless
+`selected_when` supplies an externally controlled index.
+Without `.state(...)`, `VirtualTable` retains its previous instance-local
+behavior. Without `.collection_window(...)`, it reports a complete table.
+
 Sorting remains a model responsibility: SUI emits the header action and paints
 the configured direction; it does not reorder remote or paged data.
 
@@ -222,9 +291,12 @@ the configured direction; it does not reorder remote or paged data.
 flattened expanded rows, exposes visible row semantics with level and position,
 and routes accessible expand/collapse actions to the keyed row.
 
-A data-backed table row factory remains a separate policy layer. It should
-build on the keyed virtual collection source while retaining the existing
-paint-delegate table for lightweight read-only data.
+A data-backed table row factory remains a separate policy layer. The retained
+state and paging contract now provide the integration seam, but `VirtualTable`
+still receives an application-owned row count and painter rather than a
+`VirtualCollectionSource`. A future source-backed policy should build on the
+keyed collection source while retaining the existing paint-delegate table for
+lightweight read-only data.
 
 ## Choosing a Collection Widget
 
