@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(cargo test:*)",
-      "Bash(cargo build:*)",
-      "Bash(xargs ls -1)"
-    ]
-  }
-}
