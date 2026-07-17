@@ -223,6 +223,12 @@ performance overlays, and visual artifact generation.
 10. Built-in widgets stay outside `sinomo-ui-runtime`.
 11. Scheduler wakes and typed command delivery remain distinct; neither is
     represented as an implicit root custom event.
+12. Window overlay ordering, nesting, focus, dismissal, and diagnostics belong
+    to `sinomo-ui-runtime`; concrete presentation widgets and placement policy
+    belong to `sinomo-ui-widgets`.
+13. Native file dialog handles and external file-drop normalization belong to
+    `sinomo-ui-platform`; applications remain responsible for storage and
+    import policy.
 
 ## Practical Ownership Guide
 

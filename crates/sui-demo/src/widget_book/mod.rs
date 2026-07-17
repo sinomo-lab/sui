@@ -4287,11 +4287,11 @@ fn build_widget_states_gallery_with_theme(theme_reader: WidgetBookThemeReader) -
                         ))
                         .with_child(state_sample_with_theme(
                             Rc::clone(&theme_reader),
-                            "Popover details",
-                            SizedBox::new().width(260.0).with_child(
+                            "Managed popover",
+                            SizedBox::new().width(260.0).with_child(OverlayHost::new(
                                 Popover::new(
                                     "States popover details",
-                                    Button::new("Details open")
+                                    Button::new("Open managed details")
                                         .min_width(180.0)
                                         .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                                     Stack::vertical()
@@ -4299,19 +4299,36 @@ fn build_widget_states_gallery_with_theme(theme_reader: WidgetBookThemeReader) -
                                         .alignment(Alignment::Start)
                                         .with_child(demo_label(
                                             &theme_reader,
-                                            "Layer blend",
+                                            "Collision-aware placement",
                                             DemoTextRole::Supporting,
                                             DemoTextColor::Text,
                                         ))
                                         .with_child(demo_label(
                                             &theme_reader,
-                                            "Screen, 72% opacity",
+                                            "Escape or outside click dismisses",
                                             DemoTextRole::Metadata,
                                             DemoTextColor::Muted,
                                         )),
                                 )
                                 .theme(theme_reader()),
-                            ),
+                            )),
+                        ))
+                        .with_child(state_sample_with_theme(
+                            Rc::clone(&theme_reader),
+                            "Status notification",
+                            SizedBox::new().width(360.0).height(92.0).with_child({
+                                let center = NotificationCenter::new();
+                                center.push(
+                                    TransientNotification::new(
+                                        "Workspace indexed",
+                                        "42 files are ready for search",
+                                    )
+                                    .persistent(),
+                                );
+                                NotificationHost::new(center)
+                                    .theme(theme_reader())
+                                    .width(320.0)
+                            }),
                         )),
                 )),
         ),

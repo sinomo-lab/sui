@@ -28,6 +28,7 @@ pub use geometry::{Path, PathBuilder, PathElement, Point, Rect, Size, Transform,
 pub use id::{AsyncWakeToken, FontHandle, ImageHandle, SurfaceId, TimerToken, WidgetId, WindowId};
 pub use invalidation::{DirtyRegion, InvalidationKind, InvalidationRequest, InvalidationTarget};
 pub use semantics::{
-    EditableTextSemantics, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
-    SemanticsState, SemanticsTextRange, SemanticsValue, ToggleState,
+    EditableTextSemantics, SemanticsAction, SemanticsActionRequest, SemanticsLiveRegion,
+    SemanticsNode, SemanticsPopupKind, SemanticsRelations, SemanticsRole, SemanticsState,
+    SemanticsTextRange, SemanticsValue, ToggleState,
 };

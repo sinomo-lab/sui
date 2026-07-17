@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use accesskit::{
-    Action, ActionData, ActionRequest, CustomAction, Live, Node, NodeId, Rect, Role, TextPosition,
-    TextSelection, Toggled, Tree, TreeId, TreeUpdate,
+    Action, ActionData, ActionRequest, CustomAction, HasPopup, Live, Node, NodeId, Rect, Role,
+    TextPosition, TextSelection, Toggled, Tree, TreeId, TreeUpdate,
 };
 use sui_core::{
-    SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsTextRange,
-    SemanticsValue, ToggleState, WidgetId, WindowId,
+    SemanticsAction, SemanticsActionRequest, SemanticsLiveRegion, SemanticsNode,
+    SemanticsPopupKind, SemanticsRole, SemanticsTextRange, SemanticsValue, ToggleState, WidgetId,
+    WindowId,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -356,6 +357,9 @@ fn map_semantics_node(
         node.set_busy();
         node.set_live(Live::Polite);
     }
+    if source.state.modal {
+        node.set_modal();
+    }
     if source.state.selected {
         node.set_selected(true);
     }
@@ -374,6 +378,61 @@ fn map_semantics_node(
         SemanticsRole::ProgressBar | SemanticsRole::BusyIndicator
     ) {
         node.set_live(Live::Polite);
+    }
+    if let Some(live) = source.live_region {
+        node.set_live(match live {
+            SemanticsLiveRegion::Polite => Live::Polite,
+            SemanticsLiveRegion::Assertive => Live::Assertive,
+        });
+    }
+    if let Some(popup) = source.popup {
+        node.set_has_popup(match popup {
+            SemanticsPopupKind::Menu => HasPopup::Menu,
+            SemanticsPopupKind::ListBox => HasPopup::Listbox,
+            SemanticsPopupKind::Tree => HasPopup::Tree,
+            SemanticsPopupKind::Grid => HasPopup::Grid,
+            SemanticsPopupKind::Dialog => HasPopup::Dialog,
+        });
+    }
+    if !source.relations.controls.is_empty() {
+        node.set_controls(
+            source
+                .relations
+                .controls
+                .iter()
+                .map(|id| NodeId(id.get()))
+                .collect::<Vec<_>>(),
+        );
+    }
+    if !source.relations.labelled_by.is_empty() {
+        node.set_labelled_by(
+            source
+                .relations
+                .labelled_by
+                .iter()
+                .map(|id| NodeId(id.get()))
+                .collect::<Vec<_>>(),
+        );
+    }
+    if !source.relations.described_by.is_empty() {
+        node.set_described_by(
+            source
+                .relations
+                .described_by
+                .iter()
+                .map(|id| NodeId(id.get()))
+                .collect::<Vec<_>>(),
+        );
+    }
+    if !source.relations.owns.is_empty() {
+        node.set_owns(
+            source
+                .relations
+                .owns
+                .iter()
+                .map(|id| NodeId(id.get()))
+                .collect::<Vec<_>>(),
+        );
     }
 
     if let Some(editable) = &source.editable_text {
@@ -932,6 +991,42 @@ mod tests {
         assert_eq!(progress.live(), Some(Live::Polite));
         assert!(progress.is_busy());
         assert_eq!(progress.value(), Some("Loading candidate queue"));
+    }
+
+    #[test]
+    fn overlay_state_and_relationships_map_to_accesskit() {
+        let root = node(80, SemanticsRole::Root);
+        let mut dialog = node(81, SemanticsRole::Dialog);
+        dialog.parent = Some(root.id);
+        dialog.state.modal = true;
+        dialog.popup = Some(SemanticsPopupKind::Dialog);
+        dialog.live_region = Some(SemanticsLiveRegion::Assertive);
+        dialog.relations.controls.push(WidgetId::new(84));
+        dialog.relations.labelled_by.push(WidgetId::new(82));
+        dialog.relations.described_by.push(WidgetId::new(83));
+        dialog.relations.owns.push(WidgetId::new(84));
+
+        let mut label = node(82, SemanticsRole::Text);
+        label.parent = Some(root.id);
+        let mut description = node(83, SemanticsRole::Text);
+        description.parent = Some(root.id);
+        let mut controlled = node(84, SemanticsRole::List);
+        controlled.parent = Some(root.id);
+
+        let snapshot = build_accesskit_snapshot(
+            WindowId::new(1),
+            1.0,
+            "Overlay",
+            &[root, dialog, label, description, controlled],
+        );
+        let dialog = mapped_node(&snapshot, 81);
+        assert!(dialog.is_modal());
+        assert_eq!(dialog.has_popup(), Some(HasPopup::Dialog));
+        assert_eq!(dialog.live(), Some(Live::Assertive));
+        assert_eq!(dialog.controls(), &[NodeId(84)]);
+        assert_eq!(dialog.labelled_by(), &[NodeId(82)]);
+        assert_eq!(dialog.described_by(), &[NodeId(83)]);
+        assert_eq!(dialog.owns(), &[NodeId(84)]);
     }
 
     #[test]

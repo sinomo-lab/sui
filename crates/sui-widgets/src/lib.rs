@@ -13,6 +13,7 @@ pub mod drag_drop;
 mod editor;
 pub mod hdr_theme;
 pub mod media;
+pub mod overlay;
 pub mod panes;
 pub mod reorderable;
 pub mod rich_document;
@@ -49,21 +50,21 @@ pub use collection::{
 pub use composites::{
     ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, BusyIndicator, CalloutPaint,
     CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill,
-    CommandButtonPaint, CommandGroup, ContextMenu, CoverageDots, CoverageDotsConfig, DetailRow,
-    Dialog, DisclosureButtonPaint, DockPanel, Drawer, EmptyState, EmptyStatePaint, FieldGroup,
-    FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem, Modal, PanelSection,
-    PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar,
-    PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelGeometry,
-    SectionPanelPaint, SegmentedControl, SegmentedControlItem, SheetState, SideSheet,
-    SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface,
-    SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole, TabBar, Tabs, ToolPalette,
-    ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement,
-    detail_row_height_for_value, paint_action_tile, paint_border, paint_callout, paint_code_lines,
-    paint_code_panel, paint_command_button, paint_coverage_dots, paint_coverage_dots_with_config,
-    paint_detail_row_at, paint_disclosure_button, paint_empty_state, paint_hairline,
-    paint_placement_badge, paint_placement_badge_with, paint_progress_bar, paint_rounded_panel,
-    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
-    paint_status_badge,
+    CommandButtonPaint, CommandGroup, CommandPalette, ContextMenu, CoverageDots,
+    CoverageDotsConfig, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, Drawer, EmptyState,
+    EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem,
+    Modal, PanelSection, PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment,
+    PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
+    SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, SheetState,
+    SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost,
+    StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole,
+    TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
+    TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
+    paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
+    paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
+    paint_empty_state, paint_hairline, paint_placement_badge, paint_placement_badge_with,
+    paint_progress_bar, paint_rounded_panel, paint_rounded_rect, paint_section_label,
+    paint_section_label_detail, paint_section_panel, paint_status_badge,
 };
 pub use containers::{
     Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,
@@ -95,6 +96,11 @@ pub use hdr_theme::{
 pub use media::{
     BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette, ColorPaletteSwatch,
     ColorPicker, ColorSwatch, Image, ImageFit, SignalMeter,
+};
+pub use overlay::{
+    NotificationCenter, NotificationHost, NotificationId, NotificationUrgency, OverlayAlignment,
+    OverlayCollisionPolicy, OverlayHost, OverlayPlacement, OverlayPlacementRequest,
+    OverlayPlacementResult, OverlaySide, TransientNotification, place_overlay,
 };
 pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,

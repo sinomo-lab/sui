@@ -40,6 +40,13 @@ and `wgpu` adapter/surface support on the target machine. Test the real target
 and graphics stack before shipping; a successful headless test does not prove
 surface creation or presentation on every driver.
 
+The platform layer also normalizes native file hover/drop events and provides
+the asynchronous `NativeFileDialogs` service on Linux, macOS, and Windows.
+Linux builds use the selected native portal/backend support from the platform
+dependency; test dialogs in the actual desktop session and packaging format.
+See [Overlays and desktop interaction](overlays-and-desktop.md) for the portable
+request, file-handle, and `DragDropHost` APIs.
+
 ## Runtime-only or Custom Embedding
 
 Disable defaults to construct widgets and a runtime without selecting the
@@ -91,6 +98,11 @@ Web output uses WebGPU where available through `wgpu`. Browser security and
 activation rules still apply to clipboard, focus, input methods, and other
 host services. Verify the browsers and deployment headers supported by the
 product rather than treating desktop behavior as proof of browser behavior.
+
+Web builds support asynchronous open/save file handles through the same dialog
+service, subject to browser user-activation and security policy. Files expose
+byte-oriented `read`/`write` operations rather than host filesystem paths, and
+folder selection is intentionally unavailable.
 
 The Rust/Wasm application surface is implemented. The workspace's native
 JavaScript binding targets Node/Electron; it is not a browser JavaScript/DOM

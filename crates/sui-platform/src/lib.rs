@@ -3,6 +3,7 @@
 mod accessibility;
 mod desktop;
 mod display_capabilities;
+mod file_dialog;
 mod headless;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod os_clipboard;
@@ -41,6 +42,10 @@ pub use display_capabilities::{
     WindowOutputDiagnostics, clear_window_output_diagnostics, clear_window_output_diagnostics_all,
     detect_window_display_capabilities, publish_window_output_diagnostics,
     resolve_sdr_content_brightness_nits, window_output_diagnostics,
+};
+pub use file_dialog::{
+    FileDialogFilter, FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection,
+    FileDialogService, NativeFileDialogs, PlatformFile, show_file_dialog,
 };
 pub use headless::{HeadlessPlatform, PlatformWindow};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]

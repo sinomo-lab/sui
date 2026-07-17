@@ -19,6 +19,7 @@ rust-widget Checkbox bound Checkbox
 rust-widget ColorPalette bound ColorPalette
 rust-widget ColorPicker bound ColorPicker
 rust-widget ColorSwatch bound ColorSwatch
+rust-widget CommandPalette rust-only
 rust-widget CommandGroup bound CommandGroup
 rust-widget ContextMenu bound ContextMenu
 rust-widget CoverageDots bound CoverageDots
@@ -50,6 +51,8 @@ rust-widget MasterDetail rust-only
 rust-widget MeasuredBottomDock bound MeasuredBottomDock
 rust-widget Menu bound Menu
 rust-widget NumberInput bound NumberInput
+rust-widget NotificationHost rust-only
+rust-widget OverlayHost rust-only
 rust-widget Padding bound Padding
 rust-widget PanelSection bound PanelSection
 rust-widget PasswordInput manual-wrapper PasswordInput

@@ -1,6 +1,6 @@
 # Virtual Collections
 
-[Previous: widgets and layout](widgets-and-layout.md) ·
+[Previous: overlays and desktop interaction](overlays-and-desktop.md) ·
 [API guide](README.md) ·
 [Next: rich documents](rich-documents.md)
 

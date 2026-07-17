@@ -370,6 +370,7 @@ pub struct SceneLayerDescriptor {
     pub content_bounds: Rect,
     pub paint_bounds: Rect,
     pub hit_test: bool,
+    pub clip_to_ancestors: bool,
     pub properties: LayerProperties,
     pub stack_host: WidgetId,
     pub stack_order: usize,
@@ -387,6 +388,7 @@ impl SceneLayerDescriptor {
             content_bounds: bounds,
             paint_bounds: bounds,
             hit_test: true,
+            clip_to_ancestors: true,
             properties: LayerProperties::default(),
             stack_host: owner,
             stack_order: 0,
@@ -408,6 +410,11 @@ impl SceneLayerDescriptor {
 
     pub const fn with_hit_test(mut self, hit_test: bool) -> Self {
         self.hit_test = hit_test;
+        self
+    }
+
+    pub const fn with_clip_to_ancestors(mut self, clip: bool) -> Self {
+        self.clip_to_ancestors = clip;
         self
     }
 

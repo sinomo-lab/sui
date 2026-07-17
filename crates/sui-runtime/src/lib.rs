@@ -3,6 +3,7 @@
 mod command;
 mod diagnostics;
 mod logo;
+mod overlay;
 mod reactive;
 mod widget;
 
@@ -52,6 +53,11 @@ pub use diagnostics::{
     window_scene_statistics_detail_mode,
 };
 pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
+pub use overlay::{
+    OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayDismissReason, OverlayDismissRequest,
+    OverlayFocusBehavior, OverlayInitialFocus, OverlayKind, OverlayManagerSnapshot,
+    OverlayModality, OverlayOptions, OverlaySnapshot, OverlayTraceKind, OverlayTraceSample,
+};
 use std::rc::Rc;
 pub use sui_core::DpiInfo;
 pub use sui_layout::LayoutContext;
@@ -878,6 +884,18 @@ impl Runtime {
         Ok(window.graph.snapshot())
     }
 
+    /// Inspect the window's currently presented overlay stack.
+    pub fn overlay_snapshot(&self, window_id: WindowId) -> Result<OverlayManagerSnapshot> {
+        let window = self.window(window_id)?;
+        Ok(window.overlay_manager.snapshot())
+    }
+
+    /// Drain overlay lifecycle and dismissal diagnostics for an inspector.
+    pub fn take_overlay_traces(&mut self, window_id: WindowId) -> Result<Vec<OverlayTraceSample>> {
+        let window = self.window_mut(window_id)?;
+        Ok(window.overlay_manager.take_traces())
+    }
+
     fn dispatch_controller_wake(&mut self) {
         let sender = self.command_sender.clone();
         let mut app_ctx = CommandCtx::new(sender.clone(), None);
@@ -1316,6 +1334,9 @@ pub struct WidgetNodeSnapshot {
     pub stack_surface: WidgetId,
     pub stack_surface_order: usize,
     pub transient_owner_surface: Option<WidgetId>,
+    /// Logical overlay owner coordinating this node, when any.
+    pub overlay_owner: Option<WidgetId>,
+    pub is_overlay_owner: bool,
     pub is_stack_host: bool,
     pub is_stack_surface: bool,
     pub hit_test: bool,
@@ -1431,6 +1452,8 @@ struct WindowState {
     icon: Option<WindowIcon>,
     root: WidgetPod,
     graph: WidgetGraph,
+    overlay_manager: overlay::OverlayManager,
+    pending_overlay_focus: Option<FocusRequest>,
     focus: FocusState,
     focused_semantics: Option<WidgetId>,
     schedule: FrameSchedule,
@@ -1487,6 +1510,8 @@ impl WindowState {
             title,
             icon,
             graph: WidgetGraph::empty(root.id()),
+            overlay_manager: overlay::OverlayManager::default(),
+            pending_overlay_focus: None,
             root,
             focus,
             focused_semantics: None,
@@ -1614,6 +1639,9 @@ impl WindowState {
         self.preprocess_window_event(&event);
         self.ensure_graph_for_event(&event, text_system, font_registry, image_registry);
 
+        let mut invalidations = Vec::new();
+        self.apply_pending_overlay_focus(&mut invalidations);
+
         let captured_target = match &event {
             Event::Pointer(pointer) => self.pointer_capture.get(&pointer.pointer_id).copied(),
             _ => None,
@@ -1623,13 +1651,12 @@ impl WindowState {
             Event::Pointer(pointer) => self.pointer_hit_target(pointer.position),
             _ => None,
         };
-        let hit_target = match &event {
+        let mut hit_target = match &event {
             Event::Pointer(_) if captured_target.is_some() => None,
             Event::Pointer(_) => pointer_hit_target,
             _ => None,
         };
 
-        let mut invalidations = Vec::new();
         if matches!(event, Event::Window(WindowEvent::Focused(false))) {
             self.cancel_all_pointer_captures(&mut invalidations);
             self.pointer_capture.clear();
@@ -1655,6 +1682,47 @@ impl WindowState {
             self.schedule.extend(&invalidations);
             self.pending_invalidations.extend(invalidations);
             return;
+        }
+
+        if matches!(
+            &event,
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && key.key == "Escape"
+                    && !key.repeat
+                    && !key.is_composing
+        ) && self.dispatch_overlay_dismissal(
+            OverlayDismissReason::Escape,
+            None,
+            &mut invalidations,
+        ) {
+            self.finish_event(&event);
+            self.record_event_invalidations(&invalidations, &event);
+            self.schedule.extend(&invalidations);
+            self.pending_invalidations.extend(invalidations);
+            return;
+        }
+
+        if let Event::Pointer(pointer) = &event
+            && pointer.kind == PointerEventKind::Down
+            && pointer.button == Some(PointerButton::Primary)
+            && let Some(entry) = self
+                .overlay_manager
+                .topmost_dismissible(OverlayDismissReason::OutsidePointer)
+                .cloned()
+            && !hit_target.is_some_and(|target| self.target_is_in_overlay(entry.owner, target))
+        {
+            self.dispatch_overlay_dismissal(
+                OverlayDismissReason::OutsidePointer,
+                Some(pointer.position),
+                &mut invalidations,
+            );
+        }
+
+        if let Some(modal) = self.overlay_manager.active_modal()
+            && hit_target.is_some_and(|target| !self.target_is_in_overlay(modal, target))
+        {
+            hit_target = Some(modal);
         }
 
         let target = self.resolve_event_target(&event, hit_target);
@@ -1694,6 +1762,49 @@ impl WindowState {
                 reason: None,
             }),
         );
+    }
+
+    fn target_is_in_overlay(&self, owner: WidgetId, target: WidgetId) -> bool {
+        target == owner || self.graph.is_ancestor_of(owner, target)
+    }
+
+    fn dispatch_overlay_dismissal(
+        &mut self,
+        reason: OverlayDismissReason,
+        pointer_position: Option<Point>,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) -> bool {
+        let Some(entry) = self.overlay_manager.topmost_dismissible(reason).cloned() else {
+            return false;
+        };
+        let mut request = OverlayDismissRequest::new(reason);
+        request.pointer_position = pointer_position;
+        let queued = command::queued_command(
+            CommandTarget::Widget {
+                window_id: self.id,
+                widget_id: entry.owner,
+            },
+            CommandDelivery::Directed,
+            OVERLAY_DISMISS_REQUEST,
+            request,
+        );
+        let Some(dispatch) = self.dispatch_direct_command(entry.owner, &queued) else {
+            return false;
+        };
+        let handled = dispatch.handled;
+        let focus_request = dispatch.focus_request;
+        let mut effects = EventEffects::default();
+        effects.extend(dispatch);
+        self.apply_event_effects(effects, invalidations);
+        if let Some(request) = focus_request {
+            let effects = self.apply_focus_request(request);
+            self.apply_event_effects(effects, invalidations);
+        }
+        if handled {
+            self.overlay_manager
+                .trace_dismissal(entry.owner, entry.options.kind, reason);
+        }
+        handled
     }
 
     fn handle_semantics_action(
@@ -2930,8 +3041,19 @@ impl WindowState {
                     && !keyboard.modifiers.alt
                     && !keyboard.modifiers.meta =>
             {
-                self.graph
-                    .next_focusable(self.focus.focused_widget, keyboard.modifiers.shift)
+                self.overlay_manager
+                    .focus_trap()
+                    .and_then(|scope| {
+                        self.graph.next_focusable_within(
+                            scope,
+                            self.focus.focused_widget,
+                            keyboard.modifiers.shift,
+                        )
+                    })
+                    .or_else(|| {
+                        self.graph
+                            .next_focusable(self.focus.focused_widget, keyboard.modifiers.shift)
+                    })
                     .map(FocusRequest::Focus)
                     .or(Some(FocusRequest::Clear))
             }
@@ -2961,6 +3083,7 @@ impl WindowState {
     }
 
     fn apply_focus_request(&mut self, request: FocusRequest) -> EventEffects {
+        let request = self.constrain_focus_request(request);
         let next_focus = match request {
             FocusRequest::Focus(widget_id) => Some(widget_id),
             FocusRequest::Clear => None,
@@ -3061,6 +3184,35 @@ impl WindowState {
         effects
     }
 
+    fn constrain_focus_request(&self, request: FocusRequest) -> FocusRequest {
+        let Some(scope) = self.overlay_manager.focus_trap() else {
+            return request;
+        };
+        match request {
+            FocusRequest::Focus(widget_id)
+                if widget_id == scope || self.graph.is_ancestor_of(scope, widget_id) =>
+            {
+                return request;
+            }
+            FocusRequest::Focus(_) | FocusRequest::Clear => {}
+        }
+
+        self.focus
+            .focused_widget
+            .filter(|focused| *focused == scope || self.graph.is_ancestor_of(scope, *focused))
+            .or_else(|| self.graph.first_focusable_within(scope, true))
+            .map(FocusRequest::Focus)
+            .unwrap_or(FocusRequest::Clear)
+    }
+
+    fn apply_pending_overlay_focus(&mut self, invalidations: &mut Vec<InvalidationRequest>) {
+        let Some(request) = self.pending_overlay_focus.take() else {
+            return;
+        };
+        let effects = self.apply_focus_request(request);
+        self.apply_event_effects(effects, invalidations);
+    }
+
     fn focus_transition_invalidations(&self, widget_id: WidgetId) -> Vec<InvalidationRequest> {
         let mut invalidations = vec![InvalidationRequest::new(
             InvalidationTarget::Widget(widget_id),
@@ -3126,6 +3278,8 @@ impl WindowState {
                 diagnostics.push(FramePhase::HitTest, started.elapsed());
             }
         }
+
+        self.apply_pending_overlay_focus(&mut invalidations);
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
         let dpi_info = self.dpi_info_for_viewport(viewport);
@@ -3346,7 +3500,8 @@ impl WindowState {
                 self.focus.focused_widget,
             );
             self.root.semantics(&mut semantics_ctx);
-            self.last_semantics = self.assemble_semantics_tree(semantics_ctx.into_nodes());
+            let semantics = self.assemble_semantics_tree(semantics_ctx.into_nodes());
+            self.last_semantics = self.filter_modal_semantics(semantics);
             if diagnostics_enabled {
                 diagnostics.push(FramePhase::Semantics, started.elapsed());
             }
@@ -4094,8 +4249,61 @@ impl WindowState {
             self.focus.focused_widget,
             &self.last_paint_bounds_by_widget,
         );
+        let overlay_focus = self.overlay_manager.sync(
+            self.graph.overlay_snapshots(),
+            &self.graph,
+            self.focus.focused_widget,
+        );
+        if overlay_focus.is_some() {
+            self.pending_overlay_focus = overlay_focus;
+        }
         self.prune_runtime_state();
         self.schedule.hit_test = false;
+    }
+
+    fn filter_modal_semantics(&self, mut nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {
+        let Some(modal) = self.overlay_manager.active_modal() else {
+            return nodes;
+        };
+
+        let modal_subtree = self
+            .graph
+            .subtree_ids(modal)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let mut allowed = modal_subtree.clone();
+        let mut ancestor = self.graph.node(modal).and_then(|node| node.parent);
+        while let Some(widget_id) = ancestor {
+            allowed.insert(widget_id);
+            ancestor = self.graph.node(widget_id).and_then(|node| node.parent);
+        }
+
+        let parents = nodes
+            .iter()
+            .map(|node| (node.id, node.parent))
+            .collect::<HashMap<_, _>>();
+        let belongs_to_modal = |node: &SemanticsNode| {
+            if allowed.contains(&node.id) {
+                return true;
+            }
+            let mut current = node.parent;
+            let mut visited = HashSet::new();
+            while let Some(parent) = current {
+                if !visited.insert(parent) {
+                    break;
+                }
+                if modal_subtree.contains(&parent) {
+                    return true;
+                }
+                current = parents.get(&parent).copied().flatten();
+            }
+            false
+        };
+        nodes.retain(belongs_to_modal);
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == modal) {
+            node.state.modal = true;
+        }
+        nodes
     }
 
     fn sync_scene_stack_metadata(&self, scene: &mut Scene) {
@@ -4246,6 +4454,16 @@ struct WidgetGraph {
     order: Vec<WidgetId>,
     host_surface_order: HashMap<WidgetId, Vec<WidgetId>>,
     host_order_policy: HashMap<WidgetId, StackOrderPolicy>,
+    overlay_options: HashMap<WidgetId, OverlayOptions>,
+    overlay_parents: HashMap<WidgetId, Option<WidgetId>>,
+    overlay_surfaces: HashMap<WidgetId, Vec<WidgetId>>,
+}
+
+#[derive(Clone, Copy)]
+struct GraphCollectContext {
+    stack_host: WidgetId,
+    stack_surface: WidgetId,
+    overlay_owner: Option<WidgetId>,
 }
 
 impl WidgetGraph {
@@ -4256,6 +4474,9 @@ impl WidgetGraph {
             order: Vec::new(),
             host_surface_order: HashMap::new(),
             host_order_policy: HashMap::new(),
+            overlay_options: HashMap::new(),
+            overlay_parents: HashMap::new(),
+            overlay_surfaces: HashMap::new(),
         }
     }
 
@@ -4270,8 +4491,11 @@ impl WidgetGraph {
             None,
             focused_widget,
             paint_bounds_by_widget,
-            root.id(),
-            root.id(),
+            GraphCollectContext {
+                stack_host: root.id(),
+                stack_surface: root.id(),
+                overlay_owner: None,
+            },
         );
         graph.recompute_stack_surface_order();
         graph
@@ -4465,17 +4689,102 @@ impl WidgetGraph {
         }
     }
 
+    fn first_focusable_within(
+        &self,
+        overlay_owner: WidgetId,
+        include_owner: bool,
+    ) -> Option<WidgetId> {
+        self.order.iter().copied().find(|candidate| {
+            self.node(*candidate).is_some_and(|node| node.accepts_focus)
+                && (include_owner && *candidate == overlay_owner
+                    || self.is_ancestor_of(overlay_owner, *candidate))
+        })
+    }
+
+    fn next_focusable_within(
+        &self,
+        scope: WidgetId,
+        current: Option<WidgetId>,
+        backwards: bool,
+    ) -> Option<WidgetId> {
+        let focusable = self
+            .order
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                self.node(*candidate).is_some_and(|node| node.accepts_focus)
+                    && (*candidate == scope || self.is_ancestor_of(scope, *candidate))
+            })
+            .collect::<Vec<_>>();
+        if focusable.is_empty() {
+            return None;
+        }
+        let fallback = if backwards {
+            focusable.last().copied()
+        } else {
+            focusable.first().copied()
+        };
+        let Some(current) = current else {
+            return fallback;
+        };
+        let Some(index) = focusable.iter().position(|candidate| *candidate == current) else {
+            return fallback;
+        };
+        if backwards {
+            Some(focusable[(index + focusable.len() - 1) % focusable.len()])
+        } else {
+            Some(focusable[(index + 1) % focusable.len()])
+        }
+    }
+
+    fn overlay_snapshots(&self) -> Vec<OverlaySnapshot> {
+        self.order
+            .iter()
+            .copied()
+            .filter_map(|owner| {
+                let options = self.overlay_options.get(&owner).copied()?;
+                Some(OverlaySnapshot {
+                    owner,
+                    parent: self.overlay_parents.get(&owner).copied().flatten(),
+                    surfaces: self
+                        .overlay_surfaces
+                        .get(&owner)
+                        .cloned()
+                        .unwrap_or_default(),
+                    options,
+                    order: 0,
+                })
+            })
+            .enumerate()
+            .map(|(order, mut snapshot)| {
+                snapshot.order = order;
+                snapshot
+            })
+            .collect()
+    }
+
     fn collect(
         &mut self,
         pod: &WidgetPod,
         parent: Option<WidgetId>,
         focused_widget: Option<WidgetId>,
         paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
-        inherited_host: WidgetId,
-        inherited_surface: WidgetId,
+        context: GraphCollectContext,
     ) {
         let id = pod.id();
         self.order.push(id);
+
+        let overlay_options = pod.current_overlay_options();
+        let is_overlay_owner = overlay_options.is_some();
+        let overlay_owner = if is_overlay_owner {
+            Some(id)
+        } else {
+            context.overlay_owner
+        };
+        if let Some(options) = overlay_options {
+            self.overlay_options.insert(id, options);
+            self.overlay_parents.insert(id, context.overlay_owner);
+        }
 
         let host_options = if id == self.root {
             Some(pod.current_stack_host_options().unwrap_or_default())
@@ -4483,7 +4792,11 @@ impl WidgetGraph {
             pod.current_stack_host_options()
         };
         let is_stack_host = host_options.is_some();
-        let resolved_host = if is_stack_host { id } else { inherited_host };
+        let resolved_host = if is_stack_host {
+            id
+        } else {
+            context.stack_host
+        };
         let host_policy = host_options
             .map(|options| options.order_policy)
             .unwrap_or(StackOrderPolicy::Stable);
@@ -4502,22 +4815,26 @@ impl WidgetGraph {
         let surface_options = pod.current_stack_surface_options();
         let emits_layer = pod.current_layer_options().emits_layer();
         let is_direct_child_of_host = parent == Some(resolved_host);
-        let is_stack_surface =
-            emits_layer && (surface_options.is_some() || is_direct_child_of_host);
+        let is_stack_surface = id != self.root
+            && emits_layer
+            && (surface_options.is_some() || is_direct_child_of_host);
         let hit_test = surface_options.is_none_or(|options| options.hit_test);
         let resolved_surface = if is_stack_surface {
             id
         } else {
-            inherited_surface
+            context.stack_surface
         };
         let transient_owner_surface = surface_options
-            .filter(|options| emits_layer && options.transient && inherited_surface != id)
-            .map(|_| inherited_surface);
+            .filter(|options| emits_layer && options.transient && context.stack_surface != id)
+            .map(|_| context.stack_surface);
         if is_stack_surface {
             let surfaces = self.host_surface_order.entry(resolved_host).or_default();
             if !surfaces.contains(&id) {
                 surfaces.push(id);
             }
+        }
+        if is_stack_surface && let Some(owner) = overlay_owner {
+            self.overlay_surfaces.entry(owner).or_default().push(id);
         }
         let stack_surface_order = self
             .host_surface_order
@@ -4535,8 +4852,11 @@ impl WidgetGraph {
                 parent: id,
                 focused_widget,
                 paint_bounds_by_widget,
-                inherited_host: resolved_host,
-                inherited_surface: resolved_surface,
+                context: GraphCollectContext {
+                    stack_host: resolved_host,
+                    stack_surface: resolved_surface,
+                    overlay_owner,
+                },
                 children: Vec::new(),
             };
             pod.visit_children(&mut visitor);
@@ -4564,6 +4884,8 @@ impl WidgetGraph {
                 stack_surface: resolved_surface,
                 stack_surface_order,
                 transient_owner_surface,
+                overlay_owner,
+                is_overlay_owner,
                 is_stack_host,
                 is_stack_surface,
                 hit_test,
@@ -4584,6 +4906,9 @@ impl WidgetGraph {
             let mut tested_surfaces = HashSet::new();
             if let Some(ordered_surfaces) = self.host_surface_order.get(&node.id) {
                 for surface_id in ordered_surfaces.iter().rev().copied() {
+                    if surface_id == widget_id {
+                        continue;
+                    }
                     tested_surfaces.insert(surface_id);
                     if let Some(hit) = self.hit_test_node(surface_id, point) {
                         return Some(hit);
@@ -4620,8 +4945,7 @@ struct CollectChildrenVisitor<'a> {
     parent: WidgetId,
     focused_widget: Option<WidgetId>,
     paint_bounds_by_widget: &'a HashMap<WidgetId, Rect>,
-    inherited_host: WidgetId,
-    inherited_surface: WidgetId,
+    context: GraphCollectContext,
     children: Vec<WidgetId>,
 }
 
@@ -4633,8 +4957,7 @@ impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
             Some(self.parent),
             self.focused_widget,
             self.paint_bounds_by_widget,
-            self.inherited_host,
-            self.inherited_surface,
+            self.context,
         );
     }
 }
@@ -4975,11 +5298,12 @@ mod tests {
     use super::{
         Application, ArrangeCtx, Command, CommandController, CommandCtx, CommandKey, CommandTarget,
         EventCtx, EventPhase, FocusScope, FocusScopeState, FocusState, FrameSchedule, LayerOptions,
-        MeasureCtx, PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
-        SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
-        WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
-        WindowBuilder, WindowIcon, WindowRenderOptions, set_window_render_options,
-        set_window_scene_statistics_detail_mode, window_render_options,
+        MeasureCtx, OVERLAY_DISMISS_REQUEST, OverlayDismissReason, OverlayFocusBehavior,
+        OverlayKind, OverlayOptions, OverlayTraceKind, PaintBoundaryMode, PaintCtx, RenderOutput,
+        Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
+        WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
+        WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
+        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
@@ -5776,6 +6100,165 @@ mod tests {
 
     struct FocusTraversalRoot {
         children: WidgetChildren,
+    }
+
+    struct ManagedOverlayTestRoot {
+        open: Rc<RefCell<bool>>,
+        children: WidgetChildren,
+    }
+
+    impl ManagedOverlayTestRoot {
+        fn new(
+            open: Rc<RefCell<bool>>,
+            dismissals: Rc<RefCell<Vec<OverlayDismissReason>>>,
+        ) -> Self {
+            let mut overlay_children = WidgetChildren::with_capacity(2);
+            overlay_children.push(FocusLeaf {
+                counters: Rc::new(RefCell::new(Counters::default())),
+            });
+            overlay_children.push(FocusLeaf {
+                counters: Rc::new(RefCell::new(Counters::default())),
+            });
+
+            let mut children = WidgetChildren::with_capacity(2);
+            children.push(FocusLeaf {
+                counters: Rc::new(RefCell::new(Counters::default())),
+            });
+            children.push(ManagedOverlayTestWidget {
+                open: Rc::clone(&open),
+                dismissals,
+                children: overlay_children,
+            });
+            Self { open, children }
+        }
+    }
+
+    impl Widget for ManagedOverlayTestRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event
+                && custom.kind == "open-managed-overlay"
+            {
+                *self.open.borrow_mut() = true;
+                ctx.request_measure();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(360.0, 220.0));
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(100.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(160.0, 120.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                Rect::new(bounds.x() + 20.0, bounds.y() + 20.0, 100.0, 40.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                Rect::new(bounds.x() + 160.0, bounds.y() + 20.0, 160.0, 120.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.clear(Color::rgba(0.08, 0.09, 0.11, 1.0));
+            self.children.paint(ctx);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            ctx.push(SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::Window,
+                ctx.bounds(),
+            ));
+            self.children.semantics(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
+        }
+    }
+
+    struct ManagedOverlayTestWidget {
+        open: Rc<RefCell<bool>>,
+        dismissals: Rc<RefCell<Vec<OverlayDismissReason>>>,
+        children: WidgetChildren,
+    }
+
+    impl Widget for ManagedOverlayTestWidget {
+        fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+            let Some(request) = command.get(OVERLAY_DISMISS_REQUEST) else {
+                return;
+            };
+            self.dismissals.borrow_mut().push(request.reason);
+            *self.open.borrow_mut() = false;
+            ctx.request_measure();
+            ctx.request_semantics();
+            ctx.set_handled();
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let size = constraints.clamp(Size::new(160.0, 120.0));
+            self.children
+                .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            self.children
+                .measure_child(1, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+            size
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.children.arrange_child(
+                0,
+                ctx,
+                Rect::new(bounds.x() + 20.0, bounds.y() + 12.0, 120.0, 40.0),
+            );
+            self.children.arrange_child(
+                1,
+                ctx,
+                Rect::new(bounds.x() + 20.0, bounds.y() + 64.0, 120.0, 40.0),
+            );
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.children.paint(ctx);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            if *self.open.borrow() {
+                let mut node =
+                    SemanticsNode::new(ctx.widget_id(), SemanticsRole::Dialog, ctx.bounds());
+                node.name = Some("managed overlay".to_string());
+                ctx.push(node);
+            }
+            self.children.semantics(ctx);
+        }
+
+        fn overlay_options(&self) -> Option<OverlayOptions> {
+            (*self.open.borrow()).then_some(
+                OverlayOptions::new(OverlayKind::Dialog)
+                    .modal(true)
+                    .focus(OverlayFocusBehavior::CONTAINED),
+            )
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(visitor);
+        }
     }
 
     impl FocusTraversalRoot {
@@ -8206,6 +8689,126 @@ mod tests {
                 .find(|node| node.id == first_id)
                 .is_some_and(|node| node.focused)
         );
+    }
+
+    #[test]
+    fn managed_overlay_traps_restores_and_traces_focus_and_dismissal() {
+        let open = Rc::new(RefCell::new(false));
+        let dismissals = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Managed overlay").root(
+                ManagedOverlayTestRoot::new(Rc::clone(&open), Rc::clone(&dismissals)),
+            ))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .overlay_snapshot(window_id)
+                .unwrap()
+                .overlays
+                .is_empty()
+        );
+
+        let graph = runtime.widget_graph(window_id).unwrap();
+        let root_id = graph.nodes[0].id;
+        let background_id = graph
+            .nodes
+            .iter()
+            .find(|node| node.parent == Some(root_id) && node.accepts_focus)
+            .unwrap()
+            .id;
+        assert!(
+            initial
+                .semantics
+                .iter()
+                .any(|node| node.id == background_id)
+        );
+
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, background_id, SemanticsActionRequest::Focus,)
+                .unwrap()
+        );
+        assert_eq!(
+            runtime.focused_widget(window_id).unwrap(),
+            Some(background_id)
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Custom(CustomEvent::new("open-managed-overlay")),
+            )
+            .unwrap();
+        let opened = runtime.render(window_id).unwrap();
+        let snapshot = runtime.overlay_snapshot(window_id).unwrap();
+        assert_eq!(snapshot.overlays.len(), 1);
+        assert_eq!(snapshot.active_modal, Some(snapshot.overlays[0].owner));
+        assert_eq!(snapshot.focus_trap, Some(snapshot.overlays[0].owner));
+        assert!(!opened.semantics.iter().any(|node| node.id == background_id));
+        assert!(
+            opened
+                .semantics
+                .iter()
+                .any(|node| { node.id == snapshot.overlays[0].owner && node.state.modal })
+        );
+
+        let first_overlay_focus = runtime.focused_widget(window_id).unwrap().unwrap();
+        assert_ne!(first_overlay_focus, background_id);
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+            )
+            .unwrap();
+        let second_overlay_focus = runtime.focused_widget(window_id).unwrap().unwrap();
+        assert_ne!(second_overlay_focus, first_overlay_focus);
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.focused_widget(window_id).unwrap(),
+            Some(first_overlay_focus)
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Escape", KeyState::Pressed)),
+            )
+            .unwrap();
+        assert_eq!(
+            dismissals.borrow().as_slice(),
+            &[OverlayDismissReason::Escape]
+        );
+        let _ = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .overlay_snapshot(window_id)
+                .unwrap()
+                .overlays
+                .is_empty()
+        );
+        assert_eq!(
+            runtime.focused_widget(window_id).unwrap(),
+            Some(background_id)
+        );
+
+        let traces = runtime.take_overlay_traces(window_id).unwrap();
+        for expected in [
+            OverlayTraceKind::Opened,
+            OverlayTraceKind::FocusEntered,
+            OverlayTraceKind::DismissRequested,
+            OverlayTraceKind::Closed,
+            OverlayTraceKind::FocusRestored,
+        ] {
+            assert!(traces.iter().any(|trace| trace.kind == expected));
+        }
     }
 
     #[test]

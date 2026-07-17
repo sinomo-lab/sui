@@ -14,6 +14,7 @@ use crate::{
     Command, CommandDelivery, CommandKey, CommandSender, CommandTarget,
     command::{QueuedCommand, queued_command},
     diagnostics::{WidgetTimingPhase, record_widget_timing},
+    overlay::OverlayOptions,
 };
 
 use sui_core::{
@@ -87,6 +88,15 @@ pub trait Widget {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        None
+    }
+
+    /// Describe this widget as the logical owner of a presented overlay.
+    ///
+    /// The overlay's rendered surfaces may be retained descendants. Returning
+    /// options here lets the window runtime coordinate nesting, focus,
+    /// dismissal, modality, and diagnostics independently of paint ownership.
+    fn overlay_options(&self) -> Option<OverlayOptions> {
         None
     }
 
@@ -1299,6 +1309,10 @@ impl WidgetPod {
                 .unwrap_or(self.layout_state.arranged_bounds),
         )
         .with_properties(self.current_layer_properties())
+        .with_clip_to_ancestors(matches!(
+            options.composition_mode,
+            LayerCompositionMode::Normal
+        ))
         .with_composition_mode(options.composition_mode)
     }
 
@@ -1324,6 +1338,10 @@ impl WidgetPod {
 
     pub(crate) fn current_stack_surface_options(&self) -> Option<StackSurfaceOptions> {
         self.widget.stack_surface_options()
+    }
+
+    pub(crate) fn current_overlay_options(&self) -> Option<OverlayOptions> {
+        self.widget.overlay_options()
     }
 
     pub(crate) fn layer_composition_mode_for(

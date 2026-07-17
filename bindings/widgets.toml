@@ -1228,6 +1228,10 @@ classification = "bound"
 bindings = ["CommandGroup"]
 
 [[rust_widget]]
+name = "CommandPalette"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "ContextMenu"
 classification = "bound"
 bindings = ["ContextMenu"]
@@ -1368,9 +1372,17 @@ classification = "bound"
 bindings = ["Menu"]
 
 [[rust_widget]]
+name = "NotificationHost"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "NumberInput"
 classification = "bound"
 bindings = ["NumberInput"]
+
+[[rust_widget]]
+name = "OverlayHost"
+classification = "rust-only"
 
 [[rust_widget]]
 name = "Padding"

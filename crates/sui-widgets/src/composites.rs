@@ -3,13 +3,14 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path,
     PathBuilder, Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Transform, Vector, WakeEvent,
-    WidgetId,
+    SemanticsPopupKind, SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Transform,
+    Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_reactive::{Observable, Signal};
 use sui_runtime::{
-    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
+    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, OVERLAY_DISMISS_REQUEST,
+    OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind, OverlayOptions, PaintBoundaryMode,
     PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
@@ -24,6 +25,9 @@ use crate::{
     MotionScalar, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeTextToken,
     WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
     controls::{apply_hdr_policy_cap, cap_resolved_hdr_style, draw_icon_glyph},
+    overlay::{
+        OverlayAlignment, OverlayPlacement, OverlayPlacementRequest, OverlaySide, place_overlay,
+    },
     paint_theme_shadow, resolve_widget_hdr_style,
     text_align::{paint_aligned_text, paint_single_line_aligned_text},
 };
@@ -11556,23 +11560,39 @@ fn tooltip_bubble_rect(
     theme: &DefaultTheme,
     placement: TooltipPlacement,
     alignment: TooltipAlignment,
-) -> Rect {
+    viewport: Rect,
+) -> (Rect, TooltipPlacement) {
     let measurement = measurement.unwrap_or_else(|| tooltip_fallback_measurement(theme));
     let padding = theme.metrics.tooltip_padding;
     let width =
         (measurement.width + padding.left + padding.right).max(theme.metrics.tooltip_min_width);
     let height =
         measurement.height.max(theme.typography.body_line_height) + padding.top + padding.bottom;
-    let x = match alignment {
-        TooltipAlignment::Start => trigger_bounds.x(),
-        TooltipAlignment::Center => trigger_bounds.x() + ((trigger_bounds.width() - width) * 0.5),
-        TooltipAlignment::End => trigger_bounds.max_x() - width,
+    let side = match placement {
+        TooltipPlacement::Above => OverlaySide::Top,
+        TooltipPlacement::Below => OverlaySide::Bottom,
     };
-    let y = match placement {
-        TooltipPlacement::Above => trigger_bounds.y() - height - theme.metrics.tooltip_gap,
-        TooltipPlacement::Below => trigger_bounds.max_y() + theme.metrics.tooltip_gap,
+    let alignment = match alignment {
+        TooltipAlignment::Start => OverlayAlignment::Start,
+        TooltipAlignment::Center => OverlayAlignment::Center,
+        TooltipAlignment::End => OverlayAlignment::End,
     };
-    Rect::new(x, y, width, height)
+    let result = place_overlay(
+        &OverlayPlacementRequest::new(
+            trigger_bounds,
+            Size::new(width, height),
+            viewport,
+            OverlayPlacement::new(side, alignment),
+        )
+        .gap(theme.metrics.tooltip_gap)
+        .margin(theme.metrics.tooltip_gap.max(4.0)),
+    );
+    let resolved = if result.placement.side == OverlaySide::Top {
+        TooltipPlacement::Above
+    } else {
+        TooltipPlacement::Below
+    };
+    (result.bounds, resolved)
 }
 
 #[derive(Debug, Clone)]
@@ -11580,6 +11600,7 @@ struct TooltipPresentationState {
     theme: DefaultTheme,
     text: String,
     placement: TooltipPlacement,
+    resolved_placement: TooltipPlacement,
     alignment: TooltipAlignment,
     measurement: Option<TextMeasurement>,
     hovered: bool,
@@ -11594,6 +11615,7 @@ impl TooltipPresentationState {
             theme: DefaultTheme::default(),
             text,
             placement: TooltipPlacement::Above,
+            resolved_placement: TooltipPlacement::Above,
             alignment: TooltipAlignment::Center,
             measurement: None,
             hovered: false,
@@ -11608,7 +11630,7 @@ impl TooltipPresentationState {
     }
 
     fn layer_properties(&self) -> LayerProperties {
-        let direction = match self.placement {
+        let direction = match self.resolved_placement {
             TooltipPlacement::Above => -1.0,
             TooltipPlacement::Below => 1.0,
         };
@@ -11669,7 +11691,7 @@ impl Widget for TooltipOverlay {
             state.theme.surfaces.tooltip_border,
             None,
         );
-        let tail = tooltip_tail(state.trigger_bounds, bubble, state.placement);
+        let tail = tooltip_tail(state.trigger_bounds, bubble, state.resolved_placement);
         ctx.fill(tail, state.theme.surfaces.tooltip);
         let text_style = text_token_style(
             &state.theme,
@@ -11838,13 +11860,17 @@ impl Widget for Tooltip {
 
         let mut state = self.state.borrow_mut();
         state.trigger_bounds = trigger_bounds;
-        state.bubble_bounds = tooltip_bubble_rect(
+        let viewport = Rect::from_origin_size(Point::ZERO, ctx.dpi().viewport);
+        let (bubble_bounds, resolved_placement) = tooltip_bubble_rect(
             trigger_bounds,
             state.measurement,
             &state.theme,
             state.placement,
             state.alignment,
+            viewport,
         );
+        state.bubble_bounds = bubble_bounds;
+        state.resolved_placement = resolved_placement;
         let overlay_bounds = if state.is_presented() {
             state.bubble_bounds
         } else {
@@ -11857,6 +11883,14 @@ impl Widget for Tooltip {
     fn paint(&self, ctx: &mut PaintCtx) {
         self.child.paint(ctx);
         self.overlay.paint(ctx);
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        self.state.borrow().is_presented().then_some(
+            OverlayOptions::new(OverlayKind::Tooltip)
+                .dismiss(OverlayDismissPolicy::NONE)
+                .focus(OverlayFocusBehavior::NONE),
+        )
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -12357,6 +12391,13 @@ impl Popover {
 }
 
 impl Widget for Popover {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.open {
+            self.set_open(ctx, false);
+            ctx.set_handled();
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer)
@@ -12509,30 +12550,25 @@ impl Widget for Popover {
         let presented = self.state.borrow().is_presented();
         let surface_bounds = if presented {
             let surface_size = self.surface.child().measured_size();
-            let viewport = ctx.dpi().viewport;
+            let viewport = Rect::from_origin_size(Point::ZERO, ctx.dpi().viewport);
             let margin = self.gap.max(4.0);
             let width = surface_size.width.max(trigger_size.width);
-            let mut x = aligned_x(width);
-            if viewport.width > 0.0 {
-                let max_x = (viewport.width - margin - width).max(margin);
-                x = x.clamp(margin, max_x);
-            }
-
-            let below_y = trigger_bounds.max_y() + self.gap;
-            let above_y = trigger_bounds.y() - self.gap - surface_size.height;
-            let mut y = below_y;
-            if viewport.height > 0.0
-                && below_y + surface_size.height > viewport.height - margin
-                && above_y >= margin
-            {
-                y = above_y;
-            }
-            if viewport.height > 0.0 {
-                let max_y = (viewport.height - margin - surface_size.height).max(margin);
-                y = y.clamp(margin, max_y);
-            }
-
-            Rect::new(x, y, width, surface_size.height)
+            let alignment = match self.alignment {
+                PopoverAlignment::Start => OverlayAlignment::Start,
+                PopoverAlignment::End => OverlayAlignment::End,
+            };
+            place_overlay(
+                &OverlayPlacementRequest::new(
+                    trigger_bounds,
+                    Size::new(width, surface_size.height),
+                    viewport,
+                    OverlayPlacement::new(OverlaySide::Bottom, alignment),
+                )
+                .fallbacks([OverlayPlacement::new(OverlaySide::Top, alignment)])
+                .gap(self.gap)
+                .margin(margin),
+            )
+            .bounds
         } else {
             Rect::from_origin_size(trigger_bounds.origin, Size::ZERO)
         };
@@ -12554,6 +12590,7 @@ impl Widget for Popover {
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
         node.state.expanded = Some(self.open);
+        node.popup = Some(SemanticsPopupKind::Dialog);
         node.actions = vec![
             SemanticsAction::Focus,
             SemanticsAction::Expand,
@@ -12568,6 +12605,18 @@ impl Widget for Popover {
 
     fn accepts_focus(&self) -> bool {
         true
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        (self.open || self.state.borrow().is_presented()).then_some(
+            OverlayOptions::new(OverlayKind::Popover)
+                .dismiss(if self.open {
+                    OverlayDismissPolicy::TRANSIENT
+                } else {
+                    OverlayDismissPolicy::NONE
+                })
+                .focus(OverlayFocusBehavior::NONE),
+        )
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -13293,6 +13342,13 @@ impl ContextMenu {
 }
 
 impl Widget for ContextMenu {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.open {
+            self.set_open(ctx, false);
+            ctx.set_handled();
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move && self.open => {
@@ -13448,7 +13504,6 @@ impl Widget for ContextMenu {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let trigger_size = self.trigger.measure(ctx, constraints.loosen());
-        let mut size = trigger_size;
         if self.open {
             let theme = self.resolved_theme();
             let pointer_anchored = self.open_position.is_some();
@@ -13458,11 +13513,7 @@ impl Widget for ContextMenu {
                 self.measured_menu_width(ctx).max(trigger_size.width)
             };
             let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
-            let gap = theme.metrics.popover_gap;
-            self.frame_rect = match self.open_position {
-                Some(position) => Rect::new(position.x, position.y, width, height),
-                None => Rect::new(0.0, trigger_size.height + gap, width, height),
-            };
+            self.frame_rect = Rect::from_origin_size(Point::ZERO, Size::new(width, height));
             {
                 let mut state = self.surface_state.borrow_mut();
                 state.theme = theme;
@@ -13480,16 +13531,10 @@ impl Widget for ContextMenu {
                 .measure(ctx, Constraints::tight(self.frame_rect.size));
             self.focus_surface
                 .measure(ctx, Constraints::tight(self.frame_rect.size));
-            if !pointer_anchored {
-                size = Size::new(
-                    width.max(trigger_size.width),
-                    trigger_size.height + gap + height,
-                );
-            }
         } else {
             self.frame_rect = Rect::ZERO;
         }
-        constraints.clamp(size)
+        constraints.clamp(trigger_size)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -13497,19 +13542,40 @@ impl Widget for ContextMenu {
             ctx,
             Rect::from_origin_size(bounds.origin, self.trigger.child().measured_size()),
         );
-        if self.open && self.open_position.is_some() {
-            // Pointer-anchored menus stay inside the trigger bounds instead of
-            // spilling past the window edge.
-            let size = self.frame_rect.size;
-            let max_x = (bounds.width() - size.width).max(0.0);
-            let max_y = (bounds.height() - size.height).max(0.0);
-            self.frame_rect = Rect::from_origin_size(
-                Point::new(
-                    self.frame_rect.x().clamp(0.0, max_x),
-                    self.frame_rect.y().clamp(0.0, max_y),
-                ),
-                size,
+        if self.open {
+            let theme = self.resolved_theme();
+            let anchor = self.open_position.map_or_else(
+                || self.trigger.child().bounds(),
+                |position| {
+                    Rect::from_origin_size(
+                        Point::new(bounds.x() + position.x, bounds.y() + position.y),
+                        Size::ZERO,
+                    )
+                },
             );
+            let viewport = Rect::from_origin_size(Point::ZERO, ctx.dpi().viewport);
+            let result = place_overlay(
+                &OverlayPlacementRequest::new(
+                    anchor,
+                    self.frame_rect.size,
+                    viewport,
+                    OverlayPlacement::BOTTOM_START,
+                )
+                .fallbacks([
+                    OverlayPlacement::TOP_START,
+                    OverlayPlacement::RIGHT_START,
+                    OverlayPlacement::LEFT_START,
+                ])
+                .gap(if self.open_position.is_some() {
+                    0.0
+                } else {
+                    theme.metrics.popover_gap
+                })
+                .margin(theme.metrics.popover_gap.max(4.0)),
+            );
+            self.frame_rect = result
+                .bounds
+                .translate(Vector::new(-bounds.x(), -bounds.y()));
         }
         self.sync_surface_state(bounds);
         let state = self.surface_state.borrow();
@@ -13537,6 +13603,7 @@ impl Widget for ContextMenu {
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
         node.state.expanded = Some(self.open);
+        node.popup = Some(SemanticsPopupKind::Menu);
         node.value = self
             .highlighted
             .and_then(|index| self.items.get(index))
@@ -13567,6 +13634,18 @@ impl Widget for ContextMenu {
 
     fn accepts_focus(&self) -> bool {
         true
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        (self.open || self.surface_state.borrow().is_presented()).then_some(
+            OverlayOptions::new(OverlayKind::Menu)
+                .dismiss(if self.open {
+                    OverlayDismissPolicy::TRANSIENT
+                } else {
+                    OverlayDismissPolicy::NONE
+                })
+                .focus(OverlayFocusBehavior::NONE),
+        )
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -13609,6 +13688,85 @@ impl Widget for ContextMenu {
     }
 }
 
+#[derive(Debug, Clone)]
+struct DialogFocusState {
+    theme: DefaultTheme,
+    frame: Rect,
+    shown: bool,
+    animation: AnimatedScalar,
+}
+
+impl DialogFocusState {
+    fn new() -> Self {
+        Self {
+            theme: DefaultTheme::default(),
+            frame: Rect::ZERO,
+            shown: false,
+            animation: AnimatedScalar::new(0.0),
+        }
+    }
+}
+
+struct DialogFocusSurface {
+    state: Rc<RefCell<DialogFocusState>>,
+}
+
+impl DialogFocusSurface {
+    fn new(state: Rc<RefCell<DialogFocusState>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Widget for DialogFocusSurface {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
+        let state = self.state.borrow();
+        if state.shown {
+            state.frame.size
+        } else {
+            Size::ZERO
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let state = self.state.borrow();
+        if !state.shown || !state.animation.is_presented() {
+            return;
+        }
+        let progress = state.animation.value;
+        if progress <= AnimatedScalar::EPSILON {
+            return;
+        }
+        let metrics = state.theme.metrics;
+        draw_focus_ring_frame(
+            ctx,
+            ctx.bounds(),
+            metrics.corner_radius + 3.0,
+            metrics,
+            state
+                .theme
+                .palette
+                .focus_ring
+                .with_alpha(state.theme.palette.focus_ring.alpha * progress),
+        );
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        let state = self.state.borrow();
+        (state.shown && state.animation.is_presented()).then_some(StackSurfaceOptions {
+            transient: true,
+            hit_test: false,
+            ..StackSurfaceOptions::default()
+        })
+    }
+}
+
 pub struct Dialog {
     theme: Box<DefaultTheme>,
     title: String,
@@ -13625,8 +13783,11 @@ pub struct Dialog {
     description_measurement: Option<TextMeasurement>,
     reveal: AnimatedScalar,
     focus_animation: AnimatedScalar,
+    focus_state: Rc<RefCell<DialogFocusState>>,
+    focus_surface: SingleChild,
     entrance_started: bool,
     on_dismiss: Option<Box<dyn FnMut()>>,
+    overlay_kind: OverlayKind,
 }
 
 impl Dialog {
@@ -13634,6 +13795,7 @@ impl Dialog {
     where
         W: Widget + 'static,
     {
+        let focus_state = Rc::new(RefCell::new(DialogFocusState::new()));
         Self {
             theme: Box::new(DefaultTheme::default()),
             title: title.into(),
@@ -13650,8 +13812,11 @@ impl Dialog {
             description_measurement: None,
             reveal: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            focus_surface: SingleChild::new(DialogFocusSurface::new(Rc::clone(&focus_state))),
+            focus_state,
             entrance_started: false,
             on_dismiss: None,
+            overlay_kind: OverlayKind::Dialog,
         }
     }
 
@@ -13671,6 +13836,9 @@ impl Dialog {
             self.reveal = AnimatedScalar::new(0.0);
             self.focus_animation = AnimatedScalar::new(0.0);
             self.entrance_started = false;
+            let mut focus = self.focus_state.borrow_mut();
+            focus.shown = false;
+            focus.animation = AnimatedScalar::new(0.0);
         }
         self
     }
@@ -13760,6 +13928,14 @@ impl Dialog {
 }
 
 impl Widget for Dialog {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.shown {
+            self.dismiss();
+            ctx.request_semantics();
+            ctx.set_handled();
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if !self.shown {
             return;
@@ -13776,9 +13952,22 @@ impl Widget for Dialog {
                     }
                 }
                 let previous_focus = self.focus_animation.value;
+                let was_focus_presented = self.focus_animation.is_presented();
                 let focus_animating = self.focus_animation.advance(*time);
                 if self.focus_animation.changed_since(previous_focus) {
-                    ctx.request_paint();
+                    self.focus_state.borrow_mut().animation = self.focus_animation;
+                    request_child_invalidation(
+                        ctx,
+                        self.focus_surface.child().id(),
+                        InvalidationKind::Paint,
+                    );
+                }
+                if was_focus_presented != self.focus_animation.is_presented() {
+                    request_child_invalidation(
+                        ctx,
+                        self.focus_surface.child().id(),
+                        InvalidationKind::Visibility,
+                    );
                 }
                 if animating || focus_animating {
                     ctx.request_animation_frame();
@@ -13832,6 +14021,10 @@ impl Widget for Dialog {
             self.reveal = AnimatedScalar::new(0.0);
             self.focus_animation = AnimatedScalar::new(0.0);
             self.entrance_started = false;
+            let mut focus = self.focus_state.borrow_mut();
+            focus.shown = false;
+            focus.frame = Rect::ZERO;
+            focus.animation = AnimatedScalar::new(0.0);
             return Size::ZERO;
         }
         self.ensure_entrance_started(ctx);
@@ -13915,6 +14108,15 @@ impl Widget for Dialog {
         let dialog_y = ((viewport.height - dialog_height) * 0.5).max(outer_margin);
         self.dialog_frame = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
         self.body_frame = Rect::new(padding.left, body_top, body_size.width, body_size.height);
+        {
+            let mut focus = self.focus_state.borrow_mut();
+            focus.theme = *self.theme;
+            focus.shown = true;
+            focus.frame = self.dialog_frame;
+            focus.animation = self.focus_animation;
+        }
+        self.focus_surface
+            .measure(ctx, Constraints::tight(self.dialog_frame.size));
 
         viewport
     }
@@ -13925,6 +14127,8 @@ impl Widget for Dialog {
         }
 
         let dialog = self.dialog_frame.translate(bounds.origin.to_vector());
+        self.focus_state.borrow_mut().frame = dialog;
+        self.focus_surface.arrange(ctx, dialog);
         self.body.arrange(
             ctx,
             Rect::new(
@@ -13991,11 +14195,7 @@ impl Widget for Dialog {
             metrics,
             palette.surface_raised,
             palette.border,
-            (self.focus_animation.value > AnimatedScalar::EPSILON).then_some(
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
-            ),
+            None,
         );
 
         let title_style = self.title_style();
@@ -14046,6 +14246,7 @@ impl Widget for Dialog {
         for button in self.actions.as_slice() {
             button.paint(ctx);
         }
+        self.focus_surface.paint(ctx);
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -14082,6 +14283,18 @@ impl Widget for Dialog {
         })
     }
 
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        self.shown.then_some(
+            OverlayOptions::new(self.overlay_kind)
+                .modal(self.modal)
+                .dismiss(OverlayDismissPolicy {
+                    escape: true,
+                    outside_pointer: self.dismiss_on_scrim,
+                })
+                .focus(OverlayFocusBehavior::CONTAINED),
+        )
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         if !self.shown {
             return;
@@ -14093,6 +14306,7 @@ impl Widget for Dialog {
         node.description = self.description.clone();
         node.state.focused = ctx.is_focused();
         node.state.expanded = Some(self.shown);
+        node.state.modal = self.modal;
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::Collapse];
         ctx.push(node);
         self.body.semantics(ctx);
@@ -14106,13 +14320,26 @@ impl Widget for Dialog {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let was_presented = self.focus_animation.is_presented();
         set_focus_animation_target(
             &mut self.focus_animation,
             focused as u8 as f32,
             &self.theme,
             ctx,
         );
-        ctx.request_paint();
+        self.focus_state.borrow_mut().animation = self.focus_animation;
+        request_child_invalidation(
+            ctx,
+            self.focus_surface.child().id(),
+            InvalidationKind::Paint,
+        );
+        if was_presented != self.focus_animation.is_presented() {
+            request_child_invalidation(
+                ctx,
+                self.focus_surface.child().id(),
+                InvalidationKind::Visibility,
+            );
+        }
         ctx.request_semantics();
     }
 
@@ -14120,6 +14347,7 @@ impl Widget for Dialog {
         if self.shown {
             self.body.visit_children(visitor);
             self.actions.visit_children(visitor);
+            self.focus_surface.visit_children(visitor);
         }
     }
 
@@ -14127,7 +14355,114 @@ impl Widget for Dialog {
         if self.shown {
             self.body.visit_children_mut(visitor);
             self.actions.visit_children_mut(visitor);
+            self.focus_surface.visit_children_mut(visitor);
         }
+    }
+}
+
+/// Modal presentation shell for application command search and execution.
+///
+/// Query state, ranking, and command execution remain application policies;
+/// this shell supplies the shared overlay lifecycle and desktop interaction
+/// behavior.
+pub struct CommandPalette {
+    inner: Dialog,
+}
+
+impl CommandPalette {
+    pub fn new<W>(name: impl Into<String>, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let mut inner = Dialog::new(name, content).dismiss_on_scrim(true);
+        inner.overlay_kind = OverlayKind::CommandPalette;
+        Self { inner }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.inner = self.inner.theme(theme);
+        self
+    }
+
+    pub fn shown(mut self, shown: bool) -> Self {
+        self.inner = self.inner.shown(shown);
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.inner = self.inner.description(description);
+        self
+    }
+
+    pub fn max_width(mut self, max_width: f32) -> Self {
+        self.inner = self.inner.max_width(max_width);
+        self
+    }
+
+    pub fn on_dismiss<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.inner = self.inner.on_dismiss(on_dismiss);
+        self
+    }
+}
+
+impl Widget for CommandPalette {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        self.inner.command(ctx, command);
+    }
+
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.inner.event(ctx, event);
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        self.inner.layer_options()
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        self.inner.layer_properties()
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.inner.stack_surface_options()
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        self.inner.overlay_options()
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.inner.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.inner.visit_children_mut(visitor);
     }
 }
 
@@ -14500,6 +14835,13 @@ impl SideSheet {
 }
 
 impl Widget for SideSheet {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.is_shown() {
+            self.dismiss(ctx);
+            ctx.set_handled();
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if let Some(state) = &self.state {
             self.shown = state.is_shown();
@@ -14844,6 +15186,25 @@ impl Widget for SideSheet {
         }
     }
 
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.shown.then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        self.is_shown().then_some(
+            OverlayOptions::new(OverlayKind::Sheet)
+                .modal(self.modal)
+                .dismiss(OverlayDismissPolicy {
+                    escape: true,
+                    outside_pointer: self.dismiss_on_scrim,
+                })
+                .focus(OverlayFocusBehavior::CONTAINED),
+        )
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         if !self.shown {
             return;
@@ -14857,6 +15218,7 @@ impl Widget for SideSheet {
         node.description = self.description.clone();
         node.state.focused = ctx.is_focused();
         node.state.expanded = Some(true);
+        node.state.modal = self.modal;
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::Collapse];
         ctx.push(node);
         self.body.semantics(ctx);
@@ -15004,6 +15366,10 @@ impl BottomSheet {
 }
 
 impl Widget for BottomSheet {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        self.inner.command(ctx, command);
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.inner.event(ctx, event);
     }
@@ -15034,6 +15400,10 @@ impl Widget for BottomSheet {
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
         self.inner.stack_surface_options()
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        self.inner.overlay_options()
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -16533,7 +16903,7 @@ mod tests {
                 .on_dismiss(move || on_dismiss.set(on_dismiss.get() + 1)),
         );
         let initial = runtime.render(window_id).unwrap();
-        let sheet_id = initial
+        let _sheet_id = initial
             .semantics
             .iter()
             .find(|node| node.role == SemanticsRole::Dialog)
@@ -16550,7 +16920,7 @@ mod tests {
 
         runtime.tick(1.0);
         handle_ready_events(&mut runtime).unwrap();
-        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(sheet_id));
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(child_id));
 
         assert!(
             runtime
@@ -21529,9 +21899,14 @@ mod tests {
         // Dropdown anchoring keeps the row geometry derivable from the
         // trigger bounds; pointer anchoring is covered separately.
         let (mut runtime, window_id) = build_runtime(
-            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
-                .anchor_to_pointer(false)
-                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+            crate::SizedBox::new()
+                .width(320.0)
+                .height(180.0)
+                .with_child(
+                    ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                        .anchor_to_pointer(false)
+                        .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+                ),
         );
 
         let closed = runtime
@@ -21558,14 +21933,19 @@ mod tests {
         let output = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
-        let context = output
+        let _context = output
             .semantics
             .iter()
             .find(|node| node.role == SemanticsRole::ContextMenu)
             .expect("context menu semantics present");
-        assert!(output.semantics.iter().any(|node| {
-            node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
-        }));
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
+            })
+            .expect("rename menu item semantics present")
+            .bounds;
         let text = text_run_for(&output, "Rename");
         let layout = TextSystem::new()
             .shape_text_run(&text, &FontRegistry::new())
@@ -21576,12 +21956,7 @@ mod tests {
             .expect("context menu item text should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
-        let theme = DefaultTheme::default();
-        let padding = theme.metrics.menu_padding;
-        let gap = theme.metrics.popover_gap;
-        let menu_height = context.bounds.height() - trigger.height() - gap;
-        let row_height = (menu_height - padding.top - padding.bottom) / 2.0;
-        let row_center = trigger.max_y() + gap + padding.top + (row_height * 0.5);
+        let row_center = row.y() + row.height() * 0.5;
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
         Ok(())
@@ -21832,9 +22207,14 @@ mod tests {
     fn context_menu_shortcut_aligns_to_trailing_edge() -> Result<(), String> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
-            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
-                .anchor_to_pointer(false)
-                .items([MenuItem::new("Rename").shortcut("F2")]),
+            crate::SizedBox::new()
+                .width(320.0)
+                .height(180.0)
+                .with_child(
+                    ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                        .anchor_to_pointer(false)
+                        .items([MenuItem::new("Rename").shortcut("F2")]),
+                ),
         );
 
         let closed = runtime
@@ -21876,7 +22256,11 @@ mod tests {
         let shortcut_edge = row.max_x() - theme.metrics.menu_item_padding.right;
 
         assert_eq!(shortcut.style.color, theme.placeholder_text_style().color);
-        assert!((label_clip.max_x() - label_edge).abs() < 0.75);
+        assert!(
+            (label_clip.max_x() - label_edge).abs() < 0.75,
+            "label clip {:?} should end at {label_edge}; row={row:?}",
+            label_clip
+        );
         assert!((shortcut.rect.max_x() - shortcut_edge).abs() < 0.75);
         assert!((text_run_visual_center(&shortcut) - (row.y() + row.height() * 0.5)).abs() < 0.75);
         Ok(())
@@ -21890,9 +22274,14 @@ mod tests {
         theme.metrics.menu_row_height = 64.0;
         let metrics = theme.metrics;
         let (mut runtime, window_id) = build_runtime(
-            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
-                .theme(theme)
-                .items([MenuItem::new("Rename").shortcut("F2")]),
+            crate::SizedBox::new()
+                .width(320.0)
+                .height(180.0)
+                .with_child(
+                    ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                        .theme(theme)
+                        .items([MenuItem::new("Rename").shortcut("F2")]),
+                ),
         );
 
         let closed = runtime
@@ -22467,14 +22856,18 @@ mod tests {
     #[test]
     fn tooltip_end_alignment_keeps_bubble_inside_trailing_trigger_edge() -> Result<(), String> {
         let tooltip_text = "Enter sends · Shift+Enter newline";
-        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
-            16.0,
-            crate::Tooltip::new(
-                tooltip_text,
-                crate::Button::new("Send message").min_width(32.0),
-            )
-            .alignment(super::TooltipAlignment::End),
-        ));
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 160.0))
+                .with_child(crate::Padding::all(
+                    16.0,
+                    crate::Tooltip::new(
+                        tooltip_text,
+                        crate::Button::new("Send message").min_width(32.0),
+                    )
+                    .alignment(super::TooltipAlignment::End),
+                )),
+        );
 
         let initial = runtime
             .render(window_id)
@@ -22520,14 +22913,18 @@ mod tests {
     fn tooltip_text_visual_center_matches_padded_bubble_center() -> Result<(), String> {
         let theme = DefaultTheme::default();
         let tooltip_text = "Quick access to common commands";
-        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
-            16.0,
-            crate::Tooltip::new(
-                tooltip_text,
-                crate::Button::new("Hover for shortcuts").min_width(180.0),
-            )
-            .theme(theme),
-        ));
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 160.0))
+                .with_child(crate::Padding::all(
+                    16.0,
+                    crate::Tooltip::new(
+                        tooltip_text,
+                        crate::Button::new("Hover for shortcuts").min_width(180.0),
+                    )
+                    .theme(theme),
+                )),
+        );
 
         let initial = runtime
             .render(window_id)
@@ -22584,14 +22981,18 @@ mod tests {
         };
         theme.sync_derived_fields();
         let tooltip_text = "Quick commands";
-        let (mut runtime, window_id) = build_runtime(crate::Padding::all(
-            16.0,
-            crate::Tooltip::new(
-                tooltip_text,
-                crate::Button::new("Hover for shortcuts").min_width(180.0),
-            )
-            .theme(theme),
-        ));
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(360.0, 160.0))
+                .with_child(crate::Padding::all(
+                    16.0,
+                    crate::Tooltip::new(
+                        tooltip_text,
+                        crate::Button::new("Hover for shortcuts").min_width(180.0),
+                    )
+                    .theme(theme),
+                )),
+        );
 
         let initial = runtime
             .render(window_id)

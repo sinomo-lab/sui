@@ -1,7 +1,7 @@
 # Widgets and Layout
 
 [Previous: getting started](getting-started.md) · [API guide](README.md) ·
-[Next: virtual collections](virtual-collections.md)
+[Next: overlays and desktop interaction](overlays-and-desktop.md)
 
 SUI widgets are retained Rust values. A window owns one root widget, container
 widgets own child `WidgetPod`s, and the runtime revisits that tree for events,
@@ -19,7 +19,7 @@ families to learn rather than an exhaustive symbol inventory.
 | Text and numeric input | `TextInput`, `PasswordInput`, `DateTimeInput`, `TextArea`, `NumberInput`, `SpinBox`, `Slider` | Editable values and ranges |
 | Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Background` | Size and position ordinary widget trees |
 | Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `AdaptiveView`, `ResponsiveSidebar`, `MasterDetail` | Overflow, panes, and adaptive workspace structure |
-| Overlays and shells | `Dialog`, `Modal`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet`, `BottomSheet` | Transient or elevated interface layers |
+| Overlays and shells | `Dialog`, `Modal`, `CommandPalette`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet`, `BottomSheet` | Managed transient or elevated interface layers |
 | Data and navigation | `ListView`, `VirtualList`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`, `Tabs` | Collections and navigation state |
 | Creative tools | `Canvas`, `PixelCanvas`, `ColorPicker`, `LayerList`, `BrushPreview` | Editor-style and graphics interfaces |
 

@@ -579,6 +579,9 @@ impl RetainedCompositorState {
                     );
 
                     let mut child_state = state.clone();
+                    if !layer.descriptor.clip_to_ancestors {
+                        child_state.clip_stack.clear();
+                    }
                     child_state.effect_node = self.push_effect_node(
                         Some(state.effect_node),
                         layer.descriptor.composition_mode,
@@ -2200,6 +2203,70 @@ mod tests {
         assert!(
             !clips.contains(&bounds),
             "stack surfaces should not clip popovers to layout bounds; clips={clips:?}"
+        );
+    }
+
+    #[test]
+    fn overlay_layers_escape_ancestor_clips_but_keep_their_own_paint_clip() {
+        let layer_id = WidgetId::new(64);
+        let ancestor_clip = Rect::new(20.0, 20.0, 48.0, 36.0);
+        let paint_bounds = Rect::new(8.0, 8.0, 112.0, 72.0);
+        let descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(28.0, 28.0, 40.0, 24.0),
+        )
+        .with_content_bounds(paint_bounds)
+        .with_paint_bounds(paint_bounds)
+        .with_is_stack_surface(true)
+        .with_clip_to_ancestors(false)
+        .with_composition_mode(LayerCompositionMode::Overlay);
+
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillRect {
+            rect: paint_bounds,
+            brush: Color::rgba(0.28, 0.64, 0.88, 1.0).into(),
+        });
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::PushClip {
+            rect: ancestor_clip,
+        });
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+        scene.push(SceneCommand::PopClip);
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(27),
+            viewport: Size::new(128.0, 88.0),
+            surface_size: Size::new(128.0, 88.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Content,
+                descriptor,
+            )],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let clips = layer_clip_rects(&compositor, layer_id);
+
+        assert!(
+            clips.contains(&paint_bounds),
+            "overlay paint clip missing: {clips:?}"
+        );
+        assert!(
+            !clips.contains(&ancestor_clip),
+            "overlay should not inherit ancestor clip: {clips:?}"
         );
     }
 

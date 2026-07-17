@@ -3,6 +3,7 @@ use crate::{
     ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeColorScheme, WidgetColorRole,
     WidgetLuminanceRole, WidgetMaterialRole,
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
+    overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionOwnerId, SelectionScope},
     text_align::{
@@ -17,14 +18,15 @@ use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
-    SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsTextRange,
-    SemanticsValue, Size, TimerToken, ToggleState, Vector, WakeEvent, WidgetId,
+    SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsPopupKind, SemanticsRole,
+    SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState, Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
 use sui_reactive::Observable;
 use sui_runtime::{
-    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
+    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, OVERLAY_DISMISS_REQUEST,
+    OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind, OverlayOptions, PaintBoundaryMode,
     PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor,
     WidgetPodVisitor,
 };
@@ -7230,49 +7232,42 @@ impl Select {
             .min(self.resolved_theme().metrics.select_menu_max_height)
     }
 
-    fn menu_placement(&self, bounds: Rect, viewport: Size) -> SelectMenuPlacement {
-        if !viewport.height.is_finite() || viewport.height <= 0.0 {
-            return SelectMenuPlacement::Below;
-        }
-
+    fn menu_layout(&self, bounds: Rect, viewport: Size) -> (SelectMenuPlacement, Rect) {
         let theme = self.resolved_theme();
-        let menu_height = self.menu_height();
-        let below_space = (viewport.height - bounds.max_y()).max(0.0);
-        let above_space = bounds.y().max(0.0);
-        let comfortable_below =
-            menu_height + theme.metrics.select_menu_gap + theme.metrics.select_menu_edge_padding;
-
-        if below_space < comfortable_below && above_space > below_space {
+        let viewport = if viewport.width.is_finite()
+            && viewport.height.is_finite()
+            && viewport.width > 0.0
+            && viewport.height > 0.0
+        {
+            Rect::from_origin_size(Point::ZERO, viewport)
+        } else {
+            Rect::new(0.0, 0.0, f32::MAX / 4.0, f32::MAX / 4.0)
+        };
+        let result = place_overlay(
+            &OverlayPlacementRequest::new(
+                self.header_rect(bounds),
+                Size::new(bounds.width(), self.menu_height()),
+                viewport,
+                OverlayPlacement::BOTTOM_START,
+            )
+            .fallbacks([OverlayPlacement::TOP_START])
+            .gap(theme.metrics.select_menu_gap)
+            .margin(theme.metrics.select_menu_edge_padding),
+        );
+        let placement = if result.placement == OverlayPlacement::TOP_START {
             SelectMenuPlacement::Above
         } else {
             SelectMenuPlacement::Below
-        }
+        };
+        (placement, result.bounds)
+    }
+
+    fn menu_placement(&self, bounds: Rect, viewport: Size) -> SelectMenuPlacement {
+        self.menu_layout(bounds, viewport).0
     }
 
     fn menu_rect(&self, bounds: Rect, viewport: Size) -> Rect {
-        let theme = self.resolved_theme();
-        let height = self.menu_height();
-        let placement = self.menu_placement(bounds, viewport);
-        let header = self.header_rect(bounds);
-        let mut y = match placement {
-            SelectMenuPlacement::Below => header.max_y() + theme.metrics.select_menu_gap,
-            SelectMenuPlacement::Above => header.y() - theme.metrics.select_menu_gap - height,
-        };
-
-        if viewport.height.is_finite()
-            && viewport.height > (height + (theme.metrics.select_menu_edge_padding * 2.0))
-        {
-            let min_y = theme.metrics.select_menu_edge_padding.min(bounds.y());
-            let max_y =
-                (viewport.height - height - theme.metrics.select_menu_edge_padding).max(0.0);
-            y = if min_y <= max_y {
-                y.clamp(min_y, max_y)
-            } else {
-                y.max(0.0)
-            };
-        }
-
-        Rect::new(bounds.x(), y, bounds.width(), height)
+        self.menu_layout(bounds, viewport).1
     }
 
     fn option_rect(&self, bounds: Rect, viewport: Size, index: usize) -> Rect {
@@ -7451,6 +7446,13 @@ impl Select {
 }
 
 impl Widget for Select {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.expanded {
+            self.set_expanded(ctx, false);
+            ctx.set_handled();
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
@@ -7761,6 +7763,7 @@ impl Widget for Select {
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered_header || self.menu_state.borrow().hovered.is_some();
         node.state.expanded = Some(self.expanded);
+        node.popup = Some(SemanticsPopupKind::ListBox);
         node.actions = vec![
             SemanticsAction::Focus,
             SemanticsAction::Expand,
@@ -7772,6 +7775,18 @@ impl Widget for Select {
 
     fn accepts_focus(&self) -> bool {
         true
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        (self.expanded || self.menu_state.borrow().is_presented()).then_some(
+            OverlayOptions::new(OverlayKind::Menu)
+                .dismiss(if self.expanded {
+                    OverlayDismissPolicy::TRANSIENT
+                } else {
+                    OverlayDismissPolicy::NONE
+                })
+                .focus(OverlayFocusBehavior::NONE),
+        )
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -11288,11 +11303,10 @@ mod tests {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(crate::Padding::all(
             12.0,
-            Select::new("Mode").placeholder("Choose mode").options([
-                "Automatic",
-                "Linear",
-                "Gamma",
-            ]),
+            Select::new("Mode")
+                .placeholder("Choose mode")
+                .options(["Automatic", "Linear", "Gamma"])
+                .selected(2),
         ));
 
         let _ = runtime.render(window_id)?;
@@ -11315,9 +11329,22 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::ComboBox)
             .expect("select semantics present after expand");
+        let menu = overlay_layer_descriptor(&expanded).expect("select menu overlay present");
+        let menu_owner = overlay_layer_owner(&expanded).expect("select menu overlay owner");
         let option_point = Point::new(
-            select.bounds.x() + 20.0,
-            select.bounds.max_y() + super::SELECT_MENU_GAP + (select.bounds.height() * 1.5),
+            menu.bounds.x() + 20.0,
+            menu.bounds.y() + (select.bounds.height() * 0.5),
+        );
+        let menu_node = runtime
+            .widget_graph(window_id)?
+            .nodes
+            .into_iter()
+            .find(|node| node.id == menu_owner)
+            .expect("menu surface in widget graph");
+        assert!(
+            menu_node.geometry.input_bounds.contains(option_point),
+            "option point {option_point:?} should hit menu input bounds {:?}",
+            menu_node.geometry.input_bounds
         );
         runtime.handle_event(
             window_id,
@@ -11325,7 +11352,7 @@ mod tests {
         )?;
 
         runtime.tick(entrance_time + (hover_time * 0.5));
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
         let mid = runtime.render(window_id)?;
         let mid_fills = solid_fill_colors(&mid);
         assert!(
@@ -11334,8 +11361,10 @@ mod tests {
         );
         assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
-        runtime.tick(entrance_time + hover_time);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        // Allow a tiny margin because opening the managed overlay can schedule
+        // an independent focus-frame at the same timestamp as the menu reveal.
+        runtime.tick(entrance_time + hover_time + 0.001);
+        assert!(handle_ready_events(&mut runtime)? >= 1);
         let settled = runtime.render(window_id)?;
         let settled_fills = solid_fill_colors(&settled);
         assert!(
@@ -15179,9 +15208,10 @@ mod tests {
             .iter()
             .find(|node| node.role == SemanticsRole::ComboBox)
             .expect("select semantics present after expand");
+        let menu = overlay_layer_descriptor(&expanded).expect("select menu overlay present");
         let option_point = Point::new(
-            select.bounds.x() + 20.0,
-            select.bounds.max_y() + 6.0 + (select.bounds.height() * 1.5),
+            menu.bounds.x() + 20.0,
+            menu.bounds.y() + (select.bounds.height() * 1.5),
         );
 
         runtime.handle_event(
@@ -15509,10 +15539,11 @@ mod tests {
         let option_text = text_run_for(&expanded, option);
         let option_layout = shaped_text_layout_for(&expanded, option);
         let option_clip = draw_clip_rect_for(&expanded, option);
+        let menu = overlay_layer_descriptor(&expanded).expect("select menu overlay present");
         let row = Rect::new(
-            select.bounds.x(),
-            select.bounds.max_y() + super::SELECT_MENU_GAP,
-            select.bounds.width(),
+            menu.bounds.x(),
+            menu.bounds.y(),
+            menu.bounds.width(),
             select.bounds.height(),
         );
         let expected_option_clip =
@@ -15570,7 +15601,8 @@ mod tests {
             .expect("select menu option text should contain one line");
         let actual_visual_center =
             text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
-        let row_center = select.bounds.max_y() + 6.0 + (select.bounds.height() * 0.5);
+        let menu = overlay_layer_descriptor(&output).expect("select menu overlay present");
+        let row_center = menu.bounds.y() + (select.bounds.height() * 0.5);
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
         Ok(())

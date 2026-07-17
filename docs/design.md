@@ -352,6 +352,23 @@ Accessibility support should be practical rather than ornamental. If a widget is
 
 Drag and drop should be built into the event model rather than implemented as a library-side workaround. It should support internal drag operations and platform integration where available.
 
+### Transient presentation
+
+Dialogs, menus, popovers, tooltips, sheets, notifications, command palettes,
+and drag previews share a window-level overlay manager. Widget subtrees own
+their presentation and interaction state; the manager owns cross-overlay
+ordering, nesting, modality, focus containment and restoration, topmost
+dismissal, and diagnostics. Logical overlay ownership is independent from the
+scene layer that paints a surface, so the widget tree does not have to mirror
+the compositor stack.
+
+Anchored presentations use one collision-aware placement policy with explicit
+fallbacks, safe-viewport shifting, and bounded resizing. Overlay scene layers
+escape ordinary ancestor clips while retaining their own presentation clip.
+The semantic model exposes popup relationships, modal state, ownership, and
+live regions so accessibility and automation see the same lifecycle as input
+and rendering.
+
 ### Keyboard navigation
 
 Keyboard navigation should be part of the default focus system. Applications should be able to customize navigation order and behavior for tool-centric interfaces.

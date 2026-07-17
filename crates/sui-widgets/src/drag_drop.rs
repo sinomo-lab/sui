@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use sui_core::{
     DragDropScope, DragEvent, DragEventKind, DragPayload, DragPreview, DragSessionId, DropEffect,
-    Event, Point, PointerButton, PointerEventKind, Rect, Size, Vector,
+    Event, Point, PointerButton, PointerEventKind, Rect, Size, Vector, WindowEvent,
 };
 use sui_layout::Constraints;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    SingleChild, StackSurfaceOptions, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, OverlayDismissPolicy, OverlayFocusBehavior,
+    OverlayKind, OverlayOptions, PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild,
+    StackSurfaceOptions, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{Border, LayerCompositionMode};
 
@@ -26,6 +27,10 @@ pub struct DragDropHost {
     scope: DragDropScope,
     child: SingleChild,
     overlay: SingleChild,
+    external_hovered: Vec<PathBuf>,
+    on_external_hover: Option<Box<dyn FnMut(&mut EventCtx, &[PathBuf])>>,
+    on_external_drop: Option<Box<dyn FnMut(&mut EventCtx, PathBuf)>>,
+    on_external_cancel: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
 
 impl DragDropHost {
@@ -37,6 +42,10 @@ impl DragDropHost {
             overlay: SingleChild::new(DragPreviewOverlay::new(scope.clone())),
             scope,
             child: SingleChild::new(child),
+            external_hovered: Vec::new(),
+            on_external_hover: None,
+            on_external_drop: None,
+            on_external_cancel: None,
         }
     }
 
@@ -51,9 +60,72 @@ impl DragDropHost {
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
+
+    pub fn external_hovered_files(&self) -> &[PathBuf] {
+        &self.external_hovered
+    }
+
+    pub fn on_external_file_hover<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &[PathBuf]) + 'static,
+    {
+        self.on_external_hover = Some(Box::new(callback));
+        self
+    }
+
+    pub fn on_external_file_drop<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, PathBuf) + 'static,
+    {
+        self.on_external_drop = Some(Box::new(callback));
+        self
+    }
+
+    pub fn on_external_file_hover_cancelled<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_external_cancel = Some(Box::new(callback));
+        self
+    }
 }
 
 impl Widget for DragDropHost {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Window(WindowEvent::ExternalFileHovered(path)) => {
+                if !self.external_hovered.contains(path) {
+                    self.external_hovered.push(path.clone());
+                }
+                if let Some(callback) = &mut self.on_external_hover {
+                    callback(ctx, &self.external_hovered);
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Window(WindowEvent::ExternalFileHoverCancelled) => {
+                self.external_hovered.clear();
+                if let Some(callback) = &mut self.on_external_cancel {
+                    callback(ctx);
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Window(WindowEvent::ExternalFileDropped(path)) => {
+                self.external_hovered.retain(|hovered| hovered != path);
+                if let Some(callback) = &mut self.on_external_drop {
+                    callback(ctx, path.clone());
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let size = self.child.measure(ctx, constraints);
         self.overlay.measure(ctx, Constraints::tight(size));
@@ -72,6 +144,14 @@ impl Widget for DragDropHost {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.child.semantics(ctx);
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        self.scope.active_drag().is_some().then_some(
+            OverlayOptions::new(OverlayKind::DragPreview)
+                .dismiss(OverlayDismissPolicy::NONE)
+                .focus(OverlayFocusBehavior::NONE),
+        )
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
@@ -789,6 +869,58 @@ mod tests {
         )?;
 
         assert_eq!(*starts.borrow(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn drag_drop_host_routes_platform_file_hover_drop_and_cancel() -> Result<()> {
+        let hovered = Rc::new(RefCell::new(Vec::<Vec<PathBuf>>::new()));
+        let dropped = Rc::new(RefCell::new(Vec::<PathBuf>::new()));
+        let cancelled = Rc::new(RefCell::new(0));
+        let root = DragDropHost::new(
+            DragDropScope::new(),
+            SizedBox::new().width(160.0).height(80.0),
+        )
+        .on_external_file_hover({
+            let hovered = Rc::clone(&hovered);
+            move |_, paths| hovered.borrow_mut().push(paths.to_vec())
+        })
+        .on_external_file_drop({
+            let dropped = Rc::clone(&dropped);
+            move |_, path| dropped.borrow_mut().push(path)
+        })
+        .on_external_file_hover_cancelled({
+            let cancelled = Rc::clone(&cancelled);
+            move |_| *cancelled.borrow_mut() += 1
+        });
+        let (mut runtime, window_id) = build_runtime(root);
+        let _ = runtime.render(window_id)?;
+        let first = PathBuf::from("/tmp/first.txt");
+        let second = PathBuf::from("/tmp/second.png");
+
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::ExternalFileHovered(first.clone())),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::ExternalFileHovered(second.clone())),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::ExternalFileDropped(first.clone())),
+        )?;
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::ExternalFileHoverCancelled),
+        )?;
+
+        assert_eq!(
+            hovered.borrow().as_slice(),
+            &[vec![first.clone()], vec![first.clone(), second]]
+        );
+        assert_eq!(dropped.borrow().as_slice(), &[first]);
+        assert_eq!(*cancelled.borrow(), 1);
         Ok(())
     }
 

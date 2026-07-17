@@ -5,9 +5,12 @@ use sui_core::{
 use sui_layout::Constraints;
 use sui_reactive::Signal;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, FocusScope, FocusScopeState, MeasureCtx, PaintCtx, SemanticsCtx,
-    SingleChild, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, FocusScope, FocusScopeState, LayerOptions, MeasureCtx,
+    OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind,
+    OverlayOptions, PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions,
+    Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
+use sui_scene::LayerCompositionMode;
 
 use crate::{DefaultTheme, SplitExtent, SplitState, SplitStateSnapshot, ThemeBreakpoints};
 
@@ -431,9 +434,26 @@ impl ResponsiveSidebar {
     fn sidebar_visible(&self) -> bool {
         self.mode != ResponsiveSidebarMode::OverlayClosed
     }
+
+    fn dismiss_overlay(&mut self, ctx: &mut EventCtx) {
+        self.state.close_overlay();
+        self.content_scope.request_restore();
+        ctx.request_measure();
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
 }
 
 impl Widget for ResponsiveSidebar {
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some()
+            && self.mode == ResponsiveSidebarMode::OverlayOpen
+        {
+            self.dismiss_overlay(ctx);
+            ctx.set_handled();
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.snapshot = self.state.snapshot();
         if self.mode == ResponsiveSidebarMode::OverlayOpen {
@@ -442,19 +462,11 @@ impl Widget for ResponsiveSidebar {
                     if semantics.target == ctx.widget_id()
                         && matches!(semantics.action, SemanticsActionRequest::Collapse) =>
                 {
-                    self.state.close_overlay();
-                    self.content_scope.request_restore();
-                    ctx.request_measure();
-                    ctx.request_paint();
-                    ctx.request_semantics();
+                    self.dismiss_overlay(ctx);
                     ctx.set_handled();
                 }
                 Event::Keyboard(key) if key.state == KeyState::Pressed && key.key == "Escape" => {
-                    self.state.close_overlay();
-                    self.content_scope.request_restore();
-                    ctx.request_measure();
-                    ctx.request_paint();
-                    ctx.request_semantics();
+                    self.dismiss_overlay(ctx);
                     ctx.set_handled();
                 }
                 Event::Pointer(pointer)
@@ -466,11 +478,7 @@ impl Widget for ResponsiveSidebar {
                             .contains(pointer.position) =>
                 {
                     if self.dismiss_on_scrim {
-                        self.state.close_overlay();
-                        self.content_scope.request_restore();
-                        ctx.request_measure();
-                        ctx.request_paint();
-                        ctx.request_semantics();
+                        self.dismiss_overlay(ctx);
                     }
                     ctx.set_handled();
                 }
@@ -541,6 +549,40 @@ impl Widget for ResponsiveSidebar {
         }
     }
 
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: if self.mode == ResponsiveSidebarMode::OverlayOpen {
+                PaintBoundaryMode::Explicit
+            } else {
+                PaintBoundaryMode::Flat
+            },
+            composition_mode: if self.mode == ResponsiveSidebarMode::OverlayOpen {
+                LayerCompositionMode::Effect
+            } else {
+                LayerCompositionMode::Normal
+            },
+        }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        (self.mode == ResponsiveSidebarMode::OverlayOpen).then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
+    }
+
+    fn overlay_options(&self) -> Option<OverlayOptions> {
+        (self.mode == ResponsiveSidebarMode::OverlayOpen).then_some(
+            OverlayOptions::new(OverlayKind::Sheet)
+                .modal(true)
+                .dismiss(OverlayDismissPolicy {
+                    escape: true,
+                    outside_pointer: self.dismiss_on_scrim,
+                })
+                .focus(OverlayFocusBehavior::CONTAINED),
+        )
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         if self.mode == ResponsiveSidebarMode::OverlayOpen {
             let mut node = SemanticsNode::new(
@@ -551,6 +593,7 @@ impl Widget for ResponsiveSidebar {
             );
             node.name = self.name.clone().or_else(|| Some("Navigation".to_string()));
             node.state.expanded = Some(true);
+            node.state.modal = true;
             node.actions = vec![SemanticsAction::Collapse];
             ctx.push(node);
             self.sidebar.semantics(ctx);

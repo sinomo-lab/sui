@@ -46,6 +46,29 @@ pub enum SemanticsRole {
     ScrollView,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticsPopupKind {
+    Menu,
+    ListBox,
+    Tree,
+    Grid,
+    Dialog,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticsLiveRegion {
+    Polite,
+    Assertive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SemanticsRelations {
+    pub controls: Vec<WidgetId>,
+    pub labelled_by: Vec<WidgetId>,
+    pub described_by: Vec<WidgetId>,
+    pub owns: Vec<WidgetId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticsAction {
     Focus,
@@ -147,6 +170,7 @@ pub struct SemanticsState {
     pub selected: bool,
     pub expanded: Option<bool>,
     pub busy: bool,
+    pub modal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +210,9 @@ pub struct SemanticsNode {
     pub state: SemanticsState,
     pub actions: Vec<SemanticsAction>,
     pub editable_text: Option<EditableTextSemantics>,
+    pub relations: SemanticsRelations,
+    pub popup: Option<SemanticsPopupKind>,
+    pub live_region: Option<SemanticsLiveRegion>,
     pub bounds: Rect,
 }
 
@@ -202,6 +229,9 @@ impl SemanticsNode {
             state: SemanticsState::default(),
             actions: Vec::new(),
             editable_text: None,
+            relations: SemanticsRelations::default(),
+            popup: None,
+            live_region: None,
             bounds,
         }
     }
