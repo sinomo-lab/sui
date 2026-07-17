@@ -2,6 +2,7 @@
 
 mod animation_demo;
 mod app;
+mod command_demo;
 mod drag_drop_demo;
 mod layout_demo;
 #[cfg(feature = "markdown")]

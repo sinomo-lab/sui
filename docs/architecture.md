@@ -37,10 +37,13 @@ The normal desktop flow is:
 3. `DesktopPlatform` creates host windows or targets, wires them to a shared `WgpuRenderer`, and enters the `winit` event loop.
 4. Host events are normalized into `sui_core::Event` values and delivered for a `WindowId`.
 5. `Runtime::handle_event(window_id, event)` routes the event through the retained widget protocol.
-6. Widgets request explicit invalidation, timers, animation frames, async wakeups, focus, and pointer capture through contexts.
-7. When a target needs work, the runtime runs measure, arrange, paint, semantics, and resource updates as needed.
-8. `Runtime::render(window_id)` returns `RenderOutput` containing a `SceneFrame`, semantics, IME state, title, and diagnostics.
-9. `sinomo-ui-platform` submits the `SceneFrame` to `sinomo-ui-render-wgpu` for the same `WindowId`.
+6. The platform separately drains the typed command queue into widget,
+   window, or application recipients; this routing does not depend on hit
+   testing or widget ancestry.
+7. Widgets request explicit invalidation, timers, animation frames, async wakeups, focus, and pointer capture through contexts.
+8. When a target needs work, the runtime runs measure, arrange, paint, semantics, and resource updates as needed.
+9. `Runtime::render(window_id)` returns `RenderOutput` containing a `SceneFrame`, semantics, IME state, title, and diagnostics.
+10. `sinomo-ui-platform` submits the `SceneFrame` to `sinomo-ui-render-wgpu` for the same `WindowId`.
 
 Headless tests use the same runtime-facing path through `HeadlessPlatform`.
 
@@ -58,6 +61,26 @@ not embedded in `WindowEvent`; callers deliver it through APIs such as
 SUI core does not prescribe how a widget internally dispatches events to
 subsystems. The retained runtime provides capture, target, and bubble routing as
 the standard local widget implementation.
+
+## Commands And Scheduler Wakes
+
+Input events use capture, target, and bubble paths because those paths model
+presentation ownership. Application communication uses a separate typed queue:
+
+- `Widget` and `FocusedWidget` targets deliver directly to one retained
+  identity without capture or bubbling.
+- `Window` targets reach lifecycle-owned window controllers and subscriptions.
+- `Application` targets reach application controllers; application broadcast
+  continues to every live window.
+
+`CommandSender`, `UiHandle`, and `EventCtx::command_sender` all publish to this
+queue. Payloads are `Send + Sync`, delivery happens on the UI thread, and stale
+widget/window identities are dropped instead of being rerouted to the root.
+Window subscriptions disappear with their window.
+
+A scheduler-only `wake()` is intentionally distinct from command or event
+delivery. It invokes controller wake hooks and gives the runtime another chance
+to make progress, but never synthesizes `Event::Custom` at a root widget.
 
 ## Widget Protocol
 
@@ -97,6 +120,7 @@ It owns:
 - the `Widget` trait and widget contexts
 - `WidgetPod`, `SingleChild`, and `WidgetChildren`
 - event routing, focus, pointer capture, timers, animation-frame wakeups, and async wakeups
+- typed widget/window/application command routing and scheduler-only controller wakes
 - invalidation scheduling
 - measure and arrange execution
 - scene and semantics generation
@@ -177,6 +201,7 @@ The current stack includes:
 - `WindowPerformanceSnapshot` and related phase timings in `sinomo-ui-runtime`
 - renderer submission stats published by `sinomo-ui-platform`
 - animation counters for active widgets and frame wakeups
+- command-dispatch and invalidation-reason traces
 - the widget book performance overlay in `sinomo-ui-demo`
 - inspector widgets in `sinomo-ui-debug`
 - semantics-first locators and artifact capture in `sinomo-ui-testing`

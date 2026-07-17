@@ -47,8 +47,10 @@ builder and returns the configured value. Construct the widget tree and
 resources first, then call one terminal operation:
 
 - `run()` starts the desktop or browser event loop and blocks until it exits.
-- `run_with_handle(...)` also supplies a cloneable wake handle after the event
-  loop is ready.
+- `run_with_handle(...)` also supplies a cloneable, thread-safe `UiHandle`
+  after the event loop is ready. It sends typed commands from background work;
+  its bare `wake()` method runs scheduler hooks without creating a widget
+  event.
 - `build()` returns a `Runtime` without starting a platform event loop. Use it
   for tests, headless rendering, embedding, or a custom host.
 

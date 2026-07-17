@@ -199,6 +199,9 @@ target in performance-sensitive components.
   after the current dispatch completes.
 - `post_command(target, key, payload)` delivers a strongly typed command to a
   particular retained widget after the current dispatch completes.
+- `command_sender()` returns the runtime's typed command producer. Use it from
+  a widget callback to send to window/application controllers or to start an
+  application-wide broadcast without routing through an ancestor widget.
 
 Built-in text inputs already implement focus, selection, IME, and clipboard
 behavior. Use these services directly only in a custom interaction.
@@ -254,6 +257,29 @@ Sending enqueues the payload and wakes the platform event loop. The application
 subscription runs on the UI thread, and the signal invalidates only widgets that
 observed it. No invisible widget or root custom event is involved.
 
+Widget callbacks use the same queue through `EventCtx::command_sender`:
+
+```rust
+#[derive(Clone, Copy)]
+enum RefreshReason {
+    UserAction,
+}
+
+static REFRESH_REQUESTED: CommandKey<RefreshReason> =
+    CommandKey::new("example.refresh-requested");
+
+Button::new("Refresh every window").on_press_with_ctx(|ctx| {
+    ctx.command_sender().broadcast_application(
+        REFRESH_REQUESTED,
+        RefreshReason::UserAction,
+    );
+})
+```
+
+The command is delivered after the current input dispatch yields back to the
+runtime. Clone the sender before moving it into worker-owned code; use
+`UiHandle` when starting work from `App::run_with_handle`.
+
 ## Command Scope, Multicast, and Controllers
 
 `CommandSender` and `UiHandle` expose four routing scopes:
@@ -286,3 +312,12 @@ the latest frame. The same data is available through
 `UiHandle` is available only with a platform event-loop feature. Headless code
 can use `Runtime::command_sender` plus `process_commands`, or drive the runtime
 through `sinomo-ui-testing`.
+
+Run the complete interactive sample with:
+
+```bash
+cargo run -p sinomo-ui --example commands
+```
+
+The `Commands` card in `sinomo-ui-demo` exposes the same routes and shows their
+live subscriber state alongside the performance inspector's routing trace.

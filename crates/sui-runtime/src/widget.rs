@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    Command, CommandDelivery, CommandKey, CommandTarget,
+    Command, CommandDelivery, CommandKey, CommandSender, CommandTarget,
     command::{QueuedCommand, queued_command},
     diagnostics::{WidgetTimingPhase, record_widget_timing},
 };
@@ -710,6 +710,7 @@ impl WidgetPod {
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         event: &Event,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
@@ -720,6 +721,7 @@ impl WidgetPod {
                 phase,
                 focused_widget,
                 clipboard,
+                command_sender,
                 event,
             )
         })
@@ -735,6 +737,7 @@ impl WidgetPod {
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         event: &Event,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
@@ -745,6 +748,7 @@ impl WidgetPod {
                 phase,
                 focused_widget,
                 clipboard,
+                command_sender,
                 event,
             )
         })
@@ -759,6 +763,7 @@ impl WidgetPod {
         current_time: f64,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         command: &Command<'_>,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
@@ -768,6 +773,7 @@ impl WidgetPod {
                 current_time,
                 focused_widget,
                 clipboard,
+                command_sender,
                 command,
             )
         })
@@ -782,6 +788,7 @@ impl WidgetPod {
         current_time: f64,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         command: &Command<'_>,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
@@ -791,6 +798,7 @@ impl WidgetPod {
                 current_time,
                 focused_widget,
                 clipboard,
+                command_sender,
                 command,
             )
         })
@@ -805,6 +813,7 @@ impl WidgetPod {
         current_time: f64,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut(target, &mut |pod| {
@@ -814,6 +823,7 @@ impl WidgetPod {
                 current_time,
                 focused_widget,
                 clipboard,
+                command_sender,
                 focused,
             )
         })
@@ -828,6 +838,7 @@ impl WidgetPod {
         current_time: f64,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         focused: bool,
     ) -> Option<EventDispatch> {
         self.find_mut_path(path, &mut |pod| {
@@ -837,6 +848,7 @@ impl WidgetPod {
                 current_time,
                 focused_widget,
                 clipboard,
+                command_sender,
                 focused,
             )
         })
@@ -851,6 +863,7 @@ impl WidgetPod {
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         event: &Event,
     ) -> EventDispatch {
         let mut ctx = EventCtx::new(
@@ -862,6 +875,7 @@ impl WidgetPod {
             phase,
             focused_widget,
             clipboard.clone(),
+            command_sender.clone(),
         );
         self.widget.event(&mut ctx, event);
         EventDispatch {
@@ -885,6 +899,7 @@ impl WidgetPod {
         current_time: f64,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         command: &Command<'_>,
     ) -> EventDispatch {
         let mut ctx = EventCtx::new(
@@ -896,6 +911,7 @@ impl WidgetPod {
             EventPhase::Target,
             focused_widget,
             clipboard.clone(),
+            command_sender.clone(),
         );
         self.widget.command(&mut ctx, command);
         ctx.into_dispatch()
@@ -908,6 +924,7 @@ impl WidgetPod {
         current_time: f64,
         focused_widget: Option<WidgetId>,
         clipboard: &Clipboard,
+        command_sender: &CommandSender,
         focused: bool,
     ) -> EventDispatch {
         let mut ctx = EventCtx::new(
@@ -919,6 +936,7 @@ impl WidgetPod {
             EventPhase::Target,
             focused_widget,
             clipboard.clone(),
+            command_sender.clone(),
         );
         self.widget.focus_changed(&mut ctx, focused);
         EventDispatch {
@@ -1192,6 +1210,7 @@ pub struct EventCtx {
     phase: EventPhase,
     focused_widget_id: Option<WidgetId>,
     clipboard: Clipboard,
+    command_sender: CommandSender,
     handled: bool,
     invalidations: Vec<InvalidationRequest>,
     focus_request: Option<FocusRequest>,
@@ -1214,6 +1233,7 @@ impl EventCtx {
         phase: EventPhase,
         focused_widget_id: Option<WidgetId>,
         clipboard: Clipboard,
+        command_sender: CommandSender,
     ) -> Self {
         Self {
             window_id,
@@ -1224,6 +1244,7 @@ impl EventCtx {
             phase,
             focused_widget_id,
             clipboard,
+            command_sender,
             handled: false,
             invalidations: Vec::new(),
             focus_request: None,
@@ -1322,6 +1343,15 @@ impl EventCtx {
 
     pub fn set_clipboard_text(&mut self, text: impl AsRef<str>) {
         self.clipboard.set_text(text);
+    }
+
+    /// Return the runtime's cloneable typed command producer.
+    ///
+    /// Widget callbacks can use this to address window or application
+    /// controllers without routing through an ancestor widget. Delivery is
+    /// queued until the current event dispatch completes.
+    pub fn command_sender(&self) -> &CommandSender {
+        &self.command_sender
     }
 
     /// Queue an event for delivery to `target` after the current dispatch
@@ -2505,6 +2535,8 @@ impl SemanticsCtx {
 mod tests {
     use std::sync::Arc;
 
+    use crate::CommandSender;
+
     use super::{
         ArrangeCtx, EventCtx, EventPhase, KeyedChildren, MeasureCtx, MeasureScope, PaintCtx,
         SemanticsCtx, SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod,
@@ -2604,6 +2636,7 @@ mod tests {
             EventPhase::Target,
             None,
             Clipboard::new(),
+            CommandSender::new(),
         );
 
         assert_eq!(measure.dpi(), dpi);
@@ -2709,6 +2742,7 @@ mod tests {
             EventPhase::Target,
             None,
             Clipboard::new(),
+            CommandSender::new(),
         );
 
         ctx.request_measure();
@@ -2750,6 +2784,7 @@ mod tests {
             EventPhase::Target,
             None,
             Clipboard::new(),
+            CommandSender::new(),
         );
 
         ctx.request_animation_frame();

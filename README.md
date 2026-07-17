@@ -64,6 +64,10 @@ then build an editable [stateful form](https://github.com/sinomo-lab/sui/blob/ma
 - Retained rich documents with incremental streaming Markdown, cross-block
   selection, syntax-highlighted code, attachments, and extensible structured
   result renderers.
+- Keyed virtual lists, tables, and trees with variable row heights,
+  incremental updates, selection, anchoring, and retained row state.
+- Thread-safe typed widget/window/application commands, lifecycle-owned
+  controllers and subscriptions, application multicast, and routing traces.
 - A renderer-neutral scene representation and retained `wgpu` compositor.
 - AccessKit-backed accessibility plus an accessibility-tree generated TUI.
 - Headless automation, semantic locators, screenshots, and visual artifact

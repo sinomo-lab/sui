@@ -45,6 +45,8 @@ embedding, tests, and tooling, but they carry more integration responsibility.
 | --- | --- |
 | Configure an app, window, or resources | [Getting started](./api/getting-started.md) |
 | Choose a control or layout container | [Widgets and layout](./api/widgets-and-layout.md) |
+| Render large keyed lists, tables, or trees | [Virtual collections](./api/virtual-collections.md) |
+| Stream Markdown or structured results | [Rich documents](./api/rich-documents.md) |
 | Edit text, passwords, or date/time values | [Input and editing](./api/input-and-editing.md) |
 | Handle events or update shared state | [State, events, and async](./api/state-events-and-async.md) |
 | Apply Mesh themes or register assets | [Themes and resources](./api/themes-and-resources.md) |
@@ -75,6 +77,8 @@ SUI uses a few conventions consistently:
   typed `UiHandle` command queue. Application/window controllers receive them
   independently of the widget paint tree; a bare `wake()` only schedules
   controller wake hooks.
+- Widget callbacks can access the same producer through
+  `EventCtx::command_sender()` for window/application delivery and multicast.
 - Accessibility semantics are part of the widget contract, not optional test
   metadata. Tests and the generated TUI consume the same tree.
 
@@ -91,6 +95,10 @@ Run the widget book to inspect real controls and their semantics:
 ```bash
 cargo run -p sinomo-ui-demo
 ```
+
+Open the `Commands` card to inspect the typed routing scopes and diagnostics,
+or run `cargo run -p sinomo-ui --example commands` for a minimal standalone
+program.
 
 Generate browsable rustdoc for the checked-out version:
 

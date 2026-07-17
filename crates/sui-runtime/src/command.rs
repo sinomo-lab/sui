@@ -542,10 +542,12 @@ pub trait CommandController {
     }
 }
 
+type ErasedCommandCallback = dyn FnMut(&mut CommandCtx, &dyn Any);
+
 pub(crate) struct CommandSubscription {
     key: ErasedCommandKey,
     handler_name: &'static str,
-    callback: Box<dyn FnMut(&mut CommandCtx, &dyn Any)>,
+    callback: Box<ErasedCommandCallback>,
 }
 
 impl CommandSubscription {

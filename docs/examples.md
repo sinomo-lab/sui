@@ -43,6 +43,17 @@ invalidation, and editable text, password, and date/time fields. The
 cargo run -p sinomo-ui --example stateful_form
 ```
 
+### Typed commands
+
+[`commands.rs`](../crates/sui/examples/commands.rs) demonstrates typed
+application commands from both a widget callback and a worker thread,
+application-wide multicast, lifecycle-owned window/application subscriptions,
+and signal-driven presentation updates.
+
+```bash
+cargo run -p sinomo-ui --example commands
+```
+
 Check every Rust facade example without opening a window:
 
 ```bash
@@ -52,8 +63,10 @@ cargo check -p sinomo-ui --examples
 ## Demo and widget book
 
 The `sinomo-ui-demo` application is the workspace's interactive development host. It
-contains the widget book, theme and text-rendering surfaces, renderer controls,
-and focused performance views.
+contains the widget book, a typed command-routing lab, theme and text-rendering
+surfaces, renderer controls, and focused performance views. Open the
+`Commands` card to exercise directed window/application delivery, multicast,
+worker delivery, and scheduler-only controller wakes.
 
 Open the native demo:
 

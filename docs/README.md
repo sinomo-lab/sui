@@ -30,6 +30,10 @@ The fastest way to explore the complete widget set is the desktop widget book:
 cargo run -p sinomo-ui-demo
 ```
 
+The demo's `Commands` card exercises typed window/application delivery,
+application multicast, background-thread sends, controller wakes, and the
+matching performance-inspector traces.
+
 ## API guide
 
 The hand-written API guide complements generated Rust documentation:
@@ -37,6 +41,8 @@ The hand-written API guide complements generated Rust documentation:
 - [API guide index](./api/README.md)
 - [Getting started and application lifecycle](./api/getting-started.md)
 - [Widgets and layout](./api/widgets-and-layout.md)
+- [Virtual collections](./api/virtual-collections.md)
+- [Rich documents](./api/rich-documents.md)
 - [Input and editing](./api/input-and-editing.md)
 - [State, events, and async work](./api/state-events-and-async.md)
 - [Themes and resources](./api/themes-and-resources.md)

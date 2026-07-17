@@ -31,6 +31,16 @@ use crate::animation_demo::{
 };
 use crate::animation_demo::{ANIMATION_DEMO_TAB_LABEL, build_animation_demo_with_theme};
 #[cfg(test)]
+use crate::command_demo::{
+    APPLICATION_BROADCAST_BUTTON, APPLICATION_COMMAND_BUTTON, BACKGROUND_COMMAND_BUTTON,
+    COMMAND_DEMO_SCROLL_NAME, WAKE_CONTROLLERS_BUTTON, WINDOW_COMMAND_BUTTON,
+};
+use crate::command_demo::{
+    COMMAND_DEMO_TAB_LABEL, CommandDemoState, CommandDemoWakeController,
+    DEMO_APPLICATION_BROADCAST, DEMO_APPLICATION_COMMAND, DEMO_WINDOW_COMMAND,
+    build_command_demo_with_theme,
+};
+#[cfg(test)]
 use crate::drag_drop_demo::DRAG_DROP_DEMO_SCROLL_NAME;
 use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme};
 #[cfg(test)]
@@ -420,6 +430,7 @@ struct DevDemo {
 
 struct DevBrowserShell {
     state: DevShellState,
+    command_demo_state: CommandDemoState,
     demos: Vec<DevDemo>,
     picker: SingleChild,
     tab_bar: SingleChild,
@@ -445,7 +456,8 @@ impl DevBrowserShell {
         let tab_scroll_state = ScrollState::new();
         let tab_scroll_to_end = Rc::new(Cell::new(false));
         let theme_reader = state.theme_reader();
-        let demos = build_dev_demo_entries(Rc::clone(&theme_reader));
+        let command_demo_state = CommandDemoState::new();
+        let demos = build_dev_demo_entries(Rc::clone(&theme_reader), command_demo_state.clone());
         if let Some(index) =
             initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
         {
@@ -569,6 +581,7 @@ impl DevBrowserShell {
 
         Self {
             state: state.clone(),
+            command_demo_state,
             demos,
             picker: SingleChild::new(picker),
             tab_bar: SingleChild::new(tab_bar),
@@ -593,6 +606,10 @@ impl DevBrowserShell {
 
     fn performance_overlay_reader(&self) -> Rc<dyn Fn() -> bool> {
         self.state.performance_overlay_reader()
+    }
+
+    fn command_demo_state(&self) -> CommandDemoState {
+        self.command_demo_state.clone()
     }
 
     fn root_size_for_constraints(constraints: Constraints) -> Size {
@@ -1735,7 +1752,10 @@ impl Widget for FloatingSettingsWindow {
     }
 }
 
-fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
+fn build_dev_demo_entries(
+    theme_reader: DevThemeReader,
+    command_demo_state: CommandDemoState,
+) -> Vec<DevDemo> {
     vec![
         DevDemo {
             title: WIDGET_BOOK_TAB_LABEL,
@@ -1852,7 +1872,19 @@ fn build_dev_demo_entries(theme_reader: DevThemeReader) -> Vec<DevDemo> {
             description: "Vector canvas drawing and editing demo.",
             icon: IconGlyph::ChevronRight,
             accent: Color::rgba(0.12, 0.56, 0.76, 1.0),
-            child: WidgetPod::new(build_vector_editor_demo_with_theme(theme_reader)),
+            child: WidgetPod::new(build_vector_editor_demo_with_theme(Rc::clone(
+                &theme_reader,
+            ))),
+        },
+        DevDemo {
+            title: COMMAND_DEMO_TAB_LABEL,
+            description: "Typed window and application commands, multicast, worker delivery, and controller wakes.",
+            icon: IconGlyph::Send,
+            accent: Color::rgba(0.16, 0.52, 0.72, 1.0),
+            child: WidgetPod::new(build_command_demo_with_theme(
+                command_demo_state,
+                theme_reader,
+            )),
         },
     ]
 }
@@ -1863,6 +1895,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "themes" | "theme" => Some(THEMES_TAB_LABEL),
         "theme-editor" | "theme-edit" | "theme-builder" => Some(THEME_EDITOR_TAB_LABEL),
         "animation" | "animations" | "animation-demo" => Some(ANIMATION_DEMO_TAB_LABEL),
+        "commands" | "command-routing" | "application-commands" => Some(COMMAND_DEMO_TAB_LABEL),
         "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
@@ -2981,8 +3014,13 @@ pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
 ) -> Application {
     let shell = DevBrowserShell::new(render_options);
     let performance_overlay_reader = shell.performance_overlay_reader();
-    finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
-        .with_window_render_options(render_options)
+    let command_demo_state = shell.command_demo_state();
+    finish_dev_application_with_performance_overlay_reader(
+        shell,
+        performance_overlay_reader,
+        command_demo_state,
+    )
+    .with_window_render_options(render_options)
 }
 
 pub(crate) fn build_dev_application_with_initial_demo_and_render_options(
@@ -2991,8 +3029,13 @@ pub(crate) fn build_dev_application_with_initial_demo_and_render_options(
 ) -> Application {
     let shell = DevBrowserShell::with_initial_demo(render_options, initial_demo);
     let performance_overlay_reader = shell.performance_overlay_reader();
-    finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
-        .with_window_render_options(render_options)
+    let command_demo_state = shell.command_demo_state();
+    finish_dev_application_with_performance_overlay_reader(
+        shell,
+        performance_overlay_reader,
+        command_demo_state,
+    )
+    .with_window_render_options(render_options)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -3005,8 +3048,13 @@ fn build_dev_application_with_render_options_and_automation(
     });
     let shell = DevBrowserShell::with_initial_demo(render_options, initial_demo);
     let performance_overlay_reader = shell.performance_overlay_reader();
-    finish_dev_application_with_performance_overlay_reader(shell, performance_overlay_reader)
-        .with_window_render_options(render_options)
+    let command_demo_state = shell.command_demo_state();
+    finish_dev_application_with_performance_overlay_reader(
+        shell,
+        performance_overlay_reader,
+        command_demo_state,
+    )
+    .with_window_render_options(render_options)
 }
 
 #[cfg(test)]
@@ -3028,6 +3076,7 @@ fn finish_dev_application<W: Widget + 'static>(root: W) -> Application {
 fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
     root: W,
     performance_overlay_reader: Rc<dyn Fn() -> bool>,
+    command_demo_state: CommandDemoState,
 ) -> Application {
     let mut app = App::new();
     {
@@ -3035,11 +3084,32 @@ fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
         register_dev_application_resources(&mut resources);
     }
 
-    app.window(
-        Window::new(WINDOW_TITLE).root(
-            LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root)
-                .performance_overlay_enabled_when(move || performance_overlay_reader()),
-        ),
+    let application_state = command_demo_state.clone();
+    let application_broadcast_state = command_demo_state.clone();
+    let window_state = command_demo_state.clone();
+    let window_broadcast_state = command_demo_state.clone();
+
+    app.on_command(DEMO_APPLICATION_COMMAND, move |ctx, message| {
+        application_state.record_application_command(message);
+        ctx.set_handled();
+    })
+    .on_command(DEMO_APPLICATION_BROADCAST, move |_, message| {
+        application_broadcast_state.record_application_broadcast(message);
+    })
+    .window(
+        Window::new(WINDOW_TITLE)
+            .controller(CommandDemoWakeController::new(command_demo_state))
+            .on_command(DEMO_WINDOW_COMMAND, move |ctx, message| {
+                window_state.record_window_command(message);
+                ctx.set_handled();
+            })
+            .on_command(DEMO_APPLICATION_BROADCAST, move |_, message| {
+                window_broadcast_state.record_window_broadcast(message);
+            })
+            .root(
+                LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root)
+                    .performance_overlay_enabled_when(move || performance_overlay_reader()),
+            ),
     )
     .into_application()
 }
@@ -3840,6 +3910,7 @@ mod tests {
             WIDGET_BOOK_TAB_LABEL,
             THEMES_TAB_LABEL,
             HDR_VALIDATION_TAB_LABEL,
+            COMMAND_DEMO_TAB_LABEL,
             LAYOUT_TAB_LABEL,
             DRAG_DROP_TAB_LABEL,
             PAINT_TAB_LABEL,
@@ -7920,6 +7991,93 @@ final_max_luminance={final_max_luminance}
             "expected vector status bar to expose selected object"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_command_demo_exercises_scopes_multicast_and_wake_separation() -> Result<()> {
+        fn contains_text(window: &TestWindow, needle: &str) -> Result<bool> {
+            let snapshot = window.snapshot()?;
+            Ok(snapshot.accessibility.nodes.iter().any(|node| {
+                node.name
+                    .as_deref()
+                    .is_some_and(|value| value.contains(needle))
+                    || matches!(
+                        &node.value,
+                        Some(SemanticsValue::Text(value)) if value.contains(needle)
+                    )
+            }))
+        }
+
+        let app = TestApp::new(|| {
+            build_dev_application_with_initial_demo_and_render_options(
+                Some(COMMAND_DEMO_TAB_LABEL),
+                RenderSettingsTab::default_options(),
+            )
+            .build()
+        })?;
+        let window = app.main_window()?;
+        assert_dev_shell_active_tab(&window, COMMAND_DEMO_TAB_LABEL)?;
+
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(COMMAND_DEMO_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        for button in [
+            WINDOW_COMMAND_BUTTON,
+            APPLICATION_COMMAND_BUTTON,
+            APPLICATION_BROADCAST_BUTTON,
+            BACKGROUND_COMMAND_BUTTON,
+            WAKE_CONTROLLERS_BUTTON,
+        ] {
+            window
+                .get_by_role(SemanticsRole::Button)
+                .with_name(button)
+                .expect()
+                .to_be_visible()?;
+        }
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(WINDOW_COMMAND_BUTTON)
+            .click()?;
+        assert!(contains_text(&window, "Window subscriber received #1")?);
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(APPLICATION_COMMAND_BUTTON)
+            .click()?;
+        assert!(contains_text(
+            &window,
+            "Application subscriber received #2"
+        )?);
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(APPLICATION_BROADCAST_BUTTON)
+            .click()?;
+        let performance = window.performance_snapshot()?;
+        assert!(
+            performance
+                .command_dispatches
+                .iter()
+                .any(|sample| sample.name == DEMO_APPLICATION_BROADCAST.name())
+        );
+        assert!(contains_text(
+            &window,
+            "Application multicast subscriber received #3"
+        )?);
+        assert!(contains_text(
+            &window,
+            "Window multicast subscriber received the same #3"
+        )?);
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(WAKE_CONTROLLERS_BUTTON)
+            .click()?;
+        assert!(contains_text(&window, "no custom widget event was sent")?);
         Ok(())
     }
 

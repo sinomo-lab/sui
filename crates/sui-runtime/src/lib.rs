@@ -142,7 +142,7 @@ impl WindowBuilder {
         self
     }
 
-    fn build(self, window_id: WindowId) -> Result<WindowState> {
+    fn build(self, window_id: WindowId, command_sender: CommandSender) -> Result<WindowState> {
         let root = self
             .root
             .ok_or_else(|| Error::new("window root widget must be set before building"))?;
@@ -153,6 +153,7 @@ impl WindowBuilder {
             self.icon,
             root,
             self.command_listeners,
+            command_sender,
         ))
     }
 }
@@ -508,7 +509,7 @@ impl Runtime {
 
     pub fn add_window(&mut self, builder: WindowBuilder) -> Result<WindowId> {
         let window_id = self.alloc_window_id();
-        let mut window = builder.build(window_id)?;
+        let mut window = builder.build(window_id, self.command_sender.clone())?;
         window.clipboard = self.clipboard.clone();
         window.reactive_hub.set_waker(self.external_waker.clone());
         self.windows.push(window);
@@ -1458,6 +1459,7 @@ struct WindowState {
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
     clipboard: Clipboard,
+    command_sender: CommandSender,
     command_listeners: CommandListeners,
     pending_command_diagnostics: Vec<CommandDispatchSample>,
     pending_invalidation_diagnostics: Vec<InvalidationTraceSample>,
@@ -1470,6 +1472,7 @@ impl WindowState {
         icon: Option<WindowIcon>,
         root: WidgetPod,
         command_listeners: CommandListeners,
+        command_sender: CommandSender,
     ) -> Self {
         let focus = FocusState {
             focused_widget: None,
@@ -1513,6 +1516,7 @@ impl WindowState {
             ime_composition_rect: None,
             last_tick_time: 0.0,
             clipboard: Clipboard::new(),
+            command_sender,
             command_listeners,
             pending_command_diagnostics: Vec::new(),
             pending_invalidation_diagnostics: Vec::new(),
@@ -1967,6 +1971,7 @@ impl WindowState {
                 EventPhase::Target,
                 self.focus.focused_widget,
                 &self.clipboard,
+                &self.command_sender,
                 event,
             )
             .or_else(|| {
@@ -1978,6 +1983,7 @@ impl WindowState {
                     EventPhase::Target,
                     self.focus.focused_widget,
                     &self.clipboard,
+                    &self.command_sender,
                     event,
                 )
             })
@@ -2004,6 +2010,7 @@ impl WindowState {
                 self.last_tick_time,
                 self.focus.focused_widget,
                 &self.clipboard,
+                &self.command_sender,
                 &command,
             )
             .or_else(|| {
@@ -2014,6 +2021,7 @@ impl WindowState {
                     self.last_tick_time,
                     self.focus.focused_widget,
                     &self.clipboard,
+                    &self.command_sender,
                     &command,
                 )
             })
@@ -2814,6 +2822,7 @@ impl WindowState {
                         EventPhase::Capture,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         event,
                     )
                     .unwrap_or_else(empty_dispatch);
@@ -2841,6 +2850,7 @@ impl WindowState {
                     EventPhase::Target,
                     self.focus.focused_widget,
                     &self.clipboard,
+                    &self.command_sender,
                     event,
                 )
                 .or_else(|| {
@@ -2852,6 +2862,7 @@ impl WindowState {
                         EventPhase::Target,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         event,
                     )
                 })
@@ -2877,6 +2888,7 @@ impl WindowState {
                         EventPhase::Bubble,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         event,
                     )
                     .unwrap_or_else(empty_dispatch);
@@ -2983,6 +2995,7 @@ impl WindowState {
                         self.last_tick_time,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         false,
                     )
                 })
@@ -2994,6 +3007,7 @@ impl WindowState {
                         self.last_tick_time,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         false,
                     )
                 });
@@ -3017,6 +3031,7 @@ impl WindowState {
                         self.last_tick_time,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         true,
                     )
                 })
@@ -3028,6 +3043,7 @@ impl WindowState {
                         self.last_tick_time,
                         self.focus.focused_widget,
                         &self.clipboard,
+                        &self.command_sender,
                         true,
                     )
                 });
@@ -8790,6 +8806,20 @@ mod tests {
         }
     }
 
+    struct EventCommandRoot;
+
+    impl Widget for EventCommandRoot {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if matches!(event, Event::Custom(_)) {
+                ctx.command_sender().send_application(TEST_COMMAND, 41);
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 80.0))
+        }
+    }
+
     #[test]
     fn scheduler_wake_invokes_controllers_without_synthesizing_a_root_event() {
         let controller_wakes = Arc::new(AtomicUsize::new(0));
@@ -8811,6 +8841,32 @@ mod tests {
 
         assert_eq!(controller_wakes.load(Ordering::Relaxed), 1);
         assert_eq!(custom_events.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn widget_event_context_can_enqueue_an_application_command() {
+        let received = Arc::new(AtomicUsize::new(0));
+        let received_by_handler = Arc::clone(&received);
+        let mut runtime = Application::new()
+            .on_command(TEST_COMMAND, move |ctx, value| {
+                received_by_handler.store(*value as usize, Ordering::Relaxed);
+                ctx.set_handled();
+            })
+            .window(WindowBuilder::new().root(EventCommandRoot))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Custom(CustomEvent::new("runtime.test.enqueue-command")),
+            )
+            .unwrap();
+        assert_eq!(received.load(Ordering::Relaxed), 0);
+
+        runtime.process_commands();
+        assert_eq!(received.load(Ordering::Relaxed), 41);
     }
 
     #[test]

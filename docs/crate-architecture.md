@@ -129,6 +129,7 @@ This crate owns:
 - the `Widget` trait and widget contexts
 - `WidgetPod`, `SingleChild`, and `WidgetChildren`
 - event routing
+- the typed command queue, application/window controllers, and multicast
 - focus and pointer capture
 - timers, animation-frame wakes, and async wakeups
 - invalidation scheduling
@@ -166,7 +167,8 @@ Host integration.
 
 This crate owns desktop lifecycle with `winit`, host event normalization into
 `sui_core::Event`, redraw scheduling for `WindowId` targets, accessibility
-bridging, deterministic headless execution, and renderer submission. Its
+bridging, separate reactive/command scheduler wakes, deterministic headless
+execution, and renderer submission. Its
 Windows accessibility bridge publishes runtime semantic snapshots through
 AccessKit's native UI Automation adapter and routes requested actions back into
 the runtime event loop.
@@ -219,10 +221,15 @@ performance overlays, and visual artifact generation.
 8. `sinomo-ui-render-wgpu` consumes scene output and resource snapshots, not widget internals.
 9. `sinomo-ui-platform` normalizes host events and submits renderer frames; it does not own widget logic.
 10. Built-in widgets stay outside `sinomo-ui-runtime`.
+11. Scheduler wakes and typed command delivery remain distinct; neither is
+    represented as an implicit root custom event.
 
 ## Practical Ownership Guide
 
 - Add or change an event type: `sinomo-ui-core`, then `sinomo-ui-platform`, then retained-runtime routing if needed.
+- Add a typed application command: define its `CommandKey` near the owning
+  feature, then register application/window subscribers through the facade;
+  do not add a new string custom event.
 - Change `WindowId` target semantics: update `sinomo-ui-core`, `sinomo-ui-runtime`, `sinomo-ui-platform`, and docs together.
 - Change widget participation in layout, paint, semantics, routing, or child enumeration: `sinomo-ui-runtime` and `sinomo-ui-widgets`.
 - Change layout primitives: `sinomo-ui-layout`.
