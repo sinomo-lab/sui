@@ -15,6 +15,7 @@ pub mod hdr_theme;
 pub mod media;
 pub mod panes;
 pub mod reorderable;
+pub mod rich_document;
 pub mod rich_text;
 pub mod selection;
 mod text_align;
@@ -98,6 +99,14 @@ pub use panes::{
     FloatingWorkspaceState, ResizablePane, SplitView,
 };
 pub use reorderable::{ReorderableList, ReorderableListChange};
+pub use rich_document::{
+    BasicSyntaxHighlighter, RichAttachment, RichBlockId, RichDocumentBlock, RichDocumentBlockKind,
+    RichDocumentModel, RichDocumentRenderContext, RichDocumentRendererRegistry,
+    RichDocumentSnapshot, RichDocumentSpan, RichDocumentStatus, RichDocumentUpdate,
+    RichDocumentView, RichDocumentViewState, RichExtensionBlock, RichInlineImage, RichInlineKind,
+    RichInlineStyle, RichLink, RichListItem, RichSyntaxHighlighter, RichSyntaxSpan,
+    RichSyntaxTokenKind,
+};
 pub use rich_text::{RichText, RichTextSourceMap, RichTextSourceSpan};
 pub use selection::{
     SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,

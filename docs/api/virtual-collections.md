@@ -2,7 +2,7 @@
 
 [Previous: widgets and layout](widgets-and-layout.md) ·
 [API guide](README.md) ·
-[Next: input and text editing](input-and-editing.md)
+[Next: rich documents](rich-documents.md)
 
 SUI has two complementary virtualization paths:
 

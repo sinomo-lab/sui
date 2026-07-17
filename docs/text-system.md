@@ -31,8 +31,8 @@ TextSystem through LayoutContext
 ```
 
 Application code normally enters this pipeline through `Label`, `RichText`,
-`TextInput`, `TextArea`, or `TextSurface`. A custom widget can use the same
-pipeline through `MeasureCtx::layout()` and `PaintCtx`.
+`RichDocumentView`, `TextInput`, `TextArea`, or `TextSurface`. A custom widget
+can use the same pipeline through `MeasureCtx::layout()` and `PaintCtx`.
 
 ## Documents and Styles
 
@@ -76,6 +76,13 @@ fn build_status() -> impl Widget {
 publish selection through a `SelectionScope`. Its optional
 `RichTextSourceMap` maps copied display ranges back to original source text,
 which is useful for rendered Markdown.
+
+For complete Markdown and mixed structured content, use
+`RichDocumentModel` and `RichDocumentView` rather than manually flattening a
+document into one `RichText`. The rich-document layer performs streaming tail
+parsing, retains one persistent layout per stable block, and coordinates
+selection across those layouts. See the [rich-document API
+guide](api/rich-documents.md).
 
 ## Layout Results
 

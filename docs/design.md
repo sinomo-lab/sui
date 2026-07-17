@@ -300,7 +300,7 @@ Text is a first-class subsystem, not a thin utility. It should support:
 
 Text input must support IME and platform text services. SUI should not rely on raw keyboard events for international text entry.
 
-Basic text and font support belong in the core framework. Rich text editing, advanced text layout, and markdown-oriented features should live in a higher-level subsystem built on top of the core text stack. Outline conversion belongs in core because glyphs are already fundamentally vector data.
+Basic text and font support belong in the core framework. Rich text editing and advanced text layout live above that core. Markdown-oriented display is provided by the higher-level `RichDocumentModel` and `RichDocumentView` subsystem: it incrementally parses streaming tails, retains keyed block widgets and cached layouts, coordinates cross-block selection, and lets applications register structured block renderers without introducing an application-specific message widget. Outline conversion belongs in core because glyphs are already fundamentally vector data.
 
 ## Infinite Canvas
 

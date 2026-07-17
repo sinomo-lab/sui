@@ -3314,6 +3314,7 @@ name = "sinomo-ui-widgets"
 version = "0.1.0"
 dependencies = [
  "palette",
+ "pulldown-cmark",
  "sinomo-ui-animation",
  "sinomo-ui-core",
  "sinomo-ui-layout",

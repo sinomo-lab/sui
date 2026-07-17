@@ -61,6 +61,9 @@ then build an editable [stateful form](https://github.com/sinomo-lab/sui/blob/ma
   high-contrast and void/OLED schemes, and contextual control sizes.
 - Editable text, text areas, password fields, and local date/time fields with
   caret movement, selection, clipboard operations, and IME input.
+- Retained rich documents with incremental streaming Markdown, cross-block
+  selection, syntax-highlighted code, attachments, and extensible structured
+  result renderers.
 - A renderer-neutral scene representation and retained `wgpu` compositor.
 - AccessKit-backed accessibility plus an accessibility-tree generated TUI.
 - Headless automation, semantic locators, screenshots, and visual artifact
@@ -93,6 +96,7 @@ and broader Linux native-HDR integration remain roadmap work.
 | --- | --- | --- |
 | Hello | `cargo run -p sinomo-ui --example hello` | Minimal application and window |
 | Quickstart | `cargo run -p sinomo-ui --example quickstart` | Layout, theming, and callbacks |
+| Rich document | `cargo run -p sinomo-ui --example rich_document` | Markdown, code, selection, and structured blocks |
 | Stateful form | `cargo run -p sinomo-ui --example stateful_form` | External state and editable inputs |
 | Widget book | `cargo run -p sinomo-ui-demo` | Built-in widgets, themes, renderer settings, and demos |
 | TUI | `cargo run -p sinomo-ui-demo -- --tui` | Keyboard-driven semantic-tree interface |

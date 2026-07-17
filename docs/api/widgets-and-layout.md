@@ -14,7 +14,7 @@ families to learn rather than an exhaustive symbol inventory.
 
 | Family | Common types | Use for |
 | --- | --- | --- |
-| Text and actions | `Label`, `RichText`, `Button`, `IconButton`, `Link` | Display text and invoke commands |
+| Text, documents, and actions | `Label`, `RichText`, `RichDocumentView`, `Button`, `IconButton`, `Link` | Display text or streaming Markdown and invoke commands |
 | Boolean and choice controls | `Checkbox`, `Switch`, `RadioGroup`, `SegmentedControl`, `Select`, `ComboBox` | Small finite choices |
 | Text and numeric input | `TextInput`, `PasswordInput`, `DateTimeInput`, `TextArea`, `NumberInput`, `SpinBox`, `Slider` | Editable values and ranges |
 | Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Background` | Size and position ordinary widget trees |

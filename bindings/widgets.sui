@@ -61,6 +61,7 @@ rust-widget RadioGroup bound RadioGroup
 rust-widget RebuildOnChange rust-only
 rust-widget RebuildOnConstraints rust-only
 rust-widget ReorderableList manual-wrapper ReorderableList
+rust-widget RichDocumentView rust-only
 rust-widget RichText bound RichText
 rust-widget ScrollBar rust-only
 rust-widget ScrollView bound ScrollView
