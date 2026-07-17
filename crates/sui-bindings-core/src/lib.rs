@@ -14,15 +14,17 @@ use std::{
     },
 };
 
+#[cfg(feature = "desktop")]
+use sui::CommandKey;
 use sui::containers::Padding as PaddingWidget;
 use sui::{
     ActionCard, Align, Alignment, ArrangeCtx, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
     BrowserTabBar, Brush, BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator, Button,
     Checkbox, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSpace, ColorSwatch,
-    CommandGroup, CommandKey, Constraints, ContextMenu, CoverageDots, CustomEvent, DateTimeInput,
-    DetailRow, Dialog, Dock, DockPanel, DpiInfo, EmptyState, Event, EventCtx, EventPhase,
-    FieldGroup, FixedPaneSplit, Flex, FloatingStack, FontHandle, FormRow, FormSection, FramedField,
-    Icon, IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
+    CommandGroup, Constraints, ContextMenu, CoverageDots, CustomEvent, DateTimeInput, DetailRow,
+    Dialog, Dock, DockPanel, DpiInfo, EmptyState, Event, EventCtx, EventPhase, FieldGroup,
+    FixedPaneSplit, Flex, FloatingStack, FontHandle, FormRow, FormSection, FramedField, Icon,
+    IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
     LayerList, LayerListItem, Link, ListItem, ListView, MeasureCtx, MeasuredBottomDock, Menu,
     MenuItem, Modifiers, NumberInput, PaintCtx, PanelSection, PasswordInput, Path, PlacementBadge,
@@ -6088,7 +6090,6 @@ struct BindingSideSheetWidget {
     inner: SideSheet,
     shown: BindingBool,
     last_shown: bool,
-    build: Box<dyn Fn(bool) -> SideSheet>,
 }
 
 impl BindingSideSheetWidget {
@@ -6102,14 +6103,13 @@ impl BindingSideSheetWidget {
             inner,
             shown,
             last_shown,
-            build: Box::new(build),
         }
     }
 
     fn sync_state(&mut self) {
         let shown = self.shown.resolve();
         if shown != self.last_shown {
-            self.inner = (self.build)(shown);
+            self.inner.set_shown(shown);
             self.last_shown = shown;
         }
     }
@@ -6165,7 +6165,6 @@ impl Widget for BindingSideSheetWidget {
 struct BindingSplitViewWidget {
     inner: SplitView,
     ratio: BindingNumber,
-    build: Box<dyn Fn(f32) -> SplitView>,
 }
 
 impl BindingSplitViewWidget {
@@ -6174,17 +6173,13 @@ impl BindingSplitViewWidget {
         build: impl Fn(f32) -> SplitView + 'static,
     ) -> BindingSplitViewWidget {
         let inner = build(ratio.resolve() as f32);
-        Self {
-            inner,
-            ratio,
-            build: Box::new(build),
-        }
+        Self { inner, ratio }
     }
 
     fn sync_state(&mut self) {
         let ratio = (self.ratio.resolve() as f32).clamp(0.0, 1.0);
         if (ratio - self.inner.current_ratio()).abs() > f32::EPSILON {
-            self.inner = (self.build)(ratio);
+            self.inner.set_ratio(ratio);
         }
     }
 }
@@ -6818,6 +6813,7 @@ impl Widget for BindingUiTaskRootWidget {
     }
 }
 
+#[cfg(feature = "desktop")]
 const BINDING_UI_TASKS_READY: CommandKey<()> = CommandKey::new("sui.bindings.ui-tasks-ready");
 
 #[derive(Debug, Clone)]
@@ -8762,6 +8758,10 @@ impl ForeignEventCtx<'_> {
 
     pub fn request_focus(&mut self) {
         self.inner.request_focus();
+    }
+
+    pub fn request_focus_for(&mut self, widget_id: WidgetId) {
+        self.inner.request_focus_for(widget_id);
     }
 
     pub fn clear_focus(&mut self) {
@@ -11020,6 +11020,14 @@ mod tests {
                 .iter()
                 .any(|name| name == "Bound inspector")
         );
+        let content_id = runtime
+            .runtime
+            .semantics(window_id.into_sui())
+            .unwrap()
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Inspector content"))
+            .unwrap()
+            .id;
 
         shown.set(false);
         assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
@@ -11029,6 +11037,22 @@ mod tests {
                 .semantics_names
                 .iter()
                 .any(|name| name == "Bound inspector")
+        );
+
+        shown.set(true);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        let _ = runtime.render_window(window_id).unwrap();
+        assert_eq!(
+            runtime
+                .runtime
+                .semantics(window_id.into_sui())
+                .unwrap()
+                .iter()
+                .find(|node| node.name.as_deref() == Some("Inspector content"))
+                .unwrap()
+                .id,
+            content_id,
+            "bound visibility updates must retain sheet content identity"
         );
     }
 
@@ -11067,12 +11091,32 @@ mod tests {
                 .any(|name| name == "Bound split")
         );
         assert!(initial.semantics_values.iter().any(|value| value == "0.25"));
+        let first_pane_id = runtime
+            .runtime
+            .semantics(window_id.into_sui())
+            .unwrap()
+            .iter()
+            .find(|node| node.name.as_deref() == Some("First pane"))
+            .unwrap()
+            .id;
 
         ratio.set(0.75);
         assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
         let updated = runtime.render_window(window_id).unwrap();
         assert!(updated.semantics_values.iter().any(|value| value == "0.75"));
         assert!(!updated.semantics_values.iter().any(|value| value == "0.25"));
+        assert_eq!(
+            runtime
+                .runtime
+                .semantics(window_id.into_sui())
+                .unwrap()
+                .iter()
+                .find(|node| node.name.as_deref() == Some("First pane"))
+                .unwrap()
+                .id,
+            first_pane_id,
+            "bound ratio updates must retain pane widget identity"
+        );
     }
 
     #[test]

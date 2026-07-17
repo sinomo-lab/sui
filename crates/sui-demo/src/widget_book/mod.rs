@@ -3780,6 +3780,61 @@ fn build_widget_book_gallery_with_theme_selection(
                             .name(SPLIT_VIEW_NAME)
                             .ratio(0.62),
                         ),
+                    )
+                    .with_child(
+                        SizedBox::new().width(720.0).height(132.0).with_child(
+                            AdaptiveView::new(
+                                Background::new(
+                                    theme_reader().palette.control,
+                                    Padding::all(
+                                        16.0,
+                                        demo_label(
+                                            &theme_reader,
+                                            "Compact: one-pane navigation with drawers and bottom sheets",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Text,
+                                        ),
+                                    ),
+                                )
+                                .brush_when(widget_book_theme_color(
+                                    &theme_reader,
+                                    |theme| theme.palette.control,
+                                )),
+                                Background::new(
+                                    theme_reader().palette.surface,
+                                    Padding::all(
+                                        16.0,
+                                        demo_label(
+                                            &theme_reader,
+                                            "Medium: retained rail plus content",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Text,
+                                        ),
+                                    ),
+                                )
+                                .brush_when(widget_book_theme_color(
+                                    &theme_reader,
+                                    |theme| theme.palette.surface,
+                                )),
+                                Background::new(
+                                    theme_reader().palette.surface_raised,
+                                    Padding::all(
+                                        16.0,
+                                        demo_label(
+                                            &theme_reader,
+                                            "Expanded: stable sidebar, content, and inspector regions",
+                                            DemoTextRole::Supporting,
+                                            DemoTextColor::Text,
+                                        ),
+                                    ),
+                                )
+                                .brush_when(widget_book_theme_color(
+                                    &theme_reader,
+                                    |theme| theme.palette.surface_raised,
+                                )),
+                            )
+                            .breakpoints(AdaptiveBreakpoints::new(480.0, 680.0)),
+                        ),
                     ),
             ))
             .with_child(filterable_widget_book_section(

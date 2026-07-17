@@ -5,7 +5,7 @@ use std::{
     hash::{Hash, Hasher},
     rc::Rc,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -19,7 +19,7 @@ use crate::{
 use sui_core::{
     AsyncWakeToken, Clipboard, Color, DpiInfo, DragPayload, DragScopeId, DragSessionId, DropEffect,
     Event, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, Path, Point,
-    Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WidgetId, WindowId,
+    Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowId,
 };
 use sui_layout::{Constraints, LayoutContext};
 use sui_reactive::{Observable, Signal};
@@ -250,6 +250,272 @@ impl SingleChild {
     pub fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         visitor.visit(&mut self.child);
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FocusRestorePolicy {
+    /// Restore only a descendant that previously held focus.
+    LastFocused,
+    /// Focus the first currently mounted focusable descendant.
+    FirstFocusable,
+    /// Prefer the last focused descendant, falling back to the first focusable one.
+    #[default]
+    LastFocusedOrFirstFocusable,
+}
+
+#[derive(Debug, Default)]
+struct FocusScopeStateInner {
+    last_focused: Option<WidgetId>,
+    restore_requested: bool,
+}
+
+/// Shared retained focus history for a [`FocusScope`].
+///
+/// Presentation policies call [`Self::request_restore`] when a previously
+/// hidden pane or route becomes visible. The associated scope performs the
+/// focus change on its next runtime wake without rebuilding its child subtree.
+#[derive(Clone, Debug)]
+pub struct FocusScopeState {
+    inner: Arc<Mutex<FocusScopeStateInner>>,
+    restore_revision: Signal<u64>,
+}
+
+impl FocusScopeState {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(FocusScopeStateInner::default())),
+            restore_revision: Signal::named("FocusScopeState::restore", 0),
+        }
+    }
+
+    pub fn last_focused(&self) -> Option<WidgetId> {
+        self.lock_inner().last_focused
+    }
+
+    pub fn request_restore(&self) -> bool {
+        let changed = {
+            let mut inner = self.lock_inner();
+            if inner.restore_requested {
+                false
+            } else {
+                inner.restore_requested = true;
+                true
+            }
+        };
+        if changed {
+            self.restore_revision
+                .update(|revision| *revision = revision.wrapping_add(1));
+        }
+        changed
+    }
+
+    pub fn clear(&self) {
+        let restore_was_requested = {
+            let mut inner = self.lock_inner();
+            let restore_was_requested = inner.restore_requested;
+            inner.last_focused = None;
+            inner.restore_requested = false;
+            restore_was_requested
+        };
+        if restore_was_requested {
+            self.restore_revision
+                .update(|revision| *revision = revision.wrapping_add(1));
+        }
+    }
+
+    fn remember(&self, widget_id: WidgetId) {
+        self.lock_inner().last_focused = Some(widget_id);
+    }
+
+    fn restore_requested(&self) -> bool {
+        self.lock_inner().restore_requested
+    }
+
+    fn complete_restore(&self) {
+        self.lock_inner().restore_requested = false;
+    }
+
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, FocusScopeStateInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl Default for FocusScopeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Retains focus history for a stable child subtree.
+///
+/// The scope does not impose visibility or navigation behavior. Adaptive
+/// containers keep the scope and its child mounted, then request restoration
+/// through [`FocusScopeState`] when the subtree is presented again.
+pub struct FocusScope {
+    state: FocusScopeState,
+    restore_policy: FocusRestorePolicy,
+    child: SingleChild,
+}
+
+impl FocusScope {
+    pub fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            state: FocusScopeState::new(),
+            restore_policy: FocusRestorePolicy::default(),
+            child: SingleChild::new(child),
+        }
+    }
+
+    pub fn state(mut self, state: FocusScopeState) -> Self {
+        self.state = state;
+        self
+    }
+
+    pub fn restore_policy(mut self, restore_policy: FocusRestorePolicy) -> Self {
+        self.restore_policy = restore_policy;
+        self
+    }
+
+    pub fn child(&self) -> &WidgetPod {
+        self.child.child()
+    }
+
+    pub fn child_mut(&mut self) -> &mut WidgetPod {
+        self.child.child_mut()
+    }
+
+    fn restore_target(&self) -> Option<WidgetId> {
+        let last_focused = self
+            .state
+            .last_focused()
+            .filter(|target| pod_contains(self.child.child(), *target));
+        match self.restore_policy {
+            FocusRestorePolicy::LastFocused => last_focused,
+            FocusRestorePolicy::FirstFocusable => first_focusable(self.child.child()),
+            FocusRestorePolicy::LastFocusedOrFirstFocusable => {
+                last_focused.or_else(|| first_focusable(self.child.child()))
+            }
+        }
+    }
+
+    fn remember_current_focus(&self, focused_widget_id: Option<WidgetId>) {
+        if let Some(focused) = focused_widget_id
+            && pod_contains(self.child.child(), focused)
+        {
+            self.state.remember(focused);
+        }
+    }
+}
+
+impl Widget for FocusScope {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.remember_current_focus(ctx.focused_widget_id());
+        if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. }))
+            && self.state.restore_requested()
+        {
+            let target = self.restore_target();
+            self.state.complete_restore();
+            if let Some(target) = target {
+                ctx.request_focus_for(target);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let _ = ctx.observe(&self.state.restore_revision);
+        if self.state.restore_requested() {
+            ctx.request_animation_frame();
+        }
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.remember_current_focus(ctx.focused_widget_id());
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.remember_current_focus(ctx.focused_widget_id());
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+fn pod_contains(root: &WidgetPod, target: WidgetId) -> bool {
+    if root.id() == target {
+        return true;
+    }
+
+    struct Finder {
+        target: WidgetId,
+        found: bool,
+    }
+
+    impl WidgetPodVisitor for Finder {
+        fn visit(&mut self, child: &WidgetPod) {
+            if self.found {
+                return;
+            }
+            if child.id() == self.target {
+                self.found = true;
+            } else {
+                child.visit_children(self);
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        target,
+        found: false,
+    };
+    root.visit_children(&mut finder);
+    finder.found
+}
+
+fn first_focusable(root: &WidgetPod) -> Option<WidgetId> {
+    if root.accepts_focus() {
+        return Some(root.id());
+    }
+
+    struct Finder {
+        target: Option<WidgetId>,
+    }
+
+    impl WidgetPodVisitor for Finder {
+        fn visit(&mut self, child: &WidgetPod) {
+            if self.target.is_some() {
+                return;
+            }
+            if child.accepts_focus() {
+                self.target = Some(child.id());
+            } else {
+                child.visit_children(self);
+            }
+        }
+    }
+
+    let mut finder = Finder { target: None };
+    root.visit_children(&mut finder);
+    finder.target
 }
 
 #[derive(Default)]
@@ -683,7 +949,11 @@ impl WidgetPod {
         parent_ctx.extend_nodes(child_ctx.into_nodes());
     }
 
-    pub(crate) fn accepts_focus(&self) -> bool {
+    /// Return whether this retained widget is a focus target.
+    ///
+    /// Adaptive containers use this while selecting a restoration fallback for
+    /// a subtree that has just become visible again.
+    pub fn accepts_focus(&self) -> bool {
         self.widget.accepts_focus()
     }
 
@@ -1384,6 +1654,15 @@ impl EventCtx {
 
     pub fn request_focus(&mut self) {
         self.focus_request = Some(FocusRequest::Focus(self.widget_id));
+    }
+
+    /// Request focus for a retained widget in the current window.
+    ///
+    /// Containers use this to restore focus to a descendant after adaptive
+    /// presentation changes. The target must be mounted in the widget graph by
+    /// the time the current event dispatch completes.
+    pub fn request_focus_for(&mut self, widget_id: WidgetId) {
+        self.focus_request = Some(FocusRequest::Focus(widget_id));
     }
 
     pub fn clear_focus(&mut self) {

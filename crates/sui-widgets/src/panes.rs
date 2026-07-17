@@ -1,9 +1,12 @@
+use std::cell::Cell;
+
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
     SemanticsValue, Size, WakeEvent, WidgetId,
 };
 use sui_layout::{Axis, Constraints};
+use sui_reactive::Signal;
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, Widget, WidgetPod,
@@ -19,6 +22,64 @@ use crate::{
 
 type AnimatedScalar = MotionScalar;
 type ThemeReader = std::rc::Rc<dyn Fn() -> DefaultTheme>;
+
+fn retained_subtree_contains(root: &WidgetPod, target: WidgetId) -> bool {
+    if root.id() == target {
+        return true;
+    }
+
+    struct Finder {
+        target: WidgetId,
+        found: bool,
+    }
+
+    impl WidgetPodVisitor for Finder {
+        fn visit(&mut self, child: &WidgetPod) {
+            if self.found {
+                return;
+            }
+            if child.id() == self.target {
+                self.found = true;
+            } else {
+                child.visit_children(self);
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        target,
+        found: false,
+    };
+    root.visit_children(&mut finder);
+    finder.found
+}
+
+fn first_focusable_in(root: &WidgetPod) -> Option<WidgetId> {
+    if root.accepts_focus() {
+        return Some(root.id());
+    }
+
+    struct Finder {
+        target: Option<WidgetId>,
+    }
+
+    impl WidgetPodVisitor for Finder {
+        fn visit(&mut self, child: &WidgetPod) {
+            if self.target.is_some() {
+                return;
+            }
+            if child.accepts_focus() {
+                self.target = Some(child.id());
+            } else {
+                child.visit_children(self);
+            }
+        }
+    }
+
+    let mut finder = Finder { target: None };
+    root.visit_children(&mut finder);
+    finder.target
+}
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
@@ -1083,11 +1144,157 @@ impl Widget for FloatingViewHost {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SplitExtent {
+    Fraction(f32),
+    Pixels(f32),
+}
+
+impl SplitExtent {
+    fn normalized(self) -> Self {
+        match self {
+            Self::Fraction(fraction) => Self::Fraction(fraction.clamp(0.0, 1.0)),
+            Self::Pixels(pixels) => Self::Pixels(pixels.max(0.0)),
+        }
+    }
+}
+
+impl Default for SplitExtent {
+    fn default() -> Self {
+        Self::Fraction(0.5)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPaneSide {
+    First,
+    Second,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplitStateSnapshot {
+    pub extent: SplitExtent,
+    pub collapsed: Option<SplitPaneSide>,
+    pub last_expanded_extent: SplitExtent,
+}
+
+impl SplitStateSnapshot {
+    pub fn new(extent: SplitExtent) -> Self {
+        let extent = extent.normalized();
+        Self {
+            extent,
+            collapsed: None,
+            last_expanded_extent: extent,
+        }
+    }
+}
+
+impl Default for SplitStateSnapshot {
+    fn default() -> Self {
+        Self::new(SplitExtent::default())
+    }
+}
+
+/// Cloneable, observable split-pane state.
+///
+/// Applications may persist [`Self::snapshot`] in their own settings system
+/// and later restore it with [`Self::apply_snapshot`]. SUI owns no storage or
+/// serialization policy.
+#[derive(Clone, Debug)]
+pub struct SplitState {
+    snapshot: Signal<SplitStateSnapshot>,
+}
+
+impl SplitState {
+    pub fn new(extent: SplitExtent) -> Self {
+        Self {
+            snapshot: Signal::named("SplitState", SplitStateSnapshot::new(extent)),
+        }
+    }
+
+    pub fn fraction(fraction: f32) -> Self {
+        Self::new(SplitExtent::Fraction(fraction))
+    }
+
+    pub fn pixels(pixels: f32) -> Self {
+        Self::new(SplitExtent::Pixels(pixels))
+    }
+
+    pub fn snapshot(&self) -> SplitStateSnapshot {
+        self.snapshot.get()
+    }
+
+    pub fn apply_snapshot(&self, snapshot: SplitStateSnapshot) -> bool {
+        let extent = snapshot.extent.normalized();
+        let last_expanded_extent = snapshot.last_expanded_extent.normalized();
+        self.snapshot.set(SplitStateSnapshot {
+            extent,
+            collapsed: snapshot.collapsed,
+            last_expanded_extent,
+        })
+    }
+
+    pub fn set_extent(&self, extent: SplitExtent) -> bool {
+        let extent = extent.normalized();
+        self.snapshot.update(|snapshot| {
+            snapshot.extent = extent;
+            snapshot.last_expanded_extent = extent;
+            snapshot.collapsed = None;
+        })
+    }
+
+    pub fn set_fraction(&self, fraction: f32) -> bool {
+        self.set_extent(SplitExtent::Fraction(fraction))
+    }
+
+    pub fn set_pixels(&self, pixels: f32) -> bool {
+        self.set_extent(SplitExtent::Pixels(pixels))
+    }
+
+    pub fn collapse(&self, side: SplitPaneSide) -> bool {
+        self.snapshot.update(|snapshot| {
+            if snapshot.collapsed.is_none() {
+                snapshot.last_expanded_extent = snapshot.extent;
+            }
+            snapshot.collapsed = Some(side);
+        })
+    }
+
+    pub fn expand(&self) -> bool {
+        self.snapshot.update(|snapshot| {
+            if snapshot.collapsed.is_some() {
+                snapshot.extent = snapshot.last_expanded_extent;
+                snapshot.collapsed = None;
+            }
+        })
+    }
+
+    pub fn toggle(&self, side: SplitPaneSide) -> bool {
+        if self.snapshot().collapsed == Some(side) {
+            self.expand()
+        } else {
+            self.collapse(side)
+        }
+    }
+
+    pub(crate) fn observable(&self) -> &Signal<SplitStateSnapshot> {
+        &self.snapshot
+    }
+}
+
+impl Default for SplitState {
+    fn default() -> Self {
+        Self::new(SplitExtent::default())
+    }
+}
+
 pub struct SplitView {
     theme: Box<DefaultTheme>,
     theme_reader: Option<ThemeReader>,
     name: Option<String>,
     axis: Axis,
+    state: SplitState,
+    snapshot: SplitStateSnapshot,
     ratio: f32,
     min_first: f32,
     min_second: f32,
@@ -1101,6 +1308,9 @@ pub struct SplitView {
     drag_pointer: Option<u64>,
     divider_bounds: Rect,
     on_change: Option<Box<dyn FnMut(f32)>>,
+    first_last_focus: Cell<Option<WidgetId>>,
+    second_last_focus: Cell<Option<WidgetId>>,
+    pending_focus_restore: Cell<Option<SplitPaneSide>>,
 }
 
 impl SplitView {
@@ -1114,6 +1324,8 @@ impl SplitView {
             theme_reader: None,
             name: None,
             axis,
+            state: SplitState::default(),
+            snapshot: SplitStateSnapshot::default(),
             ratio: 0.5,
             min_first: 120.0,
             min_second: 120.0,
@@ -1127,6 +1339,9 @@ impl SplitView {
             drag_pointer: None,
             divider_bounds: Rect::ZERO,
             on_change: None,
+            first_last_focus: Cell::new(None),
+            second_last_focus: Cell::new(None),
+            pending_focus_restore: Cell::new(None),
         }
     }
 
@@ -1166,8 +1381,37 @@ impl SplitView {
     }
 
     pub fn ratio(mut self, ratio: f32) -> Self {
-        self.ratio = ratio.clamp(0.0, 1.0);
+        self.set_ratio(ratio);
         self
+    }
+
+    pub fn extent(mut self, extent: SplitExtent) -> Self {
+        self.set_extent(extent);
+        self
+    }
+
+    pub fn state(mut self, state: SplitState) -> Self {
+        self.snapshot = state.snapshot();
+        self.state = state;
+        self.ratio = self.resolved_ratio_for_available(1.0);
+        self
+    }
+
+    pub fn split_state(&self) -> SplitState {
+        self.state.clone()
+    }
+
+    pub fn set_ratio(&mut self, ratio: f32) -> bool {
+        self.set_extent(SplitExtent::Fraction(ratio))
+    }
+
+    pub fn set_extent(&mut self, extent: SplitExtent) -> bool {
+        let changed = self.state.set_extent(extent);
+        self.snapshot = self.state.snapshot();
+        if let SplitExtent::Fraction(ratio) = self.snapshot.extent {
+            self.ratio = ratio;
+        }
+        changed
     }
 
     pub fn min_first(mut self, min_first: f32) -> Self {
@@ -1211,6 +1455,10 @@ impl SplitView {
 
     pub fn current_ratio(&self) -> f32 {
         self.ratio
+    }
+
+    pub fn current_snapshot(&self) -> SplitStateSnapshot {
+        self.state.snapshot()
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -1262,8 +1510,70 @@ impl SplitView {
     fn divider_main_offset(&self, bounds: Rect) -> f32 {
         let divider = self.resolved_divider_thickness();
         let available = (axis_main(self.axis, bounds.size) - divider).max(0.0);
+        match self.snapshot.collapsed {
+            Some(SplitPaneSide::First) => return 0.0,
+            Some(SplitPaneSide::Second) => return available,
+            None => {}
+        }
         let (lower, upper) = self.allowed_first_main_range(available);
-        (available * self.ratio).clamp(lower, upper)
+        self.resolved_first_main(available).clamp(lower, upper)
+    }
+
+    fn resolved_first_main(&self, available: f32) -> f32 {
+        match self.snapshot.extent {
+            SplitExtent::Fraction(fraction) => available * fraction,
+            SplitExtent::Pixels(pixels) => pixels,
+        }
+    }
+
+    fn resolved_ratio_for_available(&self, available: f32) -> f32 {
+        if available <= f32::EPSILON {
+            return self.ratio.clamp(0.0, 1.0);
+        }
+        match self.snapshot.collapsed {
+            Some(SplitPaneSide::First) => 0.0,
+            Some(SplitPaneSide::Second) => 1.0,
+            None => (self.resolved_first_main(available) / available).clamp(0.0, 1.0),
+        }
+    }
+
+    fn sync_snapshot(&mut self, snapshot: SplitStateSnapshot, available: Option<f32>) {
+        let previous_collapsed = self.snapshot.collapsed;
+        self.snapshot = snapshot;
+        if previous_collapsed != self.snapshot.collapsed {
+            match previous_collapsed {
+                Some(SplitPaneSide::First)
+                    if self.snapshot.collapsed != Some(SplitPaneSide::First) =>
+                {
+                    self.pending_focus_restore.set(Some(SplitPaneSide::First));
+                }
+                Some(SplitPaneSide::Second)
+                    if self.snapshot.collapsed != Some(SplitPaneSide::Second) =>
+                {
+                    self.pending_focus_restore.set(Some(SplitPaneSide::Second));
+                }
+                _ => {}
+            }
+        }
+        if let Some(available) = available {
+            self.ratio = self.resolved_ratio_for_available(available);
+        } else if let SplitExtent::Fraction(ratio) = self.snapshot.extent {
+            self.ratio = ratio;
+        }
+    }
+
+    fn update_extent_from_first_main(&mut self, first_main: f32, available: f32) -> bool {
+        let extent = match self.snapshot.extent {
+            SplitExtent::Fraction(_) => SplitExtent::Fraction(if available <= f32::EPSILON {
+                0.0
+            } else {
+                first_main / available
+            }),
+            SplitExtent::Pixels(_) => SplitExtent::Pixels(first_main),
+        };
+        let changed = self.state.set_extent(extent);
+        self.sync_snapshot(self.state.snapshot(), Some(available));
+        changed
     }
 
     fn update_hover(&mut self, hovered: bool, ctx: &mut EventCtx) {
@@ -1304,28 +1614,62 @@ impl SplitView {
         let pointer_main = axis_position(self.axis, position) - axis_origin(self.axis, bounds);
         let (lower, upper) = self.allowed_first_main_range(total);
         let clamped = pointer_main.clamp(lower, upper);
-        let ratio = (clamped / total).clamp(0.0, 1.0);
-        if (ratio - self.ratio).abs() > f32::EPSILON {
-            self.ratio = ratio;
-            if let Some(on_change) = &mut self.on_change {
-                on_change(self.ratio);
-            }
+        if self.update_extent_from_first_main(clamped, total)
+            && let Some(on_change) = &mut self.on_change
+        {
+            on_change(self.ratio);
         }
     }
 
-    fn nudge_ratio(&mut self, delta: f32) {
+    fn nudge_ratio(&mut self, delta: f32, available: f32) {
         let next = (self.ratio + delta).clamp(0.0, 1.0);
-        if (next - self.ratio).abs() > f32::EPSILON {
-            self.ratio = next;
-            if let Some(on_change) = &mut self.on_change {
-                on_change(self.ratio);
-            }
+        self.set_first_main_and_notify(next * available, available);
+    }
+
+    fn set_first_main_and_notify(&mut self, first_main: f32, available: f32) {
+        if self.update_extent_from_first_main(first_main, available)
+            && let Some(on_change) = &mut self.on_change
+        {
+            on_change(self.ratio);
+        }
+    }
+
+    fn remember_focus(&self, focused: Option<WidgetId>) {
+        let Some(focused) = focused else {
+            return;
+        };
+        if retained_subtree_contains(self.first.child(), focused) {
+            self.first_last_focus.set(Some(focused));
+        } else if retained_subtree_contains(self.second.child(), focused) {
+            self.second_last_focus.set(Some(focused));
+        }
+    }
+
+    fn restore_pending_focus(&self, ctx: &mut EventCtx) {
+        let Some(side) = self.pending_focus_restore.take() else {
+            return;
+        };
+        let (pane, remembered) = match side {
+            SplitPaneSide::First => (self.first.child(), self.first_last_focus.get()),
+            SplitPaneSide::Second => (self.second.child(), self.second_last_focus.get()),
+        };
+        let target = remembered
+            .filter(|target| retained_subtree_contains(pane, *target))
+            .or_else(|| first_focusable_in(pane));
+        if let Some(target) = target {
+            ctx.request_focus_for(target);
+            ctx.request_paint();
+            ctx.request_semantics();
         }
     }
 }
 
 impl Widget for SplitView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.remember_focus(ctx.focused_widget_id());
+        let divider = self.resolved_divider_thickness();
+        let available = (axis_main(self.axis, ctx.bounds().size) - divider).max(0.0);
+        self.sync_snapshot(self.state.snapshot(), Some(available));
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 if self.drag_pointer == Some(pointer.pointer_id) {
@@ -1397,7 +1741,7 @@ impl Widget for SplitView {
                     (Axis::Horizontal, "ArrowLeft") | (Axis::Vertical, "ArrowUp") => -step,
                     (Axis::Horizontal, "ArrowRight") | (Axis::Vertical, "ArrowDown") => step,
                     (Axis::Horizontal, "Home") | (Axis::Vertical, "Home") => {
-                        self.ratio = 0.0;
+                        self.set_first_main_and_notify(0.0, available);
                         ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
@@ -1405,7 +1749,7 @@ impl Widget for SplitView {
                         return;
                     }
                     (Axis::Horizontal, "End") | (Axis::Vertical, "End") => {
-                        self.ratio = 1.0;
+                        self.set_first_main_and_notify(available, available);
                         ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
@@ -1414,13 +1758,14 @@ impl Widget for SplitView {
                     }
                     _ => return,
                 };
-                self.nudge_ratio(delta);
+                self.nudge_ratio(delta, available);
                 ctx.request_arrange();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                self.restore_pending_focus(ctx);
                 if self.advance_animations(*time) {
                     ctx.request_animation_frame();
                 }
@@ -1431,6 +1776,11 @@ impl Widget for SplitView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let snapshot = ctx.observe(self.state.observable());
+        self.sync_snapshot(snapshot, None);
+        if self.pending_focus_restore.get().is_some() {
+            ctx.request_animation_frame();
+        }
         let divider = self.resolved_divider_thickness();
 
         let probe_constraints = constraints.loosen();
@@ -1456,6 +1806,7 @@ impl Widget for SplitView {
         ));
 
         let total_main = axis_main(self.axis, size);
+        self.sync_snapshot(snapshot, Some((total_main - divider).max(0.0)));
         let cross = axis_cross(self.axis, size);
         let divider_offset = self.divider_main_offset(Rect::from_origin_size(Point::ZERO, size));
         let first_main = divider_offset.max(0.0);
@@ -1473,6 +1824,7 @@ impl Widget for SplitView {
         let size = bounds.size;
 
         let total_main = axis_main(self.axis, size);
+        self.sync_snapshot(self.state.snapshot(), Some((total_main - divider).max(0.0)));
         let cross = axis_cross(self.axis, size);
         let divider_offset = self.divider_main_offset(Rect::from_origin_size(Point::ZERO, size));
         let first_main = divider_offset.max(0.0);
@@ -1496,8 +1848,13 @@ impl Widget for SplitView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        self.first.paint(ctx);
-        self.second.paint(ctx);
+        self.remember_focus(ctx.focused_widget_id());
+        if self.snapshot.collapsed != Some(SplitPaneSide::First) {
+            self.first.paint(ctx);
+        }
+        if self.snapshot.collapsed != Some(SplitPaneSide::Second) {
+            self.second.paint(ctx);
+        }
 
         let theme = self.resolved_theme();
         let palette = theme.palette;
@@ -1532,8 +1889,13 @@ impl Widget for SplitView {
         node.value = Some(SemanticsValue::Number(self.ratio as f64));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
         ctx.push(node);
-        self.first.semantics(ctx);
-        self.second.semantics(ctx);
+        self.remember_focus(ctx.focused_widget_id());
+        if self.snapshot.collapsed != Some(SplitPaneSide::First) {
+            self.first.semantics(ctx);
+        }
+        if self.snapshot.collapsed != Some(SplitPaneSide::Second) {
+            self.second.semantics(ctx);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -1548,13 +1910,21 @@ impl Widget for SplitView {
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.first.visit_children(visitor);
-        self.second.visit_children(visitor);
+        if self.snapshot.collapsed != Some(SplitPaneSide::First) {
+            self.first.visit_children(visitor);
+        }
+        if self.snapshot.collapsed != Some(SplitPaneSide::Second) {
+            self.second.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.first.visit_children_mut(visitor);
-        self.second.visit_children_mut(visitor);
+        if self.snapshot.collapsed != Some(SplitPaneSide::First) {
+            self.first.visit_children_mut(visitor);
+        }
+        if self.snapshot.collapsed != Some(SplitPaneSide::Second) {
+            self.second.visit_children_mut(visitor);
+        }
     }
 }
 
@@ -1968,14 +2338,15 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState, SplitView,
+        FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState, SplitExtent,
+        SplitPaneSide, SplitState, SplitStateSnapshot, SplitView,
     };
     use crate::DefaultTheme;
     use crate::containers::SizedBox;
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, Rect, Result, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsValue,
-        Size, Vector, WidgetId, WindowEvent,
+        PointerEventKind, Rect, Result, ScrollDelta, SemanticsActionRequest, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::{Axis, Constraints};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
@@ -1988,6 +2359,70 @@ mod tests {
 
     struct ColorFill {
         color: Color,
+    }
+
+    #[test]
+    fn split_state_snapshot_round_trips_extent_and_collapse_state() {
+        let state = SplitState::pixels(312.0);
+        assert!(state.collapse(SplitPaneSide::First));
+        let persisted = state.snapshot();
+        assert_eq!(persisted.extent, SplitExtent::Pixels(312.0));
+        assert_eq!(persisted.collapsed, Some(SplitPaneSide::First));
+
+        let restored = SplitState::default();
+        assert!(restored.apply_snapshot(persisted));
+        assert_eq!(restored.snapshot(), persisted);
+        assert!(restored.expand());
+        assert_eq!(
+            restored.snapshot(),
+            SplitStateSnapshot {
+                extent: SplitExtent::Pixels(312.0),
+                collapsed: None,
+                last_expanded_extent: SplitExtent::Pixels(312.0),
+            }
+        );
+    }
+
+    #[test]
+    fn split_view_restores_focus_after_collapsed_pane_expands() -> Result<()> {
+        let state = SplitState::fraction(0.5);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(420.0).height(180.0).with_child(
+                SplitView::horizontal(
+                    crate::Button::new("First action"),
+                    crate::Button::new("Second action"),
+                )
+                .state(state.clone()),
+            ),
+        );
+
+        let first_id = runtime
+            .render(window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.name.as_deref() == Some("First action"))
+            .expect("first pane action present")
+            .id;
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            first_id,
+            SemanticsActionRequest::Focus,
+        )?);
+        let _ = runtime.render(window_id)?;
+
+        state.collapse(SplitPaneSide::First);
+        let collapsed = runtime.render(window_id)?;
+        assert!(!collapsed.semantics.iter().any(|node| node.id == first_id));
+        assert_eq!(runtime.focused_widget(window_id)?, None);
+
+        state.expand();
+        let expanded = runtime.render(window_id)?;
+        assert!(expanded.semantics.iter().any(|node| node.id == first_id));
+        for (ready_window, event) in runtime.drain_ready_events() {
+            runtime.handle_event(ready_window, event)?;
+        }
+        assert_eq!(runtime.focused_widget(window_id)?, Some(first_id));
+        Ok(())
     }
 
     impl ColorFill {

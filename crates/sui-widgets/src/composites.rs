@@ -7,7 +7,7 @@ use sui_core::{
     WidgetId,
 };
 use sui_layout::{Axis, Constraints, Padding as Insets};
-use sui_reactive::Observable;
+use sui_reactive::{Observable, Signal};
 use sui_runtime::{
     ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
     PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
@@ -14138,9 +14138,46 @@ pub enum SideSheetPlacement {
     Left,
     #[default]
     Right,
+    Bottom,
 }
 
-/// A viewport-height overlay panel anchored to either horizontal edge.
+/// Cloneable presentation state shared by a sheet and application controls.
+#[derive(Clone, Debug)]
+pub struct SheetState {
+    shown: Signal<bool>,
+}
+
+impl SheetState {
+    pub fn new(shown: bool) -> Self {
+        Self {
+            shown: Signal::named("SheetState", shown),
+        }
+    }
+
+    pub fn is_shown(&self) -> bool {
+        self.shown.get()
+    }
+
+    pub fn show(&self) -> bool {
+        self.shown.set(true)
+    }
+
+    pub fn hide(&self) -> bool {
+        self.shown.set(false)
+    }
+
+    pub fn toggle(&self) -> bool {
+        self.shown.update(|shown| *shown = !*shown)
+    }
+}
+
+impl Default for SheetState {
+    fn default() -> Self {
+        Self::new(false)
+    }
+}
+
+/// An overlay panel anchored to a viewport edge.
 ///
 /// `SideSheet` is suitable for responsive inspectors, conversation drawers,
 /// and focused configuration flows. It shares SUI's dialog surface, spacing,
@@ -14152,10 +14189,12 @@ pub struct SideSheet {
     title: String,
     description: Option<String>,
     shown: bool,
+    state: Option<SheetState>,
     modal: bool,
     dismiss_on_scrim: bool,
     placement: SideSheetPlacement,
     width: Option<f32>,
+    height: Option<f32>,
     body: SingleChild,
     header_action: Option<SingleChild>,
     actions: WidgetChildren,
@@ -14168,6 +14207,7 @@ pub struct SideSheet {
     focus_animation: AnimatedScalar,
     entrance_started: bool,
     focus_requested: bool,
+    previous_focus: Option<WidgetId>,
     on_dismiss: Option<Box<dyn FnMut()>>,
 }
 
@@ -14182,10 +14222,12 @@ impl SideSheet {
             title: title.into(),
             description: None,
             shown: true,
+            state: None,
             modal: true,
             dismiss_on_scrim: true,
             placement: SideSheetPlacement::Right,
             width: None,
+            height: None,
             body: SingleChild::new(body),
             header_action: None,
             actions: WidgetChildren::new(),
@@ -14198,6 +14240,7 @@ impl SideSheet {
             focus_animation: AnimatedScalar::new(0.0),
             entrance_started: false,
             focus_requested: false,
+            previous_focus: None,
             on_dismiss: None,
         }
     }
@@ -14222,13 +14265,33 @@ impl SideSheet {
     }
 
     pub fn shown(mut self, shown: bool) -> Self {
+        self.set_shown(shown);
+        self
+    }
+
+    pub fn is_shown(&self) -> bool {
+        self.shown
+    }
+
+    pub fn set_shown(&mut self, shown: bool) -> bool {
+        self.state = None;
+        if self.shown == shown {
+            return false;
+        }
         self.shown = shown;
-        if !shown {
+        if !self.shown {
             self.reveal = AnimatedScalar::new(0.0);
             self.focus_animation = AnimatedScalar::new(0.0);
             self.entrance_started = false;
             self.focus_requested = false;
+            self.previous_focus = None;
         }
+        true
+    }
+
+    pub fn state(mut self, state: SheetState) -> Self {
+        self.shown = state.is_shown();
+        self.state = Some(state);
         self
     }
 
@@ -14249,6 +14312,12 @@ impl SideSheet {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width.max(0.0));
+        self
+    }
+
+    /// Set the panel height when placed at [`SideSheetPlacement::Bottom`].
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height.max(0.0));
         self
     }
 
@@ -14321,6 +14390,14 @@ impl SideSheet {
             .max(0.0)
     }
 
+    fn resolved_height(&self, viewport_height: f32, theme: &DefaultTheme) -> f32 {
+        self.height
+            .unwrap_or((viewport_height * 0.62).min(560.0))
+            .max(theme.metrics.touch_target_size * 3.0)
+            .min(viewport_height)
+            .max(0.0)
+    }
+
     fn title_style(theme: &DefaultTheme) -> TextStyle {
         TextStyle {
             font_size: theme.metrics.dialog_title_font_size,
@@ -14330,9 +14407,18 @@ impl SideSheet {
         }
     }
 
-    fn dismiss(&mut self) {
+    fn dismiss(&mut self, ctx: &mut EventCtx) {
+        if let Some(state) = &self.state {
+            state.hide();
+            self.shown = false;
+            ctx.request_measure();
+            ctx.request_paint();
+        }
         if let Some(on_dismiss) = &mut self.on_dismiss {
             on_dismiss();
+        }
+        if let Some(previous_focus) = self.previous_focus.take() {
+            ctx.request_focus_for(previous_focus);
         }
     }
 
@@ -14397,22 +14483,27 @@ impl SideSheet {
         }
     }
 
-    fn reveal_offset(&self) -> f32 {
-        let distance = self.sheet_frame.width() * (1.0 - self.reveal.value);
+    fn reveal_offset(&self) -> Vector {
+        let horizontal_distance = self.sheet_frame.width() * (1.0 - self.reveal.value);
+        let vertical_distance = self.sheet_frame.height() * (1.0 - self.reveal.value);
         match self.placement {
-            SideSheetPlacement::Left => -distance,
-            SideSheetPlacement::Right => distance,
+            SideSheetPlacement::Left => Vector::new(-horizontal_distance, 0.0),
+            SideSheetPlacement::Right => Vector::new(horizontal_distance, 0.0),
+            SideSheetPlacement::Bottom => Vector::new(0.0, vertical_distance),
         }
     }
 
     fn presented_sheet(&self, origin: Point) -> Rect {
         self.sheet_frame
-            .translate(origin.to_vector() + Vector::new(self.reveal_offset(), 0.0))
+            .translate(origin.to_vector() + self.reveal_offset())
     }
 }
 
 impl Widget for SideSheet {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Some(state) = &self.state {
+            self.shown = state.is_shown();
+        }
         if !self.shown {
             return;
         }
@@ -14420,10 +14511,12 @@ impl Widget for SideSheet {
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
                 if !self.focus_requested {
                     self.focus_requested = true;
-                    let focus_is_inside = ctx.focused_widget_id().is_some_and(|focused| {
+                    let current_focus = ctx.focused_widget_id();
+                    let focus_is_inside = current_focus.is_some_and(|focused| {
                         focused == ctx.widget_id() || self.contains_widget(focused)
                     });
                     if !focus_is_inside {
+                        self.previous_focus = current_focus;
                         ctx.request_focus();
                     }
                 }
@@ -14443,7 +14536,7 @@ impl Widget for SideSheet {
                 if semantics.target == ctx.widget_id()
                     && matches!(semantics.action, sui_core::SemanticsActionRequest::Collapse) =>
             {
-                self.dismiss();
+                self.dismiss(ctx);
                 ctx.request_semantics();
                 ctx.set_handled();
             }
@@ -14459,7 +14552,7 @@ impl Widget for SideSheet {
                     ctx.request_semantics();
                 } else {
                     if self.dismiss_on_scrim {
-                        self.dismiss();
+                        self.dismiss(ctx);
                     }
                     if self.modal || self.dismiss_on_scrim {
                         ctx.set_handled();
@@ -14468,7 +14561,7 @@ impl Widget for SideSheet {
                 }
             }
             Event::Keyboard(key) if key.state == KeyState::Pressed && key.key == "Escape" => {
-                self.dismiss();
+                self.dismiss(ctx);
                 ctx.request_semantics();
                 ctx.set_handled();
             }
@@ -14477,6 +14570,9 @@ impl Widget for SideSheet {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(state) = &self.state {
+            self.shown = ctx.observe(&state.shown);
+        }
         if !self.shown {
             self.sheet_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
@@ -14484,6 +14580,8 @@ impl Widget for SideSheet {
             self.reveal = AnimatedScalar::new(0.0);
             self.focus_animation = AnimatedScalar::new(0.0);
             self.entrance_started = false;
+            self.focus_requested = false;
+            self.previous_focus = None;
             return Size::ZERO;
         }
         self.ensure_entrance_started(ctx);
@@ -14503,12 +14601,23 @@ impl Widget for SideSheet {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let padding = metrics.dialog_padding;
-        let sheet_width = self.resolved_width(viewport.width, &theme);
-        let sheet_x = match self.placement {
-            SideSheetPlacement::Left => 0.0,
-            SideSheetPlacement::Right => viewport.width - sheet_width,
+        let (sheet_x, sheet_y, sheet_width, sheet_height) = match self.placement {
+            SideSheetPlacement::Left => (
+                0.0,
+                0.0,
+                self.resolved_width(viewport.width, &theme),
+                viewport.height,
+            ),
+            SideSheetPlacement::Right => {
+                let width = self.resolved_width(viewport.width, &theme);
+                (viewport.width - width, 0.0, width, viewport.height)
+            }
+            SideSheetPlacement::Bottom => {
+                let height = self.resolved_height(viewport.height, &theme);
+                (0.0, viewport.height - height, viewport.width, height)
+            }
         };
-        self.sheet_frame = Rect::new(sheet_x, 0.0, sheet_width, viewport.height);
+        self.sheet_frame = Rect::new(sheet_x, sheet_y, sheet_width, sheet_height);
 
         let title_style = Self::title_style(&theme);
         let description_style = theme.placeholder_text_style();
@@ -14572,7 +14681,7 @@ impl Widget for SideSheet {
             metrics.dialog_footer_gap
         };
         let body_height =
-            (viewport.height - body_top - footer_gap - footer_height - padding.bottom).max(0.0);
+            (sheet_height - body_top - footer_gap - footer_height - padding.bottom).max(0.0);
         let body_width = (sheet_width - padding.left - padding.right).max(0.0);
         let _ = self.body.measure(
             ctx,
@@ -14642,20 +14751,28 @@ impl Widget for SideSheet {
             ctx.fill_bounds(scrim);
         }
 
-        ctx.push_transform(Transform::translation(self.reveal_offset(), 0.0));
+        let reveal_offset = self.reveal_offset();
+        ctx.push_transform(Transform::translation(reveal_offset.x, reveal_offset.y));
         let sheet = self.sheet_frame.translate(ctx.bounds().origin.to_vector());
         let metrics = theme.metrics;
         paint_theme_shadow(ctx, sheet, [0.0; 4], &theme.shadows.box_shadow.xl);
         ctx.fill_rect(sheet, theme.palette.surface_raised);
         let border_width = physical_pixels(ctx, metrics.border_width.max(1.0));
-        let border_x = match self.placement {
-            SideSheetPlacement::Left => sheet.max_x() - border_width,
-            SideSheetPlacement::Right => sheet.x(),
+        let border = match self.placement {
+            SideSheetPlacement::Left => Rect::new(
+                sheet.max_x() - border_width,
+                sheet.y(),
+                border_width,
+                sheet.height(),
+            ),
+            SideSheetPlacement::Right => {
+                Rect::new(sheet.x(), sheet.y(), border_width, sheet.height())
+            }
+            SideSheetPlacement::Bottom => {
+                Rect::new(sheet.x(), sheet.y(), sheet.width(), border_width)
+            }
         };
-        ctx.fill_rect(
-            Rect::new(border_x, sheet.y(), border_width, sheet.height()),
-            theme.palette.border,
-        );
+        ctx.fill_rect(border, theme.palette.border);
         if self.focus_animation.value > AnimatedScalar::EPSILON {
             let inset = physical_pixels(ctx, theme.metrics.focus_ring_width) * 0.5;
             ctx.stroke(
@@ -14783,6 +14900,162 @@ impl Widget for SideSheet {
 
 /// A familiar alias for navigation-oriented side sheets.
 pub type Drawer = SideSheet;
+
+/// A modal surface anchored to the bottom edge of its allocated viewport.
+///
+/// `BottomSheet` follows the same focus, dismissal, semantics, and action
+/// contracts as [`SideSheet`], while exposing height-oriented configuration.
+pub struct BottomSheet {
+    inner: SideSheet,
+}
+
+impl BottomSheet {
+    pub fn new<W>(title: impl Into<String>, body: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            inner: SideSheet::new(title, body).placement(SideSheetPlacement::Bottom),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.inner = self.inner.theme(theme);
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.inner = self.inner.theme_when(theme);
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.inner = self.inner.description(description);
+        self
+    }
+
+    pub fn shown(mut self, shown: bool) -> Self {
+        self.inner = self.inner.shown(shown);
+        self
+    }
+
+    pub fn state(mut self, state: SheetState) -> Self {
+        self.inner = self.inner.state(state);
+        self
+    }
+
+    pub fn modal(mut self, modal: bool) -> Self {
+        self.inner = self.inner.modal(modal);
+        self
+    }
+
+    pub fn dismiss_on_scrim(mut self, dismiss: bool) -> Self {
+        self.inner = self.inner.dismiss_on_scrim(dismiss);
+        self
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.inner = self.inner.height(height);
+        self
+    }
+
+    pub fn header_action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.inner = self.inner.header_action(action);
+        self
+    }
+
+    pub fn action<W>(mut self, action: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.inner = self.inner.action(action);
+        self
+    }
+
+    pub fn primary_action<F>(mut self, label: impl Into<String>, on_press: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.inner = self.inner.primary_action(label, on_press);
+        self
+    }
+
+    pub fn secondary_action<F>(mut self, label: impl Into<String>, on_press: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.inner = self.inner.secondary_action(label, on_press);
+        self
+    }
+
+    pub fn on_dismiss<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut() + 'static,
+    {
+        self.inner = self.inner.on_dismiss(on_dismiss);
+        self
+    }
+}
+
+impl Widget for BottomSheet {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.inner.event(ctx, event);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "sui_widgets::BottomSheet"
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        self.inner.layer_options()
+    }
+
+    fn layer_properties(&self) -> LayerProperties {
+        self.inner.layer_properties()
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        self.inner.stack_surface_options()
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.inner.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.inner.visit_children_mut(visitor);
+    }
+}
 
 pub struct ProgressBar {
     theme: Box<DefaultTheme>,
@@ -15423,18 +15696,18 @@ mod tests {
 
     use super::Tabs;
     use super::{
-        ActionCard, ActionTilePaint, BrowserTabBar, CalloutPaint, CodePanelPaint, CodeTextLine,
-        CodeTextPaint, CodeTextSpan, CommandButtonPaint, CommandGroup, ContextMenu, CoverageDots,
-        DetailRow, Dialog, DisclosureButtonPaint, DockPanel, EmptyState, FieldGroup, FormRow,
-        FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge,
-        PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
-        PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelPaint, SegmentedControl,
-        SegmentedControlItem, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar,
-        StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, TabBar, ToolPalette,
-        ToolPaletteItem, Toolbar, paint_action_tile, paint_border, paint_callout, paint_code_lines,
-        paint_code_panel, paint_command_button, paint_disclosure_button, paint_hairline,
-        paint_placement_badge_with, paint_rounded_panel, paint_section_label,
-        paint_section_label_detail, paint_section_panel, text_token_style,
+        ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint,
+        CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonPaint, CommandGroup, ContextMenu,
+        CoverageDots, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, EmptyState, FieldGroup,
+        FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection,
+        PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar,
+        PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelPaint,
+        SegmentedControl, SegmentedControlItem, SheetState, SideSheet, SideSheetPlacement, Spinner,
+        StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance,
+        TabBar, ToolPalette, ToolPaletteItem, Toolbar, paint_action_tile, paint_border,
+        paint_callout, paint_code_lines, paint_code_panel, paint_command_button,
+        paint_disclosure_button, paint_hairline, paint_placement_badge_with, paint_rounded_panel,
+        paint_section_label, paint_section_label_detail, paint_section_panel, text_token_style,
     };
     use crate::FloatingStack;
     use crate::{
@@ -22991,6 +23264,56 @@ mod tests {
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Overlay);
         assert_eq!(descriptor.properties.opacity, 0.0);
         assert!(descriptor.properties.translation.y > 0.0);
+    }
+
+    #[test]
+    fn bottom_sheet_uses_requested_height_and_bottom_edge() {
+        let output = render(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 480.0))
+                .with_child(
+                    BottomSheet::new("Filters", crate::Label::new("Filter options")).height(240.0),
+                ),
+        );
+
+        let sheet = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Dialog)
+            .expect("bottom sheet semantics present");
+        assert_eq!(sheet.name.as_deref(), Some("Filters"));
+        assert_eq!(sheet.bounds, Rect::new(0.0, 240.0, 640.0, 240.0));
+    }
+
+    #[test]
+    fn sheet_state_presents_a_retained_bottom_sheet() {
+        let state = SheetState::default();
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(640.0, 480.0))
+                .with_child(
+                    BottomSheet::new("Filters", crate::Label::new("Filter options"))
+                        .state(state.clone()),
+                ),
+        );
+
+        assert!(
+            !runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .any(|node| node.role == SemanticsRole::Dialog)
+        );
+        state.show();
+        assert!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some("Filters"))
+        );
     }
 
     fn sui_widgets_fixture<A, B>(top: A, bottom: B) -> impl Widget

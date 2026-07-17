@@ -22,6 +22,7 @@ mod text_align;
 pub mod text_command;
 pub mod text_surface;
 pub mod theme;
+pub mod workspace;
 
 pub use animation::{
     ANIMATION_DOCUMENT_VERSION, AnimatedValue, AnimationBinding, AnimationBindingInvalidation,
@@ -46,22 +47,23 @@ pub use collection::{
     VirtualListSelectionMode, VirtualListState, VirtualViewportSnapshot,
 };
 pub use composites::{
-    ActionCard, ActionTilePaint, BrowserTabBar, BusyIndicator, CalloutPaint, CodePanelPaint,
-    CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
-    ContextMenu, CoverageDots, CoverageDotsConfig, DetailRow, Dialog, DisclosureButtonPaint,
-    DockPanel, Drawer, EmptyState, EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField,
-    HairlineEdge, Menu, MenuItem, Modal, PanelSection, PlacementBadge, PlacementBadgePaint,
-    Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout,
-    SectionLabel, SectionLabelPaint, SectionPanelGeometry, SectionPanelPaint, SegmentedControl,
-    SegmentedControlItem, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar,
-    StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation,
-    SurfaceRole, TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
-    TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
-    paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
-    paint_empty_state, paint_hairline, paint_placement_badge, paint_placement_badge_with,
-    paint_progress_bar, paint_rounded_panel, paint_rounded_rect, paint_section_label,
-    paint_section_label_detail, paint_section_panel, paint_status_badge,
+    ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, BusyIndicator, CalloutPaint,
+    CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill,
+    CommandButtonPaint, CommandGroup, ContextMenu, CoverageDots, CoverageDotsConfig, DetailRow,
+    Dialog, DisclosureButtonPaint, DockPanel, Drawer, EmptyState, EmptyStatePaint, FieldGroup,
+    FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem, Modal, PanelSection,
+    PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar,
+    PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelGeometry,
+    SectionPanelPaint, SegmentedControl, SegmentedControlItem, SheetState, SideSheet,
+    SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface,
+    SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole, TabBar, Tabs, ToolPalette,
+    ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement,
+    detail_row_height_for_value, paint_action_tile, paint_border, paint_callout, paint_code_lines,
+    paint_code_panel, paint_command_button, paint_coverage_dots, paint_coverage_dots_with_config,
+    paint_detail_row_at, paint_disclosure_button, paint_empty_state, paint_hairline,
+    paint_placement_badge, paint_placement_badge_with, paint_progress_bar, paint_rounded_panel,
+    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
+    paint_status_badge,
 };
 pub use containers::{
     Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,
@@ -96,7 +98,8 @@ pub use media::{
 };
 pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
-    FloatingWorkspaceState, ResizablePane, SplitView,
+    FloatingWorkspaceState, ResizablePane, SplitExtent, SplitPaneSide, SplitState,
+    SplitStateSnapshot, SplitView,
 };
 pub use reorderable::{ReorderableList, ReorderableListChange};
 pub use rich_document::{
@@ -125,4 +128,9 @@ pub use theme::{
     ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
     ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale, ThemeTextToken,
     ThemeTracking, paint_theme_shadow,
+};
+pub use workspace::{
+    AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, MasterDetail, MasterDetailRoute,
+    MasterDetailState, ResponsiveSidebar, ResponsiveSidebarMode, ResponsiveSidebarSnapshot,
+    ResponsiveSidebarState,
 };

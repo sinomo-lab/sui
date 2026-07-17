@@ -57,9 +57,10 @@ pub use sui_core::DpiInfo;
 pub use sui_layout::LayoutContext;
 use widget::MeasureScope;
 pub use widget::{
-    ArrangeCtx, EventCtx, EventPhase, KeyedChildren, KeyedReconcile, LayerOptions, MeasureCtx,
-    PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy,
-    StackSurfaceOptions, Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, FocusRestorePolicy, FocusScope, FocusScopeState,
+    KeyedChildren, KeyedReconcile, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
+    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{
     BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PaintImageResource,
@@ -4973,8 +4974,8 @@ mod tests {
 
     use super::{
         Application, ArrangeCtx, Command, CommandController, CommandCtx, CommandKey, CommandTarget,
-        EventCtx, EventPhase, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
-        PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
+        EventCtx, EventPhase, FocusScope, FocusScopeState, FocusState, FrameSchedule, LayerOptions,
+        MeasureCtx, PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
         SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
         WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
         WindowBuilder, WindowIcon, WindowRenderOptions, set_window_render_options,
@@ -5145,6 +5146,7 @@ mod tests {
             self.counters.borrow_mut().semantics += 1;
             let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
             node.name = Some("focus-leaf".to_string());
+            node.actions = vec![SemanticsAction::Focus, SemanticsAction::Blur];
             ctx.push(node);
         }
 
@@ -5157,6 +5159,55 @@ mod tests {
             ctx.request_paint_rect(ctx.bounds());
             ctx.request_semantics();
         }
+    }
+
+    #[test]
+    fn focus_scope_restores_the_last_focused_descendant() {
+        let state = FocusScopeState::new();
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new().title("Focus Scope").root(
+                    FocusScope::new(FocusLeaf {
+                        counters: Rc::new(RefCell::new(Counters::default())),
+                    })
+                    .state(state.clone()),
+                ),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let target = runtime
+            .render(window_id)
+            .unwrap()
+            .semantics
+            .into_iter()
+            .find(|node| node.name.as_deref() == Some("focus-leaf"))
+            .unwrap()
+            .id;
+
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, target, SemanticsActionRequest::Focus)
+                .unwrap()
+        );
+        let _ = runtime.render(window_id).unwrap();
+        assert_eq!(state.last_focused(), Some(target));
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, target, SemanticsActionRequest::Blur)
+                .unwrap()
+        );
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+
+        state.request_restore();
+        let _ = runtime.render(window_id).unwrap();
+        let ready = runtime.drain_ready_events();
+        assert_eq!(ready.len(), 1);
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(target));
     }
 
     struct TestRoot {

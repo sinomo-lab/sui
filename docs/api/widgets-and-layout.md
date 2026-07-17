@@ -18,8 +18,8 @@ families to learn rather than an exhaustive symbol inventory.
 | Boolean and choice controls | `Checkbox`, `Switch`, `RadioGroup`, `SegmentedControl`, `Select`, `ComboBox` | Small finite choices |
 | Text and numeric input | `TextInput`, `PasswordInput`, `DateTimeInput`, `TextArea`, `NumberInput`, `SpinBox`, `Slider` | Editable values and ranges |
 | Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Background` | Size and position ordinary widget trees |
-| Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `Dock`, `SwitchView` | Overflow, panes, and alternate content |
-| Overlays and shells | `Dialog`, `Modal`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet` | Transient or elevated interface layers |
+| Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `AdaptiveView`, `ResponsiveSidebar`, `MasterDetail` | Overflow, panes, and adaptive workspace structure |
+| Overlays and shells | `Dialog`, `Modal`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet`, `BottomSheet` | Transient or elevated interface layers |
 | Data and navigation | `ListView`, `VirtualList`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`, `Tabs` | Collections and navigation state |
 | Creative tools | `Canvas`, `PixelCanvas`, `ColorPicker`, `LayerList`, `BrushPreview` | Editor-style and graphics interfaces |
 
@@ -189,41 +189,115 @@ let gutter = ScrollBar::vertical(state);
 ## Responsive Structure
 
 Most responsive changes only need `Flex` wrapping and item minimums. When the
-actual widget structure must change at a breakpoint, use
-`RebuildOnConstraints`:
+presentation really changes at a breakpoint, use `AdaptiveView`. It derives
+its class from its own incoming width constraints rather than global window
+size, and retains all three variant subtrees while only visiting the active
+one:
 
 ```rust
 use sui::prelude::*;
 
-fn responsive_actions() -> impl Widget {
-    RebuildOnConstraints::new(
-        false,
-        |constraints| constraints.max.width < 520.0,
-        |narrow| {
-            if *narrow {
-                WidgetPod::new(
-                    Stack::vertical()
-                        .spacing(8.0)
-                        .with_child(Button::primary("Save"))
-                        .with_child(Button::new("Cancel")),
-                )
-            } else {
-                WidgetPod::new(
-                    Flex::horizontal()
-                        .gap(8.0)
-                        .with_child(Button::primary("Save"))
-                        .with_child(Button::new("Cancel")),
-                )
-            }
-        },
+fn adaptive_actions() -> impl Widget {
+    AdaptiveView::new(
+        Stack::vertical()
+            .spacing(8.0)
+            .with_child(Button::primary("Save"))
+            .with_child(Button::new("Cancel")),
+        Flex::horizontal()
+            .gap(8.0)
+            .with_child(Button::primary("Save"))
+            .with_child(Button::new("Cancel")),
+        Flex::horizontal()
+            .gap(12.0)
+            .with_child(Button::primary("Save changes"))
+            .with_child(Button::new("Cancel")),
     )
+    .breakpoints(AdaptiveBreakpoints::new(520.0, 900.0))
 }
 ```
 
-Rebuilding replaces the child subtree, including its local interaction state.
-Reserve it for structural changes. For value, selection, color, or label
-changes, prefer reader callbacks and targeted invalidation as described in
-[State, events, and background work](state-events-and-async.md).
+Each adaptive variant has a stable widget identity and focus scope. Returning
+to a variant restores its last focused descendant, with first-focusable
+fallback. A variant's state is retained, but the three variants are still
+distinct trees. Do not copy one stateful editor into every variant when the
+same logical pane should survive every presentation.
+
+For common workspace structures, prefer the policy widgets that retain one
+copy of each logical pane:
+
+- `ResponsiveSidebar` keeps sidebar and content pods stable. Compact width
+  turns the sidebar into a dismissible overlay; wider widths use a rail or
+  inline pane. `ResponsiveSidebarState` controls overlay visibility and
+  collapse, while `SplitState` supplies the persisted inline width.
+- `MasterDetail` keeps master and detail pods stable. Compact width shows the
+  route selected by `MasterDetailState`; wider widths show both. Escape moves
+  from detail back to master in compact mode.
+- `FocusScope` and `FocusScopeState` are available for custom adaptive
+  containers that need the same last-focused-or-first-focusable restoration.
+
+`RebuildOnConstraints` remains available for genuinely disposable structure.
+It replaces its child subtree and therefore resets local editor, focus,
+selection, and animation state.
+
+## Split Pane State and Persistence
+
+`SplitView` accepts either fractional or pixel sizing through `SplitExtent`.
+Share a `SplitState` when application controls need to collapse a pane, update
+its size, or persist it:
+
+```rust
+use sui::prelude::*;
+
+let split = SplitState::pixels(320.0);
+let layout = SplitView::horizontal(sidebar, content)
+    .state(split.clone())
+    .min_first(220.0)
+    .min_second(360.0);
+
+split.collapse(SplitPaneSide::First);
+split.expand();
+
+// Store this plain value in the application's settings format.
+let persisted: SplitStateSnapshot = split.snapshot();
+split.apply_snapshot(persisted);
+```
+
+SUI deliberately does not choose a settings store or serialization format.
+The snapshot is the persistence boundary. Pointer dragging preserves the
+state's authored unit: a pixel split remains pixel-sized and a fractional
+split remains proportional.
+
+## Drawers and Bottom Sheets
+
+`SideSheet` (also exported as `Drawer`) anchors to the left or right edge.
+`BottomSheet` uses the same modal scrim, actions, dismissal, entrance motion,
+dialog semantics, and focus-return contract while exposing height rather than
+width. Use `SheetState` to let sibling controls present either sheet without
+rebuilding it:
+
+```rust
+use sui::prelude::*;
+
+let sheet = SheetState::default();
+let open_sheet = sheet.clone();
+
+let open = Button::new("Filters").on_press(move || {
+    open_sheet.show();
+});
+let panel = BottomSheet::new("Filters", filter_form)
+    .state(sheet)
+    .height(360.0);
+```
+
+When a state-backed sheet is dismissed by Escape or its scrim, it hides itself
+and invokes `on_dismiss`. Focus returns to the widget that owned focus before
+the sheet opened when that widget is still present.
+
+These APIs cover stable application-shell composition; they are not a docking
+framework. Use `FloatingWorkspace` for independent floating panels today.
+Tab docking, drop zones, detachable windows, and serialized dock graphs should
+remain a separate subsystem until more than one application needs the same
+policy.
 
 ## Layout Contract for Custom Widgets
 

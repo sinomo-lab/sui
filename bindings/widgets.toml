@@ -1157,6 +1157,10 @@ classification = "manual-wrapper"
 bindings = ["ActionCard"]
 
 [[rust_widget]]
+name = "AdaptiveView"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "Align"
 classification = "bound"
 bindings = ["Align"]
@@ -1165,6 +1169,10 @@ bindings = ["Align"]
 name = "Background"
 classification = "bound"
 bindings = ["Background"]
+
+[[rust_widget]]
+name = "BottomSheet"
+classification = "rust-only"
 
 [[rust_widget]]
 name = "Breadcrumb"
@@ -1346,6 +1354,10 @@ classification = "bound"
 bindings = ["ListView"]
 
 [[rust_widget]]
+name = "MasterDetail"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "MeasuredBottomDock"
 classification = "bound"
 bindings = ["MeasuredBottomDock"]
@@ -1426,6 +1438,10 @@ classification = "rust-only"
 name = "ReorderableList"
 classification = "manual-wrapper"
 bindings = ["ReorderableList"]
+
+[[rust_widget]]
+name = "ResponsiveSidebar"
+classification = "rust-only"
 
 [[rust_widget]]
 name = "RichDocumentView"

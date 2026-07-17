@@ -1,8 +1,11 @@
 use crate::{
-    Application, CommandController, CommandCtx, CommandKey, CommandSender, CommandTarget,
-    EmbeddedSvgImageResource, FontHandle, ImageHandle, RegisteredFont, RegisteredImage, Result,
-    Runtime, Widget, WindowBuilder, WindowIcon, WindowRenderOptions,
+    Application, CommandController, CommandCtx, CommandKey, EmbeddedSvgImageResource, FontHandle,
+    ImageHandle, RegisteredFont, RegisteredImage, Result, Runtime, Widget, WindowBuilder,
+    WindowIcon, WindowRenderOptions,
 };
+
+#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
+use crate::{CommandSender, CommandTarget};
 
 #[cfg(all(target_os = "android", feature = "mobile"))]
 use crate::AndroidApp;

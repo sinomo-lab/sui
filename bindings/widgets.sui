@@ -5,8 +5,10 @@
 # backed by a purpose-built adapter, `equivalent` names the portable binding
 # replacement, and `rust-only` is reserved for Rust-native contracts.
 rust-widget ActionCard manual-wrapper ActionCard
+rust-widget AdaptiveView rust-only
 rust-widget Align bound Align
 rust-widget Background bound Background
+rust-widget BottomSheet rust-only
 rust-widget Breadcrumb bound Breadcrumb
 rust-widget BrowserTabBar bound BrowserTabBar
 rust-widget BrushPreview manual-wrapper BrushPreview
@@ -44,6 +46,7 @@ rust-widget Label bound Label
 rust-widget LayerList bound LayerList
 rust-widget Link bound Link
 rust-widget ListView bound ListView
+rust-widget MasterDetail rust-only
 rust-widget MeasuredBottomDock bound MeasuredBottomDock
 rust-widget Menu bound Menu
 rust-widget NumberInput bound NumberInput
@@ -61,6 +64,7 @@ rust-widget RadioGroup bound RadioGroup
 rust-widget RebuildOnChange rust-only
 rust-widget RebuildOnConstraints rust-only
 rust-widget ReorderableList manual-wrapper ReorderableList
+rust-widget ResponsiveSidebar rust-only
 rust-widget RichDocumentView rust-only
 rust-widget RichText bound RichText
 rust-widget ScrollBar rust-only
