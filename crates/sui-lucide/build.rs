@@ -160,7 +160,11 @@ fn render_generated(
         "        sui_runtime::EmbeddedSvgImageResource::new(self.handle(), self.svg())\n",
     );
     source.push_str("    }\n");
-    source.push_str("\n    pub const fn path_data(self) -> crate::LucidePathData {\n");
+    // SVG coordinates such as 3.14 and 6.28 are data, not approximations of mathematical
+    // constants. Keep Clippy's approximation lint enabled for handwritten code while avoiding
+    // false positives in this generated lookup table.
+    source.push_str("\n    #[allow(clippy::approx_constant)]\n");
+    source.push_str("    pub const fn path_data(self) -> crate::LucidePathData {\n");
     source.push_str("        match self {\n");
     for (file_stem, variant) in variants {
         let data = &icon_data[file_stem];
@@ -375,22 +379,36 @@ fn render_path_commands(source: &mut String, commands: &[NativePathCommand]) {
         match command {
             NativePathCommand::MoveTo(x, y) => {
                 source.push_str(&format!(
-                    "crate::LucidePathCommand::MoveTo({x:?}, {y:?}),\n"
+                    "crate::LucidePathCommand::MoveTo({}, {}),\n",
+                    f32_literal(*x),
+                    f32_literal(*y),
                 ));
             }
             NativePathCommand::LineTo(x, y) => {
                 source.push_str(&format!(
-                    "crate::LucidePathCommand::LineTo({x:?}, {y:?}),\n"
+                    "crate::LucidePathCommand::LineTo({}, {}),\n",
+                    f32_literal(*x),
+                    f32_literal(*y),
                 ));
             }
             NativePathCommand::QuadTo(x1, y1, x, y) => {
                 source.push_str(&format!(
-                    "crate::LucidePathCommand::QuadTo({x1:?}, {y1:?}, {x:?}, {y:?}),\n"
+                    "crate::LucidePathCommand::QuadTo({}, {}, {}, {}),\n",
+                    f32_literal(*x1),
+                    f32_literal(*y1),
+                    f32_literal(*x),
+                    f32_literal(*y),
                 ));
             }
             NativePathCommand::CubicTo(x1, y1, x2, y2, x, y) => {
                 source.push_str(&format!(
-                    "crate::LucidePathCommand::CubicTo({x1:?}, {y1:?}, {x2:?}, {y2:?}, {x:?}, {y:?}),\n"
+                    "crate::LucidePathCommand::CubicTo({}, {}, {}, {}, {}, {}),\n",
+                    f32_literal(*x1),
+                    f32_literal(*y1),
+                    f32_literal(*x2),
+                    f32_literal(*y2),
+                    f32_literal(*x),
+                    f32_literal(*y),
                 ));
             }
             NativePathCommand::Close => {
@@ -398,4 +416,8 @@ fn render_path_commands(source: &mut String, commands: &[NativePathCommand]) {
             }
         }
     }
+}
+
+fn f32_literal(value: f64) -> String {
+    format!("{:?}", value as f32)
 }

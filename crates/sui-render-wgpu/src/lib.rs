@@ -1288,8 +1288,8 @@ fn downsample_rgba8_srgb(source: &ImageMipLevel) -> ImageMipLevel {
                 for source_x in source_x_start..source_x_end {
                     let offset = ((source_y * source.width + source_x) * 4) as usize;
                     let alpha = source.pixels[offset + 3] as f32 / 255.0;
-                    for channel in 0..3 {
-                        premultiplied[channel] +=
+                    for (channel, premultiplied_channel) in premultiplied.iter_mut().enumerate() {
+                        *premultiplied_channel +=
                             srgb_u8_to_linear(source.pixels[offset + channel]) * alpha;
                     }
                     alpha_sum += alpha;
@@ -1300,9 +1300,9 @@ fn downsample_rgba8_srgb(source: &ImageMipLevel) -> ImageMipLevel {
             let output = ((y * width + x) * 4) as usize;
             let alpha = alpha_sum / sample_count.max(1.0);
             if alpha_sum > f32::EPSILON {
-                for channel in 0..3 {
+                for (channel, premultiplied_channel) in premultiplied.iter().enumerate() {
                     pixels[output + channel] =
-                        linear_to_srgb_u8(premultiplied[channel] / alpha_sum);
+                        linear_to_srgb_u8(*premultiplied_channel / alpha_sum);
                 }
             }
             pixels[output + 3] = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -3302,24 +3302,23 @@ impl WgpuRenderer {
             image
         };
 
-        if let Some(cached) = self.image_cache.get_mut(&texture_key) {
-            if cached.texture.width() == upload_image.width()
-                && cached.texture.height() == upload_image.height()
-                && cached.image.format() == image.format()
-            {
-                let shared = self
-                    .shared
-                    .as_ref()
-                    .expect("renderer shared state initialized");
-                Self::write_registered_image_texture(
-                    &shared.queue,
-                    &cached.texture,
-                    upload_image,
-                    mipmapped,
-                );
-                cached.image = image.clone();
-                return Ok(Self::image_bind_group_for_sampling(cached, key.sampling));
-            }
+        if let Some(cached) = self.image_cache.get_mut(&texture_key)
+            && cached.texture.width() == upload_image.width()
+            && cached.texture.height() == upload_image.height()
+            && cached.image.format() == image.format()
+        {
+            let shared = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized");
+            Self::write_registered_image_texture(
+                &shared.queue,
+                &cached.texture,
+                upload_image,
+                mipmapped,
+            );
+            cached.image = image.clone();
+            return Ok(Self::image_bind_group_for_sampling(cached, key.sampling));
         }
 
         let shared = self
