@@ -2299,6 +2299,17 @@ impl ScrollBar {
         self.width.unwrap_or(theme.metrics.scroll_bar_thickness)
     }
 
+    fn resolved_track_width(&self) -> f32 {
+        let expanded = self.resolved_width();
+        match self.appearance {
+            ScrollBarAppearance::Gutter => expanded,
+            ScrollBarAppearance::Overlay => {
+                let collapsed = OVERLAY_SCROLL_BAR_IDLE_THICKNESS.min(expanded);
+                collapsed + (expanded - collapsed) * self.hover_animation.value.clamp(0.0, 1.0)
+            }
+        }
+    }
+
     fn resolved_min_thumb_length(&self) -> f32 {
         self.resolved_theme().metrics.scroll_bar_min_thumb_length
     }
@@ -2311,25 +2322,25 @@ impl ScrollBar {
     }
 
     fn track_rect(&self, bounds: Rect) -> Rect {
-        let width = self.resolved_width();
+        let width = self.resolved_track_width();
         match self.axis {
             ScrollBarAxis::Vertical => {
-                let horizontal_inset = ((bounds.width() - width) * 0.5).max(0.0);
-                Rect::new(
-                    bounds.x() + horizontal_inset,
-                    bounds.y(),
-                    width.min(bounds.width()),
-                    bounds.height(),
-                )
+                let x = match self.appearance {
+                    ScrollBarAppearance::Gutter => {
+                        bounds.x() + ((bounds.width() - width) * 0.5).max(0.0)
+                    }
+                    ScrollBarAppearance::Overlay => (bounds.max_x() - width).max(bounds.x()),
+                };
+                Rect::new(x, bounds.y(), width.min(bounds.width()), bounds.height())
             }
             ScrollBarAxis::Horizontal => {
-                let vertical_inset = ((bounds.height() - width) * 0.5).max(0.0);
-                Rect::new(
-                    bounds.x(),
-                    bounds.y() + vertical_inset,
-                    bounds.width(),
-                    width.min(bounds.height()),
-                )
+                let y = match self.appearance {
+                    ScrollBarAppearance::Gutter => {
+                        bounds.y() + ((bounds.height() - width) * 0.5).max(0.0)
+                    }
+                    ScrollBarAppearance::Overlay => (bounds.max_y() - width).max(bounds.y()),
+                };
+                Rect::new(bounds.x(), y, bounds.width(), width.min(bounds.height()))
             }
         }
     }
@@ -2543,7 +2554,11 @@ impl Widget for ScrollBar {
 
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+                self.set_hovered(
+                    pointer_supports_hover(pointer.pointer_kind)
+                        && ctx.bounds().contains(pointer.position),
+                    ctx,
+                );
                 if self.dragging
                     && self.pointer_id == Some(pointer.pointer_id)
                     && let Some(metrics) = metrics
@@ -2561,7 +2576,7 @@ impl Widget for ScrollBar {
                 }
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
-                self.set_hovered(true, ctx);
+                self.set_hovered(pointer_supports_hover(pointer.pointer_kind), ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
                 if !self.dragging || self.pointer_id != Some(pointer.pointer_id) {
@@ -2577,7 +2592,7 @@ impl Widget for ScrollBar {
                     return;
                 };
 
-                self.set_hovered(true, ctx);
+                self.set_hovered(pointer_supports_hover(pointer.pointer_kind), ctx);
                 self.set_dragging(true, ctx);
                 self.pointer_id = Some(pointer.pointer_id);
                 self.drag_thumb_offset = if metrics.thumb.contains(pointer.position) {
@@ -2618,7 +2633,11 @@ impl Widget for ScrollBar {
                 }
                 self.set_dragging(false, ctx);
                 self.pointer_id = None;
-                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
+                self.set_hovered(
+                    pointer_supports_hover(pointer.pointer_kind)
+                        && ctx.bounds().contains(pointer.position),
+                    ctx,
+                );
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.set_handled();
             }
@@ -2817,6 +2836,11 @@ impl Widget for ScrollBar {
 }
 
 const OVERLAY_SCROLL_BAR_INSET: f32 = 3.0;
+const OVERLAY_SCROLL_BAR_IDLE_THICKNESS: f32 = 4.0;
+
+fn pointer_supports_hover(pointer_kind: PointerKind) -> bool {
+    matches!(pointer_kind, PointerKind::Mouse | PointerKind::Pen)
+}
 
 pub(crate) struct OverlayScrollBars {
     vertical: Option<SingleChild>,
@@ -5316,6 +5340,20 @@ mod tests {
         colors
     }
 
+    fn solid_fill_path_bounds(output: &RenderOutput) -> Vec<Rect> {
+        let mut bounds = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath {
+                path,
+                brush: Brush::Solid(_),
+            } = command
+            {
+                bounds.push(path.bounds());
+            }
+        });
+        bounds
+    }
+
     fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
         let mut colors = Vec::new();
         output
@@ -7666,6 +7704,85 @@ mod tests {
             output.frame.viewport.width,
             DefaultTheme::touch().metrics.scroll_bar_thickness
         );
+    }
+
+    #[test]
+    fn overlay_scroll_bar_expands_only_for_hover_capable_pointers() {
+        let theme = DefaultTheme::default();
+        let state = ScrollState::new();
+        state.sync_metrics(
+            ScrollAxes::Vertical,
+            Size::new(80.0, 40.0),
+            Size::new(80.0, 120.0),
+        );
+        let (mut runtime, window_id) = build_runtime(
+            ScrollBar::vertical(state)
+                .theme(theme)
+                .name("Overlay scroll bar")
+                .overlay(),
+        );
+
+        let idle = runtime.render(window_id).expect("render should succeed");
+        let bounds = idle
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Overlay scroll bar"))
+            .expect("scroll bar semantics present")
+            .bounds;
+        let idle_width =
+            super::OVERLAY_SCROLL_BAR_IDLE_THICKNESS.min(theme.metrics.scroll_bar_thickness);
+        let idle_paths = solid_fill_path_bounds(&idle);
+        assert_eq!(bounds.width(), theme.metrics.scroll_bar_thickness);
+        assert_eq!(idle_paths.len(), 2);
+        assert!(
+            idle_paths
+                .iter()
+                .all(|path| (path.width() - idle_width).abs() <= f32::EPSILON)
+        );
+
+        let point = Point::new(bounds.x() + bounds.width() * 0.5, bounds.y() + 8.0);
+        let mut wheel = PointerEvent::new(PointerEventKind::Scroll, point);
+        wheel.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, 24.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(wheel))
+            .expect("wheel event should be handled");
+        let after_wheel = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            solid_fill_path_bounds(&after_wheel)
+                .iter()
+                .all(|path| (path.width() - idle_width).abs() <= f32::EPSILON)
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Move,
+                    7,
+                    point,
+                    Vector::ZERO,
+                )),
+            )
+            .expect("touch move should be handled");
+        let after_touch = runtime.render(window_id).expect("render should succeed");
+        assert!(
+            solid_fill_path_bounds(&after_touch)
+                .iter()
+                .all(|path| (path.width() - idle_width).abs() <= f32::EPSILON)
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(PointerEventKind::Move, point)),
+            )
+            .expect("mouse hover should be handled");
+        runtime.tick(theme.motion.hover_duration());
+        assert_eq!(handle_ready_events(&mut runtime), 1);
+        let hovered = runtime.render(window_id).expect("render should succeed");
+        assert!(solid_fill_path_bounds(&hovered).iter().all(|path| {
+            (path.width() - theme.metrics.scroll_bar_thickness).abs() <= f32::EPSILON
+        }));
     }
 
     #[test]
