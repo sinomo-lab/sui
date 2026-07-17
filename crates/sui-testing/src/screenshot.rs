@@ -297,7 +297,10 @@ pub(crate) fn read_png(path: &Path) -> Result<Screenshot> {
     let file = File::open(path).map_err(io_error)?;
     let decoder = png::Decoder::new(BufReader::new(file));
     let mut reader = decoder.read_info().map_err(png_error)?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
+    let output_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| Error::new("PNG screenshot exceeds the decoder output size limit"))?;
+    let mut buffer = vec![0; output_size];
     let info = reader.next_frame(&mut buffer).map_err(png_error)?;
     if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
         return Err(Error::new("expected an RGBA8 PNG screenshot baseline"));

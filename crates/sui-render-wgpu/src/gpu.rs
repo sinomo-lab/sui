@@ -366,8 +366,11 @@ impl SharedRenderer {
                 | PipelineKind::GradientRectClipped
                 | PipelineKind::ClipMask => None,
             };
-            let scene_vertex_layouts = [Vertex::layout()];
-            let text_vertex_layouts = [TextAtlasQuadVertex::layout(), TextAtlasInstance::layout()];
+            let scene_vertex_layouts = [Some(Vertex::layout())];
+            let text_vertex_layouts = [
+                Some(TextAtlasQuadVertex::layout()),
+                Some(TextAtlasInstance::layout()),
+            ];
             let vertex_buffers = match kind {
                 PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
                     &text_vertex_layouts[..]

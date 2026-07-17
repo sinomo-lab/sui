@@ -17,7 +17,7 @@ name = "sui_testing"
 
 [dependencies]
 png = { workspace = true }
-exr = "1"
+exr = "1.74.2"
 sui-avif = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }

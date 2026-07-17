@@ -20,4 +20,4 @@ avif-serialize = { workspace = true }
 rav1e = { workspace = true }
 
 [dev-dependencies]
-avif-parse = "2"
+avif-parse = "2.1.0"

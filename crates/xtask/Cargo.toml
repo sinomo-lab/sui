@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 description = "Development and release automation for the SUI workspace."
 authors.workspace = true
 categories.workspace = true

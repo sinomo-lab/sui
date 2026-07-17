@@ -405,12 +405,9 @@ fn prepare_paragraph(
 
     let metrics = cosmic_text::Metrics::new(primary_style.font_size, primary_style.line_height);
     let mut buffer = Buffer::new(&mut font_context.font_system, metrics);
-    buffer.set_wrap(
-        &mut font_context.font_system,
-        map_wrap(paragraph.style.wrap),
-    );
-    buffer.set_hinting(&mut font_context.font_system, Hinting::Disabled);
-    buffer.set_size(&mut font_context.font_system, box_width, None);
+    buffer.set_wrap(map_wrap(paragraph.style.wrap));
+    buffer.set_hinting(Hinting::Disabled);
+    buffer.set_size(box_width, None);
 
     let prefix = direction_prefix(paragraph.style.direction);
     let suffix = if prefix.is_empty() { "" } else { "\u{202C}" };
@@ -446,7 +443,6 @@ fn prepare_paragraph(
     }
 
     buffer.set_rich_text(
-        &mut font_context.font_system,
         rich_spans
             .iter()
             .map(|(text, attrs)| (text.as_str(), attrs.clone())),
@@ -454,6 +450,7 @@ fn prepare_paragraph(
         cosmic_text::Shaping::Advanced,
         map_align(paragraph.style.align, paragraph.style.direction),
     );
+    buffer.shape_until_scroll(&mut font_context.font_system, false);
 
     let buffer_line = buffer
         .lines

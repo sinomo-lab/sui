@@ -2110,7 +2110,11 @@ impl WgpuRenderer {
                 Error::new(format!("failed to map screenshot readback buffer: {error}"))
             })?;
 
-        let mapped = slice.get_mapped_range();
+        let mapped = slice.get_mapped_range().map_err(|error| {
+            Error::new(format!(
+                "failed to access mapped screenshot readback buffer: {error}"
+            ))
+        })?;
         let tightly_packed = strip_padded_readback_rows(
             &mapped,
             bytes_per_row as usize,
@@ -2132,6 +2136,7 @@ impl WgpuRenderer {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface,
+                apply_limit_buckets: false,
             }))
             .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?;
 
@@ -2297,6 +2302,7 @@ impl WgpuRenderer {
                 power_preference: wgpu::PowerPreference::None,
                 force_fallback_adapter: false,
                 compatible_surface,
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?;
@@ -2510,7 +2516,11 @@ impl WgpuRenderer {
         };
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;
         let surface_present_started = self.runtime_diagnostics_enabled.then(Instant::now);
-        frame_texture.present();
+        self.shared
+            .as_ref()
+            .expect("renderer shared state initialized")
+            .queue
+            .present(frame_texture);
         frame_stats.surface_present_time_us = surface_present_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);

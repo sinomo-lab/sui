@@ -49,9 +49,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect as TerminalRect},
     style::{Color as TerminalColor, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap, block::Title,
-    },
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use sui::Application;
 #[cfg(not(target_arch = "wasm32"))]
@@ -954,7 +952,7 @@ fn draw_details(frame: &mut Frame<'_>, area: TerminalRect, selected: Option<&Sem
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
-fn tui_view_block(title: impl Into<Title<'static>>) -> Block<'static> {
+fn tui_view_block(title: impl Into<Line<'static>>) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -3815,8 +3813,8 @@ mod tests {
         button.name = Some("Very long button label".to_string());
         let actionable = vec![button.clone()];
         let nodes = vec![root, button];
-        let mut terminal =
-            Terminal::new(ratatui::backend::TestBackend::new(24, 8)).map_err(to_sui_io_error)?;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(24, 8))
+            .expect("ratatui TestBackend construction is infallible");
 
         terminal
             .draw(|frame| {
@@ -3829,7 +3827,7 @@ mod tests {
                     &TuiSpatialState::default(),
                 )
             })
-            .map_err(to_sui_io_error)?;
+            .expect("ratatui TestBackend drawing is infallible");
         let rendered = terminal
             .backend()
             .buffer()

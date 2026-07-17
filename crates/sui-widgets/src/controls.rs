@@ -12436,6 +12436,10 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(TextArea::new("Notes").value("alpha"));
 
         let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+        )?;
         runtime.handle_command(
             CommandTarget::FocusedWidget(window_id),
             CommandDelivery::Directed,

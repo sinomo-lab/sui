@@ -15,7 +15,7 @@ license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/sinomo-lab/sui"
 rust-version = "1.90"
-version = "0.1.0"
+version = "0.2.0"
 
 [profile.release]
 opt-level = 2
@@ -29,53 +29,53 @@ opt-level = 2
 
 [workspace.dependencies]
 accesskit = "0.24.1"
-accesskit_consumer = "0.37.0"
-accesskit_winit = { version = "0.33.1", default-features = false, features = ["rwh_06"] }
-avif-serialize = "0.8.8"
-bytemuck = { version = "1", features = ["derive"] }
-cosmic-text = "0.18.2"
+accesskit_consumer = "0.38.0"
+accesskit_winit = { version = "0.33.2", default-features = false, features = ["rwh_06"] }
+avif-serialize = "0.8.9"
+bytemuck = { version = "1.25.1", features = ["derive"] }
+cosmic-text = "0.19.0"
 rav1e = { version = "0.8.1", default-features = false, features = ["threading"] }
-resvg = { version = "0.47", default-features = false }
-fontdb = "0.23"
-js-sys = "0.3"
-lyon_path = "1.0"
-lyon_tessellation = "1.0"
-napi = "3.10.3"
+resvg = { version = "0.47.0", default-features = false }
+fontdb = "0.23.0"
+js-sys = "0.3.103"
+lyon_path = "1.0.19"
+lyon_tessellation = "1.0.20"
+napi = "3.10.5"
 napi-build = "2.3.2"
-napi-derive = "3.5.9"
-palette = "0.7"
-png = "0.17"
-pollster = "0.4"
-pulldown-cmark = "0.13"
+napi-derive = "3.5.10"
+palette = "0.7.6"
+png = "0.18.1"
+pollster = "1.0.1"
+pulldown-cmark = "0.13.4"
 pyo3 = "0.29.0"
-rustybuzz = "0.20"
-swash = "0.2.7"
-sui = { package = "sinomo-ui", version = "0.1.0", path = "crates/sui", default-features = false }
-sui-animation = { package = "sinomo-ui-animation", version = "0.1.0", path = "crates/sui-animation" }
-sui-avif = { package = "sinomo-ui-avif", version = "0.1.0", path = "crates/sui-avif" }
-sui-bindings-core = { package = "sinomo-ui-bindings-core", version = "0.1.0", path = "crates/sui-bindings-core" }
-sui-core = { package = "sinomo-ui-core", version = "0.1.0", path = "crates/sui-core" }
-sui-debug = { package = "sinomo-ui-debug", version = "0.1.0", path = "crates/sui-debug" }
-sui-demo = { package = "sinomo-ui-demo", version = "0.1.0", path = "crates/sui-demo" }
-sui-js = { package = "sinomo-ui-js", version = "0.1.0", path = "crates/sui-js" }
-sui-layout = { package = "sinomo-ui-layout", version = "0.1.0", path = "crates/sui-layout" }
-sui-lucide = { package = "sinomo-ui-lucide", version = "1.17.0", path = "crates/sui-lucide" }
-sui-platform = { package = "sinomo-ui-platform", version = "0.1.0", path = "crates/sui-platform" }
-sui-python = { package = "sinomo-ui-python", version = "0.1.0", path = "crates/sui-python" }
-sui-reactive = { package = "sinomo-ui-reactive", version = "0.1.0", path = "crates/sui-reactive" }
-sui-render-wgpu = { package = "sinomo-ui-render-wgpu", version = "0.1.0", path = "crates/sui-render-wgpu" }
-sui-runtime = { package = "sinomo-ui-runtime", version = "0.1.0", path = "crates/sui-runtime" }
-sui-scene = { package = "sinomo-ui-scene", version = "0.1.0", path = "crates/sui-scene" }
-sui-testing = { package = "sinomo-ui-testing", version = "0.1.0", path = "crates/sui-testing" }
-sui-text = { package = "sinomo-ui-text", version = "0.1.0", path = "crates/sui-text" }
-sui-tui = { package = "sinomo-ui-tui", version = "0.1.0", path = "crates/sui-tui" }
-sui-widgets = { package = "sinomo-ui-widgets", version = "0.1.0", path = "crates/sui-widgets" }
-tiny-skia = "0.11"
-unicode-segmentation = "1.12"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = "0.3"
-web-time = "1"
-ttf-parser = "0.25"
-wgpu = "29.0.1"
+rustybuzz = "0.20.1"
+swash = "0.2.9"
+sui = { package = "sinomo-ui", version = "0.2.0", path = "crates/sui", default-features = false }
+sui-animation = { package = "sinomo-ui-animation", version = "0.2.0", path = "crates/sui-animation" }
+sui-avif = { package = "sinomo-ui-avif", version = "0.2.0", path = "crates/sui-avif" }
+sui-bindings-core = { package = "sinomo-ui-bindings-core", version = "0.2.0", path = "crates/sui-bindings-core" }
+sui-core = { package = "sinomo-ui-core", version = "0.2.0", path = "crates/sui-core" }
+sui-debug = { package = "sinomo-ui-debug", version = "0.2.0", path = "crates/sui-debug" }
+sui-demo = { package = "sinomo-ui-demo", version = "0.2.0", path = "crates/sui-demo" }
+sui-js = { package = "sinomo-ui-js", version = "0.2.0", path = "crates/sui-js" }
+sui-layout = { package = "sinomo-ui-layout", version = "0.2.0", path = "crates/sui-layout" }
+sui-lucide = { package = "sinomo-ui-lucide", version = "1.17.1", path = "crates/sui-lucide" }
+sui-platform = { package = "sinomo-ui-platform", version = "0.2.0", path = "crates/sui-platform" }
+sui-python = { package = "sinomo-ui-python", version = "0.2.0", path = "crates/sui-python" }
+sui-reactive = { package = "sinomo-ui-reactive", version = "0.2.0", path = "crates/sui-reactive" }
+sui-render-wgpu = { package = "sinomo-ui-render-wgpu", version = "0.2.0", path = "crates/sui-render-wgpu" }
+sui-runtime = { package = "sinomo-ui-runtime", version = "0.2.0", path = "crates/sui-runtime" }
+sui-scene = { package = "sinomo-ui-scene", version = "0.2.0", path = "crates/sui-scene" }
+sui-testing = { package = "sinomo-ui-testing", version = "0.2.0", path = "crates/sui-testing" }
+sui-text = { package = "sinomo-ui-text", version = "0.2.0", path = "crates/sui-text" }
+sui-tui = { package = "sinomo-ui-tui", version = "0.2.0", path = "crates/sui-tui" }
+sui-widgets = { package = "sinomo-ui-widgets", version = "0.2.0", path = "crates/sui-widgets" }
+tiny-skia = "0.12.0"
+unicode-segmentation = "1.13.3"
+wasm-bindgen = "0.2.126"
+wasm-bindgen-futures = "0.4.76"
+web-sys = "0.3.103"
+web-time = "1.1.0"
+ttf-parser = "0.25.1"
+wgpu = "30.0.0"
 winit = { version = "0.30.13", features = ["android-native-activity"] }

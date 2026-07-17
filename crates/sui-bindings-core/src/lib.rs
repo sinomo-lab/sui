@@ -7122,7 +7122,10 @@ pub fn registered_image_from_png(data: impl AsRef<[u8]>) -> Result<RegisteredIma
     let mut decoder = png::Decoder::new(Cursor::new(data.as_ref()));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().map_err(|error| error.to_string())?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
+    let output_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "PNG image exceeds the decoder output size limit".to_string())?;
+    let mut buffer = vec![0; output_size];
     let info = reader
         .next_frame(&mut buffer)
         .map_err(|error| error.to_string())?;

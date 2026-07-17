@@ -1,6 +1,6 @@
 [package]
 name = "sinomo-ui-lucide"
-version = "1.17.0"
+version = "1.17.1"
 description = "Embedded Lucide SVG icon resources for SUI."
 edition.workspace = true
 authors.workspace = true
@@ -22,8 +22,8 @@ sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 
 [build-dependencies]
-roxmltree = "0.20"
-svgtypes = "0.16"
+roxmltree = "0.21.1"
+svgtypes = "0.16.1"
 
 [dev-dependencies]
 sui-layout = { workspace = true }
