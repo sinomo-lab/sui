@@ -166,6 +166,18 @@ impl FontRegistry {
     pub fn is_empty(&self) -> bool {
         self.fonts.is_empty()
     }
+
+    pub(crate) fn cache_key(&self) -> Vec<(FontHandle, FaceCacheKey)> {
+        // The context retains every registered font's Arc-backed bytes, so their
+        // allocation identities cannot be reused while this key is cached.
+        let mut key = self
+            .fonts
+            .iter()
+            .map(|(handle, font)| (*handle, FaceCacheKey::from_registered_font(font)))
+            .collect::<Vec<_>>();
+        key.sort_unstable_by_key(|(handle, _)| *handle);
+        key
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

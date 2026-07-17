@@ -234,6 +234,59 @@ fn text_system_uses_registered_font_handles() {
 }
 
 #[test]
+fn text_system_reuses_font_context_across_layout_cache_misses() {
+    let system = TextSystem::new();
+    let fonts = FontRegistry::new();
+
+    for text in ["first uncached layout", "second uncached layout"] {
+        system
+            .shape_text(
+                text,
+                Size::new(180.0, 28.0),
+                TextStyle::new(Color::WHITE),
+                &fonts,
+            )
+            .unwrap();
+    }
+
+    assert_eq!(system.layout_cache_snapshot().misses, 2);
+    assert_eq!(system.font_context_build_count(), 1);
+}
+
+#[test]
+fn text_system_rebuilds_font_context_after_registered_fonts_change() {
+    let system = TextSystem::new();
+    let empty_fonts = FontRegistry::new();
+    system
+        .shape_text(
+            "default font",
+            Size::new(180.0, 28.0),
+            TextStyle::new(Color::WHITE),
+            &empty_fonts,
+        )
+        .unwrap();
+
+    let handle = FontHandle::new(23);
+    let mut registered_fonts = FontRegistry::new();
+    registered_fonts.insert(handle, load_test_font());
+    for text in ["first registered layout", "second registered layout"] {
+        system
+            .shape_text(
+                text,
+                Size::new(180.0, 28.0),
+                TextStyle {
+                    font: Some(handle),
+                    ..TextStyle::new(Color::WHITE)
+                },
+                &registered_fonts,
+            )
+            .unwrap();
+    }
+
+    assert_eq!(system.font_context_build_count(), 2);
+}
+
+#[test]
 fn registered_face_cache_is_scoped_per_font_registry() {
     let Some((first_font, second_font)) = load_distinct_test_fonts() else {
         return;

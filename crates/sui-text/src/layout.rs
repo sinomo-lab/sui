@@ -106,7 +106,7 @@ pub(crate) fn layout_document(
     flattened: FlattenedTextDocument,
     resolved_spans: Vec<ResolvedSpanInput>,
     box_size: Option<Size>,
-    mut font_context: FontContext,
+    font_context: &mut FontContext,
     layout_id: TextLayoutId,
 ) -> Result<TextLayout> {
     let box_width = box_size.map(|size| size.width);
@@ -127,7 +127,7 @@ pub(crate) fn layout_document(
             paragraph,
             &resolved_spans,
             box_width,
-            &mut font_context,
+            font_context,
             &mut faces,
             &mut face_slots,
             &mut face_metrics,

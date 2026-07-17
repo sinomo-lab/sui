@@ -93,15 +93,29 @@ fn record_text_timing(
 #[derive(Debug)]
 pub struct TextSystem {
     state: OnceLock<std::result::Result<TextSystemState, String>>,
+    font_context: Mutex<Option<CachedFontContext>>,
+    #[cfg(test)]
+    font_context_build_count: AtomicU64,
     layout_cache: Mutex<TextLayoutCache>,
     persistent_layouts: Mutex<Arc<TextLayoutRegistry>>,
     next_layout_handle: AtomicU64,
+}
+
+#[derive(Debug)]
+struct CachedFontContext {
+    registry_key: Vec<(sui_core::FontHandle, FaceCacheKey)>,
+    // Constructing a cosmic-text FontSystem clones and indexes the complete
+    // system font database. Keep that work outside individual layout misses.
+    context: FontContext,
 }
 
 impl Default for TextSystem {
     fn default() -> Self {
         Self {
             state: OnceLock::new(),
+            font_context: Mutex::new(None),
+            #[cfg(test)]
+            font_context_build_count: AtomicU64::new(0),
             layout_cache: Mutex::new(TextLayoutCache::default()),
             persistent_layouts: Mutex::new(Arc::new(TextLayoutRegistry::default())),
             next_layout_handle: AtomicU64::new(1),
@@ -278,14 +292,15 @@ impl TextSystem {
 
         let layout_started = text_timing_enabled().then(Instant::now);
         let flattened = FlattenedTextDocument::new(normalized_document.clone());
-        let font_context = self.font_context(font_registry)?;
-        let resolved_spans = self.resolve_span_inputs(&flattened, &font_context)?;
         let layout_id = crate::cache::TextLayoutCacheKey::stable_layout_id(
             &normalized_document,
             &span_face_keys,
             box_size,
         );
-        let layout = layout_document(flattened, resolved_spans, box_size, font_context, layout_id)?;
+        let layout = self.with_font_context(font_registry, |font_context| {
+            let resolved_spans = self.resolve_span_inputs(&flattened, font_context)?;
+            layout_document(flattened, resolved_spans, box_size, font_context, layout_id)
+        })?;
         let miss_layout_time_us = layout_started
             .as_ref()
             .map(|started| started.elapsed().as_micros() as u64)
@@ -434,7 +449,41 @@ impl TextSystem {
         }
     }
 
-    fn font_context(&self, font_registry: &FontRegistry) -> Result<FontContext> {
-        self.text_system_state()?.build_font_context(font_registry)
+    fn with_font_context<T>(
+        &self,
+        font_registry: &FontRegistry,
+        operation: impl FnOnce(&mut FontContext) -> Result<T>,
+    ) -> Result<T> {
+        let registry_key = font_registry.cache_key();
+        let mut cached = self
+            .font_context
+            .lock()
+            .map_err(|_| Error::new("text font context cache lock was poisoned"))?;
+        let rebuild = cached
+            .as_ref()
+            .is_none_or(|cached| cached.registry_key != registry_key);
+        if rebuild {
+            *cached = Some(CachedFontContext {
+                registry_key,
+                context: self
+                    .text_system_state()?
+                    .build_font_context(font_registry)?,
+            });
+            #[cfg(test)]
+            self.font_context_build_count
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        operation(
+            &mut cached
+                .as_mut()
+                .expect("font context was initialized")
+                .context,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn font_context_build_count(&self) -> u64 {
+        self.font_context_build_count.load(Ordering::Relaxed)
     }
 }

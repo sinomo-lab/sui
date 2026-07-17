@@ -8254,7 +8254,7 @@ mod tests {
         path::{Path, PathBuf},
         rc::Rc,
         sync::{Mutex, OnceLock},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::visual_artifacts::{
@@ -9214,6 +9214,36 @@ mod tests {
             for (name, phase, avg_ms, avg_calls) in widgets.into_iter().take(15) {
                 println!("  {name:<28} {phase:<8} {avg_ms:>8.4} ms  x{avg_calls:>6.1}");
             }
+        }
+
+        let text_requests = samples
+            .iter()
+            .map(|sample| sample.runtime_text_timing.request_count)
+            .sum::<usize>();
+        if text_requests > 0 {
+            let text_hits = samples
+                .iter()
+                .map(|sample| sample.runtime_text_timing.cache_hit_count)
+                .sum::<usize>();
+            let text_misses = samples
+                .iter()
+                .map(|sample| sample.runtime_text_timing.cache_miss_count)
+                .sum::<usize>();
+            let text_total_us = samples
+                .iter()
+                .map(|sample| sample.runtime_text_timing.total_time_us)
+                .sum::<u64>();
+            let text_miss_layout_us = samples
+                .iter()
+                .map(|sample| sample.runtime_text_timing.miss_layout_time_us)
+                .sum::<u64>();
+            println!("--- text layout totals ---");
+            println!("  requests: {text_requests} ({text_hits} hits, {text_misses} misses)");
+            println!(
+                "  total: {:.3} ms, miss layout: {:.3} ms",
+                text_total_us as f64 / 1_000.0,
+                text_miss_layout_us as f64 / 1_000.0,
+            );
         }
     }
 
@@ -11856,6 +11886,37 @@ mod tests {
             &samples,
         );
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for widget-book tree construction and destruction"]
+    fn widget_book_tree_creation_current_status_benchmark() {
+        let mut creation_ms = Vec::with_capacity(7);
+        let mut destruction_ms = Vec::with_capacity(7);
+        for _ in 0..7 {
+            let started = Instant::now();
+            let gallery =
+                std::hint::black_box(build_widget_book_gallery(default_widget_book_state()));
+            creation_ms.push(started.elapsed().as_secs_f64() * 1_000.0);
+
+            let started = Instant::now();
+            drop(gallery);
+            destruction_ms.push(started.elapsed().as_secs_f64() * 1_000.0);
+        }
+        creation_ms.sort_by(f64::total_cmp);
+        destruction_ms.sort_by(f64::total_cmp);
+        println!(
+            "widget-book tree creation: median={:.3} ms min={:.3} ms max={:.3} ms",
+            creation_ms[creation_ms.len() / 2],
+            creation_ms[0],
+            creation_ms[creation_ms.len() - 1]
+        );
+        println!(
+            "widget-book tree destruction: median={:.3} ms min={:.3} ms max={:.3} ms",
+            destruction_ms[destruction_ms.len() / 2],
+            destruction_ms[0],
+            destruction_ms[destruction_ms.len() - 1]
+        );
     }
 
     #[cfg(feature = "artifacts")]
