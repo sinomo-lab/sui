@@ -8520,7 +8520,10 @@ mod tests {
         let scrolled_semantics = &snapshot.accessibility.nodes;
 
         for (section_name, max_height) in [
-            (super::DATA_WIDGETS_GALLERY_NAME, 950.0),
+            // The data gallery includes the 132px VirtualList story added alongside
+            // the collection framework. Keep headroom for its surrounding spacing
+            // while still catching an accidentally stretched, viewport-sized tail.
+            (super::DATA_WIDGETS_GALLERY_NAME, 1_100.0),
             (super::CANVAS_WIDGETS_GALLERY_NAME, 750.0),
         ] {
             let section = scrolled_semantics
