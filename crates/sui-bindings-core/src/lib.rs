@@ -19,8 +19,8 @@ use sui::{
     ActionCard, Align, Alignment, ArrangeCtx, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
     BrowserTabBar, Brush, BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator, Button,
     Checkbox, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSpace, ColorSwatch,
-    CommandGroup, Constraints, ContextMenu, CoverageDots, CustomEvent, DateTimeInput, DetailRow,
-    Dialog, Dock, DockPanel, DpiInfo, EXTERNAL_WAKE_KIND, EmptyState, Event, EventCtx, EventPhase,
+    CommandGroup, CommandKey, Constraints, ContextMenu, CoverageDots, CustomEvent, DateTimeInput,
+    DetailRow, Dialog, Dock, DockPanel, DpiInfo, EmptyState, Event, EventCtx, EventPhase,
     FieldGroup, FixedPaneSplit, Flex, FloatingStack, FontHandle, FormRow, FormSection, FramedField,
     Icon, IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
@@ -6777,19 +6777,6 @@ impl BindingUiTaskRootWidget {
 
 impl Widget for BindingUiTaskRootWidget {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        let external_wake = matches!(
-            event,
-            Event::Custom(CustomEvent { kind, .. }) if kind == EXTERNAL_WAKE_KIND
-        );
-        if external_wake {
-            let drained = self.drain_ui_tasks(ctx);
-            if drained == 0 {
-                ctx.request_measure();
-                ctx.request_paint();
-                ctx.request_semantics();
-            }
-        }
-
         self.inner.event(ctx, event);
         self.drain_ui_tasks(ctx);
     }
@@ -6830,6 +6817,8 @@ impl Widget for BindingUiTaskRootWidget {
         self.inner.visit_children_mut(visitor);
     }
 }
+
+const BINDING_UI_TASKS_READY: CommandKey<()> = CommandKey::new("sui.bindings.ui-tasks-ready");
 
 #[derive(Debug, Clone)]
 pub struct BindingWindow {
@@ -7047,12 +7036,23 @@ impl BindingApp {
                 window.root.into_runtime_widget(self.errors.clone()),
                 ui_tasks.clone(),
             );
-            app = app.window(SuiWindow::new(window.title.clone()).root(root));
+            let tasks_for_window = ui_tasks.clone();
+            app = app.window(SuiWindow::new(window.title.clone()).root(root).on_command(
+                BINDING_UI_TASKS_READY,
+                move |ctx, _| {
+                    tasks_for_window.drain();
+                    ctx.request_measure();
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                },
+            ));
         }
 
         let tasks_for_waker = ui_tasks.clone();
         app.run_with_handle(move |native_ui| {
-            tasks_for_waker.set_waker(move || native_ui.wake());
+            tasks_for_waker.set_waker(move || {
+                native_ui.broadcast_application(BINDING_UI_TASKS_READY, ());
+            });
             on_ready(ui_handle);
         })
         .map_err(|error| error.to_string())

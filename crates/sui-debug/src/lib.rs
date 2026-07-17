@@ -984,6 +984,50 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             ])
         })
         .collect::<Vec<_>>();
+    let command_trace_height =
+        (52.0 + snapshot.command_dispatches.len().min(6) as f32 * 30.0).clamp(82.0, 232.0);
+    let command_rows = snapshot
+        .command_dispatches
+        .iter()
+        .rev()
+        .take(64)
+        .map(|sample| {
+            let outcome = if !sample.delivered {
+                "not delivered".to_string()
+            } else if sample.handled {
+                format!("handled by {}", sample.handlers.join(", "))
+            } else if sample.handlers.is_empty() {
+                "no matching handler".to_string()
+            } else {
+                format!("observed by {}", sample.handlers.join(", "))
+            };
+            TableRow::new([
+                format!("#{} {}", sample.sequence, sample.name),
+                format!("{:?} / {:?}", sample.target, sample.delivery),
+                outcome,
+            ])
+        })
+        .collect::<Vec<_>>();
+    let invalidation_trace_height =
+        (52.0 + snapshot.invalidations.len().min(6) as f32 * 30.0).clamp(82.0, 232.0);
+    let invalidation_rows = snapshot
+        .invalidations
+        .iter()
+        .rev()
+        .take(64)
+        .map(|sample| {
+            TableRow::new([
+                sample.source.clone(),
+                format!("{:?} / {:?}", sample.target, sample.kind),
+                sample.reason.clone().unwrap_or_else(|| {
+                    sample
+                        .region
+                        .map(|region| format!("region {region:?}"))
+                        .unwrap_or_default()
+                }),
+            ])
+        })
+        .collect::<Vec<_>>();
 
     Stack::vertical()
         .spacing(10.0)
@@ -1059,6 +1103,30 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
                     ])
                     .rows(phase_rows),
             ),
+        )
+        .with_child(
+            SizedBox::new().height(command_trace_height).with_child(
+                Table::new("Command routing trace")
+                    .columns([
+                        TableColumn::new("Command").min_width(180.0),
+                        TableColumn::new("Scope").min_width(180.0),
+                        TableColumn::new("Delivery").min_width(220.0),
+                    ])
+                    .rows(command_rows),
+            ),
+        )
+        .with_child(
+            SizedBox::new()
+                .height(invalidation_trace_height)
+                .with_child(
+                    Table::new("Invalidation trace")
+                        .columns([
+                            TableColumn::new("Source").min_width(180.0),
+                            TableColumn::new("Target / kind").min_width(210.0),
+                            TableColumn::new("Reason").min_width(220.0),
+                        ])
+                        .rows(invalidation_rows),
+                ),
         )
         .with_child(scene_summary_view(SceneDebugSummary::from(&snapshot.scene)))
 }

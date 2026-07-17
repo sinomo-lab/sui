@@ -29,7 +29,8 @@ The public facade is intentionally the normal boundary for applications:
 - `App` owns application resources and one or more windows.
 - `Window` configures a user-facing window and its retained root widget.
 - `ResourceRegistry` registers fonts and images and returns stable handles.
-- `UiHandle` wakes a running platform event loop after background work.
+- `UiHandle` sends typed commands or performs a scheduler-only wake from a
+  background thread.
 - `Widget` is the protocol for custom retained widgets.
 - Built-in controls, containers, composites, geometry, events, semantic types,
   text types, and themes are re-exported by the facade.
@@ -70,9 +71,10 @@ SUI uses a few conventions consistently:
 - State changes become visible through explicit invalidation. Request only the
   passes that may have changed: measure, paint, semantics, resources, or
   animation.
-- Widgets stay on the UI thread. Background tasks publish results through a
-  queue and call `UiHandle::wake()`; the retained tree consumes them when SUI
-  delivers the external wake event.
+- Widgets stay on the UI thread. Background tasks publish results through the
+  typed `UiHandle` command queue. Application/window controllers receive them
+  independently of the widget paint tree; a bare `wake()` only schedules
+  controller wake hooks.
 - Accessibility semantics are part of the widget contract, not optional test
   metadata. Tests and the generated TUI consume the same tree.
 

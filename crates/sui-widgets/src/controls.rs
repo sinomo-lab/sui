@@ -24,8 +24,9 @@ use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_lucide::LucideIcon;
 use sui_reactive::Observable;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
+    PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor,
+    WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
@@ -1665,27 +1666,29 @@ impl Widget for Label {
                     _ => {}
                 }
             }
-            Event::Custom(custom) => {
-                if let Some(command) = TextCommand::from_custom_event(custom) {
-                    match command {
-                        TextCommand::SelectAll => {
-                            let text = self.current_text();
-                            self.set_selection(0, text.len(), text.len());
-                            self.sync_selection_scope(ctx, &text);
-                            ctx.request_paint();
-                            ctx.request_semantics();
-                            ctx.set_handled();
-                        }
-                        TextCommand::Copy => {
-                            if self.copy_selection(ctx) {
-                                ctx.set_handled();
-                            }
-                        }
-                        TextCommand::Cut | TextCommand::Paste => {}
-                    }
+            _ => {}
+        }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        let Some(command) = TextCommand::from_command(command) else {
+            return;
+        };
+        match command {
+            TextCommand::SelectAll => {
+                let text = self.current_text();
+                self.set_selection(0, text.len(), text.len());
+                self.sync_selection_scope(ctx, &text);
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            TextCommand::Copy => {
+                if self.copy_selection(ctx) {
+                    ctx.set_handled();
                 }
             }
-            _ => {}
+            TextCommand::Cut | TextCommand::Paste => {}
         }
     }
 
@@ -6383,14 +6386,6 @@ impl Widget for TextArea {
                     }
                 }
             }
-            Event::Custom(custom) => {
-                if let Some(command) = TextCommand::from_custom_event(custom) {
-                    if !ctx.is_focused() {
-                        ctx.request_focus();
-                    }
-                    self.apply_text_command(ctx, command);
-                }
-            }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
                 if !self.read_only {
                     self.execute_editor_command(ctx, EditorCommand::StartComposition);
@@ -6537,6 +6532,16 @@ impl Widget for TextArea {
             }
             _ => {}
         }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        let Some(command) = TextCommand::from_command(command) else {
+            return;
+        };
+        if !ctx.is_focused() {
+            ctx.request_focus();
+        }
+        self.apply_text_command(ctx, command);
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -8374,14 +8379,6 @@ impl Widget for TextInput {
                     }
                 }
             }
-            Event::Custom(custom) => {
-                if let Some(command) = TextCommand::from_custom_event(custom) {
-                    if !ctx.is_focused() {
-                        ctx.request_focus();
-                    }
-                    self.apply_text_command(ctx, command);
-                }
-            }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() => {
                 if !self.read_only {
                     self.execute_editor_command(ctx, EditorCommand::StartComposition);
@@ -8534,6 +8531,16 @@ impl Widget for TextInput {
             }
             _ => {}
         }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        let Some(command) = TextCommand::from_command(command) else {
+            return;
+        };
+        if !ctx.is_focused() {
+            ctx.request_focus();
+        }
+        self.apply_text_command(ctx, command);
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -9555,7 +9562,7 @@ mod tests {
     use crate::{
         containers::{SizedBox, Stack},
         selection::SelectionScope,
-        text_command::TextCommand,
+        text_command::{TEXT_COMMAND, TextCommand},
     };
     use sui_core::{
         Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
@@ -9567,8 +9574,9 @@ mod tests {
     use sui_reactive::Signal;
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
-        Application, MeasureCtx, PaintCtx, RenderOutput, Runtime, Widget, WindowBuilder,
-        WindowRenderOptions, clear_window_render_options, set_window_render_options,
+        Application, CommandDelivery, CommandTarget, MeasureCtx, PaintCtx, RenderOutput, Runtime,
+        Widget, WindowBuilder, WindowRenderOptions, clear_window_render_options,
+        set_window_render_options,
     };
     use sui_scene::{
         Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor, SceneLayerUpdateKind,
@@ -10253,7 +10261,12 @@ mod tests {
         assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
 
         runtime.clipboard().set_text("");
-        runtime.handle_event(window_id, TextCommand::Copy.into_event())?;
+        runtime.handle_command(
+            CommandTarget::FocusedWidget(window_id),
+            CommandDelivery::Directed,
+            TEXT_COMMAND,
+            TextCommand::Copy,
+        );
         assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
 
         runtime.clipboard().set_text("");
@@ -12419,19 +12432,38 @@ mod tests {
     }
 
     #[test]
-    fn text_command_events_drive_clipboard_actions() -> Result<()> {
+    fn typed_text_commands_drive_clipboard_actions() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(TextArea::new("Notes").value("alpha"));
 
         let _ = runtime.render(window_id)?;
-        runtime.handle_event(window_id, TextCommand::SelectAll.into_event())?;
-        runtime.handle_event(window_id, TextCommand::Copy.into_event())?;
+        runtime.handle_command(
+            CommandTarget::FocusedWidget(window_id),
+            CommandDelivery::Directed,
+            TEXT_COMMAND,
+            TextCommand::SelectAll,
+        );
+        runtime.handle_command(
+            CommandTarget::FocusedWidget(window_id),
+            CommandDelivery::Directed,
+            TEXT_COMMAND,
+            TextCommand::Copy,
+        );
         assert_eq!(runtime.clipboard().text().as_deref(), Some("alpha"));
 
         runtime.clipboard().set_text("beta");
-        runtime.handle_event(window_id, TextCommand::SelectAll.into_event())?;
-        runtime.handle_event(window_id, TextCommand::Paste.into_event())?;
-        runtime.handle_event(window_id, TextCommand::SelectAll.into_event())?;
-        runtime.handle_event(window_id, TextCommand::Copy.into_event())?;
+        for command in [
+            TextCommand::SelectAll,
+            TextCommand::Paste,
+            TextCommand::SelectAll,
+            TextCommand::Copy,
+        ] {
+            runtime.handle_command(
+                CommandTarget::FocusedWidget(window_id),
+                CommandDelivery::Directed,
+                TEXT_COMMAND,
+                command,
+            );
+        }
         assert_eq!(runtime.clipboard().text().as_deref(), Some("beta"));
         Ok(())
     }

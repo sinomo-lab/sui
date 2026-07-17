@@ -11,8 +11,6 @@ use sui_reactive::{Change, Observable, Observer, SourceId, Subscription};
 
 use crate::ReactiveInvalidationSample;
 
-pub const REACTIVE_CHANGE_KIND: &str = "sui.reactive.changed";
-
 type ExternalWaker = dyn Fn() + Send + Sync + 'static;
 
 struct PendingReactiveInvalidation {

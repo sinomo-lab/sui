@@ -7,10 +7,12 @@ use std::{
     time::Duration,
 };
 
-use sui_core::{DirtyRegion, InvalidationKind, Size, WidgetId, WindowId};
+use sui_core::{DirtyRegion, InvalidationKind, InvalidationTarget, Rect, Size, WidgetId, WindowId};
 use sui_reactive::SourceId;
 use sui_scene::{LayerCompositionMode, SceneCommand, SceneFrame, SceneLayerUpdateKind};
 use sui_text::RuntimeTextTimingDiagnostics;
+
+use crate::{CommandDelivery, CommandTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramePhase {
@@ -96,6 +98,29 @@ pub struct ReactiveInvalidationSample {
     pub delivered: bool,
 }
 
+/// One application-command delivery attempt retained in the next frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandDispatchSample {
+    pub sequence: u64,
+    pub name: String,
+    pub payload_type: String,
+    pub target: CommandTarget,
+    pub delivery: CommandDelivery,
+    pub handlers: Vec<String>,
+    pub handled: bool,
+    pub delivered: bool,
+}
+
+/// The origin and optional caller explanation for a scheduled invalidation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvalidationTraceSample {
+    pub target: InvalidationTarget,
+    pub kind: InvalidationKind,
+    pub region: Option<Rect>,
+    pub source: String,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WidgetRebuildSample {
     pub widget_id: WidgetId,
@@ -110,6 +135,8 @@ pub struct RenderDiagnostics {
     pub runtime_text_timing: RuntimeTextTimingDiagnostics,
     pub widget_timings: Vec<WidgetTimingSample>,
     pub reactive_invalidations: Vec<ReactiveInvalidationSample>,
+    pub command_dispatches: Vec<CommandDispatchSample>,
+    pub invalidations: Vec<InvalidationTraceSample>,
     pub widget_rebuilds: Vec<WidgetRebuildSample>,
     pub widget_count: usize,
     pub active_animated_widget_count: usize,
@@ -1129,6 +1156,8 @@ pub struct WindowPerformanceSnapshot {
     pub text_cache_deltas: TextCacheDeltaDiagnostics,
     pub runtime_text_timing: RuntimeTextTimingDiagnostics,
     pub widget_timings: Vec<WidgetTimingSample>,
+    pub command_dispatches: Vec<CommandDispatchSample>,
+    pub invalidations: Vec<InvalidationTraceSample>,
     pub retained_packet_hotspot: Option<RetainedPacketHotspotDiagnostics>,
     pub scene: SceneStatistics,
 }
@@ -1178,6 +1207,8 @@ impl WindowPerformanceSnapshot {
             text_cache_deltas,
             runtime_text_timing: RuntimeTextTimingDiagnostics::default(),
             widget_timings: Vec::new(),
+            command_dispatches: Vec::new(),
+            invalidations: Vec::new(),
             retained_packet_hotspot: None,
             scene,
         }
@@ -1193,6 +1224,16 @@ impl WindowPerformanceSnapshot {
 
     pub fn with_widget_timings(mut self, widget_timings: Vec<WidgetTimingSample>) -> Self {
         self.widget_timings = widget_timings;
+        self
+    }
+
+    pub fn with_event_traces(
+        mut self,
+        command_dispatches: Vec<CommandDispatchSample>,
+        invalidations: Vec<InvalidationTraceSample>,
+    ) -> Self {
+        self.command_dispatches = command_dispatches;
+        self.invalidations = invalidations;
         self
     }
 

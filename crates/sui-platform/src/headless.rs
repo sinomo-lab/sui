@@ -68,11 +68,11 @@ impl HeadlessPlatform {
 
     pub fn pump(&mut self, runtime: &mut Runtime) -> Result<bool> {
         self.sync_windows(runtime)?;
+        let mut did_work = runtime.has_pending_commands();
+        runtime.process_commands();
         runtime.tick(self.frame_clock);
         self.queue_ready_events(runtime);
         self.queue_redraw_requests(runtime)?;
-
-        let mut did_work = false;
 
         while let Some(queued_event) = self.pending_events.pop_front() {
             did_work = true;

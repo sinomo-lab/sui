@@ -9,9 +9,9 @@ use sui_core::{
 use sui_layout::{Axis, Constraints, Padding as Insets};
 use sui_reactive::Observable;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
+    PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
+    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
@@ -8995,6 +8995,13 @@ impl Widget for TabBar {
         }
     }
 
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.is(REACTIVE_CHANGED) && self.selected_source.is_some() {
+            self.sync_external_selected(ctx);
+            ctx.set_handled();
+        }
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         if let Some(source) = &self.selected_source {
             let selected = ctx.observe_with(source.as_ref(), InvalidationKind::Paint);
@@ -15432,7 +15439,7 @@ mod tests {
     use crate::FloatingStack;
     use crate::{
         DefaultTheme, HdrThemeMode, Padding, ScrollView, SelectionScope, SemanticColorToken,
-        SemanticTone, SizedBox, Stack, TextArea, TextCommand, ThemeTextToken,
+        SemanticTone, SizedBox, Stack, TEXT_COMMAND, TextArea, TextCommand, ThemeTextToken,
     };
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
@@ -21378,7 +21385,7 @@ mod tests {
         let menu = menu
             .items([MenuItem::new("Copy")])
             .on_activate_with_ctx(move |ctx, _, _| {
-                ctx.post_event(text_area_id, TextCommand::Copy.into_event());
+                ctx.post_command(text_area_id, TEXT_COMMAND, TextCommand::Copy);
             });
         let (mut runtime, window_id) = build_runtime(menu);
 

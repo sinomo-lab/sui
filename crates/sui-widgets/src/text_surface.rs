@@ -8,8 +8,8 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
-    EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
-    Widget,
+    Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, Widget,
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{
@@ -1534,14 +1534,6 @@ impl Widget for TextSurface {
                 };
                 self.apply_editor_result(ctx, result);
             }
-            Event::Custom(custom) => {
-                if let Some(command) = TextCommand::from_custom_event(custom) {
-                    if !ctx.is_focused() {
-                        ctx.request_focus();
-                    }
-                    self.apply_text_command(ctx, command);
-                }
-            }
             Event::Window(WindowEvent::Focused(false)) => {
                 let result = self.editor.execute(EditorCommand::ClearComposition);
                 self.apply_editor_result(ctx, result);
@@ -1551,6 +1543,16 @@ impl Widget for TextSurface {
             }
             _ => {}
         }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        let Some(command) = TextCommand::from_command(command) else {
+            return;
+        };
+        if !ctx.is_focused() {
+            ctx.request_focus();
+        }
+        self.apply_text_command(ctx, command);
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {

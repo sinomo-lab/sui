@@ -104,11 +104,11 @@ editor instead of reaching into it:
 
 ```rust,ignore
 // `editor_id` is the WidgetId of the retained input or text surface.
-ctx.post_event(editor_id, TextCommand::Paste.into_event());
+ctx.post_command(editor_id, TEXT_COMMAND, TextCommand::Paste);
 ```
 
 `TextCommand::{Cut, Copy, Paste, SelectAll}` is understood by `TextInput`,
-`TextArea`, and `TextSurface`. Posting the event after a context-menu action
+`TextArea`, and `TextSurface`. Posting the command after a context-menu action
 keeps focus and editor ownership in one place.
 
 ## Shared Selection Scope

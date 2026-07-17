@@ -96,11 +96,13 @@ pub use sui_render_wgpu::{
     WgpuExternalTextureContext, WgpuExternalTextureRegistry, WgpuRenderer,
 };
 pub use sui_runtime::{
-    Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta,
-    DEFAULT_SUI_LOGO_SVG, EXTERNAL_WAKE_KIND, EmbeddedSvgImageResource, EventCtx, EventPhase,
-    FocusState, FramePhase, FramePhaseSample, FrameSchedule, KeyedChildren, KeyedReconcile,
-    MeasureCtx, PaintCtx, PresentationLatencyDiagnostics, REACTIVE_CHANGE_KIND,
-    ReactiveInvalidationSample, RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
+    Application as RuntimeApplication, ArrangeCtx, CacheMetrics, CacheMetricsDelta, Command,
+    CommandController, CommandCtx, CommandDelivery, CommandDispatchSample, CommandKey,
+    CommandSender, CommandTarget, DEFAULT_SUI_LOGO_SVG, EXTERNAL_WAKE_KIND,
+    EmbeddedSvgImageResource, EventCtx, EventPhase, FocusState, FramePhase, FramePhaseSample,
+    FrameSchedule, InvalidationTraceSample, KeyedChildren, KeyedReconcile, MeasureCtx, PaintCtx,
+    PresentationLatencyDiagnostics, REACTIVE_CHANGED, ReactiveInvalidationSample,
+    RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
     RetainedPacketRebuildDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
     SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions,
     TextCacheDeltaDiagnostics, TextCacheDiagnostics, Widget, WidgetChildren,
@@ -164,8 +166,8 @@ pub use sui_widgets::{
     RichTextSourceMap, RichTextSourceSpan, ScrollAlignment, SegmentedControl, SegmentedControlItem,
     SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
     SelectionPayload, SelectionPoint, SelectionScope, SemanticColorToken, SemanticTone, SplitView,
-    StatusBadge, SurfacePalette, TEXT_COMMAND_EVENT_KIND, Table, TableColumn, TableColumnAlignment,
-    TableRow, TextBlockPaint, TextCellPaint, TextCommand, TextSelectionInfo, TextSurface,
+    StatusBadge, SurfacePalette, TEXT_COMMAND, Table, TableColumn, TableColumnAlignment, TableRow,
+    TextBlockPaint, TextCellPaint, TextCommand, TextSelectionInfo, TextSurface,
     TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan, ThemeAspectRatios,
     ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
     ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeLeading, ThemeMotion,
@@ -399,6 +401,22 @@ impl Application {
         self
     }
 
+    /// Attach an application-scoped controller outside the widget tree.
+    pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
+        self.inner = self.inner.controller(controller);
+        self
+    }
+
+    /// Subscribe an application-scoped typed command handler.
+    pub fn on_command<T, F>(mut self, key: CommandKey<T>, handler: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: FnMut(&mut CommandCtx, &T) + 'static,
+    {
+        self.inner = self.inner.on_command(key, handler);
+        self
+    }
+
     #[cfg(feature = "wgpu")]
     /// Enable or disable analytic-edge feathering in the WGPU renderer.
     pub fn with_feathering_enabled(mut self, enabled: bool) -> Self {
@@ -554,11 +572,10 @@ impl Application {
         Ok(())
     }
 
-    /// Like [`run`](Self::run) but invokes `on_ready` with a [`Waker`] once the event loop is
-    /// created (before it starts running), so the caller can wake the UI from a background
-    /// thread — e.g. run startup work off the UI thread and refresh the UI when it finishes.
+    /// Like [`run`](Self::run) but invokes `on_ready` with a typed,
+    /// thread-safe [`CommandSender`] once the event loop is created.
     #[cfg(any(feature = "desktop", feature = "web"))]
-    pub fn run_with(self, on_ready: impl FnOnce(Waker)) -> Result<()> {
+    pub fn run_with(self, on_ready: impl FnOnce(CommandSender)) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
         let external_texture_registry = self.external_texture_registry.clone();
@@ -586,11 +603,11 @@ impl Application {
     }
 
     #[cfg(all(target_os = "android", feature = "mobile"))]
-    /// Run on Android and invoke `on_ready` with a cross-thread wake handle.
+    /// Run on Android and invoke `on_ready` with a cross-thread command handle.
     pub fn run_android_with(
         self,
         android_app: AndroidApp,
-        on_ready: impl FnOnce(Waker),
+        on_ready: impl FnOnce(CommandSender),
     ) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
@@ -660,7 +677,8 @@ pub mod prelude {
         CodeTextPaint, CodeTextSpan, CollectionAnchor, CollectionAnchorGravity, CollectionChange,
         CollectionDelta, CollectionExtentIndex, CollectionModelError, CollectionSync,
         CollectionWindow, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSwatch,
-        ComboBox, CommandButtonFill, CommandButtonPaint, CommandGroup, CompiledClip,
+        ComboBox, Command, CommandButtonFill, CommandButtonPaint, CommandController, CommandCtx,
+        CommandDelivery, CommandGroup, CommandKey, CommandSender, CommandTarget, CompiledClip,
         CompiledTimeline, CompiledTrack, Constraints, ContextMenu, ControlMetrics, ControlPalette,
         ControlSize, ControlTypography, CoverageDots, CoverageDotsConfig, DataGrid, DateTimeInput,
         DefaultTheme, DetailRow, Dialog, DisclosureButtonPaint, Divider, Dock, DockPanel,
@@ -696,8 +714,8 @@ pub mod prelude {
         SideSheet, SideSheetPlacement, Signal, SingleChild, Size, SizedBox, Slider, SourceId,
         SpinBox, Spinner, SplitView, SpringF32, Stack, StatusBar, StatusBarHost, StatusBarSegment,
         StrokeStyle, Style, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation,
-        SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextBlockPaint, TextCellPaint,
+        SurfacePalette, SurfaceRole, Switch, SwitchView, TEXT_COMMAND, TabBar, Table, TableColumn,
+        TableColumnAlignment, TableRow, Tabs, TextArea, TextBlockPaint, TextCellPaint, TextCommand,
         TextDocument, TextInput, TextLayout, TextMeasurement, TextParagraph, TextParagraphStyle,
         TextRenderCoveragePolicy, TextRenderHinting, TextRenderMode, TextRenderPolicy,
         TextRenderStemDarkening, TextSelectionInfo, TextSpan, TextSpanId, TextStyle,

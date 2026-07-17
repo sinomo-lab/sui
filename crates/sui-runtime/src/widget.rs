@@ -10,7 +10,11 @@ use std::{
     },
 };
 
-use crate::diagnostics::{WidgetTimingPhase, record_widget_timing};
+use crate::{
+    Command, CommandDelivery, CommandKey, CommandTarget,
+    command::{QueuedCommand, queued_command},
+    diagnostics::{WidgetTimingPhase, record_widget_timing},
+};
 
 use sui_core::{
     AsyncWakeToken, Clipboard, Color, DpiInfo, DragPayload, DragScopeId, DragSessionId, DropEffect,
@@ -53,6 +57,10 @@ pub trait WidgetPodMutVisitor {
 
 pub trait Widget {
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
+
+    /// Receive a typed command addressed directly to this widget. Commands are
+    /// target-only and do not capture or bubble through the widget tree.
+    fn command(&mut self, _ctx: &mut EventCtx, _command: &Command<'_>) {}
 
     fn debug_name(&self) -> &'static str {
         std::any::type_name::<Self>()
@@ -743,6 +751,52 @@ impl WidgetPod {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn dispatch_command_for_path(
+        &mut self,
+        path: &[WidgetId],
+        window_id: WindowId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+        focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
+        command: &Command<'_>,
+    ) -> Option<EventDispatch> {
+        self.find_mut_path(path, &mut |pod| {
+            pod.dispatch_command(
+                window_id,
+                dpi_info,
+                current_time,
+                focused_widget,
+                clipboard,
+                command,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn dispatch_command_for(
+        &mut self,
+        target: WidgetId,
+        window_id: WindowId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+        focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
+        command: &Command<'_>,
+    ) -> Option<EventDispatch> {
+        self.find_mut(target, &mut |pod| {
+            pod.dispatch_command(
+                window_id,
+                dpi_info,
+                current_time,
+                focused_widget,
+                clipboard,
+                command,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn notify_focus_change_for(
         &mut self,
         target: WidgetId,
@@ -819,7 +873,32 @@ impl WidgetPod {
             drag_requests: ctx.take_drag_requests(),
             drop_acceptances: ctx.take_drop_acceptances(),
             posted_events: ctx.take_posted_events(),
+            posted_commands: ctx.take_posted_commands(),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_command(
+        &mut self,
+        window_id: WindowId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+        focused_widget: Option<WidgetId>,
+        clipboard: &Clipboard,
+        command: &Command<'_>,
+    ) -> EventDispatch {
+        let mut ctx = EventCtx::new(
+            window_id,
+            self.id,
+            self.layout_state.arranged_bounds,
+            dpi_info,
+            current_time,
+            EventPhase::Target,
+            focused_widget,
+            clipboard.clone(),
+        );
+        self.widget.command(&mut ctx, command);
+        ctx.into_dispatch()
     }
 
     fn focus_changed(
@@ -851,6 +930,7 @@ impl WidgetPod {
             drag_requests: ctx.take_drag_requests(),
             drop_acceptances: ctx.take_drop_acceptances(),
             posted_events: ctx.take_posted_events(),
+            posted_commands: ctx.take_posted_commands(),
         }
     }
 
@@ -1083,6 +1163,12 @@ pub(crate) struct PostedEventRequest {
     pub event: Event,
 }
 
+/// A typed, target-only command posted during widget dispatch.
+#[derive(Debug, Clone)]
+pub(crate) struct PostedCommandRequest {
+    pub command: QueuedCommand,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct EventDispatch {
     pub handled: bool,
@@ -1093,6 +1179,7 @@ pub(crate) struct EventDispatch {
     pub drag_requests: Vec<DragRequest>,
     pub drop_acceptances: Vec<DropAcceptanceRequest>,
     pub posted_events: Vec<PostedEventRequest>,
+    pub posted_commands: Vec<PostedCommandRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -1113,6 +1200,7 @@ pub struct EventCtx {
     drag_requests: Vec<DragRequest>,
     drop_acceptances: Vec<DropAcceptanceRequest>,
     posted_events: Vec<PostedEventRequest>,
+    posted_commands: Vec<PostedCommandRequest>,
 }
 
 impl EventCtx {
@@ -1144,6 +1232,21 @@ impl EventCtx {
             drag_requests: Vec::new(),
             drop_acceptances: Vec::new(),
             posted_events: Vec::new(),
+            posted_commands: Vec::new(),
+        }
+    }
+
+    fn into_dispatch(mut self) -> EventDispatch {
+        EventDispatch {
+            handled: self.is_handled(),
+            invalidations: self.take_invalidations(),
+            focus_request: self.take_focus_request(),
+            wake_requests: self.take_wake_requests(),
+            pointer_capture_requests: self.take_pointer_capture_requests(),
+            drag_requests: self.take_drag_requests(),
+            drop_acceptances: self.take_drop_acceptances(),
+            posted_events: self.take_posted_events(),
+            posted_commands: self.take_posted_commands(),
         }
     }
 
@@ -1228,6 +1331,25 @@ impl EventCtx {
     pub fn post_event(&mut self, target: WidgetId, event: Event) {
         self.posted_events
             .push(PostedEventRequest { target, event });
+    }
+
+    /// Queue a typed command for target-only delivery after the current widget
+    /// dispatch completes.
+    pub fn post_command<T>(&mut self, target: WidgetId, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.posted_commands.push(PostedCommandRequest {
+            command: queued_command(
+                CommandTarget::Widget {
+                    window_id: self.window_id,
+                    widget_id: target,
+                },
+                CommandDelivery::Directed,
+                key,
+                payload,
+            ),
+        });
     }
 
     pub fn request_focus(&mut self) {
@@ -1411,6 +1533,10 @@ impl EventCtx {
 
     pub(crate) fn take_posted_events(&mut self) -> Vec<PostedEventRequest> {
         std::mem::take(&mut self.posted_events)
+    }
+
+    pub(crate) fn take_posted_commands(&mut self) -> Vec<PostedCommandRequest> {
+        std::mem::take(&mut self.posted_commands)
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {

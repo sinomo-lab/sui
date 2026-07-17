@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod command;
 mod diagnostics;
 mod logo;
 mod reactive;
@@ -29,23 +30,28 @@ use sui_scene::{
 use sui_text::{FontRegistry, RegisteredFont, TextLayoutHandle, TextSystem};
 use web_time::Instant;
 
+pub use command::{
+    Command, CommandController, CommandCtx, CommandDelivery, CommandKey, CommandSender,
+    CommandTarget,
+};
+use command::{CommandInvalidation, CommandListeners, QueuedCommand};
 pub use diagnostics::{
-    CacheMetrics, CacheMetricsDelta, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics,
-    ReactiveInvalidationSample, RenderDiagnostics, RendererSubmissionDiagnostics,
-    RetainedPacketHotspotDiagnostics, RetainedPacketRebuildDiagnostics, SceneStatistics,
-    SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
-    WidgetRebuildSample, WidgetTimingPhase, WidgetTimingSample, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-    WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy,
-    WindowTextHinting, WindowTextSubpixelOrder, WindowToneMappingMode,
-    clear_window_performance_snapshot, clear_window_performance_snapshots,
-    clear_window_render_options, publish_window_performance_snapshot, set_window_render_options,
+    CacheMetrics, CacheMetricsDelta, CommandDispatchSample, FramePhase, FramePhaseSample,
+    InvalidationTraceSample, PresentationLatencyDiagnostics, ReactiveInvalidationSample,
+    RenderDiagnostics, RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
+    RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+    TextCacheDeltaDiagnostics, TextCacheDiagnostics, WidgetRebuildSample, WidgetTimingPhase,
+    WidgetTimingSample, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowPerformanceSummary,
+    WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
+    WindowTextSubpixelOrder, WindowToneMappingMode, clear_window_performance_snapshot,
+    clear_window_performance_snapshots, clear_window_render_options,
+    publish_window_performance_snapshot, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_performance_text_caches, window_render_options,
     window_scene_statistics_detail_mode,
 };
 pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
-pub use reactive::REACTIVE_CHANGE_KIND;
 use std::rc::Rc;
 pub use sui_core::DpiInfo;
 pub use sui_layout::LayoutContext;
@@ -59,6 +65,10 @@ use widget::{
     BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PaintImageResource,
     PointerCaptureRequest, WakeRequest,
 };
+
+/// Internal typed notification delivered to widgets whose observable
+/// dependencies changed.
+pub const REACTIVE_CHANGED: CommandKey<()> = CommandKey::new("sui.reactive.changed");
 
 type PaintOutput = (
     Scene,
@@ -74,6 +84,7 @@ pub struct WindowBuilder {
     title: String,
     icon: Option<WindowIcon>,
     root: Option<WidgetPod>,
+    command_listeners: CommandListeners,
 }
 
 impl WindowBuilder {
@@ -82,6 +93,7 @@ impl WindowBuilder {
             title: "SUI Window".to_string(),
             icon: Some(WindowIcon::sui()),
             root: None,
+            command_listeners: CommandListeners::default(),
         }
     }
 
@@ -113,12 +125,35 @@ impl WindowBuilder {
         self
     }
 
+    /// Attach a non-widget controller whose lifetime is exactly this window's
+    /// lifetime.
+    pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
+        self.command_listeners.push_controller(controller);
+        self
+    }
+
+    /// Subscribe a window-scoped handler to a typed command.
+    pub fn on_command<T, F>(mut self, key: CommandKey<T>, handler: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: FnMut(&mut CommandCtx, &T) + 'static,
+    {
+        self.command_listeners.push_subscription(key, handler);
+        self
+    }
+
     fn build(self, window_id: WindowId) -> Result<WindowState> {
         let root = self
             .root
             .ok_or_else(|| Error::new("window root widget must be set before building"))?;
 
-        Ok(WindowState::new(window_id, self.title, self.icon, root))
+        Ok(WindowState::new(
+            window_id,
+            self.title,
+            self.icon,
+            root,
+            self.command_listeners,
+        ))
     }
 }
 
@@ -256,6 +291,7 @@ pub struct Application {
     next_image_id: u64,
     font_registry: Arc<FontRegistry>,
     image_registry: Arc<ImageRegistry>,
+    command_listeners: CommandListeners,
 }
 
 impl Application {
@@ -265,6 +301,22 @@ impl Application {
 
     pub fn window(mut self, window: WindowBuilder) -> Self {
         self.windows.push(window);
+        self
+    }
+
+    /// Attach an application-scoped non-widget controller.
+    pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
+        self.command_listeners.push_controller(controller);
+        self
+    }
+
+    /// Subscribe an application-scoped handler to a typed command.
+    pub fn on_command<T, F>(mut self, key: CommandKey<T>, handler: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: FnMut(&mut CommandCtx, &T) + 'static,
+    {
+        self.command_listeners.push_subscription(key, handler);
         self
     }
 
@@ -384,6 +436,7 @@ impl Application {
             self.next_image_id,
             self.image_registry,
         );
+        runtime.command_listeners = self.command_listeners;
 
         for window in self.windows {
             runtime.add_window(window)?;
@@ -401,13 +454,13 @@ impl Default for Application {
             next_image_id: 1,
             font_registry: Arc::new(FontRegistry::new()),
             image_registry: Arc::new(ImageRegistry::new()),
+            command_listeners: CommandListeners::default(),
         }
     }
 }
 
-/// Custom-event kind delivered to a window's root widget when a background thread wakes the UI
-/// (see [`Runtime::wake_root`]). Widgets match `Event::Custom` with this `kind` to drain
-/// cross-thread work (channels, async results) without polling on animation frames.
+/// Legacy root-event kind. Platform wakes no longer synthesize this event; use
+/// [`CommandSender`] and window/application controllers instead.
 pub const EXTERNAL_WAKE_KIND: &str = "sui.external.wake";
 
 pub struct Runtime {
@@ -419,6 +472,8 @@ pub struct Runtime {
     clipboard: Clipboard,
     windows: Vec<WindowState>,
     external_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+    command_sender: CommandSender,
+    command_listeners: CommandListeners,
 }
 
 impl Runtime {
@@ -446,6 +501,8 @@ impl Runtime {
             clipboard: Clipboard::new(),
             windows: Vec::new(),
             external_waker: None,
+            command_sender: CommandSender::new(),
+            command_listeners: CommandListeners::default(),
         }
     }
 
@@ -468,6 +525,20 @@ impl Runtime {
         }
     }
 
+    /// Install the platform callback used by the thread-safe command producer.
+    pub fn set_command_waker(&self, waker: impl Fn() + Send + Sync + 'static) {
+        self.command_sender.set_waker(Some(Arc::new(waker)));
+    }
+
+    /// Return the cloneable command producer associated with this runtime.
+    pub fn command_sender(&self) -> CommandSender {
+        self.command_sender.clone()
+    }
+
+    pub fn has_pending_commands(&self) -> bool {
+        self.command_sender.has_pending()
+    }
+
     /// Drain observable changes into targeted widget invalidations without
     /// delivering an application-level external wake event.
     ///
@@ -476,6 +547,45 @@ impl Runtime {
         for window in &mut self.windows {
             window.drain_reactive_invalidations();
         }
+    }
+
+    /// Drain queued commands and scheduler-only wakes on the UI thread.
+    ///
+    /// Platform integrations call this in response to the command producer's
+    /// waker. Delivery is independent of hit testing and widget ancestry.
+    pub fn process_commands(&mut self) {
+        const MAX_COMMAND_ROUNDS: usize = 8;
+
+        for _ in 0..MAX_COMMAND_ROUNDS {
+            let (manual_wake, commands) = self.command_sender.drain();
+            if !manual_wake && commands.is_empty() {
+                break;
+            }
+            if manual_wake {
+                self.dispatch_controller_wake();
+            }
+            for command in commands {
+                self.dispatch_queued_command(&command);
+            }
+        }
+    }
+
+    /// Enqueue and synchronously drain a command. Intended for headless hosts
+    /// and tests that own the runtime loop directly.
+    pub fn handle_command<T>(
+        &mut self,
+        target: CommandTarget,
+        delivery: CommandDelivery,
+        key: CommandKey<T>,
+        payload: T,
+    ) where
+        T: Send + Sync + 'static,
+    {
+        match delivery {
+            CommandDelivery::Directed => self.command_sender.send(target, key, payload),
+            CommandDelivery::Broadcast => self.command_sender.broadcast(target, key, payload),
+        }
+        self.process_commands();
     }
 
     /// Shared clipboard handle used by every window in this runtime.
@@ -576,10 +686,11 @@ impl Runtime {
         Ok(window.wake_async(token))
     }
 
-    /// Deliver an external-wake [`Event::Custom`] (kind [`EXTERNAL_WAKE_KIND`]) to a window's
-    /// root widget. Used by the platform to translate a background-thread wake into a UI event,
-    /// so widgets can drain channels / async results. Routed to the root and its effects
-    /// (invalidations, wake requests) applied like any other event.
+    /// Explicitly deliver the legacy external-wake [`Event::Custom`] (kind
+    /// [`EXTERNAL_WAKE_KIND`]) to a window's root widget.
+    ///
+    /// Platform wakes do not call this method. New integrations should enqueue a
+    /// typed command or use [`CommandSender::wake`] with a controller.
     pub fn wake_root(&mut self, window_id: WindowId) -> Result<()> {
         self.handle_event(
             window_id,
@@ -763,6 +874,274 @@ impl Runtime {
     pub fn widget_graph(&self, window_id: WindowId) -> Result<WidgetGraphSnapshot> {
         let window = self.window(window_id)?;
         Ok(window.graph.snapshot())
+    }
+
+    fn dispatch_controller_wake(&mut self) {
+        let sender = self.command_sender.clone();
+        let mut app_ctx = CommandCtx::new(sender.clone(), None);
+        let app_handlers = self.command_listeners.wake(&mut app_ctx);
+        self.apply_command_ctx(
+            app_ctx,
+            "scheduler wake",
+            "()",
+            None,
+            0,
+            CommandTarget::Application,
+            CommandDelivery::Broadcast,
+            app_handlers,
+        );
+
+        for index in 0..self.windows.len() {
+            let window_id = self.windows[index].id;
+            let mut ctx = CommandCtx::new(sender.clone(), Some(window_id));
+            let handlers = self.windows[index].command_listeners.wake(&mut ctx);
+            self.apply_command_ctx(
+                ctx,
+                "scheduler wake",
+                "()",
+                Some(index),
+                0,
+                CommandTarget::Window(window_id),
+                CommandDelivery::Broadcast,
+                handlers,
+            );
+        }
+    }
+
+    fn dispatch_queued_command(&mut self, queued: &QueuedCommand) {
+        match queued.target {
+            CommandTarget::Widget {
+                window_id,
+                widget_id,
+            } => {
+                if let Some(index) = self
+                    .windows
+                    .iter()
+                    .position(|window| window.id == window_id)
+                {
+                    let Some(dispatch) =
+                        self.windows[index].dispatch_direct_command(widget_id, queued)
+                    else {
+                        push_trace(
+                            &mut self.windows[index].pending_command_diagnostics,
+                            command_sample(queued, Vec::new(), false, false),
+                        );
+                        return;
+                    };
+                    let (handlers, handled) = {
+                        let handled = dispatch.handled;
+                        (vec!["widget target".to_string()], handled)
+                    };
+                    let focus_request = dispatch.focus_request;
+                    let mut effects = EventEffects::default();
+                    effects.extend(dispatch);
+                    let mut invalidations = Vec::new();
+                    self.windows[index].apply_event_effects(effects, &mut invalidations);
+                    if let Some(request) = focus_request {
+                        let focus_effects = self.windows[index].apply_focus_request(request);
+                        self.windows[index].apply_event_effects(focus_effects, &mut invalidations);
+                    }
+                    self.windows[index].record_command_invalidations(
+                        &invalidations,
+                        queued.key.name,
+                        None,
+                    );
+                    self.windows[index].schedule.extend(&invalidations);
+                    self.windows[index]
+                        .pending_invalidations
+                        .extend(invalidations);
+                    push_trace(
+                        &mut self.windows[index].pending_command_diagnostics,
+                        command_sample(queued, handlers, handled, true),
+                    );
+                }
+            }
+            CommandTarget::FocusedWidget(window_id) => {
+                if let Some(index) = self
+                    .windows
+                    .iter()
+                    .position(|window| window.id == window_id)
+                {
+                    let Some(target) = self.windows[index].focus.focused_widget else {
+                        push_trace(
+                            &mut self.windows[index].pending_command_diagnostics,
+                            command_sample(queued, Vec::new(), false, false),
+                        );
+                        return;
+                    };
+                    let Some(dispatch) =
+                        self.windows[index].dispatch_direct_command(target, queued)
+                    else {
+                        push_trace(
+                            &mut self.windows[index].pending_command_diagnostics,
+                            command_sample(queued, Vec::new(), false, false),
+                        );
+                        return;
+                    };
+                    let handled = { dispatch.handled };
+                    let focus_request = dispatch.focus_request;
+                    let mut effects = EventEffects::default();
+                    effects.extend(dispatch);
+                    let mut invalidations = Vec::new();
+                    self.windows[index].apply_event_effects(effects, &mut invalidations);
+                    if let Some(request) = focus_request {
+                        let focus_effects = self.windows[index].apply_focus_request(request);
+                        self.windows[index].apply_event_effects(focus_effects, &mut invalidations);
+                    }
+                    self.windows[index].record_command_invalidations(
+                        &invalidations,
+                        queued.key.name,
+                        None,
+                    );
+                    self.windows[index].schedule.extend(&invalidations);
+                    self.windows[index]
+                        .pending_invalidations
+                        .extend(invalidations);
+                    push_trace(
+                        &mut self.windows[index].pending_command_diagnostics,
+                        command_sample(queued, vec!["focused widget".to_string()], handled, true),
+                    );
+                }
+            }
+            CommandTarget::Window(window_id) => {
+                if let Some(index) = self
+                    .windows
+                    .iter()
+                    .position(|window| window.id == window_id)
+                {
+                    self.dispatch_to_window_listeners(index, queued);
+                }
+            }
+            CommandTarget::Application => {
+                let sender = self.command_sender.clone();
+                let mut ctx = CommandCtx::new(sender.clone(), None);
+                let broadcast = queued.delivery == CommandDelivery::Broadcast;
+                let command = Command::new(queued);
+                let handlers = self
+                    .command_listeners
+                    .dispatch(&mut ctx, &command, broadcast);
+                self.apply_command_ctx(
+                    ctx,
+                    queued.key.name,
+                    queued.key.payload_type_name,
+                    None,
+                    queued.sequence,
+                    queued.target,
+                    queued.delivery,
+                    handlers,
+                );
+
+                if broadcast {
+                    for index in 0..self.windows.len() {
+                        self.dispatch_to_window_listeners(index, queued);
+                    }
+                }
+            }
+        }
+    }
+
+    fn dispatch_to_window_listeners(&mut self, index: usize, queued: &QueuedCommand) {
+        let sender = self.command_sender.clone();
+        let window_id = self.windows[index].id;
+        let mut ctx = CommandCtx::new(sender, Some(window_id));
+        let broadcast = queued.delivery == CommandDelivery::Broadcast;
+        let command = Command::new(queued);
+        let handlers = self.windows[index]
+            .command_listeners
+            .dispatch(&mut ctx, &command, broadcast);
+        self.apply_command_ctx(
+            ctx,
+            queued.key.name,
+            queued.key.payload_type_name,
+            Some(index),
+            queued.sequence,
+            queued.target,
+            queued.delivery,
+            handlers,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_command_ctx(
+        &mut self,
+        mut ctx: CommandCtx,
+        source: &str,
+        payload_type: &str,
+        delivery_window: Option<usize>,
+        sequence: u64,
+        target: CommandTarget,
+        delivery: CommandDelivery,
+        handlers: Vec<String>,
+    ) {
+        let handled = ctx.is_handled();
+        let invalidations = ctx.take_invalidations();
+        let animations = ctx.take_animation_targets();
+        for invalidation in invalidations {
+            self.apply_command_invalidation(invalidation, source, delivery_window);
+        }
+        for (window_id, widget_id) in animations {
+            if let Some(window) = self
+                .windows
+                .iter_mut()
+                .find(|window| window.id == window_id)
+            {
+                window.requested_animation_frames.insert(widget_id);
+            }
+        }
+
+        let sample = CommandDispatchSample {
+            sequence,
+            name: source.to_string(),
+            payload_type: payload_type.to_string(),
+            target,
+            delivery,
+            delivered: !handlers.is_empty(),
+            handlers,
+            handled,
+        };
+        if let Some(index) = delivery_window {
+            push_trace(&mut self.windows[index].pending_command_diagnostics, sample);
+        } else {
+            for window in &mut self.windows {
+                push_trace(&mut window.pending_command_diagnostics, sample.clone());
+            }
+        }
+    }
+
+    fn apply_command_invalidation(
+        &mut self,
+        invalidation: CommandInvalidation,
+        source: &str,
+        delivery_window: Option<usize>,
+    ) {
+        let target_index = match invalidation.request.target {
+            InvalidationTarget::Window(window_id) => self
+                .windows
+                .iter()
+                .position(|window| window.id == window_id),
+            InvalidationTarget::Widget(widget_id) => self.windows.iter().position(|window| {
+                window.root.id() == widget_id || window.graph.contains(widget_id)
+            }),
+            InvalidationTarget::Surface(_) => delivery_window,
+        };
+        let Some(index) = target_index else {
+            return;
+        };
+        let request = invalidation.request;
+        push_trace(
+            &mut self.windows[index].pending_invalidation_diagnostics,
+            InvalidationTraceSample {
+                target: request.target,
+                kind: request.kind,
+                region: request.region,
+                source: format!("command:{source}"),
+                reason: invalidation.reason,
+            },
+        );
+        self.windows[index]
+            .schedule
+            .extend(std::slice::from_ref(&request));
+        self.windows[index].pending_invalidations.push(request);
     }
 
     fn alloc_window_id(&mut self) -> WindowId {
@@ -1079,10 +1458,19 @@ struct WindowState {
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
     clipboard: Clipboard,
+    command_listeners: CommandListeners,
+    pending_command_diagnostics: Vec<CommandDispatchSample>,
+    pending_invalidation_diagnostics: Vec<InvalidationTraceSample>,
 }
 
 impl WindowState {
-    fn new(id: WindowId, title: String, icon: Option<WindowIcon>, root: WidgetPod) -> Self {
+    fn new(
+        id: WindowId,
+        title: String,
+        icon: Option<WindowIcon>,
+        root: WidgetPod,
+        command_listeners: CommandListeners,
+    ) -> Self {
         let focus = FocusState {
             focused_widget: None,
             window_focused: true,
@@ -1125,6 +1513,9 @@ impl WindowState {
             ime_composition_rect: None,
             last_tick_time: 0.0,
             clipboard: Clipboard::new(),
+            command_listeners,
+            pending_command_diagnostics: Vec::new(),
+            pending_invalidation_diagnostics: Vec::new(),
         }
     }
 
@@ -1145,6 +1536,18 @@ impl WindowState {
                 };
                 let delivered = self.graph.is_empty() || self.graph.contains(widget_id);
                 sample.delivered = delivered;
+                if delivered {
+                    push_trace(
+                        &mut self.pending_invalidation_diagnostics,
+                        InvalidationTraceSample {
+                            target: request.target,
+                            kind: request.kind,
+                            region: request.region,
+                            source: format!("reactive:{}", sample.source_name),
+                            reason: Some(format!("observable version {}", sample.version)),
+                        },
+                    );
+                }
                 self.pending_reactive_diagnostics.push(sample);
                 if delivered {
                     targets.insert(widget_id);
@@ -1152,9 +1555,19 @@ impl WindowState {
                 }
             }
 
-            let event = Event::Custom(CustomEvent::new(REACTIVE_CHANGE_KIND));
             for target in targets {
-                let dispatch = self.dispatch_direct_event(target, &event);
+                let command = command::queued_command(
+                    CommandTarget::Widget {
+                        window_id: self.id,
+                        widget_id: target,
+                    },
+                    CommandDelivery::Directed,
+                    REACTIVE_CHANGED,
+                    (),
+                );
+                let Some(dispatch) = self.dispatch_direct_command(target, &command) else {
+                    continue;
+                };
                 let focus_request = dispatch.focus_request;
                 let mut effects = EventEffects::default();
                 effects.extend(dispatch);
@@ -1233,6 +1646,7 @@ impl WindowState {
 
         if skip_primary_route {
             self.finish_event(&event);
+            self.record_event_invalidations(&invalidations, &event);
             self.schedule.extend(&invalidations);
             self.pending_invalidations.extend(invalidations);
             return;
@@ -1258,8 +1672,23 @@ impl WindowState {
         }
 
         self.finish_event(&event);
+        self.record_event_invalidations(&invalidations, &event);
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
+    }
+
+    fn record_event_invalidations(&mut self, invalidations: &[InvalidationRequest], event: &Event) {
+        let source = event_trace_source(event);
+        extend_traces(
+            &mut self.pending_invalidation_diagnostics,
+            invalidations.iter().map(|request| InvalidationTraceSample {
+                target: request.target,
+                kind: request.kind,
+                region: request.region,
+                source: source.clone(),
+                reason: None,
+            }),
+        );
     }
 
     fn handle_semantics_action(
@@ -1553,6 +1982,59 @@ impl WindowState {
                 )
             })
             .unwrap_or_else(empty_dispatch)
+    }
+
+    fn dispatch_direct_command(
+        &mut self,
+        target: WidgetId,
+        command: &QueuedCommand,
+    ) -> Option<widget::EventDispatch> {
+        let path = if target == self.root.id() {
+            vec![target]
+        } else {
+            self.graph.path_to(target)?
+        };
+        let dpi_info = self.current_dpi_info();
+        let command = Command::new(command);
+        self.root
+            .dispatch_command_for_path(
+                &path,
+                self.id,
+                dpi_info,
+                self.last_tick_time,
+                self.focus.focused_widget,
+                &self.clipboard,
+                &command,
+            )
+            .or_else(|| {
+                self.root.dispatch_command_for(
+                    target,
+                    self.id,
+                    dpi_info,
+                    self.last_tick_time,
+                    self.focus.focused_widget,
+                    &self.clipboard,
+                    &command,
+                )
+            })
+    }
+
+    fn record_command_invalidations(
+        &mut self,
+        invalidations: &[InvalidationRequest],
+        source: &str,
+        reason: Option<&str>,
+    ) {
+        extend_traces(
+            &mut self.pending_invalidation_diagnostics,
+            invalidations.iter().map(|request| InvalidationTraceSample {
+                target: request.target,
+                kind: request.kind,
+                region: request.region,
+                source: format!("command:{source}"),
+                reason: reason.map(str::to_string),
+            }),
+        );
     }
 
     fn pointer_hit_target(&mut self, point: Point) -> Option<WidgetId> {
@@ -1883,6 +2365,7 @@ impl WindowState {
         self.apply_pointer_capture_requests(effects.pointer_capture_requests, invalidations);
         self.apply_drag_requests(effects.drag_requests, invalidations);
         self.apply_posted_events(effects.posted_events, invalidations);
+        self.apply_posted_commands(effects.posted_commands, invalidations);
     }
 
     /// Deliver widget-posted events (see `EventCtx::post_event`) directly to
@@ -1908,6 +2391,7 @@ impl WindowState {
                 );
                 self.apply_drag_requests(dispatch.drag_requests, invalidations);
                 posted.extend(dispatch.posted_events);
+                self.apply_posted_commands(dispatch.posted_commands, invalidations);
                 if let Some(request) = dispatch.focus_request {
                     let focus_effects = self.apply_focus_request(request);
                     invalidations.extend(focus_effects.invalidations);
@@ -1918,6 +2402,59 @@ impl WindowState {
                     );
                     self.apply_drag_requests(focus_effects.drag_requests, invalidations);
                     posted.extend(focus_effects.posted_events);
+                    self.apply_posted_commands(focus_effects.posted_commands, invalidations);
+                }
+            }
+        }
+    }
+
+    fn apply_posted_commands(
+        &mut self,
+        mut posted: Vec<widget::PostedCommandRequest>,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) {
+        const MAX_POSTED_COMMAND_ROUNDS: usize = 8;
+        let mut rounds = 0;
+        while !posted.is_empty() && rounds < MAX_POSTED_COMMAND_ROUNDS {
+            rounds += 1;
+            for request in std::mem::take(&mut posted) {
+                let CommandTarget::Widget { widget_id, .. } = request.command.target else {
+                    continue;
+                };
+                let Some(dispatch) = self.dispatch_direct_command(widget_id, &request.command)
+                else {
+                    push_trace(
+                        &mut self.pending_command_diagnostics,
+                        command_sample(&request.command, Vec::new(), false, false),
+                    );
+                    continue;
+                };
+                self.record_command_invalidations(
+                    &dispatch.invalidations,
+                    request.command.key.name,
+                    Some("posted by widget"),
+                );
+                invalidations.extend(dispatch.invalidations);
+                self.apply_wake_requests(dispatch.wake_requests);
+                self.apply_pointer_capture_requests(
+                    dispatch.pointer_capture_requests,
+                    invalidations,
+                );
+                self.apply_drag_requests(dispatch.drag_requests, invalidations);
+                self.apply_posted_events(dispatch.posted_events, invalidations);
+                posted.extend(dispatch.posted_commands);
+                push_trace(
+                    &mut self.pending_command_diagnostics,
+                    command_sample(
+                        &request.command,
+                        vec!["widget target".to_string()],
+                        dispatch.handled,
+                        true,
+                    ),
+                );
+                if let Some(focus_request) = dispatch.focus_request {
+                    let effects = self.apply_focus_request(focus_request);
+                    self.apply_event_effects(effects, invalidations);
                 }
             }
         }
@@ -2837,6 +3374,8 @@ impl WindowState {
         diagnostics.runtime_text_timing = sui_text::take_text_timing_collection();
         diagnostics.widget_timings = diagnostics::take_widget_timing_collection();
         diagnostics.reactive_invalidations = std::mem::take(&mut self.pending_reactive_diagnostics);
+        diagnostics.command_dispatches = std::mem::take(&mut self.pending_command_diagnostics);
+        diagnostics.invalidations = std::mem::take(&mut self.pending_invalidation_diagnostics);
         diagnostics.widget_rebuilds = diagnostics::take_widget_rebuilds(self.id);
         diagnostics.active_animated_widget_count = self.active_animated_widget_count();
         diagnostics.animation_frame_wake_count = self.pending_animation_wake_count;
@@ -4105,6 +4644,7 @@ struct EventEffects {
     drag_requests: Vec<DragRequest>,
     drop_acceptances: Vec<DropAcceptanceRequest>,
     posted_events: Vec<widget::PostedEventRequest>,
+    posted_commands: Vec<widget::PostedCommandRequest>,
 }
 
 impl EventEffects {
@@ -4116,6 +4656,7 @@ impl EventEffects {
         self.drag_requests.extend(dispatch.drag_requests);
         self.drop_acceptances.extend(dispatch.drop_acceptances);
         self.posted_events.extend(dispatch.posted_events);
+        self.posted_commands.extend(dispatch.posted_commands);
     }
 
     fn merge(&mut self, effects: EventEffects) {
@@ -4126,6 +4667,7 @@ impl EventEffects {
         self.drag_requests.extend(effects.drag_requests);
         self.drop_acceptances.extend(effects.drop_acceptances);
         self.posted_events.extend(effects.posted_events);
+        self.posted_commands.extend(effects.posted_commands);
     }
 }
 
@@ -4139,7 +4681,55 @@ fn empty_dispatch() -> widget::EventDispatch {
         drag_requests: Vec::new(),
         drop_acceptances: Vec::new(),
         posted_events: Vec::new(),
+        posted_commands: Vec::new(),
     }
+}
+
+const MAX_PENDING_TRACE_SAMPLES: usize = 512;
+
+fn push_trace<T>(samples: &mut Vec<T>, sample: T) {
+    if samples.len() == MAX_PENDING_TRACE_SAMPLES {
+        samples.remove(0);
+    }
+    samples.push(sample);
+}
+
+fn extend_traces<T>(samples: &mut Vec<T>, additions: impl IntoIterator<Item = T>) {
+    for sample in additions {
+        push_trace(samples, sample);
+    }
+}
+
+fn command_sample(
+    command: &QueuedCommand,
+    handlers: Vec<String>,
+    handled: bool,
+    delivered: bool,
+) -> CommandDispatchSample {
+    CommandDispatchSample {
+        sequence: command.sequence,
+        name: command.key.name.to_string(),
+        payload_type: command.key.payload_type_name.to_string(),
+        target: command.target,
+        delivery: command.delivery,
+        handlers,
+        handled,
+        delivered,
+    }
+}
+
+fn event_trace_source(event: &Event) -> String {
+    let kind = match event {
+        Event::Pointer(event) => format!("pointer:{:?}", event.kind),
+        Event::Drag(event) => format!("drag:{:?}", event.kind),
+        Event::Keyboard(_) => "keyboard".to_string(),
+        Event::Ime(_) => "ime".to_string(),
+        Event::Semantics(_) => "semantics".to_string(),
+        Event::Wake(event) => format!("wake:{event:?}"),
+        Event::Window(event) => format!("window:{event:?}"),
+        Event::Custom(event) => format!("custom:{}", event.kind),
+    };
+    format!("event:{kind}")
 }
 
 fn nearest_drop_acceptance(
@@ -4366,8 +4956,9 @@ mod tests {
     };
 
     use super::{
-        Application, ArrangeCtx, EventCtx, EventPhase, FocusState, FrameSchedule, LayerOptions,
-        MeasureCtx, PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
+        Application, ArrangeCtx, Command, CommandController, CommandCtx, CommandKey, CommandTarget,
+        EventCtx, EventPhase, FocusState, FrameSchedule, LayerOptions, MeasureCtx,
+        PaintBoundaryMode, PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode,
         SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetChildren,
         WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor,
         WindowBuilder, WindowIcon, WindowRenderOptions, set_window_render_options,
@@ -8162,6 +8753,228 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].version, 2);
+    }
+
+    static TEST_COMMAND: CommandKey<u32> = CommandKey::new("runtime.test.command");
+
+    struct CommandRoot {
+        commands: Arc<AtomicUsize>,
+        custom_events: Arc<AtomicUsize>,
+    }
+
+    impl Widget for CommandRoot {
+        fn event(&mut self, _ctx: &mut EventCtx, event: &Event) {
+            if matches!(event, Event::Custom(_)) {
+                self.custom_events.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+            if command.get(TEST_COMMAND).is_some() {
+                self.commands.fetch_add(1, Ordering::Relaxed);
+                ctx.request_paint();
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 80.0))
+        }
+    }
+
+    struct WakeController(Arc<AtomicUsize>);
+
+    impl CommandController for WakeController {
+        fn wake(&mut self, _ctx: &mut CommandCtx) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn scheduler_wake_invokes_controllers_without_synthesizing_a_root_event() {
+        let controller_wakes = Arc::new(AtomicUsize::new(0));
+        let custom_events = Arc::new(AtomicUsize::new(0));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .controller(WakeController(Arc::clone(&controller_wakes)))
+                    .root(CommandRoot {
+                        commands: Arc::new(AtomicUsize::new(0)),
+                        custom_events: Arc::clone(&custom_events),
+                    }),
+            )
+            .build()
+            .unwrap();
+
+        runtime.command_sender().wake();
+        runtime.process_commands();
+
+        assert_eq!(controller_wakes.load(Ordering::Relaxed), 1);
+        assert_eq!(custom_events.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn directed_commands_stop_when_handled_while_broadcast_reaches_all_subscribers() {
+        let first = Arc::new(AtomicUsize::new(0));
+        let second = Arc::new(AtomicUsize::new(0));
+        let first_handler = Arc::clone(&first);
+        let second_handler = Arc::clone(&second);
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .on_command(TEST_COMMAND, move |ctx, _| {
+                        first_handler.fetch_add(1, Ordering::Relaxed);
+                        ctx.set_handled();
+                    })
+                    .on_command(TEST_COMMAND, move |_, _| {
+                        second_handler.fetch_add(1, Ordering::Relaxed);
+                    })
+                    .root(CommandRoot {
+                        commands: Arc::new(AtomicUsize::new(0)),
+                        custom_events: Arc::new(AtomicUsize::new(0)),
+                    }),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let sender = runtime.command_sender();
+
+        sender.send_window(window_id, TEST_COMMAND, 1);
+        runtime.process_commands();
+        assert_eq!(first.load(Ordering::Relaxed), 1);
+        assert_eq!(second.load(Ordering::Relaxed), 0);
+
+        sender.broadcast_window(window_id, TEST_COMMAND, 2);
+        runtime.process_commands();
+        assert_eq!(first.load(Ordering::Relaxed), 2);
+        assert_eq!(second.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn application_broadcast_is_thread_safe_multicast_and_drops_removed_window_subscriptions() {
+        let application_count = Arc::new(AtomicUsize::new(0));
+        let first_window_count = Arc::new(AtomicUsize::new(0));
+        let second_window_count = Arc::new(AtomicUsize::new(0));
+        let application_handler = Arc::clone(&application_count);
+        let first_handler = Arc::clone(&first_window_count);
+        let second_handler = Arc::clone(&second_window_count);
+        let root = || CommandRoot {
+            commands: Arc::new(AtomicUsize::new(0)),
+            custom_events: Arc::new(AtomicUsize::new(0)),
+        };
+        let mut runtime = Application::new()
+            .on_command(TEST_COMMAND, move |_, _| {
+                application_handler.fetch_add(1, Ordering::Relaxed);
+            })
+            .window(
+                WindowBuilder::new()
+                    .on_command(TEST_COMMAND, move |_, _| {
+                        first_handler.fetch_add(1, Ordering::Relaxed);
+                    })
+                    .root(root()),
+            )
+            .window(
+                WindowBuilder::new()
+                    .on_command(TEST_COMMAND, move |_, _| {
+                        second_handler.fetch_add(1, Ordering::Relaxed);
+                    })
+                    .root(root()),
+            )
+            .build()
+            .unwrap();
+        let first_window = runtime.window_ids()[0];
+        let sender = runtime.command_sender();
+        let producer = std::thread::spawn(move || {
+            sender.broadcast_application(TEST_COMMAND, 1);
+            sender
+        });
+        let sender = producer.join().unwrap();
+
+        runtime.process_commands();
+        assert_eq!(application_count.load(Ordering::Relaxed), 1);
+        assert_eq!(first_window_count.load(Ordering::Relaxed), 1);
+        assert_eq!(second_window_count.load(Ordering::Relaxed), 1);
+
+        runtime.remove_window(first_window).unwrap();
+        sender.broadcast_application(TEST_COMMAND, 2);
+        runtime.process_commands();
+        assert_eq!(application_count.load(Ordering::Relaxed), 2);
+        assert_eq!(first_window_count.load(Ordering::Relaxed), 1);
+        assert_eq!(second_window_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn widget_commands_and_controller_invalidations_are_traced() {
+        let commands = Arc::new(AtomicUsize::new(0));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .on_command(TEST_COMMAND, |ctx, _| {
+                        ctx.request_window_with_reason(
+                            InvalidationKind::Paint,
+                            "test command changed presentation",
+                        );
+                    })
+                    .root(CommandRoot {
+                        commands: Arc::clone(&commands),
+                        custom_events: Arc::new(AtomicUsize::new(0)),
+                    }),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id).unwrap();
+        let root_id = runtime.widget_graph(window_id).unwrap().root;
+        let sender = runtime.command_sender();
+
+        sender.send_widget(window_id, root_id, TEST_COMMAND, 1);
+        sender.send_widget(window_id, WidgetId::new(u64::MAX), TEST_COMMAND, 2);
+        sender.send_window(window_id, TEST_COMMAND, 3);
+        runtime.process_commands();
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(commands.load(Ordering::Relaxed), 1);
+        assert!(output.diagnostics.command_dispatches.iter().any(|sample| {
+            sample.name == TEST_COMMAND.name()
+                && sample.payload_type == std::any::type_name::<u32>()
+                && sample.delivered
+        }));
+        assert!(output.diagnostics.command_dispatches.iter().any(|sample| {
+            sample.name == TEST_COMMAND.name()
+                && matches!(sample.target, CommandTarget::Widget { widget_id, .. } if widget_id == WidgetId::new(u64::MAX))
+                && !sample.delivered
+        }));
+        assert!(output.diagnostics.invalidations.iter().any(|sample| {
+            sample.source == format!("command:{}", TEST_COMMAND.name())
+                && sample.reason.as_deref() == Some("test command changed presentation")
+        }));
+    }
+
+    #[test]
+    fn focused_command_without_focus_is_dropped_instead_of_targeting_the_root() {
+        let commands = Arc::new(AtomicUsize::new(0));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().root(CommandRoot {
+                commands: Arc::clone(&commands),
+                custom_events: Arc::new(AtomicUsize::new(0)),
+            }))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        runtime.render(window_id).unwrap();
+
+        runtime
+            .command_sender()
+            .send_focused(window_id, TEST_COMMAND, 1);
+        runtime.process_commands();
+        let output = runtime.render(window_id).unwrap();
+
+        assert_eq!(commands.load(Ordering::Relaxed), 0);
+        assert!(output.diagnostics.command_dispatches.iter().any(|sample| {
+            sample.name == TEST_COMMAND.name()
+                && sample.target == CommandTarget::FocusedWidget(window_id)
+                && !sample.delivered
+        }));
     }
 
     #[test]

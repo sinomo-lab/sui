@@ -131,6 +131,10 @@ Every `RenderOutput` includes:
 - `diagnostics.widget_rebuilds`, recording structural replacement reasons
   reported by `RebuildOnChange`, `RebuildOnConstraints`, or custom widgets
   through `ctx.record_rebuild(...)`.
+- `diagnostics.command_dispatches`, recording the typed command name, payload
+  type, target, delivery mode, invoked handlers, and whether delivery succeeded.
+- `diagnostics.invalidations`, recording which event, reactive source, or
+  command invalidated a target and an optional controller-provided reason.
 
 Name application-facing signals and selectors with `Signal::named` and
 `select_named` so diagnostics explain the state dependency rather than showing
@@ -148,7 +152,8 @@ Important variants include:
 - `Event::Semantics` for actions requested by assistive technology.
 - `Event::Wake` for timers, async wake tokens, and animation frames.
 - `Event::Window` for window or embedded-viewport lifecycle changes.
-- `Event::Custom` for application and runtime-defined messages.
+- `Event::Custom` for explicitly widget-routed extension events. Prefer typed
+  commands for application services and cross-thread messages.
 
 Pointer and focus-routed events can travel through capture, target, and bubble
 phases. Inspect `ctx.phase()` only when a container needs phase-specific
@@ -190,8 +195,10 @@ target in performance-sensitive components.
   release it with `release_pointer_capture(pointer_id)`.
 - `clipboard_text()` and `set_clipboard_text(...)` use the platform clipboard
   when available and the runtime fallback otherwise.
-- `post_event(target, event)` delivers a command to a particular retained
-  widget after the current dispatch completes.
+- `post_event(target, event)` delivers an event to a particular retained widget
+  after the current dispatch completes.
+- `post_command(target, key, payload)` delivers a strongly typed command to a
+  particular retained widget after the current dispatch completes.
 
 Built-in text inputs already implement focus, selection, IME, and clipboard
 behavior. Use these services directly only in a custom interaction.
@@ -210,96 +217,72 @@ from the next `WakeEvent::AnimationFrame`, invalidate the changed presentation,
 and request another frame only while animation remains active. Do not run a
 blocking loop inside `event` or `paint`.
 
-## Tutorial: Deliver Background Results with `UiHandle`
+## Tutorial: Deliver Typed Background Results with `UiHandle`
 
 Widgets are not required to be `Send`, and their methods stay synchronous.
-Put long-running work on another thread, place results in thread-safe external
-state, then wake the UI event loop.
+Put long-running work on another thread and return its result through SUI's
+thread-safe typed command queue.
 
 ```rust,no_run
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
-
 use sui::prelude::*;
-use sui::{EXTERNAL_WAKE_KIND, SemanticsNode, SemanticsRole};
 
-struct AsyncStatus {
-    inbox: Arc<Mutex<VecDeque<String>>>,
-    text: String,
-}
-
-impl AsyncStatus {
-    fn new(inbox: Arc<Mutex<VecDeque<String>>>) -> Self {
-        Self {
-            inbox,
-            text: "Loading…".to_string(),
-        }
-    }
-}
-
-impl Widget for AsyncStatus {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        let Event::Custom(custom) = event else { return };
-        if custom.kind != EXTERNAL_WAKE_KIND {
-            return;
-        }
-
-        {
-            let mut inbox = self.inbox.lock().expect("background result queue");
-            while let Some(message) = inbox.pop_front() {
-                self.text = message;
-            }
-        }
-
-        ctx.request_measure();
-        ctx.request_semantics();
-        ctx.set_handled();
-    }
-
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        constraints.clamp(Size::new(240.0, 40.0))
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.label(ctx.bounds(), self.text.clone(), Color::BLACK);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(
-            ctx.widget_id(),
-            SemanticsRole::Text,
-            ctx.bounds(),
-        );
-        node.name = Some(self.text.clone());
-        ctx.push(node);
-    }
-}
+const BACKGROUND_STATUS: CommandKey<String> =
+    CommandKey::new("example.background.status");
 
 fn main() -> Result<()> {
-    let inbox = Arc::new(Mutex::new(VecDeque::new()));
-    let worker_inbox = Arc::clone(&inbox);
+    let status = Signal::named("background status", "Loading…".to_string());
+    let status_for_command = status.clone();
 
     App::new()
-        .main_window("Background work", AsyncStatus::new(inbox))
+        .on_command(BACKGROUND_STATUS, move |_, message| {
+            status_for_command.set(message.clone());
+        })
+        .main_window(
+            "Background work",
+            Label::new("Loading…").text_from(status),
+        )
         .run_with_handle(move |ui| {
             std::thread::spawn(move || {
                 // Replace this with blocking I/O or CPU work.
-                worker_inbox
-                    .lock()
-                    .expect("background result queue")
-                    .push_back("Loaded".to_string());
-                ui.wake();
+                ui.send_application(BACKGROUND_STATUS, "Loaded".to_string());
             });
         })
 }
 ```
 
-`UiHandle::wake` is the cross-thread signal; it does not carry the result and
-does not mutate widgets. The platform delivers an external-wake custom event to
-window roots, and the root drains the application-owned queue. For multiple
-windows, route queued work in the application model to the appropriate root.
+Sending enqueues the payload and wakes the platform event loop. The application
+subscription runs on the UI thread, and the signal invalidates only widgets that
+observed it. No invisible widget or root custom event is involved.
+
+## Command Scope, Multicast, and Controllers
+
+`CommandSender` and `UiHandle` expose four routing scopes:
+
+| Target | Receiver |
+| --- | --- |
+| `Widget { window_id, widget_id }` | `Widget::command` on that retained identity |
+| `FocusedWidget(window_id)` | `Widget::command` on the current focus target |
+| `Window(window_id)` | `Window::on_command` and window controllers |
+| `Application` | `App::on_command` and application controllers |
+
+A directed command stops after a handler calls `ctx.set_handled()`. A broadcast
+continues through all matching handlers. `broadcast_application` first reaches
+application handlers and then every live window, making it the application-wide
+multicast facility. Window subscriptions and controllers are dropped with their
+window; a widget command whose stable identity is no longer present is reported
+as undelivered instead of being rerouted to an ancestor.
+
+Use `App::controller` or `Window::controller` for services that need both typed
+commands and a scheduler-only wake hook. `CommandController::wake` is invoked by
+`UiHandle::wake`; it is intentionally separate from command delivery and never
+synthesizes `Event::Custom` at a root widget. A controller can request measure,
+arrange, paint, semantics, or animation work through `CommandCtx`, and can attach
+a diagnostic reason with `request_window_with_reason`.
+
+The performance inspector shows the command routing and invalidation trace from
+the latest frame. The same data is available through
+`WindowPerformanceSnapshot::command_dispatches` and `invalidations`.
 
 `UiHandle` is available only with a platform event-loop feature. Headless code
-can drive `Runtime` or use `sinomo-ui-testing` instead.
+can use `Runtime::command_sender` plus `process_commands`, or drive the runtime
+through `sinomo-ui-testing`.

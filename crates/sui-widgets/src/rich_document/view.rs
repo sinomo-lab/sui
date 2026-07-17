@@ -14,8 +14,8 @@ use sui_core::{
 use sui_layout::Constraints;
 use sui_reactive::Signal;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::StrokeStyle;
 use sui_text::{
@@ -681,25 +681,6 @@ impl Widget for RichDocumentView {
                     _ => {}
                 }
             }
-            Event::Custom(custom) => {
-                if let Some(command) = TextCommand::from_custom_event(custom) {
-                    match command {
-                        TextCommand::Copy => {
-                            if self.copy_selection(ctx) {
-                                ctx.set_handled();
-                            }
-                        }
-                        TextCommand::SelectAll => {
-                            if self.select_all() {
-                                ctx.request_paint();
-                                ctx.request_semantics();
-                                ctx.set_handled();
-                            }
-                        }
-                        TextCommand::Cut | TextCommand::Paste => {}
-                    }
-                }
-            }
             Event::Semantics(semantics)
                 if semantics.target == ctx.widget_id()
                     && semantics.action == SemanticsActionRequest::Copy
@@ -708,6 +689,27 @@ impl Widget for RichDocumentView {
                 ctx.set_handled();
             }
             _ => {}
+        }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        let Some(command) = TextCommand::from_command(command) else {
+            return;
+        };
+        match command {
+            TextCommand::Copy => {
+                if self.copy_selection(ctx) {
+                    ctx.set_handled();
+                }
+            }
+            TextCommand::SelectAll => {
+                if self.select_all() {
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            TextCommand::Cut | TextCommand::Paste => {}
         }
     }
 
@@ -1805,14 +1807,17 @@ mod tests {
     };
     use sui_layout::Constraints;
     use sui_reactive::Signal;
-    use sui_runtime::{Application, MeasureCtx, Runtime, SemanticsCtx, Widget, WindowBuilder};
+    use sui_runtime::{
+        Application, CommandDelivery, CommandTarget, MeasureCtx, Runtime, SemanticsCtx, Widget,
+        WindowBuilder,
+    };
     use sui_scene::{RegisteredImage, SceneCommand};
 
     use super::{
         RichDocumentBlock, RichDocumentBlockKind, RichDocumentModel, RichDocumentRenderContext,
         RichDocumentRendererRegistry, RichDocumentView, RichDocumentViewState,
     };
-    use crate::{RichAttachment, RichExtensionBlock, TextCommand};
+    use crate::{RichAttachment, RichExtensionBlock, TEXT_COMMAND, TextCommand};
 
     fn runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -2094,9 +2099,12 @@ mod tests {
         assert!(selected.contains("First block"), "selected {selected:?}");
         assert!(selected.contains("Second block"), "selected {selected:?}");
 
-        runtime
-            .handle_event(window_id, TextCommand::Copy.into_event())
-            .unwrap();
+        runtime.handle_command(
+            CommandTarget::FocusedWidget(window_id),
+            CommandDelivery::Directed,
+            TEXT_COMMAND,
+            TextCommand::Copy,
+        );
         assert_eq!(
             runtime.clipboard().text().as_deref(),
             Some(selected.as_str())

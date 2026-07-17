@@ -12,8 +12,8 @@ use sui_layout::{
 };
 use sui_reactive::Observable;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    REACTIVE_CHANGE_KIND, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
+    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
+    PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
     WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
@@ -1722,11 +1722,7 @@ impl<K: PartialEq + Clone + 'static> Widget for RebuildOnChange<K> {
             Event::Pointer(pointer) if matches!(pointer.kind, PointerEventKind::Up)
         );
         let redraw = matches!(event, Event::Window(WindowEvent::RedrawRequested));
-        let reactive = matches!(
-            event,
-            Event::Custom(custom) if custom.kind == REACTIVE_CHANGE_KIND
-        );
-        if (pointer_up || redraw || reactive) && self.refresh() {
+        if (pointer_up || redraw) && self.refresh() {
             ctx.record_rebuild(
                 std::any::type_name::<Self>(),
                 "caller-supplied structural key changed",
@@ -1735,6 +1731,20 @@ impl<K: PartialEq + Clone + 'static> Widget for RebuildOnChange<K> {
             ctx.request_arrange();
             ctx.request_paint();
             ctx.request_semantics();
+        }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        if command.is(REACTIVE_CHANGED) && self.refresh() {
+            ctx.record_rebuild(
+                std::any::type_name::<Self>(),
+                "observable structural key changed",
+            );
+            ctx.request_measure();
+            ctx.request_arrange();
+            ctx.request_paint();
+            ctx.request_semantics();
+            ctx.set_handled();
         }
     }
 
@@ -4684,11 +4694,13 @@ mod tests {
         assert!(key.set(2));
         let output = runtime.render(window_id)?;
         assert_eq!(output.frame.viewport, Size::new(40.0, 20.0));
-        assert!(output.diagnostics.widget_rebuilds.iter().any(|sample| {
-            sample
-                .reason
-                .contains("caller-supplied structural key changed")
-        }));
+        assert!(
+            output
+                .diagnostics
+                .widget_rebuilds
+                .iter()
+                .any(|sample| { sample.reason.contains("observable structural key changed") })
+        );
         Ok(())
     }
 

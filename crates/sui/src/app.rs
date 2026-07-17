@@ -1,12 +1,11 @@
 use crate::{
-    Application, EmbeddedSvgImageResource, FontHandle, ImageHandle, RegisteredFont,
-    RegisteredImage, Result, Runtime, Widget, WindowBuilder, WindowIcon, WindowRenderOptions,
+    Application, CommandController, CommandCtx, CommandKey, CommandSender, CommandTarget,
+    EmbeddedSvgImageResource, FontHandle, ImageHandle, RegisteredFont, RegisteredImage, Result,
+    Runtime, Widget, WindowBuilder, WindowIcon, WindowRenderOptions,
 };
 
 #[cfg(all(target_os = "android", feature = "mobile"))]
 use crate::AndroidApp;
-#[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
-use crate::Waker;
 
 /// User-facing SUI application builder.
 ///
@@ -37,6 +36,22 @@ impl App {
     /// Add a window to the application.
     pub fn window(mut self, window: Window) -> Self {
         self.application = self.application.window(window.into_window_builder());
+        self
+    }
+
+    /// Attach an application-scoped service outside the widget tree.
+    pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
+        self.application = self.application.controller(controller);
+        self
+    }
+
+    /// Subscribe an application-scoped typed command handler.
+    pub fn on_command<T, F>(mut self, key: CommandKey<T>, handler: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: FnMut(&mut CommandCtx, &T) + 'static,
+    {
+        self.application = self.application.on_command(key, handler);
         self
     }
 
@@ -117,16 +132,16 @@ impl App {
         self.application.run()
     }
 
-    /// Run the app and receive a cloneable, thread-safe wake handle once the
+    /// Run the app and receive a cloneable, thread-safe command handle once the
     /// event loop is ready.
     ///
-    /// Background tasks can keep [`UiHandle`] and call [`UiHandle::wake`] after
-    /// pushing work into their own channel. Widgets can then drain that channel
-    /// when they receive SUI's external wake event.
+    /// Background tasks normally send typed window/application commands. A bare
+    /// [`UiHandle::wake`] only schedules controller wake hooks and never creates
+    /// a widget event.
     #[cfg(any(feature = "desktop", feature = "web"))]
     pub fn run_with_handle(self, on_ready: impl FnOnce(UiHandle)) -> Result<()> {
         self.application
-            .run_with(|waker| on_ready(UiHandle::new(waker)))
+            .run_with(|commands| on_ready(UiHandle::new(commands)))
     }
 
     #[cfg(all(target_os = "android", feature = "mobile"))]
@@ -141,7 +156,7 @@ impl App {
         on_ready: impl FnOnce(UiHandle),
     ) -> Result<()> {
         self.application
-            .run_android_with(android_app, |waker| on_ready(UiHandle::new(waker)))
+            .run_android_with(android_app, |commands| on_ready(UiHandle::new(commands)))
     }
 
     /// Convert back to the lower-level application builder.
@@ -178,6 +193,22 @@ impl Window {
         W: Widget + 'static,
     {
         self.builder = self.builder.root(root);
+        self
+    }
+
+    /// Attach a controller owned by this window rather than by its widget tree.
+    pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
+        self.builder = self.builder.controller(controller);
+        self
+    }
+
+    /// Subscribe a lifecycle-safe handler owned by this window.
+    pub fn on_command<T, F>(mut self, key: CommandKey<T>, handler: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: FnMut(&mut CommandCtx, &T) + 'static,
+    {
+        self.builder = self.builder.on_command(key, handler);
         self
     }
 
@@ -291,11 +322,11 @@ impl ResourceRegistry<'_> {
     }
 }
 
-/// Cloneable UI wake handle for background work.
+/// Cloneable, thread-safe UI command handle for background work.
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 #[derive(Clone)]
 pub struct UiHandle {
-    waker: Waker,
+    commands: CommandSender,
 }
 
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
@@ -308,13 +339,68 @@ impl UiHandle {
         )),
         allow(dead_code)
     )]
-    fn new(waker: Waker) -> Self {
-        Self { waker }
+    fn new(commands: CommandSender) -> Self {
+        Self { commands }
     }
 
-    /// Wake the UI event loop from any thread.
+    /// Schedule controller wake hooks without synthesizing a widget event.
     pub fn wake(&self) {
-        self.waker.wake();
+        self.commands.wake();
+    }
+
+    pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.commands.send(target, key, payload);
+    }
+
+    pub fn send_widget<T>(
+        &self,
+        window_id: crate::WindowId,
+        widget_id: crate::WidgetId,
+        key: CommandKey<T>,
+        payload: T,
+    ) where
+        T: Send + Sync + 'static,
+    {
+        self.commands
+            .send_widget(window_id, widget_id, key, payload);
+    }
+
+    pub fn send_focused<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.commands.send_focused(window_id, key, payload);
+    }
+
+    pub fn send_window<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.commands.send_window(window_id, key, payload);
+    }
+
+    pub fn send_application<T>(&self, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.commands.send_application(key, payload);
+    }
+
+    pub fn broadcast_window<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.commands.broadcast_window(window_id, key, payload);
+    }
+
+    pub fn broadcast_application<T>(&self, key: CommandKey<T>, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        self.commands.broadcast_application(key, payload);
     }
 }
 

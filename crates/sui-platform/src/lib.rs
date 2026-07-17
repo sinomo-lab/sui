@@ -277,7 +277,11 @@ pub fn publish_frame_performance(
             )
             .with_presentation_latency(presentation_latency)
             .with_runtime_text_timing(output.diagnostics.runtime_text_timing)
-            .with_widget_timings(output.diagnostics.widget_timings.clone()),
+            .with_widget_timings(output.diagnostics.widget_timings.clone())
+            .with_event_traces(
+                output.diagnostics.command_dispatches.clone(),
+                output.diagnostics.invalidations.clone(),
+            ),
         );
         return;
     }
@@ -371,7 +375,11 @@ pub fn publish_frame_performance(
         .with_retained_packet_hotspot(retained_packet_hotspot_diagnostics_from_frame_stats(
             &renderer_stats,
         ))
-        .with_widget_timings(output.diagnostics.widget_timings.clone()),
+        .with_widget_timings(output.diagnostics.widget_timings.clone())
+        .with_event_traces(
+            output.diagnostics.command_dispatches.clone(),
+            output.diagnostics.invalidations.clone(),
+        ),
     );
 }
 

@@ -14,7 +14,7 @@ use sui_core::{
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuExternalTextureRegistry, WgpuRenderer};
 use sui_runtime::{
-    PresentationLatencyDiagnostics, Runtime, WindowIcon as RuntimeWindowIcon,
+    CommandSender, PresentationLatencyDiagnostics, Runtime, WindowIcon as RuntimeWindowIcon,
     WindowPerformanceSnapshot, WindowRenderOptions, window_performance_snapshot,
     window_render_options, window_scene_statistics_detail_mode,
 };
@@ -241,12 +241,12 @@ impl DesktopPlatform {
         self.run_android_with(runtime, android_app, |_| {})
     }
 
-    /// Like [`run`](Self::run) but hands the caller a [`Waker`] (before the loop starts) that
-    /// wakes the UI from any thread — used to drive non-blocking startup work.
+    /// Like [`run`](Self::run) but hands the caller a typed, thread-safe
+    /// [`CommandSender`] before the loop starts.
     pub fn run_with(
         self,
         mut runtime: Runtime,
-        on_ready: impl FnOnce(Waker),
+        on_ready: impl FnOnce(CommandSender),
     ) -> Result<Vec<PlatformWindow>> {
         let event_loop = EventLoop::<DesktopUserEvent>::with_user_event()
             .build()
@@ -265,7 +265,10 @@ impl DesktopPlatform {
             WakeKind::Reactive,
         );
         runtime.set_external_waker(move || reactive_waker.wake());
-        on_ready(waker);
+        let commands = runtime.command_sender();
+        let command_waker = waker.clone();
+        runtime.set_command_waker(move || command_waker.wake());
+        on_ready(commands);
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -312,7 +315,7 @@ impl DesktopPlatform {
         self,
         mut runtime: Runtime,
         android_app: AndroidApp,
-        on_ready: impl FnOnce(Waker),
+        on_ready: impl FnOnce(CommandSender),
     ) -> Result<Vec<PlatformWindow>> {
         let mut event_loop_builder = EventLoop::<DesktopUserEvent>::with_user_event();
         event_loop_builder.with_android_app(android_app);
@@ -331,7 +334,10 @@ impl DesktopPlatform {
             WakeKind::Reactive,
         );
         runtime.set_external_waker(move || reactive_waker.wake());
-        on_ready(waker);
+        let commands = runtime.command_sender();
+        let command_waker = waker.clone();
+        runtime.set_command_waker(move || command_waker.wake());
+        on_ready(commands);
 
         let mut app = DesktopApp::new(
             runtime,
@@ -1944,11 +1950,9 @@ impl DesktopApp {
 #[derive(Debug, Clone, Copy)]
 pub struct WakeSignal;
 
-/// A cheap, cloneable, `Send` handle that wakes the running desktop UI from any thread. Pending
-/// [`wake`](Self::wake) calls are coalesced into one external-wake event
-/// ([`sui_runtime::EXTERNAL_WAKE_KIND`]) delivered to every window's root widget, so a widget can
-/// drain the latest cross-thread work without building an event backlog or polling on animation
-/// frames.
+/// A cheap, cloneable, `Send` handle that wakes the running desktop UI from any thread.
+/// Pending [`wake`](Self::wake) calls are coalesced into one event-loop signal. This is a
+/// scheduler primitive: it does not synthesize or route a widget event.
 #[derive(Clone)]
 pub struct Waker {
     proxy: EventLoopProxy<DesktopUserEvent>,
@@ -2004,14 +2008,9 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
         match event {
             DesktopUserEvent::ExternalWake(_signal) => {
                 self.external_wake_pending.store(false, Ordering::Release);
-                // A background thread asked us to wake: deliver an external-wake event to every
-                // window's root (so widgets can drain cross-thread work), then drive the runtime.
-                for window_id in self.runtime.window_ids() {
-                    if let Err(error) = self.runtime.wake_root(window_id) {
-                        self.handle_error(event_loop, error);
-                        return;
-                    }
-                }
+                // Scheduler wakes and typed commands are processed outside the
+                // widget event tree. No synthetic root event is created.
+                self.runtime.process_commands();
                 if let Err(error) = self.drive_runtime(event_loop) {
                     self.handle_error(event_loop, error);
                 }

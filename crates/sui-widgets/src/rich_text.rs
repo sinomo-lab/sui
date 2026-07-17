@@ -5,7 +5,7 @@ use sui_core::{
     SemanticsRole, SemanticsValue, Size,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{Command, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_text::{
     PersistentTextLayout, TextCursor, TextDocument, TextLayoutRequest, TextParagraph,
     TextSelection, TextSpan, TextStyle,
@@ -473,24 +473,26 @@ impl Widget for RichText {
                     _ => {}
                 }
             }
-            Event::Custom(custom) => {
-                if let Some(command) = TextCommand::from_custom_event(custom) {
-                    match command {
-                        TextCommand::Copy => {
-                            if self.copy_selection(ctx) {
-                                ctx.set_handled();
-                            }
-                        }
-                        TextCommand::SelectAll => {
-                            let len = self.text().len();
-                            self.set_selection(ctx, 0, len);
-                            ctx.set_handled();
-                        }
-                        TextCommand::Cut | TextCommand::Paste => {}
-                    }
+            _ => {}
+        }
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        let Some(command) = TextCommand::from_command(command) else {
+            return;
+        };
+        match command {
+            TextCommand::Copy => {
+                if self.copy_selection(ctx) {
+                    ctx.set_handled();
                 }
             }
-            _ => {}
+            TextCommand::SelectAll => {
+                let len = self.text().len();
+                self.set_selection(ctx, 0, len);
+                ctx.set_handled();
+            }
+            TextCommand::Cut | TextCommand::Paste => {}
         }
     }
 
