@@ -12,7 +12,7 @@ use std::{cell::RefCell, collections::HashMap};
 #[cfg(target_arch = "wasm32")]
 use js_sys::{Array, Function, Reflect};
 #[cfg(target_arch = "wasm32")]
-use sui_core::WidgetId;
+use sui_core::{ClipboardBackend, WidgetId};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -48,6 +48,48 @@ pub(crate) struct WebInteropTarget {
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static SNAPSHOT_CACHE: RefCell<HashMap<u64, u64>> = RefCell::new(HashMap::new());
+}
+
+/// Browser clipboard bridge used by the WebAssembly platform runner.
+///
+/// Reads remain synchronous and deterministic through the local mirror while
+/// writes are also forwarded to the browser's asynchronous Clipboard API.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Default)]
+pub(crate) struct WebClipboardBackend {
+    text: Option<String>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ClipboardBackend for WebClipboardBackend {
+    fn text(&mut self) -> Option<String> {
+        self.text.clone()
+    }
+
+    fn set_text(&mut self, text: &str) {
+        self.text = Some(text.to_string());
+        write_browser_clipboard(text);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_browser_clipboard(text: &str) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(navigator) = Reflect::get(&window, &JsValue::from_str("navigator")) else {
+        return;
+    };
+    let Ok(clipboard) = Reflect::get(&navigator, &JsValue::from_str("clipboard")) else {
+        return;
+    };
+    let Ok(write_text) = Reflect::get(&clipboard, &JsValue::from_str("writeText")) else {
+        return;
+    };
+    let Some(write_text) = write_text.dyn_ref::<Function>() else {
+        return;
+    };
+    let _ = write_text.call1(&clipboard, &JsValue::from_str(text));
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -112,7 +154,7 @@ pub(crate) fn drain_commands() -> Vec<WebInteropCommand> {
 fn parse_command(value: JsValue) -> Option<WebInteropCommand> {
     let kind = get_string(&value, "type")?;
     let target = WebInteropTarget {
-        widget_id: get_number(&value, "id").map(|id| WidgetId::new(id as u64)),
+        widget_id: get_widget_id(&value, "id"),
         role: get_string(&value, "role"),
         name: get_string(&value, "name"),
     };
@@ -148,6 +190,18 @@ fn get_number(value: &JsValue, property: &str) -> Option<f64> {
         .ok()
         .and_then(|value| value.as_f64())
         .filter(|value| value.is_finite())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn get_widget_id(value: &JsValue, property: &str) -> Option<WidgetId> {
+    get_string(value, property)
+        .and_then(|id| id.parse::<u64>().ok())
+        .or_else(|| {
+            get_number(value, property)
+                .filter(|id| *id >= 0.0 && id.fract() == 0.0)
+                .map(|id| id as u64)
+        })
+        .map(WidgetId::new)
 }
 
 fn serialize_snapshot(
@@ -313,11 +367,11 @@ fn serialize_performance(json: &mut String, performance: &WindowPerformanceSnaps
 
 fn serialize_node(json: &mut String, node: &SemanticsNode) {
     json.push('{');
-    push_json_number_field(json, "id", node.id.get() as f64);
+    push_json_string_field(json, "id", &node.id.get().to_string());
     json.push(',');
     json.push_str("\"parent\":");
     match node.parent {
-        Some(parent) => json.push_str(&parent.get().to_string()),
+        Some(parent) => push_json_string(json, &parent.get().to_string()),
         None => json.push_str("null"),
     }
     json.push(',');
@@ -465,11 +519,14 @@ fn interactive_node(node: &SemanticsNode) -> bool {
             matches!(
                 action,
                 SemanticsAction::Activate
+                    | SemanticsAction::Expand
+                    | SemanticsAction::Collapse
                     | SemanticsAction::SetValue
                     | SemanticsAction::SetSelection
                     | SemanticsAction::Increment
                     | SemanticsAction::Decrement
                     | SemanticsAction::InsertText
+                    | SemanticsAction::Copy
                     | SemanticsAction::Custom(_)
             )
         })
@@ -750,7 +807,8 @@ mod tests {
         assert!(json.contains("\"nodesChanged\":true"));
         assert!(json.contains("\"role\":\"Button\""));
         assert!(json.contains("\"dom\":{\"tag\":\"button\",\"role\":null,\"interactive\":true}"));
-        assert!(json.contains("\"parent\":1"));
+        assert!(json.contains("\"id\":\"7\""));
+        assert!(json.contains("\"parent\":\"1\""));
         assert!(json.contains("\"name\":\"Run \\\"demo\\\"\""));
         assert!(json.contains("\"description\":\"Starts the selected demo\\nnow\""));
         assert!(json.contains("\"actions\":[\"Activate\"]"));
@@ -905,6 +963,36 @@ mod tests {
     }
 
     #[test]
+    fn serializes_expandable_status_as_interactive() {
+        let mut node = SemanticsNode::new(
+            WidgetId::new(12),
+            SemanticsRole::Status,
+            Rect::new(8.0, 12.0, 200.0, 40.0),
+        );
+        node.name = Some("Operation details".to_string());
+        node.state.expanded = Some(false);
+        node.actions.push(SemanticsAction::Expand);
+        let nodes = [node];
+
+        let json = serialize_snapshot(
+            WindowId::new(1),
+            1,
+            1.0,
+            Size::new(320.0, 240.0),
+            Some(&nodes),
+            None,
+            semantics_hash(&nodes),
+        );
+
+        assert!(json.contains("\"role\":\"Status\""));
+        assert!(
+            json.contains("\"dom\":{\"tag\":\"div\",\"role\":\"status\",\"interactive\":true}")
+        );
+        assert!(json.contains("\"expanded\":false"));
+        assert!(json.contains("\"actions\":[\"Expand\"]"));
+    }
+
+    #[test]
     fn serializes_reused_nodes_as_lightweight_frame_update() {
         let json = serialize_snapshot(
             WindowId::new(1),
@@ -919,5 +1007,37 @@ mod tests {
         assert!(json.contains("\"semanticsHash\":\"0000000000001234\""));
         assert!(json.contains("\"nodesChanged\":false"));
         assert!(json.contains("\"nodes\":null"));
+    }
+
+    #[test]
+    fn serializes_large_semantic_ids_without_javascript_precision_loss() {
+        let first_id = 0x6000_0000_0000_0001;
+        let second_id = 0x6000_0000_0000_0002;
+        let mut first = SemanticsNode::new(
+            WidgetId::new(first_id),
+            SemanticsRole::ListItem,
+            Rect::new(0.0, 0.0, 100.0, 24.0),
+        );
+        first.parent = Some(WidgetId::new(9));
+        let second = SemanticsNode::new(
+            WidgetId::new(second_id),
+            SemanticsRole::ListItem,
+            Rect::new(0.0, 24.0, 100.0, 24.0),
+        );
+        let nodes = [first, second];
+
+        let json = serialize_snapshot(
+            WindowId::new(1),
+            1,
+            1.0,
+            Size::new(320.0, 240.0),
+            Some(&nodes),
+            None,
+            semantics_hash(&nodes),
+        );
+
+        assert!(json.contains(&format!("\"id\":\"{first_id}\"")));
+        assert!(json.contains(&format!("\"id\":\"{second_id}\"")));
+        assert!(json.contains("\"parent\":\"9\""));
     }
 }

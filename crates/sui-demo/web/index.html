@@ -288,7 +288,7 @@
           String(role || "").replace(/[\s_-]/g, "").toLowerCase();
         const command = (type, node, extra = {}) => ({
           type,
-          id: Number(node.id),
+          id: String(node.id),
           role: node.role || null,
           name: nodeLabel(node) || null,
           ...extra,
@@ -354,9 +354,9 @@
           const selectorRole = selector.role == null ? null : normalizeRole(selector.role);
           const selectorName =
             selector.name == null ? null : String(selector.name).toLowerCase();
-          const selectorId = selector.id == null ? null : Number(selector.id);
+          const selectorId = selector.id == null ? null : String(selector.id);
           return snapshot.nodes.filter((node) => {
-            if (selectorId != null && Number(node.id) !== selectorId) {
+            if (selectorId != null && String(node.id) !== selectorId) {
               return false;
             }
             if (selectorRole != null && normalizeRole(node.role) !== selectorRole) {
@@ -490,15 +490,22 @@
           ];
         const interactiveActions = [
           "Activate",
+          "Expand",
+          "Collapse",
           "SetValue",
           "SetSelection",
           "Increment",
           "Decrement",
           "InsertText",
+          "Copy",
         ];
+        const semanticClickActions = ["Expand", "Collapse", "Copy"];
         const hasInteractiveAction = (node) =>
           Array.isArray(node?.actions) &&
           node.actions.some((action) => interactiveActions.includes(action));
+        const usesSemanticClick = (node) =>
+          Array.isArray(node?.actions) &&
+          node.actions.some((action) => semanticClickActions.includes(action));
         const isInteractive = (node) =>
           node.dom?.interactive ??
           (interactiveRoles.includes(node.role) || hasInteractiveAction(node));
@@ -830,7 +837,7 @@
 
         const createElement = (node) => {
           const element = document.createElement(elementKind(node));
-          element.__suiNodeId = Number(node.id);
+          element.__suiNodeId = String(node.id);
           element.__suiKind = elementKind(node);
           Object.assign(element.style, {
             position: "absolute",
@@ -860,6 +867,11 @@
                 if (type === "pointerdown") {
                   element.__suiLastPointerAt = performance.now();
                 }
+                if (element.__suiSemanticClick) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return;
+                }
                 if (forwardPointerEventToCanvas(event)) {
                   event.preventDefault();
                   event.stopPropagation();
@@ -877,6 +889,10 @@
           element.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
+            if (element.__suiSemanticClick) {
+              window.__suiEnqueueCommand?.(command("click", { id: element.__suiNodeId }));
+              return;
+            }
             const pointerAge = performance.now() - (element.__suiLastPointerAt || 0);
             if (pointerAge <= 700) {
               return;
@@ -946,10 +962,11 @@
           const range = valueRange(node);
           const value = valueText(node);
 
-          element.__suiNodeId = Number(node.id);
+          element.__suiNodeId = String(node.id);
           element.__suiRole = node.role;
           element.__suiName = label;
           element.__suiValue = value;
+          element.__suiSemanticClick = usesSemanticClick(node);
           element.hidden = hidden;
           if ("disabled" in element) {
             element.disabled = disabled;

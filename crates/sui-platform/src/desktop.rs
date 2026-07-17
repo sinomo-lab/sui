@@ -520,6 +520,9 @@ impl DesktopApp {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
 
+        #[cfg(target_arch = "wasm32")]
+        runtime.set_clipboard_backend(crate::web_interop::WebClipboardBackend::default());
+
         #[cfg(not(target_os = "windows"))]
         let _ = event_loop_proxy;
 
@@ -1621,8 +1624,14 @@ impl DesktopApp {
         for command in crate::web_interop::drain_commands() {
             match command {
                 crate::web_interop::WebInteropCommand::Click { target } => {
-                    if let Some((window_id, point)) = self.find_semantics_node_point(&target) {
-                        self.inject_pointer_click(event_loop, window_id, point)?;
+                    if let Some((window_id, node)) = self.find_semantics_node(&target) {
+                        if let Some(action) = web_click_semantics_action(&node) {
+                            let _ = self
+                                .runtime
+                                .handle_semantics_action(window_id, node.id, action)?;
+                        } else {
+                            self.inject_pointer_click(event_loop, window_id, center(node.bounds))?;
+                        }
                     }
                 }
                 crate::web_interop::WebInteropCommand::Scroll {
@@ -1658,10 +1667,10 @@ impl DesktopApp {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn find_semantics_node_point(
+    fn find_semantics_node(
         &self,
         target: &crate::web_interop::WebInteropTarget,
-    ) -> Option<(WindowId, Point)> {
+    ) -> Option<(WindowId, sui_core::SemanticsNode)> {
         self.windows.iter().find_map(|(window_id, window)| {
             let snapshot = window.accessibility.snapshot()?;
             let node = target
@@ -1677,8 +1686,17 @@ impl DesktopApp {
                             .is_none_or(|name| node.name.as_deref() == Some(name))
                     })
                 })?;
-            Some((*window_id, center(node.bounds)))
+            Some((*window_id, node.clone()))
         })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn find_semantics_node_point(
+        &self,
+        target: &crate::web_interop::WebInteropTarget,
+    ) -> Option<(WindowId, Point)> {
+        self.find_semantics_node(target)
+            .map(|(window_id, node)| (window_id, center(node.bounds)))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2180,6 +2198,27 @@ fn remove_pointer_button(buttons: PointerButtons, removed: PointerButton) -> Poi
     next
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_click_semantics_action(
+    node: &sui_core::SemanticsNode,
+) -> Option<sui_core::SemanticsActionRequest> {
+    use sui_core::{SemanticsAction, SemanticsActionRequest};
+
+    if node.actions.contains(&SemanticsAction::Activate) {
+        Some(SemanticsActionRequest::Activate)
+    } else if node.state.expanded == Some(false) && node.actions.contains(&SemanticsAction::Expand)
+    {
+        Some(SemanticsActionRequest::Expand)
+    } else if node.state.expanded == Some(true) && node.actions.contains(&SemanticsAction::Collapse)
+    {
+        Some(SemanticsActionRequest::Collapse)
+    } else if node.actions.contains(&SemanticsAction::Copy) {
+        Some(SemanticsActionRequest::Copy)
+    } else {
+        None
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn center(bounds: sui_core::Rect) -> Point {
     Point::new(
@@ -2489,9 +2528,12 @@ mod tests {
     use super::{
         map_external_file_window_event, physical_position_to_logical_point,
         physical_position_to_logical_vector, physical_size_to_logical_size,
-        rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, window_icon_to_winit_icon,
+        rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, web_click_semantics_action,
+        window_icon_to_winit_icon,
     };
-    use sui_core::{Rect, WindowEvent};
+    use sui_core::{
+        Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, WindowEvent,
+    };
     use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::WindowEvent as WinitWindowEvent;
@@ -2518,6 +2560,35 @@ mod tests {
 
         assert_eq!(delta.x, 60.0);
         assert_eq!(delta.y, 30.0);
+    }
+
+    #[test]
+    fn web_click_prefers_advertised_non_geometric_semantics_actions() {
+        let mut node = SemanticsNode::new(
+            sui_core::WidgetId::new(7),
+            SemanticsRole::Status,
+            Rect::new(0.0, 0.0, 120.0, 32.0),
+        );
+        node.state.expanded = Some(false);
+        node.actions.push(SemanticsAction::Expand);
+        assert_eq!(
+            web_click_semantics_action(&node),
+            Some(SemanticsActionRequest::Expand)
+        );
+
+        node.state.expanded = Some(true);
+        node.actions = vec![SemanticsAction::Collapse];
+        assert_eq!(
+            web_click_semantics_action(&node),
+            Some(SemanticsActionRequest::Collapse)
+        );
+
+        node.state.expanded = None;
+        node.actions = vec![SemanticsAction::Copy];
+        assert_eq!(
+            web_click_semantics_action(&node),
+            Some(SemanticsActionRequest::Copy)
+        );
     }
 
     #[test]

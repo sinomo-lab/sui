@@ -1515,21 +1515,12 @@ fn block_document(
                 spans.push(TextSpan::new(marker, marker_style));
                 spans.extend(styled_spans(&item.spans, theme.body_text_style(), theme));
             }
-            TextDocument {
-                paragraphs: vec![TextParagraph::from_spans(spans)],
-            }
+            document_from_text_spans(spans)
         }
         RichDocumentBlockKind::CodeBlock { language, code } => {
             let base = theme.mono_text_style(theme.palette.text);
             let highlights = highlighter.highlight(language.as_deref(), code);
-            TextDocument {
-                paragraphs: vec![TextParagraph::from_spans(syntax_spans(
-                    code,
-                    &highlights,
-                    base,
-                    theme,
-                ))],
-            }
+            document_from_text_spans(syntax_spans(code, &highlights, base, theme))
         }
         RichDocumentBlockKind::ThematicBreak => TextDocument::new(),
         RichDocumentBlockKind::Attachment(attachment) => {
@@ -1543,9 +1534,7 @@ fn block_document(
                 style.color = theme.palette.text_muted;
                 spans.push(TextSpan::new(format!("\n{description}"), style));
             }
-            TextDocument {
-                paragraphs: vec![TextParagraph::from_spans(spans)],
-            }
+            document_from_text_spans(spans)
         }
         RichDocumentBlockKind::Extension(extension) => {
             let mut title = theme.body_text_style();
@@ -1562,9 +1551,7 @@ fn block_document(
                     theme.mono_text_style(theme.palette.text),
                 ));
             }
-            TextDocument {
-                paragraphs: vec![TextParagraph::from_spans(spans)],
-            }
+            document_from_text_spans(spans)
         }
     }
 }
@@ -1574,9 +1561,40 @@ fn document_from_spans(
     base: TextStyle,
     theme: DefaultTheme,
 ) -> TextDocument {
-    TextDocument {
-        paragraphs: vec![TextParagraph::from_spans(styled_spans(spans, base, theme))],
+    document_from_text_spans(styled_spans(spans, base, theme))
+}
+
+fn document_from_text_spans(spans: Vec<TextSpan>) -> TextDocument {
+    let mut paragraphs = Vec::new();
+    let mut current = Vec::new();
+    let mut empty_line_style = spans
+        .first()
+        .map(|span| span.style.clone())
+        .unwrap_or_default();
+
+    for span in spans {
+        empty_line_style = span.style.clone();
+        let mut remainder = span.text.as_str();
+        while let Some(newline) = remainder.find('\n') {
+            if newline > 0 {
+                current.push(TextSpan::new(&remainder[..newline], span.style.clone()));
+            }
+            if current.is_empty() {
+                current.push(TextSpan::new("", span.style.clone()));
+            }
+            paragraphs.push(TextParagraph::from_spans(std::mem::take(&mut current)));
+            remainder = &remainder[newline + 1..];
+        }
+        if !remainder.is_empty() {
+            current.push(TextSpan::new(remainder, span.style));
+        }
     }
+
+    if current.is_empty() {
+        current.push(TextSpan::new("", empty_line_style));
+    }
+    paragraphs.push(TextParagraph::from_spans(current));
+    TextDocument { paragraphs }
 }
 
 fn styled_spans(spans: &[RichDocumentSpan], base: TextStyle, theme: DefaultTheme) -> Vec<TextSpan> {
@@ -1782,8 +1800,8 @@ mod tests {
 
     use sui_core::{
         Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue,
-        Size,
+        ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
+        SemanticsValue, Size, Vector, WindowEvent,
     };
     use sui_layout::Constraints;
     use sui_reactive::Signal;
@@ -1944,6 +1962,71 @@ mod tests {
         assert_eq!(
             status.value,
             Some(SemanticsValue::Text("structured payload".to_string()))
+        );
+    }
+
+    #[test]
+    fn overflowing_code_block_scrolls_horizontally() {
+        let model = RichDocumentModel::from_markdown(
+            "```rust\nfn answer() -> u32 {\n    let diagnostic_context = \"a deliberately long code line that must overflow a narrow rich document viewport\";\n    42\n}\n```",
+        );
+        let (mut runtime, window_id) = runtime(RichDocumentView::new(model));
+        runtime
+            .handle_event(
+                window_id,
+                Event::Window(WindowEvent::Resized(Size::new(320.0, 240.0))),
+            )
+            .unwrap();
+        let first = runtime.render(window_id).unwrap();
+        let code = first
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Code)
+            .expect("code semantics");
+        assert!(
+            code.bounds.height() > 100.0,
+            "multiline code should retain every visual line, bounds={:?}",
+            code.bounds
+        );
+        let first_origin = first
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                SceneCommand::DrawShapedText(text) => Some(text),
+                _ => None,
+            })
+            .max_by(|left, right| left.bounds.width().total_cmp(&right.bounds.width()))
+            .map(|text| text.origin)
+            .expect("code text draw");
+
+        let code_center = Point::new(
+            code.bounds.x() + code.bounds.width() * 0.5,
+            code.bounds.y() + code.bounds.height() * 0.5,
+        );
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, code_center);
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(-180.0, 0.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .unwrap();
+        let second = runtime.render(window_id).unwrap();
+        let second_origin = second
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                SceneCommand::DrawShapedText(text) => Some(text),
+                _ => None,
+            })
+            .max_by(|left, right| left.bounds.width().total_cmp(&right.bounds.width()))
+            .map(|text| text.origin)
+            .expect("scrolled code text draw");
+
+        assert!(
+            second_origin.x < first_origin.x,
+            "expected code origin to move left, before={first_origin:?}, after={second_origin:?}"
         );
     }
 
