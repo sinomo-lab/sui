@@ -29,12 +29,11 @@ cargo new sui-quickstart
 cd sui-quickstart
 ```
 
-Until `sinomo-ui` is published to crates.io, add the Git dependency to
-`Cargo.toml`:
+Add the registry package to `Cargo.toml` and keep the shorter `sui` crate alias:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
+sui = { package = "sinomo-ui", version = "0.2" }
 ```
 
 The Cargo package is named `sinomo-ui`, while the dependency alias is `sui`.

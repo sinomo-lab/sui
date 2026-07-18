@@ -8,8 +8,6 @@
 - A platform supported by `winit` and `wgpu` for the default desktop build.
 - A WebAssembly target and Trunk only when building the browser demo.
 
-Until the first registry release, use the Git repository:
-
 ```toml
 [package]
 name = "hello-sui"
@@ -17,7 +15,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
+sui = { package = "sinomo-ui", version = "0.2" }
 ```
 
 The left-hand name is intentional. Cargo resolves the `sinomo-ui` package, but

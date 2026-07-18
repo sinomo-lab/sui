@@ -5,10 +5,10 @@ tutorial if you are building an application, use the API guides while you
 work, and read the architecture documents only when you need implementation
 detail. Roadmaps are deliberately separated from shipped behavior.
 
-SUI is still pre-release: the Rust desktop and testing surfaces are usable,
-but package publication and some platform integrations are unfinished. The
-[root README](../README.md#platform-status) records the supported surface and
-release boundary.
+SUI is pre-1.0: the Rust crates, desktop runtime, and testing surfaces are
+available, while some platform and language-package integrations remain
+experimental or source-built. The [root README](../README.md#platform-status)
+records the supported surface and release boundary.
 
 ## Start here
 
@@ -30,9 +30,10 @@ The fastest way to explore the complete widget set is the desktop widget book:
 cargo run -p sinomo-ui-demo
 ```
 
-The demo's `Commands` card exercises typed window/application delivery,
-application multicast, background-thread sends, controller wakes, and the
-matching performance-inspector traces.
+The demo's `Rich documents`, `Layout`, `Widget book`, and `Commands` cards
+exercise incremental documents, adaptive workspace policies, virtual
+collections and managed overlays, resizable pane state, typed application
+delivery, and inspector diagnostics.
 
 ## API guide
 
@@ -41,6 +42,7 @@ The hand-written API guide complements generated Rust documentation:
 - [API guide index](./api/README.md)
 - [Getting started and application lifecycle](./api/getting-started.md)
 - [Widgets and layout](./api/widgets-and-layout.md)
+- [Overlays and desktop interaction](./api/overlays-and-desktop.md)
 - [Virtual collections](./api/virtual-collections.md)
 - [Rich documents](./api/rich-documents.md)
 - [Input and editing](./api/input-and-editing.md)

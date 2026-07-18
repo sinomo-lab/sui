@@ -14,7 +14,7 @@ operate.
 
 ```toml
 [dev-dependencies]
-sinomo-ui-testing = { git = "https://github.com/sinomo-lab/sui" }
+sinomo-ui-testing = "0.2"
 ```
 
 Import application types and test helpers independently:

@@ -11,7 +11,7 @@ application code:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
+sui = { package = "sinomo-ui", version = "0.2" }
 ```
 
 ```rust,no_run
@@ -45,6 +45,7 @@ embedding, tests, and tooling, but they carry more integration responsibility.
 | --- | --- |
 | Configure an app, window, or resources | [Getting started](./api/getting-started.md) |
 | Choose a control or layout container | [Widgets and layout](./api/widgets-and-layout.md) |
+| Present dialogs, menus, sheets, or notifications | [Overlays and desktop](./api/overlays-and-desktop.md) |
 | Render large keyed lists, tables, or trees | [Virtual collections](./api/virtual-collections.md) |
 | Stream Markdown or structured results | [Rich documents](./api/rich-documents.md) |
 | Edit text, passwords, or date/time values | [Input and editing](./api/input-and-editing.md) |
@@ -68,11 +69,11 @@ SUI uses a few conventions consistently:
 - Layout is constraint-based. Use `Stack` for simple rows and columns and
   `Flex` for growth, wrapping, or distribution.
 - Widgets own transient interaction details such as focus, caret, and text
-  selection. Application state owns domain values and receives changes through
-  callbacks.
-- State changes become visible through explicit invalidation. Request only the
-  passes that may have changed: measure, paint, semantics, resources, or
-  animation.
+  selection. Application state owns domain values and can expose them through
+  `Signal<T>` selectors or existing reader/callback adapters.
+- Dependency-tracked widget bindings invalidate measure, paint, or semantics
+  automatically when their observed signal changes. Custom widgets and
+  non-observable state still request only the passes that may have changed.
 - Widgets stay on the UI thread. Background tasks publish results through the
   typed `UiHandle` command queue. Application/window controllers receive them
   independently of the widget paint tree; a bare `wake()` only schedules
@@ -96,9 +97,9 @@ Run the widget book to inspect real controls and their semantics:
 cargo run -p sinomo-ui-demo
 ```
 
-Open the `Commands` card to inspect the typed routing scopes and diagnostics,
-or run `cargo run -p sinomo-ui --example commands` for a minimal standalone
-program.
+Open `Rich documents`, `Layout`, `Widget book`, and `Commands` to inspect the
+rich-document, adaptive workspace, collection, overlay, and typed-routing
+surfaces, or run the focused facade examples for minimal standalone programs.
 
 Generate browsable rustdoc for the checked-out version:
 

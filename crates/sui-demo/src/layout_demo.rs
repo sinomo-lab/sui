@@ -52,9 +52,33 @@ pub(crate) fn build_layout_demo_with_theme(theme_reader: DevThemeReader) -> impl
                     Rc::clone(&theme_reader),
                 ))
                 .with_child(section(
+                    "Adaptive workspace",
+                    "Resize the demo, then toggle the same retained sidebar between its overlay, rail, and inline policies.",
+                    build_adaptive_workspace_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
+                    "Resizable split pane",
+                    "Drag the divider; SplitState keeps the pane extent independent from the widget instance.",
+                    build_split_pane_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
+                    "Master-detail navigation",
+                    "Compact containers show one route at a time; wider containers retain both panes and restore focus as routes change.",
+                    build_master_detail_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
                     "Wrapping toolbar",
                     "Toolbar actions retain identity and keyboard order when they flow onto more lines.",
                     build_wrapping_toolbar_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
+                    "Safe area",
+                    "Platform insets and an application minimum share one retained layout policy.",
+                    build_safe_area_example(Rc::clone(&theme_reader)),
                     Rc::clone(&theme_reader),
                 )),
         ))
@@ -297,6 +321,122 @@ fn build_constraint_query_example(theme_reader: DevThemeReader) -> impl Widget {
     )
 }
 
+fn build_adaptive_workspace_example(theme_reader: DevThemeReader) -> impl Widget {
+    let theme = theme_reader();
+    let sidebar_state = ResponsiveSidebarState::new();
+    sidebar_state.open_overlay();
+    let toggle_state = sidebar_state.clone();
+
+    demo_frame(
+        Stack::vertical()
+            .spacing(8.0)
+            .alignment(Alignment::Stretch)
+            .with_child(Button::new("Toggle rail / inline").on_press(move || {
+                toggle_state.toggle_expanded();
+            }))
+            .with_child(
+                SizedBox::new().height(168.0).with_child(
+                    ResponsiveSidebar::new(
+                        Background::new(
+                            theme.palette.control,
+                            Padding::all(
+                                12.0,
+                                Stack::vertical()
+                                    .spacing(8.0)
+                                    .alignment(Alignment::Stretch)
+                                    .with_child(Label::new("Files"))
+                                    .with_child(Button::new("src"))
+                                    .with_child(Button::new("docs")),
+                            ),
+                        ),
+                        Background::new(
+                            theme.palette.surface_raised,
+                            Align::center(Label::new(
+                                "Stable content pane\nOverlay  ·  Rail  ·  Inline",
+                            )),
+                        ),
+                    )
+                    .name("Responsive workspace preview")
+                    .theme(theme)
+                    .breakpoints(AdaptiveBreakpoints::new(520.0, 760.0))
+                    .state(sidebar_state)
+                    .split_state(SplitState::pixels(180.0))
+                    .rail_width(56.0)
+                    .overlay_width(260.0),
+                ),
+            ),
+        theme_reader,
+    )
+}
+
+fn build_split_pane_example(theme_reader: DevThemeReader) -> impl Widget {
+    let theme = theme_reader();
+    demo_frame(
+        SizedBox::new().height(150.0).with_child(
+            SplitView::horizontal(
+                Background::new(
+                    theme.palette.control,
+                    Align::center(Label::new("Persisted pane")),
+                ),
+                Background::new(
+                    theme.palette.surface_raised,
+                    Align::center(Label::new("Flexible content")),
+                ),
+            )
+            .name("Resizable split pane preview")
+            .theme(theme)
+            .state(SplitState::pixels(210.0))
+            .min_first(120.0)
+            .min_second(180.0),
+        ),
+        theme_reader,
+    )
+}
+
+fn build_master_detail_example(theme_reader: DevThemeReader) -> impl Widget {
+    let theme = theme_reader();
+    let navigation = MasterDetailState::default();
+    let show_detail = navigation.clone();
+    let show_master = navigation.clone();
+
+    demo_frame(
+        SizedBox::new().height(176.0).with_child(
+            MasterDetail::new(
+                Background::new(
+                    theme.palette.control,
+                    Padding::all(
+                        12.0,
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .alignment(Alignment::Stretch)
+                            .with_child(Label::new("Documents"))
+                            .with_child(Button::new("Open release notes").on_press(move || {
+                                show_detail.show_detail();
+                            })),
+                    ),
+                ),
+                Background::new(
+                    theme.palette.surface_raised,
+                    Padding::all(
+                        12.0,
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .alignment(Alignment::Stretch)
+                            .with_child(Label::new("Release notes detail"))
+                            .with_child(Button::new("Back to documents").on_press(move || {
+                                show_master.show_master();
+                            })),
+                    ),
+                ),
+            )
+            .state(navigation)
+            .breakpoints(AdaptiveBreakpoints::new(560.0, 820.0))
+            .split_state(SplitState::pixels(220.0)),
+        ),
+        theme_reader,
+    )
+}
+
 fn build_wrapping_toolbar_example(theme_reader: DevThemeReader) -> impl Widget {
     demo_frame(
         Toolbar::horizontal()
@@ -309,6 +449,19 @@ fn build_wrapping_toolbar_example(theme_reader: DevThemeReader) -> impl Widget {
             .with_child(Button::new("Inspect"))
             .with_child(Button::new("Share"))
             .with_child(Button::new("More actions")),
+        theme_reader,
+    )
+}
+
+fn build_safe_area_example(theme_reader: DevThemeReader) -> impl Widget {
+    demo_frame(
+        SafeArea::new(tile(
+            "content stays clear of system UI",
+            palette(5),
+            Color::WHITE,
+        ))
+        .edges(SafeAreaEdges::ALL)
+        .minimum(SafeAreaInsets::new(18.0, 12.0, 18.0, 12.0)),
         theme_reader,
     )
 }

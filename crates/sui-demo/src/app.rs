@@ -46,9 +46,8 @@ use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme
 #[cfg(test)]
 use crate::layout_demo::LAYOUT_DEMO_SCROLL_NAME;
 use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
-#[cfg(feature = "markdown")]
 use crate::markdown_demo::build_markdown_render_demo_with_theme;
-#[cfg(all(feature = "markdown", test))]
+#[cfg(test)]
 use crate::markdown_demo::{
     MARKDOWN_RENDER_COOLDOWN_SECONDS, MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME,
     MARKDOWN_SOURCE_EDITOR_NAME,
@@ -89,8 +88,7 @@ const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
 const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
 const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
-#[cfg(feature = "markdown")]
-const MARKDOWN_RENDER_TAB_LABEL: &str = "Markdown";
+const MARKDOWN_RENDER_TAB_LABEL: &str = "Rich documents";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
 const SETTINGS_TAB_LABEL: &str = "Settings";
 const LIVE_PERFORMANCE_OVERLAY_LABEL: &str = "Show live performance overlay";
@@ -1827,10 +1825,9 @@ fn build_dev_demo_entries(
                 &theme_reader,
             ))),
         },
-        #[cfg(feature = "markdown")]
         DevDemo {
             title: MARKDOWN_RENDER_TAB_LABEL,
-            description: "Feature-gated markdown rendering through SUI rich text documents.",
+            description: "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
             icon: IconGlyph::File,
             accent: Color::rgba(0.12, 0.48, 0.70, 1.0),
             child: WidgetPod::new(build_markdown_render_demo_with_theme(Rc::clone(
@@ -1848,7 +1845,7 @@ fn build_dev_demo_entries(
         },
         DevDemo {
             title: LAYOUT_TAB_LABEL,
-            description: "Stack, Align, and Flex layout patterns for app composition.",
+            description: "Grid, intrinsic sizing, container queries, resizable panes, adaptive workspaces, and safe areas.",
             icon: IconGlyph::Maximize,
             accent: Color::rgba(0.08, 0.58, 0.42, 1.0),
             child: WidgetPod::new(build_layout_demo_with_theme(Rc::clone(&theme_reader))),
@@ -1900,8 +1897,8 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
-        #[cfg(feature = "markdown")]
-        "markdown" | "markdown-render" | "markdown-renderer" => Some(MARKDOWN_RENDER_TAB_LABEL),
+        "markdown" | "markdown-render" | "markdown-renderer" | "rich-document"
+        | "rich-documents" => Some(MARKDOWN_RENDER_TAB_LABEL),
         "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
         "layout" | "layouts" | "flex" => Some(LAYOUT_TAB_LABEL),
         "drag-drop" | "drag-and-drop" | "dnd" => Some(DRAG_DROP_TAB_LABEL),
@@ -7769,7 +7766,6 @@ final_max_luminance={final_max_luminance}
         Ok(())
     }
 
-    #[cfg(feature = "markdown")]
     #[test]
     fn dev_workspace_registers_markdown_render_demo() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
@@ -7786,7 +7782,7 @@ final_max_luminance={final_max_luminance}
             .expect()
             .to_be_visible()?;
         window
-            .get_by_role(SemanticsRole::Text)
+            .get_by_role(SemanticsRole::GenericContainer)
             .with_name(MARKDOWN_RENDER_DEMO_NAME)
             .expect()
             .to_be_visible()?;
@@ -7798,7 +7794,6 @@ final_max_luminance={final_max_luminance}
         Ok(())
     }
 
-    #[cfg(feature = "markdown")]
     #[test]
     fn markdown_source_edit_updates_rendered_preview() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
@@ -7818,14 +7813,17 @@ final_max_luminance={final_max_luminance}
             .nodes
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Text
-                    && node.name.as_deref() == Some(MARKDOWN_RENDER_DEMO_NAME)
-                    && matches!(node.value, Some(SemanticsValue::Text(_)))
+                matches!(node.role, SemanticsRole::Paragraph | SemanticsRole::Heading)
+                    && node
+                        .name
+                        .as_deref()
+                        .is_some_and(|text| text.contains(marker))
             })
-            .expect("rendered markdown text semantics present");
-        let Some(SemanticsValue::Text(text)) = &rendered.value else {
-            unreachable!("rendered markdown node was filtered by text value");
-        };
+            .expect("rendered rich-document text semantics present");
+        let text = rendered
+            .name
+            .as_deref()
+            .expect("rendered rich-document node was filtered by semantic name");
         assert!(
             text.contains(marker),
             "rendered markdown preview did not include edited source; text={text:?}"
@@ -7833,7 +7831,6 @@ final_max_luminance={final_max_luminance}
         Ok(())
     }
 
-    #[cfg(feature = "markdown")]
     #[test]
     fn markdown_source_edits_during_cooldown_update_after_timer() -> Result<()> {
         let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
@@ -7854,14 +7851,17 @@ final_max_luminance={final_max_luminance}
             .nodes
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Text
-                    && node.name.as_deref() == Some(MARKDOWN_RENDER_DEMO_NAME)
-                    && matches!(node.value, Some(SemanticsValue::Text(_)))
+                matches!(node.role, SemanticsRole::Paragraph | SemanticsRole::Heading)
+                    && node
+                        .name
+                        .as_deref()
+                        .is_some_and(|text| text.contains("Second marker"))
             })
-            .expect("rendered markdown text semantics present");
-        let Some(SemanticsValue::Text(text)) = &rendered.value else {
-            unreachable!("rendered markdown node was filtered by text value");
-        };
+            .expect("rendered rich-document text semantics present");
+        let text = rendered
+            .name
+            .as_deref()
+            .expect("rendered rich-document node was filtered by semantic name");
         assert!(
             text.contains("Second marker"),
             "dirty markdown preview did not flush after cooldown; text={text:?}"

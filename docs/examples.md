@@ -43,6 +43,16 @@ invalidation, and editable text, password, and date/time fields. The
 cargo run -p sinomo-ui --example stateful_form
 ```
 
+### Rich document
+
+[`rich_document.rs`](../crates/sui/examples/rich_document.rs) renders selectable
+Markdown, syntax-highlighted code, links, and an expandable structured
+operation block through `RichDocumentModel` and `RichDocumentView`.
+
+```bash
+cargo run -p sinomo-ui --example rich_document
+```
+
 ### Typed commands
 
 [`commands.rs`](../crates/sui/examples/commands.rs) demonstrates typed
@@ -62,11 +72,12 @@ cargo check -p sinomo-ui --examples
 
 ## Demo and widget book
 
-The `sinomo-ui-demo` application is the workspace's interactive development host. It
-contains the widget book, a typed command-routing lab, theme and text-rendering
-surfaces, renderer controls, and focused performance views. Open the
-`Commands` card to exercise directed window/application delivery, multicast,
-worker delivery, and scheduler-only controller wakes.
+The `sinomo-ui-demo` application is the workspace's interactive development
+host. It contains the widget book, incremental rich-document editor, adaptive
+layout and overlay stories, virtual collections, a typed command-routing lab,
+theme and text-rendering surfaces, renderer controls, and focused performance
+views. Open the `Commands` card to exercise directed window/application
+delivery, multicast, worker delivery, and scheduler-only controller wakes.
 
 Open the native demo:
 

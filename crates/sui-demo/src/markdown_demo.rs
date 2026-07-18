@@ -1,197 +1,44 @@
 use std::{cell::RefCell, rc::Rc};
 
-use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use sui::{
-    Event as SuiEvent, EventPhase, KeyState, TextArea, WidgetPodMutVisitor, WidgetPodVisitor,
+    Event as SuiEvent, EventPhase, KeyState, SemanticRegion, WidgetPodMutVisitor, WidgetPodVisitor,
     prelude::*,
 };
 
-use crate::app::{
-    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
-};
+use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
 
-pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Markdown render";
-pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Markdown render demo";
+pub(crate) const MARKDOWN_RENDER_DEMO_NAME: &str = "Rich document preview";
+pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Rich document demo";
 #[cfg(test)]
-pub(crate) const MARKDOWN_RENDER_SCROLL_BAR_NAME: &str = "Markdown render demo vertical scroll bar";
+pub(crate) const MARKDOWN_RENDER_SCROLL_BAR_NAME: &str = "Rich document demo vertical scroll bar";
 pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
-
 pub(crate) const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 0.5;
+
 const MARKDOWN_PANEL_MIN_WIDTH: f32 = 320.0;
 const MARKDOWN_PANEL_GAP: f32 = 16.0;
 
-const SAMPLE_MARKDOWN: &str = r#"# SUI rich text report
+const SAMPLE_MARKDOWN: &str = r##"# SUI rich document report
 
-The markdown renderer is intentionally small: it translates markdown events into a `TextDocument`,
-then the `RichText` widget lays out and paints the styled spans.
+`RichDocumentModel` keeps this document incremental while `RichDocumentView` retains keyed block widgets, cached layouts, and selection across the complete document.
 
-## What the document uses
+## Production primitives
 
-- headings with independent size and weight
-- inline **strong**, _emphasis_, and `code` spans
-- links such as [SUI workspace](https://example.invalid/sui) with accent color
-- ordered list markers that become ordinary rich text spans
-- Unicode fallback text: 你好, 日本語, 한국어, 🙂 ✅ 🎨
+- [x] selectable text across headings, paragraphs, lists, and code
+- [x] links such as the [SUI documentation](https://github.com/sinomo-lab/sui)
+- [x] syntax-highlighted code with horizontal scrolling and copy actions
+- [x] inline images, attachments, and expandable structured results
+- [x] semantic headings, lists, code, links, attachments, and status regions
 
-1. Parse markdown events.
-2. Build paragraphs and spans.
-3. Render the document through `RichText`.
+> Edit this source to exercise reconciled block identity. Streaming producers use `append_markdown` to reparse only the mutable tail.
 
-## Source ownership
+```rust
+let document = RichDocumentModel::from_markdown("# Streaming");
+document.append_markdown("\n\nFirst retained block");
+document.append_markdown("\n\nSecond incremental block");
+```
 
-Markdown stays in the demo crate behind a feature flag. The reusable SUI layer only needs
-`TextDocument`, `TextParagraph`, and `TextSpan`, so applications can supply their own parser,
-syntax highlighter, or document model.
-"#;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BlockKind {
-    Paragraph,
-    Heading(HeadingLevel),
-    Item,
-    CodeBlock,
-}
-
-#[derive(Clone, Default)]
-struct InlineState {
-    strong: usize,
-    emphasis: usize,
-    strikethrough: usize,
-    code: usize,
-    link: usize,
-}
-
-#[derive(Clone)]
-struct MarkdownStyles {
-    body: TextStyle,
-    muted: TextStyle,
-    strong: TextStyle,
-    emphasis: TextStyle,
-    code: TextStyle,
-    link: TextStyle,
-    marker: TextStyle,
-    headings: [TextStyle; 6],
-    gap: TextStyle,
-}
-
-impl MarkdownStyles {
-    fn new(theme: DefaultTheme) -> Self {
-        let mut body = theme.body_text_style();
-        body.font_size = 14.0;
-        body.line_height = 21.0;
-
-        let mut muted = body.clone();
-        muted.color = theme.palette.text_muted;
-
-        let mut strong = body.clone();
-        strong.weight = FontWeight::BOLD;
-
-        let mut emphasis = body.clone();
-        emphasis.style = FontStyle::Italic;
-
-        let mut code = body.clone();
-        code.color = theme.palette.warning;
-        code.weight = FontWeight::SEMIBOLD;
-        code.features.enable(FontFeature::TABULAR_FIGURES);
-
-        let mut link = body.clone();
-        link.color = theme.palette.accent;
-        link.weight = FontWeight::SEMIBOLD;
-
-        let mut marker = body.clone();
-        marker.color = theme.palette.accent;
-        marker.weight = FontWeight::SEMIBOLD;
-
-        let mut heading1 = body.clone();
-        heading1.font_size = 28.0;
-        heading1.line_height = 34.0;
-        heading1.weight = FontWeight::BOLD;
-
-        let mut heading2 = body.clone();
-        heading2.font_size = 21.0;
-        heading2.line_height = 27.0;
-        heading2.weight = FontWeight::BOLD;
-
-        let mut heading3 = body.clone();
-        heading3.font_size = 18.0;
-        heading3.line_height = 24.0;
-        heading3.weight = FontWeight::SEMIBOLD;
-
-        let mut heading4 = body.clone();
-        heading4.font_size = 16.0;
-        heading4.line_height = 22.0;
-        heading4.weight = FontWeight::SEMIBOLD;
-
-        let heading5 = heading4.clone();
-        let heading6 = heading4.clone();
-
-        let mut gap = body.clone();
-        gap.font_size = 1.0;
-        gap.line_height = 8.0;
-        gap.color = Color::TRANSPARENT;
-
-        Self {
-            body,
-            muted,
-            strong,
-            emphasis,
-            code,
-            link,
-            marker,
-            headings: [heading1, heading2, heading3, heading4, heading5, heading6],
-            gap,
-        }
-    }
-
-    fn block_style(&self, kind: BlockKind) -> TextStyle {
-        match kind {
-            BlockKind::Heading(level) => self.headings[heading_index(level)].clone(),
-            BlockKind::CodeBlock => self.code.clone(),
-            BlockKind::Paragraph | BlockKind::Item => self.body.clone(),
-        }
-    }
-
-    fn inline_style(&self, kind: BlockKind, inline: &InlineState) -> TextStyle {
-        if inline.code > 0 || kind == BlockKind::CodeBlock {
-            return self.code.clone();
-        }
-        let mut style = if inline.link > 0 {
-            self.link.clone()
-        } else if inline.strong > 0 {
-            self.strong.clone()
-        } else if inline.emphasis > 0 {
-            self.emphasis.clone()
-        } else if inline.strikethrough > 0 {
-            self.muted.clone()
-        } else {
-            self.block_style(kind)
-        };
-        if inline.strong > 0 {
-            style.weight = FontWeight::BOLD;
-        }
-        if inline.emphasis > 0 {
-            style.style = FontStyle::Italic;
-        }
-        if inline.strikethrough > 0 {
-            style.color = self.muted.color;
-        }
-        style
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ListState {
-    next: Option<u64>,
-}
-
-struct MarkdownDocumentBuilder {
-    styles: MarkdownStyles,
-    paragraphs: Vec<TextParagraph>,
-    current_kind: Option<BlockKind>,
-    current_spans: Vec<TextSpan>,
-    inline: InlineState,
-    lists: Vec<ListState>,
-}
+![Renderer-neutral chart](asset:release-chart)
+"##;
 
 #[derive(Clone)]
 struct MarkdownDemoState {
@@ -201,21 +48,40 @@ struct MarkdownDemoState {
 struct MarkdownDemoStateInner {
     source: String,
     rendered_source: String,
-    rendered_document: TextDocument,
-    rendered_theme: DefaultTheme,
+    document: RichDocumentModel,
     dirty: bool,
     cooling_down: bool,
     cooldown_timer: Option<TimerToken>,
 }
 
 impl MarkdownDemoState {
-    fn new(theme: DefaultTheme) -> Self {
+    fn new() -> Self {
+        let document = RichDocumentModel::from_markdown(SAMPLE_MARKDOWN);
+
+        let mut attachment = RichAttachment::new("release-notes.md");
+        attachment.media_type = Some("text/markdown".into());
+        attachment.size_bytes = Some(4_812);
+        attachment.description =
+            Some("Portable attachment metadata with an application action".into());
+        document.append_attachment(attachment);
+
+        let mut operation = RichExtensionBlock::new("operation-log", "0.2.0 release checks");
+        operation.status = RichDocumentStatus::Running;
+        operation.summary = Some("Documentation and demo audit in progress".into());
+        operation.body =
+            "docs links       ready\nwidget gallery   ready\nrelease package  pending".into();
+        operation.initially_expanded = true;
+        operation.metadata = vec![
+            ("scope".into(), "workspace".into()),
+            ("renderer".into(), "fallback extension block".into()),
+        ];
+        document.append_extension(operation);
+
         Self {
             inner: Rc::new(RefCell::new(MarkdownDemoStateInner {
                 source: SAMPLE_MARKDOWN.to_string(),
                 rendered_source: SAMPLE_MARKDOWN.to_string(),
-                rendered_document: markdown_to_document(SAMPLE_MARKDOWN, theme),
-                rendered_theme: theme,
+                document,
                 dirty: false,
                 cooling_down: false,
                 cooldown_timer: None,
@@ -227,25 +93,18 @@ impl MarkdownDemoState {
         self.inner.borrow().source.clone()
     }
 
-    fn rendered_document_for_theme(&self, theme: DefaultTheme) -> TextDocument {
-        let mut inner = self.inner.borrow_mut();
-        if inner.rendered_theme != theme {
-            let rendered_source = inner.rendered_source.clone();
-            inner.rendered_document = markdown_to_document(&rendered_source, theme);
-            inner.rendered_theme = theme;
-        }
-        inner.rendered_document.clone()
+    fn document(&self) -> RichDocumentModel {
+        self.inner.borrow().document.clone()
+    }
+
+    fn replace_rendered(inner: &mut MarkdownDemoStateInner, source: String) {
+        inner.document.set_markdown(source.clone());
+        inner.rendered_source = source;
     }
 
     #[cfg(test)]
-    fn rendered_document(&self) -> TextDocument {
-        self.inner.borrow().rendered_document.clone()
-    }
-
-    fn replace_rendered(inner: &mut MarkdownDemoStateInner, source: String, theme: DefaultTheme) {
-        inner.rendered_document = markdown_to_document(&source, theme);
-        inner.rendered_source = source;
-        inner.rendered_theme = theme;
+    fn rendered_snapshot(&self) -> RichDocumentSnapshot {
+        self.inner.borrow().document.snapshot()
     }
 
     #[cfg(test)]
@@ -263,13 +122,13 @@ impl MarkdownDemoState {
     }
 
     #[cfg(test)]
-    fn apply_pending_render(&self, theme: DefaultTheme) -> bool {
+    fn apply_pending_render(&self) -> bool {
         let mut inner = self.inner.borrow_mut();
         if !inner.dirty {
             return false;
         }
         let source = inner.source.clone();
-        Self::replace_rendered(&mut inner, source, theme);
+        Self::replace_rendered(&mut inner, source);
         inner.dirty = false;
         true
     }
@@ -281,33 +140,24 @@ impl MarkdownDemoState {
         }
     }
 
-    fn set_source_throttled(&self, ctx: &mut EventCtx, source: String, theme: DefaultTheme) {
-        let mut should_refresh = false;
-        {
-            let mut inner = self.inner.borrow_mut();
-            if inner.source == source {
-                return;
-            }
-
-            inner.source = source;
-            if inner.cooling_down {
-                inner.dirty = true;
-            } else {
-                let source = inner.source.clone();
-                Self::replace_rendered(&mut inner, source, theme);
-                inner.dirty = false;
-                inner.cooling_down = inner.cooldown_timer.is_some();
-                should_refresh = true;
-            }
+    fn set_source_throttled(&self, source: String) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.source == source {
+            return;
         }
 
-        if should_refresh {
-            request_window_refresh(ctx, false);
+        inner.source = source;
+        if inner.cooling_down {
+            inner.dirty = true;
+        } else {
+            let source = inner.source.clone();
+            Self::replace_rendered(&mut inner, source);
+            inner.dirty = false;
+            inner.cooling_down = inner.cooldown_timer.is_some();
         }
     }
 
-    fn handle_cooldown_timer(&self, ctx: &mut EventCtx, token: TimerToken, theme: DefaultTheme) {
-        let mut should_refresh = false;
+    fn handle_cooldown_timer(&self, ctx: &mut EventCtx, token: TimerToken) {
         {
             let mut inner = self.inner.borrow_mut();
             if inner.cooldown_timer != Some(token) {
@@ -317,64 +167,53 @@ impl MarkdownDemoState {
             inner.cooldown_timer = None;
             if inner.dirty {
                 let source = inner.source.clone();
-                Self::replace_rendered(&mut inner, source, theme);
+                Self::replace_rendered(&mut inner, source);
                 inner.dirty = false;
                 inner.cooling_down = true;
                 inner.cooldown_timer =
                     Some(ctx.schedule_timer_after(MARKDOWN_RENDER_COOLDOWN_SECONDS));
-                should_refresh = true;
             } else {
                 inner.cooling_down = false;
             }
         }
 
-        if should_refresh {
-            request_window_refresh(ctx, false);
-        }
         ctx.set_handled();
     }
 }
 
 struct MarkdownSourceEditor {
     state: MarkdownDemoState,
-    theme_reader: DevThemeReader,
     editor: SingleChild,
 }
 
 impl MarkdownSourceEditor {
     fn new(state: MarkdownDemoState, theme_reader: DevThemeReader) -> Self {
         let editor_state = state.clone();
-        let editor_theme_reader = Rc::clone(&theme_reader);
-        let source_style = source_text_style(theme_reader());
         let editor = TextArea::new(MARKDOWN_SOURCE_EDITOR_NAME)
             .value(state.source())
-            .text_style(source_style)
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .padding(Insets::all(12.0))
-            .min_height(360.0)
-            .on_change_with_ctx(move |ctx, value| {
-                editor_state.set_source_throttled(ctx, value, editor_theme_reader());
+            .min_height(440.0)
+            .on_change(move |value| {
+                editor_state.set_source_throttled(value);
             });
 
         Self {
             state,
-            theme_reader,
             editor: SingleChild::new(editor),
         }
     }
 
     fn event_may_edit_source(event: &SuiEvent) -> bool {
-        matches!(
-            event,
-            SuiEvent::Keyboard(key) if key.state == KeyState::Pressed
-        ) || matches!(event, SuiEvent::Ime(_))
+        matches!(event, SuiEvent::Keyboard(key) if key.state == KeyState::Pressed)
+            || matches!(event, SuiEvent::Ime(_))
     }
 }
 
 impl Widget for MarkdownSourceEditor {
     fn event(&mut self, ctx: &mut EventCtx, event: &SuiEvent) {
         if let SuiEvent::Wake(WakeEvent::Timer { token, .. }) = event {
-            self.state
-                .handle_cooldown_timer(ctx, *token, (self.theme_reader)());
+            self.state.handle_cooldown_timer(ctx, *token);
         } else if ctx.phase() == EventPhase::Capture && Self::event_may_edit_source(event) {
             self.state.arm_cooldown_timer(ctx);
         }
@@ -405,204 +244,55 @@ impl Widget for MarkdownSourceEditor {
     }
 }
 
-impl MarkdownDocumentBuilder {
-    fn new(theme: DefaultTheme) -> Self {
-        Self {
-            styles: MarkdownStyles::new(theme),
-            paragraphs: Vec::new(),
-            current_kind: None,
-            current_spans: Vec::new(),
-            inline: InlineState::default(),
-            lists: Vec::new(),
-        }
-    }
-
-    fn start_block(&mut self, kind: BlockKind) {
-        self.finish_current(true);
-        self.current_kind = Some(kind);
-    }
-
-    fn start_item(&mut self) {
-        self.finish_current(true);
-        self.current_kind = Some(BlockKind::Item);
-        let prefix = self.next_list_prefix();
-        self.current_spans
-            .push(TextSpan::new(prefix, self.styles.marker.clone()));
-    }
-
-    fn finish_current(&mut self, include_gap: bool) {
-        let Some(kind) = self.current_kind.take() else {
-            return;
-        };
-        if self.current_spans.is_empty() && kind != BlockKind::CodeBlock {
-            return;
-        }
-        if self.current_spans.is_empty() {
-            self.current_spans
-                .push(TextSpan::new("", self.styles.code.clone()));
-        }
-        self.paragraphs.push(TextParagraph {
-            style: TextParagraphStyle::default(),
-            spans: std::mem::take(&mut self.current_spans),
-        });
-        if include_gap {
-            self.paragraphs
-                .push(TextParagraph::new("", self.gap_style(kind)));
-        }
-    }
-
-    fn gap_style(&self, kind: BlockKind) -> TextStyle {
-        let mut gap = self.styles.gap.clone();
-        gap.line_height = match kind {
-            BlockKind::Heading(HeadingLevel::H1) => 12.0,
-            BlockKind::Heading(_) => 9.0,
-            BlockKind::CodeBlock => 4.0,
-            BlockKind::Item => 3.0,
-            BlockKind::Paragraph => 8.0,
-        };
-        gap
-    }
-
-    fn current_kind(&self) -> BlockKind {
-        self.current_kind.unwrap_or(BlockKind::Paragraph)
-    }
-
-    fn add_text(&mut self, text: impl AsRef<str>) {
-        let text = text.as_ref();
-        if text.is_empty() {
-            return;
-        }
-        if self.current_kind.is_none() {
-            self.start_block(BlockKind::Paragraph);
-        }
-        let style = self.styles.inline_style(self.current_kind(), &self.inline);
-        self.current_spans.push(TextSpan::new(text, style));
-    }
-
-    fn add_code_block_text(&mut self, text: &str) {
-        for (index, line) in text.split('\n').enumerate() {
-            if index > 0 {
-                self.finish_current(false);
-                self.current_kind = Some(BlockKind::CodeBlock);
-            }
-            self.add_text(line);
-        }
-    }
-
-    fn next_list_prefix(&mut self) -> String {
-        let indent = "  ".repeat(self.lists.len().saturating_sub(1));
-        match self.lists.last_mut().and_then(|list| list.next.as_mut()) {
-            Some(next) => {
-                let current = *next;
-                *next += 1;
-                format!("{indent}{current}. ")
-            }
-            None => format!("{indent}- "),
-        }
-    }
-
-    fn finish(mut self) -> TextDocument {
-        self.finish_current(false);
-        if self.paragraphs.is_empty() {
-            self.paragraphs
-                .push(TextParagraph::new("", self.styles.body.clone()));
-        }
-        TextDocument {
-            paragraphs: self.paragraphs,
-        }
-    }
-}
-
-pub(crate) fn markdown_to_document(markdown: &str, theme: DefaultTheme) -> TextDocument {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    let mut builder = MarkdownDocumentBuilder::new(theme);
-
-    for event in Parser::new_ext(markdown, options) {
-        match event {
-            MarkdownEvent::Start(Tag::Paragraph) => {
-                if builder.current_kind.is_none() {
-                    builder.start_block(BlockKind::Paragraph);
-                }
-            }
-            MarkdownEvent::End(TagEnd::Paragraph) => {
-                if !matches!(builder.current_kind, Some(BlockKind::Item)) {
-                    builder.finish_current(true);
-                }
-            }
-            MarkdownEvent::Start(Tag::Heading { level, .. }) => {
-                builder.start_block(BlockKind::Heading(level));
-            }
-            MarkdownEvent::End(TagEnd::Heading(_)) => builder.finish_current(true),
-            MarkdownEvent::Start(Tag::List(start)) => builder.lists.push(ListState { next: start }),
-            MarkdownEvent::End(TagEnd::List(_)) => {
-                builder.finish_current(true);
-                builder.lists.pop();
-            }
-            MarkdownEvent::Start(Tag::Item) => builder.start_item(),
-            MarkdownEvent::End(TagEnd::Item) => builder.finish_current(true),
-            MarkdownEvent::Start(Tag::CodeBlock(_)) => builder.start_block(BlockKind::CodeBlock),
-            MarkdownEvent::End(TagEnd::CodeBlock) => builder.finish_current(true),
-            MarkdownEvent::Start(Tag::Emphasis) => builder.inline.emphasis += 1,
-            MarkdownEvent::End(TagEnd::Emphasis) => {
-                builder.inline.emphasis = builder.inline.emphasis.saturating_sub(1);
-            }
-            MarkdownEvent::Start(Tag::Strong) => builder.inline.strong += 1,
-            MarkdownEvent::End(TagEnd::Strong) => {
-                builder.inline.strong = builder.inline.strong.saturating_sub(1);
-            }
-            MarkdownEvent::Start(Tag::Strikethrough) => builder.inline.strikethrough += 1,
-            MarkdownEvent::End(TagEnd::Strikethrough) => {
-                builder.inline.strikethrough = builder.inline.strikethrough.saturating_sub(1);
-            }
-            MarkdownEvent::Start(Tag::Link { .. }) => builder.inline.link += 1,
-            MarkdownEvent::End(TagEnd::Link) => {
-                builder.inline.link = builder.inline.link.saturating_sub(1);
-            }
-            MarkdownEvent::Text(text) => {
-                if builder.current_kind == Some(BlockKind::CodeBlock) {
-                    builder.add_code_block_text(&text);
-                } else {
-                    builder.add_text(&text);
-                }
-            }
-            MarkdownEvent::Code(code) => {
-                builder.inline.code += 1;
-                builder.add_text(&code);
-                builder.inline.code = builder.inline.code.saturating_sub(1);
-            }
-            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => builder.add_text(" "),
-            MarkdownEvent::Rule => {
-                builder.start_block(BlockKind::Paragraph);
-                builder.add_text("-----");
-                builder.finish_current(true);
-            }
-            _ => {}
-        }
-    }
-
-    builder.finish()
-}
-
 pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
-    let state = MarkdownDemoState::new(theme_reader());
-    let rendered_state = state.clone();
-    let rendered_theme_reader = Rc::clone(&theme_reader);
-    let rendered = RichText::dynamic(
-        state.rendered_document_for_theme(theme_reader()),
-        move || rendered_state.rendered_document_for_theme(rendered_theme_reader()),
-    )
-    .semantic_name(MARKDOWN_RENDER_DEMO_NAME)
-    .padding(Insets::all(16.0))
-    .min_height(360.0);
+    let state = MarkdownDemoState::new();
+    let document = state.document();
+    let view_state = RichDocumentViewState::new();
+    let activity = Signal::named(
+        "Rich document demo activity",
+        "Select across blocks, activate a link, copy code, or open a structured result."
+            .to_string(),
+    );
+
+    let view_theme_reader = Rc::clone(&theme_reader);
+    let view_document = document.clone();
+    let retained_view_state = view_state.clone();
+    let view_activity = activity.clone();
+    let rendered = RebuildOnChange::new(
+        move || view_theme_reader(),
+        move |theme| {
+            let link_activity = view_activity.clone();
+            let image_activity = view_activity.clone();
+            let attachment_activity = view_activity.clone();
+            WidgetPod::new(
+                RichDocumentView::new(view_document.clone())
+                    .state(retained_view_state.clone())
+                    .theme(*theme)
+                    .on_link(move |destination| {
+                        link_activity.set(format!("Link routed to the application: {destination}"));
+                    })
+                    .on_image(move |source| {
+                        image_activity.set(format!("Image action requested for {source}"));
+                    })
+                    .on_attachment(move |_| {
+                        attachment_activity
+                            .set("Attachment action routed to the application".to_string());
+                    }),
+            )
+        },
+    );
+    let rendered = SemanticRegion::new(MARKDOWN_RENDER_DEMO_NAME, rendered).description(
+        "Selectable incremental Markdown with code, attachment, image, and status semantics",
+    );
     let source = MarkdownSourceEditor::new(state, Rc::clone(&theme_reader));
+
     let scroll = ScrollView::vertical(Padding::all(
         18.0,
         Stack::vertical()
             .spacing(14.0)
             .alignment(Alignment::Stretch)
             .with_child(
-                Label::new(MARKDOWN_RENDER_DEMO_NAME)
+                Label::new("Rich documents")
                     .style(dev_text_style(
                         theme_reader(),
                         theme_reader().text._2xl,
@@ -610,9 +300,16 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
                     ))
                     .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
             )
+            .with_child(
+                Label::new("")
+                    .text_from(activity)
+                    .color_when(dev_theme_color(&theme_reader, |theme| {
+                        theme.palette.text_muted
+                    })),
+            )
             .with_child(MarkdownPanelSplit::new(
-                markdown_panel("Source", source, Rc::clone(&theme_reader)),
-                markdown_panel("Rendered", rendered, Rc::clone(&theme_reader)),
+                markdown_panel("Markdown source", source, Rc::clone(&theme_reader)),
+                markdown_panel("RichDocumentView", rendered, Rc::clone(&theme_reader)),
             )),
     ))
     .name(MARKDOWN_RENDER_SCROLL_NAME)
@@ -779,29 +476,10 @@ where
     }))
 }
 
-fn heading_index(level: HeadingLevel) -> usize {
-    match level {
-        HeadingLevel::H1 => 0,
-        HeadingLevel::H2 => 1,
-        HeadingLevel::H3 => 2,
-        HeadingLevel::H4 => 3,
-        HeadingLevel::H5 => 4,
-        HeadingLevel::H6 => 5,
-    }
-}
-
-fn source_text_style(theme: DefaultTheme) -> TextStyle {
-    let mut style = theme.body_text_style();
-    style.font_size = 13.0;
-    style.line_height = 18.0;
-    style.color = theme.palette.text_muted;
-    style
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sui::{RenderOutput, SemanticsRole, SemanticsValue};
+    use sui::{RenderOutput, SemanticsRole};
     use sui_scene::SceneCommand;
 
     fn render_markdown_demo(width: f32) -> RenderOutput {
@@ -809,7 +487,7 @@ mod tests {
     }
 
     fn render_markdown_demo_with_theme(width: f32, theme: DefaultTheme) -> RenderOutput {
-        render_markdown_demo_with_size(width, 900.0, theme)
+        render_markdown_demo_with_size(width, 1100.0, theme)
     }
 
     fn render_markdown_demo_with_size(
@@ -823,13 +501,17 @@ mod tests {
             .height(height)
             .with_child(build_markdown_render_demo_with_theme(theme_reader));
         let mut runtime = Application::new()
-            .window(WindowBuilder::new().title("Markdown layout").root(root))
+            .window(
+                WindowBuilder::new()
+                    .title("Rich document layout")
+                    .root(root),
+            )
             .build()
-            .expect("markdown demo runtime should build");
+            .expect("rich document demo runtime should build");
         let window_id = runtime.window_ids()[0];
         runtime
             .render(window_id)
-            .expect("markdown demo should render")
+            .expect("rich document demo should render")
     }
 
     fn source_editor_bounds(output: &RenderOutput) -> Rect {
@@ -844,21 +526,20 @@ mod tests {
             .bounds
     }
 
-    fn rendered_markdown_bounds(output: &RenderOutput) -> Rect {
+    fn rendered_document_bounds(output: &RenderOutput) -> Rect {
         output
             .semantics
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Text
+                node.role == SemanticsRole::GenericContainer
                     && node.name.as_deref() == Some(MARKDOWN_RENDER_DEMO_NAME)
-                    && matches!(node.value, Some(SemanticsValue::Text(_)))
             })
-            .expect("rendered markdown semantics present")
+            .expect("rich document region semantics present")
             .bounds
     }
 
-    fn rendered_markdown_text_layout_width(output: &RenderOutput) -> f32 {
-        let rendered = rendered_markdown_bounds(output);
+    fn rendered_text_layout_width(output: &RenderOutput) -> f32 {
+        let rendered = rendered_document_bounds(output);
         let mut width = None;
 
         output.frame.scene.visit_commands(&mut |command| {
@@ -877,102 +558,94 @@ mod tests {
             let Some(layout) = text.resolve(output.frame.text_layout_registry.as_ref()) else {
                 return;
             };
-            if layout
-                .text()
-                .contains("The markdown renderer is intentionally small")
-            {
+            if layout.text().contains("keeps this document incremental") {
                 width = Some(layout.measurement().width);
             }
         });
 
-        width.expect("rendered markdown text layout should be present")
+        width.expect("rich document text layout should be present")
+    }
+
+    fn snapshot_text(snapshot: &RichDocumentSnapshot) -> String {
+        snapshot
+            .blocks
+            .iter()
+            .map(RichDocumentBlock::plain_text)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
-    fn markdown_to_document_styles_headings_and_inline_spans() {
-        let document = markdown_to_document(
-            "# Title\n\nBody with **strong**, _emphasis_, `code`, and [link](https://example.invalid).",
-            DefaultTheme::default(),
-        );
+    fn rich_document_demo_uses_markdown_and_structured_blocks() {
+        let snapshot = MarkdownDemoState::new().rendered_snapshot();
 
-        assert!(document.paragraphs.len() >= 3);
-        assert_eq!(document.paragraphs[0].text(), "Title");
         assert!(
-            document.paragraphs[0].spans[0].style.font_size
-                > document.paragraphs[2].spans[0].style.font_size
-        );
-        let body_spans = &document.paragraphs[2].spans;
-        assert!(
-            body_spans
+            snapshot
+                .blocks
                 .iter()
-                .any(|span| span.text == "strong" && span.style.weight == FontWeight::BOLD)
+                .any(|block| matches!(block.kind, RichDocumentBlockKind::CodeBlock { .. }))
         );
         assert!(
-            body_spans
+            snapshot
+                .blocks
                 .iter()
-                .any(|span| span.text == "emphasis" && span.style.style == FontStyle::Italic)
+                .any(|block| matches!(block.kind, RichDocumentBlockKind::Attachment(_)))
         );
         assert!(
-            body_spans
+            snapshot
+                .blocks
                 .iter()
-                .any(|span| span.text == "code" && span.style.weight == FontWeight::SEMIBOLD)
+                .any(|block| matches!(block.kind, RichDocumentBlockKind::Extension(_)))
         );
-        assert!(body_spans.iter().any(|span| span.text == "link"
-            && span.style.color == DefaultTheme::default().palette.accent));
-    }
-
-    #[test]
-    fn markdown_to_document_preserves_ordered_list_markers() {
-        let document = markdown_to_document("1. Parse\n2. Render", DefaultTheme::default());
-        let text = document.plain_text();
-
-        assert!(text.contains("1. Parse"));
-        assert!(text.contains("2. Render"));
     }
 
     #[test]
     fn markdown_state_holds_preview_until_dirty_render_applies() {
-        let state = MarkdownDemoState::new(DefaultTheme::default());
+        let state = MarkdownDemoState::new();
         state.set_source("# First edit".to_string());
         state.set_source("# Final edit".to_string());
 
         assert!(state.is_dirty());
-        assert!(
-            state
-                .rendered_document()
-                .plain_text()
-                .contains("SUI rich text report")
-        );
+        assert!(snapshot_text(&state.rendered_snapshot()).contains("SUI rich document report"));
 
-        assert!(state.apply_pending_render(DefaultTheme::default()));
+        assert!(state.apply_pending_render());
         assert!(!state.is_dirty());
-        assert_eq!(state.rendered_document().paragraphs[0].text(), "Final edit");
-        assert!(!state.apply_pending_render(DefaultTheme::default()));
+        assert!(snapshot_text(&state.rendered_snapshot()).contains("Final edit"));
+        assert!(!state.apply_pending_render());
     }
 
     #[test]
-    fn markdown_state_rethemes_last_rendered_source_without_flushing_dirty_edit() {
-        let state = MarkdownDemoState::new(DefaultTheme::default());
-        state.set_source("# Dirty edit".to_string());
+    fn markdown_state_retains_structured_blocks_across_source_edits() {
+        let state = MarkdownDemoState::new();
+        let before = state.rendered_snapshot();
+        let structured_ids = before
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    block.kind,
+                    RichDocumentBlockKind::Attachment(_) | RichDocumentBlockKind::Extension(_)
+                )
+            })
+            .map(|block| block.id)
+            .collect::<Vec<_>>();
 
-        let dark_document = state.rendered_document_for_theme(DefaultTheme::dark());
+        state.set_source("# Replaced Markdown".to_string());
+        assert!(state.apply_pending_render());
+        let after = state.rendered_snapshot();
+        let retained_ids = after
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    block.kind,
+                    RichDocumentBlockKind::Attachment(_) | RichDocumentBlockKind::Extension(_)
+                )
+            })
+            .map(|block| block.id)
+            .collect::<Vec<_>>();
 
-        assert!(
-            dark_document.plain_text().contains("SUI rich text report"),
-            "dirty source should not be rendered early when only the theme changes"
-        );
-        assert_eq!(
-            dark_document.paragraphs[0].spans[0].style.color,
-            DefaultTheme::dark().palette.text
-        );
-
-        assert!(state.apply_pending_render(DefaultTheme::dark()));
-        let rendered = state.rendered_document();
-        assert_eq!(rendered.paragraphs[0].text(), "Dirty edit");
-        assert_eq!(
-            rendered.paragraphs[0].spans[0].style.color,
-            DefaultTheme::dark().palette.text
-        );
+        assert_eq!(retained_ids, structured_ids);
     }
 
     #[test]
@@ -986,7 +659,7 @@ mod tests {
                 node.role == SemanticsRole::Slider
                     && node.name.as_deref() == Some(MARKDOWN_RENDER_SCROLL_BAR_NAME)
             })
-            .expect("markdown scroll bar semantics present");
+            .expect("rich document scroll bar semantics present");
 
         assert_eq!(
             scroll_bar.bounds.width(),
@@ -998,7 +671,7 @@ mod tests {
     fn markdown_demo_panels_split_evenly_when_side_by_side() {
         let output = render_markdown_demo(900.0);
         let source = source_editor_bounds(&output);
-        let rendered = rendered_markdown_bounds(&output);
+        let rendered = rendered_document_bounds(&output);
 
         assert!(
             (source.width() - rendered.width()).abs() <= 1.0,
@@ -1014,7 +687,7 @@ mod tests {
     fn markdown_demo_wrapped_panels_fill_available_width() {
         let output = render_markdown_demo(620.0);
         let source = source_editor_bounds(&output);
-        let rendered = rendered_markdown_bounds(&output);
+        let rendered = rendered_document_bounds(&output);
 
         assert!(
             source.y() < rendered.y(),
@@ -1031,15 +704,14 @@ mod tests {
     }
 
     #[test]
-    fn markdown_rendered_text_wraps_to_render_panel_width() {
+    fn rich_document_text_wraps_to_render_panel_width() {
         let output = render_markdown_demo(620.0);
-        let rendered = rendered_markdown_bounds(&output);
-        let layout_width = rendered_markdown_text_layout_width(&output);
-        let content_width = (rendered.width() - 32.0).max(0.0);
+        let rendered = rendered_document_bounds(&output);
+        let layout_width = rendered_text_layout_width(&output);
 
         assert!(
-            layout_width <= content_width + 2.0,
-            "rendered markdown text should wrap within the rich text content width: layout_width={layout_width}, content_width={content_width}, rendered={rendered:?}"
+            layout_width <= rendered.width() + 2.0,
+            "rich document text should wrap within its panel: layout_width={layout_width}, rendered={rendered:?}"
         );
     }
 }

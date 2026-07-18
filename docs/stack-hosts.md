@@ -18,6 +18,7 @@ The implemented behavior is:
 - stack surfaces are widget subtrees that participate in host-local z order
 - popup-like surfaces resolve to the nearest host when active
 - transient popups track an owning surface
+- window overlay managers coordinate dismissal, focus, nesting, and modality
 - runtime graph hit testing uses input bounds, not only layout bounds
 - scene layer descriptors carry host and ordering metadata
 - ordering-only updates can be emitted without forcing content repaint
@@ -49,6 +50,12 @@ Each surface resolves to one nearest host and one resolved surface identity in t
 ### Transient popup ownership
 
 Active popup-like widgets mark themselves as transient stack surfaces. The runtime records the owning surface for transient surfaces so ordering and diagnostics preserve popup-to-owner relationship.
+
+Popup lifecycle is coordinated by the presentation root's overlay manager. Overlay
+declarations carry their kind, modality, dismissal policy, focus behavior, and
+parent relationship. Windows provide a manager automatically; use `OverlayHost`
+when an embedded viewport or workspace region needs an independent stacking
+host. Focus and dismissal still remain coordinated by the containing window.
 
 ## Geometry Contract
 
@@ -193,14 +200,15 @@ Recommended targeted runs:
 
 - Stack host clipping policy is still conservative and widget-specific; there is no full generalized clip policy API yet.
 - Composition modes remain renderer hints and are still used by some widget behavior, but ordering semantics should come from stack metadata.
-- Popup lifecycle policy is currently local to each popup-style widget; ownership metadata is available for tighter centralized policies in future changes.
+- Platform child-window overlays are intentionally outside this retained stack model; platform dialogs and drag/drop enter through the platform services instead.
 
 ## Where To Work
 
 - stack graph membership and ordering: `sinomo-ui-runtime`
 - scene descriptor and update metadata: `sinomo-ui-scene` and `sinomo-ui-runtime`
 - retained compositor update handling: `sinomo-ui-render-wgpu`
-- popup and floating widgets: `sinomo-ui-widgets`
+- overlay lifecycle and tracing: `sinomo-ui-runtime`
+- popup, overlay-host, and floating widgets: `sinomo-ui-widgets`
 - debug panels and inspection widgets: `sinomo-ui-debug`
 
 This document should be treated as implementation guidance for current code paths, not as a speculative design note.

@@ -29,8 +29,8 @@ that keeps application code on the narrowest and most stable surface.
 6. [Input and text editing](input-and-editing.md) covers editable fields,
    selection, clipboard commands, IME, form state, and security boundaries.
 7. [State, events, and background work](state-events-and-async.md) explains
-   retained local state, external reader/callback state, invalidation, timers,
-   animation frames, and `UiHandle`.
+   retained local state, dependency-tracked signals, typed command routing,
+   invalidation, timers, animation frames, and `UiHandle`.
 8. [Themes and resources](themes-and-resources.md) shows static and live
    themes, control sizing, typed theme extensions, fonts, images, and icons.
 9. [Custom widgets](custom-widgets.md) walks through the `Widget` lifecycle,
@@ -50,6 +50,7 @@ that keeps application code on the narrowest and most stable surface.
 | Test or embed without an event loop | `App::build` | `Runtime` and `HeadlessPlatform` |
 | Custom drawing or interaction | Implement `Widget` | Scene and text types re-exported by `sui` |
 | Custom platform integration | `Application`, `WindowBuilder` | `Runtime` and platform crates |
+| Live application inspection | `Runtime::inspector_snapshot` | `sinomo-ui-debug` live/snapshot views |
 | UI automation | `sinomo-ui-testing` | Direct normalized event dispatch |
 
 `App` is the recommended application builder. `Application`, `Runtime`, and
@@ -64,7 +65,7 @@ Alias the dependency as `sui` and import the prelude:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
+sui = { package = "sinomo-ui", version = "0.2" }
 ```
 
 ```rust,no_run

@@ -8,26 +8,24 @@ testing, and native Python and Node/Electron bindings in one workspace.
 
 **[Open the SUI widget book in your browser →](https://sinomo-lab.github.io/sui/)**
 
-Explore SUI's widgets, themes, text editing, canvas and media surfaces, and
-retained `wgpu` renderer in a WebGPU-capable browser. No installation is
-required.
+Explore SUI's widgets, reactive state, virtual collections, rich documents,
+adaptive workspaces, managed overlays, text editing, canvas and media
+surfaces, and retained `wgpu` renderer in a WebGPU-capable browser. No
+installation is required.
 
-> **Release status:** SUI is pre-release software. The Rust desktop API and
-> testing stack are usable today, while browser, mobile, Python, JavaScript,
-> and native HDR support have the limitations listed below. The crates and
-> language packages have not been published yet, so API and package names may
-> still change before the first stable release.
+> **Release status:** SUI is pre-1.0 software. The Rust crates, desktop API,
+> and testing stack are available today, while browser, mobile, Python,
+> JavaScript, and native HDR support have the limitations listed below. The
+> Rust API may continue to evolve during the `0.x` series.
 
 ## Quick start
 
 SUI requires Rust 1.90 or newer and the system libraries normally needed by
 `winit` and `wgpu` on your platform.
 
-Until the first crates.io release, add the repository dependency:
-
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", git = "https://github.com/sinomo-lab/sui" }
+sui = { package = "sinomo-ui", version = "0.2" }
 ```
 
 The package is named `sinomo-ui` because the `sui` registry namespace is
@@ -68,6 +66,11 @@ then build an editable [stateful form](https://github.com/sinomo-lab/sui/blob/ma
   incremental updates, selection, anchoring, and retained row state.
 - Thread-safe typed widget/window/application commands, lifecycle-owned
   controllers and subscriptions, application multicast, and routing traces.
+- Managed overlays, adaptive workspace policies, safe-area and intrinsic
+  layout, and focus-preserving responsive navigation.
+- A live renderer-neutral application inspector for semantics, widget IDs,
+  event routes, rebuild reasons, invalidations, schedulers, collections, and
+  paint damage.
 - A renderer-neutral scene representation and retained `wgpu` compositor.
 - AccessKit-backed accessibility plus an accessibility-tree generated TUI.
 - Headless automation, semantic locators, screenshots, and visual artifact
@@ -101,6 +104,7 @@ and broader Linux native-HDR integration remain roadmap work.
 | Hello | `cargo run -p sinomo-ui --example hello` | Minimal application and window |
 | Quickstart | `cargo run -p sinomo-ui --example quickstart` | Layout, theming, and callbacks |
 | Rich document | `cargo run -p sinomo-ui --example rich_document` | Markdown, code, selection, and structured blocks |
+| Typed commands | `cargo run -p sinomo-ui --example commands` | Window/application routing, multicast, controllers, and signals |
 | Stateful form | `cargo run -p sinomo-ui --example stateful_form` | External state and editable inputs |
 | Widget book | `cargo run -p sinomo-ui-demo` | Built-in widgets, themes, renderer settings, and demos |
 | TUI | `cargo run -p sinomo-ui-demo -- --tui` | Keyboard-driven semantic-tree interface |
@@ -132,6 +136,8 @@ reference, internals, and active roadmap work.
   form step by step.
 - [API guide](https://github.com/sinomo-lab/sui/blob/main/docs/api/README.md) — application lifecycle, widgets, layout,
   inputs, resources, custom widgets, testing, and accessibility.
+- [Overlays and desktop interaction](https://github.com/sinomo-lab/sui/blob/main/docs/api/overlays-and-desktop.md) — managed
+  dialogs, menus, sheets, notifications, file dialogs, and drag/drop.
 - [Examples](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md) — runnable Rust, Python, and JavaScript samples.
 - [Testing](https://github.com/sinomo-lab/sui/blob/main/docs/testing.md) — semantic automation, screenshots, and artifacts.
 - [TUI](https://github.com/sinomo-lab/sui/blob/main/docs/tui.md) — run and embed the accessibility-generated terminal UI.

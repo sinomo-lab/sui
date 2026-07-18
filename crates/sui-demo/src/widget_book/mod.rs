@@ -4995,10 +4995,10 @@ fn build_text_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) ->
         panel_with_theme(
             Rc::clone(&theme_reader),
             TEXT_WIDGETS_GALLERY_NAME,
-            "Text widgets cover labels, links, rich text, text input aliases, and separator aliases.",
-            Stack::horizontal()
+            "Text widgets cover labels, links, retained rich documents, text input aliases, and separator aliases.",
+            Stack::vertical()
                 .spacing(14.0)
-                .alignment(Alignment::Start)
+                .alignment(Alignment::Stretch)
                 .with_child(control_story_with_theme(
                     Rc::clone(&theme_reader),
                     "Rich text and links",
@@ -5021,6 +5021,37 @@ fn build_text_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReader) ->
                                 .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                         ),
                 ))
+                .with_child({
+                    let document = RichDocumentModel::from_markdown(
+                        r#"## Retained rich document
+
+Select across blocks, activate the [application link](https://example.invalid/sui), or copy the highlighted code.
+
+```rust
+document.append_markdown("incremental tail");
+```
+"#,
+                    );
+                    let mut operation =
+                        RichExtensionBlock::new("operation-log", "Indexed workspace");
+                    operation.status = RichDocumentStatus::Success;
+                    operation.summary = Some("2,000 keyed rows ready".into());
+                    operation.body = "documents  184\nassets      37\nerrors       0".into();
+                    document.append_extension(operation);
+
+                    control_story_with_theme(
+                        Rc::clone(&theme_reader),
+                        "Rich document",
+                        "RichDocumentView retains Markdown blocks, selection, code actions, and extensible structured results.",
+                        SizedBox::new().width(680.0).height(330.0).with_child(
+                            ScrollView::vertical(
+                                RichDocumentView::new(document).theme(theme_reader()),
+                            )
+                            .retain_content_layer()
+                            .theme(theme_reader()),
+                        ),
+                    )
+                })
                 .with_child(control_story_with_theme(
                     Rc::clone(&theme_reader),
                     "Public aliases",

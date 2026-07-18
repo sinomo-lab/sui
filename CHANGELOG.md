@@ -4,6 +4,40 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [0.2.0]
+
+This release expands SUI from a retained widget and rendering foundation into
+a fuller application toolkit while keeping the facade renderer-neutral.
+
+### Highlights
+
+- Added dependency-tracked `Signal<T>` bindings, observable selectors,
+  keyed subtree reconciliation, automatic pass invalidation, retained local
+  state, and rebuild diagnostics.
+- Added the `VirtualCollection` foundation and keyed `VirtualList`, windowed
+  collection models, variable-height extents, anchoring, follow-end behavior,
+  selection, keyboard navigation, row retention, and virtual table state.
+- Added `RichDocumentModel` and `RichDocumentView` with incremental streaming
+  Markdown, selection across blocks, code actions and highlighting, links,
+  images, attachments, extensible structured blocks, cached layouts, and rich
+  accessibility semantics.
+- Added typed widget, window, and application command routing, lifecycle-owned
+  controllers and subscriptions, scheduler-only wakes, application multicast,
+  and command/invalidation traces.
+- Added window-managed overlay policy for dialogs, popovers, menus, tooltips,
+  command palettes, notifications, drawers, and bottom sheets, including
+  collision-aware placement, nesting, modality, dismissal, and focus restore.
+- Added resizable split state, responsive sidebars, master-detail navigation,
+  adaptive views, container queries, grid, intrinsic content extents, wrapping
+  toolbars, aspect ratio, safe areas, and retained layout transitions.
+- Added a live application inspector covering semantics and accessibility,
+  stable widget IDs and bounds, event routes, rebuild and invalidation reasons,
+  scheduler work, virtual collection statistics, and paint damage.
+- Reduced widget-construction and retained text-layout overhead, refreshed
+  dependencies, and made overlay scroll bars compact until pointer hover.
+- Corrected Android window and `wgpu::Surface` creation to follow
+  `Resumed`/`Suspended`, retaining the runtime while native surfaces are absent.
+
 ## [0.1.0]
 
 Initial public alpha release of the Rust workspace.
@@ -40,3 +74,4 @@ Initial public alpha release of the Rust workspace.
   published or supported release surfaces.
 
 [0.1.0]: https://github.com/sinomo-lab/sui/releases/tag/v0.1.0
+[0.2.0]: https://github.com/sinomo-lab/sui/compare/v0.1.0...v0.2.0
