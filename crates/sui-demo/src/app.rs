@@ -423,7 +423,44 @@ struct DevDemo {
     description: &'static str,
     icon: IconGlyph,
     accent: Color,
-    child: WidgetPod,
+    child: Option<WidgetPod>,
+    build_child: Option<Box<dyn FnOnce() -> WidgetPod>>,
+}
+
+impl DevDemo {
+    fn lazy<W, F>(
+        title: &'static str,
+        description: &'static str,
+        icon: IconGlyph,
+        accent: Color,
+        build_child: F,
+    ) -> Self
+    where
+        W: Widget + 'static,
+        F: FnOnce() -> W + 'static,
+    {
+        Self {
+            title,
+            description,
+            icon,
+            accent,
+            child: None,
+            build_child: Some(Box::new(move || WidgetPod::new(build_child()))),
+        }
+    }
+
+    fn ensure_child(&mut self) -> &mut WidgetPod {
+        if self.child.is_none() {
+            let build_child = self
+                .build_child
+                .take()
+                .expect("unbuilt dev demo should retain its widget factory");
+            self.child = Some(build_child());
+        }
+        self.child
+            .as_mut()
+            .expect("dev demo child should exist after construction")
+    }
 }
 
 struct DevBrowserShell {
@@ -981,7 +1018,9 @@ impl Widget for DevBrowserShell {
             let grid = Self::picker_grid_rect(content);
             self.picker.measure(ctx, Constraints::tight(grid.size));
         } else if let Some(active) = self.state.active_tab() {
-            self.demos[active].child.measure(ctx, content_constraints);
+            self.demos[active]
+                .ensure_child()
+                .measure(ctx, content_constraints);
         }
 
         if self.state.settings_visible() {
@@ -1025,7 +1064,10 @@ impl Widget for DevBrowserShell {
             self.picker.arrange(ctx, Rect::ZERO);
             for (index, demo) in self.demos.iter_mut().enumerate() {
                 if self.state.active_tab() == Some(index) {
-                    demo.child.arrange(ctx, self.content_bounds);
+                    demo.child
+                        .as_mut()
+                        .expect("active dev demo should be built during measurement")
+                        .arrange(ctx, self.content_bounds);
                 }
             }
         }
@@ -1045,7 +1087,11 @@ impl Widget for DevBrowserShell {
             self.paint_picker(ctx, &theme);
             self.picker.paint(ctx);
         } else if let Some(active) = self.state.active_tab() {
-            self.demos[active].child.paint(ctx);
+            self.demos[active]
+                .child
+                .as_ref()
+                .expect("active dev demo should be built during measurement")
+                .paint(ctx);
         }
 
         self.paint_toolbar(ctx, &theme);
@@ -1080,8 +1126,10 @@ impl Widget for DevBrowserShell {
         self.theme_toggle.semantics(ctx);
         if self.state.picker_visible() {
             self.picker.semantics(ctx);
-        } else if let Some(active) = self.state.active_tab() {
-            self.demos[active].child.semantics(ctx);
+        } else if let Some(active) = self.state.active_tab()
+            && let Some(child) = self.demos[active].child.as_ref()
+        {
+            child.semantics(ctx);
         }
         self.settings_window.semantics(ctx);
         self.main_menu.semantics(ctx);
@@ -1097,8 +1145,10 @@ impl Widget for DevBrowserShell {
         self.tab_scroll_forward.visit_children(visitor);
         if self.state.picker_visible() {
             self.picker.visit_children(visitor);
-        } else if let Some(active) = self.state.active_tab() {
-            visitor.visit(&self.demos[active].child);
+        } else if let Some(active) = self.state.active_tab()
+            && let Some(child) = self.demos[active].child.as_ref()
+        {
+            visitor.visit(child);
         }
         self.plus_button.visit_children(visitor);
         self.theme_toggle.visit_children(visitor);
@@ -1114,8 +1164,10 @@ impl Widget for DevBrowserShell {
         self.tab_scroll_forward.visit_children_mut(visitor);
         if self.state.picker_visible() {
             self.picker.visit_children_mut(visitor);
-        } else if let Some(active) = self.state.active_tab() {
-            visitor.visit(&mut self.demos[active].child);
+        } else if let Some(active) = self.state.active_tab()
+            && let Some(child) = self.demos[active].child.as_mut()
+        {
+            visitor.visit(child);
         }
         self.plus_button.visit_children_mut(visitor);
         self.theme_toggle.visit_children_mut(visitor);
@@ -1754,134 +1806,121 @@ fn build_dev_demo_entries(
     theme_reader: DevThemeReader,
     command_demo_state: CommandDemoState,
 ) -> Vec<DevDemo> {
+    macro_rules! themed_demo {
+        ($title:expr, $description:expr, $icon:expr, $accent:expr, |$theme:ident| $child:expr) => {{
+            let $theme = Rc::clone(&theme_reader);
+            DevDemo::lazy($title, $description, $icon, $accent, move || $child)
+        }};
+    }
+
     vec![
-        DevDemo {
-            title: WIDGET_BOOK_TAB_LABEL,
-            description: "Catalog of controls, containers, media, and text surfaces.",
-            icon: IconGlyph::MoreHorizontal,
-            accent: Color::rgba(0.16, 0.48, 0.86, 1.0),
-            child: WidgetPod::new(build_widget_book_gallery_with_theme(
-                default_widget_book_state(),
-                Rc::clone(&theme_reader),
-            )),
-        },
-        DevDemo {
-            title: THEMES_TAB_LABEL,
-            description: "Theme previews and HDR theme mode comparisons.",
-            icon: IconGlyph::PaintBucket,
-            accent: Color::rgba(0.62, 0.28, 0.78, 1.0),
-            child: WidgetPod::new(build_theme_demo_surface_with_theme(
-                default_widget_book_state(),
-                Rc::clone(&theme_reader),
-            )),
-        },
-        DevDemo {
-            title: THEME_EDITOR_TAB_LABEL,
-            description: "Edit foundational theme tokens and preview every change in real time.",
-            icon: IconGlyph::PaintBucket,
-            accent: Color::rgba(0.18, 0.54, 0.66, 1.0),
-            child: WidgetPod::new(build_theme_editor_demo_with_theme(Rc::clone(&theme_reader))),
-        },
-        DevDemo {
-            title: ANIMATION_DEMO_TAB_LABEL,
-            description: "Timeline playback, retained layer, repaint, editor, and overlay examples.",
-            icon: IconGlyph::Sparkles,
-            accent: Color::rgba(0.18, 0.58, 0.74, 1.0),
-            child: WidgetPod::new(build_animation_demo_with_theme(Rc::clone(&theme_reader))),
-        },
-        DevDemo {
-            title: RETAINED_TEXT_TAB_LABEL,
-            description: "Retained text layout and redraw benchmark.",
-            icon: IconGlyph::Search,
-            accent: Color::rgba(0.75, 0.42, 0.12, 1.0),
-            child: WidgetPod::new(build_retained_text_benchmark_with_theme(Rc::clone(
-                &theme_reader,
-            ))),
-        },
-        DevDemo {
-            title: TEXT_RENDERING_COMPARISON_TAB_LABEL,
-            description: "Side-by-side text rendering comparison surface.",
-            icon: IconGlyph::FitView,
-            accent: Color::rgba(0.20, 0.50, 0.62, 1.0),
-            child: WidgetPod::new(build_text_rendering_comparison_surface_with_theme(
-                Rc::clone(&theme_reader),
-            )),
-        },
-        DevDemo {
-            title: TEXT_VALIDATION_TAB_LABEL,
-            description: "Validation surface for text metrics, alignment, and rasterization.",
-            icon: IconGlyph::ActualSize,
-            accent: Color::rgba(0.68, 0.26, 0.32, 1.0),
-            child: WidgetPod::new(build_text_validation_surface_with_theme(Rc::clone(
-                &theme_reader,
-            ))),
-        },
-        DevDemo {
-            title: TEXT_EDITING_TAB_LABEL,
-            description: "Single-line and multi-line text editing demos.",
-            icon: IconGlyph::Restore,
-            accent: Color::rgba(0.35, 0.38, 0.82, 1.0),
-            child: WidgetPod::new(build_text_editing_benchmark_with_theme(Rc::clone(
-                &theme_reader,
-            ))),
-        },
-        DevDemo {
-            title: MARKDOWN_RENDER_TAB_LABEL,
-            description: "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
-            icon: IconGlyph::File,
-            accent: Color::rgba(0.12, 0.48, 0.70, 1.0),
-            child: WidgetPod::new(build_markdown_render_demo_with_theme(Rc::clone(
-                &theme_reader,
-            ))),
-        },
-        DevDemo {
-            title: HDR_VALIDATION_TAB_LABEL,
-            description: "HDR, color-management, and tone-mapping validation surface.",
-            icon: IconGlyph::Maximize,
-            accent: Color::rgba(0.82, 0.52, 0.10, 1.0),
-            child: WidgetPod::new(build_color_validation_surface_with_theme(Rc::clone(
-                &theme_reader,
-            ))),
-        },
-        DevDemo {
-            title: LAYOUT_TAB_LABEL,
-            description: "Grid, intrinsic sizing, container queries, resizable panes, adaptive workspaces, and safe areas.",
-            icon: IconGlyph::Maximize,
-            accent: Color::rgba(0.08, 0.58, 0.42, 1.0),
-            child: WidgetPod::new(build_layout_demo_with_theme(Rc::clone(&theme_reader))),
-        },
-        DevDemo {
-            title: DRAG_DROP_TAB_LABEL,
-            description: "Internal drag-and-drop payloads, targets, scopes, and preview overlay.",
-            icon: IconGlyph::Send,
-            accent: Color::rgba(0.20, 0.48, 0.78, 1.0),
-            child: WidgetPod::new(build_drag_drop_demo_with_theme(Rc::clone(&theme_reader))),
-        },
-        DevDemo {
-            title: PAINT_TAB_LABEL,
-            description: "Pixel canvas painting workspace with editor-style panels.",
-            icon: IconGlyph::Brush,
-            accent: Color::rgba(0.80, 0.22, 0.44, 1.0),
-            child: WidgetPod::new(build_paint_demo_with_theme(Rc::clone(&theme_reader))),
-        },
-        DevDemo {
-            title: VECTOR_EDITOR_TAB_LABEL,
-            description: "Vector canvas drawing and editing demo.",
-            icon: IconGlyph::ChevronRight,
-            accent: Color::rgba(0.12, 0.56, 0.76, 1.0),
-            child: WidgetPod::new(build_vector_editor_demo_with_theme(Rc::clone(
-                &theme_reader,
-            ))),
-        },
-        DevDemo {
-            title: COMMAND_DEMO_TAB_LABEL,
-            description: "Typed window and application commands, multicast, worker delivery, and controller wakes.",
-            icon: IconGlyph::Send,
-            accent: Color::rgba(0.16, 0.52, 0.72, 1.0),
-            child: WidgetPod::new(build_command_demo_with_theme(
-                command_demo_state,
-                theme_reader,
-            )),
+        themed_demo!(
+            WIDGET_BOOK_TAB_LABEL,
+            "Catalog of controls, containers, media, and text surfaces.",
+            IconGlyph::MoreHorizontal,
+            Color::rgba(0.16, 0.48, 0.86, 1.0),
+            |theme| build_widget_book_gallery_with_theme(default_widget_book_state(), theme)
+        ),
+        themed_demo!(
+            THEMES_TAB_LABEL,
+            "Theme previews and HDR theme mode comparisons.",
+            IconGlyph::PaintBucket,
+            Color::rgba(0.62, 0.28, 0.78, 1.0),
+            |theme| build_theme_demo_surface_with_theme(default_widget_book_state(), theme)
+        ),
+        themed_demo!(
+            THEME_EDITOR_TAB_LABEL,
+            "Edit foundational theme tokens and preview every change in real time.",
+            IconGlyph::PaintBucket,
+            Color::rgba(0.18, 0.54, 0.66, 1.0),
+            |theme| build_theme_editor_demo_with_theme(theme)
+        ),
+        themed_demo!(
+            ANIMATION_DEMO_TAB_LABEL,
+            "Timeline playback, retained layer, repaint, editor, and overlay examples.",
+            IconGlyph::Sparkles,
+            Color::rgba(0.18, 0.58, 0.74, 1.0),
+            |theme| build_animation_demo_with_theme(theme)
+        ),
+        themed_demo!(
+            RETAINED_TEXT_TAB_LABEL,
+            "Retained text layout and redraw benchmark.",
+            IconGlyph::Search,
+            Color::rgba(0.75, 0.42, 0.12, 1.0),
+            |theme| build_retained_text_benchmark_with_theme(theme)
+        ),
+        themed_demo!(
+            TEXT_RENDERING_COMPARISON_TAB_LABEL,
+            "Side-by-side text rendering comparison surface.",
+            IconGlyph::FitView,
+            Color::rgba(0.20, 0.50, 0.62, 1.0),
+            |theme| build_text_rendering_comparison_surface_with_theme(theme)
+        ),
+        themed_demo!(
+            TEXT_VALIDATION_TAB_LABEL,
+            "Validation surface for text metrics, alignment, and rasterization.",
+            IconGlyph::ActualSize,
+            Color::rgba(0.68, 0.26, 0.32, 1.0),
+            |theme| build_text_validation_surface_with_theme(theme)
+        ),
+        themed_demo!(
+            TEXT_EDITING_TAB_LABEL,
+            "Single-line and multi-line text editing demos.",
+            IconGlyph::Restore,
+            Color::rgba(0.35, 0.38, 0.82, 1.0),
+            |theme| build_text_editing_benchmark_with_theme(theme)
+        ),
+        themed_demo!(
+            MARKDOWN_RENDER_TAB_LABEL,
+            "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
+            IconGlyph::File,
+            Color::rgba(0.12, 0.48, 0.70, 1.0),
+            |theme| build_markdown_render_demo_with_theme(theme)
+        ),
+        themed_demo!(
+            HDR_VALIDATION_TAB_LABEL,
+            "HDR, color-management, and tone-mapping validation surface.",
+            IconGlyph::Maximize,
+            Color::rgba(0.82, 0.52, 0.10, 1.0),
+            |theme| build_color_validation_surface_with_theme(theme)
+        ),
+        themed_demo!(
+            LAYOUT_TAB_LABEL,
+            "Grid, intrinsic sizing, container queries, resizable panes, adaptive workspaces, and safe areas.",
+            IconGlyph::Maximize,
+            Color::rgba(0.08, 0.58, 0.42, 1.0),
+            |theme| build_layout_demo_with_theme(theme)
+        ),
+        themed_demo!(
+            DRAG_DROP_TAB_LABEL,
+            "Internal drag-and-drop payloads, targets, scopes, and preview overlay.",
+            IconGlyph::Send,
+            Color::rgba(0.20, 0.48, 0.78, 1.0),
+            |theme| build_drag_drop_demo_with_theme(theme)
+        ),
+        themed_demo!(
+            PAINT_TAB_LABEL,
+            "Pixel canvas painting workspace with editor-style panels.",
+            IconGlyph::Brush,
+            Color::rgba(0.80, 0.22, 0.44, 1.0),
+            |theme| build_paint_demo_with_theme(theme)
+        ),
+        themed_demo!(
+            VECTOR_EDITOR_TAB_LABEL,
+            "Vector canvas drawing and editing demo.",
+            IconGlyph::ChevronRight,
+            Color::rgba(0.12, 0.56, 0.76, 1.0),
+            |theme| build_vector_editor_demo_with_theme(theme)
+        ),
+        {
+            let theme = Rc::clone(&theme_reader);
+            DevDemo::lazy(
+                COMMAND_DEMO_TAB_LABEL,
+                "Typed window and application commands, multicast, worker delivery, and controller wakes.",
+                IconGlyph::Send,
+                Color::rgba(0.16, 0.52, 0.72, 1.0),
+                move || build_command_demo_with_theme(command_demo_state, theme),
+            )
         },
     ]
 }
@@ -3198,6 +3237,29 @@ mod tests {
     };
 
     const FRONTING_TEST_TITLE: &str = "Fronting test";
+
+    #[test]
+    fn dev_demo_builds_its_widget_once_on_first_use() {
+        let build_count = Rc::new(Cell::new(0));
+        let factory_count = Rc::clone(&build_count);
+        let mut demo = DevDemo::lazy(
+            "Lazy demo",
+            "Test lazy demo construction",
+            IconGlyph::Add,
+            Color::BLACK,
+            move || {
+                factory_count.set(factory_count.get() + 1);
+                Label::new("Lazy content")
+            },
+        );
+
+        assert!(demo.child.is_none());
+        assert_eq!(build_count.get(), 0);
+        let first_id = demo.ensure_child().id();
+        let second_id = demo.ensure_child().id();
+        assert_eq!(build_count.get(), 1);
+        assert_eq!(first_id, second_id);
+    }
 
     #[test]
     fn embedded_dev_web_font_subsets_shape_cjk_and_emoji_samples() {
@@ -7547,6 +7609,42 @@ final_max_luminance={final_max_luminance}
             .expect()
             .to_be_visible()?;
         open_dev_shell_demo(&window, RETAINED_TEXT_TAB_LABEL)?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for cold dev-workspace startup and lazy first-page opening"]
+    fn dev_workspace_page_open_current_status_benchmark() -> Result<()> {
+        let startup_started = std::time::Instant::now();
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let startup_ms = startup_started.elapsed().as_secs_f64() * 1000.0;
+        let window = app.main_window()?;
+
+        let layout_started = std::time::Instant::now();
+        open_dev_shell_demo(&window, LAYOUT_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(LAYOUT_DEMO_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        let layout_open_ms = layout_started.elapsed().as_secs_f64() * 1000.0;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("Open demo")
+            .click()?;
+        let rich_document_started = std::time::Instant::now();
+        open_dev_shell_demo(&window, MARKDOWN_RENDER_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(MARKDOWN_RENDER_SCROLL_NAME)
+            .expect()
+            .to_be_visible()?;
+        let rich_document_open_ms = rich_document_started.elapsed().as_secs_f64() * 1000.0;
+
+        println!(
+            "DEV_WORKSPACE_PAGE_OPEN_BENCHMARK startup_ms={startup_ms:.3} layout_first_open_ms={layout_open_ms:.3} rich_document_first_open_ms={rich_document_open_ms:.3}"
+        );
         Ok(())
     }
 
