@@ -203,6 +203,222 @@ impl Widget for AdaptiveView {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConstraintOrientation {
+    #[default]
+    Any,
+    Portrait,
+    Landscape,
+}
+
+/// Serializable, locally evaluated container query.
+///
+/// Queries use the widget's incoming constraints and never consult global
+/// window size, so the same view works inside split panes and embedded hosts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConstraintQuery {
+    pub min_width: Option<f32>,
+    pub max_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_height: Option<f32>,
+    pub min_aspect_ratio: Option<f32>,
+    pub max_aspect_ratio: Option<f32>,
+    pub orientation: ConstraintOrientation,
+}
+
+impl ConstraintQuery {
+    pub const fn new() -> Self {
+        Self {
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            min_aspect_ratio: None,
+            max_aspect_ratio: None,
+            orientation: ConstraintOrientation::Any,
+        }
+    }
+
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn max_width(mut self, width: f32) -> Self {
+        self.max_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn min_height(mut self, height: f32) -> Self {
+        self.min_height = Some(height.max(0.0));
+        self
+    }
+
+    pub fn max_height(mut self, height: f32) -> Self {
+        self.max_height = Some(height.max(0.0));
+        self
+    }
+
+    pub fn min_aspect_ratio(mut self, ratio: f32) -> Self {
+        self.min_aspect_ratio = Some(normalize_query_ratio(ratio));
+        self
+    }
+
+    pub fn max_aspect_ratio(mut self, ratio: f32) -> Self {
+        self.max_aspect_ratio = Some(normalize_query_ratio(ratio));
+        self
+    }
+
+    pub const fn orientation(mut self, orientation: ConstraintOrientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    pub fn matches(self, constraints: Constraints) -> bool {
+        let width = constraint_width(constraints);
+        let height = constraint_height(constraints);
+        let aspect_ratio = if height > 0.0 { width / height } else { width };
+        self.min_width.is_none_or(|minimum| width >= minimum)
+            && self.max_width.is_none_or(|maximum| width <= maximum)
+            && self.min_height.is_none_or(|minimum| height >= minimum)
+            && self.max_height.is_none_or(|maximum| height <= maximum)
+            && self
+                .min_aspect_ratio
+                .is_none_or(|minimum| aspect_ratio >= minimum)
+            && self
+                .max_aspect_ratio
+                .is_none_or(|maximum| aspect_ratio <= maximum)
+            && match self.orientation {
+                ConstraintOrientation::Any => true,
+                ConstraintOrientation::Portrait => height >= width,
+                ConstraintOrientation::Landscape => width > height,
+            }
+    }
+}
+
+impl Default for ConstraintQuery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn normalize_query_ratio(ratio: f32) -> f32 {
+    if ratio.is_finite() {
+        ratio.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+struct ConstraintBranch {
+    query: ConstraintQuery,
+    focus: FocusScopeState,
+    child: SingleChild,
+}
+
+impl ConstraintBranch {
+    fn new(query: ConstraintQuery, child: impl Widget + 'static) -> Self {
+        let focus = FocusScopeState::new();
+        Self {
+            query,
+            child: SingleChild::new(FocusScope::new(child).state(focus.clone())),
+            focus,
+        }
+    }
+}
+
+/// Retains each declarative query branch and visits only the first matching one.
+pub struct ConstraintView {
+    branches: Vec<ConstraintBranch>,
+    fallback_focus: FocusScopeState,
+    fallback: SingleChild,
+    active: Option<usize>,
+}
+
+impl ConstraintView {
+    pub fn new<W>(fallback: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        let fallback_focus = FocusScopeState::new();
+        Self {
+            branches: Vec::new(),
+            fallback: SingleChild::new(FocusScope::new(fallback).state(fallback_focus.clone())),
+            fallback_focus,
+            active: None,
+        }
+    }
+
+    pub fn when<W>(mut self, query: ConstraintQuery, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.branches.push(ConstraintBranch::new(query, child));
+        self
+    }
+
+    pub const fn active_branch(&self) -> Option<usize> {
+        self.active
+    }
+
+    fn active(&self) -> &SingleChild {
+        match self.active {
+            Some(index) => &self.branches[index].child,
+            None => &self.fallback,
+        }
+    }
+
+    fn active_mut(&mut self) -> &mut SingleChild {
+        match self.active {
+            Some(index) => &mut self.branches[index].child,
+            None => &mut self.fallback,
+        }
+    }
+
+    fn select(&mut self, constraints: Constraints) {
+        let active = self
+            .branches
+            .iter()
+            .position(|branch| branch.query.matches(constraints));
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if let Some(index) = active {
+            self.branches[index].focus.request_restore();
+        } else {
+            self.fallback_focus.request_restore();
+        }
+    }
+}
+
+impl Widget for ConstraintView {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.select(constraints);
+        self.active_mut().measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.active_mut().arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.active().paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.active().semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.active().visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.active_mut().visit_children_mut(visitor);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResponsiveSidebarSnapshot {
     pub expanded: bool,
@@ -940,6 +1156,38 @@ mod tests {
             render_named(&mut runtime)[0],
             ("compact".to_string(), compact_id)
         );
+    }
+
+    #[test]
+    fn constraint_view_matches_first_local_query_and_retains_identity() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new().title("Constraint view").root(
+                    ConstraintView::new(NamedPane("fallback"))
+                        .when(
+                            ConstraintQuery::new()
+                                .min_width(700.0)
+                                .orientation(ConstraintOrientation::Landscape),
+                            NamedPane("wide"),
+                        )
+                        .when(
+                            ConstraintQuery::new().max_width(699.0),
+                            NamedPane("compact"),
+                        ),
+                ),
+            )
+            .build()
+            .unwrap();
+
+        resize(&mut runtime, 500.0);
+        let compact = render_named(&mut runtime);
+        assert_eq!(compact[0].0, "compact");
+        let compact_id = compact[0].1;
+
+        resize(&mut runtime, 900.0);
+        assert_eq!(render_named(&mut runtime)[0].0, "wide");
+        resize(&mut runtime, 500.0);
+        assert_eq!(render_named(&mut runtime)[0].1, compact_id);
     }
 
     #[test]

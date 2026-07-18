@@ -59,7 +59,7 @@ pub use overlay::{
     OverlayModality, OverlayOptions, OverlaySnapshot, OverlayTraceKind, OverlayTraceSample,
 };
 use std::rc::Rc;
-pub use sui_core::DpiInfo;
+pub use sui_core::{DpiInfo, SafeAreaInsets};
 pub use sui_layout::LayoutContext;
 use widget::MeasureScope;
 pub use widget::{
@@ -1459,6 +1459,7 @@ struct WindowState {
     schedule: FrameSchedule,
     scale_factor: f32,
     raw_dpi: Option<f32>,
+    safe_area: SafeAreaInsets,
     viewport_hint: Option<Size>,
     viewport: Option<Size>,
     last_frame: Option<SceneFrame>,
@@ -1518,6 +1519,7 @@ impl WindowState {
             schedule: FrameSchedule::bootstrap(),
             scale_factor: 1.0,
             raw_dpi: None,
+            safe_area: SafeAreaInsets::ZERO,
             viewport_hint: None,
             viewport: None,
             last_frame: None,
@@ -2400,6 +2402,13 @@ impl WindowState {
                     self.viewport_hint = Some(*size);
                 }
                 self.invalidate_layout_for_viewport_change();
+            }
+            WindowEvent::SafeAreaChanged(safe_area) => {
+                let safe_area = safe_area.normalized();
+                if self.safe_area != safe_area {
+                    self.safe_area = safe_area;
+                    self.invalidate_layout_for_viewport_change();
+                }
             }
             WindowEvent::Focused(focused) => {
                 self.focus.window_focused = *focused;
@@ -4226,7 +4235,12 @@ impl WindowState {
         };
         let viewport = constraints.clamp(measured_root);
 
-        let mut arrange_ctx = ArrangeCtx::new(self.id, self.root.id(), self.current_dpi_info());
+        let mut arrange_ctx = ArrangeCtx::new_at(
+            self.id,
+            self.root.id(),
+            self.current_dpi_info(),
+            self.last_tick_time,
+        );
         self.root.arrange(
             &mut arrange_ctx,
             Rect::from_origin_size(Point::ZERO, viewport),
@@ -4240,6 +4254,7 @@ impl WindowState {
         let mut invalidations = measure_ctx.take_invalidations();
         self.apply_wake_requests(measure_ctx.take_wake_requests());
         invalidations.extend(arrange_ctx.take_invalidations());
+        self.apply_wake_requests(arrange_ctx.take_wake_requests());
         invalidations
     }
 
@@ -4369,6 +4384,7 @@ impl WindowState {
             viewport,
             scale_viewport_to_surface_size(viewport, self.scale_factor),
         )
+        .with_safe_area(self.safe_area)
     }
 
     fn current_dpi_info(&self) -> DpiInfo {

@@ -3010,6 +3010,7 @@ fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
         BindingWindowEvent::ScaleFactorChanged { .. } => "scaleFactorChanged",
         BindingWindowEvent::Focused(_) => "focused",
         BindingWindowEvent::Occluded(_) => "occluded",
+        BindingWindowEvent::SafeAreaChanged { .. } => "safeAreaChanged",
         BindingWindowEvent::ExternalFileHovered(_) => "externalFileHovered",
         BindingWindowEvent::ExternalFileHoverCancelled => "externalFileHoverCancelled",
         BindingWindowEvent::ExternalFileDropped(_) => "externalFileDropped",

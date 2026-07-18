@@ -38,6 +38,24 @@ pub(crate) fn build_layout_demo_with_theme(theme_reader: DevThemeReader) -> impl
                     "Use wrapping and fractional basis values for responsive groups.",
                     build_flex_wrap_example(Rc::clone(&theme_reader)),
                     Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
+                    "Grid and aspect ratio",
+                    "Resolve fixed, intrinsic, and fractional tracks while media keeps a stable ratio.",
+                    build_grid_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
+                    "Local container query",
+                    "This retained view changes policy from its own width, not the window width.",
+                    build_constraint_query_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
+                ))
+                .with_child(section(
+                    "Wrapping toolbar",
+                    "Toolbar actions retain identity and keyboard order when they flow onto more lines.",
+                    build_wrapping_toolbar_example(Rc::clone(&theme_reader)),
+                    Rc::clone(&theme_reader),
                 )),
         ))
         .name(LAYOUT_DEMO_SCROLL_NAME),
@@ -229,6 +247,68 @@ fn build_flex_wrap_example(theme_reader: DevThemeReader) -> impl Widget {
                     .min_width(220.0)
                     .min_height(66.0),
             ),
+        theme_reader,
+    )
+}
+
+fn build_grid_example(theme_reader: DevThemeReader) -> impl Widget {
+    demo_frame(
+        Grid::new([
+            GridTrack::Fixed(132.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ])
+        .rows([GridTrack::Auto, GridTrack::Auto])
+        .gap(10.0)
+        .with_cell(
+            GridCell::new(0, 0).span(2, 1),
+            AspectRatio::new(
+                1.0,
+                tile("1 : 1", palette(5), Color::WHITE).min_size(Size::new(80.0, 80.0)),
+            ),
+        )
+        .with_cell(
+            GridCell::new(0, 1).span(1, 2),
+            tile("spans two fractional columns", palette(0), Color::WHITE),
+        )
+        .with_cell(GridCell::new(1, 1), tile("1fr", palette(1), Color::WHITE))
+        .with_cell(GridCell::new(1, 2), tile("1fr", palette(2), Color::WHITE)),
+        theme_reader,
+    )
+}
+
+fn build_constraint_query_example(theme_reader: DevThemeReader) -> impl Widget {
+    let compact_theme = Rc::clone(&theme_reader);
+    demo_frame(
+        ConstraintView::new(
+            Stack::vertical()
+                .spacing(8.0)
+                .with_child(tile("compact header", palette(3), Color::WHITE))
+                .with_child(tile("stacked content", palette(0), Color::WHITE)),
+        )
+        .when(
+            ConstraintQuery::new().min_width(680.0),
+            Grid::new([GridTrack::Fixed(180.0), GridTrack::Fraction(1.0)])
+                .gap(10.0)
+                .with_child(tile("wide sidebar", palette(3), Color::WHITE))
+                .with_child(tile("wide content", palette(0), Color::WHITE)),
+        ),
+        compact_theme,
+    )
+}
+
+fn build_wrapping_toolbar_example(theme_reader: DevThemeReader) -> impl Widget {
+    demo_frame(
+        Toolbar::horizontal()
+            .theme_when(clone_dev_theme_reader(&theme_reader))
+            .wrapping()
+            .line_spacing(8.0)
+            .divider(false)
+            .with_child(Button::primary("Run"))
+            .with_child(Button::new("Format"))
+            .with_child(Button::new("Inspect"))
+            .with_child(Button::new("Share"))
+            .with_child(Button::new("More actions")),
         theme_reader,
     )
 }

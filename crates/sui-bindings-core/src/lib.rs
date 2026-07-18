@@ -8040,6 +8040,12 @@ pub enum BindingWindowEvent {
     },
     Focused(bool),
     Occluded(bool),
+    SafeAreaChanged {
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    },
     ExternalFileHovered(String),
     ExternalFileHoverCancelled,
     ExternalFileDropped(String),
@@ -8062,6 +8068,12 @@ impl From<&WindowEvent> for BindingWindowEvent {
             },
             WindowEvent::Focused(focused) => Self::Focused(*focused),
             WindowEvent::Occluded(occluded) => Self::Occluded(*occluded),
+            WindowEvent::SafeAreaChanged(insets) => Self::SafeAreaChanged {
+                left: insets.left,
+                top: insets.top,
+                right: insets.right,
+                bottom: insets.bottom,
+            },
             WindowEvent::ExternalFileHovered(path) => {
                 Self::ExternalFileHovered(path.to_string_lossy().into_owned())
             }
@@ -8090,6 +8102,12 @@ impl From<BindingWindowEvent> for WindowEvent {
             },
             BindingWindowEvent::Focused(focused) => Self::Focused(focused),
             BindingWindowEvent::Occluded(occluded) => Self::Occluded(occluded),
+            BindingWindowEvent::SafeAreaChanged {
+                left,
+                top,
+                right,
+                bottom,
+            } => Self::SafeAreaChanged(sui::SafeAreaInsets::new(left, top, right, bottom)),
             BindingWindowEvent::ExternalFileHovered(path) => Self::ExternalFileHovered(path.into()),
             BindingWindowEvent::ExternalFileHoverCancelled => Self::ExternalFileHoverCancelled,
             BindingWindowEvent::ExternalFileDropped(path) => Self::ExternalFileDropped(path.into()),

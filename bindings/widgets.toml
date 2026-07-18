@@ -1166,6 +1166,10 @@ classification = "bound"
 bindings = ["Align"]
 
 [[rust_widget]]
+name = "AspectRatio"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "Background"
 classification = "bound"
 bindings = ["Background"]
@@ -1229,6 +1233,10 @@ bindings = ["CommandGroup"]
 
 [[rust_widget]]
 name = "CommandPalette"
+classification = "rust-only"
+
+[[rust_widget]]
+name = "ConstraintView"
 classification = "rust-only"
 
 [[rust_widget]]
@@ -1323,6 +1331,10 @@ classification = "bound"
 bindings = ["FramedField"]
 
 [[rust_widget]]
+name = "Grid"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "Icon"
 classification = "bound"
 bindings = ["Icon"]
@@ -1346,6 +1358,10 @@ bindings = ["Label"]
 name = "LayerList"
 classification = "bound"
 bindings = ["LayerList"]
+
+[[rust_widget]]
+name = "LayoutTransition"
+classification = "rust-only"
 
 [[rust_widget]]
 name = "Link"
@@ -1463,6 +1479,10 @@ classification = "rust-only"
 name = "RichText"
 classification = "bound"
 bindings = ["RichText"]
+
+[[rust_widget]]
+name = "SafeArea"
+classification = "rust-only"
 
 [[rust_widget]]
 name = "ScrollBar"

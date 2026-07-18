@@ -6,7 +6,10 @@ use sui_core::{
     SemanticsPopupKind, SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Transform,
     Vector, WakeEvent, WidgetId,
 };
-use sui_layout::{Axis, Constraints, Padding as Insets};
+use sui_layout::{
+    Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexLayout, FlexStyle,
+    FlexWrap, Padding as Insets, arrange_flex, flex_layout,
+};
 use sui_reactive::{Observable, Signal};
 use sui_runtime::{
     ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, OVERLAY_DISMISS_REQUEST,
@@ -827,9 +830,12 @@ pub struct Toolbar {
     extent: Option<f32>,
     padding: Option<Insets>,
     spacing: Option<f32>,
+    line_spacing: Option<f32>,
+    wrap: FlexWrap,
     background: Option<Color>,
     divider: bool,
     children: WidgetChildren,
+    layout: Option<FlexLayout>,
 }
 
 impl Toolbar {
@@ -850,9 +856,12 @@ impl Toolbar {
             extent: None,
             padding: None,
             spacing: None,
+            line_spacing: None,
+            wrap: FlexWrap::NoWrap,
             background: None,
             divider: true,
             children: WidgetChildren::new(),
+            layout: None,
         }
     }
 
@@ -887,6 +896,22 @@ impl Toolbar {
 
     pub fn spacing(mut self, spacing: f32) -> Self {
         self.spacing = Some(spacing.max(0.0));
+        self
+    }
+
+    /// Allow toolbar items to flow into additional rows or columns while
+    /// retaining their original widget identities and navigation order.
+    pub fn wrap(mut self, wrap: FlexWrap) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    pub fn wrapping(self) -> Self {
+        self.wrap(FlexWrap::Wrap)
+    }
+
+    pub fn line_spacing(mut self, spacing: f32) -> Self {
+        self.line_spacing = Some(spacing.max(0.0));
         self
     }
 
@@ -966,6 +991,66 @@ impl Widget for Toolbar {
         let extent = self.resolved_extent(metrics);
         let padding = self.resolved_padding(metrics);
         let spacing = self.resolved_spacing(metrics);
+        if self.wrap == FlexWrap::Wrap {
+            let line_spacing = self.line_spacing.unwrap_or(spacing);
+            let max_content = Size::new(
+                if constraints.max.width.is_finite() {
+                    (constraints.max.width - padding.left - padding.right).max(0.0)
+                } else {
+                    f32::INFINITY
+                },
+                if constraints.max.height.is_finite() {
+                    (constraints.max.height - padding.top - padding.bottom).max(0.0)
+                } else {
+                    f32::INFINITY
+                },
+            );
+            let min_cross = match self.axis {
+                Axis::Horizontal => (extent - padding.top - padding.bottom).max(0.0),
+                Axis::Vertical => (extent - padding.left - padding.right).max(0.0),
+            };
+            let min_content = match self.axis {
+                Axis::Horizontal => Size::new(
+                    if max_content.width.is_finite() {
+                        max_content.width
+                    } else {
+                        0.0
+                    },
+                    min_cross,
+                ),
+                Axis::Vertical => Size::new(
+                    min_cross,
+                    if max_content.height.is_finite() {
+                        max_content.height
+                    } else {
+                        0.0
+                    },
+                ),
+            };
+            let style = FlexStyle::new(self.axis)
+                .wrap(FlexWrap::Wrap)
+                .main_gap(spacing)
+                .cross_gap(line_spacing)
+                .justify(FlexJustify::Start)
+                .align_items(Alignment::Center)
+                .align_content(FlexAlignContent::Start);
+            let items = vec![FlexItem::new(); self.children.len()];
+            let layout = flex_layout(
+                style,
+                &items,
+                Constraints::new(min_content, max_content),
+                |index, child_constraints| {
+                    self.children.measure_child(index, ctx, child_constraints)
+                },
+            );
+            let natural = Size::new(
+                layout.size.width + padding.left + padding.right,
+                layout.size.height + padding.top + padding.bottom,
+            );
+            self.layout = Some(layout);
+            return constraints.clamp(natural);
+        }
+        self.layout = None;
         let content_cross = match self.axis {
             Axis::Horizontal => (extent - padding.top - padding.bottom).max(0.0),
             Axis::Vertical => (extent - padding.left - padding.right).max(0.0),
@@ -1025,6 +1110,32 @@ impl Widget for Toolbar {
         let metrics = theme.metrics;
         let spacing = self.resolved_spacing(metrics);
         let content = self.content_bounds(bounds, metrics);
+        if self.wrap == FlexWrap::Wrap {
+            let style = FlexStyle::new(self.axis)
+                .wrap(FlexWrap::Wrap)
+                .main_gap(spacing)
+                .cross_gap(self.line_spacing.unwrap_or(spacing))
+                .justify(FlexJustify::Start)
+                .align_items(Alignment::Center)
+                .align_content(FlexAlignContent::Start);
+            let items = vec![FlexItem::new(); self.children.len()];
+            let measured = self
+                .children
+                .as_slice()
+                .iter()
+                .map(WidgetPod::measured_size)
+                .collect::<Vec<_>>();
+            let layout = arrange_flex(style, &items, content.size, &measured);
+            for (index, item) in layout.items.iter().enumerate() {
+                self.children.arrange_child(
+                    index,
+                    ctx,
+                    item.rect.translate(content.origin.to_vector()),
+                );
+            }
+            self.layout = Some(layout);
+            return;
+        }
         let content_main = toolbar_main(self.axis, content.size);
         let content_cross = toolbar_cross(self.axis, content.size);
         let mut main_offset = 0.0;
@@ -16173,6 +16284,36 @@ mod tests {
             }
         });
         assert_eq!(line_count, Some(1));
+    }
+
+    #[test]
+    fn wrapping_toolbar_retains_items_across_multiple_rows() {
+        let toolbar = Toolbar::horizontal()
+            .wrapping()
+            .padding(sui_layout::Padding::ZERO)
+            .spacing(4.0)
+            .line_spacing(6.0)
+            .divider(false)
+            .with_child(SizedBox::new().size(Size::new(60.0, 20.0)))
+            .with_child(SizedBox::new().size(Size::new(60.0, 20.0)))
+            .with_child(SizedBox::new().size(Size::new(60.0, 20.0)));
+        let (mut runtime, window) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(128.0, 80.0))
+                .with_child(toolbar),
+        );
+        runtime.render(window).unwrap();
+
+        let graph = runtime.widget_graph(window).unwrap();
+        let item_bounds = graph
+            .nodes
+            .iter()
+            .filter(|node| node.bounds.size == Size::new(60.0, 20.0))
+            .map(|node| node.bounds)
+            .collect::<Vec<_>>();
+        assert_eq!(item_bounds.len(), 3);
+        assert_eq!(item_bounds[0].y(), item_bounds[1].y());
+        assert!(item_bounds[2].y() >= item_bounds[0].max_y() + 6.0);
     }
 
     #[test]

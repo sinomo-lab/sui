@@ -60,32 +60,82 @@ overflow-x = auto
 overflow-y = auto
 ```
 
-For a validation surface or inspector that needs a minimum readable width, wrap the content in a widget that reports at least that width. The scroll view should still provide finite width to descendants so text wraps inside the chosen content column instead of measuring as one unwrapped line.
+`ContentExtent` makes the content offer explicit on either axis:
+
+- `Natural` gives the child an unbounded content axis.
+- `Viewport` gives the child a finite maximum equal to the viewport.
+- `AtLeastViewport` allows natural growth but requires at least the viewport.
+- `AtLeast(points)` allows natural growth above an explicit minimum.
+- `MinContent` asks the child for its intrinsic minimum and measures at that
+  exact extent.
+
+For example, a settings page can fill a short viewport while continuing to
+grow vertically, and a horizontally scrollable inspector can choose the
+smallest readable text width:
+
+```rust
+use sui::prelude::*;
+
+let settings = ScrollView::vertical(form)
+    .content_width(ContentExtent::Viewport)
+    .content_height(ContentExtent::AtLeastViewport);
+
+let inspector = ScrollView::both(details)
+    .content_width(ContentExtent::MinContent)
+    .content_height(ContentExtent::Natural);
+```
+
+The compatibility methods `viewport_size_hint`, `viewport_width_hint`, and
+`viewport_height_hint` map to `Viewport` and `Natural`. New code should prefer
+the content-extent methods because they state the actual layout policy.
 
 The older `ScrollView::horizontal`, `ScrollView::vertical`, `ScrollView::both`, and `axes(...)` constructors remain compatibility conveniences. They configure scrollable axes, but they do not by themselves opt horizontal scrolling into finite wrap-width measurement. Prefer `overflow_x(...)` and `overflow_y(...)` when authoring new layout that depends on CSS-like overflow behavior.
+
+## Intrinsic Sizing
+
+Widgets may override `Widget::intrinsic_size` to report a minimum readable
+extent and a preferred natural extent on one axis. The default is conservative:
+it treats an ordinary unbounded measurement as both minimum and natural, so
+custom widgets remain correct without implementing a second sizing contract.
+
+`Label` reports its full line as the horizontal natural extent and its widest
+whitespace-delimited segment as the horizontal minimum. `Grid` and
+`ContentExtent::MinContent` consume this information. Intrinsic queries do not
+replace normal measurement and do not mutate a pod's cached arranged bounds.
+
+## Grid
+
+`Grid` provides explicit retained two-dimensional layout. Tracks can be
+`Fixed`, `Auto`, `Fraction`, or `MinMax`; cells may span rows and columns and
+choose independent alignment:
+
+```rust
+use sui::prelude::*;
+
+let grid = Grid::new([
+    GridTrack::Fixed(220.0),
+    GridTrack::MinMax {
+        min: 280.0,
+        max: GridTrackMax::Fraction(1.0),
+    },
+])
+.rows([GridTrack::Auto, GridTrack::Fraction(1.0)])
+.gap(12.0)
+.with_cell(GridCell::new(0, 0).span(2, 1), navigation)
+.with_cell(GridCell::new(0, 1), toolbar)
+.with_cell(GridCell::new(1, 1), content);
+```
+
+The renderer-independent `grid_layout` solver is also public for custom
+widgets. SUI's grid intentionally omits CSS named lines, implicit placement
+algorithms beyond row-major `with_child`, and dense reordering.
 
 ## Non-Goals
 
 This document is not a plan to implement full CSS. In particular, SUI does not currently model:
 
-- the full CSS intrinsic sizing algorithm;
-- `min-content`, `max-content`, or `fit-content` as first-class sizing keywords;
-- block, inline, flex, grid, and absolute formatting contexts;
+- the full CSS intrinsic-sizing algorithm and `fit-content` grammar;
+- block and inline formatting contexts or absolute positioning;
 - CSS margin collapsing or cascade behavior.
 
 Those ideas may inspire future sizing APIs, but the core SUI model should remain small enough for custom widgets to reason about directly.
-
-## Open Design Space
-
-The current overflow API solves the immediate separation between wrapping and scrolling. Future layout work may add explicit size policies, for example:
-
-```rust
-enum ContentExtent {
-    Viewport,
-    Natural,
-    AtLeast(f32),
-    AtLeastViewport { min: f32 },
-}
-```
-
-That would make minimum readable widths and natural content growth first-class instead of relying on local wrapper widgets. Until then, overflow should stay focused on clipping, visibility, and scrollability.

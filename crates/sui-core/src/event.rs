@@ -1,7 +1,8 @@
 use std::{ops::Range, path::PathBuf};
 
 use crate::{
-    AsyncWakeToken, DragEvent, Point, SemanticsActionRequest, Size, TimerToken, Vector, WidgetId,
+    AsyncWakeToken, DragEvent, Point, SafeAreaInsets, SemanticsActionRequest, Size, TimerToken,
+    Vector, WidgetId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -234,6 +235,9 @@ pub enum WindowEvent {
         raw_dpi: Option<f32>,
         suggested_size: Option<Size>,
     },
+    /// The unobscured inset from each viewport edge changed, usually after a
+    /// mobile rotation, browser viewport update, or host embedding change.
+    SafeAreaChanged(SafeAreaInsets),
     Focused(bool),
     Occluded(bool),
     /// A file from outside the application is being hovered over the host

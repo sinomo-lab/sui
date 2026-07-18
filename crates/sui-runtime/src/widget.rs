@@ -22,7 +22,7 @@ use sui_core::{
     Event, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, Path, Point,
     Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowId,
 };
-use sui_layout::{Constraints, LayoutContext};
+use sui_layout::{Axis, Constraints, IntrinsicSize, LayoutContext};
 use sui_reactive::{Observable, Signal};
 use sui_scene::{
     Border, Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
@@ -69,6 +69,33 @@ pub trait Widget {
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.max
+    }
+
+    /// Report the smallest and preferred extent along one axis.
+    ///
+    /// The conservative default treats the ordinary natural measurement as
+    /// unbreakable. Text and other shrinkable widgets can override this to
+    /// expose a smaller minimum without changing the normal measure contract.
+    fn intrinsic_size(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        axis: Axis,
+        available_cross: f32,
+    ) -> IntrinsicSize {
+        let cross = if available_cross.is_finite() {
+            available_cross.max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let constraints = match axis {
+            Axis::Horizontal => Constraints::new(Size::ZERO, Size::new(f32::INFINITY, cross)),
+            Axis::Vertical => Constraints::new(Size::ZERO, Size::new(cross, f32::INFINITY)),
+        };
+        let size = self.measure(ctx, constraints);
+        IntrinsicSize::fixed(match axis {
+            Axis::Horizontal => size.width,
+            Axis::Vertical => size.height,
+        })
     }
 
     fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: Rect) {}
@@ -580,6 +607,16 @@ impl WidgetChildren {
         self.children[index].measure(ctx, constraints)
     }
 
+    pub fn intrinsic_size_child(
+        &mut self,
+        index: usize,
+        ctx: &mut MeasureCtx,
+        axis: Axis,
+        available_cross: f32,
+    ) -> IntrinsicSize {
+        self.children[index].intrinsic_size(ctx, axis, available_cross)
+    }
+
     pub fn arrange_child(&mut self, index: usize, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.children[index].arrange(ctx, bounds);
     }
@@ -854,13 +891,41 @@ impl WidgetPod {
         size
     }
 
+    pub fn intrinsic_size(
+        &mut self,
+        parent_ctx: &mut MeasureCtx,
+        axis: Axis,
+        available_cross: f32,
+    ) -> IntrinsicSize {
+        let force = parent_ctx.child_force();
+        let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
+        let started = Instant::now();
+        let intrinsic = self
+            .widget
+            .intrinsic_size(&mut child_ctx, axis, available_cross);
+        record_widget_timing(
+            self.id,
+            self.widget.debug_name(),
+            WidgetTimingPhase::Measure,
+            started.elapsed(),
+        );
+        parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+        parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
+        IntrinsicSize::new(intrinsic.minimum, intrinsic.natural)
+    }
+
     pub fn arrange(&mut self, parent_ctx: &mut ArrangeCtx, bounds: Rect) {
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
         self.layout_state.arranged_bounds = bounds;
         self.layout_state.arrange_valid = true;
         self.translate_descendants(delta);
 
-        let mut child_ctx = ArrangeCtx::new(parent_ctx.window_id(), self.id, parent_ctx.dpi());
+        let mut child_ctx = ArrangeCtx::new_at(
+            parent_ctx.window_id(),
+            self.id,
+            parent_ctx.dpi(),
+            parent_ctx.current_time(),
+        );
         let started = Instant::now();
         self.widget.arrange(&mut child_ctx, bounds);
         record_widget_timing(
@@ -870,6 +935,7 @@ impl WidgetPod {
             started.elapsed(),
         );
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
+        parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
     }
 
     pub fn paint(&self, parent_ctx: &mut PaintCtx) {
@@ -2150,16 +2216,30 @@ pub struct ArrangeCtx {
     window_id: WindowId,
     widget_id: WidgetId,
     dpi_info: DpiInfo,
+    current_time: f64,
     invalidations: Vec<InvalidationRequest>,
+    wake_requests: Vec<WakeRequest>,
 }
 
 impl ArrangeCtx {
+    #[cfg(test)]
     pub(crate) fn new(window_id: WindowId, widget_id: WidgetId, dpi_info: DpiInfo) -> Self {
+        Self::new_at(window_id, widget_id, dpi_info, 0.0)
+    }
+
+    pub(crate) fn new_at(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
             dpi_info,
+            current_time,
             invalidations: Vec::new(),
+            wake_requests: Vec::new(),
         }
     }
 
@@ -2191,6 +2271,10 @@ impl ArrangeCtx {
         self.dpi_info
     }
 
+    pub const fn current_time(&self) -> f64 {
+        self.current_time
+    }
+
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
@@ -2211,6 +2295,20 @@ impl ArrangeCtx {
         self.request_widget(InvalidationKind::Semantics);
     }
 
+    pub fn request_transform(&mut self) {
+        self.request_widget(InvalidationKind::Transform);
+    }
+
+    /// Schedule an animation frame for this widget after arrangement.
+    ///
+    /// This is useful for retained layout transitions, which discover their
+    /// new destination during arrange rather than during event delivery.
+    pub fn request_animation_frame(&mut self) {
+        self.wake_requests.push(WakeRequest::RequestAnimationFrame {
+            target: self.widget_id,
+        });
+    }
+
     pub fn invalidations(&self) -> &[InvalidationRequest] {
         &self.invalidations
     }
@@ -2219,8 +2317,16 @@ impl ArrangeCtx {
         std::mem::take(&mut self.invalidations)
     }
 
+    pub(crate) fn take_wake_requests(&mut self) -> Vec<WakeRequest> {
+        std::mem::take(&mut self.wake_requests)
+    }
+
     pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
         self.invalidations.extend(invalidations);
+    }
+
+    pub(crate) fn extend_wake_requests(&mut self, wake_requests: Vec<WakeRequest>) {
+        self.wake_requests.extend(wake_requests);
     }
 
     fn request_widget(&mut self, kind: InvalidationKind) {

@@ -17,8 +17,8 @@ families to learn rather than an exhaustive symbol inventory.
 | Text, documents, and actions | `Label`, `RichText`, `RichDocumentView`, `Button`, `IconButton`, `Link` | Display text or streaming Markdown and invoke commands |
 | Boolean and choice controls | `Checkbox`, `Switch`, `RadioGroup`, `SegmentedControl`, `Select`, `ComboBox` | Small finite choices |
 | Text and numeric input | `TextInput`, `PasswordInput`, `DateTimeInput`, `TextArea`, `NumberInput`, `SpinBox`, `Slider` | Editable values and ranges |
-| Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Background` | Size and position ordinary widget trees |
-| Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `AdaptiveView`, `ResponsiveSidebar`, `MasterDetail` | Overflow, panes, and adaptive workspace structure |
+| Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Grid`, `AspectRatio`, `Background` | Size and position ordinary widget trees |
+| Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `AdaptiveView`, `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SafeArea` | Overflow, panes, and adaptive workspace structure |
 | Overlays and shells | `Dialog`, `Modal`, `CommandPalette`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet`, `BottomSheet` | Managed transient or elevated interface layers |
 | Data and navigation | `ListView`, `VirtualList`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`, `Tabs` | Collections and navigation state |
 | Creative tools | `Canvas`, `PixelCanvas`, `ColorPicker`, `LayerList`, `BrushPreview` | Editor-style and graphics interfaces |
@@ -137,6 +137,35 @@ fn cards() -> impl Widget {
 `Insets` is the layout-value type used by control builder methods such as
 `Button::padding`. `Padding` in the prelude is the widget that wraps a child.
 
+`AspectRatio` constrains any retained child, not only an image. `Contain` is
+the default; `AspectRatioFit::Cover` fills and clips the available rectangle.
+
+Use `Grid` when rows and columns must share track measurements:
+
+```rust
+use sui::prelude::*;
+
+fn workspace_grid(sidebar: impl Widget + 'static, content: impl Widget + 'static) -> impl Widget {
+    Grid::new([
+        GridTrack::Fixed(240.0),
+        GridTrack::MinMax {
+            min: 320.0,
+            max: GridTrackMax::Fraction(1.0),
+        },
+    ])
+    .rows([GridTrack::Auto, GridTrack::Fraction(1.0)])
+    .gap(12.0)
+    .with_cell(GridCell::new(0, 0).span(2, 1), sidebar)
+    .with_cell(GridCell::new(0, 1), Toolbar::horizontal())
+    .with_cell(GridCell::new(1, 1), content)
+}
+```
+
+`Auto` tracks consume natural child extents, fractional tracks share remaining
+finite room, and `MinMax` supplies an explicit floor and automatic, point, or
+fractional ceiling. Cells retain normal widget identities and support row and
+column spans plus per-axis alignment.
+
 ## Scrolling and Large Collections
 
 Wrap content in `ScrollView::vertical`, `horizontal`, or `both` when it can
@@ -168,6 +197,13 @@ anchoring, follow-end, and retained-row policies.
 `ScrollState` can be shared with `ScrollView::state` when application code
 needs to inspect or control an offset. Without it, the view retains its own
 scroll state.
+
+Use `content_width` and `content_height` to separate the viewport from the
+child's content offer. `ContentExtent::Viewport` enables wrapping at viewport
+width, `Natural` allows growth, `AtLeastViewport` fills short viewports,
+`AtLeast(points)` establishes an application minimum, and `MinContent` uses
+the child's intrinsic minimum. The older `viewport_*_hint` methods remain
+compatibility shims.
 
 `ScrollView` and `VirtualScrollView` show interactive overlay scroll bars only
 when their content exceeds the viewport. The bars do not consume layout space,
@@ -216,6 +252,25 @@ fn adaptive_actions() -> impl Widget {
 }
 ```
 
+For more specific local policies, use `ConstraintView`. Its ordered,
+declarative queries can combine minimum and maximum width or height, aspect
+ratio, and portrait/landscape orientation. The first match wins; the fallback
+and every query branch stay retained:
+
+```rust
+let responsive = ConstraintView::new(compact)
+    .when(
+        ConstraintQuery::new()
+            .min_width(720.0)
+            .orientation(ConstraintOrientation::Landscape),
+        wide,
+    )
+    .when(ConstraintQuery::new().min_height(600.0), tall);
+```
+
+Queries inspect incoming constraints, so a component embedded in a split pane
+adapts to the pane rather than the outer window.
+
 Each adaptive variant has a stable widget identity and focus scope. Returning
 to a variant restores its last focused descendant, with first-focusable
 fallback. A variant's state is retained, but the three variants are still
@@ -238,6 +293,38 @@ copy of each logical pane:
 `RebuildOnConstraints` remains available for genuinely disposable structure.
 It replaces its child subtree and therefore resets local editor, focus,
 selection, and animation state.
+
+## Toolbars, Safe Areas, and Layout Motion
+
+`Toolbar::wrapping()` flows retained actions onto additional rows or columns.
+`line_spacing` controls the cross-line gap; logical child order and keyboard
+navigation do not change when wrapping changes.
+
+`SafeArea` consumes `DpiInfo::safe_area` on selected `SafeAreaEdges`. Platform
+or embedding adapters update it with `WindowEvent::SafeAreaChanged`; the
+runtime invalidates layout without rebuilding. Use `minimum` when an edge also
+needs application-defined padding:
+
+```rust
+let mobile_shell = SafeArea::new(content)
+    .edges(SafeAreaEdges::TOP.union(SafeAreaEdges::HORIZONTAL))
+    .minimum(SafeAreaInsets::new(12.0, 8.0, 12.0, 0.0));
+```
+
+Wrap a stable child in `LayoutTransition` when a retained layout policy moves
+it between origins. Arrangement immediately settles at the destination while
+the compositor animates translation from the previous visual origin:
+
+```rust
+let inspector = LayoutTransition::new(inspector)
+    .duration(0.20)
+    .easing(Easing::EaseOut);
+```
+
+Transition continuity follows the `WidgetPod` identity. When a keyed parent
+reconciles around it, focus, selection, editor state, and scroll position stay
+with the same child. Size changes currently snap; only origin movement is
+animated because it can use transform-only invalidation without re-painting.
 
 ## Split Pane State and Persistence
 

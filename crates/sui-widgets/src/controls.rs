@@ -21,7 +21,7 @@ use sui_core::{
     SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsPopupKind, SemanticsRole,
     SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState, Vector, WakeEvent, WidgetId,
 };
-use sui_layout::{Axis, Constraints, Padding as Insets};
+use sui_layout::{Axis, Constraints, IntrinsicSize, Padding as Insets};
 use sui_lucide::LucideIcon;
 use sui_reactive::Observable;
 use sui_runtime::{
@@ -1692,6 +1692,35 @@ impl Widget for Label {
             }
             TextCommand::Cut | TextCommand::Paste => {}
         }
+    }
+
+    fn intrinsic_size(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        axis: Axis,
+        available_cross: f32,
+    ) -> IntrinsicSize {
+        if axis == Axis::Horizontal {
+            let text = self.observed_text(ctx);
+            let style = self.resolved_style();
+            let natural = measure_text(ctx, &text, &style).width;
+            let minimum = text
+                .split_whitespace()
+                .map(|segment| measure_text(ctx, segment, &style).width)
+                .fold(0.0_f32, f32::max);
+            return IntrinsicSize::new(minimum, natural);
+        }
+
+        let width = if available_cross.is_finite() {
+            available_cross.max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        let size = self.measure(
+            ctx,
+            Constraints::new(Size::ZERO, Size::new(width, f32::INFINITY)),
+        );
+        IntrinsicSize::fixed(size.height)
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {

@@ -12,6 +12,7 @@ pub mod data;
 pub mod drag_drop;
 mod editor;
 pub mod hdr_theme;
+pub mod layout_policy;
 pub mod media;
 pub mod overlay;
 pub mod panes;
@@ -67,8 +68,8 @@ pub use composites::{
     paint_section_label_detail, paint_section_panel, paint_status_badge,
 };
 pub use containers::{
-    Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,
-    RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
+    Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
+    Padding, RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
 pub use controls::{
@@ -92,6 +93,9 @@ pub use hdr_theme::{
     ResolvedHdrStyle, ResolvedMaterialStyle, SemanticColorToken, WidgetColorRole, WidgetEffectRole,
     WidgetLuminanceRole, WidgetMaterialRole, resolve_effect_role, resolve_luminance_role,
     resolve_material_role, resolve_semantic_color, resolve_widget_hdr_style,
+};
+pub use layout_policy::{
+    AspectRatio, AspectRatioFit, Grid, GridCell, LayoutTransition, SafeArea, SafeAreaEdges,
 };
 pub use media::{
     BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette, ColorPaletteSwatch,
@@ -136,7 +140,7 @@ pub use theme::{
     ThemeTracking, paint_theme_shadow,
 };
 pub use workspace::{
-    AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, MasterDetail, MasterDetailRoute,
-    MasterDetailState, ResponsiveSidebar, ResponsiveSidebarMode, ResponsiveSidebarSnapshot,
-    ResponsiveSidebarState,
+    AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, ConstraintOrientation, ConstraintQuery,
+    ConstraintView, MasterDetail, MasterDetailRoute, MasterDetailState, ResponsiveSidebar,
+    ResponsiveSidebarMode, ResponsiveSidebarSnapshot, ResponsiveSidebarState,
 };

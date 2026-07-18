@@ -13,7 +13,7 @@ mod semantics;
 
 pub use clipboard::{Clipboard, ClipboardBackend, LocalClipboardBackend};
 pub use color::{Color, ColorSpace};
-pub use dpi::DpiInfo;
+pub use dpi::{DpiInfo, SafeAreaInsets};
 pub use drag::{
     DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview, DragScopeId,
     DragSessionId, DropEffect,

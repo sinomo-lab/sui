@@ -1,5 +1,12 @@
 #![forbid(unsafe_code)]
 
+mod grid;
+
+pub use grid::{
+    GridItem, GridItemLayout, GridLayout, GridPlacement, GridStyle, GridTrack, GridTrackMax,
+    grid_layout,
+};
+
 use std::sync::Arc;
 
 use sui_core::{DpiInfo, ImageHandle, Point, Rect, Size};
@@ -15,6 +22,30 @@ const FLEX_EPSILON: f32 = 0.001;
 pub enum Axis {
     Horizontal,
     Vertical,
+}
+
+/// Minimum and preferred content extents reported by a widget along one axis.
+///
+/// The minimum is the smallest readable/unbreakable extent. The natural value
+/// is the extent the widget prefers when it is not asked to wrap or shrink.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct IntrinsicSize {
+    pub minimum: f32,
+    pub natural: f32,
+}
+
+impl IntrinsicSize {
+    pub fn new(minimum: f32, natural: f32) -> Self {
+        let minimum = finite_non_negative(minimum);
+        Self {
+            minimum,
+            natural: finite_non_negative(natural).max(minimum),
+        }
+    }
+
+    pub fn fixed(extent: f32) -> Self {
+        Self::new(extent, extent)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

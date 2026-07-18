@@ -7,6 +7,7 @@
 rust-widget ActionCard manual-wrapper ActionCard
 rust-widget AdaptiveView rust-only
 rust-widget Align bound Align
+rust-widget AspectRatio rust-only
 rust-widget Background bound Background
 rust-widget BottomSheet rust-only
 rust-widget Breadcrumb bound Breadcrumb
@@ -21,6 +22,7 @@ rust-widget ColorPicker bound ColorPicker
 rust-widget ColorSwatch bound ColorSwatch
 rust-widget CommandPalette rust-only
 rust-widget CommandGroup bound CommandGroup
+rust-widget ConstraintView rust-only
 rust-widget ContextMenu bound ContextMenu
 rust-widget CoverageDots bound CoverageDots
 rust-widget DateTimeInput manual-wrapper DateTimeInput
@@ -40,11 +42,13 @@ rust-widget FloatingWorkspace rust-only
 rust-widget FormRow bound FormRow
 rust-widget FormSection bound FormSection
 rust-widget FramedField bound FramedField
+rust-widget Grid rust-only
 rust-widget Icon bound Icon
 rust-widget IconButton bound IconButton
 rust-widget Image bound Image
 rust-widget Label bound Label
 rust-widget LayerList bound LayerList
+rust-widget LayoutTransition rust-only
 rust-widget Link bound Link
 rust-widget ListView bound ListView
 rust-widget MasterDetail rust-only
@@ -70,6 +74,7 @@ rust-widget ReorderableList manual-wrapper ReorderableList
 rust-widget ResponsiveSidebar rust-only
 rust-widget RichDocumentView rust-only
 rust-widget RichText bound RichText
+rust-widget SafeArea rust-only
 rust-widget ScrollBar rust-only
 rust-widget ScrollView bound ScrollView
 rust-widget SectionLabel bound SectionLabel

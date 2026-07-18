@@ -8,7 +8,7 @@ use sui_core::{
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexStyle, FlexWrap,
-    Padding as Insets, arrange_flex, flex_layout,
+    IntrinsicSize, Padding as Insets, arrange_flex, flex_layout,
 };
 use sui_reactive::Observable;
 use sui_runtime::{
@@ -1937,6 +1937,53 @@ impl TouchScrollGesture {
     }
 }
 
+/// Controls the child's measured extent along a scrollable axis.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum ContentExtent {
+    /// Let the child choose its preferred unbounded extent.
+    #[default]
+    Natural,
+    /// Give the child a finite maximum equal to the viewport.
+    Viewport,
+    /// Keep the child at least as large as the viewport while allowing growth.
+    AtLeastViewport,
+    /// Keep the child at least as large as an explicit logical-pixel extent.
+    AtLeast(f32),
+    /// Measure the child at its reported minimum readable extent.
+    MinContent,
+}
+
+impl ContentExtent {
+    fn resolve(self, viewport: f32, minimum_content: f32) -> (f32, f32) {
+        let viewport = if viewport.is_finite() {
+            viewport.max(0.0)
+        } else {
+            0.0
+        };
+        match self {
+            Self::Natural => (0.0, f32::INFINITY),
+            Self::Viewport => (0.0, viewport),
+            Self::AtLeastViewport => (viewport, f32::INFINITY),
+            Self::AtLeast(extent) => (
+                if extent.is_finite() {
+                    extent.max(0.0)
+                } else {
+                    0.0
+                },
+                f32::INFINITY,
+            ),
+            Self::MinContent => {
+                let extent = if minimum_content.is_finite() {
+                    minimum_content.max(0.0)
+                } else {
+                    0.0
+                };
+                (extent, extent)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overflow {
     Visible,
@@ -3011,8 +3058,8 @@ pub struct ScrollView {
     state: ScrollState,
     overflow_x: Overflow,
     overflow_y: Overflow,
-    viewport_width_hint: bool,
-    viewport_height_hint: bool,
+    content_width: ContentExtent,
+    content_height: ContentExtent,
     offset: Vector,
     content_size: Size,
     focus_animation: AnimatedScalar,
@@ -3037,8 +3084,8 @@ impl ScrollView {
             state: ScrollState::new(),
             overflow_x: Overflow::Clip,
             overflow_y: Overflow::Auto,
-            viewport_width_hint: false,
-            viewport_height_hint: false,
+            content_width: ContentExtent::Natural,
+            content_height: ContentExtent::Natural,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             focus_animation: AnimatedScalar::new(0.0),
@@ -3082,8 +3129,8 @@ impl ScrollView {
         } else {
             Overflow::Clip
         };
-        self.viewport_width_hint = false;
-        self.viewport_height_hint = false;
+        self.content_width = ContentExtent::Natural;
+        self.content_height = ContentExtent::Natural;
         self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
@@ -3091,14 +3138,22 @@ impl ScrollView {
     pub fn overflow(mut self, overflow: Overflow) -> Self {
         self.overflow_x = overflow;
         self.overflow_y = overflow;
-        self.viewport_width_hint = overflow.is_scrollable();
+        self.content_width = if overflow.is_scrollable() {
+            ContentExtent::Viewport
+        } else {
+            ContentExtent::Natural
+        };
         self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
 
     pub fn overflow_x(mut self, overflow: Overflow) -> Self {
         self.overflow_x = overflow;
-        self.viewport_width_hint = overflow.is_scrollable();
+        self.content_width = if overflow.is_scrollable() {
+            ContentExtent::Viewport
+        } else {
+            ContentExtent::Natural
+        };
         self.state.sync_unmeasured_axes(self.scroll_axes());
         self
     }
@@ -3106,6 +3161,18 @@ impl ScrollView {
     pub fn overflow_y(mut self, overflow: Overflow) -> Self {
         self.overflow_y = overflow;
         self.state.sync_unmeasured_axes(self.scroll_axes());
+        self
+    }
+
+    /// Select how the child width is derived when horizontal overflow is enabled.
+    pub const fn content_width(mut self, extent: ContentExtent) -> Self {
+        self.content_width = extent;
+        self
+    }
+
+    /// Select how the child height is derived when vertical overflow is enabled.
+    pub const fn content_height(mut self, extent: ContentExtent) -> Self {
+        self.content_height = extent;
         self
     }
 
@@ -3148,18 +3215,34 @@ impl ScrollView {
     }
 
     pub const fn viewport_size_hint(mut self, enabled: bool) -> Self {
-        self.viewport_width_hint = enabled;
-        self.viewport_height_hint = enabled;
+        self.content_width = if enabled {
+            ContentExtent::Viewport
+        } else {
+            ContentExtent::Natural
+        };
+        self.content_height = if enabled {
+            ContentExtent::Viewport
+        } else {
+            ContentExtent::Natural
+        };
         self
     }
 
     pub const fn viewport_width_hint(mut self, enabled: bool) -> Self {
-        self.viewport_width_hint = enabled;
+        self.content_width = if enabled {
+            ContentExtent::Viewport
+        } else {
+            ContentExtent::Natural
+        };
         self
     }
 
     pub const fn viewport_height_hint(mut self, enabled: bool) -> Self {
-        self.viewport_height_hint = enabled;
+        self.content_height = if enabled {
+            ContentExtent::Viewport
+        } else {
+            ContentExtent::Natural
+        };
         self
     }
 
@@ -3889,24 +3972,37 @@ impl Widget for ScrollView {
                 constraints.min.height
             },
         );
+        let width_intrinsic =
+            if self.overflow_x.is_scrollable() && self.content_width == ContentExtent::MinContent {
+                self.child
+                    .child_mut()
+                    .intrinsic_size(ctx, Axis::Horizontal, viewport_hint.height)
+            } else {
+                IntrinsicSize::default()
+            };
+        let height_intrinsic = if self.overflow_y.is_scrollable()
+            && self.content_height == ContentExtent::MinContent
+        {
+            self.child
+                .child_mut()
+                .intrinsic_size(ctx, Axis::Vertical, viewport_hint.width)
+        } else {
+            IntrinsicSize::default()
+        };
         let mut child_constraints = constraints.loosen();
         if self.overflow_x.is_scrollable() {
-            child_constraints.max.width = if self.viewport_width_hint {
-                viewport_hint.width
-            } else {
-                f32::INFINITY
-            };
+            (child_constraints.min.width, child_constraints.max.width) = self
+                .content_width
+                .resolve(viewport_hint.width, width_intrinsic.minimum);
         } else if constraints.max.width.is_finite() {
             child_constraints.min.width = constraints.max.width;
             child_constraints.max.width = constraints.max.width;
         }
 
         if self.overflow_y.is_scrollable() {
-            child_constraints.max.height = if self.viewport_height_hint {
-                viewport_hint.height
-            } else {
-                f32::INFINITY
-            };
+            (child_constraints.min.height, child_constraints.max.height) = self
+                .content_height
+                .resolve(viewport_hint.height, height_intrinsic.minimum);
         } else if constraints.max.height.is_finite() {
             child_constraints.min.height = constraints.max.height;
             child_constraints.max.height = constraints.max.height;
@@ -4598,9 +4694,10 @@ mod tests {
     };
 
     use super::{
-        Align, Background, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow, Padding,
-        RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
-        SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
+        Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
+        Padding, RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState,
+        ScrollView, SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow,
+        VirtualScrollView,
     };
     use crate::{DefaultTheme, SplitView};
     use sui_core::{
@@ -6469,6 +6566,39 @@ mod tests {
         assert_eq!(constraints.max.width, 120.0);
         assert!(constraints.max.height.is_infinite());
         assert_eq!(output.frame.viewport, Size::new(120.0, 60.0));
+    }
+
+    #[test]
+    fn scroll_view_content_extent_can_require_at_least_the_viewport() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (_, _) = render_root(
+            SizedBox::new().size(Size::new(120.0, 60.0)).with_child(
+                ScrollView::both(ConstraintProbe::new(
+                    Size::new(40.0, 20.0),
+                    Rc::clone(&seen),
+                ))
+                .content_width(ContentExtent::AtLeastViewport)
+                .content_height(ContentExtent::AtLeast(100.0)),
+            ),
+        );
+
+        let constraints = seen
+            .borrow()
+            .last()
+            .copied()
+            .expect("probe should be measured");
+        assert_eq!(constraints.min, Size::new(120.0, 100.0));
+        assert!(constraints.max.width.is_infinite());
+        assert!(constraints.max.height.is_infinite());
+    }
+
+    #[test]
+    fn content_extent_normalizes_non_finite_explicit_values() {
+        assert_eq!(
+            ContentExtent::AtLeast(f32::NAN).resolve(80.0, 20.0),
+            (0.0, f32::INFINITY)
+        );
+        assert_eq!(ContentExtent::MinContent.resolve(80.0, 24.0), (24.0, 24.0));
     }
 
     #[test]
