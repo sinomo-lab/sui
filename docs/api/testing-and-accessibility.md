@@ -173,6 +173,54 @@ captures runtime timing diagnostics. Keep baseline tests small and focused;
 when a screenshot differs, the matcher writes actual and diff images next to
 the expected baseline.
 
+## Live Application Inspector
+
+`sinomo-ui-runtime` exposes one renderer-neutral snapshot for development
+tools:
+
+```rust,ignore
+runtime.set_inspector_tracing(window_id, true)?;
+let snapshot = runtime.inspector_snapshot(window_id)?;
+```
+
+`WindowInspectorSnapshot` includes the semantic tree, retained widget tree and
+lifetime-stable IDs, focus, pending frame work, overlay ownership, timers,
+animation-frame requests, async registrations, the most recent render
+diagnostics, paint damage, and bounded histories for event routes,
+invalidations, commands, reactive changes, and widget rebuild reasons. Event
+route history records only event categories and widget IDs; it deliberately
+does not retain typed text or event payloads.
+
+Tracing is opt-in because route and history capture adds work to event and
+render paths. Structural snapshots remain available while tracing is off, and
+disabling tracing clears the retained histories:
+
+```rust,ignore
+runtime.set_inspector_tracing(window_id, false)?;
+```
+
+Render a point-in-time snapshot with `sui_debug::inspector_snapshot_view`. For
+a separate live inspector window, create `sui_debug::InspectorState`, use
+`live_inspector_view(state.clone())` as that window's root, and publish a fresh
+snapshot after the inspected window processes work. Keeping the inspector in a
+separate window prevents its own widget and paint activity from obscuring the
+application being diagnosed.
+
+Widget IDs are stable for the lifetime of a retained `WidgetPod`; they are not
+persistent application or document IDs. Widget implementations may override
+`Widget::diagnostics` to expose compact operational counters:
+
+```rust,ignore
+fn diagnostics(&self, ctx: &mut WidgetDiagnosticsCtx) {
+    ctx.record("cached rows", self.cache.len().to_string());
+}
+```
+
+The hook runs only when `inspector_snapshot` is called. Do not expose user
+content, secrets, or large state dumps through it. `VirtualList` uses this hook
+for loaded and visible ranges, realized and cached row counts, scroll state,
+follow-end state, and source revision.
+
 ## Accessibility Contract
 
 Built-in widgets emit semantics automatically. A custom interactive widget

@@ -56,6 +56,44 @@ pub trait WidgetPodMutVisitor {
     fn visit(&mut self, child: &mut WidgetPod);
 }
 
+/// One opt-in diagnostic value published by a widget for live inspection.
+///
+/// Values are deliberately presentation-neutral strings. Widgets should expose
+/// compact operational state here (cache sizes, visible ranges, parser
+/// revisions, and similar data), never user content or other sensitive data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WidgetDiagnostic {
+    pub name: String,
+    pub value: String,
+}
+
+/// Collector passed to [`Widget::diagnostics`].
+#[derive(Debug, Default)]
+pub struct WidgetDiagnosticsCtx {
+    entries: Vec<WidgetDiagnostic>,
+}
+
+impl WidgetDiagnosticsCtx {
+    pub fn record(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.entries.push(WidgetDiagnostic {
+            name: name.into(),
+            value: value.into(),
+        });
+    }
+
+    fn into_entries(self) -> Vec<WidgetDiagnostic> {
+        self.entries
+    }
+}
+
+/// On-demand widget-specific state included in an inspector snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WidgetDiagnosticsSnapshot {
+    pub widget_id: WidgetId,
+    pub widget_name: &'static str,
+    pub entries: Vec<WidgetDiagnostic>,
+}
+
 pub trait Widget {
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
 
@@ -66,6 +104,12 @@ pub trait Widget {
     fn debug_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
+
+    /// Publish widget-specific state for an inspector snapshot.
+    ///
+    /// The runtime only calls this while explicitly capturing a snapshot, so
+    /// normal event, layout, and paint passes pay no cost for this hook.
+    fn diagnostics(&self, _ctx: &mut WidgetDiagnosticsCtx) {}
 
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         constraints.max
@@ -836,6 +880,29 @@ impl WidgetPod {
         self.id
     }
 
+    pub fn debug_name(&self) -> &'static str {
+        self.widget.debug_name()
+    }
+
+    pub fn diagnostics_snapshot(&self) -> WidgetDiagnosticsSnapshot {
+        let mut ctx = WidgetDiagnosticsCtx::default();
+        self.widget.diagnostics(&mut ctx);
+        WidgetDiagnosticsSnapshot {
+            widget_id: self.id,
+            widget_name: self.widget.debug_name(),
+            entries: ctx.into_entries(),
+        }
+    }
+
+    pub fn collect_diagnostics(&self, output: &mut Vec<WidgetDiagnosticsSnapshot>) {
+        let snapshot = self.diagnostics_snapshot();
+        if !snapshot.entries.is_empty() {
+            output.push(snapshot);
+        }
+        let mut visitor = CollectDiagnosticsVisitor { output };
+        self.visit_children(&mut visitor);
+    }
+
     pub const fn bounds(&self) -> Rect {
         self.layout_state.arranged_bounds
     }
@@ -1427,6 +1494,16 @@ struct TranslateVisitor {
 impl WidgetPodMutVisitor for TranslateVisitor {
     fn visit(&mut self, child: &mut WidgetPod) {
         child.translate_subtree(self.delta);
+    }
+}
+
+struct CollectDiagnosticsVisitor<'a> {
+    output: &'a mut Vec<WidgetDiagnosticsSnapshot>,
+}
+
+impl WidgetPodVisitor for CollectDiagnosticsVisitor<'_> {
+    fn visit(&mut self, child: &WidgetPod) {
+        child.collect_diagnostics(self.output);
     }
 }
 

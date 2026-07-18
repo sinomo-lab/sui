@@ -2,12 +2,12 @@
 
 mod model;
 mod render;
-mod validate;
 
 pub use model::{TuiNode, TuiSnapshot};
 pub use render::{TuiFrame, TuiLayoutMode, TuiRenderOptions, render_snapshot};
-pub use validate::{
-    AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget, validate_snapshot,
+pub use sui_platform::{
+    AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget,
+    validate_accessibility_snapshot as validate_snapshot,
 };
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ use sui_layout::{Constraints, Padding as Insets};
 use sui_reactive::{Observable, Observer, Signal, SourceId, Subscription};
 use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
-    SemanticsCtx, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    SemanticsCtx, Widget, WidgetDiagnosticsCtx, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::LayerCompositionMode;
 
@@ -2058,6 +2058,55 @@ where
     K: Clone + Eq + Hash + PartialEq + 'static,
     T: Clone + PartialEq + 'static,
 {
+    fn diagnostics(&self, ctx: &mut WidgetDiagnosticsCtx) {
+        let viewport = self.state.viewport();
+        let active_realized = self
+            .active_range
+            .clone()
+            .filter(|index| {
+                self.keys
+                    .get(*index)
+                    .is_some_and(|key| self.realized.contains_key(key))
+            })
+            .count();
+        ctx.record("name", self.name.clone());
+        ctx.record(
+            "loaded range",
+            format!(
+                "{}..{}",
+                self.window.loaded_range.start, self.window.loaded_range.end
+            ),
+        );
+        ctx.record(
+            "visible range",
+            format!(
+                "{}..{}",
+                viewport.visible_range.start, viewport.visible_range.end
+            ),
+        );
+        ctx.record(
+            "total items",
+            self.window
+                .total_count
+                .map_or_else(|| "unknown".to_string(), |count| count.to_string()),
+        );
+        ctx.record("realized rows", self.realized.len().to_string());
+        ctx.record(
+            "cached rows",
+            self.realized
+                .len()
+                .saturating_sub(active_realized)
+                .to_string(),
+        );
+        ctx.record("cache capacity", self.cache_capacity.to_string());
+        ctx.record(
+            "scroll offset",
+            format!("{:.1} / {:.1}", viewport.offset, viewport.max_offset),
+        );
+        ctx.record("following end", viewport.following_end.to_string());
+        ctx.record("source revision", self.source_revision.to_string());
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.sync_focused_row(ctx.focused_widget_id());
         let viewport = self.viewport_rect(ctx.bounds());
@@ -2868,6 +2917,24 @@ mod tests {
             builds.get() < 30,
             "virtual list should not realize all rows; realized {}",
             builds.get()
+        );
+        let inspector = runtime.inspector_snapshot(window_id).unwrap();
+        let diagnostics = inspector
+            .widget_diagnostics
+            .iter()
+            .find(|diagnostics| diagnostics.widget_name.contains("VirtualList"))
+            .expect("virtual list should publish on-demand inspector counters");
+        assert!(
+            diagnostics
+                .entries
+                .iter()
+                .any(|entry| entry.name == "realized rows")
+        );
+        assert!(
+            diagnostics
+                .entries
+                .iter()
+                .any(|entry| { entry.name == "total items" && entry.value == "1000" })
         );
     }
 

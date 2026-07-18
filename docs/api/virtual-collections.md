@@ -158,6 +158,12 @@ also reports visible keys, known total count, paging edges, scroll offsets, the
 current anchor, and follow-end state. Use `state.viewport_signal()` when other
 widgets should react to those changes.
 
+The application inspector reads the same state through the opt-in widget
+diagnostics hook. A captured `WindowInspectorSnapshot` reports the virtual
+list's loaded and visible ranges, known total, realized and cached row counts,
+cache capacity, scroll offset, follow-end status, and source revision without
+copying item values or keys into diagnostic history.
+
 ## Retained Rows and Recycling
 
 Visible rows receive a per-item `Signal<T>` and a stable `WidgetPod` while

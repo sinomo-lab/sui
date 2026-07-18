@@ -305,9 +305,12 @@ synthesizes `Event::Custom` at a root widget. A controller can request measure,
 arrange, paint, semantics, or animation work through `CommandCtx`, and can attach
 a diagnostic reason with `request_window_with_reason`.
 
-The performance inspector shows the command routing and invalidation trace from
-the latest frame. The same data is available through
-`WindowPerformanceSnapshot::command_dispatches` and `invalidations`.
+The performance inspector shows command routing and invalidations from the
+latest frame. The application inspector additionally retains bounded command,
+invalidation, reactive, rebuild, and capture/target/bubble event-route history
+when `Runtime::set_inspector_tracing` is enabled. Capture the unified state with
+`Runtime::inspector_snapshot`; event payloads and typed text are never retained
+in route history.
 
 `UiHandle` is available only with a platform event-loop feature. Headless code
 can use `Runtime::command_sender` plus `process_commands`, or drive the runtime

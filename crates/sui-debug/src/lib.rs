@@ -1,18 +1,27 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use sui_core::{Color, DirtyRegion, Rect, SemanticsValue, Size, WidgetId, WindowId};
 use sui_layout::Alignment;
-use sui_platform::AccessibilitySnapshot;
+use sui_platform::{
+    AccessibilityIssue, AccessibilityIssueSeverity, AccessibilitySnapshot,
+    validate_accessibility_snapshot,
+};
+use sui_reactive::Signal;
 use sui_runtime::{
-    CacheMetrics, CacheMetricsDelta, FocusState, FramePhase, FrameSchedule, SceneStatistics,
-    Widget, WidgetGraphSnapshot, WidgetNodeSnapshot, WindowPerformanceSnapshot,
+    CacheMetrics, CacheMetricsDelta, EventRoutePhase, FocusState, FramePhase, FrameSchedule,
+    SceneStatistics, Widget, WidgetDiagnosticsSnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot,
+    WidgetPod, WindowInspectorSnapshot, WindowPerformanceSnapshot,
 };
 use sui_scene::{SceneCommand, SceneFrame};
 use sui_widgets::{
-    Background, Label, ListItem, ListView, Padding, ScrollView, Separator, SizedBox, Stack, Table,
-    TableColumn, TableRow, TreeItem, TreeView,
+    Background, Label, ListItem, ListView, Padding, RebuildOnChange, ScrollState, ScrollView,
+    Separator, SizedBox, Stack, Table, TableColumn, TableRow, TreeItem, TreeView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +201,49 @@ impl WindowDebugSnapshot {
         self.scene_summary = Some(scene_summary);
         self
     }
+}
+
+/// Shareable publisher for a live inspector window.
+///
+/// Keep this state outside the inspected widget tree (normally in a second
+/// window) and publish fresh [`WindowInspectorSnapshot`] values after frames or
+/// events. The outer scroll state is retained across snapshot refreshes.
+#[derive(Clone)]
+pub struct InspectorState {
+    snapshot: Rc<RefCell<WindowInspectorSnapshot>>,
+    revision: Signal<u64>,
+    scroll: ScrollState,
+}
+
+impl InspectorState {
+    pub fn new(snapshot: WindowInspectorSnapshot) -> Self {
+        Self {
+            snapshot: Rc::new(RefCell::new(snapshot)),
+            revision: Signal::named("SUI inspector snapshot", 0),
+            scroll: ScrollState::new(),
+        }
+    }
+
+    pub fn snapshot(&self) -> WindowInspectorSnapshot {
+        self.snapshot.borrow().clone()
+    }
+
+    pub fn publish(&self, snapshot: WindowInspectorSnapshot) -> bool {
+        if *self.snapshot.borrow() == snapshot {
+            return false;
+        }
+        *self.snapshot.borrow_mut() = snapshot;
+        let _ = self.revision.set(self.revision.get().wrapping_add(1));
+        true
+    }
+}
+
+pub fn live_inspector_view(state: InspectorState) -> impl Widget {
+    let snapshot = Rc::clone(&state.snapshot);
+    let body = RebuildOnChange::new_observable(state.revision.clone(), move |_| {
+        WidgetPod::new(inspector_snapshot_body(snapshot.borrow().clone()))
+    });
+    ScrollView::vertical(body).state(state.scroll.clone())
 }
 
 pub fn debug_panel<W>(title: impl Into<String>, subtitle: impl Into<String>, body: W) -> impl Widget
@@ -561,6 +613,365 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
     ScrollView::vertical(body)
 }
 
+/// Render the unified runtime inspector snapshot as a standalone scrollable
+/// view. Use [`live_inspector_view`] when snapshots will be refreshed in place.
+pub fn inspector_snapshot_view(snapshot: WindowInspectorSnapshot) -> impl Widget {
+    ScrollView::vertical(inspector_snapshot_body(snapshot))
+}
+
+fn inspector_snapshot_body(snapshot: WindowInspectorSnapshot) -> Stack {
+    let accessibility = AccessibilitySnapshot::new(snapshot.window_id, snapshot.semantics.clone());
+    let accessibility_issues = validate_accessibility_snapshot(&accessibility);
+    let accessibility_errors = accessibility_issues
+        .iter()
+        .filter(|issue| issue.severity == AccessibilityIssueSeverity::Error)
+        .count();
+    let scheduler = snapshot.scheduler.clone();
+    let history = snapshot.history.clone();
+
+    let mut body = Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Stretch);
+    body.push(debug_panel(
+        "Application inspector",
+        "A renderer-neutral snapshot of retained UI structure, routing, scheduling, accessibility, and damage.",
+        debug_metric_grid([
+            DebugMetric::new("Window", snapshot.title.clone())
+                .detail(format!("window #{}", snapshot.window_id.get()))
+                .tone(DebugTone::Info),
+            DebugMetric::new("Widgets", snapshot.widget_graph.nodes.len().to_string())
+                .detail(format!("root #{}", snapshot.widget_graph.root.get())),
+            DebugMetric::new("Semantics", accessibility.nodes.len().to_string())
+                .detail(format!("{} accessibility issues", accessibility_issues.len()))
+                .tone(if accessibility_errors == 0 {
+                    DebugTone::Success
+                } else {
+                    DebugTone::Danger
+                }),
+            DebugMetric::new("Event routes", history.event_routes.len().to_string())
+                .detail(if snapshot.tracing_enabled {
+                    "Bounded history; payloads are not retained"
+                } else {
+                    "Tracing disabled; structural snapshot only"
+                })
+                .tone(if snapshot.tracing_enabled {
+                    DebugTone::Info
+                } else {
+                    DebugTone::Neutral
+                }),
+            DebugMetric::new("Timers", scheduler.timers.len().to_string())
+                .detail(format!("{} async registrations", scheduler.async_tasks.len())),
+            DebugMetric::new(
+                "Animations",
+                (scheduler.requested_animation_frames.len()
+                    + scheduler.delivering_animation_frames.len())
+                    .to_string(),
+            )
+            .detail("Requested and currently delivering animation frames"),
+            DebugMetric::new(
+                "Invalidations",
+                history.invalidations.len().to_string(),
+            )
+            .detail(format!(
+                "{} reactive, {} rebuilds",
+                history.reactive_invalidations.len(),
+                history.widget_rebuilds.len()
+            ))
+            .tone(if history.invalidations.is_empty() {
+                DebugTone::Success
+            } else {
+                DebugTone::Warning
+            }),
+            DebugMetric::new(
+                "Paint damage",
+                snapshot
+                    .scene
+                    .as_ref()
+                    .map_or(0, |scene| scene.dirty_region_count)
+                    .to_string(),
+            )
+            .detail(snapshot.scene.as_ref().map_or_else(
+                || "No rendered frame captured".to_string(),
+                |scene| format!("{:.1}% dirty coverage", scene.dirty_coverage),
+            )),
+        ]),
+    ));
+
+    body.push(debug_panel(
+        "Focus and scheduling",
+        "Focus identity and pending work are captured independently of the paint tree.",
+        debug_key_values([
+            DebugKeyValue::new(
+                "Focused widget",
+                format_optional_widget_id(snapshot.focus_state.focused_widget),
+            ),
+            DebugKeyValue::new(
+                "Window focused",
+                yes_no(snapshot.focus_state.window_focused),
+            ),
+            DebugKeyValue::new("Pending frame work", format_schedule(snapshot.schedule)),
+            DebugKeyValue::new(
+                "Animation clock",
+                scheduler
+                    .last_animation_frame_time
+                    .map_or_else(|| "idle".to_string(), |time| format!("{time:.4}s")),
+            ),
+        ]),
+    ));
+
+    body.push(debug_panel(
+        "Timers, animations, and async tasks",
+        "Runtime registrations remain visible even when they have not invalidated the current frame.",
+        debug_key_values(scheduler_entries(&scheduler)),
+    ));
+    body.push(debug_panel(
+        "Event routes",
+        "Capture, target, and bubble handlers are retained without event payloads or typed text.",
+        debug_key_values(event_route_entries(&history.event_routes)),
+    ));
+    body.push(debug_panel(
+        "Invalidations and rebuilds",
+        "Bounded history connects observable changes and application commands to frame work and structural replacement.",
+        debug_key_values(invalidation_entries(&history)),
+    ));
+    body.push(debug_panel(
+        "Widget diagnostics",
+        "Widgets may publish operational counters on demand; normal frames do not call this hook.",
+        debug_key_values(widget_diagnostic_entries(&snapshot.widget_diagnostics)),
+    ));
+    body.push(debug_panel(
+        "Accessibility warnings",
+        "The same semantic validation used by the terminal and test tooling is applied to this snapshot.",
+        debug_key_values(accessibility_issue_entries(&accessibility_issues)),
+    ));
+    body.push(debug_panel(
+        "Accessibility tree",
+        "Names, roles, values, relationships, focus, and bounds exposed to assistive technology.",
+        accessibility_snapshot_view(accessibility),
+    ));
+    body.push(debug_panel(
+        "Overlays",
+        "Logical overlay ownership and ordering remain separate from ordinary paint ancestry.",
+        debug_key_values(overlay_entries(&snapshot.overlays)),
+    ));
+    body.push(debug_panel(
+        "Widget tree",
+        "Lifetime-stable widget IDs, concrete type names, layout, input, and paint bounds.",
+        widget_graph_snapshot_view(snapshot.widget_graph),
+    ));
+    if let Some(scene) = snapshot.scene {
+        body.push(debug_panel(
+            "Scene and paint damage",
+            "Renderer-neutral dirty regions, commands, and layer updates for the last captured frame.",
+            scene_summary_view(SceneDebugSummary::from(&scene)),
+        ));
+    }
+    body
+}
+
+fn scheduler_entries(snapshot: &sui_runtime::SchedulerInspectorSnapshot) -> Vec<DebugKeyValue> {
+    let mut entries = snapshot
+        .timers
+        .iter()
+        .map(|timer| {
+            DebugKeyValue::new(
+                format!("Timer #{}", timer.token.get()),
+                format!(
+                    "target #{} deadline {:.4}s{}",
+                    timer.target.get(),
+                    timer.deadline,
+                    if timer.delivering { " delivering" } else { "" }
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.extend(snapshot.async_tasks.iter().map(|task| {
+        DebugKeyValue::new(
+            format!("Async #{}", task.token.get()),
+            format!(
+                "target #{}{}",
+                task.target.get(),
+                if task.pending_wake {
+                    " pending wake"
+                } else {
+                    ""
+                }
+            ),
+        )
+    }));
+    entries.extend(
+        snapshot
+            .requested_animation_frames
+            .iter()
+            .map(|id| DebugKeyValue::new("Animation requested", format!("widget #{}", id.get()))),
+    );
+    entries.extend(
+        snapshot
+            .delivering_animation_frames
+            .iter()
+            .map(|id| DebugKeyValue::new("Animation delivering", format!("widget #{}", id.get()))),
+    );
+    if entries.is_empty() {
+        entries.push(DebugKeyValue::new("Scheduler", "No active registrations"));
+    }
+    entries
+}
+
+fn event_route_entries(routes: &[sui_runtime::EventRouteTraceSample]) -> Vec<DebugKeyValue> {
+    if routes.is_empty() {
+        return vec![DebugKeyValue::new(
+            "Routes",
+            "No routes captured; enable runtime inspector tracing",
+        )];
+    }
+    routes
+        .iter()
+        .rev()
+        .take(48)
+        .map(|route| {
+            let steps = route
+                .steps
+                .iter()
+                .map(|step| {
+                    let phase = match step.phase {
+                        EventRoutePhase::Capture => "C",
+                        EventRoutePhase::Target => "T",
+                        EventRoutePhase::Bubble => "B",
+                    };
+                    format!(
+                        "{phase}#{}{}",
+                        step.widget_id.get(),
+                        if step.handled { "!" } else { "" }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            DebugKeyValue::new(
+                format!("{} {}", route.sequence, route.event_kind),
+                format!("target #{} | {steps}", route.target.get()),
+            )
+        })
+        .collect()
+}
+
+fn invalidation_entries(history: &sui_runtime::InspectorHistorySnapshot) -> Vec<DebugKeyValue> {
+    let mut entries = history
+        .widget_rebuilds
+        .iter()
+        .rev()
+        .take(20)
+        .map(|sample| {
+            DebugKeyValue::new(
+                format!("Rebuild #{}", sample.widget_id.get()),
+                format!("{}: {}", short_type_name(sample.widget_name), sample.reason),
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.extend(history.invalidations.iter().rev().take(40).map(|sample| {
+        DebugKeyValue::new(
+            format!("{:?} {:?}", sample.kind, sample.target),
+            sample.reason.as_ref().map_or_else(
+                || sample.source.clone(),
+                |reason| format!("{}: {reason}", sample.source),
+            ),
+        )
+    }));
+    entries.extend(
+        history
+            .command_dispatches
+            .iter()
+            .rev()
+            .take(20)
+            .map(|sample| {
+                DebugKeyValue::new(
+                    format!("Command {}", sample.name),
+                    format!(
+                        "{:?} {:?}; handlers={:?}",
+                        sample.delivery, sample.target, sample.handlers
+                    ),
+                )
+            }),
+    );
+    if entries.is_empty() {
+        entries.push(DebugKeyValue::new(
+            "History",
+            "No invalidations or rebuilds captured",
+        ));
+    }
+    entries
+}
+
+fn widget_diagnostic_entries(snapshots: &[WidgetDiagnosticsSnapshot]) -> Vec<DebugKeyValue> {
+    let entries = snapshots
+        .iter()
+        .flat_map(|snapshot| {
+            snapshot.entries.iter().map(move |entry| {
+                DebugKeyValue::new(
+                    format!(
+                        "{} #{} / {}",
+                        short_type_name(snapshot.widget_name),
+                        snapshot.widget_id.get(),
+                        entry.name
+                    ),
+                    entry.value.clone(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        vec![DebugKeyValue::new(
+            "Widgets",
+            "No widgets published custom diagnostics",
+        )]
+    } else {
+        entries
+    }
+}
+
+fn accessibility_issue_entries(issues: &[AccessibilityIssue]) -> Vec<DebugKeyValue> {
+    if issues.is_empty() {
+        return vec![DebugKeyValue::new("Validation", "No warnings")];
+    }
+    issues
+        .iter()
+        .map(|issue| {
+            DebugKeyValue::new(
+                format!("{:?} {:?}", issue.severity, issue.target),
+                issue.message.clone(),
+            )
+        })
+        .collect()
+}
+
+fn overlay_entries(snapshot: &sui_runtime::OverlayManagerSnapshot) -> Vec<DebugKeyValue> {
+    if snapshot.overlays.is_empty() {
+        return vec![DebugKeyValue::new("Overlays", "No active overlays")];
+    }
+    snapshot
+        .overlays
+        .iter()
+        .map(|overlay| {
+            DebugKeyValue::new(
+                format!("{:?} #{}", overlay.options.kind, overlay.owner.get()),
+                format!(
+                    "order={} parent={} surfaces={:?}",
+                    overlay.order,
+                    format_optional_widget_id(overlay.parent),
+                    overlay
+                        .surfaces
+                        .iter()
+                        .map(|id| id.get())
+                        .collect::<Vec<_>>()
+                ),
+            )
+        })
+        .collect()
+}
+
+fn short_type_name(name: &'static str) -> &'static str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
 fn metric_card(metric: DebugMetric) -> impl Widget {
     let (background, label_color, value_color) = tone_palette(metric.tone);
     let mut column = Stack::vertical().spacing(6.0).alignment(Alignment::Stretch);
@@ -680,7 +1091,12 @@ fn graph_tree_item(
         detail.push_str(&format!(" parent=#{}", parent.get()));
     }
 
-    let mut item = TreeItem::new(format!("Widget #{}", node.id.get())).detail(detail);
+    let mut item = TreeItem::new(format!(
+        "{} #{}",
+        short_type_name(node.widget_name),
+        node.id.get()
+    ))
+    .detail(detail);
     if !node.children.is_empty() {
         item = item.expanded(true);
         for child in &node.children {

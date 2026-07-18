@@ -3621,6 +3621,7 @@ dependencies = [
  "sinomo-ui-core",
  "sinomo-ui-layout",
  "sinomo-ui-platform",
+ "sinomo-ui-reactive",
  "sinomo-ui-runtime",
  "sinomo-ui-scene",
  "sinomo-ui-widgets",

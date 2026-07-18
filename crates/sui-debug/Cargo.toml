@@ -19,6 +19,7 @@ name = "sui_debug"
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-platform = { workspace = true }
+sui-reactive = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 sui-widgets = { workspace = true }

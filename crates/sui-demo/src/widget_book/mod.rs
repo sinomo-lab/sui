@@ -3619,7 +3619,7 @@ fn build_widget_book_gallery_with_theme_selection(
                 "Focus, semantics, widget graph, and scene diagnostics.",
                 demo_label(
                     &theme_reader,
-                    "Debug inspector available via sui-debug crate. Open the standalone debug view for full semantics, widget graph, and scene inspection."
+                    "The sui-debug application inspector now combines semantics and accessibility warnings, widget IDs and bounds, event routes, invalidation and rebuild reasons, scheduler state, virtual collection counters, and paint damage. Keep it in a separate window to avoid inspector self-noise."
                     , DemoTextRole::Supporting,
                     DemoTextColor::Muted,
                 ),

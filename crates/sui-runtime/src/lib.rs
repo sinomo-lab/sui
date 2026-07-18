@@ -66,7 +66,8 @@ pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, FocusRestorePolicy, FocusScope, FocusScopeState,
     KeyedChildren, KeyedReconcile, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
-    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    WidgetChildren, WidgetDiagnostic, WidgetDiagnosticsCtx, WidgetDiagnosticsSnapshot, WidgetPod,
+    WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{
     BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PaintImageResource,
@@ -884,6 +885,28 @@ impl Runtime {
         Ok(window.graph.snapshot())
     }
 
+    /// Enable or disable bounded route and invalidation history for a window.
+    /// Structural snapshots remain available while tracing is disabled.
+    pub fn set_inspector_tracing(&mut self, window_id: WindowId, enabled: bool) -> Result<()> {
+        let window = self.window_mut(window_id)?;
+        if window.inspector_tracing_enabled != enabled {
+            window.clear_inspector_history();
+            window.last_render_diagnostics = RenderDiagnostics::default();
+        }
+        window.inspector_tracing_enabled = enabled;
+        Ok(())
+    }
+
+    pub fn inspector_tracing(&self, window_id: WindowId) -> Result<bool> {
+        Ok(self.window(window_id)?.inspector_tracing_enabled)
+    }
+
+    /// Capture a unified renderer-neutral snapshot for debug tooling.
+    pub fn inspector_snapshot(&self, window_id: WindowId) -> Result<WindowInspectorSnapshot> {
+        let window = self.window(window_id)?;
+        Ok(window.inspector_snapshot())
+    }
+
     /// Inspect the window's currently presented overlay stack.
     pub fn overlay_snapshot(&self, window_id: WindowId) -> Result<OverlayManagerSnapshot> {
         let window = self.window(window_id)?;
@@ -1323,6 +1346,7 @@ impl WidgetGeometrySnapshot {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetNodeSnapshot {
     pub id: WidgetId,
+    pub widget_name: &'static str,
     pub parent: Option<WidgetId>,
     pub children: Vec<WidgetId>,
     pub measured_size: Size,
@@ -1357,6 +1381,85 @@ pub struct WidgetGraphSnapshot {
     pub root: WidgetId,
     pub nodes: Vec<WidgetNodeSnapshot>,
     pub stack_hosts: Vec<StackHostSnapshot>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventRoutePhase {
+    Capture,
+    Target,
+    Bubble,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventRouteStep {
+    pub widget_id: WidgetId,
+    pub phase: EventRoutePhase,
+    pub handled: bool,
+}
+
+/// Privacy-safe event routing trace. Event payloads and typed characters are
+/// intentionally not retained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventRouteTraceSample {
+    pub sequence: u64,
+    pub event_kind: &'static str,
+    pub target: WidgetId,
+    pub path: Vec<WidgetId>,
+    pub steps: Vec<EventRouteStep>,
+    pub handled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimerInspectorSnapshot {
+    pub token: TimerToken,
+    pub target: WidgetId,
+    pub deadline: f64,
+    pub delivering: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AsyncTaskInspectorSnapshot {
+    pub token: AsyncWakeToken,
+    pub target: WidgetId,
+    pub pending_wake: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SchedulerInspectorSnapshot {
+    pub timers: Vec<TimerInspectorSnapshot>,
+    pub async_tasks: Vec<AsyncTaskInspectorSnapshot>,
+    pub requested_animation_frames: Vec<WidgetId>,
+    pub delivering_animation_frames: Vec<WidgetId>,
+    pub last_animation_frame_time: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InspectorHistorySnapshot {
+    pub event_routes: Vec<EventRouteTraceSample>,
+    pub reactive_invalidations: Vec<ReactiveInvalidationSample>,
+    pub command_dispatches: Vec<CommandDispatchSample>,
+    pub invalidations: Vec<InvalidationTraceSample>,
+    pub widget_rebuilds: Vec<WidgetRebuildSample>,
+}
+
+/// Renderer-neutral, point-in-time state consumed by testing tools and live
+/// inspector UIs. Capturing widget-specific diagnostics is opt-in and happens
+/// only while this snapshot is requested.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowInspectorSnapshot {
+    pub window_id: WindowId,
+    pub title: String,
+    pub tracing_enabled: bool,
+    pub focus_state: FocusState,
+    pub schedule: FrameSchedule,
+    pub semantics: Vec<SemanticsNode>,
+    pub widget_graph: WidgetGraphSnapshot,
+    pub overlays: OverlayManagerSnapshot,
+    pub scheduler: SchedulerInspectorSnapshot,
+    pub widget_diagnostics: Vec<WidgetDiagnosticsSnapshot>,
+    pub last_render_diagnostics: RenderDiagnostics,
+    pub history: InspectorHistorySnapshot,
+    pub scene: Option<SceneStatistics>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1488,6 +1591,14 @@ struct WindowState {
     command_listeners: CommandListeners,
     pending_command_diagnostics: Vec<CommandDispatchSample>,
     pending_invalidation_diagnostics: Vec<InvalidationTraceSample>,
+    inspector_tracing_enabled: bool,
+    next_event_route_sequence: u64,
+    event_route_history: VecDeque<EventRouteTraceSample>,
+    reactive_invalidation_history: VecDeque<ReactiveInvalidationSample>,
+    command_dispatch_history: VecDeque<CommandDispatchSample>,
+    invalidation_history: VecDeque<InvalidationTraceSample>,
+    widget_rebuild_history: VecDeque<WidgetRebuildSample>,
+    last_render_diagnostics: RenderDiagnostics,
 }
 
 impl WindowState {
@@ -1548,6 +1659,14 @@ impl WindowState {
             command_listeners,
             pending_command_diagnostics: Vec::new(),
             pending_invalidation_diagnostics: Vec::new(),
+            inspector_tracing_enabled: false,
+            next_event_route_sequence: 0,
+            event_route_history: VecDeque::new(),
+            reactive_invalidation_history: VecDeque::new(),
+            command_dispatch_history: VecDeque::new(),
+            invalidation_history: VecDeque::new(),
+            widget_rebuild_history: VecDeque::new(),
+            last_render_diagnostics: RenderDiagnostics::default(),
         }
     }
 
@@ -2928,6 +3047,7 @@ impl WindowState {
         let mut effects = EventEffects::default();
         let mut handled = false;
         let mut focus_request = None;
+        let mut route_steps = self.inspector_tracing_enabled.then(Vec::new);
         let target_only = matches!(event, Event::Wake(_));
         let ignore_handled = matches!(event, Event::Drag(_));
 
@@ -2949,6 +3069,13 @@ impl WindowState {
                     .unwrap_or_else(empty_dispatch);
                 let dispatch_handled = dispatch.handled;
                 let dispatch_focus_request = dispatch.focus_request;
+                if let Some(route_steps) = &mut route_steps {
+                    route_steps.push(EventRouteStep {
+                        widget_id: path[path_len - 1],
+                        phase: EventRoutePhase::Capture,
+                        handled: dispatch_handled,
+                    });
+                }
                 effects.extend(dispatch);
                 if dispatch_focus_request.is_some() {
                     focus_request = dispatch_focus_request;
@@ -2990,6 +3117,13 @@ impl WindowState {
                 .unwrap_or_else(empty_dispatch);
             let dispatch_handled = dispatch.handled;
             let dispatch_focus_request = dispatch.focus_request;
+            if let Some(route_steps) = &mut route_steps {
+                route_steps.push(EventRouteStep {
+                    widget_id: target,
+                    phase: EventRoutePhase::Target,
+                    handled: dispatch_handled,
+                });
+            }
             effects.extend(dispatch);
             if dispatch_focus_request.is_some() {
                 focus_request = dispatch_focus_request;
@@ -3015,6 +3149,13 @@ impl WindowState {
                     .unwrap_or_else(empty_dispatch);
                 let dispatch_handled = dispatch.handled;
                 let dispatch_focus_request = dispatch.focus_request;
+                if let Some(route_steps) = &mut route_steps {
+                    route_steps.push(EventRouteStep {
+                        widget_id: path[path_len - 1],
+                        phase: EventRoutePhase::Bubble,
+                        handled: dispatch_handled,
+                    });
+                }
                 effects.extend(dispatch);
                 if dispatch_focus_request.is_some() {
                     focus_request = dispatch_focus_request;
@@ -3024,6 +3165,20 @@ impl WindowState {
                     break;
                 }
             }
+        }
+
+        if let Some(route_steps) = route_steps {
+            let trace_handled = route_steps.iter().any(|step| step.handled);
+            let sample = EventRouteTraceSample {
+                sequence: self.next_event_route_sequence,
+                event_kind: inspector_event_kind(event),
+                target,
+                path: path.clone(),
+                steps: route_steps,
+                handled: trace_handled,
+            };
+            self.next_event_route_sequence = self.next_event_route_sequence.wrapping_add(1);
+            push_inspector_history(&mut self.event_route_history, sample);
         }
 
         EventRouteResult {
@@ -3567,6 +3722,8 @@ impl WindowState {
                 && self.animation_frame_is_transform_only(repainted, &frame.layer_updates),
         );
         self.pending_animation_wake_count = 0;
+
+        self.capture_inspector_diagnostics(&diagnostics);
 
         self.schedule.clear();
 
@@ -4391,6 +4548,117 @@ impl WindowState {
         let viewport = self.viewport.or(self.viewport_hint).unwrap_or(Size::ZERO);
         self.dpi_info_for_viewport(viewport)
     }
+
+    fn clear_inspector_history(&mut self) {
+        self.event_route_history.clear();
+        self.reactive_invalidation_history.clear();
+        self.command_dispatch_history.clear();
+        self.invalidation_history.clear();
+        self.widget_rebuild_history.clear();
+    }
+
+    fn capture_inspector_diagnostics(&mut self, diagnostics: &RenderDiagnostics) {
+        if !self.inspector_tracing_enabled {
+            return;
+        }
+
+        extend_inspector_history(
+            &mut self.reactive_invalidation_history,
+            diagnostics.reactive_invalidations.iter().cloned(),
+        );
+        extend_inspector_history(
+            &mut self.command_dispatch_history,
+            diagnostics.command_dispatches.iter().cloned(),
+        );
+        extend_inspector_history(
+            &mut self.invalidation_history,
+            diagnostics.invalidations.iter().cloned(),
+        );
+        extend_inspector_history(
+            &mut self.widget_rebuild_history,
+            diagnostics.widget_rebuilds.iter().cloned(),
+        );
+        self.last_render_diagnostics = diagnostics.clone();
+    }
+
+    fn scheduler_snapshot(&self) -> SchedulerInspectorSnapshot {
+        let mut timers = self
+            .scheduled_timers
+            .iter()
+            .map(|timer| TimerInspectorSnapshot {
+                token: timer.token,
+                target: timer.target,
+                deadline: timer.deadline,
+                delivering: self.delivering_timers.contains_key(&timer.token),
+            })
+            .collect::<Vec<_>>();
+        for (&token, &target) in &self.delivering_timers {
+            if timers.iter().all(|timer| timer.token != token) {
+                timers.push(TimerInspectorSnapshot {
+                    token,
+                    target,
+                    deadline: self.last_tick_time,
+                    delivering: true,
+                });
+            }
+        }
+        timers.sort_by(|left, right| left.deadline.total_cmp(&right.deadline));
+
+        let mut async_tasks = self
+            .async_wake_targets
+            .iter()
+            .map(|(&token, &target)| AsyncTaskInspectorSnapshot {
+                token,
+                target,
+                pending_wake: self.pending_async_wakeups.contains(&token),
+            })
+            .collect::<Vec<_>>();
+        async_tasks.sort_by_key(|task| task.token.get());
+
+        SchedulerInspectorSnapshot {
+            timers,
+            async_tasks,
+            requested_animation_frames: self.requested_animation_frames.iter().copied().collect(),
+            delivering_animation_frames: self.delivering_animation_frames.iter().copied().collect(),
+            last_animation_frame_time: self.last_animation_frame_time,
+        }
+    }
+
+    fn inspector_snapshot(&self) -> WindowInspectorSnapshot {
+        let mut widget_diagnostics = Vec::new();
+        self.root.collect_diagnostics(&mut widget_diagnostics);
+        WindowInspectorSnapshot {
+            window_id: self.id,
+            title: self.title.clone(),
+            tracing_enabled: self.inspector_tracing_enabled,
+            focus_state: self.focus,
+            schedule: self.schedule,
+            semantics: self.last_semantics.clone(),
+            widget_graph: self.graph.snapshot(),
+            overlays: self.overlay_manager.snapshot(),
+            scheduler: self.scheduler_snapshot(),
+            widget_diagnostics,
+            last_render_diagnostics: self.last_render_diagnostics.clone(),
+            history: InspectorHistorySnapshot {
+                event_routes: self.event_route_history.iter().cloned().collect(),
+                reactive_invalidations: self
+                    .reactive_invalidation_history
+                    .iter()
+                    .cloned()
+                    .collect(),
+                command_dispatches: self.command_dispatch_history.iter().cloned().collect(),
+                invalidations: self.invalidation_history.iter().cloned().collect(),
+                widget_rebuilds: self.widget_rebuild_history.iter().cloned().collect(),
+            },
+            scene: self.last_frame.as_ref().map(|frame| {
+                SceneStatistics::from_frame_with_mode(
+                    frame,
+                    self.graph.nodes.len(),
+                    window_scene_statistics_detail_mode(self.id),
+                )
+            }),
+        }
+    }
 }
 
 impl Drop for WindowState {
@@ -4890,6 +5158,7 @@ impl WidgetGraph {
             id,
             WidgetNodeSnapshot {
                 id,
+                widget_name: pod.debug_name(),
                 parent,
                 children,
                 measured_size: pod.measured_size(),
@@ -5042,6 +5311,7 @@ fn empty_dispatch() -> widget::EventDispatch {
 }
 
 const MAX_PENDING_TRACE_SAMPLES: usize = 512;
+const MAX_INSPECTOR_HISTORY_SAMPLES: usize = 256;
 
 fn push_trace<T>(samples: &mut Vec<T>, sample: T) {
     if samples.len() == MAX_PENDING_TRACE_SAMPLES {
@@ -5053,6 +5323,19 @@ fn push_trace<T>(samples: &mut Vec<T>, sample: T) {
 fn extend_traces<T>(samples: &mut Vec<T>, additions: impl IntoIterator<Item = T>) {
     for sample in additions {
         push_trace(samples, sample);
+    }
+}
+
+fn push_inspector_history<T>(samples: &mut VecDeque<T>, sample: T) {
+    if samples.len() == MAX_INSPECTOR_HISTORY_SAMPLES {
+        samples.pop_front();
+    }
+    samples.push_back(sample);
+}
+
+fn extend_inspector_history<T>(samples: &mut VecDeque<T>, additions: impl IntoIterator<Item = T>) {
+    for sample in additions {
+        push_inspector_history(samples, sample);
     }
 }
 
@@ -5086,6 +5369,19 @@ fn event_trace_source(event: &Event) -> String {
         Event::Custom(event) => format!("custom:{}", event.kind),
     };
     format!("event:{kind}")
+}
+
+fn inspector_event_kind(event: &Event) -> &'static str {
+    match event {
+        Event::Pointer(_) => "pointer",
+        Event::Drag(_) => "drag",
+        Event::Keyboard(_) => "keyboard",
+        Event::Ime(_) => "ime",
+        Event::Semantics(_) => "semantics",
+        Event::Wake(_) => "wake",
+        Event::Window(_) => "window",
+        Event::Custom(_) => "custom",
+    }
 }
 
 fn nearest_drop_acceptance(
@@ -5313,13 +5609,14 @@ mod tests {
 
     use super::{
         Application, ArrangeCtx, Command, CommandController, CommandCtx, CommandKey, CommandTarget,
-        EventCtx, EventPhase, FocusScope, FocusScopeState, FocusState, FrameSchedule, LayerOptions,
-        MeasureCtx, OVERLAY_DISMISS_REQUEST, OverlayDismissReason, OverlayFocusBehavior,
-        OverlayKind, OverlayOptions, OverlayTraceKind, PaintBoundaryMode, PaintCtx, RenderOutput,
-        Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
-        WidgetChildren, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPodMutVisitor,
-        WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
-        set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
+        EventCtx, EventPhase, EventRoutePhase, FocusScope, FocusScopeState, FocusState,
+        FrameSchedule, LayerOptions, MeasureCtx, OVERLAY_DISMISS_REQUEST, OverlayDismissReason,
+        OverlayFocusBehavior, OverlayKind, OverlayOptions, OverlayTraceKind, PaintBoundaryMode,
+        PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
+        StackSurfaceOptions, Widget, WidgetChildren, WidgetDiagnosticsCtx, WidgetGraphSnapshot,
+        WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon,
+        WindowRenderOptions, set_window_render_options, set_window_scene_statistics_detail_mode,
+        window_render_options,
     };
     use sui_core::{
         AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
@@ -5556,6 +5853,10 @@ mod tests {
     }
 
     impl Widget for TestRoot {
+        fn diagnostics(&self, ctx: &mut WidgetDiagnosticsCtx) {
+            ctx.record("test state", "available");
+        }
+
         fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
             if let Event::Custom(custom) = event
                 && custom.kind == "semantics-only"
@@ -9194,6 +9495,17 @@ mod tests {
         let async_token = state.borrow().async_token.unwrap();
         let timer_token = state.borrow().timer_token.unwrap();
 
+        let scheduler = runtime.inspector_snapshot(window_id).unwrap().scheduler;
+        assert!(scheduler.timers.iter().any(|timer| {
+            timer.token == timer_token && timer.deadline == 3.0 && !timer.delivering
+        }));
+        assert!(
+            scheduler
+                .async_tasks
+                .iter()
+                .any(|task| { task.token == async_token && !task.pending_wake })
+        );
+
         assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), Some(3.0));
         assert!(runtime.wake_async(window_id, async_token).unwrap());
 
@@ -9376,6 +9688,47 @@ mod tests {
         let graph = runtime.widget_graph(window_id).unwrap();
 
         assert_eq!(output.diagnostics.widget_count, graph.nodes.len());
+    }
+
+    #[test]
+    fn inspector_snapshot_unifies_structure_routes_and_widget_diagnostics() {
+        let (mut runtime, window_id, _, _) = build_runtime();
+        runtime.set_inspector_tracing(window_id, true).unwrap();
+        runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Down,
+                    Point::new(48.0, 40.0),
+                )),
+            )
+            .unwrap();
+
+        let snapshot = runtime.inspector_snapshot(window_id).unwrap();
+        assert_eq!(snapshot.title, "Test");
+        assert!(!snapshot.semantics.is_empty());
+        assert!(
+            snapshot
+                .widget_graph
+                .nodes
+                .iter()
+                .any(|node| node.widget_name.ends_with("TestRoot"))
+        );
+        assert!(snapshot.widget_diagnostics.iter().any(|diagnostics| {
+            diagnostics.widget_name.ends_with("TestRoot")
+                && diagnostics
+                    .entries
+                    .iter()
+                    .any(|entry| entry.name == "test state" && entry.value == "available")
+        }));
+        let route = snapshot.history.event_routes.last().unwrap();
+        assert_eq!(route.event_kind, "pointer");
+        assert!(route.steps.iter().any(|step| {
+            step.phase == EventRoutePhase::Capture || step.phase == EventRoutePhase::Target
+        }));
+        assert!(snapshot.scene.is_some());
     }
 
     struct ReactiveTextLeaf {

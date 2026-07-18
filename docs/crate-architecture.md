@@ -189,8 +189,10 @@ scene painting, but custom widgets may use different internal models.
 Reusable debug UI.
 
 This crate owns development-facing widgets and inspectors. It should render
-runtime and renderer state that already exists; it should not be the only place
-where diagnostics are computed.
+the renderer-neutral `WindowInspectorSnapshot` produced by the runtime; it
+should not be the only place where diagnostics are computed. Accessibility
+validation remains shared platform infrastructure, and widget-specific
+diagnostics are collected only when a snapshot is requested.
 
 ### `sinomo-ui-testing`
 

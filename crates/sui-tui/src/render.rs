@@ -4,8 +4,9 @@ use sui_core::{Rect, SemanticsNode, SemanticsRole, SemanticsValue, ToggleState};
 use sui_platform::AccessibilitySnapshot;
 
 use crate::{
+    AccessibilityIssueSeverity,
     model::{TuiNode, TuiSnapshot},
-    validate::{AccessibilityIssueSeverity, validate_snapshot},
+    validate_snapshot,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
