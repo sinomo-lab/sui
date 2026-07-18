@@ -1,27 +1,32 @@
 # SUI
 
-SUI is a retained-mode UI toolkit for Rust. It combines a renderer-neutral
-scene model, a `wgpu` renderer, accessible built-in widgets, deterministic UI
-testing, and native Python and Node/Electron bindings in one workspace.
+**A flexible UI toolkit for Rust, powered by `wgpu`.**
 
-## Live WASM demo
+SUI takes its name from 水 (*sui*, water): the toolkit should take the shape of
+the application, not the other way around. Its retained widget tree and
+reactive state are tools, not rules. An application can use the complete
+stack, replace parts of it, or embed only the runtime. Custom code joins
+through a small widget contract, so SUI remains useful without owning the
+application's architecture.
 
-**[Open the SUI widget book in your browser →](https://sinomo-lab.github.io/sui/)**
+SUI also handles several hard edges of modern application UI. Virtual
+collections keep identity and scroll position stable while data changes. The
+document model consumes streaming Markdown without throwing away finished
+layout. Typed application messages are routed independently of the paint
+tree, and managed overlays and responsive panes preserve focus as structure
+changes. The same semantics power accessibility, UI testing, and inspection.
 
-Explore SUI's widgets, reactive state, virtual collections, rich documents,
-adaptive workspaces, managed overlays, text editing, canvas and media
-surfaces, and retained `wgpu` renderer in a WebGPU-capable browser. No
-installation is required.
+Rendering follows the same idea: widgets emit renderer-neutral scenes, while
+a retained `wgpu` compositor handles the normal GPU path. SUI is aimed at
+technical and creative software where ordinary controls need to work naturally
+beside custom graphics.
 
-> **Release status:** SUI is pre-1.0 software. The Rust crates, desktop API,
-> and testing stack are available today, while browser, mobile, Python,
-> JavaScript, and native HDR support have the limitations listed below. The
-> Rust API may continue to evolve during the `0.x` series.
+**[Explore the live SUI widget book →](https://sinomo-lab.github.io/sui/)**
 
 ## Quick start
 
-SUI requires Rust 1.90 or newer and the system libraries normally needed by
-`winit` and `wgpu` on your platform.
+SUI requires Rust 1.90 or newer and the system libraries normally required by
+`winit` and `wgpu` on the target platform.
 
 ```toml
 [dependencies]
@@ -29,140 +34,87 @@ sui = { package = "sinomo-ui", version = "0.2" }
 ```
 
 The package is named `sinomo-ui` because the `sui` registry namespace is
-occupied. Aliasing it as `sui` keeps application imports concise.
+occupied. The dependency alias keeps application imports concise.
 
 ```rust,no_run
 use sui::prelude::*;
 
 fn main() -> Result<()> {
+    let content = Stack::vertical()
+        .spacing(12.0)
+        .alignment(Alignment::Start)
+        .with_child(Label::new("Your first SUI window").font_size(24.0))
+        .with_child(
+            Button::primary("Continue")
+                .on_press(|| println!("Hello from SUI!")),
+        );
+
     App::new()
-        .main_window("Hello SUI", Label::new("Ready"))
+        .main_window("Hello SUI", Padding::all(24.0, content))
         .run()
 }
 ```
 
-From a workspace checkout, run the same program with:
+Run the checked quickstart or open the complete widget book:
 
 ```bash
-cargo run -p sinomo-ui --example hello
+cargo run -p sinomo-ui --example quickstart
+cargo run -p sinomo-ui-demo
 ```
 
-Continue with the detailed [first-application tutorial](https://github.com/sinomo-lab/sui/blob/main/docs/tutorials/quickstart.md),
-then build an editable [stateful form](https://github.com/sinomo-lab/sui/blob/main/docs/tutorials/stateful-form.md).
-
-## What is included
-
-- Retained widgets with explicit measure, arrange, event, paint, and semantics
-  passes.
-- Common controls, form inputs, layout containers, composite application
-  widgets, the built-in SUI and neutral light/dark presets, branded
-  high-contrast and void/OLED schemes, and contextual control sizes.
-- Editable text, text areas, password fields, and local date/time fields with
-  caret movement, selection, clipboard operations, and IME input.
-- Retained rich documents with incremental streaming Markdown, cross-block
-  selection, syntax-highlighted code, attachments, and extensible structured
-  result renderers.
-- Keyed virtual lists, tables, and trees with variable row heights,
-  incremental updates, selection, anchoring, and retained row state.
-- Thread-safe typed widget/window/application commands, lifecycle-owned
-  controllers and subscriptions, application multicast, and routing traces.
-- Managed overlays, adaptive workspace policies, safe-area and intrinsic
-  layout, and focus-preserving responsive navigation.
-- A live renderer-neutral application inspector for semantics, widget IDs,
-  event routes, rebuild reasons, invalidations, schedulers, collections, and
-  paint damage.
-- A renderer-neutral scene representation and retained `wgpu` compositor.
-- AccessKit-backed accessibility plus an accessibility-tree generated TUI.
-- Headless automation, semantic locators, screenshots, and visual artifact
-  generation.
-- Native Python and Node/Electron bindings for the shared high-level model.
-
-The [widget and layout reference](https://github.com/sinomo-lab/sui/blob/main/docs/api/widgets-and-layout.md) lists the
-public building blocks and points to focused API guides.
+The [quickstart tutorial](https://github.com/sinomo-lab/sui/blob/main/docs/tutorials/quickstart.md)
+continues from this example.
 
 ## Platform status
 
+SUI is pre-1.0 software. The Rust API may continue to evolve during the `0.x`
+series.
+
 | Surface | Status | Notes |
 | --- | --- | --- |
-| Rust desktop | Available | `winit` + `wgpu` on Linux, macOS, and Windows |
-| Headless/testing | Available | Deterministic runtime, semantics, rendering, and screenshots |
-| Accessibility TUI | Available | Generated from the same semantic tree as assistive technologies |
-| Rust browser | Alpha | [Live WebAssembly widget book](https://sinomo-lab.github.io/sui/) built through the `web` feature and Trunk |
-| Rust Android | Experimental | Native-activity entry point through the `mobile` feature |
-| Python | Alpha | Local PyO3/maturin build; packages are not published |
-| Node/Electron | Alpha | Local napi-rs build; packages are not published |
-| Browser JavaScript | Planned | No JavaScript/WASM package yet |
+| Rust desktop | Available | Linux, macOS, and Windows through `winit` and `wgpu` |
+| Headless/testing | Available | Deterministic runtime, semantic interaction, rendering, and screenshots |
+| Web | Alpha | Rust/Wasm and WebGPU; used by the live widget book |
+| Android | Experimental | Native-activity host with lifecycle-aware surface management |
+| Python | Alpha | Working native binding, currently built from source |
+| JavaScript | Alpha | Working but incomplete Node/Electron binding, currently built from source |
 
-Native HDR output is currently strongest on Windows. The renderer, color
-management, diagnostics, and SDR fallback paths are cross-platform; macOS EDR
-and broader Linux native-HDR integration remain roadmap work.
-
-## Learn by example
-
-| Example | Run it | Demonstrates |
-| --- | --- | --- |
-| Hello | `cargo run -p sinomo-ui --example hello` | Minimal application and window |
-| Quickstart | `cargo run -p sinomo-ui --example quickstart` | Layout, theming, and callbacks |
-| Rich document | `cargo run -p sinomo-ui --example rich_document` | Markdown, code, selection, and structured blocks |
-| Typed commands | `cargo run -p sinomo-ui --example commands` | Window/application routing, multicast, controllers, and signals |
-| Stateful form | `cargo run -p sinomo-ui --example stateful_form` | External state and editable inputs |
-| Widget book | `cargo run -p sinomo-ui-demo` | Built-in widgets, themes, renderer settings, and demos |
-| TUI | `cargo run -p sinomo-ui-demo -- --tui` | Keyboard-driven semantic-tree interface |
-
-See the [complete examples catalog](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md) for Rust, testing,
-Python, and JavaScript examples.
-
-## Feature flags
-
-The `sinomo-ui` package enables `desktop` and `wgpu` by default.
-
-| Feature | Purpose |
-| --- | --- |
-| `desktop` | Desktop event loop and window integration; also enables `wgpu` |
-| `web` | Browser platform integration; also enables `wgpu` |
-| `mobile` | Mobile platform integration; also enables `wgpu` |
-| `wgpu` | Public `wgpu` renderer facade |
-| `testing` | Reserved facade feature for test-oriented consumers |
-
-Custom embedders can disable default features and opt into the layers they
-need. Programs that call `App::run()` need a platform feature.
+The web path runs SUI applications through Rust/Wasm and WebGPU; it is not a
+DOM framework. Applications authored in JavaScript can use the separate
+Node/Electron API. See [Platforms and Cargo features](https://github.com/sinomo-lab/sui/blob/main/docs/api/platforms-and-features.md)
+and the [JavaScript binding guide](https://github.com/sinomo-lab/sui/blob/main/crates/sui-js/README.md)
+for the current boundaries.
 
 ## Documentation
 
-The [documentation index](https://github.com/sinomo-lab/sui/blob/main/docs/README.md) separates learning material, API
-reference, internals, and active roadmap work.
+- [Start here](https://github.com/sinomo-lab/sui/blob/main/docs/README.md)
+- [API guide](https://github.com/sinomo-lab/sui/blob/main/docs/api/README.md)
+- [Examples](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md)
+- [Testing](https://github.com/sinomo-lab/sui/blob/main/docs/testing.md)
+- [Architecture](https://github.com/sinomo-lab/sui/blob/main/docs/architecture.md)
+- [Crate boundaries](https://github.com/sinomo-lab/sui/blob/main/docs/crate-architecture.md)
 
-- [Tutorials](https://github.com/sinomo-lab/sui/blob/main/docs/tutorials/README.md) — build a first app and a stateful
-  form step by step.
-- [API guide](https://github.com/sinomo-lab/sui/blob/main/docs/api/README.md) — application lifecycle, widgets, layout,
-  inputs, resources, custom widgets, testing, and accessibility.
-- [Overlays and desktop interaction](https://github.com/sinomo-lab/sui/blob/main/docs/api/overlays-and-desktop.md) — managed
-  dialogs, menus, sheets, notifications, file dialogs, and drag/drop.
-- [Examples](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md) — runnable Rust, Python, and JavaScript samples.
-- [Testing](https://github.com/sinomo-lab/sui/blob/main/docs/testing.md) — semantic automation, screenshots, and artifacts.
-- [TUI](https://github.com/sinomo-lab/sui/blob/main/docs/tui.md) — run and embed the accessibility-generated terminal UI.
-- [Architecture](https://github.com/sinomo-lab/sui/blob/main/docs/architecture.md) — understand the retained runtime and
-  frame pipeline.
-- [Contributing](https://github.com/sinomo-lab/sui/blob/main/CONTRIBUTING.md) — build, validate, document, and submit
-  changes.
-- [Security policy](https://github.com/sinomo-lab/sui/blob/main/SECURITY.md) — report vulnerabilities privately and check
-  the supported-version policy.
-
-Generate local Rust API documentation with:
+Generate API documentation for the checked-out revision with:
 
 ```bash
 cargo doc -p sinomo-ui --no-deps --open
 ```
 
+## Feature flags
+
+The `sinomo-ui` facade enables `desktop` and `wgpu` by default. Disable default
+features when embedding the renderer-neutral runtime or selecting another
+platform host.
+
+| Feature | Purpose |
+| --- | --- |
+| `desktop` | Desktop event loop and window integration; also enables `wgpu` |
+| `web` | Browser/WebAssembly integration; also enables `wgpu` |
+| `mobile` | Mobile integration, currently Android; also enables `wgpu` |
+| `wgpu` | Renderer facade and external texture integration |
+| `testing` | Compatibility flag; high-level test APIs live in `sinomo-ui-testing` |
+
 ## Repository development
-
-Launch the desktop widget book:
-
-```bash
-cargo run -p sinomo-ui-demo
-```
-
-Run the standard validation suite:
 
 ```bash
 cargo fmt --all -- --check
@@ -170,23 +122,18 @@ cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Generate the visual validation bundle explicitly:
+The widget book also serves as SUI's integration and visual-validation host.
+Generate its artifact bundle with:
 
 ```bash
 cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
 Artifacts are written under `target/ui-artifacts/sui-demo/widget-book`.
-Ordinary tests do not generate this slower bundle.
-
-For crate ownership and dependency boundaries, see the
-[crate architecture](https://github.com/sinomo-lab/sui/blob/main/docs/crate-architecture.md).
-Contributors should read
-[CONTRIBUTING.md](https://github.com/sinomo-lab/sui/blob/main/CONTRIBUTING.md)
-before opening a change.
+Contributors should read [CONTRIBUTING.md](https://github.com/sinomo-lab/sui/blob/main/CONTRIBUTING.md);
+security issues should follow the [security policy](https://github.com/sinomo-lab/sui/blob/main/SECURITY.md).
 
 ## License
 
 SUI is licensed under the [MIT License](https://github.com/sinomo-lab/sui/blob/main/LICENSE).
-The bundled `sinomo-ui-lucide`
-crate retains its upstream ISC license.
+The bundled `sinomo-ui-lucide` crate retains its upstream ISC license.
