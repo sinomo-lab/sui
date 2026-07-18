@@ -127,6 +127,14 @@ On `target_os = "android"`, the facade exports `AndroidApp` and provides
 the native-activity handle supplied by the Android host. The ordinary
 `App::run()` method is not the Android entry point.
 
+SUI follows Android's native-window lifecycle: it does not create a Winit
+window or `wgpu::Surface` until the host delivers `Resumed`. On `Suspended`,
+the platform layer drops all GPU surfaces before the native `SurfaceView`
+becomes invalid, while retaining the runtime and widget tree. A later
+`Resumed` restores the surfaces, refreshes the viewport, and schedules a new
+frame automatically. Application code should not need to synthesize redraws
+or rebuild its UI around these transitions.
+
 Treat package metadata, lifecycle integration, permissions, input, soft
 keyboard behavior, graphics adapter availability, and device testing as part
 of the Android application. The `mobile` feature does not provide an iOS entry

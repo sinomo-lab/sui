@@ -81,6 +81,36 @@ enum DesktopUserEvent {
     AccessKit(AccessKitEvent),
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum HostLifecycle {
+    #[default]
+    AwaitingResume,
+    Resumed,
+    Suspended,
+}
+
+impl HostLifecycle {
+    fn is_resumed(self) -> bool {
+        self == Self::Resumed
+    }
+
+    /// Returns `true` when host surfaces need to be created or restored.
+    fn resume(&mut self) -> bool {
+        if self.is_resumed() {
+            return false;
+        }
+        *self = Self::Resumed;
+        true
+    }
+
+    /// Returns `true` when live host surfaces need to be released.
+    fn suspend(&mut self) -> bool {
+        let had_surfaces = self.is_resumed();
+        *self = Self::Suspended;
+        had_surfaces
+    }
+}
+
 #[cfg(target_os = "windows")]
 impl From<AccessKitEvent> for DesktopUserEvent {
     fn from(event: AccessKitEvent) -> Self {
@@ -365,6 +395,7 @@ struct DesktopApp {
     automation: Option<DesktopAutomationState>,
     started_at: Instant,
     frame_clock: f64,
+    host_lifecycle: HostLifecycle,
     windows: HashMap<WindowId, WindowState>,
     host_to_runtime: HashMap<HostWindowId, WindowId>,
     last_error: Option<Error>,
@@ -540,6 +571,7 @@ impl DesktopApp {
             automation: automation.map(DesktopAutomationState::new),
             started_at: Instant::now(),
             frame_clock: 0.0,
+            host_lifecycle: HostLifecycle::default(),
             windows: HashMap::new(),
             host_to_runtime: HashMap::new(),
             last_error: None,
@@ -562,6 +594,71 @@ impl DesktopApp {
         self.renderer
             .set_window_display_capabilities(window_id, capabilities)?;
         Ok(())
+    }
+
+    fn restore_window_surfaces(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        let runtime_window_ids = self.runtime.window_ids();
+        let window_ids: Vec<_> = self
+            .windows
+            .keys()
+            .copied()
+            .filter(|window_id| runtime_window_ids.contains(window_id))
+            .collect();
+
+        for window_id in window_ids {
+            let window = Arc::clone(&self.windows[&window_id].window);
+            self.renderer
+                .register_window(window_id, Arc::clone(&window))?;
+            self.refresh_window_display_capabilities(window_id)?;
+
+            let scale_factor = window.scale_factor();
+            let size = physical_size_to_logical_size(
+                Self::initial_window_physical_size(&window),
+                scale_factor,
+            );
+            if let Some(state) = self.windows.get_mut(&window_id) {
+                state.scale_factor = scale_factor;
+                state.display_capabilities_dirty = false;
+                state.redraw_requested = false;
+                state.redraw_requested_at_ms = None;
+            }
+
+            // A newly restored surface has no contents. Re-delivering its current
+            // scale and size invalidates layout/paint and schedules a fresh frame
+            // without replacing the retained runtime or widget tree.
+            self.process_event(
+                event_loop,
+                window_id,
+                Event::Window(WindowEvent::ScaleFactorChanged {
+                    scale_factor,
+                    raw_dpi: None,
+                    suggested_size: Some(size),
+                }),
+            )?;
+            self.process_event(
+                event_loop,
+                window_id,
+                Event::Window(WindowEvent::Resized(size)),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn suspend_window_surfaces(&mut self) {
+        if !self.host_lifecycle.suspend() {
+            return;
+        }
+
+        for (window_id, window) in &mut self.windows {
+            // On Android the native SurfaceView is invalid as soon as this
+            // callback returns. Drop wgpu surfaces synchronously while retaining
+            // the host window and SUI runtime state for the next Resumed event.
+            self.renderer.remove_window(*window_id);
+            window.display_capabilities_dirty = true;
+            window.redraw_requested = false;
+            window.redraw_requested_at_ms = None;
+        }
     }
 
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -699,6 +796,14 @@ impl DesktopApp {
     }
 
     fn drive_runtime(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        // Winit may deliver AboutToWait and user events before the first
+        // Resumed callback. In particular, Android has no native window (and
+        // therefore cannot create a wgpu surface) during that interval.
+        if !self.host_lifecycle.is_resumed() {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return Ok(());
+        }
+
         self.sync_windows(event_loop)?;
         if self.windows.is_empty() {
             return Ok(());
@@ -1999,9 +2104,20 @@ impl Waker {
 
 impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.host_lifecycle.resume()
+            && let Err(error) = self.restore_window_surfaces(event_loop)
+        {
+            self.handle_error(event_loop, error);
+            return;
+        }
         if let Err(error) = self.drive_runtime(event_loop) {
             self.handle_error(event_loop, error);
         }
+    }
+
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.suspend_window_surfaces();
+        event_loop.set_control_flow(ControlFlow::Wait);
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: DesktopUserEvent) {
@@ -2037,6 +2153,9 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
         window_id: HostWindowId,
         event: WinitWindowEvent,
     ) {
+        if !self.host_lifecycle.is_resumed() {
+            return;
+        }
         if let Err(error) = self.handle_window_event(event_loop, window_id, event) {
             self.handle_error(event_loop, error);
         }
@@ -2525,7 +2644,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        map_external_file_window_event, physical_position_to_logical_point,
+        HostLifecycle, map_external_file_window_event, physical_position_to_logical_point,
         physical_position_to_logical_vector, physical_size_to_logical_size,
         rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, web_click_semantics_action,
         window_icon_to_winit_icon,
@@ -2536,6 +2655,21 @@ mod tests {
     use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::WindowEvent as WinitWindowEvent;
+
+    #[test]
+    fn host_lifecycle_waits_for_resume_and_handles_redundant_callbacks() {
+        let mut lifecycle = HostLifecycle::default();
+
+        assert!(!lifecycle.is_resumed());
+        assert!(!lifecycle.suspend());
+        assert!(lifecycle.resume());
+        assert!(lifecycle.is_resumed());
+        assert!(!lifecycle.resume());
+        assert!(lifecycle.suspend());
+        assert!(!lifecycle.is_resumed());
+        assert!(!lifecycle.suspend());
+        assert!(lifecycle.resume());
+    }
 
     #[test]
     fn converts_physical_size_to_logical_size() {
