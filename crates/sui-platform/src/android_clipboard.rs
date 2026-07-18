@@ -5,6 +5,8 @@ use jni::{
 use sui_core::ClipboardBackend;
 use winit::platform::android::activity::AndroidApp;
 
+const CLIPBOARD_MAIN_THREAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Android system-clipboard bridge for the NativeActivity platform.
 ///
 /// Android framework objects must be used on the Java main thread. Clipboard
@@ -23,31 +25,31 @@ impl AndroidClipboardBackend {
         }
     }
 
-    fn system_text(&self) -> jni::errors::Result<Option<String>> {
+    fn system_text(&self) -> Option<jni::errors::Result<Option<String>>> {
         let (send, receive) = std::sync::mpsc::sync_channel(1);
         let app = self.app.clone();
         self.app.run_on_java_main_thread(Box::new(move || {
             let _ = send.send(read_system_text(&app));
         }));
-        receive.recv().unwrap_or_else(|_| Ok(None))
+        receive.recv_timeout(CLIPBOARD_MAIN_THREAD_TIMEOUT).ok()
     }
 
-    fn set_system_text(&self, text: String) -> jni::errors::Result<()> {
+    fn set_system_text(&self, text: String) -> Option<jni::errors::Result<()>> {
         let (send, receive) = std::sync::mpsc::sync_channel(1);
         let app = self.app.clone();
         self.app.run_on_java_main_thread(Box::new(move || {
             let _ = send.send(write_system_text(&app, &text));
         }));
-        receive.recv().unwrap_or(Ok(()))
+        receive.recv_timeout(CLIPBOARD_MAIN_THREAD_TIMEOUT).ok()
     }
 }
 
 impl ClipboardBackend for AndroidClipboardBackend {
     fn text(&mut self) -> Option<String> {
-        self.system_text()
-            .ok()
-            .flatten()
-            .or_else(|| self.fallback.clone())
+        match self.system_text() {
+            Some(Ok(text)) => text,
+            Some(Err(_)) | None => self.fallback.clone(),
+        }
     }
 
     fn set_text(&mut self, text: &str) {

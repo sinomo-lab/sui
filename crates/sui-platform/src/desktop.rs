@@ -661,6 +661,11 @@ impl DesktopApp {
             window.display_capabilities_dirty = true;
             window.redraw_requested = false;
             window.redraw_requested_at_ms = None;
+            window.android_back_down_seen = false;
+            if window.ime_allowed {
+                window.window.set_ime_allowed(false);
+                window.ime_allowed = false;
+            }
         }
     }
 
@@ -763,6 +768,8 @@ impl DesktopApp {
                     accesskit_snapshot,
                     pointer: PointerState::default(),
                     touch_points: HashMap::new(),
+                    android_back_down_seen: false,
+                    ime_allowed: false,
                     scale_factor,
                     window,
                 },
@@ -1159,7 +1166,11 @@ impl DesktopApp {
             window.last_non_redraw_event_at_ms = None;
             window.redraw_requested_at_ms = None;
 
-            apply_ime_composition_rect(window.window.as_ref(), output.ime_composition_rect);
+            apply_ime_composition_rect(
+                window.window.as_ref(),
+                &mut window.ime_allowed,
+                output.ime_composition_rect,
+            );
         }
 
         crate::publish_frame_performance(
@@ -1257,11 +1268,16 @@ impl DesktopApp {
                     }),
                 )
             }
-            WinitWindowEvent::Focused(focused) => self.process_event(
-                event_loop,
-                window_id,
-                Event::Window(WindowEvent::Focused(focused)),
-            ),
+            WinitWindowEvent::Focused(focused) => {
+                if !focused && let Some(window) = self.windows.get_mut(&window_id) {
+                    window.android_back_down_seen = false;
+                }
+                self.process_event(
+                    event_loop,
+                    window_id,
+                    Event::Window(WindowEvent::Focused(focused)),
+                )
+            }
             WinitWindowEvent::Occluded(occluded) => self.process_event(
                 event_loop,
                 window_id,
@@ -1463,13 +1479,22 @@ impl DesktopApp {
                 self.process_event(event_loop, window_id, event)
             }
             WinitWindowEvent::KeyboardInput { event, .. } => {
-                #[cfg(target_os = "android")]
-                eprintln!(
-                    "sui android key: logical={:?} physical={:?} state={:?} repeat={}",
-                    event.logical_key, event.physical_key, event.state, event.repeat
-                );
-                let is_android_back = cfg!(target_os = "android")
-                    && is_android_back_request(&event.logical_key, event.state, event.repeat);
+                let (effective_state, is_android_back) = if cfg!(target_os = "android") {
+                    let down_seen = self
+                        .windows
+                        .get_mut(&window_id)
+                        .map(|window| &mut window.android_back_down_seen);
+                    down_seen.map_or((event.state, false), |down_seen| {
+                        normalize_android_back_event(
+                            &event.logical_key,
+                            event.state,
+                            event.repeat,
+                            down_seen,
+                        )
+                    })
+                } else {
+                    (event.state, false)
+                };
                 let modifiers = self
                     .windows
                     .get(&window_id)
@@ -1479,7 +1504,7 @@ impl DesktopApp {
                     key: logical_key_to_string(&event.logical_key),
                     code: physical_key_to_string(&event.physical_key),
                     text: event.text.as_ref().map(|text| text.to_string()),
-                    state: match event.state {
+                    state: match effective_state {
                         ElementState::Pressed => KeyState::Pressed,
                         ElementState::Released => KeyState::Released,
                     },
@@ -2218,6 +2243,8 @@ struct WindowState {
     accesskit_snapshot: AccessKitSnapshot,
     pointer: PointerState,
     touch_points: HashMap<u64, Point>,
+    android_back_down_seen: bool,
+    ime_allowed: bool,
     scale_factor: f64,
     window: Arc<Window>,
 }
@@ -2267,9 +2294,17 @@ fn physical_position_to_logical_vector(
     Vector::new(logical.x, logical.y)
 }
 
-fn apply_ime_composition_rect(window: &Window, rect: Option<sui_core::Rect>) {
+fn apply_ime_composition_rect(
+    window: &Window,
+    ime_allowed: &mut bool,
+    rect: Option<sui_core::Rect>,
+) {
     let cursor_area = rect.and_then(|rect| sanitize_ime_cursor_area(rect, window.scale_factor()));
-    window.set_ime_allowed(cursor_area.is_some());
+    let next_ime_allowed = cursor_area.is_some();
+    if next_ime_allowed != *ime_allowed {
+        window.set_ime_allowed(next_ime_allowed);
+        *ime_allowed = next_ime_allowed;
+    }
 
     if let Some((position, size)) = cursor_area {
         window.set_ime_cursor_area(position, size);
@@ -2385,8 +2420,29 @@ fn logical_key_to_string(key: &Key) -> String {
     }
 }
 
-fn is_android_back_request(key: &Key, state: ElementState, repeat: bool) -> bool {
-    matches!(key, Key::Named(NamedKey::BrowserBack)) && state == ElementState::Pressed && !repeat
+fn normalize_android_back_event(
+    key: &Key,
+    state: ElementState,
+    repeat: bool,
+    down_seen: &mut bool,
+) -> (ElementState, bool) {
+    if !matches!(key, Key::Named(NamedKey::BrowserBack)) {
+        return (state, false);
+    }
+
+    match state {
+        ElementState::Pressed => {
+            if !repeat {
+                *down_seen = true;
+            }
+            (state, !repeat)
+        }
+        ElementState::Released if std::mem::take(down_seen) => (state, false),
+        // Android's input queue lets the active IME pre-dispatch Back. Some IMEs consume
+        // the Down edge and return only Up to the app, so normalize that release-only
+        // sequence into the single activation expected by the runtime and window host.
+        ElementState::Released => (ElementState::Pressed, !repeat),
+    }
 }
 
 fn named_key_to_string(key: NamedKey) -> String {
@@ -2680,7 +2736,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        HostLifecycle, is_android_back_request, map_external_file_window_event,
+        HostLifecycle, map_external_file_window_event, normalize_android_back_event,
         physical_position_to_logical_point, physical_position_to_logical_vector,
         physical_size_to_logical_size, rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area,
         web_click_semantics_action, window_icon_to_winit_icon,
@@ -2735,29 +2791,63 @@ mod tests {
     }
 
     #[test]
-    fn android_back_request_requires_initial_browser_back_press() {
+    fn android_back_normalization_activates_once_for_press_and_release() {
         let browser_back = Key::Named(NamedKey::BrowserBack);
+        let mut down_seen = false;
 
-        assert!(is_android_back_request(
-            &browser_back,
-            ElementState::Pressed,
-            false
-        ));
-        assert!(!is_android_back_request(
-            &browser_back,
-            ElementState::Released,
-            false
-        ));
-        assert!(!is_android_back_request(
-            &browser_back,
-            ElementState::Pressed,
-            true
-        ));
-        assert!(!is_android_back_request(
-            &Key::Named(NamedKey::Escape),
-            ElementState::Pressed,
-            false
-        ));
+        assert_eq!(
+            normalize_android_back_event(
+                &browser_back,
+                ElementState::Pressed,
+                false,
+                &mut down_seen,
+            ),
+            (ElementState::Pressed, true)
+        );
+        assert!(down_seen);
+        assert_eq!(
+            normalize_android_back_event(
+                &browser_back,
+                ElementState::Released,
+                false,
+                &mut down_seen,
+            ),
+            (ElementState::Released, false)
+        );
+        assert!(!down_seen);
+        assert_eq!(
+            normalize_android_back_event(
+                &browser_back,
+                ElementState::Pressed,
+                true,
+                &mut down_seen,
+            ),
+            (ElementState::Pressed, false)
+        );
+        assert_eq!(
+            normalize_android_back_event(
+                &Key::Named(NamedKey::Escape),
+                ElementState::Pressed,
+                false,
+                &mut down_seen,
+            ),
+            (ElementState::Pressed, false)
+        );
+    }
+
+    #[test]
+    fn android_back_normalization_promotes_release_only_delivery() {
+        let mut down_seen = false;
+        assert_eq!(
+            normalize_android_back_event(
+                &Key::Named(NamedKey::BrowserBack),
+                ElementState::Released,
+                false,
+                &mut down_seen,
+            ),
+            (ElementState::Pressed, true)
+        );
+        assert!(!down_seen);
     }
 
     #[test]
