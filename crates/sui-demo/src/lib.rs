@@ -3064,8 +3064,14 @@ use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 const DEV_WEB_FONT_URLS: &[(&str, &str)] = &[
-    ("Noto Sans CJK SC", "NotoSansCJKsc-Regular.otf"),
-    ("Noto Color Emoji", "NotoColorEmoji.ttf"),
+    (
+        "Noto Sans CJK SC",
+        concat!("NotoSansCJKsc-Regular.otf?v=", env!("CARGO_PKG_VERSION")),
+    ),
+    (
+        "Noto Color Emoji",
+        concat!("NotoColorEmoji.ttf?v=", env!("CARGO_PKG_VERSION")),
+    ),
 ];
 
 #[cfg(target_arch = "wasm32")]

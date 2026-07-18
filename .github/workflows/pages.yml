@@ -41,6 +41,9 @@ jobs:
           --filehash true
           --public-url "${{ steps.pages.outputs.base_path }}/"
 
+      - name: Precompress and configure immutable assets
+        run: node crates/sui-demo/web/prepare-dist.mjs crates/sui-demo/web/dist
+
       - name: Enforce the web demo size budget
         shell: bash
         run: |
@@ -57,6 +60,10 @@ jobs:
             echo "::error::WebAssembly bundle exceeds the 12 MiB Pages budget."
             exit 1
           fi
+
+          brotli_bytes=$(wc -c < "${wasm_file}.br")
+          gzip_bytes=$(wc -c < "${wasm_file}.gz")
+          echo "Precompressed WebAssembly: $brotli_bytes bytes (Brotli), $gzip_bytes bytes (gzip)"
 
       - name: Upload the Pages artifact
         uses: actions/upload-pages-artifact@v5

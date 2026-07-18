@@ -14,10 +14,35 @@ Or from the workspace root:
 Production build
 
   trunk build --config crates/sui-demo/web/Trunk.toml --release
+  node crates/sui-demo/web/prepare-dist.mjs crates/sui-demo/web/dist
 
 Output goes to:
 
   crates/sui-demo/web/dist
+
+The preparation step writes Brotli and gzip sidecars for compressible assets,
+`compression-manifest.json`, and an `_headers` file for static hosts that support
+the Cloudflare Pages/Netlify header format. Fingerprinted application assets and
+versioned font payloads receive a one-year immutable cache lifetime on those
+hosts, while HTML and the manifest remain revalidated.
+
+GitHub Pages always controls its own response headers. It currently serves gzip
+but does not negotiate the generated Brotli sidecars or allow a custom cache
+lifetime. The browser loader therefore retains the server-decoded Wasm and font
+responses in a revisioned Cache Storage entry. Pages supplies gzip on the first
+load, while later loads avoid its ten-minute cache limit. Static hosts that
+support `_headers` and Brotli negotiation use the immutable response rules and
+the generated `.br` sidecars directly. The Pages workflow runs the preparation
+step automatically before uploading the artifact.
+
+After startup, `asset-cache-worker.js` adds the fingerprinted JavaScript module
+to that same revisioned cache and serves it on later visits. HTML, the
+compression manifest, and the worker itself remain revalidated so deployments
+can advance without pinning the entry point.
+
+Trunk's Wasm preload remains active for parallel cold-start fetching. On later
+visits the service worker satisfies that preload from the same revisioned cache,
+so it does not bypass the long-lived cache or start a network transfer.
 
 Benchmark mode
 
@@ -51,4 +76,6 @@ Behavior:
 Notes:
 - Trunk builds ../Cargo.toml as the Rust/WASM asset.
 - The config enables --no-default-features plus the web feature.
+- `compression-loader.js` is inactive when no compression manifest is present,
+  so normal `trunk serve` development keeps using the original assets.
 - The watch config includes the `sinomo-ui-demo` package and the workspace root so edits in the Rust sources trigger rebuilds.

@@ -14,6 +14,9 @@ features = ["web"]
 watch = [
   "index.html",
   "Trunk.toml",
+  "asset-cache-worker.js",
+  "compression-loader.js",
+  "prepare-dist.mjs",
   "../Cargo.toml",
   "../src",
   "../../sui/Cargo.toml",
