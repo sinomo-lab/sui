@@ -347,6 +347,9 @@ impl DesktopPlatform {
         android_app: AndroidApp,
         on_ready: impl FnOnce(CommandSender),
     ) -> Result<Vec<PlatformWindow>> {
+        runtime.set_clipboard_backend(crate::android_clipboard::AndroidClipboardBackend::new(
+            android_app.clone(),
+        ));
         let mut event_loop_builder = EventLoop::<DesktopUserEvent>::with_user_event();
         event_loop_builder.with_android_app(android_app);
         let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
@@ -932,8 +935,18 @@ impl DesktopApp {
         window_id: WindowId,
         event: Event,
     ) -> Result<()> {
+        self.process_event_with_outcome(event_loop, window_id, event)
+            .map(|_| ())
+    }
+
+    fn process_event_with_outcome(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: Event,
+    ) -> Result<bool> {
         if !self.windows.contains_key(&window_id) {
-            return Ok(());
+            return Ok(false);
         }
 
         let event_arrived_at_ms = self.current_time_ms();
@@ -948,7 +961,7 @@ impl DesktopApp {
         self.runtime.tick(self.frame_clock);
 
         let event_started = Instant::now();
-        self.runtime.handle_event(window_id, event)?;
+        let handled = self.runtime.dispatch_event(window_id, event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
 
         if let Some(window) = self.windows.get_mut(&window_id) {
@@ -990,7 +1003,7 @@ impl DesktopApp {
             event_loop.exit();
         }
 
-        Ok(())
+        Ok(handled)
     }
 
     fn render_window_if_needed(&mut self, window_id: WindowId, event_time_ms: f64) -> Result<()> {
@@ -1450,6 +1463,13 @@ impl DesktopApp {
                 self.process_event(event_loop, window_id, event)
             }
             WinitWindowEvent::KeyboardInput { event, .. } => {
+                #[cfg(target_os = "android")]
+                eprintln!(
+                    "sui android key: logical={:?} physical={:?} state={:?} repeat={}",
+                    event.logical_key, event.physical_key, event.state, event.repeat
+                );
+                let is_android_back = cfg!(target_os = "android")
+                    && is_android_back_request(&event.logical_key, event.state, event.repeat);
                 let modifiers = self
                     .windows
                     .get(&window_id)
@@ -1467,7 +1487,19 @@ impl DesktopApp {
                     repeat: event.repeat,
                     is_composing: false,
                 };
-                self.process_event(event_loop, window_id, Event::Keyboard(keyboard_event))
+                let handled = self.process_event_with_outcome(
+                    event_loop,
+                    window_id,
+                    Event::Keyboard(keyboard_event),
+                )?;
+                if is_android_back && !handled {
+                    self.process_event(
+                        event_loop,
+                        window_id,
+                        Event::Window(WindowEvent::CloseRequested),
+                    )?;
+                }
+                Ok(())
             }
             WinitWindowEvent::Ime(ime) => {
                 if let Some(ime_event) = map_ime_event(ime) {
@@ -2353,6 +2385,10 @@ fn logical_key_to_string(key: &Key) -> String {
     }
 }
 
+fn is_android_back_request(key: &Key, state: ElementState, repeat: bool) -> bool {
+    matches!(key, Key::Named(NamedKey::BrowserBack)) && state == ElementState::Pressed && !repeat
+}
+
 fn named_key_to_string(key: NamedKey) -> String {
     match key {
         NamedKey::Enter => "Enter".to_string(),
@@ -2644,17 +2680,20 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        HostLifecycle, map_external_file_window_event, physical_position_to_logical_point,
-        physical_position_to_logical_vector, physical_size_to_logical_size,
-        rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area, web_click_semantics_action,
-        window_icon_to_winit_icon,
+        HostLifecycle, is_android_back_request, map_external_file_window_event,
+        physical_position_to_logical_point, physical_position_to_logical_vector,
+        physical_size_to_logical_size, rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area,
+        web_click_semantics_action, window_icon_to_winit_icon,
     };
     use sui_core::{
         Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, WindowEvent,
     };
     use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
-    use winit::event::WindowEvent as WinitWindowEvent;
+    use winit::{
+        event::{ElementState, WindowEvent as WinitWindowEvent},
+        keyboard::{Key, NamedKey},
+    };
 
     #[test]
     fn host_lifecycle_waits_for_resume_and_handles_redundant_callbacks() {
@@ -2693,6 +2732,32 @@ mod tests {
 
         assert_eq!(delta.x, 60.0);
         assert_eq!(delta.y, 30.0);
+    }
+
+    #[test]
+    fn android_back_request_requires_initial_browser_back_press() {
+        let browser_back = Key::Named(NamedKey::BrowserBack);
+
+        assert!(is_android_back_request(
+            &browser_back,
+            ElementState::Pressed,
+            false
+        ));
+        assert!(!is_android_back_request(
+            &browser_back,
+            ElementState::Released,
+            false
+        ));
+        assert!(!is_android_back_request(
+            &browser_back,
+            ElementState::Pressed,
+            true
+        ));
+        assert!(!is_android_back_request(
+            &Key::Named(NamedKey::Escape),
+            ElementState::Pressed,
+            false
+        ));
     }
 
     #[test]

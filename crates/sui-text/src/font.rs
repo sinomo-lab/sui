@@ -582,13 +582,13 @@ fn first_installed_family(font_db: &fontdb::Database, candidates: &[&str]) -> Op
     })
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
 fn load_bundled_fallback_fonts(font_db: &mut fontdb::Database) {
-    load_bundled_wasm_fallback_fonts(font_db);
+    load_bundled_portable_fallback_fonts(font_db);
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
-fn load_bundled_wasm_fallback_fonts(font_db: &mut fontdb::Database) {
+#[cfg(any(target_arch = "wasm32", target_os = "android", test))]
+fn load_bundled_portable_fallback_fonts(font_db: &mut fontdb::Database) {
     let sans_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
         include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
     )));
@@ -605,10 +605,10 @@ fn load_bundled_wasm_fallback_fonts(font_db: &mut fontdb::Database) {
     let _ = set_monospace_family_from_loaded_faces(font_db, &mono_ids);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn load_bundled_fallback_fonts(_font_db: &mut fontdb::Database) {}
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", target_os = "android", test))]
 fn set_sans_serif_family_from_loaded_faces(
     font_db: &mut fontdb::Database,
     ids: &[fontdb::ID],
@@ -618,7 +618,7 @@ fn set_sans_serif_family_from_loaded_faces(
     Some(name)
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", target_os = "android", test))]
 fn set_serif_family_from_loaded_faces(
     font_db: &mut fontdb::Database,
     ids: &[fontdb::ID],
@@ -628,7 +628,7 @@ fn set_serif_family_from_loaded_faces(
     Some(name)
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", target_os = "android", test))]
 fn set_monospace_family_from_loaded_faces(
     font_db: &mut fontdb::Database,
     ids: &[fontdb::ID],
@@ -638,7 +638,7 @@ fn set_monospace_family_from_loaded_faces(
     Some(name)
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", target_os = "android", test))]
 fn preferred_family_from_loaded_faces(
     font_db: &fontdb::Database,
     ids: &[fontdb::ID],
@@ -696,9 +696,9 @@ mod font_database_tests {
     }
 
     #[test]
-    fn bundled_wasm_fonts_resolve_all_theme_generic_stacks_on_native_tests() {
+    fn bundled_portable_fonts_resolve_all_theme_generic_stacks_on_native_tests() {
         let mut font_db = fontdb::Database::new();
-        load_bundled_wasm_fallback_fonts(&mut font_db);
+        load_bundled_portable_fallback_fonts(&mut font_db);
         configure_platform_generic_families(&mut font_db);
 
         assert_eq!(font_db.family_name(&fontdb::Family::SansSerif), "Noto Sans");

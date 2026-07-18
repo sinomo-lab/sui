@@ -3691,6 +3691,7 @@ dependencies = [
  "accesskit_consumer",
  "accesskit_winit",
  "arboard",
+ "jni",
  "js-sys",
  "resvg",
  "rfd",

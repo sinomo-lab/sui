@@ -1,6 +1,9 @@
 #![deny(unsafe_code)]
 
 mod accessibility;
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+mod android_clipboard;
 mod desktop;
 mod display_capabilities;
 mod file_dialog;

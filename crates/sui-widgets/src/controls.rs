@@ -12202,6 +12202,26 @@ mod tests {
     }
 
     #[test]
+    fn text_input_browser_back_clears_focus_and_disables_ime() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(TextInput::new("API key").value("secret"));
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(20.0, 16.0), true),
+        )?;
+        assert!(runtime.render(window_id)?.ime_composition_rect.is_some());
+
+        assert!(runtime.dispatch_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("BrowserBack", KeyState::Pressed)),
+        )?);
+        assert_eq!(runtime.focused_widget(window_id)?, None);
+        assert!(runtime.render(window_id)?.ime_composition_rect.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn text_input_selection_scope_tracks_keyboard_selection() -> Result<()> {
         let selection = SelectionScope::new();
         let (mut runtime, window_id) = build_runtime(

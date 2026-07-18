@@ -626,14 +626,24 @@ impl Runtime {
     }
 
     pub fn handle_event(&mut self, window_id: WindowId, event: Event) -> Result<()> {
+        self.dispatch_event(window_id, event).map(|_| ())
+    }
+
+    /// Dispatch an event and report whether widget routing or a built-in runtime behavior
+    /// consumed it.
+    ///
+    /// Platform hosts can use this to provide native fallbacks only when application and
+    /// runtime behavior did not handle an event. Most callers should continue to use
+    /// [`Runtime::handle_event`] when the dispatch outcome is not relevant.
+    pub fn dispatch_event(&mut self, window_id: WindowId, event: Event) -> Result<bool> {
         let text_system = Arc::clone(&self.text_system);
         let font_registry = Arc::clone(&self.font_registry);
         let image_registry = Arc::clone(&self.image_registry);
         let window = self.window_mut(window_id)?;
         window.drain_reactive_invalidations();
-        window.handle_event(event, text_system, font_registry, image_registry);
+        let handled = window.handle_event(event, text_system, font_registry, image_registry);
         window.drain_reactive_invalidations();
-        Ok(())
+        Ok(handled)
     }
 
     /// Invoke an action advertised by a node in the latest semantic snapshot.
@@ -1744,7 +1754,7 @@ impl WindowState {
         text_system: Arc<TextSystem>,
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
-    ) {
+    ) -> bool {
         if matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
             diagnostics::begin_widget_timing_collection();
             sui_text::begin_text_timing_collection();
@@ -1802,14 +1812,38 @@ impl WindowState {
             self.record_event_invalidations(&invalidations, &event);
             self.schedule.extend(&invalidations);
             self.pending_invalidations.extend(invalidations);
-            return;
+            return false;
         }
 
         if matches!(
             &event,
             Event::Keyboard(key)
                 if key.state == KeyState::Pressed
-                    && key.key == "Escape"
+                    && key.key == "BrowserBack"
+                    && !key.repeat
+                    && !key.is_composing
+        ) && self.ime_composition_rect.is_some()
+            && self.focus.focused_widget.is_some()
+        {
+            // Android exposes its system Back key as `BrowserBack`. When an editor has
+            // enabled the IME, the first press dismisses editing instead of closing the
+            // containing window. This clear deliberately bypasses modal focus trapping:
+            // keeping logical focus would cause the next frame to enable the IME again.
+            self.ime_composition_rect = None;
+            let effects = self.apply_focus_request_unconstrained(FocusRequest::Clear);
+            self.apply_event_effects(effects, &mut invalidations);
+            self.finish_event(&event);
+            self.record_event_invalidations(&invalidations, &event);
+            self.schedule.extend(&invalidations);
+            self.pending_invalidations.extend(invalidations);
+            return true;
+        }
+
+        if matches!(
+            &event,
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && matches!(key.key.as_str(), "Escape" | "BrowserBack")
                     && !key.repeat
                     && !key.is_composing
         ) && self.dispatch_overlay_dismissal(
@@ -1821,7 +1855,7 @@ impl WindowState {
             self.record_event_invalidations(&invalidations, &event);
             self.schedule.extend(&invalidations);
             self.pending_invalidations.extend(invalidations);
-            return;
+            return true;
         }
 
         if let Event::Pointer(pointer) = &event
@@ -1849,6 +1883,7 @@ impl WindowState {
         let target = self.resolve_event_target(&event, hit_target);
 
         let route = self.route_event(target, &event);
+        let handled = route.handled;
 
         let focus_request = route
             .focus_request
@@ -1869,6 +1904,7 @@ impl WindowState {
         self.record_event_invalidations(&invalidations, &event);
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
+        handled
     }
 
     fn record_event_invalidations(&mut self, invalidations: &[InvalidationRequest], event: &Event) {
@@ -3248,6 +3284,10 @@ impl WindowState {
 
     fn apply_focus_request(&mut self, request: FocusRequest) -> EventEffects {
         let request = self.constrain_focus_request(request);
+        self.apply_focus_request_unconstrained(request)
+    }
+
+    fn apply_focus_request_unconstrained(&mut self, request: FocusRequest) -> EventEffects {
         let next_focus = match request {
             FocusRequest::Focus(widget_id) => Some(widget_id),
             FocusRequest::Clear => None,
@@ -7319,6 +7359,37 @@ mod tests {
         layout: RefCell<Option<PersistentTextLayout>>,
     }
 
+    struct FocusedImeLeaf;
+
+    impl Widget for FocusedImeLeaf {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(160.0, 32.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            if ctx.is_focused() {
+                ctx.set_ime_composition_rect(Rect::new(
+                    ctx.bounds().x() + 8.0,
+                    ctx.bounds().y() + 8.0,
+                    1.0,
+                    16.0,
+                ));
+            }
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node =
+                SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
+            node.state.focused = ctx.is_focused();
+            node.actions = vec![SemanticsAction::Focus];
+            ctx.push(node);
+        }
+
+        fn accepts_focus(&self) -> bool {
+            true
+        }
+    }
+
     impl Widget for TextImeLeaf {
         fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
             let size = constraints.clamp(Size::new(160.0, 32.0));
@@ -10073,6 +10144,92 @@ mod tests {
             }
         });
         assert!(saw_shaped_text);
+    }
+
+    #[test]
+    fn browser_back_clears_ime_focus_before_becoming_unhandled() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Browser Back IME")
+                    .root(PaintedChildRoot::new(FocusedImeLeaf)),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime.render(window_id).unwrap();
+        let text_input = initial
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("focused IME test input")
+            .id;
+
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, text_input, SemanticsActionRequest::Focus)
+                .unwrap()
+        );
+        assert!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .ime_composition_rect
+                .is_some()
+        );
+
+        assert!(
+            runtime
+                .dispatch_event(
+                    window_id,
+                    Event::Keyboard(KeyboardEvent::new("BrowserBack", KeyState::Pressed)),
+                )
+                .unwrap()
+        );
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+        assert!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .ime_composition_rect
+                .is_none()
+        );
+
+        assert!(
+            !runtime
+                .dispatch_event(
+                    window_id,
+                    Event::Keyboard(KeyboardEvent::new("BrowserBack", KeyState::Pressed)),
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn dispatch_event_reports_widget_handled_browser_back() {
+        let (mut runtime, window_id, _, leaf_counters) = build_runtime();
+        let initial = runtime.render(window_id).unwrap();
+        let focus_leaf = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("focus-leaf"))
+            .expect("focus leaf")
+            .id;
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, focus_leaf, SemanticsActionRequest::Focus)
+                .unwrap()
+        );
+
+        assert!(
+            runtime
+                .dispatch_event(
+                    window_id,
+                    Event::Keyboard(KeyboardEvent::new("BrowserBack", KeyState::Pressed)),
+                )
+                .unwrap()
+        );
+        assert_eq!(leaf_counters.borrow().keyboard, 1);
     }
 
     #[test]
