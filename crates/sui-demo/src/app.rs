@@ -3617,6 +3617,25 @@ mod tests {
             .unwrap_or_else(|| panic!("{channel} channel picker row should exist"))
     }
 
+    fn theme_editor_slider(output: &RenderOutput, name: &str) -> SemanticsNode {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider && node.name.as_deref() == Some(name))
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} slider should exist"))
+    }
+
+    fn slider_range_value(node: &SemanticsNode) -> f64 {
+        let Some(SemanticsValue::Range { value, .. }) = node.value else {
+            panic!(
+                "{} should expose a range value",
+                node.name.as_deref().unwrap_or("slider")
+            );
+        };
+        value
+    }
+
     #[test]
     fn widget_book_scroll_does_not_repaint_pixels_outside_shrunken_floating_view() -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
@@ -7906,6 +7925,42 @@ final_max_luminance={final_max_luminance}
             "expected slider drag to preserve controls scroll position; before_drag={}, after_drag={}",
             scrolled_red.bounds.y(),
             after_red.bounds.y()
+        );
+
+        let scrolled_spacing = theme_editor_slider(&after, THEME_SPACING_NAME);
+        let start = Point::new(
+            scrolled_spacing.bounds.x() + scrolled_spacing.bounds.width() * 0.35,
+            scrolled_spacing.bounds.y() + scrolled_spacing.bounds.height() * 0.5,
+        );
+        let end = Point::new(
+            scrolled_spacing.bounds.x() + scrolled_spacing.bounds.width() * 0.70,
+            scrolled_spacing.bounds.y() + scrolled_spacing.bounds.height() * 0.5,
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(75, PointerEventKind::Down, start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(75, PointerEventKind::Move, end, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(75, PointerEventKind::Up, end, false),
+        )?;
+
+        let final_output = runtime.render(window_id)?;
+        let final_spacing = theme_editor_slider(&final_output, THEME_SPACING_NAME);
+        assert!(
+            (slider_range_value(&final_spacing) - slider_range_value(&scrolled_spacing)).abs()
+                > 0.01,
+            "expected spacing slider drag to change the slider value"
+        );
+        assert!(
+            (final_spacing.bounds.y() - scrolled_spacing.bounds.y()).abs() <= 1.0,
+            "expected scale slider drag to preserve controls scroll position; before_drag={}, after_drag={}",
+            scrolled_spacing.bounds.y(),
+            final_spacing.bounds.y()
         );
         Ok(())
     }
