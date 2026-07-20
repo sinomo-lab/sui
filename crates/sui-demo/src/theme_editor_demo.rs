@@ -11,11 +11,7 @@ pub(crate) const THEME_EDITOR_CONTROLS_SCROLL_NAME: &str = "Theme editor control
 pub(crate) const THEME_EDITOR_PREVIEW_SCROLL_NAME: &str = "Theme editor preview";
 
 const THEME_PRESET_NAME: &str = "Theme preset";
-const THEME_COLOR_VARIABLE_NAME: &str = "Color variable";
-const THEME_SELECTED_COLOR_NAME: &str = "Selected theme color";
-pub(crate) const THEME_RED_CHANNEL_NAME: &str = "Red channel";
-const THEME_GREEN_CHANNEL_NAME: &str = "Green channel";
-const THEME_BLUE_CHANNEL_NAME: &str = "Blue channel";
+pub(crate) const THEME_COLOR_PICKER_NAME: &str = "Selected theme color picker";
 const THEME_CONTROL_SIZE_NAME: &str = "Control size";
 pub(crate) const THEME_SPACING_NAME: &str = "Base spacing";
 const THEME_RADIUS_SCALE_NAME: &str = "Corner radius scale";
@@ -240,19 +236,17 @@ impl ThemeEditorState {
         self.set_preset(index);
     }
 
-    fn selected_color_index(&self) -> usize {
-        let selected = self.inner.borrow().selected_color;
-        ThemeColorVariable::ALL
-            .iter()
-            .position(|candidate| *candidate == selected)
-            .unwrap_or(0)
+    fn select_color_variable(&self, variable: ThemeColorVariable) {
+        self.inner.borrow_mut().selected_color = variable;
     }
 
-    fn select_color(&self, index: usize) {
-        self.inner.borrow_mut().selected_color = ThemeColorVariable::ALL
-            .get(index)
-            .copied()
-            .unwrap_or(ThemeColorVariable::Primary);
+    fn is_selected_color(&self, variable: ThemeColorVariable) -> bool {
+        self.inner.borrow().selected_color == variable
+    }
+
+    fn color_variable(&self, variable: ThemeColorVariable) -> Color {
+        let inner = self.inner.borrow();
+        variable.color(&inner.theme.colors)
     }
 
     fn selected_color(&self) -> Color {
@@ -272,24 +266,9 @@ impl ThemeEditorState {
         )
     }
 
-    fn color_channel(&self, channel: usize) -> f64 {
-        let color = self.selected_color();
-        f64::from(match channel {
-            1 => color.green,
-            2 => color.blue,
-            _ => color.red,
-        })
-    }
-
-    fn set_color_channel(&self, channel: usize, value: f32) {
+    fn set_selected_color(&self, color: Color) {
         let mut inner = self.inner.borrow_mut();
         let selected = inner.selected_color;
-        let mut color = selected.color(&inner.theme.colors);
-        match channel {
-            1 => color.green = value,
-            2 => color.blue = value,
-            _ => color.red = value,
-        }
         selected.set_color(&mut inner.theme.colors, color);
         inner.theme.sync_derived_fields();
     }
@@ -563,94 +542,106 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
 }
 
 fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
-    let token_reader = state.clone();
-    let token_change = state.clone();
-    let swatch_state = state.clone();
     let summary_state = state.clone();
+    let picker_reader = state.clone();
+    let picker_change = state.clone();
 
     PanelSection::new(
         "Color",
         Stack::vertical()
             .spacing(10.0)
             .alignment(Alignment::Stretch)
+            .with_child(build_color_swatch_list(state, Rc::clone(&shell_theme)))
             .with_child(
-                Select::new(THEME_COLOR_VARIABLE_NAME)
-                    .options(ThemeColorVariable::ALL.map(ThemeColorVariable::label))
-                    .selected_when(move || Some(token_reader.selected_color_index()))
-                    .theme_when(clone_dev_theme_reader(&shell_theme))
-                    .on_change_with_ctx(move |ctx, index, _| {
-                        token_change.select_color(index);
-                        request_window_refresh(ctx, true);
-                    }),
+                Label::dynamic("Primary  #000000", move || {
+                    summary_state.selected_color_summary()
+                })
+                .style(dev_text_style(
+                    shell_theme(),
+                    shell_theme().text.sm,
+                    shell_theme().palette.text,
+                ))
+                .color_when(dev_theme_color(&shell_theme, |theme| theme.palette.text)),
             )
             .with_child(
-                Stack::horizontal()
-                    .spacing(10.0)
-                    .alignment(Alignment::Center)
-                    .with_child(
-                        ColorSwatch::new(THEME_SELECTED_COLOR_NAME, swatch_state.selected_color())
-                            .theme_when(clone_dev_theme_reader(&shell_theme))
-                            .color_when(move || swatch_state.selected_color())
-                            .size(Size::new(56.0, 32.0))
-                            .read_only(),
-                    )
-                    .with_child(
-                        Label::dynamic("Primary  #000000", move || {
-                            summary_state.selected_color_summary()
-                        })
-                        .style(dev_text_style(
-                            shell_theme(),
-                            shell_theme().text.sm,
-                            shell_theme().palette.text,
-                        ))
-                        .color_when(dev_theme_color(&shell_theme, |theme| theme.palette.text)),
-                    ),
-            )
-            .with_child(color_channel_row(
-                THEME_RED_CHANNEL_NAME,
-                0,
-                state.clone(),
-                Rc::clone(&shell_theme),
-            ))
-            .with_child(color_channel_row(
-                THEME_GREEN_CHANNEL_NAME,
-                1,
-                state.clone(),
-                Rc::clone(&shell_theme),
-            ))
-            .with_child(color_channel_row(
-                THEME_BLUE_CHANNEL_NAME,
-                2,
-                state,
-                Rc::clone(&shell_theme),
-            )),
+                SimpleColorPicker::from_color(
+                    THEME_COLOR_PICKER_NAME,
+                    picker_reader.selected_color(),
+                )
+                .mode(SimpleColorPickerMode::Rgb)
+                .show_alpha(false)
+                .color_when(move || picker_reader.selected_color())
+                .theme_when(clone_dev_theme_reader(&shell_theme))
+                .on_change_with_ctx(move |ctx, color| {
+                    picker_change.set_selected_color(color);
+                    request_window_refresh(ctx, true);
+                }),
+            ),
     )
     .theme_when(clone_dev_theme_reader(&shell_theme))
 }
 
-fn color_channel_row(
-    name: &'static str,
-    channel: usize,
+fn build_color_swatch_list(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
+    let mut swatches = Flex::horizontal()
+        .gap(8.0)
+        .wrap(FlexWrap::Wrap)
+        .align_items(Alignment::Start);
+
+    for variable in ThemeColorVariable::ALL {
+        swatches = swatches.with_item(
+            build_color_token_swatch(variable, state.clone(), Rc::clone(&shell_theme)),
+            FlexItem::fixed(118.0),
+        );
+    }
+
+    swatches
+}
+
+fn build_color_token_swatch(
+    variable: ThemeColorVariable,
     state: ThemeEditorState,
     shell_theme: DevThemeReader,
-) -> PropertyRow {
-    let value_state = state.clone();
-    let change_state = state;
-    PropertyRow::new(
-        name.trim_end_matches(" channel"),
-        Slider::new(name)
-            .range(0.0, 1.0)
-            .step(0.01)
-            .value_when(move || value_state.color_channel(channel))
+) -> impl Widget {
+    let color_state = state.clone();
+    let select_state = state.clone();
+    let label_state = state;
+    let label_theme = Rc::clone(&shell_theme);
+    Stack::vertical()
+        .spacing(4.0)
+        .alignment(Alignment::Start)
+        .with_child(
+            ColorSwatch::new(
+                theme_color_swatch_name(variable),
+                color_state.color_variable(variable),
+            )
             .theme_when(clone_dev_theme_reader(&shell_theme))
-            .on_change_with_ctx(move |ctx, value| {
-                change_state.set_color_channel(channel, value as f32);
+            .color_when(move || color_state.color_variable(variable))
+            .size(Size::new(54.0, 30.0))
+            .on_press_with_ctx(move |ctx, _| {
+                select_state.select_color_variable(variable);
                 request_window_refresh(ctx, true);
             }),
-    )
-    .theme_when(clone_dev_theme_reader(&shell_theme))
-    .inline()
-    .label_width(48.0)
+        )
+        .with_child(
+            Label::new(variable.label())
+                .style(dev_text_style(
+                    shell_theme(),
+                    shell_theme().text.xs,
+                    shell_theme().palette.text_muted,
+                ))
+                .color_when(move || {
+                    let theme = label_theme();
+                    if label_state.is_selected_color(variable) {
+                        theme.palette.accent
+                    } else {
+                        theme.palette.text_muted
+                    }
+                }),
+        )
+}
+
+fn theme_color_swatch_name(variable: ThemeColorVariable) -> String {
+    format!("{} theme color", variable.label())
 }
 
 fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
@@ -980,15 +971,8 @@ mod tests {
     #[test]
     fn color_edits_refresh_derived_palette_and_readable_content() {
         let state = ThemeEditorState::new();
-        state.select_color(
-            ThemeColorVariable::ALL
-                .iter()
-                .position(|variable| *variable == ThemeColorVariable::Primary)
-                .unwrap(),
-        );
-        state.set_color_channel(0, 0.95);
-        state.set_color_channel(1, 0.85);
-        state.set_color_channel(2, 0.20);
+        state.select_color_variable(ThemeColorVariable::Primary);
+        state.set_selected_color(Color::rgba(0.95, 0.85, 0.20, 1.0));
 
         let theme = state.theme();
         assert_eq!(theme.palette.accent, theme.colors.primary);
@@ -1016,6 +1000,31 @@ mod tests {
     }
 
     #[test]
+    fn color_editor_lists_all_editable_color_swatches() -> Result<()> {
+        let shell_theme: DevThemeReader = Rc::new(DefaultTheme::sui);
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Theme editor")
+                    .root(build_theme_editor_demo_with_theme(shell_theme)),
+            )
+            .build()?;
+        let output = runtime.render(runtime.window_ids()[0])?;
+
+        for variable in ThemeColorVariable::ALL {
+            let name = theme_color_swatch_name(variable);
+            assert!(
+                output.semantics.iter().any(|node| {
+                    node.role == sui::SemanticsRole::ColorSwatch
+                        && node.name.as_deref() == Some(name.as_str())
+                }),
+                "expected theme editor to expose {name:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reset_restores_the_selected_preset() {
         let state = ThemeEditorState::new();
         state.set_preset(2);
@@ -1031,7 +1040,7 @@ mod tests {
     fn neutral_preset_is_selectable_and_resettable() {
         let state = ThemeEditorState::new();
         state.set_preset(1);
-        state.set_color_channel(0, 0.8);
+        state.set_selected_color(Color::rgba(0.8, 0.3, 0.2, 1.0));
         state.reset_current_preset();
 
         assert_eq!(state.theme(), DefaultTheme::neutral());
@@ -1042,7 +1051,7 @@ mod tests {
     fn neutral_dark_preset_is_selectable_and_resettable() {
         let state = ThemeEditorState::new();
         state.set_preset(3);
-        state.set_color_channel(0, 0.2);
+        state.set_selected_color(Color::rgba(0.2, 0.3, 0.8, 1.0));
         state.reset_current_preset();
 
         assert_eq!(state.theme(), DefaultTheme::neutral_dark());

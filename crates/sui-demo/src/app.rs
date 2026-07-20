@@ -55,7 +55,7 @@ use crate::markdown_demo::{
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
 use crate::theme_editor_demo::{
-    THEME_EDITOR_CONTROLS_SCROLL_NAME, THEME_EDITOR_PREVIEW_SCROLL_NAME, THEME_RED_CHANNEL_NAME,
+    THEME_COLOR_PICKER_NAME, THEME_EDITOR_CONTROLS_SCROLL_NAME, THEME_EDITOR_PREVIEW_SCROLL_NAME,
     THEME_SPACING_NAME,
 };
 use crate::theme_editor_demo::{THEME_EDITOR_TAB_LABEL, build_theme_editor_demo_with_theme};
@@ -3561,6 +3561,34 @@ mod tests {
                     path,
                     brush: Brush::Solid(color),
                 } if *color == expected && rects_overlap(path.bounds(), region) => {
+                    rects.push(path.bounds());
+                }
+                _ => {}
+            });
+        rects
+    }
+
+    fn solid_fill_bounds_for_rgba8_color_in_rect(
+        output: &RenderOutput,
+        expected: Color,
+        region: Rect,
+    ) -> Vec<Rect> {
+        let expected = color_to_rgba8(expected);
+        let mut rects = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    rect,
+                    brush: Brush::Solid(color),
+                } if color_to_rgba8(*color) == expected && rects_overlap(*rect, region) => {
+                    rects.push(*rect);
+                }
+                SceneCommand::FillPath {
+                    path,
+                    brush: Brush::Solid(color),
+                } if color_to_rgba8(*color) == expected && rects_overlap(path.bounds(), region) => {
                     rects.push(path.bounds());
                 }
                 _ => {}
@@ -7704,21 +7732,45 @@ final_max_luminance={final_max_luminance}
         .expect("theme editor demo should build");
         let window_id = runtime.window_ids()[0];
         let before = runtime.render(window_id)?;
+        let picker = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some(THEME_COLOR_PICKER_NAME)
+            })
+            .expect("theme color picker should exist");
         let red_slider = before
             .semantics
             .iter()
             .find(|node| {
-                node.role == SemanticsRole::Slider
-                    && node.name.as_deref() == Some(THEME_RED_CHANNEL_NAME)
+                node.parent == Some(picker.id)
+                    && node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some("Red")
             })
-            .expect("red channel slider should exist");
+            .expect("red channel picker row should exist");
         let initial_theme = DefaultTheme::light();
 
-        assert!(runtime.handle_semantics_action(
+        let start = Point::new(
+            red_slider.bounds.x() + red_slider.bounds.width() * 0.20,
+            red_slider.bounds.y() + red_slider.bounds.height() * 0.5,
+        );
+        let end = Point::new(
+            red_slider.bounds.x() + red_slider.bounds.width() * 0.95,
+            red_slider.bounds.y() + red_slider.bounds.height() * 0.5,
+        );
+        runtime.handle_event(
             window_id,
-            red_slider.id,
-            sui::SemanticsActionRequest::SetValue(SemanticsValue::Number(0.95)),
-        )?);
+            primary_pointer_event(73, PointerEventKind::Down, start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(73, PointerEventKind::Move, end, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(73, PointerEventKind::Up, end, false),
+        )?;
 
         let after = runtime.render(window_id)?;
         let edited_slider = after
@@ -7729,7 +7781,10 @@ final_max_luminance={final_max_luminance}
         let Some(SemanticsValue::Range { value, min, max }) = edited_slider.value else {
             panic!("red channel slider should expose its edited range value");
         };
-        assert!((value - 0.95).abs() < f64::EPSILON * 2.0);
+        assert!(
+            (value - 0.95).abs() < 0.001,
+            "expected dragged red channel to land near 0.95, got {value}"
+        );
         assert_eq!((min, max), (0.0, 1.0));
 
         let preview_button = after
@@ -7741,12 +7796,12 @@ final_max_luminance={final_max_luminance}
             .expect("primary preview button should exist");
         let mut edited_theme = initial_theme;
         let primary = edited_theme.colors.primary;
-        edited_theme.colors.primary = Color::rgba(0.95, primary.green, primary.blue, 1.0);
+        edited_theme.colors.primary = Color::rgba(value as f32, primary.green, primary.blue, 1.0);
         edited_theme.colors.accent = edited_theme.colors.primary;
         edited_theme.sync_derived_fields();
 
         assert!(
-            !solid_fill_bounds_for_color_in_rect(
+            !solid_fill_bounds_for_rgba8_color_in_rect(
                 &after,
                 edited_theme.palette.accent,
                 preview_button.bounds,
@@ -7755,7 +7810,7 @@ final_max_luminance={final_max_luminance}
             "expected the edited primary color to repaint the live preview button"
         );
         assert!(
-            solid_fill_bounds_for_color_in_rect(
+            solid_fill_bounds_for_rgba8_color_in_rect(
                 &after,
                 initial_theme.palette.accent,
                 preview_button.bounds,

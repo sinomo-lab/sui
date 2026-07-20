@@ -495,6 +495,7 @@ pub struct ColorSwatch {
     focus_animation: AnimatedScalar,
     read_only: bool,
     on_press: Option<Box<dyn FnMut(Color)>>,
+    on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Color)>>,
 }
 
 impl ColorSwatch {
@@ -513,6 +514,7 @@ impl ColorSwatch {
             focus_animation: AnimatedScalar::new(0.0),
             read_only: false,
             on_press: None,
+            on_press_with_ctx: None,
         }
     }
 
@@ -556,6 +558,14 @@ impl ColorSwatch {
         self
     }
 
+    pub fn on_press_with_ctx<F>(mut self, on_press: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, Color) + 'static,
+    {
+        self.on_press_with_ctx = Some(Box::new(on_press));
+        self
+    }
+
     fn current_color(&self) -> Color {
         self.color_reader
             .as_ref()
@@ -570,10 +580,13 @@ impl ColorSwatch {
             .unwrap_or(*self.theme)
     }
 
-    fn activate(&mut self) {
+    fn activate(&mut self, ctx: &mut EventCtx) {
         let color = self.current_color();
         if let Some(on_press) = &mut self.on_press {
             on_press(color);
+        }
+        if let Some(on_press) = &mut self.on_press_with_ctx {
+            on_press(ctx, color);
         }
     }
 
@@ -661,7 +674,7 @@ impl Widget for ColorSwatch {
             {
                 let hovered = ctx.bounds().contains(pointer.position);
                 if self.pressed && hovered {
-                    self.activate();
+                    self.activate(ctx);
                 }
                 self.set_pressed(false, ctx);
                 self.set_hovered(hovered, ctx);
@@ -683,7 +696,7 @@ impl Widget for ColorSwatch {
                     && key.state == KeyState::Pressed
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
-                self.activate();
+                self.activate(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -1920,6 +1933,7 @@ pub struct SimpleColorPicker {
     focus_animation: AnimatedScalar,
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Color)>>,
 }
 
 impl ColorPicker {
@@ -2738,6 +2752,7 @@ impl SimpleColorPicker {
             focus_animation: AnimatedScalar::new(0.0),
             color_reader: None,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -2784,6 +2799,14 @@ impl SimpleColorPicker {
         F: FnMut(Color) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, Color) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -2991,14 +3014,23 @@ impl SimpleColorPicker {
         ));
     }
 
-    fn emit_change(&mut self) {
+    fn emit_change(&mut self, ctx: &mut EventCtx) {
         let color = self.color();
         if let Some(on_change) = &mut self.on_change {
             on_change(color);
         }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, color);
+        }
     }
 
-    fn update_from_position(&mut self, bounds: Rect, channel: ColorSliderChannel, position: Point) {
+    fn update_from_position(
+        &mut self,
+        ctx: &mut EventCtx,
+        bounds: Rect,
+        channel: ColorSliderChannel,
+        position: Point,
+    ) {
         let Some(rect) = self.slider_rect_for_channel(bounds, channel) else {
             return;
         };
@@ -3023,7 +3055,7 @@ impl SimpleColorPicker {
             ColorSliderChannel::Blue => self.blue = max_channel_value * t,
         }
         self.refresh_inactive_channels();
-        self.emit_change();
+        self.emit_change(ctx);
     }
 
     fn refresh_inactive_channels(&mut self) {
@@ -3147,7 +3179,7 @@ impl Widget for SimpleColorPicker {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 if let Some(active) = self.active {
-                    self.update_from_position(ctx.bounds(), active, pointer.position);
+                    self.update_from_position(ctx, ctx.bounds(), active, pointer.position);
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -3159,7 +3191,7 @@ impl Widget for SimpleColorPicker {
             {
                 if let Some(active) = self.hit_channel(ctx.bounds(), pointer.position) {
                     self.active = Some(active);
-                    self.update_from_position(ctx.bounds(), active, pointer.position);
+                    self.update_from_position(ctx, ctx.bounds(), active, pointer.position);
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
                     ctx.request_paint();
@@ -3243,7 +3275,7 @@ impl Widget for SimpleColorPicker {
                     _ => return,
                 }
                 self.refresh_inactive_channels();
-                self.emit_change();
+                self.emit_change(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
