@@ -190,6 +190,8 @@ struct ThemeEditorStateInner {
     radius_scale: f32,
     text_scale: f32,
     motion_scale: f32,
+    controls_scroll: ScrollState,
+    preview_scroll: ScrollState,
 }
 
 impl ThemeEditorState {
@@ -203,6 +205,8 @@ impl ThemeEditorState {
                 radius_scale: 1.0,
                 text_scale: 1.0,
                 motion_scale: 1.0,
+                controls_scroll: ScrollState::new(),
+                preview_scroll: ScrollState::new(),
             })),
         }
     }
@@ -214,6 +218,14 @@ impl ThemeEditorState {
     fn theme_reader(&self) -> DevThemeReader {
         let state = self.clone();
         Rc::new(move || state.theme())
+    }
+
+    fn controls_scroll_state(&self) -> ScrollState {
+        self.inner.borrow().controls_scroll.clone()
+    }
+
+    fn preview_scroll_state(&self) -> ScrollState {
+        self.inner.borrow().preview_scroll.clone()
     }
 
     fn preset_index(&self) -> usize {
@@ -426,6 +438,7 @@ pub(crate) fn build_theme_editor_demo_with_theme(shell_theme: DevThemeReader) ->
 }
 
 fn build_editor_controls(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
+    let controls_scroll = state.controls_scroll_state();
     Surface::sidebar(
         ScrollView::vertical(Padding::all(
             16.0,
@@ -455,10 +468,11 @@ fn build_editor_controls(state: ThemeEditorState, shell_theme: DevThemeReader) -
                         .theme_when(clone_dev_theme_reader(&shell_theme))
                         .on_press_with_ctx(move |ctx| {
                             state.reset_current_preset();
-                            request_window_refresh(ctx, true);
+                            request_window_refresh(ctx, false);
                         }),
                 ),
         ))
+        .state(controls_scroll)
         .name(THEME_EDITOR_CONTROLS_SCROLL_NAME)
         .theme_when(clone_dev_theme_reader(&shell_theme)),
     )
@@ -516,7 +530,7 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
                         .theme_when(clone_dev_theme_reader(&shell_theme))
                         .on_change_with_ctx(move |ctx, index, _| {
                             preset_change.set_preset(index);
-                            request_window_refresh(ctx, true);
+                            request_window_refresh(ctx, false);
                         }),
                 )
                 .theme_when(clone_dev_theme_reader(&shell_theme))
@@ -531,7 +545,7 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
                         .theme_when(clone_dev_theme_reader(&shell_theme))
                         .on_change_with_ctx(move |index, _, ctx| {
                             size_change.set_control_size(index);
-                            request_window_refresh(ctx, true);
+                            request_window_refresh(ctx, false);
                         }),
                 )
                 .theme_when(clone_dev_theme_reader(&shell_theme))
@@ -574,7 +588,7 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 .theme_when(clone_dev_theme_reader(&shell_theme))
                 .on_change_with_ctx(move |ctx, color| {
                     picker_change.set_selected_color(color);
-                    request_window_refresh(ctx, true);
+                    request_window_refresh(ctx, false);
                 }),
             ),
     )
@@ -619,7 +633,7 @@ fn build_color_token_swatch(
             .size(Size::new(54.0, 30.0))
             .on_press_with_ctx(move |ctx, _| {
                 select_state.select_color_variable(variable);
-                request_window_refresh(ctx, true);
+                request_window_refresh(ctx, false);
             }),
         )
         .with_child(
@@ -668,7 +682,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || spacing_reader.spacing(),
                 move |ctx, value| {
                     spacing_change.set_spacing(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_window_refresh(ctx, false);
                 },
                 Rc::clone(&shell_theme),
             ))
@@ -681,7 +695,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || radius_reader.radius_scale(),
                 move |ctx, value| {
                     radius_change.set_radius_scale(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_window_refresh(ctx, false);
                 },
                 Rc::clone(&shell_theme),
             ))
@@ -694,7 +708,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || text_reader.text_scale(),
                 move |ctx, value| {
                     text_change.set_text_scale(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_window_refresh(ctx, false);
                 },
                 Rc::clone(&shell_theme),
             ))
@@ -707,7 +721,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || motion_reader.motion_scale(),
                 move |ctx, value| {
                     motion_change.set_motion_scale(value as f32);
-                    request_window_refresh(ctx, true);
+                    request_window_refresh(ctx, false);
                 },
                 Rc::clone(&shell_theme),
             )),
@@ -744,6 +758,7 @@ where
 }
 
 fn build_live_preview(state: ThemeEditorState, preview_theme: DevThemeReader) -> impl Widget {
+    let preview_scroll = state.preview_scroll_state();
     Surface::window(
         ScrollView::vertical(Padding::all(
             24.0,
@@ -770,6 +785,7 @@ fn build_live_preview(state: ThemeEditorState, preview_theme: DevThemeReader) ->
                     Rc::clone(&preview_theme),
                 )),
         ))
+        .state(preview_scroll)
         .name(THEME_EDITOR_PREVIEW_SCROLL_NAME)
         .theme_when(clone_dev_theme_reader(&preview_theme)),
     )

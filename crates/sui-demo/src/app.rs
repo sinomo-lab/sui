@@ -3596,6 +3596,27 @@ mod tests {
         rects
     }
 
+    fn theme_editor_color_slider(output: &RenderOutput, channel: &str) -> SemanticsNode {
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some(THEME_COLOR_PICKER_NAME)
+            })
+            .expect("theme color picker should exist");
+        output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.parent == Some(picker.id)
+                    && node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(channel)
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("{channel} channel picker row should exist"))
+    }
+
     #[test]
     fn widget_book_scroll_does_not_repaint_pixels_outside_shrunken_floating_view() -> Result<()> {
         let initial_bounds = Rect::new(320.0, 28.0, 560.0, 520.0);
@@ -7817,6 +7838,74 @@ final_max_luminance={final_max_luminance}
             )
             .is_empty(),
             "expected the preview button to stop using the original primary color"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn theme_editor_slider_drag_preserves_controls_scroll_position() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(THEME_EDITOR_TAB_LABEL),
+        ))
+        .build()
+        .expect("theme editor demo should build");
+        let window_id = runtime.window_ids()[0];
+        let before = runtime.render(window_id)?;
+        let controls = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
+            })
+            .expect("theme editor controls scroll view should exist");
+        let before_red = theme_editor_color_slider(&before, "Red");
+
+        let mut scroll = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(controls.bounds.x() + 24.0, controls.bounds.y() + 24.0),
+        );
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -160.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll))?;
+
+        let scrolled = runtime.render(window_id)?;
+        let scrolled_red = theme_editor_color_slider(&scrolled, "Red");
+        assert!(
+            scrolled_red.bounds.y() < before_red.bounds.y() - 8.0,
+            "expected controls panel content to move after scrolling; before={}, after={}",
+            before_red.bounds.y(),
+            scrolled_red.bounds.y()
+        );
+
+        let start = Point::new(
+            scrolled_red.bounds.x() + scrolled_red.bounds.width() * 0.20,
+            scrolled_red.bounds.y() + scrolled_red.bounds.height() * 0.5,
+        );
+        let end = Point::new(
+            scrolled_red.bounds.x() + scrolled_red.bounds.width() * 0.85,
+            scrolled_red.bounds.y() + scrolled_red.bounds.height() * 0.5,
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(74, PointerEventKind::Down, start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(74, PointerEventKind::Move, end, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(74, PointerEventKind::Up, end, false),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let after_red = theme_editor_color_slider(&after, "Red");
+        assert!(
+            (after_red.bounds.y() - scrolled_red.bounds.y()).abs() <= 1.0,
+            "expected slider drag to preserve controls scroll position; before_drag={}, after_drag={}",
+            scrolled_red.bounds.y(),
+            after_red.bounds.y()
         );
         Ok(())
     }
