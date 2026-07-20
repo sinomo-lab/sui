@@ -13870,7 +13870,7 @@ impl Widget for DialogFocusSurface {
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
         let state = self.state.borrow();
-        (state.shown && state.animation.is_presented()).then_some(StackSurfaceOptions {
+        state.shown.then_some(StackSurfaceOptions {
             transient: true,
             hit_test: false,
             ..StackSurfaceOptions::default()
@@ -23650,6 +23650,57 @@ mod tests {
         assert_eq!(descriptor.composition_mode, LayerCompositionMode::Effect);
         assert!(
             solid_fill_colors(&output).contains(&DefaultTheme::default().surfaces.overlay_scrim)
+        );
+    }
+
+    #[test]
+    fn modal_dialog_first_pointer_click_reaches_scrolled_body_control() {
+        let activated = Rc::new(Cell::new(false));
+        let action = Rc::clone(&activated);
+        let body = SizedBox::new()
+            .height(200.0)
+            .with_child(ScrollView::vertical(Stack::vertical().with_child(
+                crate::Button::new("Done").on_press(move || action.set(true)),
+            )));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(640.0, 420.0))
+                .with_child(Dialog::new("Confirm", body)),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        let done = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Done"))
+            .expect("dialog action semantics");
+        let point = Point::new(
+            done.bounds.x() + done.bounds.width() * 0.5,
+            done.bounds.y() + done.bounds.height() * 0.5,
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, point, false),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, point, true),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, point, false),
+            )
+            .unwrap();
+
+        assert!(
+            activated.get(),
+            "the dialog focus surface must not intercept the first click"
         );
     }
 
