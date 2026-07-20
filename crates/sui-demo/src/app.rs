@@ -151,6 +151,7 @@ const DEV_SHELL_THEME_TOGGLE_WIDTH: f32 = 140.0;
 const DEV_SHELL_THEME_TOGGLE_HEIGHT: f32 = 34.0;
 const DEV_SHELL_PICKER_TILE_HEIGHT: f32 = 124.0;
 const DEV_SHELL_PICKER_TILE_GAP: f32 = 16.0;
+const DEV_SHELL_PICKER_CARD_FOCUS_INSET: f32 = 4.0;
 const DEV_SHELL_PICKER_SCROLL_NAME: &str = "Demo picker";
 #[cfg(test)]
 const DEV_SHELL_PICKER_SCROLL_BAR_NAME: &str = "Demo picker vertical scroll bar";
@@ -523,9 +524,12 @@ impl DevBrowserShell {
                     }),
             );
         }
-        let picker = ScrollView::vertical(DevDemoPickerGrid::new(demo_buttons))
-            .name(DEV_SHELL_PICKER_SCROLL_NAME)
-            .theme_when(clone_dev_theme_reader(&theme_reader));
+        let picker = ScrollView::vertical(Padding::all(
+            DEV_SHELL_PICKER_CARD_FOCUS_INSET,
+            DevDemoPickerGrid::new(demo_buttons),
+        ))
+        .name(DEV_SHELL_PICKER_SCROLL_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader));
 
         let tab_titles = demo_titles.clone();
         let tab_tabs_state = state.clone();
@@ -4099,6 +4103,66 @@ mod tests {
             "expected picker scroll bar to overlay the scroll viewport"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn dev_workspace_picker_card_focus_ring_fits_scroll_clip() -> Result<()> {
+        let mut runtime = build_dev_application().build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let card = find_picker_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(81, PointerEventKind::Down, center_of(card.bounds), true),
+        )?;
+        settle_runtime_animations(&mut runtime, window_id);
+
+        let focused = runtime.render(window_id)?;
+        let card = find_picker_button(&focused.semantics, WIDGET_BOOK_TAB_LABEL);
+        assert!(
+            card.state.focused,
+            "picker card should receive focus during pointer interaction"
+        );
+
+        let theme = DefaultTheme::default();
+        let stroke_slack = theme.metrics.focus_ring_width * 0.5;
+        let mut clips = Vec::new();
+        let mut checked_ring = false;
+        focused
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::PushClip { rect } => clips.push(*rect),
+                SceneCommand::PopClip => {
+                    clips.pop();
+                }
+                SceneCommand::StrokePath {
+                    path,
+                    brush: Brush::Solid(color),
+                    ..
+                } if *color == theme.palette.focus_ring
+                    && rects_overlap(path.bounds(), card.bounds) =>
+                {
+                    checked_ring = true;
+                    let ring = path.bounds().inflate(stroke_slack, stroke_slack);
+                    assert!(
+                        clips.iter().all(|clip| {
+                            clip.x() <= ring.x() + 0.01
+                                && clip.y() <= ring.y() + 0.01
+                                && clip.max_x() + 0.01 >= ring.max_x()
+                                && clip.max_y() + 0.01 >= ring.max_y()
+                        }),
+                        "focused picker card ring should fit inside every enclosing clip: ring={ring:?}, clips={clips:?}"
+                    );
+                }
+                _ => {}
+            });
+        assert!(
+            checked_ring,
+            "focused picker card should paint a focus ring"
+        );
         Ok(())
     }
 
