@@ -141,16 +141,8 @@ pub(crate) fn build_accesskit_snapshot(
         }
     }
 
-    let use_semantic_root = roots.len() == 1
-        && by_id
-            .get(&roots[0])
-            .is_some_and(|node| matches!(node.role, SemanticsRole::Window | SemanticsRole::Root));
     let mut occupied: HashSet<_> = order.iter().map(|id| NodeId(id.get())).collect();
-    let tree_root = if use_semantic_root {
-        NodeId(roots[0].get())
-    } else {
-        synthetic_root_id(window_id, &occupied)
-    };
+    let tree_root = synthetic_root_id(window_id, &occupied);
     occupied.insert(tree_root);
     let mut text_run_ids = HashMap::new();
     for id in order.iter().copied() {
@@ -161,8 +153,7 @@ pub(crate) fn build_accesskit_snapshot(
         }
     }
 
-    let mut accesskit_nodes =
-        Vec::with_capacity(order.len() + text_run_ids.len() + usize::from(!use_semantic_root));
+    let mut accesskit_nodes = Vec::with_capacity(order.len() + text_run_ids.len() + 1);
     let mut node_to_widget = HashMap::with_capacity(order.len() + text_run_ids.len());
     let mut values = HashMap::new();
     let mut text_offsets = HashMap::new();
@@ -191,13 +182,6 @@ pub(crate) fn build_accesskit_snapshot(
             &mut custom_actions,
         );
         mapped.set_children(child_ids);
-        if use_semantic_root
-            && node_id == tree_root
-            && source.name.as_deref().unwrap_or_default().is_empty()
-            && !title.is_empty()
-        {
-            mapped.set_label(title);
-        }
         if let Some(value) = source.value.clone() {
             values.insert(node_id, sanitize_semantics_value(value));
         }
@@ -210,17 +194,15 @@ pub(crate) fn build_accesskit_snapshot(
         }
     }
 
-    if !use_semantic_root {
-        let mut root = Node::new(Role::Window);
-        root.set_label(if title.is_empty() {
-            "SUI window"
-        } else {
-            title
-        });
-        root.set_children(roots.iter().map(|id| NodeId(id.get())).collect::<Vec<_>>());
-        root.set_bounds(tree_bounds(nodes, scale_factor));
-        accesskit_nodes.push((tree_root, root));
-    }
+    let mut root = Node::new(Role::Window);
+    root.set_label(if title.is_empty() {
+        "SUI window"
+    } else {
+        title
+    });
+    root.set_children(roots.iter().map(|id| NodeId(id.get())).collect::<Vec<_>>());
+    root.set_bounds(tree_bounds(nodes, scale_factor));
+    accesskit_nodes.push((tree_root, root));
 
     let focus = order
         .iter()
@@ -732,6 +714,7 @@ fn character_index_to_byte_offset(offsets: &[usize], character_index: usize) -> 
 mod tests {
     use super::*;
     use accesskit::ActionData;
+    use accesskit_consumer::{Node as ConsumerNode, TreeChangeHandler};
     use sui_core::{EditableTextSemantics, Rect as SuiRect, SemanticsState};
 
     fn node(id: u64, role: SemanticsRole) -> SemanticsNode {
@@ -750,6 +733,23 @@ mod tests {
             .find(|(node_id, _)| *node_id == id)
             .expect("mapped node should exist")
             .1
+    }
+
+    struct NoopChangeHandler;
+
+    impl TreeChangeHandler for NoopChangeHandler {
+        fn node_added(&mut self, _node: &ConsumerNode) {}
+
+        fn node_updated(&mut self, _old_node: &ConsumerNode, _new_node: &ConsumerNode) {}
+
+        fn focus_moved(
+            &mut self,
+            _old_node: Option<&ConsumerNode>,
+            _new_node: Option<&ConsumerNode>,
+        ) {
+        }
+
+        fn node_removed(&mut self, _node: &ConsumerNode) {}
     }
 
     #[test]
@@ -781,9 +781,14 @@ mod tests {
 
         let snapshot = build_accesskit_snapshot(WindowId::new(1), 2.0, "Settings", &[root, button]);
         let update = snapshot.full_update();
-        assert_eq!(update.tree.as_ref().unwrap().root, NodeId(1));
-        assert_eq!(update.focus, NodeId(2));
+        let window_root = update.tree.as_ref().unwrap().root;
+        assert_ne!(window_root, NodeId(1));
+        assert_eq!(
+            mapped_accesskit_node(&snapshot, window_root).children(),
+            &[NodeId(1)]
+        );
         assert_eq!(mapped_node(&snapshot, 1).children(), &[NodeId(2)]);
+        assert_eq!(update.focus, NodeId(2));
         let button = mapped_node(&snapshot, 2);
         assert_eq!(button.role(), Role::Button);
         assert_eq!(button.label(), Some("Join another cluster"));
@@ -828,6 +833,46 @@ mod tests {
             .unwrap();
         assert_eq!(root.1.role(), Role::Window);
         assert_eq!(root.1.children(), &[NodeId(11), NodeId(12)]);
+    }
+
+    #[test]
+    fn window_root_id_stays_stable_when_semantic_root_shape_changes() {
+        let empty = build_accesskit_snapshot(WindowId::new(9), 1.0, "Gallery", &[]);
+        let empty_root = empty.full_update().tree.as_ref().unwrap().root;
+
+        let mut semantic_root = node(1, SemanticsRole::Root);
+        semantic_root.name = Some("Gallery root".into());
+        let mut child = node(2, SemanticsRole::Button);
+        child.parent = Some(semantic_root.id);
+        let single_root =
+            build_accesskit_snapshot(WindowId::new(9), 1.0, "Gallery", &[semantic_root, child]);
+        assert_eq!(
+            single_root.full_update().tree.as_ref().unwrap().root,
+            empty_root
+        );
+
+        let left = node(11, SemanticsRole::List);
+        let right = node(12, SemanticsRole::List);
+        let multiple_roots = build_accesskit_snapshot(
+            WindowId::new(9),
+            1.0,
+            "Gallery",
+            &[left.clone(), right.clone()],
+        );
+        assert_eq!(
+            multiple_roots.full_update().tree.as_ref().unwrap().root,
+            empty_root
+        );
+
+        let mut consumer_tree = accesskit_consumer::Tree::new(empty.full_update(), true);
+        let mut handler = NoopChangeHandler;
+        consumer_tree.update_and_process_changes(single_root.full_update(), &mut handler);
+        consumer_tree.update_and_process_changes(multiple_roots.full_update(), &mut handler);
+        let root = consumer_tree
+            .state()
+            .node_by_tree_local_id(empty_root, TreeId::ROOT)
+            .expect("stable AccessKit root should remain in the consumer tree");
+        assert_eq!(root.children().count(), 2);
     }
 
     #[test]

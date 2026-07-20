@@ -4532,13 +4532,25 @@ fn build_composite_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReade
                                         .with_child(IconButton::new(
                                             IconGlyph::Undo,
                                             "Undo command",
-                                        ))
+                                        )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)))
                                         .with_child(IconButton::new(
                                             IconGlyph::Redo,
                                             "Redo command",
-                                        ))
-                                        .with_child(Divider::vertical().name(DIVIDER_ALIAS_NAME))
-                                        .with_child(Button::primary("Save")),
+                                        )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)))
+                                        .with_child(
+                                            Divider::vertical()
+                                                .name(DIVIDER_ALIAS_NAME)
+                                                .theme_when(clone_widget_book_theme_reader(
+                                                    &theme_reader,
+                                                )),
+                                        )
+                                        .with_child(
+                                            Button::primary("Save").theme_when(
+                                                clone_widget_book_theme_reader(&theme_reader),
+                                            ),
+                                        ),
                                 ))
                                 .with_child(
                                     CommandGroup::horizontal(COMMAND_GROUP_NAME)
@@ -4546,15 +4558,18 @@ fn build_composite_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReade
                                         .with_child(IconButton::new(
                                             IconGlyph::Add,
                                             "Zoom in",
-                                        ))
+                                        )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)))
                                         .with_child(IconButton::new(
                                             IconGlyph::Remove,
                                             "Zoom out",
-                                        ))
+                                        )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader)))
                                         .with_child(IconButton::new(
                                             IconGlyph::FitView,
                                             "Fit canvas",
-                                        )),
+                                        )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))),
                                 )
                                 .with_child(
                                     ToolPalette::horizontal(TOOL_PALETTE_NAME)
@@ -4675,14 +4690,16 @@ fn build_composite_widgets_gallery_with_theme(theme_reader: WidgetBookThemeReade
                                     .name(DOCK_PANEL_NAME)
                                     .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                                 ))
-                                .with_child(SizedBox::new().width(380.0).height(120.0).with_child(
+                                .with_child(SizedBox::new().width(380.0).height(186.0).with_child(
                                     EmptyState::new(
                                         "No search results",
                                         "Try a broader query or clear active filters.",
                                     )
                                     .name(EMPTY_STATE_NAME)
                                     .icon(IconGlyph::Search)
-                                    .action(Button::primary("Clear filters"))
+                                    .action(Button::primary("Clear filters").theme_when(
+                                        clone_widget_book_theme_reader(&theme_reader),
+                                    ))
                                     .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                                 ))
                                 .with_child(SizedBox::new().width(380.0).with_child(
@@ -8548,6 +8565,53 @@ mod tests {
                 "missing {role:?} named {name:?}"
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn widget_book_empty_state_sample_keeps_action_inside_bounds() -> Result<()> {
+        let theme_reader = widget_book_theme_reader(DefaultTheme::dark());
+        let root = SizedBox::new().width(1280.0).height(1200.0).with_child(
+            super::build_composite_widgets_gallery_with_theme(theme_reader),
+        );
+        let mut runtime = App::new()
+            .with_resources(|resources| {
+                register_widget_book_images(resources);
+                Ok(())
+            })?
+            .window(Window::new("Widget book empty state").root(root))
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+
+        let empty_state = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some(super::EMPTY_STATE_NAME)
+            })
+            .expect("widget-book empty state semantics should exist");
+        let action = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Clear filters")
+            })
+            .expect("widget-book empty state action semantics should exist");
+
+        assert!(empty_state.bounds.height() >= 180.0);
+        assert!(action.bounds.y() >= empty_state.bounds.y());
+        assert!(action.bounds.max_y() <= empty_state.bounds.max_y());
+        assert!(action.bounds.x() >= empty_state.bounds.x());
+        assert!(action.bounds.max_x() <= empty_state.bounds.max_x());
+        assert!(
+            action.bounds.width() < empty_state.bounds.width() * 0.75,
+            "empty-state action should not stretch across the sample: state={:?}, action={:?}",
+            empty_state.bounds,
+            action.bounds
+        );
 
         Ok(())
     }

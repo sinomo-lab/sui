@@ -5551,11 +5551,18 @@ impl EmptyState {
             .unwrap_or(*self.theme)
     }
 
-    fn action_rect(&self, bounds: Rect) -> Rect {
-        let width = self.action_max_width.min((bounds.width() - 32.0).max(0.0));
+    fn action_rect(
+        bounds: Rect,
+        action_size: Size,
+        action_max_width: f32,
+        action_height: f32,
+    ) -> Rect {
+        let max_width = action_max_width.min((bounds.width() - 32.0).max(0.0));
+        let width = action_size.width.min(max_width).max(0.0);
+        let height = action_size.height.max(action_height);
         let cx = bounds.x() + bounds.width() * 0.5;
         let cy = bounds.y() + bounds.height() * 0.5 - 18.0;
-        Rect::new(cx - width * 0.5, cy + 54.0, width, self.action_height)
+        Rect::new(cx - width * 0.5, cy + 54.0, width, height)
     }
 }
 
@@ -5568,11 +5575,14 @@ impl Widget for EmptyState {
         };
         let action_height = if let Some(action) = &mut self.action {
             let action_width = self.action_max_width.min((width - 32.0).max(0.0));
-            action.measure(
+            let action_size = action.measure(
                 ctx,
-                Constraints::tight(Size::new(action_width, self.action_height)),
+                Constraints::new(
+                    Size::new(0.0, self.action_height),
+                    Size::new(action_width, f32::INFINITY),
+                ),
             );
-            self.action_height
+            action_size.height.max(self.action_height)
         } else {
             0.0
         };
@@ -5588,8 +5598,15 @@ impl Widget for EmptyState {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let action_rect = self.action_rect(bounds);
+        let action_max_width = self.action_max_width;
+        let action_height = self.action_height;
         if let Some(action) = &mut self.action {
+            let action_rect = Self::action_rect(
+                bounds,
+                action.child().measured_size(),
+                action_max_width,
+                action_height,
+            );
             action.arrange(ctx, action_rect);
         }
     }
@@ -5606,11 +5623,13 @@ impl Widget for EmptyState {
         if let Some(detail) = self.detail.as_deref() {
             paint = paint.detail(detail);
         }
+        ctx.push_clip_rect(bounds);
         paint_empty_state(ctx, &theme, bounds, paint);
 
         if let Some(action) = &self.action {
             action.paint(ctx);
         }
+        ctx.pop_clip();
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -20371,9 +20390,22 @@ mod tests {
             state.description.as_deref(),
             Some("Nothing here yet. No files matched the active filter.")
         );
-        assert!(output.semantics.iter().any(|node| {
-            node.role == SemanticsRole::Button && node.name.as_deref() == Some("Create file")
-        }));
+        let action = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Create file")
+            })
+            .expect("empty-state action semantics should exist");
+        assert!(action.bounds.x() >= state.bounds.x());
+        assert!(action.bounds.max_x() <= state.bounds.max_x());
+        assert!(action.bounds.max_y() <= state.bounds.max_y());
+        assert!(
+            action.bounds.width() < state.bounds.width() * 0.75,
+            "empty-state action should keep its natural width instead of stretching: state={:?}, action={:?}",
+            state.bounds,
+            action.bounds
+        );
         assert_eq!(
             text_run_for(&output, "Empty directory").style.color,
             theme.surfaces.text_muted
