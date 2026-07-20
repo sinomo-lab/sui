@@ -99,7 +99,8 @@ pub use layout_policy::{
 };
 pub use media::{
     BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette, ColorPaletteSwatch,
-    ColorPicker, ColorSwatch, Image, ImageFit, SignalMeter,
+    ColorPicker, ColorSwatch, Image, ImageFit, SignalMeter, SimpleColorPicker,
+    SimpleColorPickerMode,
 };
 pub use overlay::{
     NotificationCenter, NotificationHost, NotificationId, NotificationUrgency, OverlayAlignment,

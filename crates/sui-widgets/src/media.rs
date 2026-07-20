@@ -5,7 +5,7 @@ use sui_core::{
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
-use sui_scene::{ImageSource, StrokeStyle, WidgetShader};
+use sui_scene::{Brush, GradientStop, ImageSource, StrokeStyle, WidgetShader};
 use sui_text::{FontFeature, TextStyle};
 
 use crate::{
@@ -1664,6 +1664,193 @@ enum ActiveChannel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimpleColorPickerMode {
+    Hsl,
+    Hsv,
+    Rgb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorSliderChannel {
+    Hue,
+    HsvSaturation,
+    HsvValue,
+    HslSaturation,
+    HslLightness,
+    Alpha,
+    Red,
+    Green,
+    Blue,
+}
+
+impl ColorSliderChannel {
+    fn label(self) -> &'static str {
+        match self {
+            ColorSliderChannel::Hue => "H",
+            ColorSliderChannel::HsvSaturation | ColorSliderChannel::HslSaturation => "S",
+            ColorSliderChannel::HsvValue => "V",
+            ColorSliderChannel::HslLightness => "L",
+            ColorSliderChannel::Alpha => "A",
+            ColorSliderChannel::Red => "R",
+            ColorSliderChannel::Green => "G",
+            ColorSliderChannel::Blue => "B",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            ColorSliderChannel::Hue => "Hue",
+            ColorSliderChannel::HsvSaturation | ColorSliderChannel::HslSaturation => "Saturation",
+            ColorSliderChannel::HsvValue => "Value",
+            ColorSliderChannel::HslLightness => "Lightness",
+            ColorSliderChannel::Alpha => "Alpha",
+            ColorSliderChannel::Red => "Red",
+            ColorSliderChannel::Green => "Green",
+            ColorSliderChannel::Blue => "Blue",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ColorSliderRow {
+    channel: ColorSliderChannel,
+    label: &'static str,
+    name: &'static str,
+    value: f32,
+    min: f32,
+    max: f32,
+    position: f32,
+    value_text: String,
+}
+
+impl ColorSliderRow {
+    fn new(
+        channel: ColorSliderChannel,
+        value: f32,
+        min: f32,
+        max: f32,
+        position: f32,
+        value_text: String,
+    ) -> Self {
+        Self {
+            channel,
+            label: channel.label(),
+            name: channel.name(),
+            value,
+            min,
+            max,
+            position: position.clamp(0.0, 1.0),
+            value_text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ColorSliderValues {
+    color: Color,
+    editing_space: ColorSpace,
+    hue: f32,
+    hsv_saturation: f32,
+    hsv_value: f32,
+    hsl_saturation: f32,
+    hsl_lightness: f32,
+    alpha: f32,
+    red: f32,
+    green: f32,
+    blue: f32,
+    max_channel_value: f32,
+    hdr_capable: bool,
+}
+
+impl ColorSliderValues {
+    fn from_color(color: Color) -> Self {
+        let (hue, hsv_saturation, hsv_value) = rgb_to_hsv(color);
+        let max_channel_value = color_space_max_channel_value(color.space);
+        let (_, hsl_saturation, hsl_lightness) = rgb_to_hsl(color, max_channel_value);
+        Self {
+            color,
+            editing_space: color.space,
+            hue,
+            hsv_saturation,
+            hsv_value,
+            hsl_saturation,
+            hsl_lightness,
+            alpha: color.alpha,
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            max_channel_value,
+            hdr_capable: color_space_hdr_capable(color.space),
+        }
+    }
+
+    fn from_hsv(
+        editing_space: ColorSpace,
+        hue: f32,
+        saturation: f32,
+        value: f32,
+        alpha: f32,
+    ) -> Self {
+        let color = hsv_to_color(editing_space, hue, saturation, value, alpha);
+        let max_channel_value = color_space_max_channel_value(editing_space);
+        let (_, hsl_saturation, hsl_lightness) = rgb_to_hsl(color, max_channel_value);
+        Self {
+            color,
+            editing_space,
+            hue,
+            hsv_saturation: saturation,
+            hsv_value: value,
+            hsl_saturation,
+            hsl_lightness,
+            alpha,
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            max_channel_value,
+            hdr_capable: color_space_hdr_capable(editing_space),
+        }
+    }
+
+    fn from_hsl(
+        editing_space: ColorSpace,
+        hue: f32,
+        saturation: f32,
+        lightness: f32,
+        alpha: f32,
+    ) -> Self {
+        let max_channel_value = color_space_max_channel_value(editing_space);
+        let color = hsl_to_color(
+            editing_space,
+            hue,
+            saturation,
+            lightness,
+            alpha,
+            max_channel_value,
+        );
+        let (_, hsv_saturation, hsv_value) = rgb_to_hsv(color);
+        Self {
+            color,
+            editing_space,
+            hue,
+            hsv_saturation,
+            hsv_value,
+            hsl_saturation: saturation,
+            hsl_lightness: lightness,
+            alpha,
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            max_channel_value,
+            hdr_capable: color_space_hdr_capable(editing_space),
+        }
+    }
+
+    fn from_rgb(editing_space: ColorSpace, red: f32, green: f32, blue: f32, alpha: f32) -> Self {
+        Self::from_color(Color::new(editing_space, red, green, blue, alpha))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColorPickerSemanticPart {
     CurrentColor,
     PreviousColor,
@@ -1710,6 +1897,29 @@ struct ColorPickerResolvedState {
     alpha: f32,
     hdr_capable: bool,
     max_channel_value: f32,
+}
+
+pub struct SimpleColorPicker {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    name: String,
+    mode: SimpleColorPickerMode,
+    editing_space: ColorSpace,
+    hue: f32,
+    hsv_saturation: f32,
+    hsv_value: f32,
+    hsl_saturation: f32,
+    hsl_lightness: f32,
+    red: f32,
+    green: f32,
+    blue: f32,
+    alpha: f32,
+    show_alpha: bool,
+    compact: bool,
+    active: Option<ColorSliderChannel>,
+    focus_animation: AnimatedScalar,
+    color_reader: Option<Box<dyn Fn() -> Color>>,
+    on_change: Option<Box<dyn FnMut(Color)>>,
 }
 
 impl ColorPicker {
@@ -1803,11 +2013,7 @@ impl ColorPicker {
     }
 
     fn max_channel_value(&self) -> f32 {
-        if self.hdr_capable() {
-            Self::MAX_HDR_VALUE
-        } else {
-            1.0
-        }
+        color_space_max_channel_value(self.editing_space)
     }
 
     fn external_color(&self) -> Option<Color> {
@@ -1850,11 +2056,7 @@ impl ColorPicker {
                 value,
                 alpha: color.alpha,
                 hdr_capable,
-                max_channel_value: if hdr_capable {
-                    Self::MAX_HDR_VALUE
-                } else {
-                    1.0
-                },
+                max_channel_value: color_space_max_channel_value(color.space),
             };
         }
 
@@ -2507,6 +2709,609 @@ fn color_picker_child_semantics_node_with_parent(
     node
 }
 
+impl SimpleColorPicker {
+    pub fn new(name: impl Into<String>) -> Self {
+        let theme = DefaultTheme::default();
+        Self::from_color(name, theme.palette.accent)
+    }
+
+    pub fn from_color(name: impl Into<String>, color: Color) -> Self {
+        let values = ColorSliderValues::from_color(color);
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            name: name.into(),
+            mode: SimpleColorPickerMode::Hsv,
+            editing_space: color.space,
+            hue: values.hue,
+            hsv_saturation: values.hsv_saturation,
+            hsv_value: values.hsv_value,
+            hsl_saturation: values.hsl_saturation,
+            hsl_lightness: values.hsl_lightness,
+            red: values.red,
+            green: values.green,
+            blue: values.blue,
+            alpha: values.alpha,
+            show_alpha: true,
+            compact: false,
+            active: None,
+            focus_animation: AnimatedScalar::new(0.0),
+            color_reader: None,
+            on_change: None,
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    pub fn mode(mut self, mode: SimpleColorPickerMode) -> Self {
+        if self.mode != mode {
+            let current = self.color();
+            self.mode = mode;
+            self.apply_color(current);
+        }
+        self
+    }
+
+    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
+        self.set_color_space(color_space);
+        self
+    }
+
+    pub fn show_alpha(mut self, show_alpha: bool) -> Self {
+        self.show_alpha = show_alpha;
+        self
+    }
+
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
+
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(Color) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    pub fn color_when<F>(mut self, color: F) -> Self
+    where
+        F: Fn() -> Color + 'static,
+    {
+        self.color_reader = Some(Box::new(color));
+        self
+    }
+
+    pub fn color(&self) -> Color {
+        match self.mode {
+            SimpleColorPickerMode::Hsl => hsl_to_color(
+                self.editing_space,
+                self.hue,
+                self.hsl_saturation,
+                self.hsl_lightness,
+                self.alpha,
+                self.max_channel_value(),
+            ),
+            SimpleColorPickerMode::Hsv => hsv_to_color(
+                self.editing_space,
+                self.hue,
+                self.hsv_saturation,
+                self.hsv_value,
+                self.alpha,
+            ),
+            SimpleColorPickerMode::Rgb => Color::new(
+                self.editing_space,
+                self.red,
+                self.green,
+                self.blue,
+                self.alpha,
+            ),
+        }
+    }
+
+    fn hdr_capable(&self) -> bool {
+        color_space_hdr_capable(self.editing_space)
+    }
+
+    fn max_channel_value(&self) -> f32 {
+        color_space_max_channel_value(self.editing_space)
+    }
+
+    fn external_color(&self) -> Option<Color> {
+        if self.active.is_none() {
+            self.color_reader.as_ref().map(|reader| reader())
+        } else {
+            None
+        }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+
+    fn layout_metrics_for(&self, theme: &DefaultTheme) -> ControlMetrics {
+        if self.compact {
+            ControlMetrics::from_tokens(theme.spacing, theme.radius, ThemeDensity::Compact)
+        } else {
+            theme.metrics
+        }
+    }
+
+    fn layout_metrics(&self) -> ControlMetrics {
+        let theme = self.resolved_theme();
+        self.layout_metrics_for(&theme)
+    }
+
+    fn row_count(&self) -> usize {
+        if self.show_alpha { 4 } else { 3 }
+    }
+
+    fn content_inset(&self) -> f32 {
+        self.layout_metrics().color_picker_content_inset
+    }
+
+    fn row_height(&self) -> f32 {
+        self.layout_metrics().color_picker_row_height
+    }
+
+    fn row_gap(&self) -> f32 {
+        self.layout_metrics().color_picker_row_gap
+    }
+
+    fn desired_size(&self) -> Size {
+        let metrics = self.layout_metrics();
+        let inset = metrics.color_picker_content_inset;
+        let row_count = self.row_count();
+        let row_gap_count = row_count.saturating_sub(1);
+        Size::new(
+            inset * 2.0
+                + metrics
+                    .color_picker_right_panel_width
+                    .max(metrics.color_picker_map_size),
+            inset * 2.0
+                + row_count as f32 * metrics.color_picker_row_height
+                + row_gap_count as f32 * metrics.color_picker_row_gap,
+        )
+    }
+
+    fn content_rect(&self, bounds: Rect) -> Rect {
+        inset_rect(bounds, Insets::all(self.content_inset()))
+    }
+
+    fn slider_rect(&self, bounds: Rect, index: usize) -> Rect {
+        let content = self.content_rect(bounds);
+        Rect::new(
+            content.x(),
+            content.y() + index as f32 * (self.row_height() + self.row_gap()),
+            content.width(),
+            self.row_height(),
+        )
+    }
+
+    fn slider_rect_for_channel(&self, bounds: Rect, channel: ColorSliderChannel) -> Option<Rect> {
+        self.current_rows()
+            .into_iter()
+            .position(|row| row.channel == channel)
+            .map(|index| self.slider_rect(bounds, index))
+    }
+
+    fn current_values(&self) -> ColorSliderValues {
+        match self.mode {
+            SimpleColorPickerMode::Hsl => ColorSliderValues::from_hsl(
+                self.editing_space,
+                self.hue,
+                self.hsl_saturation,
+                self.hsl_lightness,
+                self.alpha,
+            ),
+            SimpleColorPickerMode::Hsv => ColorSliderValues::from_hsv(
+                self.editing_space,
+                self.hue,
+                self.hsv_saturation,
+                self.hsv_value,
+                self.alpha,
+            ),
+            SimpleColorPickerMode::Rgb => ColorSliderValues::from_rgb(
+                self.editing_space,
+                self.red,
+                self.green,
+                self.blue,
+                self.alpha,
+            ),
+        }
+    }
+
+    fn resolved_values(&self) -> ColorSliderValues {
+        self.external_color()
+            .map(ColorSliderValues::from_color)
+            .unwrap_or_else(|| self.current_values())
+    }
+
+    fn current_rows(&self) -> Vec<ColorSliderRow> {
+        color_slider_rows(self.mode, self.current_values(), self.show_alpha)
+    }
+
+    fn resolved_rows(&self, values: ColorSliderValues) -> Vec<ColorSliderRow> {
+        color_slider_rows(self.mode, values, self.show_alpha)
+    }
+
+    fn sync_external_color(&mut self) -> bool {
+        let Some(color) = self.external_color() else {
+            return false;
+        };
+        if !colors_close(self.color(), color) {
+            self.apply_color(color);
+            return true;
+        }
+        false
+    }
+
+    fn apply_color(&mut self, color: Color) {
+        let values = ColorSliderValues::from_color(color);
+        self.editing_space = color.space;
+        self.hue = values.hue;
+        self.hsv_saturation = values.hsv_saturation;
+        self.hsv_value = values.hsv_value;
+        self.hsl_saturation = values.hsl_saturation;
+        self.hsl_lightness = values.hsl_lightness;
+        self.red = values.red;
+        self.green = values.green;
+        self.blue = values.blue;
+        self.alpha = values.alpha;
+    }
+
+    fn set_color_space(&mut self, next_space: ColorSpace) {
+        if self.editing_space == next_space {
+            return;
+        }
+
+        let current = self.color();
+        self.apply_color(Color::new(
+            next_space,
+            current.red,
+            current.green,
+            current.blue,
+            current.alpha,
+        ));
+    }
+
+    fn emit_change(&mut self) {
+        let color = self.color();
+        if let Some(on_change) = &mut self.on_change {
+            on_change(color);
+        }
+    }
+
+    fn update_from_position(&mut self, bounds: Rect, channel: ColorSliderChannel, position: Point) {
+        let Some(rect) = self.slider_rect_for_channel(bounds, channel) else {
+            return;
+        };
+        let t = ((position.x - rect.x()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let max_channel_value = self.max_channel_value();
+
+        match channel {
+            ColorSliderChannel::Hue => self.hue = t,
+            ColorSliderChannel::HsvSaturation => self.hsv_saturation = t,
+            ColorSliderChannel::HsvValue => {
+                self.hsv_value = if self.hdr_capable() {
+                    hdr_slider_to_value(t)
+                } else {
+                    t
+                };
+            }
+            ColorSliderChannel::HslSaturation => self.hsl_saturation = t,
+            ColorSliderChannel::HslLightness => self.hsl_lightness = max_channel_value * t,
+            ColorSliderChannel::Alpha => self.alpha = t,
+            ColorSliderChannel::Red => self.red = max_channel_value * t,
+            ColorSliderChannel::Green => self.green = max_channel_value * t,
+            ColorSliderChannel::Blue => self.blue = max_channel_value * t,
+        }
+        self.refresh_inactive_channels();
+        self.emit_change();
+    }
+
+    fn refresh_inactive_channels(&mut self) {
+        let values = ColorSliderValues::from_color(self.color());
+        match self.mode {
+            SimpleColorPickerMode::Hsl => {
+                self.hsv_saturation = values.hsv_saturation;
+                self.hsv_value = values.hsv_value;
+                self.red = values.red;
+                self.green = values.green;
+                self.blue = values.blue;
+            }
+            SimpleColorPickerMode::Hsv => {
+                self.hsl_saturation = values.hsl_saturation;
+                self.hsl_lightness = values.hsl_lightness;
+                self.red = values.red;
+                self.green = values.green;
+                self.blue = values.blue;
+            }
+            SimpleColorPickerMode::Rgb => {
+                self.hue = values.hue;
+                self.hsv_saturation = values.hsv_saturation;
+                self.hsv_value = values.hsv_value;
+                self.hsl_saturation = values.hsl_saturation;
+                self.hsl_lightness = values.hsl_lightness;
+            }
+        }
+    }
+
+    fn hit_channel(&self, bounds: Rect, position: Point) -> Option<ColorSliderChannel> {
+        self.current_rows()
+            .into_iter()
+            .enumerate()
+            .find_map(|(index, row)| {
+                self.slider_rect(bounds, index)
+                    .contains(position)
+                    .then_some(row.channel)
+            })
+    }
+
+    fn color_semantics_text(&self, color: Color, hdr_capable: bool) -> String {
+        if hdr_capable && is_hdr_color(color) {
+            format!(
+                "R {:.3} G {:.3} B {:.3} A {:.3}",
+                color.red, color.green, color.blue, color.alpha
+            )
+        } else {
+            format_color(color)
+        }
+    }
+
+    fn mode_label(&self) -> &'static str {
+        match self.mode {
+            SimpleColorPickerMode::Hsl => "HSL",
+            SimpleColorPickerMode::Hsv => "HSV",
+            SimpleColorPickerMode::Rgb => "RGB",
+        }
+    }
+
+    fn push_slider_semantics(&self, ctx: &mut SemanticsCtx, row: &ColorSliderRow, bounds: Rect) {
+        let mut node = simple_color_picker_child_semantics_node(
+            ctx.widget_id(),
+            row.channel,
+            SemanticsRole::Slider,
+            bounds,
+            row.name,
+        );
+        node.value = Some(SemanticsValue::Range {
+            value: row.value as f64,
+            min: row.min as f64,
+            max: row.max as f64,
+        });
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+    }
+}
+
+fn simple_color_picker_child_semantics_id(
+    parent: WidgetId,
+    channel: ColorSliderChannel,
+) -> WidgetId {
+    let slot = match channel {
+        ColorSliderChannel::Hue => 1,
+        ColorSliderChannel::HsvSaturation => 2,
+        ColorSliderChannel::HsvValue => 3,
+        ColorSliderChannel::HslSaturation => 4,
+        ColorSliderChannel::HslLightness => 5,
+        ColorSliderChannel::Alpha => 6,
+        ColorSliderChannel::Red => 7,
+        ColorSliderChannel::Green => 8,
+        ColorSliderChannel::Blue => 9,
+    };
+    const TAG: u64 = 4_u64 << 51;
+    const LOW_MASK: u64 = (1_u64 << 51) - 1;
+    WidgetId::new(TAG | (parent.get().wrapping_mul(397).wrapping_add(slot) & LOW_MASK))
+}
+
+fn simple_color_picker_child_semantics_node(
+    parent: WidgetId,
+    channel: ColorSliderChannel,
+    role: SemanticsRole,
+    bounds: Rect,
+    name: impl Into<String>,
+) -> SemanticsNode {
+    let mut node = SemanticsNode::new(
+        simple_color_picker_child_semantics_id(parent, channel),
+        role,
+        bounds,
+    );
+    node.parent = Some(parent);
+    node.name = Some(name.into());
+    node
+}
+
+impl Widget for SimpleColorPicker {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.sync_external_color() {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                if let Some(active) = self.active {
+                    self.update_from_position(ctx.bounds(), active, pointer.position);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                if let Some(active) = self.hit_channel(ctx.bounds(), pointer.position) {
+                    self.active = Some(active);
+                    self.update_from_position(ctx.bounds(), active, pointer.position);
+                    ctx.request_focus();
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary) =>
+            {
+                if self.active.take().is_some() {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.active.take().is_some() {
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let unit_step = if key.modifiers.shift { 0.1 } else { 0.02 };
+                let value_step = if key.modifiers.shift { 0.5 } else { 0.1 };
+                match key.key.as_str() {
+                    "ArrowLeft" => match self.mode {
+                        SimpleColorPickerMode::Hsl => {
+                            self.hsl_saturation = (self.hsl_saturation - unit_step).clamp(0.0, 1.0)
+                        }
+                        SimpleColorPickerMode::Hsv => {
+                            self.hsv_saturation = (self.hsv_saturation - unit_step).clamp(0.0, 1.0)
+                        }
+                        SimpleColorPickerMode::Rgb => {
+                            self.red = (self.red - value_step).clamp(0.0, self.max_channel_value())
+                        }
+                    },
+                    "ArrowRight" => match self.mode {
+                        SimpleColorPickerMode::Hsl => {
+                            self.hsl_saturation = (self.hsl_saturation + unit_step).clamp(0.0, 1.0)
+                        }
+                        SimpleColorPickerMode::Hsv => {
+                            self.hsv_saturation = (self.hsv_saturation + unit_step).clamp(0.0, 1.0)
+                        }
+                        SimpleColorPickerMode::Rgb => {
+                            self.red = (self.red + value_step).clamp(0.0, self.max_channel_value())
+                        }
+                    },
+                    "ArrowUp" => match self.mode {
+                        SimpleColorPickerMode::Hsl => {
+                            self.hsl_lightness = (self.hsl_lightness + value_step)
+                                .clamp(0.0, self.max_channel_value())
+                        }
+                        SimpleColorPickerMode::Hsv => {
+                            self.hsv_value =
+                                (self.hsv_value + value_step).clamp(0.0, self.max_channel_value())
+                        }
+                        SimpleColorPickerMode::Rgb => {
+                            self.green =
+                                (self.green + value_step).clamp(0.0, self.max_channel_value())
+                        }
+                    },
+                    "ArrowDown" => match self.mode {
+                        SimpleColorPickerMode::Hsl => {
+                            self.hsl_lightness = (self.hsl_lightness - value_step)
+                                .clamp(0.0, self.max_channel_value())
+                        }
+                        SimpleColorPickerMode::Hsv => {
+                            self.hsv_value =
+                                (self.hsv_value - value_step).clamp(0.0, self.max_channel_value())
+                        }
+                        SimpleColorPickerMode::Rgb => {
+                            self.green =
+                                (self.green - value_step).clamp(0.0, self.max_channel_value())
+                        }
+                    },
+                    _ => return,
+                }
+                self.refresh_inactive_channels();
+                self.emit_change();
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                let (changed, active) = advance_scalar(&mut self.focus_animation, *time);
+                if changed {
+                    ctx.request_paint();
+                }
+                if active {
+                    ctx.request_animation_frame();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_external_color();
+        constraints.clamp(self.desired_size())
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let values = self.resolved_values();
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+
+        for (index, row) in self.resolved_rows(values).into_iter().enumerate() {
+            let rect = self.slider_rect(ctx.bounds(), index);
+            paint_color_slider_row(ctx, rect, &row, values, &theme);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let values = self.resolved_values();
+        let mut node =
+            SemanticsNode::new(ctx.widget_id(), SemanticsRole::ColorPicker, ctx.bounds());
+        node.name = Some(self.name.clone());
+        node.description = Some(format!(
+            "{} sliders; {} editing space; {} range available",
+            self.mode_label(),
+            editing_space_label(values.editing_space),
+            if values.hdr_capable { "HDR" } else { "SDR" }
+        ));
+        node.state.focused = ctx.is_focused();
+        node.value = Some(SemanticsValue::Text(
+            self.color_semantics_text(values.color, values.hdr_capable),
+        ));
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        ctx.push(node);
+
+        for (index, row) in self.resolved_rows(values).iter().enumerate() {
+            self.push_slider_semantics(ctx, row, self.slider_rect(ctx.bounds(), index));
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+}
+
 impl Widget for ColorPicker {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if self.sync_external_color() {
@@ -2628,7 +3433,6 @@ impl Widget for ColorPicker {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let palette = theme.palette;
         let resolved = self.resolved_state();
         let current = resolved.color;
         let wheel = self.color_wheel_rect(ctx.bounds());
@@ -2675,91 +3479,28 @@ impl Widget for ColorPicker {
         );
         paint_marker(ctx, marker, contrast_color(current, &theme), &theme);
 
-        let rows = [
-            ("H", format!("{:.2}", resolved.hue * 360.0)),
-            ("S", format!("{:.2}", resolved.saturation * 100.0)),
-            ("V", format!("{:.3}", resolved.value)),
-            ("A", format!("{:.1}", resolved.alpha * 100.0)),
-        ];
-        for (index, (label, value_text)) in rows.into_iter().enumerate() {
-            if index == 3 && !self.show_alpha {
-                continue;
-            }
+        let slider_values = ColorSliderValues::from_hsv(
+            resolved.editing_space,
+            resolved.hue,
+            resolved.saturation,
+            resolved.value,
+            resolved.alpha,
+        );
+        for (index, row) in
+            color_slider_rows(SimpleColorPickerMode::Hsv, slider_values, self.show_alpha)
+                .into_iter()
+                .enumerate()
+        {
             let rect = self.left_slider_rect(ctx.bounds(), index);
-            match index {
-                0 => paint_hue_bar(ctx, rect, &theme),
-                1 => paint_saturation_bar(
-                    ctx,
-                    rect,
-                    resolved.editing_space,
-                    resolved.hue,
-                    resolved.value.max(1.0),
-                    &theme,
-                ),
-                2 => paint_value_bar(
-                    ctx,
-                    rect,
-                    resolved.editing_space,
-                    resolved.hue,
-                    resolved.saturation,
-                    resolved.hdr_capable,
-                    &theme,
-                ),
-                _ => {
-                    draw_checkerboard(ctx, rect, theme.metrics.color_swatch_checker_size, &theme);
-                    paint_alpha_bar(ctx, rect, current, &theme);
-                }
-            }
-            paint_labeled_row_text(ctx, rect, label, &value_text, &theme, palette.placeholder);
-            let marker_x = match index {
-                0 => rect.x() + resolved.hue * rect.width(),
-                1 => rect.x() + resolved.saturation * rect.width(),
-                2 => {
-                    rect.x()
-                        + if resolved.hdr_capable {
-                            hdr_value_to_slider(resolved.value) * rect.width()
-                        } else {
-                            resolved.value.clamp(0.0, 1.0) * rect.width()
-                        }
-                }
-                _ => rect.x() + resolved.alpha * rect.width(),
-            };
-            paint_marker(
-                ctx,
-                Point::new(marker_x, rect.y() + rect.height() * 0.5),
-                palette.border_focus,
-                &theme,
-            );
+            paint_color_slider_row(ctx, rect, &row, slider_values, &theme);
         }
 
-        let rgb = current.to_array();
-        let channel_labels = ["R", "G", "B"];
-        for (index, label) in channel_labels.into_iter().enumerate() {
+        for (index, row) in color_slider_rows(SimpleColorPickerMode::Rgb, slider_values, false)
+            .into_iter()
+            .enumerate()
+        {
             let rect = self.rgb_row_rect(ctx.bounds(), index);
-            paint_rgb_channel_bar(
-                ctx,
-                rect,
-                current,
-                index,
-                resolved.max_channel_value,
-                &theme,
-            );
-            paint_labeled_row_text(
-                ctx,
-                rect,
-                label,
-                &format!("{:.3}", rgb[index]),
-                &theme,
-                palette.placeholder,
-            );
-            let marker_x =
-                rect.x() + (rgb[index] / resolved.max_channel_value).clamp(0.0, 1.0) * rect.width();
-            paint_marker(
-                ctx,
-                Point::new(marker_x, rect.y() + rect.height() * 0.5),
-                palette.border_focus,
-                &theme,
-            );
+            paint_color_slider_row(ctx, rect, &row, slider_values, &theme);
         }
 
         if resolved.hdr_capable && is_hdr_color(current) {
@@ -2819,6 +3560,180 @@ impl Widget for ColorPicker {
         ctx.request_paint();
         ctx.request_semantics();
     }
+}
+
+fn color_slider_rows(
+    mode: SimpleColorPickerMode,
+    values: ColorSliderValues,
+    show_alpha: bool,
+) -> Vec<ColorSliderRow> {
+    let mut rows = Vec::with_capacity(if show_alpha { 4 } else { 3 });
+    match mode {
+        SimpleColorPickerMode::Hsl => {
+            rows.push(hue_slider_row(values.hue));
+            rows.push(percent_slider_row(
+                ColorSliderChannel::HslSaturation,
+                values.hsl_saturation,
+            ));
+            rows.push(channel_slider_row(
+                ColorSliderChannel::HslLightness,
+                values.hsl_lightness,
+                values.max_channel_value,
+            ));
+        }
+        SimpleColorPickerMode::Hsv => {
+            rows.push(hue_slider_row(values.hue));
+            rows.push(percent_slider_row(
+                ColorSliderChannel::HsvSaturation,
+                values.hsv_saturation,
+            ));
+            rows.push(ColorSliderRow::new(
+                ColorSliderChannel::HsvValue,
+                values.hsv_value,
+                0.0,
+                values.max_channel_value,
+                if values.hdr_capable {
+                    hdr_value_to_slider(values.hsv_value)
+                } else {
+                    values.hsv_value.clamp(0.0, 1.0)
+                },
+                format!("{:.3}", values.hsv_value),
+            ));
+        }
+        SimpleColorPickerMode::Rgb => {
+            rows.push(channel_slider_row(
+                ColorSliderChannel::Red,
+                values.red,
+                values.max_channel_value,
+            ));
+            rows.push(channel_slider_row(
+                ColorSliderChannel::Green,
+                values.green,
+                values.max_channel_value,
+            ));
+            rows.push(channel_slider_row(
+                ColorSliderChannel::Blue,
+                values.blue,
+                values.max_channel_value,
+            ));
+        }
+    }
+
+    if show_alpha {
+        rows.push(percent_slider_row(ColorSliderChannel::Alpha, values.alpha));
+    }
+    rows
+}
+
+fn hue_slider_row(hue: f32) -> ColorSliderRow {
+    ColorSliderRow::new(
+        ColorSliderChannel::Hue,
+        hue * 360.0,
+        0.0,
+        360.0,
+        hue,
+        format!("{:.2}", hue * 360.0),
+    )
+}
+
+fn percent_slider_row(channel: ColorSliderChannel, value: f32) -> ColorSliderRow {
+    ColorSliderRow::new(
+        channel,
+        value * 100.0,
+        0.0,
+        100.0,
+        value,
+        format!("{:.1}", value * 100.0),
+    )
+}
+
+fn channel_slider_row(channel: ColorSliderChannel, value: f32, max_value: f32) -> ColorSliderRow {
+    ColorSliderRow::new(
+        channel,
+        value,
+        0.0,
+        max_value,
+        value / max_value.max(0.0001),
+        format!("{:.3}", value),
+    )
+}
+
+fn paint_color_slider_row(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    row: &ColorSliderRow,
+    values: ColorSliderValues,
+    theme: &DefaultTheme,
+) {
+    match row.channel {
+        ColorSliderChannel::Hue => paint_hue_bar(ctx, rect, theme),
+        ColorSliderChannel::HsvSaturation => paint_saturation_bar(
+            ctx,
+            rect,
+            values.editing_space,
+            values.hue,
+            values.hsv_value.max(1.0),
+            theme,
+        ),
+        ColorSliderChannel::HsvValue => paint_value_bar(
+            ctx,
+            rect,
+            values.editing_space,
+            values.hue,
+            values.hsv_saturation,
+            values.hdr_capable,
+            theme,
+        ),
+        ColorSliderChannel::HslSaturation => paint_hsl_saturation_bar(
+            ctx,
+            rect,
+            values.editing_space,
+            values.hue,
+            values.hsl_lightness,
+            values.max_channel_value,
+            theme,
+        ),
+        ColorSliderChannel::HslLightness => paint_hsl_lightness_bar(
+            ctx,
+            rect,
+            values.editing_space,
+            values.hue,
+            values.hsl_saturation,
+            values.max_channel_value,
+            theme,
+        ),
+        ColorSliderChannel::Alpha => {
+            draw_checkerboard(ctx, rect, theme.metrics.color_swatch_checker_size, theme);
+            paint_alpha_bar(ctx, rect, values.color, theme);
+        }
+        ColorSliderChannel::Red => {
+            paint_rgb_channel_bar(ctx, rect, values.color, 0, values.max_channel_value, theme)
+        }
+        ColorSliderChannel::Green => {
+            paint_rgb_channel_bar(ctx, rect, values.color, 1, values.max_channel_value, theme)
+        }
+        ColorSliderChannel::Blue => {
+            paint_rgb_channel_bar(ctx, rect, values.color, 2, values.max_channel_value, theme)
+        }
+    }
+
+    paint_labeled_row_text(
+        ctx,
+        rect,
+        row.label,
+        &row.value_text,
+        theme,
+        theme.palette.placeholder,
+    );
+    paint_marker(
+        ctx,
+        Point::new(
+            rect.x() + row.position * rect.width(),
+            rect.y() + rect.height() * 0.5,
+        ),
+        theme.palette.border_focus,
+        theme,
+    );
 }
 
 fn paint_picker_header(
@@ -2983,6 +3898,86 @@ fn paint_value_bar(
             theme.surfaces.color_picker_hdr_divider,
         );
     }
+}
+
+fn paint_hsl_saturation_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    space: ColorSpace,
+    hue: f32,
+    lightness: f32,
+    max_value: f32,
+    theme: &DefaultTheme,
+) {
+    paint_linear_color_bar(
+        ctx,
+        rect,
+        vec![
+            GradientStop {
+                offset: 0.0,
+                color: hsl_to_color(space, hue, 0.0, lightness, 1.0, max_value),
+            },
+            GradientStop {
+                offset: 1.0,
+                color: hsl_to_color(space, hue, 1.0, lightness, 1.0, max_value),
+            },
+        ],
+        theme,
+    );
+}
+
+fn paint_hsl_lightness_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    space: ColorSpace,
+    hue: f32,
+    saturation: f32,
+    max_value: f32,
+    theme: &DefaultTheme,
+) {
+    paint_linear_color_bar(
+        ctx,
+        rect,
+        vec![
+            GradientStop {
+                offset: 0.0,
+                color: hsl_to_color(space, hue, saturation, 0.0, 1.0, max_value),
+            },
+            GradientStop {
+                offset: 0.5,
+                color: hsl_to_color(space, hue, saturation, max_value * 0.5, 1.0, max_value),
+            },
+            GradientStop {
+                offset: 1.0,
+                color: hsl_to_color(space, hue, saturation, max_value, 1.0, max_value),
+            },
+        ],
+        theme,
+    );
+    if max_value > 1.0001 {
+        let divider_x = rect.x() + rect.width() / max_value.max(1.0);
+        ctx.fill_rect(
+            Rect::new(divider_x, rect.y(), 1.0, rect.height()),
+            theme.surfaces.color_picker_hdr_divider,
+        );
+    }
+}
+
+fn paint_linear_color_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    stops: Vec<GradientStop>,
+    theme: &DefaultTheme,
+) {
+    ctx.fill_rect(
+        rect,
+        Brush::LinearGradient {
+            start: rect.origin,
+            end: Point::new(rect.max_x(), rect.y()),
+            stops,
+        },
+    );
+    paint_bar_border(ctx, rect, theme);
 }
 
 fn paint_alpha_bar(ctx: &mut PaintCtx, rect: Rect, color: Color, theme: &DefaultTheme) {
@@ -3444,6 +4439,14 @@ fn color_space_hdr_capable(space: ColorSpace) -> bool {
     space.is_linear() || matches!(space, ColorSpace::DisplayP3)
 }
 
+fn color_space_max_channel_value(space: ColorSpace) -> f32 {
+    if color_space_hdr_capable(space) {
+        ColorPicker::MAX_HDR_VALUE
+    } else {
+        1.0
+    }
+}
+
 fn colors_close(left: Color, right: Color) -> bool {
     left.space == right.space
         && (left.red - right.red).abs() < 0.0001
@@ -3508,6 +4511,67 @@ fn rgb_to_hsv(color: Color) -> (f32, f32, f32) {
     (hue, saturation, max)
 }
 
+fn hsl_to_color(
+    space: ColorSpace,
+    hue: f32,
+    saturation: f32,
+    lightness: f32,
+    alpha: f32,
+    max_value: f32,
+) -> Color {
+    let max_value = max_value.max(0.0001);
+    let lightness = (lightness / max_value).clamp(0.0, 1.0);
+    let saturation = saturation.clamp(0.0, 1.0);
+    let q = if lightness < 0.5 {
+        lightness * (1.0 + saturation)
+    } else {
+        lightness + saturation - lightness * saturation
+    };
+    let p = 2.0 * lightness - q;
+    let red = hue_to_rgb(p, q, hue + (1.0 / 3.0)) * max_value;
+    let green = hue_to_rgb(p, q, hue) * max_value;
+    let blue = hue_to_rgb(p, q, hue - (1.0 / 3.0)) * max_value;
+    Color::new(space, red, green, blue, alpha)
+}
+
+fn hue_to_rgb(p: f32, q: f32, hue: f32) -> f32 {
+    let hue = hue.rem_euclid(1.0);
+    if hue < 1.0 / 6.0 {
+        p + (q - p) * 6.0 * hue
+    } else if hue < 1.0 / 2.0 {
+        q
+    } else if hue < 2.0 / 3.0 {
+        p + (q - p) * ((2.0 / 3.0) - hue) * 6.0
+    } else {
+        p
+    }
+}
+
+fn rgb_to_hsl(color: Color, max_value: f32) -> (f32, f32, f32) {
+    let max_value = max_value.max(0.0001);
+    let red = (color.red / max_value).clamp(0.0, 1.0);
+    let green = (color.green / max_value).clamp(0.0, 1.0);
+    let blue = (color.blue / max_value).clamp(0.0, 1.0);
+    let max = red.max(green).max(blue);
+    let min = red.min(green).min(blue);
+    let lightness = (max + min) * 0.5;
+    let delta = max - min;
+    if delta <= f32::EPSILON {
+        return (0.0, 0.0, lightness * max_value);
+    }
+
+    let hue = if (max - red).abs() <= f32::EPSILON {
+        (((green - blue) / delta).rem_euclid(6.0)) / 6.0
+    } else if (max - green).abs() <= f32::EPSILON {
+        (((blue - red) / delta) + 2.0) / 6.0
+    } else {
+        (((red - green) / delta) + 4.0) / 6.0
+    };
+    let saturation =
+        (delta / (1.0 - (2.0 * lightness - 1.0).abs()).max(f32::EPSILON)).clamp(0.0, 1.0);
+    (hue, saturation, lightness * max_value)
+}
+
 fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
     let mut builder = PathBuilder::new();
     builder.push_rounded_rect(rect, radius);
@@ -3544,8 +4608,8 @@ mod tests {
     use super::{
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
         ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image, SignalMeter,
-        color_picker_child_semantics_id, format_color, hsv_to_rgb, rgb_to_hsv,
-        signal_meter_bar_layout,
+        SimpleColorPicker, SimpleColorPickerMode, color_picker_child_semantics_id, format_color,
+        hsl_to_color, hsv_to_rgb, rgb_to_hsl, rgb_to_hsv, signal_meter_bar_layout,
     };
     use crate::{DefaultTheme, SemanticTone, ThemeTextToken};
     use sui_core::{
@@ -3775,6 +4839,18 @@ mod tests {
         let color = Color::rgba(0.25, 0.65, 0.82, 0.75);
         let (hue, saturation, value) = rgb_to_hsv(color);
         let round_trip = hsv_to_rgb(hue, saturation, value, color.alpha);
+
+        assert!((round_trip.red - color.red).abs() < 0.02);
+        assert!((round_trip.green - color.green).abs() < 0.02);
+        assert!((round_trip.blue - color.blue).abs() < 0.02);
+        assert!((round_trip.alpha - color.alpha).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn hsl_round_trip_stays_close() {
+        let color = Color::rgba(0.25, 0.65, 0.82, 0.75);
+        let (hue, saturation, lightness) = rgb_to_hsl(color, 1.0);
+        let round_trip = hsl_to_color(color.space, hue, saturation, lightness, color.alpha, 1.0);
 
         assert!((round_trip.red - color.red).abs() < 0.02);
         assert!((round_trip.green - color.green).abs() < 0.02);
@@ -4581,6 +5657,90 @@ mod tests {
             picker.value,
             Some(SemanticsValue::Text(format_color(changed_color)))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn simple_color_picker_hsl_mode_can_hide_alpha_slider() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Simple picker", Color::rgba(0.25, 0.65, 0.82, 0.75))
+                .mode(SimpleColorPickerMode::Hsl)
+                .show_alpha(false),
+        );
+
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorPicker
+                    && node.name.as_deref() == Some("Simple picker")
+            })
+            .expect("simple color picker semantics present");
+        assert_eq!(
+            picker.description.as_deref(),
+            Some("HSL sliders; sRGB editing space; SDR range available")
+        );
+
+        let child = |name: &str| {
+            output.semantics.iter().find(|node| {
+                node.parent == Some(picker.id)
+                    && node.role == SemanticsRole::Slider
+                    && node.name.as_deref() == Some(name)
+            })
+        };
+        assert!(child("Hue").is_some());
+        assert!(child("Saturation").is_some());
+        assert!(child("Lightness").is_some());
+        assert!(
+            child("Alpha").is_none(),
+            "hidden alpha should not expose an alpha slider"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn simple_color_picker_rgb_drag_updates_color_channels() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color(
+                "Simple RGB picker",
+                Color::new(ColorSpace::LinearSrgb, 0.2, 0.3, 0.4, 1.0),
+            )
+            .mode(SimpleColorPickerMode::Rgb)
+            .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+
+        let initial = runtime.render(window_id)?;
+        let red = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Red"))
+            .expect("red channel semantics present")
+            .bounds;
+        let start = Point::new(red.x() + red.width() * 0.20, red.y() + red.height() * 0.5);
+        let end = Point::new(red.x() + red.width() * 0.80, red.y() + red.height() * 0.5);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, start, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, end, true),
+        )?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, end, false))?;
+
+        let changed_color = *changes
+            .borrow()
+            .last()
+            .expect("simple RGB picker emitted change");
+        assert!(
+            changed_color.red > 9.0,
+            "expected HDR red channel after RGB drag, got {}",
+            changed_color.red
+        );
+        assert_eq!(changed_color.space, ColorSpace::LinearSrgb);
         Ok(())
     }
 

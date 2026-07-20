@@ -5493,6 +5493,33 @@ fn build_color_and_imagery_story_with_theme(theme_reader: WidgetBookThemeReader)
                         ),
                     )
                     .with_child(
+                        Stack::horizontal()
+                            .spacing(12.0)
+                            .alignment(Alignment::Start)
+                            .with_child(
+                                SizedBox::new().width(211.0).with_child(
+                                    SimpleColorPicker::from_color(
+                                        "Simple HSL color picker",
+                                        Color::rgba(0.20, 0.58, 0.86, 1.0),
+                                    )
+                                    .mode(SimpleColorPickerMode::Hsl)
+                                    .show_alpha(false)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ),
+                            )
+                            .with_child(
+                                SizedBox::new().width(211.0).with_child(
+                                    SimpleColorPicker::from_color(
+                                        "Simple RGB color picker",
+                                        Color::display_p3(0.86, 0.42, 0.20, 0.70),
+                                    )
+                                    .mode(SimpleColorPickerMode::Rgb)
+                                    .color_space(sui::ColorSpace::DisplayP3)
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+                                ),
+                            ),
+                    )
+                    .with_child(
                         SizedBox::new().width(220.0).height(220.0).with_child(
                             Image::new(WIDGET_BOOK_IMAGE_HANDLE)
                                 .label(DEMO_IMAGE_LABEL)
