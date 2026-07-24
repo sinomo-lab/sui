@@ -992,6 +992,7 @@ pub struct BindingMenuItem {
     disabled: bool,
     destructive: bool,
     separator_before: bool,
+    submenu: Vec<BindingMenuItem>,
 }
 
 impl BindingMenuItem {
@@ -1001,6 +1002,7 @@ impl BindingMenuItem {
         disabled: bool,
         destructive: bool,
         separator_before: bool,
+        submenu: Vec<BindingMenuItem>,
     ) -> Self {
         Self {
             label: label.into(),
@@ -1008,6 +1010,7 @@ impl BindingMenuItem {
             disabled,
             destructive,
             separator_before,
+            submenu,
         }
     }
 
@@ -1024,6 +1027,9 @@ impl BindingMenuItem {
         }
         if self.separator_before {
             item = item.separator_before();
+        }
+        if !self.submenu.is_empty() {
+            item = item.submenu(self.submenu.iter().map(BindingMenuItem::into_sui));
         }
         item
     }
@@ -9845,6 +9851,39 @@ mod tests {
 
     use super::*;
     use sui::{RuntimeApplication, SceneCommand, SemanticsRole, WindowBuilder};
+
+    #[test]
+    fn binding_menu_item_preserves_recursive_submenus() {
+        let item = BindingMenuItem::new(
+            "Move to",
+            None,
+            false,
+            false,
+            false,
+            vec![BindingMenuItem::new(
+                "Shared",
+                None,
+                false,
+                false,
+                false,
+                vec![BindingMenuItem::new(
+                    "Team workspace",
+                    None,
+                    false,
+                    false,
+                    false,
+                    Vec::new(),
+                )],
+            )],
+        )
+        .into_sui();
+
+        assert_eq!(item.submenu_items()[0].label(), "Shared");
+        assert_eq!(
+            item.submenu_items()[0].submenu_items()[0].label(),
+            "Team workspace"
+        );
+    }
 
     #[derive(Default)]
     struct MockCallbacks {

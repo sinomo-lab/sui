@@ -562,7 +562,7 @@ descriptor MenuItem
   python class
   js class
   ts class
-    constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean);
+    constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
   endts
   docs MenuItem
 end

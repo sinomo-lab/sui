@@ -210,17 +210,29 @@ pub struct PyMenuItem {
 #[pymethods]
 impl PyMenuItem {
     #[new]
-    #[pyo3(signature = (label, shortcut=None, disabled=false, destructive=false, separator_before=false))]
+    #[pyo3(signature = (label, shortcut=None, disabled=false, destructive=false, separator_before=false, submenu=None))]
     pub fn new(
         label: String,
         shortcut: Option<String>,
         disabled: bool,
         destructive: bool,
         separator_before: bool,
-    ) -> Self {
-        Self {
-            inner: BindingMenuItem::new(label, shortcut, disabled, destructive, separator_before),
-        }
+        submenu: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        let submenu = submenu
+            .map(extract_menu_items)
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Self {
+            inner: BindingMenuItem::new(
+                label,
+                shortcut,
+                disabled,
+                destructive,
+                separator_before,
+                submenu,
+            ),
+        })
     }
 
     fn __repr__(&self) -> String {

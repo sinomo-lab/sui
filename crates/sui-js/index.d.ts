@@ -636,7 +636,7 @@ export class LayerListItem {
 export function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
 
 export class MenuItem {
-  constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean);
+  constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
 }
 
 export class ToolPaletteItem {

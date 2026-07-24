@@ -219,16 +219,23 @@ impl JsMenuItem {
         disabled: Option<bool>,
         destructive: Option<bool>,
         separator_before: Option<bool>,
-    ) -> Self {
-        Self {
+        submenu: Option<Array<'_>>,
+    ) -> Result<Self> {
+        let submenu = submenu
+            .as_ref()
+            .map(extract_menu_items)
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Self {
             inner: BindingMenuItem::new(
                 label,
                 shortcut,
                 disabled.unwrap_or(false),
                 destructive.unwrap_or(false),
                 separator_before.unwrap_or(false),
+                submenu,
             ),
-        }
+        })
     }
 }
 

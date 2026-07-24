@@ -734,6 +734,7 @@ pub struct MenuItem {
     enabled: bool,
     destructive: bool,
     separator_before: bool,
+    submenu: Vec<MenuItem>,
 }
 
 impl MenuItem {
@@ -744,6 +745,7 @@ impl MenuItem {
             enabled: true,
             destructive: false,
             separator_before: false,
+            submenu: Vec::new(),
         }
     }
 
@@ -771,6 +773,26 @@ impl MenuItem {
         self
     }
 
+    /// Add the nested actions presented when this item is opened by a
+    /// [`ContextMenu`].
+    pub fn submenu<I>(mut self, items: I) -> Self
+    where
+        I: IntoIterator<Item = MenuItem>,
+    {
+        self.submenu.extend(items);
+        self
+    }
+
+    /// The nested actions owned by this item.
+    pub fn submenu_items(&self) -> &[MenuItem] {
+        &self.submenu
+    }
+
+    /// Whether this item opens a nested menu.
+    pub fn has_submenu(&self) -> bool {
+        !self.submenu.is_empty()
+    }
+
     fn text_color(&self, theme: &DefaultTheme) -> Color {
         if !self.enabled {
             theme.palette.placeholder
@@ -783,13 +805,14 @@ impl MenuItem {
 }
 
 fn virtual_menu_item_id(parent: WidgetId, index: usize) -> WidgetId {
-    WidgetId::new(
-        (1_u64 << 63)
-            | parent
-                .get()
-                .wrapping_mul(257)
-                .wrapping_add(index as u64 + 1),
-    )
+    virtual_menu_item_path_id(parent, &[index])
+}
+
+fn virtual_menu_item_path_id(parent: WidgetId, path: &[usize]) -> WidgetId {
+    let value = path.iter().fold(parent.get(), |value, index| {
+        value.wrapping_mul(257).wrapping_add(*index as u64 + 1)
+    });
+    WidgetId::new((1_u64 << 63) | value)
 }
 
 fn menu_row_height(theme: &DefaultTheme) -> f32 {
@@ -798,6 +821,10 @@ fn menu_row_height(theme: &DefaultTheme) -> f32 {
 
 fn themed_menu_height_for_rows(theme: &DefaultTheme, row_height: f32, rows: usize) -> f32 {
     theme.metrics.menu_padding.top + theme.metrics.menu_padding.bottom + (row_height * rows as f32)
+}
+
+fn menu_submenu_indicator_width(theme: &DefaultTheme) -> f32 {
+    menu_row_height(theme) * 0.55
 }
 
 fn menu_item_semantics_node(
@@ -818,6 +845,42 @@ fn menu_item_semantics_node(
     node.state.selected = highlighted;
     if item.enabled {
         node.actions = vec![SemanticsAction::Activate];
+    }
+    node
+}
+
+fn context_menu_item_semantics_node(
+    root: WidgetId,
+    parent: WidgetId,
+    path: &[usize],
+    item: &MenuItem,
+    bounds: Rect,
+    highlighted: bool,
+    expanded: bool,
+) -> SemanticsNode {
+    let mut node = SemanticsNode::new(
+        virtual_menu_item_path_id(root, path),
+        SemanticsRole::MenuItem,
+        bounds,
+    );
+    node.parent = Some(parent);
+    node.name = Some(item.label.clone());
+    node.state.disabled = !item.enabled;
+    node.state.selected = highlighted;
+    if item.has_submenu() {
+        node.state.expanded = Some(expanded);
+        node.popup = Some(SemanticsPopupKind::Menu);
+    }
+    if item.enabled {
+        node.actions = if item.has_submenu() {
+            vec![
+                SemanticsAction::Activate,
+                SemanticsAction::Expand,
+                SemanticsAction::Collapse,
+            ]
+        } else {
+            vec![SemanticsAction::Activate]
+        };
     }
     node
 }
@@ -12791,14 +12854,37 @@ impl Widget for Popover {
 }
 
 #[derive(Debug, Clone)]
+struct ContextMenuPanel {
+    prefix: Vec<usize>,
+    items: Vec<MenuItem>,
+    frame_rect: Rect,
+    opens_left: bool,
+}
+
+impl ContextMenuPanel {
+    fn item_rect(&self, theme: &DefaultTheme, row_height: f32, index: usize) -> Option<Rect> {
+        if index >= self.items.len() {
+            return None;
+        }
+        let padding = theme.metrics.menu_padding;
+        Some(Rect::new(
+            self.frame_rect.x() + padding.left,
+            self.frame_rect.y() + padding.top + (index as f32 * row_height),
+            (self.frame_rect.width() - padding.left - padding.right).max(0.0),
+            row_height,
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ContextMenuPresentationState {
     theme: DefaultTheme,
-    items: Vec<MenuItem>,
-    highlighted: Option<usize>,
-    highlight_visual: Option<usize>,
-    pressed: Option<usize>,
-    press_visual: Option<usize>,
-    frame_rect: Rect,
+    panels: Vec<ContextMenuPanel>,
+    highlighted: Option<Vec<usize>>,
+    highlight_visual: Option<Vec<usize>>,
+    pressed: Option<Vec<usize>>,
+    press_visual: Option<Vec<usize>>,
+    surface_rect: Rect,
     row_height: f32,
     reveal: AnimatedScalar,
     focus_animation: AnimatedScalar,
@@ -12811,12 +12897,12 @@ impl ContextMenuPresentationState {
         let theme = DefaultTheme::default();
         Self {
             theme,
-            items: Vec::new(),
+            panels: Vec::new(),
             highlighted: None,
             highlight_visual: None,
             pressed: None,
             press_visual: None,
-            frame_rect: Rect::ZERO,
+            surface_rect: Rect::ZERO,
             row_height: menu_row_height(&theme),
             reveal: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
@@ -12829,19 +12915,10 @@ impl ContextMenuPresentationState {
         self.reveal.is_presented()
     }
 
-    fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
-        if index >= self.items.len() {
-            return None;
-        }
-        let padding = self.theme.metrics.menu_padding;
-        let x = bounds.x() + padding.left;
-        let y = bounds.y() + padding.top + (index as f32 * self.row_height);
-        Some(Rect::new(
-            x,
-            y,
-            (bounds.width() - padding.left - padding.right).max(0.0),
-            self.row_height,
-        ))
+    fn item_rect(&self, panel: usize, index: usize) -> Option<Rect> {
+        self.panels
+            .get(panel)?
+            .item_rect(&self.theme, self.row_height, index)
     }
 
     fn layer_properties(&self) -> LayerProperties {
@@ -12854,16 +12931,16 @@ impl ContextMenuPresentationState {
         }
     }
 
-    fn highlight_amount_for(&self, index: usize) -> f32 {
-        if self.highlight_visual == Some(index) {
+    fn highlight_amount_for(&self, path: &[usize]) -> f32 {
+        if self.highlight_visual.as_deref() == Some(path) {
             self.highlight_animation.value
         } else {
             0.0
         }
     }
 
-    fn press_amount_for(&self, index: usize) -> f32 {
-        if self.press_visual == Some(index) {
+    fn press_amount_for(&self, path: &[usize]) -> f32 {
+        if self.press_visual.as_deref() == Some(path) {
             self.press_animation.value
         } else {
             0.0
@@ -12885,7 +12962,7 @@ impl Widget for ContextMenuSurface {
     fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
         let state = self.state.borrow();
         if state.is_presented() {
-            state.frame_rect.size
+            state.surface_rect.size
         } else {
             Size::ZERO
         }
@@ -12897,107 +12974,143 @@ impl Widget for ContextMenuSurface {
             return;
         }
 
-        let menu = ctx.bounds();
         let theme = state.theme;
         let metrics = theme.metrics;
         let palette = theme.palette;
         let interaction = theme.interaction;
         let item_padding = metrics.menu_item_padding;
         let surface_radius = metrics.corner_radius + 2.0;
-        paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
-        draw_control_frame(
-            ctx,
-            menu,
-            surface_radius,
-            metrics,
-            palette.surface_raised,
-            palette.border,
-            None,
-        );
+        let submenu_width = menu_submenu_indicator_width(&theme);
 
-        for (index, item) in state.items.iter().enumerate() {
-            let Some(row) = state.item_rect(menu, index) else {
-                continue;
-            };
-
-            if item.separator_before {
-                let line = Rect::new(
-                    row.x(),
-                    row.y() - (metrics.menu_padding.top * 0.5),
-                    row.width(),
-                    1.0,
-                );
-                ctx.fill(rounded_rect_path(line, 0.5), palette.border);
-            }
-
-            let highlighted = state.highlighted == Some(index);
-            let highlight_amount = state.highlight_amount_for(index);
-            let press_amount = state.press_amount_for(index);
-            let label_style = theme.text_style(item.text_color(&theme));
-            let label_slot = Rect::new(
-                row.x() + item_padding.left,
-                row.y(),
-                (row.width()
-                    - item_padding.left
-                    - item_padding.right
-                    - item
-                        .shortcut
-                        .as_ref()
-                        .map(|_| metrics.menu_shortcut_width)
-                        .unwrap_or(0.0))
-                .max(0.0),
-                row.height(),
-            );
-            if highlighted || highlight_amount > 0.0 || press_amount > 0.0 {
-                let highlight_background = mix_color(
-                    palette.control,
-                    palette.accent,
-                    interaction.selected_blend * highlight_amount,
-                );
-                let background = if press_amount > 0.0 {
-                    mix_color(
-                        highlight_background,
-                        palette.control_active,
-                        interaction.pressed_blend * press_amount,
-                    )
-                } else {
-                    highlight_background
-                };
-                ctx.fill(
-                    rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
-                    background,
-                );
-            }
-
-            ctx.push_clip_rect(label_slot);
-            paint_aligned_text(
+        for (panel_index, panel) in state.panels.iter().enumerate() {
+            let menu = panel.frame_rect;
+            paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
+            draw_control_frame(
                 ctx,
-                label_slot,
-                &item.label,
-                &label_style,
-                label_style.line_height,
-                0.0,
+                menu,
+                surface_radius,
+                metrics,
+                palette.surface_raised,
+                palette.border,
+                None,
             );
-            ctx.pop_clip();
 
-            if let Some(shortcut) = &item.shortcut {
-                let shortcut_style = theme.placeholder_text_style();
-                let shortcut_slot = Rect::new(
-                    row.max_x() - item_padding.right - metrics.menu_shortcut_width,
+            for (index, item) in panel.items.iter().enumerate() {
+                let Some(row) = state.item_rect(panel_index, index) else {
+                    continue;
+                };
+                let mut path = panel.prefix.clone();
+                path.push(index);
+
+                if item.separator_before {
+                    let line = Rect::new(
+                        row.x(),
+                        row.y() - (metrics.menu_padding.top * 0.5),
+                        row.width(),
+                        1.0,
+                    );
+                    ctx.fill(rounded_rect_path(line, 0.5), palette.border);
+                }
+
+                let highlighted = state.highlighted.as_deref() == Some(path.as_slice());
+                let highlight_amount = state.highlight_amount_for(&path);
+                let press_amount = state.press_amount_for(&path);
+                let label_style = theme.text_style(item.text_color(&theme));
+                let shortcut_width = item
+                    .shortcut
+                    .as_ref()
+                    .map(|_| metrics.menu_shortcut_width)
+                    .unwrap_or(0.0);
+                let indicator_width = if item.has_submenu() {
+                    submenu_width
+                } else {
+                    0.0
+                };
+                let label_slot = Rect::new(
+                    row.x() + item_padding.left,
                     row.y(),
-                    metrics.menu_shortcut_width,
+                    (row.width()
+                        - item_padding.left
+                        - item_padding.right
+                        - shortcut_width
+                        - indicator_width)
+                        .max(0.0),
                     row.height(),
                 );
-                ctx.push_clip_rect(shortcut_slot);
+                if highlighted || highlight_amount > 0.0 || press_amount > 0.0 {
+                    let highlight_background = mix_color(
+                        palette.control,
+                        palette.accent,
+                        interaction.selected_blend * highlight_amount,
+                    );
+                    let background = if press_amount > 0.0 {
+                        mix_color(
+                            highlight_background,
+                            palette.control_active,
+                            interaction.pressed_blend * press_amount,
+                        )
+                    } else {
+                        highlight_background
+                    };
+                    ctx.fill(
+                        rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
+                        background,
+                    );
+                }
+
+                ctx.push_clip_rect(label_slot);
                 paint_aligned_text(
                     ctx,
-                    shortcut_slot,
-                    shortcut,
-                    &shortcut_style,
-                    shortcut_style.line_height,
-                    1.0,
+                    label_slot,
+                    &item.label,
+                    &label_style,
+                    label_style.line_height,
+                    0.0,
                 );
                 ctx.pop_clip();
+
+                if let Some(shortcut) = &item.shortcut {
+                    let shortcut_style = theme.placeholder_text_style();
+                    let shortcut_slot = Rect::new(
+                        row.max_x()
+                            - item_padding.right
+                            - indicator_width
+                            - metrics.menu_shortcut_width,
+                        row.y(),
+                        metrics.menu_shortcut_width,
+                        row.height(),
+                    );
+                    ctx.push_clip_rect(shortcut_slot);
+                    paint_aligned_text(
+                        ctx,
+                        shortcut_slot,
+                        shortcut,
+                        &shortcut_style,
+                        shortcut_style.line_height,
+                        1.0,
+                    );
+                    ctx.pop_clip();
+                }
+
+                if item.has_submenu() {
+                    let indicator_style = theme.text_style(item.text_color(&theme));
+                    let indicator_slot = Rect::new(
+                        row.max_x() - item_padding.right - indicator_width,
+                        row.y(),
+                        indicator_width,
+                        row.height(),
+                    );
+                    ctx.push_clip_rect(indicator_slot);
+                    paint_aligned_text(
+                        ctx,
+                        indicator_slot,
+                        "\u{203a}",
+                        &indicator_style,
+                        indicator_style.line_height,
+                        1.0,
+                    );
+                    ctx.pop_clip();
+                }
             }
         }
     }
@@ -13043,7 +13156,7 @@ impl Widget for ContextMenuFocusSurface {
     fn measure(&mut self, _ctx: &mut MeasureCtx, _constraints: Constraints) -> Size {
         let state = self.state.borrow();
         if state.is_presented() {
-            state.frame_rect.size
+            state.surface_rect.size
         } else {
             Size::ZERO
         }
@@ -13062,15 +13175,17 @@ impl Widget for ContextMenuFocusSurface {
 
         let metrics = state.theme.metrics;
         let palette = state.theme.palette;
-        draw_focus_ring_frame(
-            ctx,
-            ctx.bounds(),
-            metrics.corner_radius + 2.0,
-            metrics,
-            palette
-                .focus_ring
-                .with_alpha(palette.focus_ring.alpha * progress),
-        );
+        for panel in &state.panels {
+            draw_focus_ring_frame(
+                ctx,
+                panel.frame_rect,
+                metrics.corner_radius + 2.0,
+                metrics,
+                palette
+                    .focus_ring
+                    .with_alpha(palette.focus_ring.alpha * progress),
+            );
+        }
     }
 
     fn layer_options(&self) -> LayerOptions {
@@ -13104,13 +13219,14 @@ pub struct ContextMenu {
     items: Vec<MenuItem>,
     items_provider: Option<Box<dyn Fn() -> Vec<MenuItem>>>,
     open: bool,
-    highlighted: Option<usize>,
-    highlight_visual: Option<usize>,
-    pressed: Option<usize>,
-    press_visual: Option<usize>,
+    open_path: Vec<usize>,
+    highlighted: Option<Vec<usize>>,
+    highlight_visual: Option<Vec<usize>>,
+    pressed: Option<Vec<usize>>,
+    press_visual: Option<Vec<usize>>,
     highlight_animation: AnimatedScalar,
     press_animation: AnimatedScalar,
-    frame_rect: Rect,
+    panels: Vec<ContextMenuPanel>,
     surface: SingleChild,
     focus_surface: SingleChild,
     surface_state: Rc<RefCell<ContextMenuPresentationState>>,
@@ -13119,6 +13235,8 @@ pub struct ContextMenu {
     open_position: Option<Point>,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
     on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, MenuItem)>>,
+    on_activate_path: Option<Box<dyn FnMut(Vec<usize>, MenuItem)>>,
+    on_activate_path_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Vec<usize>, MenuItem)>>,
 }
 
 impl ContextMenu {
@@ -13135,13 +13253,14 @@ impl ContextMenu {
             items: Vec::new(),
             items_provider: None,
             open: false,
+            open_path: Vec::new(),
             highlighted: None,
             highlight_visual: None,
             pressed: None,
             press_visual: None,
             highlight_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
-            frame_rect: Rect::ZERO,
+            panels: Vec::new(),
             surface: SingleChild::new(ContextMenuSurface::new(Rc::clone(&surface_state))),
             focus_surface: SingleChild::new(ContextMenuFocusSurface::new(Rc::clone(
                 &surface_state,
@@ -13152,6 +13271,8 @@ impl ContextMenu {
             open_position: None,
             on_activate: None,
             on_activate_with_ctx: None,
+            on_activate_path: None,
+            on_activate_path_with_ctx: None,
         }
     }
 
@@ -13199,6 +13320,11 @@ impl ContextMenu {
         self.trigger.child().id()
     }
 
+    /// Handle leaf activation.
+    ///
+    /// Flat menus receive the activated item index as before. A nested leaf
+    /// receives the index of its root submenu owner; use
+    /// [`Self::on_activate_path`] when the complete path is significant.
     pub fn on_activate<F>(mut self, on_activate: F) -> Self
     where
         F: FnMut(usize, MenuItem) + 'static,
@@ -13207,11 +13333,32 @@ impl ContextMenu {
         self
     }
 
+    /// Event-context variant of [`Self::on_activate`].
     pub fn on_activate_with_ctx<F>(mut self, on_activate: F) -> Self
     where
         F: FnMut(&mut EventCtx, usize, MenuItem) + 'static,
     {
         self.on_activate_with_ctx = Some(Box::new(on_activate));
+        self
+    }
+
+    /// Handle leaf activation with the complete index path from the root item
+    /// to the activated nested item.
+    pub fn on_activate_path<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(Vec<usize>, MenuItem) + 'static,
+    {
+        self.on_activate_path = Some(Box::new(on_activate));
+        self
+    }
+
+    /// Handle leaf activation with event context and its complete nested index
+    /// path.
+    pub fn on_activate_path_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, Vec<usize>, MenuItem) + 'static,
+    {
+        self.on_activate_path_with_ctx = Some(Box::new(on_activate));
         self
     }
 
@@ -13244,12 +13391,12 @@ impl ContextMenu {
         menu_row_height(&self.resolved_theme())
     }
 
-    fn measured_menu_width(&self, ctx: &mut MeasureCtx) -> f32 {
+    fn measured_menu_width_for_items(&self, ctx: &mut MeasureCtx, items: &[MenuItem]) -> f32 {
         let theme = self.resolved_theme();
         let label_style = theme.body_text_style();
         let shortcut_style = theme.placeholder_text_style();
         let mut width: f32 = 220.0;
-        for item in &self.items {
+        for item in items {
             let label = measure_text(ctx, item.label(), &label_style).width;
             let shortcut = item
                 .shortcut
@@ -13261,7 +13408,12 @@ impl ContextMenu {
                     + shortcut
                     + theme.metrics.menu_item_padding.left
                     + theme.metrics.menu_item_padding.right
-                    + theme.metrics.menu_shortcut_width,
+                    + theme.metrics.menu_shortcut_width
+                    + if item.has_submenu() {
+                        menu_submenu_indicator_width(&theme)
+                    } else {
+                        0.0
+                    },
             );
         }
         width
@@ -13278,43 +13430,75 @@ impl ContextMenu {
         self.trigger.child().bounds()
     }
 
-    fn item_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
-        if index >= self.items.len() || !self.open {
+    fn items_at_prefix(&self, prefix: &[usize]) -> Option<&[MenuItem]> {
+        let mut items = self.items.as_slice();
+        for index in prefix {
+            items = items.get(*index)?.submenu_items();
+        }
+        Some(items)
+    }
+
+    fn item_at_path(&self, path: &[usize]) -> Option<&MenuItem> {
+        let (&index, prefix) = path.split_last()?;
+        self.items_at_prefix(prefix)?.get(index)
+    }
+
+    fn item_rect(&self, bounds: Rect, path: &[usize]) -> Option<Rect> {
+        if !self.open {
+            return None;
+        }
+        let (&index, prefix) = path.split_last()?;
+        let panel = self.panels.get(prefix.len())?;
+        if panel.prefix != prefix {
             return None;
         }
         let theme = self.resolved_theme();
-        let padding = theme.metrics.menu_padding;
-        let menu = self.frame_rect.translate(bounds.origin.to_vector());
-        let x = menu.x() + padding.left;
-        let y = menu.y() + padding.top + (index as f32 * self.row_height());
-        Some(Rect::new(
-            x,
-            y,
-            (menu.width() - padding.left - padding.right).max(0.0),
-            self.row_height(),
-        ))
+        panel
+            .item_rect(&theme, self.row_height(), index)
+            .map(|rect| rect.translate(bounds.origin.to_vector()))
     }
 
-    fn item_at(&self, bounds: Rect, position: Point) -> Option<usize> {
-        self.items.iter().enumerate().find_map(|(index, _)| {
-            self.item_rect(bounds, index)
-                .filter(|rect| rect.contains(position))
-                .map(|_| index)
+    fn item_at(&self, bounds: Rect, position: Point) -> Option<Vec<usize>> {
+        self.panels.iter().rev().find_map(|panel| {
+            panel.items.iter().enumerate().find_map(|(index, _)| {
+                let mut path = panel.prefix.clone();
+                path.push(index);
+                self.item_rect(bounds, &path)
+                    .filter(|rect| rect.contains(position))
+                    .map(|_| path)
+            })
         })
+    }
+
+    fn surface_rect(&self) -> Rect {
+        self.panels
+            .iter()
+            .map(|panel| panel.frame_rect)
+            .reduce(Rect::union)
+            .unwrap_or(Rect::ZERO)
     }
 
     fn sync_surface_state(&self, bounds: Rect) {
         let theme = self.resolved_theme();
+        let translation = bounds.origin.to_vector();
         let mut state = self.surface_state.borrow_mut();
         state.theme = theme;
-        state.items = self.items.clone();
-        state.highlighted = self.highlighted;
-        state.highlight_visual = self.highlight_visual;
-        state.pressed = self.pressed;
-        state.press_visual = self.press_visual;
+        state.panels = self
+            .panels
+            .iter()
+            .cloned()
+            .map(|mut panel| {
+                panel.frame_rect = panel.frame_rect.translate(translation);
+                panel
+            })
+            .collect();
+        state.highlighted = self.highlighted.clone();
+        state.highlight_visual = self.highlight_visual.clone();
+        state.pressed = self.pressed.clone();
+        state.press_visual = self.press_visual.clone();
         state.highlight_animation = self.highlight_animation;
         state.press_animation = self.press_animation;
-        state.frame_rect = self.frame_rect.translate(bounds.origin.to_vector());
+        state.surface_rect = self.surface_rect().translate(translation);
         state.row_height = self.row_height();
     }
 
@@ -13327,10 +13511,10 @@ impl ContextMenu {
             || state.press_visual != self.press_visual
             || state.highlight_animation != self.highlight_animation
             || state.press_animation != self.press_animation;
-        state.highlighted = self.highlighted;
-        state.highlight_visual = self.highlight_visual;
-        state.pressed = self.pressed;
-        state.press_visual = self.press_visual;
+        state.highlighted = self.highlighted.clone();
+        state.highlight_visual = self.highlight_visual.clone();
+        state.pressed = self.pressed.clone();
+        state.press_visual = self.press_visual.clone();
         state.highlight_animation = self.highlight_animation;
         state.press_animation = self.press_animation;
         let presented = state.is_presented();
@@ -13341,14 +13525,14 @@ impl ContextMenu {
         }
     }
 
-    fn set_highlighted(&mut self, highlighted: Option<usize>, ctx: &mut EventCtx) {
+    fn set_highlighted(&mut self, highlighted: Option<Vec<usize>>, ctx: &mut EventCtx) {
         if self.highlighted == highlighted {
             return;
         }
         let theme = self.resolved_theme();
-        self.highlighted = highlighted;
-        if let Some(index) = highlighted {
-            self.highlight_visual = Some(index);
+        self.highlighted = highlighted.clone();
+        if let Some(path) = highlighted {
+            self.highlight_visual = Some(path);
             self.highlight_animation = AnimatedScalar::new(0.0);
             set_hover_animation_target(&mut self.highlight_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.highlight_animation, 0.0, &theme, ctx) {
@@ -13359,14 +13543,14 @@ impl ContextMenu {
         ctx.request_semantics();
     }
 
-    fn set_pressed(&mut self, pressed: Option<usize>, ctx: &mut EventCtx) {
+    fn set_pressed(&mut self, pressed: Option<Vec<usize>>, ctx: &mut EventCtx) {
         if self.pressed == pressed {
             return;
         }
         let theme = self.resolved_theme();
-        self.pressed = pressed;
-        if let Some(index) = pressed {
-            self.press_visual = Some(index);
+        self.pressed = pressed.clone();
+        if let Some(path) = pressed {
+            self.press_visual = Some(path);
             self.press_animation = AnimatedScalar::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
@@ -13397,6 +13581,147 @@ impl ContextMenu {
         highlight_animating | press_animating
     }
 
+    fn set_open_path(&mut self, ctx: &mut EventCtx, open_path: Vec<usize>) {
+        if self.open_path == open_path {
+            return;
+        }
+        self.open_path = open_path;
+        ctx.request_measure();
+        ctx.request_paint();
+        ctx.request_semantics();
+    }
+
+    fn update_pointer_highlight(&mut self, ctx: &mut EventCtx, highlighted: Option<Vec<usize>>) {
+        if let Some(path) = highlighted {
+            let opens_submenu = self
+                .item_at_path(&path)
+                .is_some_and(|item| item.enabled && item.has_submenu());
+            let open_path = if opens_submenu {
+                path.clone()
+            } else {
+                path[..path.len().saturating_sub(1)].to_vec()
+            };
+            self.set_open_path(ctx, open_path);
+            self.set_highlighted(Some(path), ctx);
+        } else {
+            self.set_highlighted(None, ctx);
+        }
+    }
+
+    fn open_highlighted_submenu(&mut self, ctx: &mut EventCtx) -> bool {
+        let Some(path) = self.highlighted.clone() else {
+            return false;
+        };
+        let first_enabled = self.item_at_path(&path).and_then(|item| {
+            item.enabled
+                .then(|| item.submenu_items().iter().position(|child| child.enabled))
+                .flatten()
+        });
+        if self
+            .item_at_path(&path)
+            .is_none_or(|item| !item.enabled || !item.has_submenu())
+        {
+            return false;
+        }
+        self.set_open_path(ctx, path.clone());
+        if let Some(index) = first_enabled {
+            let mut child = path;
+            child.push(index);
+            self.set_highlighted(Some(child), ctx);
+        }
+        true
+    }
+
+    fn close_current_submenu(&mut self, ctx: &mut EventCtx) -> bool {
+        let Some(path) = self.highlighted.clone() else {
+            return false;
+        };
+        if path.len() > 1 {
+            let owner = path[..path.len() - 1].to_vec();
+            let parent_open_path = owner[..owner.len().saturating_sub(1)].to_vec();
+            self.set_open_path(ctx, parent_open_path);
+            self.set_highlighted(Some(owner), ctx);
+            true
+        } else if self.open_path == path {
+            self.set_open_path(ctx, Vec::new());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn move_highlight(&mut self, delta: isize, ctx: &mut EventCtx) {
+        let prefix = self
+            .highlighted
+            .as_deref()
+            .map(|path| &path[..path.len().saturating_sub(1)])
+            .unwrap_or(&[])
+            .to_vec();
+        let Some(items) = self.items_at_prefix(&prefix) else {
+            return;
+        };
+        if items.is_empty() {
+            return;
+        }
+        let current = self
+            .highlighted
+            .as_deref()
+            .and_then(|path| path.last().copied());
+        let len = items.len() as isize;
+        let mut index = current.map_or(if delta > 0 { -1 } else { len }, |index| index as isize);
+        loop {
+            let next = (index + delta).clamp(0, len - 1);
+            if next == index {
+                return;
+            }
+            index = next;
+            if items[index as usize].enabled {
+                break;
+            }
+        }
+        let mut path = prefix.clone();
+        path.push(index as usize);
+        self.set_open_path(ctx, prefix);
+        self.set_highlighted(Some(path), ctx);
+    }
+
+    fn move_highlight_to_edge(&mut self, first: bool, ctx: &mut EventCtx) {
+        let prefix = self
+            .highlighted
+            .as_deref()
+            .map(|path| &path[..path.len().saturating_sub(1)])
+            .unwrap_or(&[])
+            .to_vec();
+        let Some(items) = self.items_at_prefix(&prefix) else {
+            return;
+        };
+        let index = if first {
+            items.iter().position(|item| item.enabled)
+        } else {
+            items.iter().rposition(|item| item.enabled)
+        };
+        if let Some(index) = index {
+            let mut path = prefix.clone();
+            path.push(index);
+            self.set_open_path(ctx, prefix);
+            self.set_highlighted(Some(path), ctx);
+        }
+    }
+
+    fn visible_path_for_semantics_id(
+        &self,
+        root: WidgetId,
+        target: WidgetId,
+    ) -> Option<Vec<usize>> {
+        self.panels.iter().find_map(|panel| {
+            panel.items.iter().enumerate().find_map(|(index, _)| {
+                let mut path = panel.prefix.clone();
+                path.push(index);
+                (virtual_menu_item_path_id(root, &path) == target).then_some(path)
+            })
+        })
+    }
+
     fn set_open(&mut self, ctx: &mut EventCtx, open: bool) {
         if self.open == open {
             return;
@@ -13410,27 +13735,32 @@ impl ContextMenu {
         }
 
         self.open = open;
+        self.open_path.clear();
         self.highlighted = if open {
-            self.items.iter().position(|item| item.enabled)
+            self.items
+                .iter()
+                .position(|item| item.enabled)
+                .map(|index| vec![index])
         } else {
             None
         };
-        self.highlight_visual = self.highlighted;
+        self.highlight_visual = self.highlighted.clone();
         self.highlight_animation = AnimatedScalar::new(self.highlighted.is_some() as u8 as f32);
         self.pressed = None;
         self.press_visual = None;
         self.press_animation = AnimatedScalar::new(0.0);
+        self.panels.clear();
 
         let surface_id = self.surface.child().id();
         let focus_surface_id = self.focus_surface.child().id();
         let theme = self.resolved_theme();
         let mut state = self.surface_state.borrow_mut();
         state.theme = theme;
-        state.items = self.items.clone();
-        state.highlighted = self.highlighted;
-        state.highlight_visual = self.highlight_visual;
-        state.pressed = self.pressed;
-        state.press_visual = self.press_visual;
+        state.panels.clear();
+        state.highlighted = self.highlighted.clone();
+        state.highlight_visual = self.highlight_visual.clone();
+        state.pressed = self.pressed.clone();
+        state.press_visual = self.press_visual.clone();
         state.highlight_animation = self.highlight_animation;
         state.press_animation = self.press_animation;
         let was_presented = state.is_presented();
@@ -13461,18 +13791,27 @@ impl ContextMenu {
         ctx.request_semantics();
     }
 
-    fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
-        let Some(item) = self.items.get(index).cloned() else {
+    fn activate_path(&mut self, ctx: &mut EventCtx, path: Vec<usize>) {
+        let Some(item) = self.item_at_path(&path).cloned() else {
             return;
         };
-        if !item.enabled {
+        if !item.enabled || item.has_submenu() {
             return;
         }
+        let Some(root_index) = path.first().copied() else {
+            return;
+        };
         if let Some(on_activate) = &mut self.on_activate {
-            on_activate(index, item.clone());
+            on_activate(root_index, item.clone());
         }
         if let Some(on_activate) = &mut self.on_activate_with_ctx {
-            on_activate(ctx, index, item);
+            on_activate(ctx, root_index, item.clone());
+        }
+        if let Some(on_activate) = &mut self.on_activate_path {
+            on_activate(path.clone(), item.clone());
+        }
+        if let Some(on_activate) = &mut self.on_activate_path_with_ctx {
+            on_activate(ctx, path, item);
         }
     }
 }
@@ -13488,7 +13827,8 @@ impl Widget for ContextMenu {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move && self.open => {
-                self.set_highlighted(self.item_at(ctx.bounds(), pointer.position), ctx);
+                let highlighted = self.item_at(ctx.bounds(), pointer.position);
+                self.update_pointer_highlight(ctx, highlighted);
             }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -13517,13 +13857,12 @@ impl Widget for ContextMenu {
                     && pointer.button == Some(PointerButton::Primary)
                     && self.open =>
             {
-                if let Some(index) = self.item_at(ctx.bounds(), pointer.position) {
-                    self.set_highlighted(Some(index), ctx);
+                if let Some(path) = self.item_at(ctx.bounds(), pointer.position) {
+                    self.update_pointer_highlight(ctx, Some(path.clone()));
                     self.set_pressed(
-                        self.items
-                            .get(index)
+                        self.item_at_path(&path)
                             .filter(|item| item.enabled)
-                            .map(|_| index),
+                            .map(|_| path),
                         ctx,
                     );
                     ctx.request_pointer_capture(pointer.pointer_id);
@@ -13538,14 +13877,19 @@ impl Widget for ContextMenu {
                     && self.open =>
             {
                 let highlighted = self.item_at(ctx.bounds(), pointer.position);
-                if let Some(index) = self
+                if let Some(path) = self
                     .pressed
+                    .clone()
                     .zip(highlighted)
                     .filter(|(left, right)| left == right)
-                    .map(|(index, _)| index)
+                    .map(|(path, _)| path)
                 {
-                    self.activate(ctx, index);
-                    self.set_open(ctx, false);
+                    if self.item_at_path(&path).is_some_and(MenuItem::has_submenu) {
+                        self.set_open_path(ctx, path);
+                    } else {
+                        self.activate_path(ctx, path);
+                        self.set_open(ctx, false);
+                    }
                 }
                 self.set_pressed(None, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
@@ -13574,21 +13918,21 @@ impl Widget for ContextMenu {
                 if ctx.is_focused() && key.state == KeyState::Pressed && self.open =>
             {
                 match key.key.as_str() {
-                    "ArrowDown" => {
-                        let mut menu = Menu::new("temp").items(self.items.clone());
-                        menu.highlighted = self.highlighted;
-                        menu.move_highlight(1, ctx);
-                        self.set_highlighted(menu.highlighted, ctx);
+                    "ArrowDown" => self.move_highlight(1, ctx),
+                    "ArrowUp" => self.move_highlight(-1, ctx),
+                    "Home" => self.move_highlight_to_edge(true, ctx),
+                    "End" => self.move_highlight_to_edge(false, ctx),
+                    "ArrowRight" => {
+                        self.open_highlighted_submenu(ctx);
                     }
-                    "ArrowUp" => {
-                        let mut menu = Menu::new("temp").items(self.items.clone());
-                        menu.highlighted = self.highlighted;
-                        menu.move_highlight(-1, ctx);
-                        self.set_highlighted(menu.highlighted, ctx);
+                    "ArrowLeft" => {
+                        self.close_current_submenu(ctx);
                     }
                     "Enter" | " " => {
-                        if let Some(index) = self.highlighted {
-                            self.activate(ctx, index);
+                        if !self.open_highlighted_submenu(ctx)
+                            && let Some(path) = self.highlighted.clone()
+                        {
+                            self.activate_path(ctx, path);
                             self.set_open(ctx, false);
                         }
                     }
@@ -13600,6 +13944,39 @@ impl Widget for ContextMenu {
                 self.refresh_surface_interaction_state(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Semantics(semantics) if self.open && semantics.target != ctx.widget_id() => {
+                let Some(path) =
+                    self.visible_path_for_semantics_id(ctx.widget_id(), semantics.target)
+                else {
+                    return;
+                };
+                let has_submenu = self
+                    .item_at_path(&path)
+                    .is_some_and(|item| item.enabled && item.has_submenu());
+                match semantics.action {
+                    sui_core::SemanticsActionRequest::Activate
+                    | sui_core::SemanticsActionRequest::Expand
+                        if has_submenu =>
+                    {
+                        self.set_highlighted(Some(path), ctx);
+                        self.open_highlighted_submenu(ctx);
+                    }
+                    sui_core::SemanticsActionRequest::Collapse if has_submenu => {
+                        self.set_open_path(ctx, path[..path.len().saturating_sub(1)].to_vec());
+                        self.set_highlighted(Some(path), ctx);
+                    }
+                    sui_core::SemanticsActionRequest::Activate => {
+                        self.activate_path(ctx, path);
+                        self.set_open(ctx, false);
+                    }
+                    sui_core::SemanticsActionRequest::Focus => {
+                        self.set_highlighted(Some(path), ctx);
+                        ctx.request_focus();
+                    }
+                    _ => return,
+                }
                 ctx.set_handled();
             }
             Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
@@ -13675,32 +14052,63 @@ impl Widget for ContextMenu {
         if self.open {
             let theme = self.resolved_theme();
             let pointer_anchored = self.open_position.is_some();
-            let width = if pointer_anchored {
-                self.measured_menu_width(ctx)
-            } else {
-                self.measured_menu_width(ctx).max(trigger_size.width)
-            };
-            let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
-            self.frame_rect = Rect::from_origin_size(Point::ZERO, Size::new(width, height));
+            self.panels.clear();
+            let mut prefix = Vec::new();
+            while let Some(items) = self.items_at_prefix(&prefix).map(<[MenuItem]>::to_vec) {
+                let mut width = self.measured_menu_width_for_items(ctx, &items);
+                if prefix.is_empty() && !pointer_anchored {
+                    width = width.max(trigger_size.width);
+                }
+                let height = themed_menu_height_for_rows(&theme, self.row_height(), items.len());
+                self.panels.push(ContextMenuPanel {
+                    prefix: prefix.clone(),
+                    items: items.clone(),
+                    frame_rect: Rect::from_origin_size(Point::ZERO, Size::new(width, height)),
+                    opens_left: false,
+                });
+                if prefix.len() >= self.open_path.len() {
+                    break;
+                }
+                let next = self.open_path[prefix.len()];
+                if items
+                    .get(next)
+                    .is_none_or(|item| !item.enabled || !item.has_submenu())
+                {
+                    break;
+                }
+                prefix.push(next);
+            }
+
+            let estimated_width = self
+                .panels
+                .iter()
+                .map(|panel| panel.frame_rect.width())
+                .sum::<f32>();
+            let estimated_height = self
+                .panels
+                .iter()
+                .map(|panel| panel.frame_rect.height())
+                .sum::<f32>();
+            let estimated_size = Size::new(estimated_width, estimated_height);
             {
                 let mut state = self.surface_state.borrow_mut();
                 state.theme = theme;
-                state.items = self.items.clone();
-                state.highlighted = self.highlighted;
-                state.highlight_visual = self.highlight_visual;
-                state.pressed = self.pressed;
-                state.press_visual = self.press_visual;
+                state.panels = self.panels.clone();
+                state.highlighted = self.highlighted.clone();
+                state.highlight_visual = self.highlight_visual.clone();
+                state.pressed = self.pressed.clone();
+                state.press_visual = self.press_visual.clone();
                 state.highlight_animation = self.highlight_animation;
                 state.press_animation = self.press_animation;
-                state.frame_rect = Rect::from_origin_size(Point::ZERO, self.frame_rect.size);
+                state.surface_rect = Rect::from_origin_size(Point::ZERO, estimated_size);
                 state.row_height = self.row_height();
             }
             self.surface
-                .measure(ctx, Constraints::tight(self.frame_rect.size));
+                .measure(ctx, Constraints::tight(estimated_size));
             self.focus_surface
-                .measure(ctx, Constraints::tight(self.frame_rect.size));
+                .measure(ctx, Constraints::tight(estimated_size));
         } else {
-            self.frame_rect = Rect::ZERO;
+            self.panels.clear();
         }
         constraints.clamp(trigger_size)
     }
@@ -13710,7 +14118,7 @@ impl Widget for ContextMenu {
             ctx,
             Rect::from_origin_size(bounds.origin, self.trigger.child().measured_size()),
         );
-        if self.open {
+        if self.open && !self.panels.is_empty() {
             let theme = self.resolved_theme();
             let anchor = self.open_position.map_or_else(
                 || self.trigger.child().bounds(),
@@ -13725,7 +14133,7 @@ impl Widget for ContextMenu {
             let result = place_overlay(
                 &OverlayPlacementRequest::new(
                     anchor,
-                    self.frame_rect.size,
+                    self.panels[0].frame_rect.size,
                     viewport,
                     OverlayPlacement::BOTTOM_START,
                 )
@@ -13741,14 +14149,56 @@ impl Widget for ContextMenu {
                 })
                 .margin(theme.metrics.popover_gap.max(4.0)),
             );
-            self.frame_rect = result
+            self.panels[0].frame_rect = result
                 .bounds
                 .translate(Vector::new(-bounds.x(), -bounds.y()));
+
+            for depth in 1..self.panels.len() {
+                let owner_path = self.panels[depth].prefix.clone();
+                let Some(anchor) = self.item_rect(bounds, &owner_path) else {
+                    continue;
+                };
+                let prefer_left = self.panels[depth - 1].opens_left;
+                let (placement, fallbacks) = if prefer_left {
+                    (
+                        OverlayPlacement::LEFT_START,
+                        [
+                            OverlayPlacement::RIGHT_START,
+                            OverlayPlacement::LEFT_END,
+                            OverlayPlacement::RIGHT_END,
+                        ],
+                    )
+                } else {
+                    (
+                        OverlayPlacement::RIGHT_START,
+                        [
+                            OverlayPlacement::LEFT_START,
+                            OverlayPlacement::RIGHT_END,
+                            OverlayPlacement::LEFT_END,
+                        ],
+                    )
+                };
+                let result = place_overlay(
+                    &OverlayPlacementRequest::new(
+                        anchor,
+                        self.panels[depth].frame_rect.size,
+                        viewport,
+                        placement,
+                    )
+                    .fallbacks(fallbacks)
+                    .gap(0.0)
+                    .margin(theme.metrics.popover_gap.max(4.0)),
+                );
+                self.panels[depth].opens_left = result.placement.side == OverlaySide::Left;
+                self.panels[depth].frame_rect = result
+                    .bounds
+                    .translate(Vector::new(-bounds.x(), -bounds.y()));
+            }
         }
         self.sync_surface_state(bounds);
         let state = self.surface_state.borrow();
         let surface_bounds = if state.is_presented() {
-            state.frame_rect
+            state.surface_rect
         } else {
             Rect::from_origin_size(bounds.origin, Size::ZERO)
         };
@@ -13774,7 +14224,8 @@ impl Widget for ContextMenu {
         node.popup = Some(SemanticsPopupKind::Menu);
         node.value = self
             .highlighted
-            .and_then(|index| self.items.get(index))
+            .as_deref()
+            .and_then(|path| self.item_at_path(path))
             .map(|item| SemanticsValue::Text(item.label.clone()));
         node.actions = vec![
             SemanticsAction::Focus,
@@ -13784,17 +14235,28 @@ impl Widget for ContextMenu {
         ];
         ctx.push(node);
         if self.open {
-            for (index, item) in self.items.iter().enumerate() {
-                let Some(row) = self.item_rect(ctx.bounds(), index) else {
-                    continue;
+            for panel in &self.panels {
+                let parent = if panel.prefix.is_empty() {
+                    ctx.widget_id()
+                } else {
+                    virtual_menu_item_path_id(ctx.widget_id(), &panel.prefix)
                 };
-                ctx.push(menu_item_semantics_node(
-                    ctx.widget_id(),
-                    index,
-                    item,
-                    row,
-                    self.highlighted == Some(index),
-                ));
+                for (index, item) in panel.items.iter().enumerate() {
+                    let mut path = panel.prefix.clone();
+                    path.push(index);
+                    let Some(row) = self.item_rect(ctx.bounds(), &path) else {
+                        continue;
+                    };
+                    ctx.push(context_menu_item_semantics_node(
+                        ctx.widget_id(),
+                        parent,
+                        &path,
+                        item,
+                        row,
+                        self.highlighted.as_deref() == Some(path.as_slice()),
+                        self.open_path.starts_with(&path),
+                    ));
+                }
             }
         }
         self.trigger.semantics(ctx);
@@ -22347,6 +22809,337 @@ mod tests {
                 .and_then(|node| node.state.expanded),
             Some(true)
         );
+    }
+
+    #[test]
+    fn context_menu_pointer_opens_submenu_and_activates_leaf_path() {
+        let activations = Rc::new(RefCell::new(Vec::new()));
+        let recorded_activations = Rc::clone(&activations);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(240.0).with_child(
+                ContextMenu::new("Actions menu", crate::Button::new("Actions"))
+                    .activation_button(PointerButton::Primary)
+                    .anchor_to_pointer(false)
+                    .items([
+                        MenuItem::new("Open"),
+                        MenuItem::new("Move to")
+                            .submenu([MenuItem::new("Archive"), MenuItem::new("Shared")]),
+                    ])
+                    .on_activate_path(move |path, item| {
+                        recorded_activations
+                            .borrow_mut()
+                            .push((path, item.label().to_string()));
+                    }),
+            ),
+        );
+
+        let closed = runtime.render(window_id).unwrap();
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Actions")
+            })
+            .expect("submenu context-menu trigger present")
+            .bounds;
+        let trigger_center = super::rect_center(trigger);
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, trigger_center, true),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, trigger_center, false),
+            )
+            .unwrap();
+
+        let opened = runtime.render(window_id).unwrap();
+        let owner = opened
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Move to")
+            })
+            .expect("submenu owner present");
+        assert!(owner.popup.is_some());
+        assert_eq!(owner.state.expanded, Some(false));
+        let owner_id = owner.id;
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, owner_id, SemanticsActionRequest::Expand,)
+                .unwrap()
+        );
+        let semantically_expanded = runtime.render(window_id).unwrap();
+        assert!(semantically_expanded.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Archive")
+        }));
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, owner_id, SemanticsActionRequest::Collapse,)
+                .unwrap()
+        );
+        let semantically_collapsed = runtime.render(window_id).unwrap();
+        let owner = semantically_collapsed
+            .semantics
+            .iter()
+            .find(|node| node.id == owner_id)
+            .expect("collapsed submenu owner present");
+        assert_eq!(owner.state.expanded, Some(false));
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    super::rect_center(owner.bounds),
+                )),
+            )
+            .unwrap();
+        let nested = runtime.render(window_id).unwrap();
+        let owner = nested
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Move to")
+            })
+            .expect("expanded submenu owner present");
+        let archive = nested
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Archive")
+            })
+            .expect("submenu leaf present");
+        assert_eq!(owner.state.expanded, Some(true));
+        assert_eq!(archive.parent, Some(owner.id));
+
+        let archive_center = super::rect_center(archive.bounds);
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, archive_center, true),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, archive_center, false),
+            )
+            .unwrap();
+
+        assert_eq!(
+            activations.borrow().as_slice(),
+            &[(vec![1, 0], "Archive".to_string())]
+        );
+        assert_eq!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::ContextMenu
+                        && node.name.as_deref() == Some("Actions menu")
+                })
+                .and_then(|node| node.state.expanded),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn context_menu_keyboard_enters_and_leaves_submenus() {
+        let activated_path = Rc::new(RefCell::new(None));
+        let recorded_path = Rc::clone(&activated_path);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(240.0).with_child(
+                ContextMenu::new("Actions menu", crate::Button::new("Actions"))
+                    .activation_button(PointerButton::Primary)
+                    .anchor_to_pointer(false)
+                    .items([
+                        MenuItem::new("Move to").submenu([
+                            MenuItem::new("Archive"),
+                            MenuItem::new("Shared").submenu([MenuItem::new("Team workspace")]),
+                        ]),
+                        MenuItem::new("Rename"),
+                    ])
+                    .on_activate_path(move |path, _| {
+                        recorded_path.replace(Some(path));
+                    }),
+            ),
+        );
+        let closed = runtime.render(window_id).unwrap();
+        let menu_id = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ContextMenu
+                    && node.name.as_deref() == Some("Actions menu")
+            })
+            .expect("context menu semantics present")
+            .id;
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, menu_id, SemanticsActionRequest::Focus)
+                .unwrap()
+        );
+        for key in ["Enter", "ArrowRight", "ArrowDown"] {
+            runtime
+                .handle_event(
+                    window_id,
+                    Event::Keyboard(KeyboardEvent::new(key, KeyState::Pressed)),
+                )
+                .unwrap();
+        }
+        let nested = runtime.render(window_id).unwrap();
+        assert!(
+            nested.semantics.iter().any(|node| {
+                node.role == SemanticsRole::MenuItem
+                    && node.name.as_deref() == Some("Shared")
+                    && node.state.selected
+            }),
+            "ArrowRight should enter the submenu and ArrowDown should move within it"
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowRight", KeyState::Pressed)),
+            )
+            .unwrap();
+        let deeply_nested = runtime.render(window_id).unwrap();
+        assert!(deeply_nested.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem
+                && node.name.as_deref() == Some("Team workspace")
+                && node.state.selected
+        }));
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+            )
+            .unwrap();
+        let one_level_nested = runtime.render(window_id).unwrap();
+        assert!(!one_level_nested.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Team workspace")
+        }));
+        assert!(one_level_nested.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem
+                && node.name.as_deref() == Some("Shared")
+                && node.state.selected
+        }));
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("ArrowLeft", KeyState::Pressed)),
+            )
+            .unwrap();
+        let closed_submenu = runtime.render(window_id).unwrap();
+        assert!(!closed_submenu.semantics.iter().any(|node| {
+            node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Archive")
+        }));
+        assert_eq!(
+            closed_submenu
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Move to")
+                })
+                .and_then(|node| node.state.expanded),
+            Some(false)
+        );
+
+        for key in ["ArrowRight", "Enter"] {
+            runtime
+                .handle_event(
+                    window_id,
+                    Event::Keyboard(KeyboardEvent::new(key, KeyState::Pressed)),
+                )
+                .unwrap();
+        }
+        assert_eq!(activated_path.borrow().as_deref(), Some(&[0, 0][..]));
+    }
+
+    #[test]
+    fn context_menu_submenu_falls_back_inside_right_viewport_edge() {
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Surface menu", SizedBox::new().width(800.0).height(300.0)).items([
+                MenuItem::new("Export").submenu([
+                    MenuItem::new("Archive").submenu([MenuItem::new("Zip")]),
+                    MenuItem::new("Plain text"),
+                ]),
+            ]),
+        );
+        runtime.render(window_id).unwrap();
+        let press = Point::new(790.0, 32.0);
+        let mut down = PointerEvent::new(PointerEventKind::Down, press);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let root = runtime.render(window_id).unwrap();
+        let owner = root
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Export")
+            })
+            .expect("submenu owner present")
+            .bounds;
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    super::rect_center(owner),
+                )),
+            )
+            .unwrap();
+        let nested = runtime.render(window_id).unwrap();
+        let child = nested
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Archive")
+            })
+            .expect("submenu leaf present")
+            .bounds;
+        assert!(
+            child.x() < owner.x(),
+            "the submenu should fall back to the owner's left near the viewport edge"
+        );
+        assert!(child.x() >= 4.0);
+        assert!(child.max_x() <= 796.0);
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    super::rect_center(child),
+                )),
+            )
+            .unwrap();
+        let deeply_nested = runtime.render(window_id).unwrap();
+        let grandchild = deeply_nested
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Zip")
+            })
+            .expect("nested submenu leaf present")
+            .bounds;
+        assert!(
+            grandchild.x() < child.x(),
+            "nested submenus should continue toward the side selected by their parent"
+        );
+        assert!(grandchild.x() >= 4.0);
     }
 
     #[test]

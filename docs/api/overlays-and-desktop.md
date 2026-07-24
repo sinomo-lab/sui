@@ -57,6 +57,36 @@ The adaptive policy first chooses a preferred or fallback side that fits, then
 shifts and finally resizes inside the safe viewport. Use
 `OverlayCollisionPolicy::NONE` only when overflow is intentional.
 
+## Context-Menu Submenus
+
+`MenuItem::submenu` builds recursive context-menu branches. Each child panel
+inherits the side selected by its parent and falls back across the anchor when
+the preferred side would leave the viewport:
+
+```rust
+use sui::prelude::*;
+
+let menu = ContextMenu::new("File actions", Button::new("Actions"))
+    .activation_button(PointerButton::Primary)
+    .item(MenuItem::new("Move to").submenu([
+        MenuItem::new("Archive"),
+        MenuItem::new("Shared").submenu([
+            MenuItem::new("Team workspace"),
+            MenuItem::new("Project workspace"),
+        ]),
+    ]))
+    .on_activate_path(|path, item| {
+        println!("activated {path:?}: {}", item.label());
+    });
+```
+
+Pointer hover opens a branch. Arrow Right enters it, Arrow Left returns to its
+owner, and the ordinary Up, Down, Home, End, Enter, Space, and Escape behavior
+continues at the active level. Submenu owners expose menu-popup and
+expanded/collapsed semantics. Existing `on_activate` callbacks remain valid for
+flat menus; use `on_activate_path` or `on_activate_path_with_ctx` when sibling
+branches can contain different leaves.
+
 ## Custom Managed Overlays
 
 A custom overlay remains a normal retained widget. Declare its active policy

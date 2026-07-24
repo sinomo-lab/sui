@@ -3513,6 +3513,13 @@ fn build_widget_book_gallery_with_theme_selection(
                             .theme_when(clone_widget_book_theme_reader(&theme_reader))
                             .item(MenuItem::new("Rename"))
                             .item(MenuItem::new("Duplicate"))
+                            .item(MenuItem::new("Move to").submenu([
+                                MenuItem::new("Archive"),
+                                MenuItem::new("Shared").submenu([
+                                    MenuItem::new("Team workspace"),
+                                    MenuItem::new("Project workspace"),
+                                ]),
+                            ]))
                             .item(MenuItem::new("Delete").separator_before().destructive())
                             .on_activate(move |_, item| {
                                 context_menu_state.borrow_mut().last_context_action = item.label().to_string();
