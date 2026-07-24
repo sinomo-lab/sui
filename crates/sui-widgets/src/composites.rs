@@ -13215,6 +13215,12 @@ impl ContextMenu {
         self
     }
 
+    /// Set the pointer button that opens the menu.
+    ///
+    /// Primary activation owns the trigger click during capture, so an
+    /// interactive trigger such as [`crate::Button`] does not consume or also
+    /// execute the click. Secondary activation remains in target/bubble order
+    /// so context-menu triggers can update their targeted row before opening.
     pub fn activation_button(mut self, activation_button: PointerButton) -> Self {
         self.activation_button = activation_button;
         self
@@ -13487,12 +13493,16 @@ impl Widget for ContextMenu {
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(self.activation_button)
-                    && ctx.phase() != EventPhase::Capture
+                    && if self.activation_button == PointerButton::Primary {
+                        ctx.phase() == EventPhase::Capture
+                    } else {
+                        ctx.phase() != EventPhase::Capture
+                    }
                     && self.trigger_rect().contains(pointer.position) =>
             {
-                // Target/Bubble only: the trigger widget sees the press first
-                // (to focus itself or record the press position) before the
-                // menu opens and takes keyboard focus.
+                // Context-click targets see the press first so they can update
+                // selection. A primary dropdown owns the press in capture so
+                // an interactive trigger cannot consume or double-activate it.
                 let open = !self.open;
                 self.open_position = (open && self.anchors_to_pointer()).then(|| {
                     let origin = ctx.bounds().origin;
@@ -13549,6 +13559,18 @@ impl Widget for ContextMenu {
                 }
             }
             Event::Keyboard(key)
+                if self.activation_button == PointerButton::Primary
+                    && ctx.is_focused()
+                    && key.state == KeyState::Pressed
+                    && !self.open
+                    && matches!(key.key.as_str(), "Enter" | " ") =>
+            {
+                self.open_position = None;
+                self.set_open(ctx, true);
+                ctx.request_focus();
+                ctx.set_handled();
+            }
+            Event::Keyboard(key)
                 if ctx.is_focused() && key.state == KeyState::Pressed && self.open =>
             {
                 match key.key.as_str() {
@@ -13579,6 +13601,22 @@ impl Widget for ContextMenu {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                let open = match semantics.action {
+                    sui_core::SemanticsActionRequest::Activate => Some(!self.open),
+                    sui_core::SemanticsActionRequest::Expand => Some(true),
+                    sui_core::SemanticsActionRequest::Collapse => Some(false),
+                    _ => None,
+                };
+                if let Some(open) = open {
+                    self.open_position = None;
+                    self.set_open(ctx, open);
+                    if open {
+                        ctx.request_focus();
+                    }
+                    ctx.set_handled();
+                }
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
                 let surface_id = self.surface.child().id();
@@ -22133,6 +22171,182 @@ mod tests {
 
         assert!((actual_visual_center - row_center).abs() < 0.75);
         Ok(())
+    }
+
+    #[test]
+    fn context_menu_primary_activation_owns_interactive_trigger_click() {
+        let trigger_activations = Rc::new(Cell::new(0));
+        let recorded_trigger_activations = Rc::clone(&trigger_activations);
+        let menu_activations = Rc::new(Cell::new(0));
+        let recorded_menu_activations = Rc::clone(&menu_activations);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(180.0).with_child(
+                ContextMenu::new(
+                    "Actions menu",
+                    crate::Button::new("Actions").on_press(move || {
+                        trigger_activations.set(trigger_activations.get() + 1);
+                    }),
+                )
+                .activation_button(PointerButton::Primary)
+                .anchor_to_pointer(false)
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")])
+                .on_activate(move |_, _| {
+                    menu_activations.set(menu_activations.get() + 1);
+                }),
+            ),
+        );
+
+        let closed = runtime.render(window_id).unwrap();
+        let trigger = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Actions")
+            })
+            .expect("interactive context-menu trigger present")
+            .bounds;
+        let trigger_center = super::rect_center(trigger);
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, trigger_center, true),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, trigger_center, false),
+            )
+            .unwrap();
+
+        let opened = runtime.render(window_id).unwrap();
+        let rename = opened
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
+            })
+            .expect("primary trigger should open the context menu");
+        assert_eq!(
+            recorded_trigger_activations.get(),
+            0,
+            "the menu trigger click must not also invoke the wrapped button"
+        );
+        assert_eq!(
+            opened
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::ContextMenu
+                        && node.name.as_deref() == Some("Actions menu")
+                })
+                .and_then(|node| node.state.expanded),
+            Some(true)
+        );
+
+        let rename_center = super::rect_center(rename.bounds);
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, rename_center, true),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, rename_center, false),
+            )
+            .unwrap();
+        assert_eq!(recorded_menu_activations.get(), 1);
+    }
+
+    #[test]
+    fn context_menu_primary_keyboard_and_semantics_share_open_contract() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(180.0).with_child(
+                ContextMenu::new("Actions menu", crate::Button::new("Actions"))
+                    .activation_button(PointerButton::Primary)
+                    .anchor_to_pointer(false)
+                    .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+            ),
+        );
+        let closed = runtime.render(window_id).unwrap();
+        let menu_id = closed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ContextMenu
+                    && node.name.as_deref() == Some("Actions menu")
+            })
+            .expect("context menu semantics present")
+            .id;
+
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, menu_id, SemanticsActionRequest::Focus)
+                .unwrap()
+        );
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .find(|node| node.id == menu_id)
+                .and_then(|node| node.state.expanded),
+            Some(true)
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Keyboard(KeyboardEvent::new("Escape", KeyState::Pressed)),
+            )
+            .unwrap();
+        let _ = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, menu_id, SemanticsActionRequest::Expand)
+                .unwrap()
+        );
+        assert_eq!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .find(|node| node.id == menu_id)
+                .and_then(|node| node.state.expanded),
+            Some(true)
+        );
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, menu_id, SemanticsActionRequest::Collapse)
+                .unwrap()
+        );
+        let _ = runtime.render(window_id).unwrap();
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, menu_id, SemanticsActionRequest::Activate)
+                .unwrap()
+        );
+        assert_eq!(
+            runtime
+                .render(window_id)
+                .unwrap()
+                .semantics
+                .iter()
+                .find(|node| node.id == menu_id)
+                .and_then(|node| node.state.expanded),
+            Some(true)
+        );
     }
 
     #[test]
