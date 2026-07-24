@@ -14191,7 +14191,16 @@ impl Widget for ContextMenu {
                 let Some(anchor) = self.item_rect(bounds, &owner_path) else {
                     continue;
                 };
-                let prefer_left = self.panels[depth - 1].opens_left;
+                let margin = theme.metrics.popover_gap.max(4.0);
+                let remaining_cascade_width = self.panels[depth..]
+                    .iter()
+                    .map(|panel| panel.frame_rect.width())
+                    .sum::<f32>();
+                let room_left = (anchor.x() - viewport.x() - margin).max(0.0);
+                let room_right = (viewport.max_x() - anchor.max_x() - margin).max(0.0);
+                let prefer_left = self.panels[depth - 1].opens_left
+                    || (room_right < remaining_cascade_width
+                        && room_left >= remaining_cascade_width);
                 let (placement, fallbacks) = if prefer_left {
                     (
                         OverlayPlacement::LEFT_START,
@@ -14220,7 +14229,7 @@ impl Widget for ContextMenu {
                     )
                     .fallbacks(fallbacks)
                     .gap(0.0)
-                    .margin(theme.metrics.popover_gap.max(4.0)),
+                    .margin(margin),
                 );
                 self.panels[depth].opens_left = result.placement.side == OverlaySide::Left;
                 self.panels[depth].frame_rect = result
@@ -23178,6 +23187,83 @@ mod tests {
         assert!(
             grandchild.x() < child.x(),
             "nested submenus should continue toward the side selected by their parent"
+        );
+        assert!(grandchild.x() >= 4.0);
+    }
+
+    #[test]
+    fn context_menu_preflights_nested_cascade_before_right_viewport_edge() {
+        let (mut runtime, window_id) = build_runtime(
+            ContextMenu::new("Surface menu", SizedBox::new().width(800.0).height(300.0)).items([
+                MenuItem::new("Export").submenu([
+                    MenuItem::new("Archive").submenu([MenuItem::new("Zip")]),
+                    MenuItem::new("Plain text"),
+                ]),
+            ]),
+        );
+        runtime.render(window_id).unwrap();
+        let press = Point::new(500.0, 32.0);
+        let mut down = PointerEvent::new(PointerEventKind::Down, press);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Secondary);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+
+        let root = runtime.render(window_id).unwrap();
+        let owner = root
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Export")
+            })
+            .expect("submenu owner present")
+            .bounds;
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    super::rect_center(owner),
+                )),
+            )
+            .unwrap();
+
+        let nested = runtime.render(window_id).unwrap();
+        let child = nested
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Archive")
+            })
+            .expect("submenu leaf present")
+            .bounds;
+        assert!(
+            child.max_x() <= owner.x(),
+            "the first submenu should reserve room for its nested cascade"
+        );
+
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(PointerEvent::new(
+                    PointerEventKind::Move,
+                    super::rect_center(child),
+                )),
+            )
+            .unwrap();
+        let deeply_nested = runtime.render(window_id).unwrap();
+        let grandchild = deeply_nested
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Zip")
+            })
+            .expect("nested submenu leaf present")
+            .bounds;
+        assert!(
+            grandchild.max_x() <= child.x(),
+            "the planned cascade should keep nested panels from covering ancestors"
         );
         assert!(grandchild.x() >= 4.0);
     }
