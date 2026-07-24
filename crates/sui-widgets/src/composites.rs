@@ -13231,6 +13231,7 @@ pub struct ContextMenu {
     focus_surface: SingleChild,
     surface_state: Rc<RefCell<ContextMenuPresentationState>>,
     activation_button: PointerButton,
+    primary_trigger_press: Option<u64>,
     anchor_to_pointer: Option<bool>,
     open_position: Option<Point>,
     on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
@@ -13267,6 +13268,7 @@ impl ContextMenu {
             ))),
             surface_state,
             activation_button: PointerButton::Secondary,
+            primary_trigger_press: None,
             anchor_to_pointer: None,
             open_position: None,
             on_activate: None,
@@ -13840,16 +13842,42 @@ impl Widget for ContextMenu {
                     }
                     && self.trigger_rect().contains(pointer.position) =>
             {
-                // Context-click targets see the press first so they can update
-                // selection. A primary dropdown owns the press in capture so
-                // an interactive trigger cannot consume or double-activate it.
-                let open = !self.open;
-                self.open_position = (open && self.anchors_to_pointer()).then(|| {
-                    let origin = ctx.bounds().origin;
-                    Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y)
-                });
-                self.set_open(ctx, open);
-                ctx.request_focus();
+                // Context-click targets see the press first so they can update selection.
+                // Primary dropdowns own the trigger press during capture but defer opening
+                // until release. Registering a transient overlay during the opening press can
+                // otherwise make the overlay host classify that same press as an outside click.
+                if self.activation_button == PointerButton::Primary {
+                    if self.open {
+                        self.set_open(ctx, false);
+                    } else {
+                        self.primary_trigger_press = Some(pointer.pointer_id);
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                    }
+                } else {
+                    let open = !self.open;
+                    self.open_position = (open && self.anchors_to_pointer()).then(|| {
+                        let origin = ctx.bounds().origin;
+                        Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y)
+                    });
+                    self.set_open(ctx, open);
+                    if open {
+                        ctx.request_focus();
+                    }
+                }
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.primary_trigger_press == Some(pointer.pointer_id) =>
+            {
+                self.primary_trigger_press = None;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                if self.trigger_rect().contains(pointer.position) {
+                    self.open_position = None;
+                    self.set_open(ctx, true);
+                    ctx.request_focus();
+                }
                 ctx.set_handled();
             }
             Event::Pointer(pointer)
@@ -13896,6 +13924,11 @@ impl Widget for ContextMenu {
                 ctx.set_handled();
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.primary_trigger_press == Some(pointer.pointer_id) {
+                    self.primary_trigger_press = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.set_handled();
+                }
                 if self.pressed.is_some() {
                     self.set_pressed(None, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
@@ -22675,6 +22708,13 @@ mod tests {
                 primary_pointer(PointerEventKind::Down, trigger_center, true),
             )
             .unwrap();
+        let pressed = runtime.render(window_id).unwrap();
+        assert!(
+            !pressed.semantics.iter().any(|node| {
+                node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename")
+            }),
+            "primary menus should register after release so the opening press is not dismissed"
+        );
         runtime
             .handle_event(
                 window_id,
