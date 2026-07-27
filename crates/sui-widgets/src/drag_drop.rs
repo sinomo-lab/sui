@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
 use sui_core::{
     DragDropScope, DragEvent, DragEventKind, DragPayload, DragPreview, DragSessionId, DropEffect,
@@ -22,11 +22,36 @@ type DragEndCallback = Box<dyn FnMut(&mut EventCtx, &DragEvent)>;
 type DropAcceptCallback = Box<dyn FnMut(&DragEvent) -> DropEffect>;
 type DropCallback = Box<dyn FnMut(&mut EventCtx, &DragEvent)>;
 type HoverCallback = Box<dyn FnMut(bool)>;
+type ThemeReader = Rc<dyn Fn() -> DefaultTheme>;
+
+struct DragPreviewThemeSource {
+    theme: DefaultTheme,
+    reader: Option<ThemeReader>,
+}
+
+impl Default for DragPreviewThemeSource {
+    fn default() -> Self {
+        Self {
+            theme: DefaultTheme::default(),
+            reader: None,
+        }
+    }
+}
+
+impl DragPreviewThemeSource {
+    fn resolve(&self) -> DefaultTheme {
+        self.reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.theme)
+    }
+}
 
 pub struct DragDropHost {
     scope: DragDropScope,
     child: SingleChild,
     overlay: SingleChild,
+    preview_theme: Rc<RefCell<DragPreviewThemeSource>>,
     external_hovered: Vec<PathBuf>,
     on_external_hover: Option<Box<dyn FnMut(&mut EventCtx, &[PathBuf])>>,
     on_external_drop: Option<Box<dyn FnMut(&mut EventCtx, PathBuf)>>,
@@ -38,10 +63,15 @@ impl DragDropHost {
     where
         W: Widget + 'static,
     {
+        let preview_theme = Rc::new(RefCell::new(DragPreviewThemeSource::default()));
         Self {
-            overlay: SingleChild::new(DragPreviewOverlay::new(scope.clone())),
+            overlay: SingleChild::new(DragPreviewOverlay::new(
+                scope.clone(),
+                Rc::clone(&preview_theme),
+            )),
             scope,
             child: SingleChild::new(child),
+            preview_theme,
             external_hovered: Vec::new(),
             on_external_hover: None,
             on_external_drop: None,
@@ -63,6 +93,25 @@ impl DragDropHost {
 
     pub fn external_hovered_files(&self) -> &[PathBuf] {
         &self.external_hovered
+    }
+
+    /// Sets the theme used to paint the drag-preview overlay.
+    pub fn theme(self, theme: DefaultTheme) -> Self {
+        {
+            let mut source = self.preview_theme.borrow_mut();
+            source.theme = theme;
+            source.reader = None;
+        }
+        self
+    }
+
+    /// Resolves the drag-preview overlay theme whenever it is painted.
+    pub fn theme_when<F>(self, reader: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.preview_theme.borrow_mut().reader = Some(Rc::new(reader));
+        self
     }
 
     pub fn on_external_file_hover<F>(mut self, callback: F) -> Self
@@ -167,11 +216,16 @@ impl Widget for DragDropHost {
 
 struct DragPreviewOverlay {
     scope: DragDropScope,
+    theme: Rc<RefCell<DragPreviewThemeSource>>,
 }
 
 impl DragPreviewOverlay {
-    fn new(scope: DragDropScope) -> Self {
-        Self { scope }
+    fn new(scope: DragDropScope, theme: Rc<RefCell<DragPreviewThemeSource>>) -> Self {
+        Self { scope, theme }
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme.borrow().resolve()
     }
 }
 
@@ -189,18 +243,17 @@ impl Widget for DragPreviewOverlay {
         };
 
         let label = drag_preview_label(&active);
-        let width = ((label.chars().count() as f32 * 7.0) + 24.0).clamp(48.0, 260.0);
-        let height = 30.0;
+        let theme = self.resolved_theme();
+        let text_style = drag_preview_text_style(theme);
+        let estimated_character_width = text_style.font_size * 0.54;
+        let width =
+            ((label.chars().count() as f32 * estimated_character_width) + 24.0).clamp(48.0, 260.0);
+        let height = text_style.line_height + 12.0;
         let offset = Vector::new(12.0, 12.0);
         let bounds = ctx.bounds();
         let x = (active.position.x + offset.x).min((bounds.max_x() - width).max(bounds.x()));
         let y = (active.position.y + offset.y).min((bounds.max_y() - height).max(bounds.y()));
         let rect = Rect::new(x.max(bounds.x()), y.max(bounds.y()), width, height);
-        let theme = DefaultTheme::default();
-        let mut text_style = theme.body_text_style();
-        text_style.font_size = text_style.font_size.min(13.0);
-        text_style.line_height = text_style.line_height.min(18.0);
-        text_style.color = theme.palette.text;
 
         ctx.fill_rrect_bordered(
             rect,
@@ -212,7 +265,12 @@ impl Widget for DragPreviewOverlay {
             },
         );
 
-        let text_rect = Rect::new(rect.x() + 12.0, rect.y() + 5.0, rect.width() - 24.0, 20.0);
+        let text_rect = Rect::new(
+            rect.x() + 12.0,
+            rect.y() + 6.0,
+            rect.width() - 24.0,
+            text_style.line_height,
+        );
         ctx.push_clip_rect(text_rect);
         ctx.draw_text(text_rect, label, text_style);
         ctx.pop_clip();
@@ -232,6 +290,13 @@ impl Widget for DragPreviewOverlay {
             ..StackSurfaceOptions::default()
         })
     }
+}
+
+fn drag_preview_text_style(theme: DefaultTheme) -> sui_text::TextStyle {
+    let mut style = theme.text_style(theme.palette.text);
+    style.font_size = theme.text.sm.size.max(1.0);
+    style.line_height = theme.text.sm.line_height.max(1.0);
+    style
 }
 
 pub struct Draggable {
@@ -612,7 +677,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::*;
-    use crate::{SizedBox, Stack};
+    use crate::{SizedBox, Stack, ThemeTextToken};
     use sui_core::{
         DragOutcome, Modifiers, PointerButtons, PointerEvent, PointerKind, Result, WindowId,
     };
@@ -648,6 +713,44 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    #[test]
+    fn drag_preview_theme_tracks_static_and_dynamic_small_tokens() {
+        let mut static_theme = DefaultTheme::default();
+        static_theme.text.sm = ThemeTextToken {
+            size: 17.0,
+            line_height: 24.0,
+        };
+        let host = DragDropHost::new(
+            DragDropScope::new(),
+            SizedBox::new().width(80.0).height(40.0),
+        )
+        .theme(static_theme);
+        let resolved = host.preview_theme.borrow().resolve();
+        let style = drag_preview_text_style(resolved);
+        assert_eq!(style.font_size, static_theme.text.sm.size);
+        assert_eq!(style.line_height, static_theme.text.sm.line_height);
+        assert_eq!(style.color, static_theme.palette.text);
+
+        let current = Rc::new(RefCell::new(DefaultTheme::default()));
+        let dynamic_host = DragDropHost::new(
+            DragDropScope::new(),
+            SizedBox::new().width(80.0).height(40.0),
+        )
+        .theme_when({
+            let current = Rc::clone(&current);
+            move || *current.borrow()
+        });
+        current.borrow_mut().text.sm = ThemeTextToken {
+            size: 19.0,
+            line_height: 27.0,
+        };
+
+        let resolved = dynamic_host.preview_theme.borrow().resolve();
+        let style = drag_preview_text_style(resolved);
+        assert_eq!(style.font_size, 19.0);
+        assert_eq!(style.line_height, 27.0);
     }
 
     #[test]

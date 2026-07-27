@@ -1568,16 +1568,20 @@ impl Widget for BrushPreview {
         draw_checkerboard(ctx, track, metrics.brush_preview_checker_size, &theme);
         paint_brush_preview_stroke(ctx, track, spec, preview_color);
 
+        let text_token = theme.text.xs;
+        let text_height = metrics
+            .brush_preview_text_height
+            .max(text_token.line_height);
         let text_slot = Rect::new(
             sample.x(),
-            sample.max_y() - metrics.brush_preview_text_height,
+            sample.max_y() - text_height,
             sample.width(),
-            metrics.brush_preview_text_height,
+            text_height,
         );
         let value_text = Self::value_text(&self.kind, spec);
         let text_style = TextStyle {
-            font_size: metrics.brush_preview_text_font_size,
-            line_height: metrics.brush_preview_text_line_height,
+            font_size: text_token.size,
+            line_height: text_token.line_height,
             color: palette.text.with_alpha(0.72),
             ..theme.body_text_style()
         };
@@ -5576,11 +5580,14 @@ mod tests {
             (content.width() - swatch_width - metrics.brush_preview_swatch_gap).max(0.0),
             content.height(),
         );
+        let text_height = metrics
+            .brush_preview_text_height
+            .max(theme.text.xs.line_height);
         let text_slot = Rect::new(
             sample.x(),
-            sample.max_y() - metrics.brush_preview_text_height,
+            sample.max_y() - text_height,
             sample.width(),
-            metrics.brush_preview_text_height,
+            text_height,
         );
         let slot_center = text_slot.y() + (text_slot.height() * 0.5);
 
@@ -5589,10 +5596,12 @@ mod tests {
     }
 
     #[test]
-    fn brush_preview_value_preserves_tall_measurement_and_slot_centering() -> Result<()> {
+    fn brush_preview_value_uses_text_token_and_preserves_slot_centering() -> Result<()> {
         let mut theme = DefaultTheme::default();
-        theme.metrics.brush_preview_text_font_size = 28.0;
-        theme.metrics.brush_preview_text_line_height = 10.0;
+        theme.text.xs = ThemeTextToken {
+            size: 28.0,
+            line_height: 10.0,
+        };
         theme.metrics.brush_preview_text_height = 44.0;
         theme.metrics.brush_preview_min_width = 420.0;
         theme.metrics.brush_preview_min_height = 96.0;
@@ -5630,11 +5639,14 @@ mod tests {
             (content.width() - swatch_width - metrics.brush_preview_swatch_gap).max(0.0),
             content.height(),
         );
+        let text_height = metrics
+            .brush_preview_text_height
+            .max(theme.text.xs.line_height);
         let text_slot = Rect::new(
             sample.x(),
-            sample.max_y() - metrics.brush_preview_text_height,
+            sample.max_y() - text_height,
             sample.width(),
-            metrics.brush_preview_text_height,
+            text_height,
         );
         let slot_center = text_slot.y() + (text_slot.height() * 0.5);
 

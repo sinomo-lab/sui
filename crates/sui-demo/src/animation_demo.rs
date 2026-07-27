@@ -2,13 +2,16 @@ use std::rc::Rc;
 
 use sui::prelude::*;
 use sui::{
-    PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, ThemeTextToken, Vector,
+    PointerEventKind, SemanticsNode, SemanticsRole, SemanticsValue, Vector,
     paint_single_line_aligned_text,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};
 
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
+use crate::app::{
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style, demo_text_style_when,
+    dev_theme_color,
+};
 
 pub(crate) const ANIMATION_DEMO_TAB_LABEL: &str = "Animation";
 pub(crate) const ANIMATION_DEMO_SCROLL_NAME: &str = "Animation demo scroll";
@@ -47,27 +50,23 @@ pub(crate) fn build_animation_demo_with_theme(theme_reader: DevThemeReader) -> i
                         .alignment(Alignment::Stretch)
                         .with_child(
                             Label::new(ANIMATION_DEMO_NAME)
-                                .style(dev_text_style(
-                                    theme_reader(),
-                                    theme_reader().text._2xl,
-                                    theme_reader().palette.text,
-                                ))
-                                .color_when(dev_theme_color(&theme_reader, |theme| {
+                                .style_when(demo_text_style_when(
+                                    &theme_reader,
+                                    DemoTextRole::PageTitle,
+                                    |theme| {
                                     theme.palette.text
-                                })),
+                                    },
+                                )),
                         )
                         .with_child(
                             Label::new(
                                 "Timeline sampling, retained transforms, repaint invalidation, editor state, and overlay animation in one focused surface.",
                             )
-                            .style(dev_text_style(
-                                theme_reader(),
-                                theme_reader().text.sm,
-                                theme_reader().palette.text_muted,
-                            ))
-                            .color_when(dev_theme_color(&theme_reader, |theme| {
-                                theme.palette.text_muted
-                            })),
+                            .style_when(demo_text_style_when(
+                                &theme_reader,
+                                DemoTextRole::Supporting,
+                                |theme| theme.palette.text_muted,
+                            )),
                         ),
                 )
                 .with_child(section(
@@ -128,26 +127,16 @@ where
     Stack::vertical()
         .spacing(8.0)
         .alignment(Alignment::Stretch)
-        .with_child(
-            Label::new(title)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.lg,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-        )
-        .with_child(
-            Label::new(description)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.sm,
-                    theme_reader().palette.text_muted,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-        )
+        .with_child(Label::new(title).style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::SectionTitle,
+            |theme| theme.palette.text,
+        )))
+        .with_child(Label::new(description).style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::Supporting,
+            |theme| theme.palette.text_muted,
+        )))
         .with_child(body)
         .with_child(
             Separator::horizontal()
@@ -210,25 +199,19 @@ fn controls_and_overlays(theme_reader: DevThemeReader) -> impl Widget {
                                 Label::new(
                                     "Tracks: opacity, translation, fill color, custom radius",
                                 )
-                                .style(dev_text_style(
-                                    theme_reader(),
-                                    theme_reader().text.sm,
-                                    theme_reader().palette.text,
-                                ))
-                                .color_when(dev_theme_color(&theme_reader, |theme| {
-                                    theme.palette.text
-                                })),
+                                .style_when(demo_text_style_when(
+                                    &theme_reader,
+                                    DemoTextRole::Body,
+                                    |theme| theme.palette.text,
+                                )),
                             )
                             .with_child(
                                 Label::new("Invalidation: transform, effect, and paint")
-                                    .style(dev_text_style(
-                                        theme_reader(),
-                                        theme_reader().text.xs,
-                                        theme_reader().palette.text_muted,
-                                    ))
-                                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                                        theme.palette.text_muted
-                                    })),
+                                    .style_when(demo_text_style_when(
+                                        &theme_reader,
+                                        DemoTextRole::Metadata,
+                                        |theme| theme.palette.text_muted,
+                                    )),
                             ),
                     )),
                 ),
@@ -354,7 +337,7 @@ impl Widget for TimelinePlaybackExample {
             ctx,
             Rect::new(bounds.x() + 18.0, bounds.y() + 14.0, 260.0, 22.0),
             "Timeline player",
-            DefaultTheme::default().text.sm,
+            DemoTextRole::CardTitle,
             Color::rgba(0.90, 0.94, 1.0, 1.0),
         );
 
@@ -527,7 +510,7 @@ impl Widget for RetainedLayerAnimationExample {
                 20.0,
             ),
             "Retained transform/effect",
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(0.90, 0.95, 1.0, 1.0),
         );
 
@@ -703,7 +686,7 @@ impl Widget for PaintInvalidationAnimationExample {
                 20.0,
             ),
             "Paint invalidation",
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(1.0, 0.94, 0.88, 1.0),
         );
 
@@ -769,14 +752,14 @@ impl Widget for AnimationDocumentEditorExample {
             ctx,
             Rect::new(bounds.x() + 16.0, bounds.y() + 14.0, 230.0, 22.0),
             "AnimationDocument",
-            DefaultTheme::default().text.sm,
+            DemoTextRole::CardTitle,
             Color::rgba(0.90, 0.94, 1.0, 1.0),
         );
         draw_demo_label(
             ctx,
             Rect::new(bounds.max_x() - 176.0, bounds.y() + 14.0, 150.0, 22.0),
             "duration 1.80s",
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(0.72, 0.78, 0.88, 1.0),
         );
 
@@ -837,7 +820,7 @@ impl AnimationDocumentEditorExample {
             ctx,
             Rect::new(rect.x() + 10.0, rect.y() + 8.0, 160.0, 18.0),
             "Clip tracks",
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(0.78, 0.84, 0.92, 1.0),
         );
 
@@ -862,7 +845,7 @@ impl AnimationDocumentEditorExample {
                 ctx,
                 Rect::new(lane.x() + 8.0, lane.y() + 5.0, 138.0, 16.0),
                 track.binding.property.path(),
-                DefaultTheme::default().text.xs,
+                DemoTextRole::Metadata,
                 Color::rgba(0.72, 0.76, 0.84, 1.0),
             );
         }
@@ -883,7 +866,7 @@ impl AnimationDocumentEditorExample {
                     ctx,
                     Rect::new(center.x + 9.0, center.y - 9.0, 70.0, 18.0),
                     format!("{:.1}s", keyframe.time),
-                    DefaultTheme::default().text.xs,
+                    DemoTextRole::Metadata,
                     Color::rgba(0.96, 0.84, 0.42, 1.0),
                 );
             }
@@ -899,7 +882,7 @@ impl AnimationDocumentEditorExample {
             ctx,
             Rect::new(rect.x() + 10.0, rect.y() + 8.0, rect.width() - 20.0, 18.0),
             "Selected keyframe",
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(0.84, 0.88, 0.94, 1.0),
         );
         let detail = self
@@ -918,7 +901,7 @@ impl AnimationDocumentEditorExample {
                 rect.height() - 42.0,
             ),
             detail,
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(0.70, 0.76, 0.86, 1.0),
         );
     }
@@ -932,7 +915,7 @@ impl AnimationDocumentEditorExample {
             ctx,
             Rect::new(rect.x() + 10.0, rect.y() + 8.0, rect.width() - 20.0, 18.0),
             "Easing curve",
-            DefaultTheme::default().text.xs,
+            DemoTextRole::Metadata,
             Color::rgba(0.84, 0.88, 0.94, 1.0),
         );
 
@@ -1179,11 +1162,11 @@ fn draw_demo_label(
     ctx: &mut PaintCtx,
     rect: Rect,
     text: impl Into<String>,
-    token: ThemeTextToken,
+    role: DemoTextRole,
     color: Color,
 ) {
     let theme = DefaultTheme::default();
-    let style = dev_text_style(theme, token, color);
+    let style = demo_text_style(theme, role, color);
     let text = text.into();
-    paint_single_line_aligned_text(ctx, rect, &text, &style, token.line_height, 0.0);
+    paint_single_line_aligned_text(ctx, rect, &text, &style, style.line_height, 0.0);
 }

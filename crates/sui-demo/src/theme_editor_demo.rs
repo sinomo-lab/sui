@@ -9,7 +9,8 @@ use sui::{
 };
 
 use crate::app::{
-    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when, dev_theme_color,
+    request_window_refresh,
 };
 
 pub(crate) const THEME_EDITOR_TAB_LABEL: &str = "Theme editor";
@@ -600,26 +601,16 @@ fn editor_title(
     Stack::vertical()
         .spacing(5.0)
         .alignment(Alignment::Stretch)
-        .with_child(
-            Label::new(title)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.xl,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-        )
-        .with_child(
-            Label::new(description)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.sm,
-                    theme_reader().palette.text_muted,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-        )
+        .with_child(Label::new(title).style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::SectionTitle,
+            |theme| theme.palette.text,
+        )))
+        .with_child(Label::new(description).style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::Supporting,
+            |theme| theme.palette.text_muted,
+        )))
 }
 
 fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
@@ -685,12 +676,11 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 Label::dynamic("Primary  #000000", move || {
                     summary_state.selected_color_summary()
                 })
-                .style(dev_text_style(
-                    shell_theme(),
-                    shell_theme().text.sm,
-                    shell_theme().palette.text,
-                ))
-                .color_when(dev_theme_color(&shell_theme, |theme| theme.palette.text)),
+                .style_when(demo_text_style_when(
+                    &shell_theme,
+                    DemoTextRole::Body,
+                    |theme| theme.palette.text,
+                )),
             )
             .with_child(
                 SimpleColorPicker::from_color(
@@ -734,7 +724,6 @@ fn build_color_token_swatch(
     let color_state = state.clone();
     let select_state = state.clone();
     let label_state = state;
-    let label_theme = Rc::clone(&shell_theme);
     let preview_target = select_state.preview_target();
     Stack::vertical()
         .spacing(4.0)
@@ -753,20 +742,17 @@ fn build_color_token_swatch(
             }),
         )
         .with_child(
-            Label::new(variable.label())
-                .style(dev_text_style(
-                    shell_theme(),
-                    shell_theme().text.xs,
-                    shell_theme().palette.text_muted,
-                ))
-                .color_when(move || {
-                    let theme = label_theme();
+            Label::new(variable.label()).style_when(demo_text_style_when(
+                &shell_theme,
+                DemoTextRole::Metadata,
+                move |theme| {
                     if label_state.is_selected_color(variable) {
                         theme.palette.accent
                     } else {
                         theme.palette.text_muted
                     }
-                }),
+                },
+            )),
         )
 }
 
@@ -922,27 +908,20 @@ fn preview_header(state: ThemeEditorState, theme_reader: DevThemeReader) -> impl
     Stack::vertical()
         .spacing(6.0)
         .alignment(Alignment::Stretch)
-        .with_child(
-            Label::new("Live preview")
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text._2xl,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-        )
+        .with_child(Label::new("Live preview").style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::PageTitle,
+            |theme| theme.palette.text,
+        )))
         .with_child(
             Label::dynamic("Light · medium controls", move || {
                 summary_state.theme_summary()
             })
-            .style(dev_text_style(
-                theme_reader(),
-                theme_reader().text.sm,
-                theme_reader().palette.text_muted,
-            ))
-            .color_when(dev_theme_color(&theme_reader, |theme| {
-                theme.palette.text_muted
-            })),
+            .style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Supporting,
+                |theme| theme.palette.text_muted,
+            )),
         )
 }
 
@@ -959,26 +938,16 @@ where
         Stack::vertical()
             .spacing(10.0)
             .alignment(Alignment::Stretch)
-            .with_child(
-                Label::new(title)
-                    .style(dev_text_style(
-                        theme_reader(),
-                        theme_reader().text.lg,
-                        theme_reader().palette.text,
-                    ))
-                    .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-            )
-            .with_child(
-                Label::new(description)
-                    .style(dev_text_style(
-                        theme_reader(),
-                        theme_reader().text.sm,
-                        theme_reader().palette.text_muted,
-                    ))
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
-            )
+            .with_child(Label::new(title).style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::SectionTitle,
+                |theme| theme.palette.text,
+            )))
+            .with_child(Label::new(description).style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Supporting,
+                |theme| theme.palette.text_muted,
+            )))
             .with_child(body),
     )
     .theme_when(clone_dev_theme_reader(&theme_reader))

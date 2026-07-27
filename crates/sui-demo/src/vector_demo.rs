@@ -8,7 +8,7 @@ use sui::{
 
 #[cfg(test)]
 use crate::app::default_dev_theme_reader;
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
+use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when};
 
 pub(crate) const VECTOR_EDITOR_TAB_LABEL: &str = "Vector editor";
 const VECTOR_DOCUMENT_NAME: &str = "Wave mark.svg";
@@ -893,13 +893,11 @@ fn build_vector_document_bar(
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
-            Label::new(VECTOR_DOCUMENT_NAME)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.sm,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+            Label::new(VECTOR_DOCUMENT_NAME).style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::CardTitle,
+                |theme| theme.palette.text,
+            )),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
@@ -907,37 +905,26 @@ fn build_vector_document_bar(
                 "{:.0} x {:.0} px",
                 VECTOR_DOCUMENT_WIDTH, VECTOR_DOCUMENT_HEIGHT
             ))
-            .style(dev_text_style(
-                theme_reader(),
-                theme_reader().text.xs,
-                theme_reader().palette.text_muted,
-            ))
-            .color_when(dev_theme_color(&theme_reader, |theme| {
-                theme.palette.text_muted
-            })),
+            .style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Metadata,
+                |theme| theme.palette.text_muted,
+            )),
         )
         .with_child(
-            Label::new("SVG / Display P3")
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.xs,
-                    theme_reader().palette.text_muted,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
+            Label::new("SVG / Display P3").style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Metadata,
+                |theme| theme.palette.text_muted,
+            )),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
-            Label::new("1 artboard / 3 objects")
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.xs,
-                    theme_reader().palette.text_muted,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
+            Label::new("1 artboard / 3 objects").style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Metadata,
+                |theme| theme.palette.text_muted,
+            )),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
@@ -981,12 +968,11 @@ fn build_vector_document_bar(
                             vector_zoom_status_text(&zoom_reader_state)
                         })
                         .semantic_name(VECTOR_ZOOM_READOUT_NAME)
-                        .style(dev_text_style(
-                            theme_reader(),
-                            theme_reader().text.xs,
-                            theme_reader().palette.text,
-                        ))
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+                        .style_when(demo_text_style_when(
+                            &theme_reader,
+                            DemoTextRole::Metadata,
+                            |theme| theme.palette.text,
+                        )),
                     ),
                 )
                 .with_child(
@@ -1442,19 +1428,13 @@ where
             .spacing(6.0)
             .alignment(Alignment::Center)
             .with_child(control)
-            .with_child(
-                SizedBox::new().width(44.0).height(28.0).with_child(
-                    Label::dynamic("", value_reader)
-                        .style(dev_text_style(
-                            theme_reader(),
-                            theme_reader().text.xs,
-                            theme_reader().palette.text_muted,
-                        ))
-                        .color_when(dev_theme_color(theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
-                ),
-            ),
+            .with_child(SizedBox::new().width(44.0).height(28.0).with_child(
+                Label::dynamic("", value_reader).style_when(demo_text_style_when(
+                    theme_reader,
+                    DemoTextRole::Metadata,
+                    |theme| theme.palette.text_muted,
+                )),
+            )),
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
     .inline()

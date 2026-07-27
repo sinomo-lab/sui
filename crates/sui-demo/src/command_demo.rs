@@ -8,7 +8,9 @@ use std::{
 
 use sui::prelude::*;
 
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
+use crate::app::{
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when, dev_theme_color,
+};
 
 pub(crate) const COMMAND_DEMO_TAB_LABEL: &str = "Commands";
 pub(crate) const COMMAND_DEMO_SCROLL_NAME: &str = "Command routing demo scroll";
@@ -230,25 +232,21 @@ pub(crate) fn build_command_demo_with_theme(
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new("Typed application commands")
-                        .style(dev_text_style(
-                            theme,
-                            theme.text._2xl,
-                            theme.palette.text,
-                        ))
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+                        .style_when(demo_text_style_when(
+                            &theme_reader,
+                            DemoTextRole::PageTitle,
+                            |theme| theme.palette.text,
+                        )),
                 )
                 .with_child(
                     Label::new(
                         "Commands cross widget-tree boundaries without turning the presentation tree into a message bus. Try each route, then open the performance overlay to inspect command and invalidation traces.",
                     )
-                    .style(dev_text_style(
-                        theme,
-                        theme.text.base,
-                        theme.palette.text_muted,
-                    ))
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
+                    .style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::Body,
+                        |theme| theme.palette.text_muted,
+                    )),
                 )
                 .with_child(actions)
                 .with_child(statuses)
@@ -256,14 +254,11 @@ pub(crate) fn build_command_demo_with_theme(
                     Label::new(
                         "UiHandle exposes the same thread-safe producer to background work. command_sender().wake() schedules controller hooks only; it never synthesizes a root custom event.",
                     )
-                    .style(dev_text_style(
-                        theme,
-                        theme.text.sm,
-                        theme.palette.text_muted,
-                    ))
-                    .color_when(dev_theme_color(&theme_reader, |theme| {
-                        theme.palette.text_muted
-                    })),
+                    .style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::Supporting,
+                        |theme| theme.palette.text_muted,
+                    )),
                 ),
         ))
         .name(COMMAND_DEMO_SCROLL_NAME)
@@ -287,22 +282,19 @@ fn status_card(
             Stack::vertical()
                 .spacing(4.0)
                 .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new(title)
-                        .style(dev_text_style(theme, theme.text.sm, theme.palette.text))
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-                )
+                .with_child(Label::new(title).style_when(demo_text_style_when(
+                    &theme_reader,
+                    DemoTextRole::CardTitle,
+                    |theme| theme.palette.text,
+                )))
                 .with_child(
                     Label::new("")
                         .text_from(status)
-                        .style(dev_text_style(
-                            theme,
-                            theme.text.sm,
-                            theme.palette.text_muted,
-                        ))
-                        .color_when(dev_theme_color(&theme_reader, |theme| {
-                            theme.palette.text_muted
-                        })),
+                        .style_when(demo_text_style_when(
+                            &theme_reader,
+                            DemoTextRole::Supporting,
+                            |theme| theme.palette.text_muted,
+                        )),
                 ),
         ),
     )

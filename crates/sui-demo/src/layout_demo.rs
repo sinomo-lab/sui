@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use sui::{WidgetPodMutVisitor, WidgetPodVisitor, prelude::*};
 
-use crate::app::{DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color};
+use crate::app::{
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style, demo_text_style_when,
+    dev_theme_color,
+};
 
 pub(crate) const LAYOUT_TAB_LABEL: &str = "Layout";
 pub(crate) const LAYOUT_DEMO_SCROLL_NAME: &str = "Layout demo scroll";
@@ -96,26 +99,16 @@ where
     Stack::vertical()
         .spacing(8.0)
         .alignment(Alignment::Stretch)
-        .with_child(
-            Label::new(title)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.lg,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-        )
-        .with_child(
-            Label::new(description)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.sm,
-                    theme_reader().palette.text_muted,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-        )
+        .with_child(Label::new(title).style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::SectionTitle,
+            |theme| theme.palette.text,
+        )))
+        .with_child(Label::new(description).style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::Supporting,
+            |theme| theme.palette.text_muted,
+        )))
         .with_child(body)
         .with_child(
             Separator::horizontal()
@@ -485,7 +478,7 @@ fn tile(label: &'static str, fill: Color, text: Color) -> LayoutTile {
         Some(move || Color::WHITE.with_alpha(0.26)),
         Align::center(Padding::all(
             6.0,
-            Label::new(label).style(dev_text_style(theme, theme.text.xs, text)),
+            Label::new(label).style(demo_text_style(theme, DemoTextRole::Metadata, text)),
         )),
     )
     .min_size(Size::new(72.0, 38.0))

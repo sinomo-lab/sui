@@ -3,7 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use sui::prelude::*;
 
 use crate::app::{
-    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when, dev_theme_color,
+    request_window_refresh,
 };
 
 pub(crate) const DRAG_DROP_TAB_LABEL: &str = "Drag and drop";
@@ -14,41 +15,33 @@ const SCOPE_TOKEN_KIND: &str = "sui-demo.scope-token";
 const REORDER_ITEM_COUNT: usize = 5;
 
 fn body_label(label: Label, theme_reader: &DevThemeReader, muted: bool) -> Label {
-    let theme = theme_reader();
-    let color = if muted {
-        theme.palette.text_muted
-    } else {
-        theme.palette.text
-    };
-    label
-        .style(dev_text_style(theme, theme.text.sm, color))
-        .color_when(dev_theme_color(theme_reader, move |theme| {
+    label.style_when(demo_text_style_when(
+        theme_reader,
+        DemoTextRole::Body,
+        move |theme| {
             if muted {
                 theme.palette.text_muted
             } else {
                 theme.palette.text
             }
-        }))
+        },
+    ))
 }
 
 fn meta_label(label: Label, theme_reader: &DevThemeReader) -> Label {
-    let theme = theme_reader();
-    label
-        .style(dev_text_style(
-            theme,
-            theme.text.xs,
-            theme.palette.text_muted,
-        ))
-        .color_when(dev_theme_color(theme_reader, |theme| {
-            theme.palette.text_muted
-        }))
+    label.style_when(demo_text_style_when(
+        theme_reader,
+        DemoTextRole::Metadata,
+        |theme| theme.palette.text_muted,
+    ))
 }
 
 fn section_title_label(label: Label, theme_reader: &DevThemeReader) -> Label {
-    let theme = theme_reader();
-    label
-        .style(dev_text_style(theme, theme.text.lg, theme.palette.text))
-        .color_when(dev_theme_color(theme_reader, |theme| theme.palette.text))
+    label.style_when(demo_text_style_when(
+        theme_reader,
+        DemoTextRole::SectionTitle,
+        |theme| theme.palette.text,
+    ))
 }
 
 const INITIAL_REORDER_ITEMS: [ReorderItem; REORDER_ITEM_COUNT] = [
@@ -297,6 +290,7 @@ pub(crate) fn build_drag_drop_demo_with_theme(theme_reader: DevThemeReader) -> i
             theme.palette.surface
         })),
     )
+    .theme_when(clone_dev_theme_reader(&theme_reader))
 }
 
 fn build_text_payload_example(
@@ -487,16 +481,19 @@ fn build_negotiation_example(
                         state.clone(),
                         false,
                     ))
-                    .with_child(DragDropHost::new(
-                        isolated_scope.clone(),
-                        scope_token_card(
-                            "Isolated token",
-                            Rc::clone(&theme_reader),
-                            isolated_scope,
-                            state.clone(),
-                            true,
-                        ),
-                    )),
+                    .with_child(
+                        DragDropHost::new(
+                            isolated_scope.clone(),
+                            scope_token_card(
+                                "Isolated token",
+                                Rc::clone(&theme_reader),
+                                isolated_scope,
+                                state.clone(),
+                                true,
+                            ),
+                        )
+                        .theme_when(clone_dev_theme_reader(&theme_reader)),
+                    ),
                 Rc::clone(&theme_reader),
             ),
             FlexItem::new().basis_fraction(0.45).min_width(280.0),
@@ -858,18 +855,15 @@ fn target_heading<F>(
 where
     F: Fn(&DragDropDemoState) -> bool + 'static,
 {
-    Label::new(text)
-        .style(dev_text_style(
-            theme_reader(),
-            theme_reader().text.base,
-            theme_reader().palette.text,
-        ))
-        .color_when(move || {
-            let theme = theme_reader();
+    Label::new(text).style_when(demo_text_style_when(
+        &theme_reader,
+        DemoTextRole::CardTitle,
+        move |theme| {
             if hovered(&state) {
                 theme.palette.border_focus
             } else {
                 theme.palette.text
             }
-        })
+        },
+    ))
 }

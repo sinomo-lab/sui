@@ -107,8 +107,8 @@ That leads to the following baseline rules for first-party widgets:
 
 - Use a restrained neutral light palette with a small number of high-contrast accent colors. The default should feel crisp and contemporary rather than heavy or overly stylized.
 - Use rounded geometry and subtle borders by default, but keep the radii restrained. Controls should read as intentionally designed surfaces, not raw rectangles or overly soft pills.
-- Default body typography should stay around `12px / 16px` equivalent sizing so dense panels remain readable without feeling oversized.
-- Interactive controls should default to roughly `24px` minimum height. This keeps inspector and property panels compact while still preserving a comfortable hit target for touch and pen input.
+- The default medium body token is `15px / 22px`; authored Small, Medium, and Large controls resolve to the shared `13px / 18px`, `15px / 22px`, and `17px / 25px` text-ramp tokens.
+- Interactive controls use `28px`, `32px`, and `40px` visible heights for Small, Medium, and Large, while preserving a separate `44px` touch target for direct input.
 - Small visual elements such as checkbox indicators or drag affordances must not become tiny click targets. The visible glyph may stay compact, but the interactive row or surrounding surface should provide the larger target.
 - Hover, pressed, and focused states should be distinct without relying on dramatic motion or heavy skeuomorphic shading. Focus visibility is mandatory and should survive both mouse and keyboard navigation.
 - Text inputs should prioritize legibility and editing clarity: visible caret, readable placeholder styling, and strong focus treatment.

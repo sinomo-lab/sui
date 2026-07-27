@@ -22,6 +22,8 @@ use sui::{
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};
 
+use crate::app::{DemoTextRole, demo_mono_text_style_when, demo_text_style, demo_text_style_when};
+
 #[cfg(all(feature = "artifacts", not(target_arch = "wasm32")))]
 mod visual_artifacts;
 
@@ -31,10 +33,6 @@ pub use visual_artifacts::write_visual_artifacts;
 pub const WINDOW_TITLE: &str = "SUI Widget Book";
 pub const WINDOW_DESCRIPTION: &str =
     "Development gallery for common built-in widgets in sui-widgets";
-
-fn widget_book_text_style(token: ThemeTextToken, color: Color) -> TextStyle {
-    widget_book_theme_text_style(DefaultTheme::default(), token, color)
-}
 
 fn widget_book_theme_text_style(
     theme: DefaultTheme,
@@ -300,43 +298,9 @@ fn widget_book_size_theme_reader(
 }
 
 #[derive(Debug, Clone, Copy)]
-enum DemoTextRole {
-    Metadata,
-    Supporting,
-    Body,
-    CardTitle,
-    Emphasis,
-    SectionTitle,
-    PageTitle,
-}
-
-#[derive(Debug, Clone, Copy)]
 enum DemoTextColor {
     Text,
     Muted,
-}
-
-fn demo_text_token(theme: DefaultTheme, role: DemoTextRole) -> ThemeTextToken {
-    match role {
-        DemoTextRole::Metadata => theme.text.xs,
-        DemoTextRole::Supporting => theme.text.sm,
-        DemoTextRole::Body => theme.text.base,
-        DemoTextRole::CardTitle => theme.text.base,
-        DemoTextRole::Emphasis => theme.text.lg,
-        DemoTextRole::SectionTitle => theme.text.xl,
-        DemoTextRole::PageTitle => theme.text._3xl,
-    }
-}
-
-fn demo_text_weight(theme: DefaultTheme, role: DemoTextRole) -> FontWeight {
-    let weight = match role {
-        DemoTextRole::PageTitle | DemoTextRole::SectionTitle => theme.font_weights.semibold,
-        DemoTextRole::Emphasis | DemoTextRole::CardTitle => theme.font_weights.medium,
-        DemoTextRole::Body | DemoTextRole::Supporting | DemoTextRole::Metadata => {
-            theme.font_weights.normal
-        }
-    };
-    FontWeight::new(weight)
 }
 
 fn demo_label(
@@ -345,23 +309,14 @@ fn demo_label(
     role: DemoTextRole,
     color: DemoTextColor,
 ) -> Label {
-    let theme = theme_reader();
-    let token = demo_text_token(theme, role);
-    let mut style = TextStyle {
-        font_size: token.size,
-        line_height: token.line_height,
-        ..theme.body_text_style()
-    };
-    style.weight = demo_text_weight(theme, role);
-    Label::new(text)
-        .style(style)
-        .color_when(widget_book_theme_color(
-            theme_reader,
-            move |theme| match color {
-                DemoTextColor::Text => theme.palette.text,
-                DemoTextColor::Muted => theme.palette.text_muted,
-            },
-        ))
+    Label::new(text).style_when(demo_text_style_when(
+        theme_reader,
+        role,
+        move |theme| match color {
+            DemoTextColor::Text => theme.palette.text,
+            DemoTextColor::Muted => theme.palette.text_muted,
+        },
+    ))
 }
 
 fn demo_mono_label<F>(
@@ -373,14 +328,7 @@ fn demo_mono_label<F>(
 where
     F: Fn(DefaultTheme) -> Color + 'static,
 {
-    let theme = theme_reader();
-    let token = demo_text_token(theme, role);
-    let initial_color = color(theme);
-    let mut style = widget_book_theme_mono_text_style(theme, token, initial_color);
-    style.weight = demo_text_weight(theme, role);
-    Label::new(text)
-        .style(style)
-        .color_when(widget_book_theme_color(theme_reader, color))
+    Label::new(text).style_when(demo_mono_text_style_when(theme_reader, role, color))
 }
 
 fn widget_book_theme_color<F>(
@@ -393,6 +341,7 @@ where
     let theme_reader = Rc::clone(theme_reader);
     move || color(theme_reader())
 }
+
 #[derive(Debug, Clone, Copy)]
 struct TextRenderingModeSpec {
     title: &'static str,
@@ -1920,17 +1869,17 @@ fn hdr_theme_lab_card(
                 .spacing(12.0)
                 .alignment(Alignment::Start)
                 .with_child(
-                    Label::new(hdr_theme_mode_title(mode)).style(widget_book_theme_text_style(
+                    Label::new(hdr_theme_mode_title(mode)).style(demo_text_style(
                         theme,
-                        theme.text.lg,
+                        DemoTextRole::Emphasis,
                         theme.palette.text,
                     )),
                 )
                 .with_child(MaximumWidth::new(
                     980.0,
-                    Label::new(lead_text).style(widget_book_theme_text_style(
+                    Label::new(lead_text).style(demo_text_style(
                         theme,
-                        theme.text.sm,
+                        DemoTextRole::Supporting,
                         theme.palette.placeholder,
                     )),
                 ))
@@ -1943,9 +1892,9 @@ fn hdr_theme_lab_card(
                         theme.hdr.luminance.emissive_indicator,
                         theme.hdr.luminance.alert_pulse,
                     ))
-                    .style(widget_book_theme_text_style(
+                    .style(demo_text_style(
                         theme,
-                        theme.text.xs,
+                        DemoTextRole::Metadata,
                         theme.palette.placeholder,
                     )),
                 ))
@@ -1969,9 +1918,9 @@ fn hdr_theme_lab_card(
                             Label::new(
                                 "The swatch mirrors the accent token resolved for the current gamut/HDR mode.",
                             )
-                            .style(widget_book_theme_text_style(
+                            .style(demo_text_style(
                                 theme,
-                                theme.text.xs,
+                                DemoTextRole::Metadata,
                                 theme.palette.placeholder,
                             )),
                         )),
@@ -1999,9 +1948,9 @@ fn hdr_theme_lab_card(
                                         Label::new(
                                             "Small popup surfaces are where constrained vs full HDR arrival cues become easiest to validate.",
                                         )
-                                        .style(widget_book_theme_text_style(
+                                        .style(demo_text_style(
                                             theme,
-                                            theme.text.sm,
+                                            DemoTextRole::Supporting,
                                             theme.palette.text,
                                         )),
                                     )
@@ -2009,9 +1958,9 @@ fn hdr_theme_lab_card(
                                         Label::new(
                                             "Use this trigger to compare popup chrome, border lift, and arrival emphasis against the matching button and switch.",
                                         )
-                                        .style(widget_book_theme_text_style(
+                                        .style(demo_text_style(
                                             theme,
-                                            theme.text.xs,
+                                            DemoTextRole::Metadata,
                                             theme.palette.placeholder,
                                         )),
                                     )
@@ -5304,7 +5253,8 @@ fn build_data_and_interaction_gallery_with_theme(
                                         .scope(drag_scope)
                                         .accept(|_| DropEffect::Copy),
                                     ),
-                            )),
+                            )
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader))),
                         ),
                     ),
                 ),
@@ -5569,7 +5519,6 @@ pub fn build_retained_text_benchmark_with_theme(
     const SECTION_COUNT: usize = 72;
     const PARAGRAPHS_PER_SECTION: usize = 4;
 
-    let text = DefaultTheme::default().text;
     let scroll_state = ScrollState::new();
     let mut content = Stack::vertical()
         .spacing(18.0)
@@ -5585,9 +5534,10 @@ pub fn build_retained_text_benchmark_with_theme(
                     Label::new(
                         "The outer scroll view stays retained, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained packet rebuilds focused on atlas text payloads.",
                     )
-                    .style(widget_book_text_style(
-                        text.base,
-                        Color::rgba(0.38, 0.46, 0.56, 1.0),
+                    .style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::Body,
+                        |_| Color::rgba(0.38, 0.46, 0.56, 1.0),
                     )),
                 ),
             )
@@ -5596,9 +5546,10 @@ pub fn build_retained_text_benchmark_with_theme(
                     Label::new(
                         "Each section deliberately uses several long paragraphs so the per-frame upload delta is shaped by text submission rather than button chrome, icons, or image content.",
                     )
-                    .style(widget_book_text_style(
-                        text.base,
-                        Color::rgba(0.42, 0.49, 0.58, 1.0),
+                    .style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::Body,
+                        |_| Color::rgba(0.42, 0.49, 0.58, 1.0),
                     )),
                 ),
             ),
@@ -5615,9 +5566,10 @@ pub fn build_retained_text_benchmark_with_theme(
                         section_index,
                         paragraph_index,
                     ))
-                    .style(widget_book_text_style(
-                        text.base,
-                        Color::rgba(0.36, 0.44, 0.53, 1.0),
+                    .style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::Body,
+                        |_| Color::rgba(0.36, 0.44, 0.53, 1.0),
                     )),
                 ),
             );
@@ -5630,13 +5582,15 @@ pub fn build_retained_text_benchmark_with_theme(
                 Stack::vertical()
                     .spacing(10.0)
                     .alignment(Alignment::Stretch)
-                    .with_child(Label::new(title).style(widget_book_text_style(
-                        text.xl,
-                        Color::rgba(0.11, 0.15, 0.21, 1.0),
+                    .with_child(Label::new(title).style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::SectionTitle,
+                        |_| Color::rgba(0.11, 0.15, 0.21, 1.0),
                     )))
-                    .with_child(Label::new(subtitle).style(widget_book_text_style(
-                        text.base,
-                        Color::rgba(0.44, 0.51, 0.60, 1.0),
+                    .with_child(Label::new(subtitle).style_when(demo_text_style_when(
+                        &theme_reader,
+                        DemoTextRole::Body,
+                        |_| Color::rgba(0.44, 0.51, 0.60, 1.0),
                     )))
                     .with_child(body),
             ),
@@ -6351,9 +6305,9 @@ pub fn build_text_validation_surface_with_theme(
                                 .min_height(300.0)
                                 .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                 .text_style_when(|theme| {
-                                    widget_book_theme_text_style(
+                                    demo_text_style(
                                         theme,
-                                        theme.text.base,
+                                        DemoTextRole::Body,
                                         theme.palette.text,
                                     )
                                 }),
@@ -7567,22 +7521,20 @@ fn theme_preview_card(
     let body = Stack::vertical()
         .spacing(10.0)
         .alignment(Alignment::Stretch)
-        .with_child(
-            Label::new(format!("{title} theme")).style(widget_book_theme_text_style(
-                theme,
-                theme.text.lg,
-                theme.palette.text,
-            )),
-        )
+        .with_child(Label::new(format!("{title} theme")).style(demo_text_style(
+            theme,
+            DemoTextRole::Emphasis,
+            theme.palette.text,
+        )))
         .with_child(MaximumWidth::new(
             520.0,
             Label::new(format!(
                 "{} base surface with {} accent for primary actions.",
                 theme_name, theme_name
             ))
-            .style(widget_book_theme_text_style(
+            .style(demo_text_style(
                 theme,
-                theme.text.sm,
+                DemoTextRole::Supporting,
                 theme.palette.placeholder,
             )),
         ))
@@ -10176,19 +10128,19 @@ mod tests {
     fn widget_book_demo_text_roles_use_semantic_theme_weights() {
         let theme = DefaultTheme::default();
         assert_eq!(
-            super::demo_text_weight(theme, super::DemoTextRole::PageTitle).value(),
+            super::DemoTextRole::PageTitle.weight(theme).value(),
             theme.font_weights.semibold
         );
         assert_eq!(
-            super::demo_text_weight(theme, super::DemoTextRole::SectionTitle).value(),
+            super::DemoTextRole::SectionTitle.weight(theme).value(),
             theme.font_weights.semibold
         );
         assert_eq!(
-            super::demo_text_weight(theme, super::DemoTextRole::CardTitle).value(),
+            super::DemoTextRole::CardTitle.weight(theme).value(),
             theme.font_weights.medium
         );
         assert_eq!(
-            super::demo_text_weight(theme, super::DemoTextRole::Body).value(),
+            super::DemoTextRole::Body.weight(theme).value(),
             theme.font_weights.normal
         );
     }

@@ -1328,6 +1328,10 @@ pub struct Label {
     text_source: Option<Arc<dyn Observable<String>>>,
     semantic_name: Option<String>,
     style: TextStyle,
+    style_reader: Option<Box<dyn Fn() -> TextStyle>>,
+    font_size_override: Option<f32>,
+    line_height_override: Option<f32>,
+    color_override: Option<Color>,
     color_reader: Option<Box<dyn Fn() -> Color>>,
     measurement: Option<TextMeasurement>,
     layout: Option<PersistentTextLayout>,
@@ -1344,6 +1348,10 @@ impl Label {
             text_source: None,
             semantic_name: None,
             style: DefaultTheme::default().body_text_style(),
+            style_reader: None,
+            font_size_override: None,
+            line_height_override: None,
+            color_override: None,
             color_reader: None,
             measurement: None,
             layout: None,
@@ -1399,6 +1407,7 @@ impl Label {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.style = theme.body_text_style();
+        self.clear_style_overrides();
         self
     }
 
@@ -1413,7 +1422,7 @@ impl Label {
     }
 
     pub fn color(mut self, color: Color) -> Self {
-        self.style.color = color;
+        self.color_override = Some(color);
         self.color_reader = None;
         self
     }
@@ -1422,22 +1431,38 @@ impl Label {
     where
         F: Fn() -> Color + 'static,
     {
+        self.color_override = None;
         self.color_reader = Some(Box::new(color));
         self
     }
 
     pub fn font_size(mut self, font_size: f32) -> Self {
-        self.style.font_size = font_size.max(1.0);
+        self.font_size_override = Some(font_size.max(1.0));
         self
     }
 
     pub fn line_height(mut self, line_height: f32) -> Self {
-        self.style.line_height = line_height.max(1.0);
+        self.line_height_override = Some(line_height.max(1.0));
         self
     }
 
     pub fn style(mut self, style: TextStyle) -> Self {
         self.style = style;
+        self.clear_style_overrides();
+        self
+    }
+
+    /// Resolve the complete text style each time the label is measured or painted.
+    ///
+    /// As with [`Self::style`], this replaces earlier whole-style and per-property
+    /// builders. Later `font_size`, `line_height`, `color`, or `color_when` calls
+    /// layer their respective property over the dynamically resolved style.
+    pub fn style_when<F>(mut self, style: F) -> Self
+    where
+        F: Fn() -> TextStyle + 'static,
+    {
+        self.clear_style_overrides();
+        self.style_reader = Some(Box::new(style));
         self
     }
 
@@ -1457,11 +1482,32 @@ impl Label {
     }
 
     fn resolved_style(&self) -> TextStyle {
-        let mut style = self.style.clone();
+        let mut style = self
+            .style_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or_else(|| self.style.clone());
+        if let Some(font_size) = self.font_size_override {
+            style.font_size = font_size;
+        }
+        if let Some(line_height) = self.line_height_override {
+            style.line_height = line_height;
+        }
+        if let Some(color) = self.color_override {
+            style.color = color;
+        }
         if let Some(color_reader) = &self.color_reader {
             style.color = color_reader();
         }
         style
+    }
+
+    fn clear_style_overrides(&mut self) {
+        self.style_reader = None;
+        self.font_size_override = None;
+        self.line_height_override = None;
+        self.color_override = None;
+        self.color_reader = None;
     }
 
     fn has_explicit_line_break(text: &str) -> bool {
@@ -10207,6 +10253,97 @@ mod tests {
         ));
         assert_eq!(output.semantics[0].role, SemanticsRole::Text);
         assert_eq!(output.semantics[0].name.as_deref(), Some("Hello SUI"));
+    }
+
+    #[test]
+    fn label_style_when_reads_current_style_for_layout_and_paint() -> Result<()> {
+        let initial_color = Color::rgba(0.2, 0.4, 0.8, 1.0);
+        let updated_color = Color::rgba(0.8, 0.3, 0.2, 1.0);
+        let style = Rc::new(RefCell::new(TextStyle {
+            font_size: 12.0,
+            line_height: 17.0,
+            color: initial_color,
+            ..TextStyle::default()
+        }));
+        let style_reader = Rc::clone(&style);
+        let (mut runtime, window_id) = build_runtime(
+            Label::new("Reactive style").style_when(move || style_reader.borrow().clone()),
+        );
+
+        let initial = runtime.render(window_id)?;
+        let initial_run = first_text_run(&initial);
+        assert_eq!(initial_run.style.font_size, 12.0);
+        assert_eq!(initial_run.style.line_height, 17.0);
+        assert_eq!(initial_run.style.color, initial_color);
+
+        *style.borrow_mut() = TextStyle {
+            font_size: 19.0,
+            line_height: 27.0,
+            color: updated_color,
+            ..TextStyle::default()
+        };
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(320.0, 120.0))),
+        )?;
+        let updated = runtime.render(window_id)?;
+        let updated_run = first_text_run(&updated);
+        assert_eq!(updated_run.style.font_size, 19.0);
+        assert_eq!(updated_run.style.line_height, 27.0);
+        assert_eq!(updated_run.style.color, updated_color);
+        assert!(updated_run.rect.height() > initial_run.rect.height());
+        Ok(())
+    }
+
+    #[test]
+    fn label_style_builders_follow_last_whole_style_and_property_precedence() {
+        let static_color = Color::rgba(0.2, 0.3, 0.4, 1.0);
+        let dynamic_color = Color::rgba(0.5, 0.6, 0.7, 1.0);
+        let override_color = Color::rgba(0.8, 0.2, 0.4, 1.0);
+        let static_style = TextStyle {
+            font_size: 13.0,
+            line_height: 18.0,
+            color: static_color,
+            ..TextStyle::default()
+        };
+        let dynamic_style = TextStyle {
+            font_size: 17.0,
+            line_height: 25.0,
+            color: dynamic_color,
+            ..TextStyle::default()
+        };
+
+        let dynamic_wins = Label::new("Dynamic")
+            .style(static_style.clone())
+            .style_when({
+                let dynamic_style = dynamic_style.clone();
+                move || dynamic_style.clone()
+            })
+            .resolved_style();
+        assert_eq!(dynamic_wins.font_size, 17.0);
+        assert_eq!(dynamic_wins.line_height, 25.0);
+        assert_eq!(dynamic_wins.color, dynamic_color);
+
+        let static_wins = Label::new("Static")
+            .style_when({
+                let dynamic_style = dynamic_style.clone();
+                move || dynamic_style.clone()
+            })
+            .style(static_style.clone())
+            .resolved_style();
+        assert_eq!(static_wins.font_size, 13.0);
+        assert_eq!(static_wins.line_height, 18.0);
+        assert_eq!(static_wins.color, static_color);
+
+        let property_overrides = Label::new("Overrides")
+            .style_when(move || dynamic_style.clone())
+            .font_size(21.0)
+            .line_height(29.0)
+            .color(override_color)
+            .resolved_style();
+        assert_eq!(property_overrides.font_size, 21.0);
+        assert_eq!(property_overrides.line_height, 29.0);
+        assert_eq!(property_overrides.color, override_color);
     }
 
     #[test]

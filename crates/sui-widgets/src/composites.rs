@@ -3470,7 +3470,6 @@ fn section_label_text_style(theme: &DefaultTheme, color: Option<Color>) -> TextS
         color.unwrap_or(theme.surfaces.text_faint),
     );
     style.weight = FontWeight::SEMIBOLD;
-    style.line_height = style.line_height.max(14.0);
     style
 }
 
@@ -3664,14 +3663,11 @@ pub fn detail_row_height_for_value(
 fn detail_row_label_style(theme: &DefaultTheme) -> TextStyle {
     let mut style = text_token_style(theme, theme.text.xs, theme.palette.text_muted);
     style.weight = FontWeight::SEMIBOLD;
-    style.line_height = style.line_height.max(14.0);
     style
 }
 
 fn detail_row_value_style(theme: &DefaultTheme) -> TextStyle {
-    let mut style = text_token_style(theme, theme.text.sm, theme.palette.text);
-    style.line_height = style.line_height.max(17.0);
-    style
+    text_token_style(theme, theme.text.sm, theme.palette.text)
 }
 
 fn detail_row_label_value_gap(theme: &DefaultTheme) -> f32 {
@@ -7114,10 +7110,9 @@ pub fn paint_command_button(
 
     let mut text_style = text_token_style(theme, theme.text.sm, label_color);
     text_style.weight = FontWeight::SEMIBOLD;
-    let text_style = fit_command_button_label_style(ctx, label, text_style, label_rect.width());
     let text_style = numeric_text_style_if_numeric(label, text_style);
     ctx.push_clip_rect(label_rect);
-    paint_aligned_text(
+    paint_single_line_aligned_text(
         ctx,
         label_rect,
         label,
@@ -7148,32 +7143,6 @@ pub fn paint_disclosure_button(
         }),
         paint.command,
     );
-}
-
-fn fit_command_button_label_style(
-    ctx: &PaintCtx,
-    label: &str,
-    mut style: TextStyle,
-    max_width: f32,
-) -> TextStyle {
-    if label.is_empty() || max_width <= 0.0 || style.font_size <= 0.0 {
-        return style;
-    }
-
-    let measured_width = ctx
-        .measure_text(label.to_string(), style.clone())
-        .ok()
-        .map(|measurement| measurement.width)
-        .unwrap_or_else(|| label.chars().count() as f32 * style.font_size * 0.56);
-    if measured_width <= max_width || measured_width <= 0.0 {
-        return style;
-    }
-
-    let min_font_size = 10.0_f32.min(style.font_size);
-    let scale = ((max_width * 0.98) / measured_width).clamp(min_font_size / style.font_size, 1.0);
-    style.font_size = (style.font_size * scale).max(min_font_size);
-    style.line_height = (style.line_height * scale).max(min_font_size + 2.0);
-    style
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -7863,7 +7832,11 @@ impl<'a> CodeTextLine<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CodeTextPaint {
     pub color: Option<Color>,
+    /// Font size override. Non-positive values resolve to the active theme's
+    /// `xs` text token when painted.
     pub font_size: f32,
+    /// Line-height override. Non-positive values resolve to the active theme's
+    /// `xs` text token when painted.
     pub line_height: f32,
     pub x_padding: f32,
     pub weight: FontWeight,
@@ -7873,8 +7846,8 @@ impl CodeTextPaint {
     pub const fn new() -> Self {
         Self {
             color: None,
-            font_size: 12.0,
-            line_height: 17.0,
+            font_size: 0.0,
+            line_height: 0.0,
             x_padding: 2.0,
             weight: FontWeight::NORMAL,
         }
@@ -7923,9 +7896,20 @@ pub fn paint_code_lines(
         return;
     }
 
+    let token = theme.text.xs;
+    let font_size = if style.font_size > 0.0 {
+        style.font_size
+    } else {
+        token.size
+    };
+    let line_height = if style.line_height > 0.0 {
+        style.line_height
+    } else {
+        token.line_height
+    };
     let mut base_style = TextStyle {
-        font_size: style.font_size.max(1.0),
-        line_height: style.line_height.max(1.0),
+        font_size: font_size.max(1.0),
+        line_height: line_height.max(1.0),
         color: style.color.unwrap_or(theme.palette.text),
         ..theme.mono_text_style(theme.palette.text)
     };
@@ -14568,12 +14552,7 @@ impl Dialog {
     }
 
     fn title_style(&self) -> TextStyle {
-        TextStyle {
-            font_size: self.theme.metrics.dialog_title_font_size,
-            line_height: self.theme.metrics.dialog_title_line_height,
-            color: self.theme.palette.text,
-            ..self.theme.body_text_style()
-        }
+        text_token_style(&self.theme, self.theme.text.lg, self.theme.palette.text)
     }
 
     fn dismiss(&mut self) {
@@ -15406,12 +15385,7 @@ impl SideSheet {
     }
 
     fn title_style(theme: &DefaultTheme) -> TextStyle {
-        TextStyle {
-            font_size: theme.metrics.dialog_title_font_size,
-            line_height: theme.metrics.dialog_title_line_height,
-            color: theme.palette.text,
-            ..theme.body_text_style()
-        }
+        text_token_style(theme, theme.text.lg, theme.palette.text)
     }
 
     fn dismiss(&mut self, ctx: &mut EventCtx) {
@@ -17655,6 +17629,7 @@ mod tests {
             .bounds;
 
         let title = text_run_for(&output, "Export");
+        assert_text_run_uses_token(&title, theme.text.lg);
         let title_layout = text_run_layout(&title);
         let title_line = title_layout
             .lines()
@@ -17703,10 +17678,34 @@ mod tests {
     }
 
     #[test]
+    fn dialog_and_side_sheet_titles_follow_the_lg_theme_token() {
+        let mut theme = DefaultTheme::default();
+        theme.text.lg = ThemeTextToken {
+            size: 23.0,
+            line_height: 31.0,
+        };
+        theme.metrics.dialog_title_font_size = 9.0;
+        theme.metrics.dialog_title_line_height = 11.0;
+
+        let dialog =
+            render(Dialog::new("Token dialog", crate::Label::new("Dialog body")).theme(theme));
+        assert_text_run_uses_token(&text_run_for(&dialog, "Token dialog"), theme.text.lg);
+
+        let side_sheet = render(
+            SideSheet::new("Token sheet", crate::Label::new("Sheet body"))
+                .theme(theme)
+                .width(360.0),
+        );
+        assert_text_run_uses_token(&text_run_for(&side_sheet, "Token sheet"), theme.text.lg);
+    }
+
+    #[test]
     fn dialog_header_text_preserves_tall_measurements_in_compact_line_boxes() {
         let mut theme = DefaultTheme::default();
-        theme.metrics.dialog_title_font_size = 32.0;
-        theme.metrics.dialog_title_line_height = 12.0;
+        theme.text.lg = ThemeTextToken {
+            size: 32.0,
+            line_height: 12.0,
+        };
         theme.typography.body_font_size = 28.0;
         theme.typography.body_line_height = 10.0;
 
@@ -18075,6 +18074,31 @@ mod tests {
     }
 
     #[test]
+    fn section_and_detail_row_styles_preserve_compact_token_line_heights() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 9.0,
+            line_height: 11.0,
+        };
+        theme.text.sm = ThemeTextToken {
+            size: 10.0,
+            line_height: 13.0,
+        };
+
+        let section = super::section_label_text_style(&theme, None);
+        assert_eq!(section.font_size, theme.text.xs.size);
+        assert_eq!(section.line_height, theme.text.xs.line_height);
+
+        let label = super::detail_row_label_style(&theme);
+        assert_eq!(label.font_size, theme.text.xs.size);
+        assert_eq!(label.line_height, theme.text.xs.line_height);
+
+        let value = super::detail_row_value_style(&theme);
+        assert_eq!(value.font_size, theme.text.sm.size);
+        assert_eq!(value.line_height, theme.text.sm.line_height);
+    }
+
+    #[test]
     fn section_label_uses_micro_label_token_and_text_semantics() {
         let theme = DefaultTheme::default();
         let output = render(
@@ -18422,22 +18446,24 @@ mod tests {
     }
 
     #[test]
-    fn command_button_paint_scales_label_in_compact_slots() {
+    fn command_button_paint_keeps_label_token_and_clips_compact_slots() {
         let theme = DefaultTheme::default();
         let output = render(CompactCommandButtonPaintFixture { theme });
         let label = text_run_for(&output, "Hide details");
         let layout = text_layout_for(&output, "Hide details");
+        let clip = clip_rect_for_text(&output, "Hide details");
 
-        assert!(
-            label.style.font_size < theme.text.sm.size,
-            "compact command button should reduce label font size"
-        );
-        assert!(label.style.font_size >= 10.0);
+        assert_text_run_uses_token(&label, theme.text.sm);
         assert_eq!(layout.lines().len(), 1, "label should not wrap");
         assert!(
-            layout.measurement().width <= layout.box_size().width + 0.01,
-            "compact command button label should fit its slot: measurement={:?} box={:?}",
+            layout.measurement().width > layout.box_size().width,
+            "compact command button should preserve and clip the natural label width: measurement={:?} box={:?}",
             layout.measurement(),
+            layout.box_size()
+        );
+        assert!(
+            (clip.width() - layout.box_size().width).abs() < 0.75,
+            "label clip should match the allocated slot: clip={clip:?} box={:?}",
             layout.box_size()
         );
     }
@@ -18670,6 +18696,7 @@ mod tests {
 
     struct CodeLinesPaintFixture {
         theme: DefaultTheme,
+        style: CodeTextPaint,
     }
 
     impl Widget for CodeLinesPaintFixture {
@@ -18688,22 +18715,20 @@ mod tests {
                 CodeTextLine::new(&second_spans)
                     .background(self.theme.palette.success.with_alpha(0.12)),
             ];
-            paint_code_lines(
-                ctx,
-                &self.theme,
-                ctx.bounds(),
-                &lines,
-                CodeTextPaint::new()
-                    .color(self.theme.palette.text)
-                    .line_height(18.0),
-            );
+            paint_code_lines(ctx, &self.theme, ctx.bounds(), &lines, self.style);
         }
     }
 
     #[test]
     fn code_lines_paint_supports_span_colors_and_line_backgrounds() {
         let theme = DefaultTheme::default();
-        let output = render(CodeLinesPaintFixture { theme });
+        let output = render(CodeLinesPaintFixture {
+            theme,
+            style: CodeTextPaint::new()
+                .color(theme.palette.text)
+                .font_size(16.0)
+                .line_height(18.0),
+        });
 
         assert!(
             solid_fill_colors(&output).contains(&theme.palette.success.with_alpha(0.12)),
@@ -18712,10 +18737,28 @@ mod tests {
         let keyword = text_run_for(&output, "let");
         assert_eq!(keyword.style.color, theme.palette.accent);
         assert_eq!(keyword.style.font_families, Some(theme.fonts.mono.into()));
+        assert_eq!(keyword.style.font_size, 16.0);
+        assert_eq!(keyword.style.line_height, 18.0);
         let fallback = text_run_for(&output, " value");
         assert_eq!(fallback.style.color, theme.palette.text);
         let added = text_run_for(&output, "+ added");
         assert_eq!(added.style.color, theme.palette.success);
+    }
+
+    #[test]
+    fn code_lines_default_paint_follows_the_theme_xs_token() {
+        let mut theme = DefaultTheme::default();
+        theme.text.xs = ThemeTextToken {
+            size: 14.0,
+            line_height: 21.0,
+        };
+        let output = render(CodeLinesPaintFixture {
+            theme,
+            style: CodeTextPaint::new().color(theme.palette.text),
+        });
+
+        assert_text_run_uses_token(&text_run_for(&output, "let"), theme.text.xs);
+        assert_text_run_uses_token(&text_run_for(&output, " value"), theme.text.xs);
     }
 
     struct SectionPanelPaintFixture {

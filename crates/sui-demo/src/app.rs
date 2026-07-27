@@ -174,6 +174,39 @@ pub enum DesktopAutomationMode {
 
 pub(crate) type DevThemeReader = Rc<dyn Fn() -> DefaultTheme>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DemoTextRole {
+    Metadata,
+    Supporting,
+    Body,
+    CardTitle,
+    Emphasis,
+    SectionTitle,
+    PageTitle,
+}
+
+impl DemoTextRole {
+    pub(crate) fn token(self, theme: DefaultTheme) -> ThemeTextToken {
+        match self {
+            Self::Metadata => theme.text.xs,
+            Self::Supporting => theme.text.sm,
+            Self::Body | Self::CardTitle => theme.text.base,
+            Self::Emphasis => theme.text.lg,
+            Self::SectionTitle => theme.text.xl,
+            Self::PageTitle => theme.text._3xl,
+        }
+    }
+
+    pub(crate) fn weight(self, theme: DefaultTheme) -> FontWeight {
+        let weight = match self {
+            Self::PageTitle | Self::SectionTitle => theme.font_weights.semibold,
+            Self::Emphasis | Self::CardTitle => theme.font_weights.medium,
+            Self::Body | Self::Supporting | Self::Metadata => theme.font_weights.normal,
+        };
+        FontWeight::new(weight)
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn default_dev_theme_reader() -> DevThemeReader {
     let theme = DefaultTheme::default();
@@ -208,6 +241,56 @@ pub(crate) fn dev_text_style(
         line_height: token.line_height,
         color,
         ..theme.body_text_style()
+    }
+}
+
+pub(crate) fn demo_text_style(theme: DefaultTheme, role: DemoTextRole, color: Color) -> TextStyle {
+    let mut style = dev_text_style(theme, role.token(theme), color);
+    style.weight = role.weight(theme);
+    style
+}
+
+pub(crate) fn demo_mono_text_style(
+    theme: DefaultTheme,
+    role: DemoTextRole,
+    color: Color,
+) -> TextStyle {
+    let token = role.token(theme);
+    TextStyle {
+        font_size: token.size,
+        line_height: token.line_height,
+        weight: role.weight(theme),
+        ..theme.mono_text_style(color)
+    }
+}
+
+pub(crate) fn demo_text_style_when<F>(
+    theme_reader: &DevThemeReader,
+    role: DemoTextRole,
+    color: F,
+) -> impl Fn() -> TextStyle + 'static
+where
+    F: Fn(DefaultTheme) -> Color + 'static,
+{
+    let theme_reader = Rc::clone(theme_reader);
+    move || {
+        let theme = theme_reader();
+        demo_text_style(theme, role, color(theme))
+    }
+}
+
+pub(crate) fn demo_mono_text_style_when<F>(
+    theme_reader: &DevThemeReader,
+    role: DemoTextRole,
+    color: F,
+) -> impl Fn() -> TextStyle + 'static
+where
+    F: Fn(DefaultTheme) -> Color + 'static,
+{
+    let theme_reader = Rc::clone(theme_reader);
+    move || {
+        let theme = theme_reader();
+        demo_mono_text_style(theme, role, color(theme))
     }
 }
 
@@ -814,7 +897,7 @@ impl DevBrowserShell {
         ctx.fill_rect(content, palette.surface);
         let header = Rect::new(content.x(), content.y(), content.width(), 96.0);
         ctx.fill_rect(header, palette.surface_hover.with_alpha(0.45));
-        let title_style = dev_text_style(*theme, theme.text._3xl, palette.text);
+        let title_style = demo_text_style(*theme, DemoTextRole::PageTitle, palette.text);
         paint_single_line_aligned_text(
             ctx,
             Rect::new(
@@ -828,7 +911,7 @@ impl DevBrowserShell {
             title_style.line_height,
             0.0,
         );
-        let subtitle_style = dev_text_style(*theme, theme.text.sm, palette.text_muted);
+        let subtitle_style = demo_text_style(*theme, DemoTextRole::Supporting, palette.text_muted);
         paint_single_line_aligned_text(
             ctx,
             Rect::new(
@@ -1461,7 +1544,7 @@ impl Widget for ThemeToggleButton {
             ),
         );
         let label_rect = Self::label_rect(bounds, knob, scheme);
-        let label_style = dev_text_style(theme, theme.text.xs, palette.text);
+        let label_style = demo_text_style(theme, DemoTextRole::Metadata, palette.text);
         paint_single_line_aligned_text(
             ctx,
             label_rect,
@@ -1732,7 +1815,11 @@ impl Widget for FloatingSettingsWindow {
             content_palette.border.with_alpha(0.6),
             StrokeStyle::new(1.0),
         );
-        let title_style = dev_text_style(theme, theme.text.sm, Color::rgba(0.96, 0.97, 0.99, 1.0));
+        let title_style = demo_text_style(
+            theme,
+            DemoTextRole::CardTitle,
+            Color::rgba(0.96, 0.97, 0.99, 1.0),
+        );
         paint_single_line_aligned_text(
             ctx,
             Rect::new(
@@ -2346,11 +2433,15 @@ fn settings_panel_width(max_width: f32) -> f32 {
 }
 
 fn settings_panel_title_style(theme: DefaultTheme) -> TextStyle {
-    dev_text_style(theme, theme.text.sm, theme.palette.text)
+    demo_text_style(theme, DemoTextRole::CardTitle, theme.palette.text)
 }
 
 fn settings_panel_body_style(theme: DefaultTheme) -> TextStyle {
-    dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.9))
+    demo_text_style(
+        theme,
+        DemoTextRole::Metadata,
+        theme.palette.text.with_alpha(0.9),
+    )
 }
 
 fn settings_wrapped_text_height(
@@ -2567,7 +2658,11 @@ impl Widget for SdrContentBrightnessStatus {
             .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
             .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
         let theme = self.theme();
-        let style = dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.78));
+        let style = demo_text_style(
+            theme,
+            DemoTextRole::Metadata,
+            theme.palette.text.with_alpha(0.78),
+        );
         let width = if constraints.max.width.is_finite() {
             constraints.max.width.clamp(0.0, 420.0)
         } else {
@@ -2582,7 +2677,11 @@ impl Widget for SdrContentBrightnessStatus {
         let text = window_output_diagnostics(ctx.window_id())
             .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
             .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
-        let style = dev_text_style(theme, theme.text.xs, theme.palette.text.with_alpha(0.78));
+        let style = demo_text_style(
+            theme,
+            DemoTextRole::Metadata,
+            theme.palette.text.with_alpha(0.78),
+        );
         paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
     }
 
@@ -2642,7 +2741,6 @@ impl RenderSettingsTab {
         let sdr_content_brightness_state = Rc::clone(&state);
         let system_sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = widget_book_hdr_theme_mode();
-        let theme = theme_reader();
 
         let content = ScrollView::vertical(Padding::all(
                 28.0,
@@ -2651,15 +2749,21 @@ impl RenderSettingsTab {
                     .alignment(Alignment::Stretch)
                     .with_child(
                         Label::new("Renderer settings")
-                            .style(dev_text_style(theme, theme.text._3xl, theme.palette.text))
-                            .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+                            .style_when(demo_text_style_when(
+                                &theme_reader,
+                                DemoTextRole::PageTitle,
+                                |theme| theme.palette.text,
+                            )),
                     )
                     .with_child(
                         Label::new(
                             "These controls update the active window's runtime presentation on the next redraw.",
                         )
-                        .style(dev_text_style(theme, theme.text.sm, theme.palette.text_muted))
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
+                        .style_when(demo_text_style_when(
+                            &theme_reader,
+                            DemoTextRole::Supporting,
+                            |theme| theme.palette.text_muted,
+                        )),
                     )
                     .with_child(
                         Checkbox::new(LIVE_PERFORMANCE_OVERLAY_LABEL)
@@ -2965,8 +3069,11 @@ impl RenderSettingsTab {
                         Label::new(
                             "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The default perceptual text coverage policy applies a luminance-aware coverage curve to atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
                         )
-                        .style(dev_text_style(theme, theme.text.sm, theme.palette.text_muted))
-                        .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text_muted)),
+                        .style_when(demo_text_style_when(
+                            &theme_reader,
+                            DemoTextRole::Supporting,
+                            |theme| theme.palette.text_muted,
+                        )),
                     ),
             ))
             .name(SETTINGS_SCROLL_NAME)

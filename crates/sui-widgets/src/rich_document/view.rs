@@ -28,7 +28,7 @@ use super::{
     RichDocumentModel, RichDocumentSpan, RichDocumentStatus, RichInlineImage, RichInlineKind,
     RichSyntaxHighlighter, RichSyntaxSpan, RichSyntaxTokenKind,
 };
-use crate::{DefaultTheme, TextCommand};
+use crate::{DefaultTheme, TextCommand, ThemeTextToken};
 
 const BLOCK_GAP: f32 = 8.0;
 const TEXT_INSET: f32 = 2.0;
@@ -1228,8 +1228,7 @@ impl Widget for DefaultBlockView {
                     Rect::new(bounds.x(), bounds.y(), bounds.width(), CODE_HEADER_HEIGHT),
                     self.theme.surfaces.surface_2,
                 );
-                let mut label = self.theme.text_style(self.theme.palette.text_muted);
-                label.font_size = (label.font_size - 2.0).max(10.0);
+                let label = code_header_language_text_style(self.theme);
                 ctx.draw_text(
                     Rect::new(
                         bounds.x() + CODE_INSET,
@@ -1240,8 +1239,7 @@ impl Widget for DefaultBlockView {
                     language.as_deref().unwrap_or("plain text"),
                     label,
                 );
-                let mut action = self.theme.text_style(self.theme.palette.accent_soft_text);
-                action.font_size = (action.font_size - 2.0).max(10.0);
+                let action = code_header_action_text_style(self.theme);
                 ctx.draw_text(
                     Rect::new(
                         bounds.max_x() - 42.0,
@@ -1466,6 +1464,39 @@ impl Widget for DefaultBlockView {
     }
 }
 
+fn text_style_for_token(mut style: TextStyle, token: ThemeTextToken) -> TextStyle {
+    style.font_size = token.size.max(1.0);
+    style.line_height = token.line_height.max(1.0);
+    style
+}
+
+fn heading_text_style(theme: DefaultTheme, level: u8) -> TextStyle {
+    let token = match level {
+        1 => theme.text._3xl,
+        2 => theme.text._2xl,
+        3 => theme.text.xl,
+        4 => theme.text.lg,
+        _ => theme.text.base,
+    };
+    let mut style = text_style_for_token(theme.body_text_style(), token);
+    style.weight = FontWeight::BOLD;
+    style
+}
+
+fn code_header_language_text_style(theme: DefaultTheme) -> TextStyle {
+    text_style_for_token(
+        theme.mono_text_style(theme.palette.text_muted),
+        theme.text.sm,
+    )
+}
+
+fn code_header_action_text_style(theme: DefaultTheme) -> TextStyle {
+    text_style_for_token(
+        theme.text_style(theme.palette.accent_soft_text),
+        theme.text.sm,
+    )
+}
+
 fn block_document(
     kind: &RichDocumentBlockKind,
     theme: DefaultTheme,
@@ -1477,17 +1508,7 @@ fn block_document(
             document_from_spans(spans, theme.body_text_style(), theme)
         }
         RichDocumentBlockKind::Heading { level, spans } => {
-            let mut style = theme.body_text_style();
-            style.font_size *= match level {
-                1 => 1.75,
-                2 => 1.48,
-                3 => 1.28,
-                4 => 1.15,
-                _ => 1.05,
-            };
-            style.line_height = style.font_size * 1.3;
-            style.weight = FontWeight::BOLD;
-            document_from_spans(spans, style, theme)
+            document_from_spans(spans, heading_text_style(theme, *level), theme)
         }
         RichDocumentBlockKind::BlockQuote { spans, .. } => {
             let mut style = theme.body_text_style();
@@ -1816,8 +1837,12 @@ mod tests {
     use super::{
         RichDocumentBlock, RichDocumentBlockKind, RichDocumentModel, RichDocumentRenderContext,
         RichDocumentRendererRegistry, RichDocumentView, RichDocumentViewState,
+        code_header_action_text_style, code_header_language_text_style, heading_text_style,
     };
-    use crate::{RichAttachment, RichExtensionBlock, TEXT_COMMAND, TextCommand};
+    use crate::{
+        DefaultTheme, RichAttachment, RichExtensionBlock, TEXT_COMMAND, TextCommand, ThemeTextToken,
+    };
+    use sui_text::FontWeight;
 
     fn runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -1848,6 +1873,57 @@ mod tests {
             PointerButtons::NONE
         };
         Event::Pointer(pointer)
+    }
+
+    #[test]
+    fn heading_text_styles_follow_theme_ramp_pairs() {
+        let theme = DefaultTheme::default();
+        let expected = [
+            (1, theme.text._3xl),
+            (2, theme.text._2xl),
+            (3, theme.text.xl),
+            (4, theme.text.lg),
+            (5, theme.text.base),
+            (6, theme.text.base),
+        ];
+
+        for (level, token) in expected {
+            let style = heading_text_style(theme, level);
+            assert_eq!(style.font_size, token.size);
+            assert_eq!(style.line_height, token.line_height);
+            assert_eq!(style.weight, FontWeight::BOLD);
+        }
+    }
+
+    #[test]
+    fn code_header_text_styles_use_complete_small_token_pair() {
+        let mut theme = DefaultTheme::default();
+        theme.text.sm = ThemeTextToken {
+            size: 11.0,
+            line_height: 16.0,
+        };
+
+        let language = code_header_language_text_style(theme);
+        let action = code_header_action_text_style(theme);
+
+        assert_eq!(language.font_size, theme.text.sm.size);
+        assert_eq!(language.line_height, theme.text.sm.line_height);
+        assert_eq!(language.color, theme.palette.text_muted);
+        assert_eq!(
+            language.font_families,
+            theme
+                .mono_text_style(theme.palette.text_muted)
+                .font_families
+        );
+        assert_eq!(action.font_size, theme.text.sm.size);
+        assert_eq!(action.line_height, theme.text.sm.line_height);
+        assert_eq!(action.color, theme.palette.accent_soft_text);
+        assert_eq!(
+            action.font_families,
+            theme
+                .text_style(theme.palette.accent_soft_text)
+                .font_families
+        );
     }
 
     #[test]

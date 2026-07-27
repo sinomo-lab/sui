@@ -1887,11 +1887,12 @@ impl ControlTypography {
     }
 
     /// Legacy density typography. Authored interfaces should prefer
-    /// [`Self::for_size`], which resolves Small/Medium/Large to 13/15/17px
-    /// before any independent text-scale adjustment.
+    /// [`Self::for_size`]; the legacy Compact/Comfortable/Touch tiers mirror
+    /// Small/Medium/Large so both paths resolve the same text-ramp tokens.
     pub fn for_density(text: &ThemeTextScale, density: ThemeDensity) -> Self {
         let token = match density {
-            ThemeDensity::Compact | ThemeDensity::Comfortable => text.base,
+            ThemeDensity::Compact => text.sm,
+            ThemeDensity::Comfortable => text.base,
             ThemeDensity::Touch => text.lg,
         };
         Self {
@@ -3690,8 +3691,8 @@ fn shadow_layer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Color, ControlSize, DefaultTheme, SemanticTone, ThemeColorScheme, ThemeColors,
-        ThemeDensity, ThemeShadow, rgb8, rgba8,
+        Color, ControlSize, ControlTypography, DefaultTheme, SemanticTone, ThemeColorScheme,
+        ThemeColors, ThemeDensity, ThemeShadow, ThemeTextScale, rgb8, rgba8,
     };
     use crate::hdr_theme::HdrThemeMode;
 
@@ -4214,6 +4215,26 @@ mod tests {
 
     #[test]
     fn density_tiers_match_the_mesh_contract() {
+        let text = ThemeTextScale::default();
+        assert_eq!(
+            ControlTypography::for_density(&text, ThemeDensity::Compact),
+            ControlTypography::for_size(&text, ControlSize::Small)
+        );
+        assert_eq!(
+            ControlTypography::for_density(&text, ThemeDensity::Comfortable),
+            ControlTypography::for_size(&text, ControlSize::Medium)
+        );
+        assert_eq!(
+            ControlTypography::for_density(&text, ThemeDensity::Touch),
+            ControlTypography::for_size(&text, ControlSize::Large)
+        );
+        let legacy_compact = DefaultTheme::default().with_density(ThemeDensity::Compact);
+        let legacy_comfortable = DefaultTheme::default().with_density(ThemeDensity::Comfortable);
+        let legacy_touch = DefaultTheme::default().with_density(ThemeDensity::Touch);
+        assert_eq!(legacy_compact.typography.body_font_size, text.sm.size);
+        assert_eq!(legacy_comfortable.typography.body_font_size, text.base.size);
+        assert_eq!(legacy_touch.typography.body_font_size, text.lg.size);
+
         let compact = DefaultTheme::compact();
         let comfortable = DefaultTheme::comfortable();
         let touch = DefaultTheme::touch();

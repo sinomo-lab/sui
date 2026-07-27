@@ -5,7 +5,8 @@ use sui::prelude::*;
 #[cfg(test)]
 use crate::app::default_dev_theme_reader;
 use crate::app::{
-    DevThemeReader, clone_dev_theme_reader, dev_text_style, dev_theme_color, request_window_refresh,
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when,
+    request_window_refresh,
 };
 
 pub(crate) const PAINT_TAB_LABEL: &str = "Paint";
@@ -338,15 +339,11 @@ fn build_paint_toolbar(paint_state: PixelCanvasState, theme_reader: DevThemeRead
         .extent(44.0)
         .padding(Insets::all(6.0))
         .spacing(8.0)
-        .with_child(
-            Label::new("SUI Paint")
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.base,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
-        )
+        .with_child(Label::new("SUI Paint").style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::CardTitle,
+            |theme| theme.palette.text,
+        )))
         .with_child(
             paint_command_group(PAINT_HISTORY_COMMANDS_NAME, &theme_reader)
                 .with_child(
@@ -660,13 +657,11 @@ fn build_paint_document_bar(
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
-            Label::new(PAINT_DOCUMENT_NAME)
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.sm,
-                    theme_reader().palette.text,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+            Label::new(PAINT_DOCUMENT_NAME).style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::CardTitle,
+                |theme| theme.palette.text,
+            )),
         )
         .with_child(Separator::vertical().length(18.0))
         .with_child(
@@ -674,26 +669,17 @@ fn build_paint_document_bar(
                 "{} x {} px",
                 PAINT_DOCUMENT_WIDTH, PAINT_DOCUMENT_HEIGHT
             ))
-            .style(dev_text_style(
-                theme_reader(),
-                theme_reader().text.xs,
-                theme_reader().palette.text_muted,
-            ))
-            .color_when(dev_theme_color(&theme_reader, |theme| {
-                theme.palette.text_muted
-            })),
+            .style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Metadata,
+                |theme| theme.palette.text_muted,
+            )),
         )
-        .with_child(
-            Label::new("RGB / 8-bit")
-                .style(dev_text_style(
-                    theme_reader(),
-                    theme_reader().text.xs,
-                    theme_reader().palette.text_muted,
-                ))
-                .color_when(dev_theme_color(&theme_reader, |theme| {
-                    theme.palette.text_muted
-                })),
-        )
+        .with_child(Label::new("RGB / 8-bit").style_when(demo_text_style_when(
+            &theme_reader,
+            DemoTextRole::Metadata,
+            |theme| theme.palette.text_muted,
+        )))
         .with_child(Separator::vertical().length(18.0))
         .with_child(
             paint_command_group(PAINT_DOCUMENT_VIEW_COMMANDS_NAME, &theme_reader)
@@ -713,12 +699,11 @@ fn build_paint_document_bar(
                     SizedBox::new().width(78.0).with_child(
                         Label::dynamic("Zoom --", move || paint_zoom_status_text(&zoom_state))
                             .semantic_name(PAINT_ZOOM_READOUT_NAME)
-                            .style(dev_text_style(
-                                theme_reader(),
-                                theme_reader().text.xs,
-                                theme_reader().palette.text,
-                            ))
-                            .color_when(dev_theme_color(&theme_reader, |theme| theme.palette.text)),
+                            .style_when(demo_text_style_when(
+                                &theme_reader,
+                                DemoTextRole::Metadata,
+                                |theme| theme.palette.text,
+                            )),
                     ),
                 )
                 .with_child(
