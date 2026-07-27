@@ -6077,7 +6077,7 @@ impl Widget for PresetStrip {
         let metrics = theme.metrics;
         let item_height = self.resolved_item_height(metrics);
         let gap = self.resolved_gap(metrics);
-        let style = text_token_style(&theme, theme.text.xs, theme.palette.text);
+        let style = theme.text_style(theme.palette.text);
         self.label_measurements = self
             .presets
             .iter()
@@ -6107,7 +6107,7 @@ impl Widget for PresetStrip {
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let selected = self.current_selected();
-        let style = text_token_style(&theme, theme.text.xs, palette.text);
+        let style = theme.text_style(palette.text);
 
         if self.focus_animation.value > AnimatedScalar::EPSILON {
             ctx.stroke(
@@ -6825,10 +6825,10 @@ impl StatusBadge {
     }
 
     fn text_style(&self, theme: &DefaultTheme, label: &str, tone: SemanticTone) -> TextStyle {
-        // Mesh badge label: xs/600 in the status ink that reads on the soft wash.
+        // Mesh badge label: contextual control text at 600 in the status ink
+        // that reads on the soft wash.
         let (_, tone_ink) = theme.semantic_tone_soft_colors(tone);
-        let mut style = text_token_style(theme, theme.text.xs, tone_ink);
-        style.weight = FontWeight::SEMIBOLD;
+        let style = semibold_control_text_style(theme, tone_ink);
         numeric_text_style_if_numeric(label, style)
     }
 
@@ -6854,7 +6854,8 @@ pub fn paint_status_badge(
     }
 
     // Mesh badge: soft status wash, no border, status-hued ink (`--sm-*-soft`
-    // fill + `--sm-*-text` content) at the xs/600 label size, r-1 corners.
+    // fill + `--sm-*-text` content) at the contextual control/600 label size,
+    // r-1 corners.
     let (tone_soft, tone_ink) = theme.semantic_tone_soft_colors(tone);
     let icon_size = (rect.height() - 13.0).clamp(11.0, 15.0);
     let gap = theme.metrics.icon_label_gap.max(4.0);
@@ -6884,8 +6885,7 @@ pub fn paint_status_badge(
         return;
     }
 
-    let mut style = text_token_style(theme, theme.text.xs, tone_ink);
-    style.weight = FontWeight::SEMIBOLD;
+    let style = semibold_control_text_style(theme, tone_ink);
     let style = numeric_text_style_if_numeric(label, style);
     ctx.push_clip_rect(content_rect);
     paint_aligned_text(ctx, content_rect, label, &style, style.line_height, 0.0);
@@ -9192,7 +9192,7 @@ impl Widget for TabBar {
             }
         }
         let theme = self.resolved_theme();
-        let style = text_token_style(&theme, theme.text.sm, theme.palette.text);
+        let style = theme.text_style(theme.palette.text);
         let padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .tabs
@@ -9219,8 +9219,8 @@ impl Widget for TabBar {
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
-        let label_style = text_token_style(&theme, theme.text.sm, palette.text_muted);
-        let selected_label_style = text_token_style(&theme, theme.text.sm, palette.text);
+        let label_style = theme.text_style(palette.text_muted);
+        let selected_label_style = theme.text_style(palette.text);
 
         // Navigation tabs share one flat strip. Selection is communicated by the
         // animated underline below rather than by a second, raised tile.
@@ -9825,7 +9825,7 @@ impl Widget for BrowserTabBar {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.refresh_tabs();
         let theme = self.resolved_theme();
-        let style = text_token_style(&theme, theme.text.sm, theme.palette.text);
+        let style = theme.text_style(theme.palette.text);
         let padding = theme.metrics.tab_padding;
         let close_extent = Self::close_size(&theme) + (Self::close_gap(&theme) * 2.0);
         self.label_measurements = self
@@ -9900,15 +9900,11 @@ impl Widget for BrowserTabBar {
                 );
             }
 
-            let text_style = text_token_style(
-                &theme,
-                theme.text.sm,
-                if selected {
-                    palette.text
-                } else {
-                    palette.text_muted
-                },
-            );
+            let text_style = theme.text_style(if selected {
+                palette.text
+            } else {
+                palette.text_muted
+            });
             let text_slot = self.label_rect_for(rect);
             let pressed_offset = press_amount * interaction.pressed_offset;
             ctx.push_clip_rect(text_slot);
@@ -10437,7 +10433,7 @@ impl Widget for SegmentedControl {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let style = theme.body_text_style();
+        let style = semibold_control_text_style(&theme, theme.palette.text);
         let padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .segments
@@ -10459,13 +10455,7 @@ impl Widget for SegmentedControl {
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let padding = metrics.tab_padding;
-        let label_style = TextStyle {
-            font_size: theme.text.xs.size,
-            line_height: theme.text.xs.line_height,
-            weight: sui_text::FontWeight(theme.font_weights.semibold),
-            color: palette.text_muted,
-            ..theme.body_text_style()
-        };
+        let label_style = semibold_control_text_style(&theme, palette.text_muted);
         let selected_label_style = TextStyle {
             color: palette.accent,
             ..label_style.clone()
@@ -10968,7 +10958,7 @@ impl Widget for Tabs {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let text_style = text_token_style(&theme, theme.text.sm, theme.palette.text);
+        let text_style = theme.text_style(theme.palette.text);
         let tab_padding = theme.metrics.tab_padding;
         self.label_measurements = self
             .labels
@@ -11060,8 +11050,8 @@ impl Widget for Tabs {
         let interaction = theme.interaction;
         let tab_padding = metrics.tab_padding;
         let header = self.header_rect(ctx.bounds());
-        let label_style = text_token_style(&theme, theme.text.sm, palette.text_muted);
-        let selected_label_style = text_token_style(&theme, theme.text.sm, palette.text);
+        let label_style = theme.text_style(palette.text_muted);
+        let selected_label_style = theme.text_style(palette.text);
 
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
@@ -16415,6 +16405,12 @@ fn text_token_style(theme: &DefaultTheme, token: ThemeTextToken, color: Color) -
     }
 }
 
+fn semibold_control_text_style(theme: &DefaultTheme, color: Color) -> TextStyle {
+    let mut style = theme.text_style(color);
+    style.weight = FontWeight::SEMIBOLD;
+    style
+}
+
 fn numeric_text_style(mut style: TextStyle) -> TextStyle {
     style.features.enable(FontFeature::TABULAR_FIGURES);
     style
@@ -19225,7 +19221,50 @@ mod tests {
                         .preset("Token preset"),
                 ),
         );
-        assert_text_run_uses_token(&text_run_for(&preset_strip, "Token preset"), theme.text.xs);
+        assert_text_run_uses_token(
+            &text_run_for(&preset_strip, "Token preset"),
+            theme.text.base,
+        );
+
+        let tab_bar = render(TabBar::new("Token tabs").theme(theme).tab("Token tab bar"));
+        assert_text_run_uses_token(&text_run_for(&tab_bar, "Token tab bar"), theme.text.base);
+
+        let browser_tab_bar = render(
+            BrowserTabBar::new("Token browser tabs")
+                .theme(theme)
+                .tabs(["Token browser tab"])
+                .selected(Some(0)),
+        );
+        assert_text_run_uses_token(
+            &text_run_for(&browser_tab_bar, "Token browser tab"),
+            theme.text.base,
+        );
+
+        let tabs = render(
+            Tabs::new("Token panel tabs")
+                .theme(theme)
+                .tab("Token panel tab", crate::SizedBox::new()),
+        );
+        assert_text_run_uses_token(&text_run_for(&tabs, "Token panel tab"), theme.text.base);
+
+        let segmented_control = render(
+            SegmentedControl::new("Token segments")
+                .theme(theme)
+                .segments(["Token segment"]),
+        );
+        let segment_label = text_run_for(&segmented_control, "Token segment");
+        assert_text_run_uses_token(&segment_label, theme.text.base);
+        assert_eq!(segment_label.style.weight, FontWeight::SEMIBOLD);
+
+        let status_badge = render(StatusBadge::new("Token badge").theme(theme));
+        let status_badge_label = text_run_for(&status_badge, "Token badge");
+        assert_text_run_uses_token(&status_badge_label, theme.text.base);
+        assert_eq!(status_badge_label.style.weight, FontWeight::SEMIBOLD);
+
+        let placement_badge = render(PlacementBadge::new("Token placement").theme(theme));
+        let placement_badge_label = text_run_for(&placement_badge, "Token placement");
+        assert_text_run_uses_token(&placement_badge_label, theme.text.base);
+        assert_eq!(placement_badge_label.style.weight, FontWeight::SEMIBOLD);
 
         let status_bar = render(
             crate::SizedBox::new()
@@ -19307,7 +19346,7 @@ mod tests {
     #[test]
     fn preset_strip_label_preserves_tall_measurements_and_item_centering() {
         let mut theme = DefaultTheme::default();
-        theme.text.xs = ThemeTextToken {
+        theme.text.base = ThemeTextToken {
             size: 28.0,
             line_height: 12.0,
         };
@@ -19334,7 +19373,7 @@ mod tests {
             .shape_text_run(&text, &FontRegistry::new())
             .expect("preset label should shape");
 
-        assert_text_run_uses_token(&text, theme.text.xs);
+        assert_text_run_uses_token(&text, theme.text.base);
         assert!(text.rect.height() >= layout.measurement().height - 0.01);
         assert!(text.rect.height() > text.style.line_height);
         assert!(
@@ -19562,7 +19601,7 @@ mod tests {
             node.value,
             Some(SemanticsValue::Text("Primary on atlas".to_string()))
         );
-        assert_text_run_uses_token(&text_run_for(&output, "Primary on atlas"), theme.text.xs);
+        assert_text_run_uses_token(&text_run_for(&output, "Primary on atlas"), theme.text.base);
     }
 
     #[test]
@@ -21809,7 +21848,7 @@ mod tests {
     #[test]
     fn selected_tab_labels_preserve_body_text_metrics() {
         let mut theme = DefaultTheme::default();
-        theme.text.sm = ThemeTextToken {
+        theme.text.base = ThemeTextToken {
             size: 15.5,
             line_height: 22.0,
         };
@@ -21822,7 +21861,7 @@ mod tests {
                 .selected(1),
         );
         let tab_bar_label = text_run_for(&tab_bar, "Inspect");
-        assert_text_run_uses_token(&tab_bar_label, theme.text.sm);
+        assert_text_run_uses_token(&tab_bar_label, theme.text.base);
         assert_eq!(tab_bar_label.style.color, theme.palette.text);
         assert!(
             (text_run_visual_center(&tab_bar_label) - (tab_bar.frame.viewport.height * 0.5)).abs()
@@ -21837,7 +21876,7 @@ mod tests {
                 .tab("Inspect", crate::Label::new("Inspect")),
         );
         let tabs_label = text_run_for(&tabs, "Inspect");
-        assert_text_run_uses_token(&tabs_label, theme.text.sm);
+        assert_text_run_uses_token(&tabs_label, theme.text.base);
         assert_eq!(tabs_label.style.color, theme.palette.text);
         assert!(
             (text_run_visual_center(&tabs_label) - (theme.metrics.tab_height * 0.5)).abs() < 0.75
@@ -21847,7 +21886,7 @@ mod tests {
     #[test]
     fn selected_tab_labels_preserve_tall_measurements_and_exact_centering() {
         let mut theme = DefaultTheme::default();
-        theme.text.sm = ThemeTextToken {
+        theme.text.base = ThemeTextToken {
             size: 28.0,
             line_height: 12.0,
         };
@@ -21865,7 +21904,7 @@ mod tests {
             .shape_text_run(&tab_bar_label, &FontRegistry::new())
             .expect("selected tab bar label should shape");
 
-        assert_text_run_uses_token(&tab_bar_label, theme.text.sm);
+        assert_text_run_uses_token(&tab_bar_label, theme.text.base);
         assert!(tab_bar_label.rect.height() >= tab_bar_layout.measurement().height - 0.01);
         assert!(tab_bar_label.rect.height() > tab_bar_label.style.line_height);
         assert!(
@@ -21886,7 +21925,7 @@ mod tests {
             .shape_text_run(&tabs_label, &FontRegistry::new())
             .expect("selected tabs label should shape");
 
-        assert_text_run_uses_token(&tabs_label, theme.text.sm);
+        assert_text_run_uses_token(&tabs_label, theme.text.base);
         assert!(tabs_label.rect.height() >= tabs_layout.measurement().height - 0.01);
         assert!(tabs_label.rect.height() > tabs_label.style.line_height);
         assert!(
