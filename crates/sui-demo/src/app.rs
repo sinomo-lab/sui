@@ -16,11 +16,12 @@ use crate::widget_book::{
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
-    WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
-    WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
-    paint_aligned_text, paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
+    TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetId,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode,
+    WindowEvent, WindowId, WindowOutputColorPrimaries, WindowOutputDiagnostics,
+    WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
+    WindowToneMappingMode, default_sui_logo_image, paint_aligned_text,
+    paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
 };
 
 #[cfg(test)]
@@ -2142,6 +2143,40 @@ pub(crate) fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool)
     ));
 }
 
+pub(crate) fn request_widget_refresh(
+    ctx: &mut EventCtx,
+    widget_id: WidgetId,
+    kinds: impl IntoIterator<Item = InvalidationKind>,
+) {
+    for kind in kinds {
+        ctx.request(InvalidationRequest::new(
+            InvalidationTarget::Widget(widget_id),
+            kind,
+        ));
+    }
+}
+
+pub(crate) fn request_widget_visual_refresh(ctx: &mut EventCtx, widget_id: WidgetId) {
+    request_widget_refresh(
+        ctx,
+        widget_id,
+        [InvalidationKind::Paint, InvalidationKind::Semantics],
+    );
+}
+
+pub(crate) fn request_widget_layout_refresh(ctx: &mut EventCtx, widget_id: WidgetId) {
+    request_widget_refresh(
+        ctx,
+        widget_id,
+        [
+            InvalidationKind::Measure,
+            InvalidationKind::Paint,
+            InvalidationKind::HitTest,
+            InvalidationKind::Semantics,
+        ],
+    );
+}
+
 fn scroll_dev_tab_strip(state: &ScrollState, direction: f32, ctx: &mut EventCtx) {
     let current = state.current_offset();
     let max_offset = state.max_offset();
@@ -3736,6 +3771,17 @@ mod tests {
             .find(|node| node.role == SemanticsRole::Slider && node.name.as_deref() == Some(name))
             .cloned()
             .unwrap_or_else(|| panic!("{name} slider should exist"))
+    }
+
+    fn theme_editor_color_swatch(output: &RenderOutput, name: &str) -> SemanticsNode {
+        output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(name)
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} swatch should exist"))
     }
 
     fn slider_range_value(node: &SemanticsNode) -> f64 {
@@ -8029,6 +8075,88 @@ final_max_luminance={final_max_luminance}
             )
             .is_empty(),
             "expected the preview button to stop using the original primary color"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn theme_editor_paint_only_color_selection_preserves_controls_scroll_position() -> Result<()> {
+        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
+            RenderSettingsTab::default_options(),
+            Some(THEME_EDITOR_TAB_LABEL),
+        ))
+        .build()
+        .expect("theme editor demo should build");
+        let window_id = runtime.window_ids()[0];
+        let before = runtime.render(window_id)?;
+        let controls = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
+            })
+            .expect("theme editor controls scroll view should exist");
+        let before_red = theme_editor_color_slider(&before, "Red");
+
+        let mut scroll = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(controls.bounds.x() + 24.0, controls.bounds.y() + 24.0),
+        );
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -160.0)));
+        runtime.handle_event(window_id, Event::Pointer(scroll))?;
+
+        let scrolled = runtime.render(window_id)?;
+        let controls = scrolled
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
+            })
+            .expect("theme editor controls scroll view should still exist");
+        let scrolled_red = theme_editor_color_slider(&scrolled, "Red");
+        assert!(
+            scrolled_red.bounds.y() < before_red.bounds.y() - 8.0,
+            "expected controls panel content to move after scrolling; before={}, after={}",
+            before_red.bounds.y(),
+            scrolled_red.bounds.y()
+        );
+
+        let warning = theme_editor_color_swatch(&scrolled, "Warning theme color");
+        let click = Point::new(
+            warning.bounds.x() + warning.bounds.width() * 0.5,
+            warning.bounds.y() + warning.bounds.height() * 0.5,
+        );
+        assert!(
+            controls.bounds.contains(click),
+            "expected warning swatch to be visible after scrolling; swatch={:?}, controls={:?}",
+            warning.bounds,
+            controls.bounds
+        );
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(76, PointerEventKind::Down, click, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer_event(76, PointerEventKind::Up, click, false),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let after_red = theme_editor_color_slider(&after, "Red");
+        assert!(
+            (after_red.bounds.y() - scrolled_red.bounds.y()).abs() <= 1.0,
+            "expected paint-only color selection to preserve controls scroll position; before_click={}, after_click={}",
+            scrolled_red.bounds.y(),
+            after_red.bounds.y()
+        );
+        assert!(
+            (slider_range_value(&after_red) - f64::from(DefaultTheme::sui().colors.warning.red))
+                .abs()
+                < 0.001,
+            "expected selecting the warning swatch to retarget the color picker"
         );
         Ok(())
     }

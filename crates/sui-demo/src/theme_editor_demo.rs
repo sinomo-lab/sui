@@ -3,14 +3,12 @@ use std::{
     rc::Rc,
 };
 
-use sui::{
-    InvalidationKind, InvalidationRequest, InvalidationTarget, SemanticTone, StatusBadge, WidgetId,
-    WidgetPodMutVisitor, WidgetPodVisitor, prelude::*,
-};
+use sui::{SemanticTone, StatusBadge, WidgetId, WidgetPodMutVisitor, WidgetPodVisitor, prelude::*};
+use sui_runtime::{LayerOptions, PaintBoundaryMode};
 
 use crate::app::{
     DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when, dev_theme_color,
-    request_window_refresh,
+    request_widget_layout_refresh, request_widget_visual_refresh, request_window_refresh,
 };
 
 pub(crate) const THEME_EDITOR_TAB_LABEL: &str = "Theme editor";
@@ -185,42 +183,51 @@ fn readable_content_color(color: Color) -> Color {
 }
 
 #[derive(Clone, Default)]
-struct ThemeEditorPreviewTarget {
+struct ThemeEditorRefreshTarget {
     widget_id: Rc<Cell<Option<WidgetId>>>,
 }
 
-impl ThemeEditorPreviewTarget {
+impl ThemeEditorRefreshTarget {
     fn set(&self, widget_id: WidgetId) {
         self.widget_id.set(Some(widget_id));
     }
 
+    fn widget_id(&self) -> Option<WidgetId> {
+        self.widget_id.get()
+    }
+
     fn request_layout(&self, ctx: &mut EventCtx) -> bool {
-        let Some(widget_id) = self.widget_id.get() else {
+        let Some(widget_id) = self.widget_id() else {
             return false;
         };
 
-        for kind in [
-            InvalidationKind::Measure,
-            InvalidationKind::Paint,
-            InvalidationKind::HitTest,
-            InvalidationKind::Semantics,
-        ] {
-            ctx.request(InvalidationRequest::new(
-                InvalidationTarget::Widget(widget_id),
-                kind,
-            ));
-        }
+        request_widget_layout_refresh(ctx, widget_id);
+        true
+    }
+
+    fn request_visual(&self, ctx: &mut EventCtx) -> bool {
+        let Some(widget_id) = self.widget_id() else {
+            return false;
+        };
+
+        request_widget_visual_refresh(ctx, widget_id);
         true
     }
 }
 
-struct ThemeEditorPreviewAnchor {
-    target: ThemeEditorPreviewTarget,
+#[derive(Clone)]
+struct ThemeEditorRefreshTargets {
+    controls: ThemeEditorRefreshTarget,
+    preview: ThemeEditorRefreshTarget,
+}
+
+struct ThemeEditorRefreshAnchor {
+    target: ThemeEditorRefreshTarget,
     child: SingleChild,
 }
 
-impl ThemeEditorPreviewAnchor {
-    fn new<W>(target: ThemeEditorPreviewTarget, child: W) -> Self
+impl ThemeEditorRefreshAnchor {
+    fn new<W>(target: ThemeEditorRefreshTarget, child: W) -> Self
     where
         W: Widget + 'static,
     {
@@ -231,7 +238,7 @@ impl ThemeEditorPreviewAnchor {
     }
 }
 
-impl Widget for ThemeEditorPreviewAnchor {
+impl Widget for ThemeEditorRefreshAnchor {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.target.set(ctx.widget_id());
         self.child.measure(ctx, constraints)
@@ -259,27 +266,35 @@ impl Widget for ThemeEditorPreviewAnchor {
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
     }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            ..Default::default()
+        }
+    }
 }
 
 fn request_theme_editor_refresh(
     ctx: &mut EventCtx,
-    preview_target: &ThemeEditorPreviewTarget,
+    targets: &ThemeEditorRefreshTargets,
     preview_layout_changed: bool,
 ) {
-    if preview_layout_changed && !preview_target.request_layout(ctx) {
-        request_window_refresh(ctx, false);
-        return;
-    }
+    let controls_ready = targets.controls.request_visual(ctx);
+    let preview_ready = if preview_layout_changed {
+        targets.preview.request_layout(ctx)
+    } else {
+        targets.preview.request_visual(ctx)
+    };
 
-    for kind in [
-        InvalidationKind::Paint,
-        InvalidationKind::HitTest,
-        InvalidationKind::Semantics,
-    ] {
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Window(ctx.window_id()),
-            kind,
-        ));
+    if !controls_ready || !preview_ready {
+        request_window_refresh(ctx, false);
+    }
+}
+
+fn request_theme_editor_controls_refresh(ctx: &mut EventCtx, target: &ThemeEditorRefreshTarget) {
+    if !target.request_visual(ctx) {
+        request_window_refresh(ctx, false);
     }
 }
 
@@ -298,7 +313,8 @@ struct ThemeEditorStateInner {
     motion_scale: f32,
     controls_scroll: ScrollState,
     preview_scroll: ScrollState,
-    preview_target: ThemeEditorPreviewTarget,
+    controls_target: ThemeEditorRefreshTarget,
+    preview_target: ThemeEditorRefreshTarget,
 }
 
 impl ThemeEditorState {
@@ -314,7 +330,8 @@ impl ThemeEditorState {
                 motion_scale: 1.0,
                 controls_scroll: ScrollState::new(),
                 preview_scroll: ScrollState::new(),
-                preview_target: ThemeEditorPreviewTarget::default(),
+                controls_target: ThemeEditorRefreshTarget::default(),
+                preview_target: ThemeEditorRefreshTarget::default(),
             })),
         }
     }
@@ -336,8 +353,20 @@ impl ThemeEditorState {
         self.inner.borrow().preview_scroll.clone()
     }
 
-    fn preview_target(&self) -> ThemeEditorPreviewTarget {
+    fn controls_target(&self) -> ThemeEditorRefreshTarget {
+        self.inner.borrow().controls_target.clone()
+    }
+
+    fn preview_target(&self) -> ThemeEditorRefreshTarget {
         self.inner.borrow().preview_target.clone()
+    }
+
+    fn refresh_targets(&self) -> ThemeEditorRefreshTargets {
+        let inner = self.inner.borrow();
+        ThemeEditorRefreshTargets {
+            controls: inner.controls_target.clone(),
+            preview: inner.preview_target.clone(),
+        }
     }
 
     fn preset_index(&self) -> usize {
@@ -551,46 +580,50 @@ pub(crate) fn build_theme_editor_demo_with_theme(shell_theme: DevThemeReader) ->
 
 fn build_editor_controls(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
     let controls_scroll = state.controls_scroll_state();
-    let reset_preview_target = state.preview_target();
-    Surface::sidebar(
-        ScrollView::vertical(Padding::all(
-            16.0,
-            Stack::vertical()
-                .spacing(14.0)
-                .alignment(Alignment::Stretch)
-                .with_child(editor_title(
-                    "Theme variables",
-                    "Edit source tokens; derived palettes and control metrics update automatically.",
-                    Rc::clone(&shell_theme),
-                ))
-                .with_child(build_preset_section(
-                    state.clone(),
-                    Rc::clone(&shell_theme),
-                ))
-                .with_child(build_color_section(
-                    state.clone(),
-                    Rc::clone(&shell_theme),
-                ))
-                .with_child(build_scale_section(
-                    state.clone(),
-                    Rc::clone(&shell_theme),
-                ))
-                .with_child(
-                    Button::new(THEME_RESET_NAME)
-                        .icon(IconGlyph::Restore)
-                        .theme_when(clone_dev_theme_reader(&shell_theme))
-                        .on_press_with_ctx(move |ctx| {
-                            state.reset_current_preset();
-                            request_theme_editor_refresh(ctx, &reset_preview_target, true);
-                        }),
-                ),
-        ))
-        .state(controls_scroll)
-        .name(THEME_EDITOR_CONTROLS_SCROLL_NAME)
-        .theme_when(clone_dev_theme_reader(&shell_theme)),
+    let controls_target = state.controls_target();
+    let reset_targets = state.refresh_targets();
+    ThemeEditorRefreshAnchor::new(
+        controls_target,
+        Surface::sidebar(
+            ScrollView::vertical(Padding::all(
+                16.0,
+                Stack::vertical()
+                    .spacing(14.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(editor_title(
+                        "Theme variables",
+                        "Edit source tokens; derived palettes and control metrics update automatically.",
+                        Rc::clone(&shell_theme),
+                    ))
+                    .with_child(build_preset_section(
+                        state.clone(),
+                        Rc::clone(&shell_theme),
+                    ))
+                    .with_child(build_color_section(
+                        state.clone(),
+                        Rc::clone(&shell_theme),
+                    ))
+                    .with_child(build_scale_section(
+                        state.clone(),
+                        Rc::clone(&shell_theme),
+                    ))
+                    .with_child(
+                        Button::new(THEME_RESET_NAME)
+                            .icon(IconGlyph::Restore)
+                            .theme_when(clone_dev_theme_reader(&shell_theme))
+                            .on_press_with_ctx(move |ctx| {
+                                state.reset_current_preset();
+                                request_theme_editor_refresh(ctx, &reset_targets, true);
+                            }),
+                    ),
+            ))
+            .state(controls_scroll)
+            .name(THEME_EDITOR_CONTROLS_SCROLL_NAME)
+            .theme_when(clone_dev_theme_reader(&shell_theme)),
+        )
+        .theme_when(clone_dev_theme_reader(&shell_theme))
+        .fill(),
     )
-    .theme_when(clone_dev_theme_reader(&shell_theme))
-    .fill()
 }
 
 fn editor_title(
@@ -618,8 +651,8 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
     let preset_change = state.clone();
     let size_reader = state.clone();
     let size_change = state;
-    let preset_preview_target = preset_reader.preview_target();
-    let size_preview_target = size_reader.preview_target();
+    let preset_targets = preset_reader.refresh_targets();
+    let size_targets = size_reader.refresh_targets();
 
     PanelSection::new(
         "Foundation",
@@ -635,7 +668,7 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
                         .theme_when(clone_dev_theme_reader(&shell_theme))
                         .on_change_with_ctx(move |ctx, index, _| {
                             preset_change.set_preset(index);
-                            request_theme_editor_refresh(ctx, &preset_preview_target, true);
+                            request_theme_editor_refresh(ctx, &preset_targets, true);
                         }),
                 )
                 .theme_when(clone_dev_theme_reader(&shell_theme))
@@ -650,7 +683,7 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
                         .theme_when(clone_dev_theme_reader(&shell_theme))
                         .on_change_with_ctx(move |index, _, ctx| {
                             size_change.set_control_size(index);
-                            request_theme_editor_refresh(ctx, &size_preview_target, true);
+                            request_theme_editor_refresh(ctx, &size_targets, true);
                         }),
                 )
                 .theme_when(clone_dev_theme_reader(&shell_theme))
@@ -664,7 +697,7 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
     let summary_state = state.clone();
     let picker_reader = state.clone();
     let picker_change = state.clone();
-    let picker_preview_target = state.preview_target();
+    let picker_targets = state.refresh_targets();
 
     PanelSection::new(
         "Color",
@@ -693,7 +726,7 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 .theme_when(clone_dev_theme_reader(&shell_theme))
                 .on_change_with_ctx(move |ctx, color| {
                     picker_change.set_selected_color(color);
-                    request_theme_editor_refresh(ctx, &picker_preview_target, false);
+                    request_theme_editor_refresh(ctx, &picker_targets, false);
                 }),
             ),
     )
@@ -724,7 +757,7 @@ fn build_color_token_swatch(
     let color_state = state.clone();
     let select_state = state.clone();
     let label_state = state;
-    let preview_target = select_state.preview_target();
+    let controls_target = select_state.controls_target();
     Stack::vertical()
         .spacing(4.0)
         .alignment(Alignment::Start)
@@ -738,7 +771,7 @@ fn build_color_token_swatch(
             .size(Size::new(54.0, 30.0))
             .on_press_with_ctx(move |ctx, _| {
                 select_state.select_color_variable(variable);
-                request_theme_editor_refresh(ctx, &preview_target, false);
+                request_theme_editor_controls_refresh(ctx, &controls_target);
             }),
         )
         .with_child(
@@ -769,10 +802,10 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
     let text_change = state.clone();
     let motion_reader = state.clone();
     let motion_change = state;
-    let spacing_preview_target = spacing_reader.preview_target();
-    let radius_preview_target = radius_reader.preview_target();
-    let text_preview_target = text_reader.preview_target();
-    let motion_preview_target = motion_reader.preview_target();
+    let spacing_targets = spacing_reader.refresh_targets();
+    let radius_targets = radius_reader.refresh_targets();
+    let text_targets = text_reader.refresh_targets();
+    let motion_targets = motion_reader.refresh_targets();
 
     PanelSection::new(
         "Scale",
@@ -788,7 +821,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || spacing_reader.spacing(),
                 move |ctx, value| {
                     spacing_change.set_spacing(value as f32);
-                    request_theme_editor_refresh(ctx, &spacing_preview_target, true);
+                    request_theme_editor_refresh(ctx, &spacing_targets, true);
                 },
                 Rc::clone(&shell_theme),
             ))
@@ -801,7 +834,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || radius_reader.radius_scale(),
                 move |ctx, value| {
                     radius_change.set_radius_scale(value as f32);
-                    request_theme_editor_refresh(ctx, &radius_preview_target, true);
+                    request_theme_editor_refresh(ctx, &radius_targets, true);
                 },
                 Rc::clone(&shell_theme),
             ))
@@ -814,7 +847,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || text_reader.text_scale(),
                 move |ctx, value| {
                     text_change.set_text_scale(value as f32);
-                    request_theme_editor_refresh(ctx, &text_preview_target, true);
+                    request_theme_editor_refresh(ctx, &text_targets, true);
                 },
                 Rc::clone(&shell_theme),
             ))
@@ -827,7 +860,7 @@ fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                 move || motion_reader.motion_scale(),
                 move |ctx, value| {
                     motion_change.set_motion_scale(value as f32);
-                    request_theme_editor_refresh(ctx, &motion_preview_target, true);
+                    request_theme_editor_refresh(ctx, &motion_targets, true);
                 },
                 Rc::clone(&shell_theme),
             )),
@@ -866,7 +899,7 @@ where
 fn build_live_preview(state: ThemeEditorState, preview_theme: DevThemeReader) -> impl Widget {
     let preview_scroll = state.preview_scroll_state();
     let preview_target = state.preview_target();
-    ThemeEditorPreviewAnchor::new(
+    ThemeEditorRefreshAnchor::new(
         preview_target,
         Surface::window(
             ScrollView::vertical(Padding::all(
