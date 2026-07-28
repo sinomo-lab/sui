@@ -5056,12 +5056,23 @@ impl Slider {
         self
     }
 
-    fn fraction(&self) -> f32 {
+    fn resolved_value(&self) -> f64 {
+        if self.dragging {
+            return self.value;
+        }
+
+        self.value_reader
+            .as_ref()
+            .map(|reader| clamp_and_snap_value(reader(), self.min, self.max, self.step))
+            .unwrap_or(self.value)
+    }
+
+    fn fraction_for(&self, value: f64) -> f32 {
         if (self.max - self.min).abs() <= f64::EPSILON {
             return 0.0;
         }
 
-        ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0) as f32
+        ((value - self.min) / (self.max - self.min)).clamp(0.0, 1.0) as f32
     }
 
     fn sync_external_value(&mut self) {
@@ -5093,12 +5104,12 @@ impl Slider {
         )
     }
 
-    fn thumb_rect(&self, bounds: Rect) -> Rect {
+    fn thumb_rect_for(&self, bounds: Rect, value: f64) -> Rect {
         let track = self.track_rect(bounds);
         let theme = self.resolved_theme();
         let thumb = theme.metrics.slider_thumb_size;
         Rect::new(
-            track.x() + (track.width() * self.fraction()) - (thumb * 0.5),
+            track.x() + (track.width() * self.fraction_for(value)) - (thumb * 0.5),
             bounds.y() + ((bounds.height() - thumb) * 0.5),
             thumb,
             thumb,
@@ -5292,14 +5303,15 @@ impl Widget for Slider {
         let hover_progress = self.hover_animation.value;
         let drag_progress = self.drag_animation.value;
         let focus_progress = self.focus_animation.value;
+        let value = self.resolved_value();
         let track = self.track_rect(ctx.bounds());
         let active = Rect::new(
             track.x(),
             track.y(),
-            track.width() * self.fraction(),
+            track.width() * self.fraction_for(value),
             track.height(),
         );
-        let thumb = self.thumb_rect(ctx.bounds());
+        let thumb = self.thumb_rect_for(ctx.bounds(), value);
 
         draw_control_frame(
             ctx,
@@ -5353,7 +5365,7 @@ impl Widget for Slider {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Slider, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = Some(SemanticsValue::Range {
-            value: self.value,
+            value: self.resolved_value(),
             min: self.min,
             max: self.max,
         });
@@ -9655,17 +9667,18 @@ mod tests {
         text_command::{TEXT_COMMAND, TextCommand},
     };
     use sui_core::{
-        Color, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-        PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
-        SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector,
-        WidgetId, WindowEvent,
+        Color, CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point,
+        PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result,
+        SemanticsAction, SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue,
+        Size, Vector, WidgetId, WindowEvent,
     };
     use sui_layout::{Constraints, Padding as TestPadding};
     use sui_reactive::Signal;
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
-        Application, CommandDelivery, CommandTarget, MeasureCtx, PaintCtx, RenderOutput, Runtime,
-        Widget, WindowBuilder, WindowRenderOptions, clear_window_render_options,
+        Application, ArrangeCtx, CommandDelivery, CommandTarget, EventCtx, MeasureCtx, PaintCtx,
+        RenderOutput, Runtime, SemanticsCtx, SingleChild, Widget, WidgetPodMutVisitor,
+        WidgetPodVisitor, WindowBuilder, WindowRenderOptions, clear_window_render_options,
         set_window_render_options,
     };
     use sui_scene::{
@@ -9939,6 +9952,84 @@ mod tests {
             }
         });
         bounds
+    }
+
+    const INVALIDATE_EXTERNAL_SLIDER_VALUE_KIND: &str = "invalidate-external-slider-value";
+
+    struct ExternalValueInvalidationHost {
+        child: SingleChild,
+    }
+
+    impl ExternalValueInvalidationHost {
+        fn new<W>(child: W) -> Self
+        where
+            W: Widget + 'static,
+        {
+            Self {
+                child: SingleChild::new(child),
+            }
+        }
+    }
+
+    impl Widget for ExternalValueInvalidationHost {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if let Event::Custom(custom) = event
+                && custom.kind == INVALIDATE_EXTERNAL_SLIDER_VALUE_KIND
+            {
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+        }
+
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.child.measure(ctx, constraints)
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.child.arrange(ctx, bounds);
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.child.paint(ctx);
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            self.child.semantics(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.child.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+
+    fn slider_thumb_center_x(output: &RenderOutput, expected_color: Color) -> f32 {
+        let mut thumb_bounds = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath {
+                path,
+                brush: Brush::Solid(color),
+            } = command
+                && *color == expected_color
+            {
+                let bounds = path.bounds();
+                if bounds.width() > 8.0
+                    && bounds.height() > 8.0
+                    && (bounds.width() - bounds.height()).abs() < 1.0
+                {
+                    thumb_bounds.push(bounds);
+                }
+            }
+        });
+        let thumb = thumb_bounds
+            .into_iter()
+            .max_by(|left, right| left.width().total_cmp(&right.width()))
+            .expect("slider thumb fill should be present");
+        thumb.x() + thumb.width() * 0.5
     }
 
     fn assert_rect_approx_eq(actual: Rect, expected: Rect) {
@@ -14242,6 +14333,51 @@ mod tests {
             })
         );
         assert_eq!(slider.numeric_step, Some(0.01));
+        Ok(())
+    }
+
+    #[test]
+    fn slider_value_when_updates_on_repaint_without_slider_event() -> Result<()> {
+        let value = Rc::new(RefCell::new(0.25));
+        let value_reader = Rc::clone(&value);
+        let theme = DefaultTheme::default();
+        let (mut runtime, window_id) = build_runtime(ExternalValueInvalidationHost::new(
+            SizedBox::new().width(200.0).height(32.0).with_child(
+                Slider::new("Opacity")
+                    .range(0.0, 1.0)
+                    .step(0.01)
+                    .value_when(move || *value_reader.borrow()),
+            ),
+        ));
+
+        let initial = runtime.render(window_id)?;
+        let initial_thumb_x = slider_thumb_center_x(&initial, theme.palette.accent);
+
+        *value.borrow_mut() = 0.75;
+        runtime.handle_event(
+            window_id,
+            Event::Custom(CustomEvent::new(INVALIDATE_EXTERNAL_SLIDER_VALUE_KIND)),
+        )?;
+        let updated = runtime.render(window_id)?;
+        let updated_thumb_x = slider_thumb_center_x(&updated, theme.palette.accent);
+        assert!(
+            updated_thumb_x > initial_thumb_x + 40.0,
+            "expected repaint-only external value change to move slider thumb from {initial_thumb_x} to the right, got {updated_thumb_x}"
+        );
+
+        let slider = updated
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider)
+            .expect("slider semantics present after repaint-only external update");
+        assert_eq!(
+            slider.value,
+            Some(SemanticsValue::Range {
+                value: 0.75,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
         Ok(())
     }
 
