@@ -265,6 +265,24 @@ fn widget_book_new_sections_cover_exported_widget_families() -> Result<()> {
 }
 
 #[test]
+fn widget_book_virtual_table_sample_paints_cells() {
+    let output = render_widget_with_size(
+        "Widget book data gallery",
+        Size::new(1280.0, 1800.0),
+        super::build_data_and_interaction_gallery_with_theme(
+            super::default_widget_book_theme_reader(),
+        ),
+    );
+
+    for text in ["#0000", "asset_00000.png"] {
+        assert!(
+            scene_contains_text(&output, text),
+            "virtual table sample should paint visible cell text {text:?}"
+        );
+    }
+}
+
+#[test]
 fn widget_book_empty_state_sample_keeps_action_inside_bounds() -> Result<()> {
     let theme_reader = widget_book_theme_reader(DefaultTheme::dark());
     let root = SizedBox::new().width(1280.0).height(1200.0).with_child(
@@ -673,6 +691,27 @@ where
     runtime
         .render(window_id)
         .expect("themed widget should render")
+}
+
+fn scene_contains_text(output: &RenderOutput, text: &str) -> bool {
+    let registry = output.frame.text_layout_registry.as_ref();
+    let mut found = false;
+    output.frame.scene.visit_commands(&mut |command| {
+        if found {
+            return;
+        }
+        found = match command {
+            SceneCommand::DrawText(run) => run.text == text,
+            SceneCommand::DrawShapedText(run) => run
+                .resolve(registry)
+                .is_some_and(|layout| layout.text() == text),
+            SceneCommand::DrawShapedTextWindow(run) => run
+                .resolve(registry)
+                .is_some_and(|layout| layout.text() == text),
+            _ => false,
+        };
+    });
+    found
 }
 
 #[test]

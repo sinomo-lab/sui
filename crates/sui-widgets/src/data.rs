@@ -488,6 +488,7 @@ impl Widget for ListView {
                 let next = self.clamp_scroll(viewport.height(), self.scroll_y - delta.y);
                 if (next - self.scroll_y).abs() > f32::EPSILON {
                     self.scroll_y = next;
+                    ctx.request_arrange();
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -586,6 +587,7 @@ impl Widget for ListView {
                     }
                     _ => return,
                 }
+                ctx.request_arrange();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2535,6 +2537,7 @@ impl Widget for TreeView {
                 let next = self.clamp_scroll(viewport.height(), self.scroll_y - delta.y);
                 if (next - self.scroll_y).abs() > f32::EPSILON {
                     self.scroll_y = next;
+                    ctx.request_arrange();
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -2671,6 +2674,7 @@ impl Widget for TreeView {
                     _ => return,
                 }
 
+                ctx.request_arrange();
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -2690,6 +2694,7 @@ impl Widget for TreeView {
                         let next = self.clamp_scroll(viewport.height(), self.scroll_y + delta);
                         if (next - self.scroll_y).abs() > f32::EPSILON {
                             self.scroll_y = next;
+                            ctx.request_arrange();
                             ctx.request_paint();
                             ctx.request_semantics();
                         }
@@ -2712,6 +2717,7 @@ impl Widget for TreeView {
                         self.select_path(&row.path);
                         self.ensure_visible(viewport.height(), &row.path);
                         ctx.request_focus();
+                        ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
                         ctx.set_handled();
@@ -7267,6 +7273,15 @@ mod tests {
         Event::Pointer(scroll)
     }
 
+    fn semantic_bounds(output: &RenderOutput, role: SemanticsRole, name: &str) -> Rect {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == role && node.name.as_deref() == Some(name))
+            .map(|node| node.bounds)
+            .unwrap_or_else(|| panic!("{role:?} semantics named {name:?} should be present"))
+    }
+
     fn handle_ready_events(runtime: &mut Runtime) -> Result<usize> {
         let ready = runtime.drain_ready_events();
         let count = ready.len();
@@ -8604,6 +8619,40 @@ mod tests {
     }
 
     #[test]
+    fn list_item_child_widget_rearranges_when_scrolled() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(260.0).height(96.0).with_child(
+                ListView::new("Assets")
+                    .padding(Insets::ZERO)
+                    .row_height(40.0)
+                    .items([
+                        ListItem::new("First"),
+                        ListItem::new("Custom row").with_content(Label::new("Floating child")),
+                        ListItem::new("Third"),
+                        ListItem::new("Fourth"),
+                    ]),
+            ),
+        );
+
+        let before = runtime.render(window_id)?;
+        let before_child = semantic_bounds(&before, SemanticsRole::Text, "Floating child");
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(32.0, 32.0), Vector::new(0.0, -20.0)),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let after_child = semantic_bounds(&after, SemanticsRole::Text, "Floating child");
+
+        assert!(
+            (before_child.y() - after_child.y() - 20.0).abs() < 0.5,
+            "custom list child should move with scroll: before={before_child:?}, after={after_child:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn list_and_tree_padding_overrides_inset_row_viewports() {
         let padding = Insets {
             left: 24.0,
@@ -8727,6 +8776,44 @@ mod tests {
 
         assert_eq!(*presses.borrow(), 1);
         assert!(changes.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn tree_item_child_widget_rearranges_when_scrolled() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(104.0).with_child(
+                TreeView::new("Scene")
+                    .padding(Insets::ZERO)
+                    .row_height(40.0)
+                    .item(
+                        TreeItem::new("Root")
+                            .expanded(true)
+                            .with_child(TreeItem::new("First child"))
+                            .with_child(
+                                TreeItem::new("Custom tree row")
+                                    .with_content(Label::new("Floating tree child")),
+                            )
+                            .with_child(TreeItem::new("Third child")),
+                    ),
+            ),
+        );
+
+        let before = runtime.render(window_id)?;
+        let before_child = semantic_bounds(&before, SemanticsRole::Text, "Floating tree child");
+
+        runtime.handle_event(
+            window_id,
+            wheel_scroll(Point::new(32.0, 32.0), Vector::new(0.0, -24.0)),
+        )?;
+
+        let after = runtime.render(window_id)?;
+        let after_child = semantic_bounds(&after, SemanticsRole::Text, "Floating tree child");
+
+        assert!(
+            (before_child.y() - after_child.y() - 24.0).abs() < 0.5,
+            "custom tree child should move with scroll: before={before_child:?}, after={after_child:?}"
+        );
         Ok(())
     }
 

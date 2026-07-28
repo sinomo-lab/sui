@@ -63,6 +63,34 @@ fn widget_book_theme_mono_text_style(
         ..theme.mono_text_style(color)
     }
 }
+
+fn paint_widget_book_table_cell(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    text: &str,
+    style: &TextStyle,
+    horizontal_alignment: f32,
+) {
+    if rect.is_empty() {
+        return;
+    }
+
+    ctx.push_clip_rect(rect);
+    paint_single_line_aligned_text(
+        ctx,
+        Rect::new(
+            rect.x() + 8.0,
+            rect.y(),
+            (rect.width() - 16.0).max(0.0),
+            rect.height(),
+        ),
+        text,
+        style,
+        style.line_height,
+        horizontal_alignment,
+    );
+    ctx.pop_clip();
+}
 pub const RETAINED_TEXT_BENCHMARK_TITLE: &str = "SUI Retained Text Scroll Benchmark";
 pub const ANIMATION_BENCHMARK_TITLE: &str = "SUI Animation Benchmark";
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
@@ -5204,8 +5232,9 @@ fn build_data_and_interaction_gallery_with_theme(
                                         ])
                                         .selected(0),
                                 ))
-                                .with_child(SizedBox::new().width(420.0).height(170.0).with_child(
-                                    VirtualTable::new(VIRTUAL_TABLE_NAME)
+                                .with_child({
+                                    let table_theme = Rc::clone(&theme_reader);
+                                    let table = VirtualTable::new(VIRTUAL_TABLE_NAME)
                                         .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                         .columns([
                                             VirtualTableColumn::new("Row").width(80.0),
@@ -5215,8 +5244,47 @@ fn build_data_and_interaction_gallery_with_theme(
                                         .row_count(10_000)
                                         .selected(42)
                                         .row_name(|row| format!("Virtual row {row}"))
-                                        .row_description(|row| format!("Asset record {row}")),
-                                )),
+                                        .row_description(|row| format!("Asset record {row}"))
+                                        .row_painter(move |ctx, row| {
+                                            let theme = table_theme();
+                                            let body = theme.body_text_style();
+                                            let muted = widget_book_theme_text_style(
+                                                theme,
+                                                theme.text.base,
+                                                theme.palette.text_muted,
+                                            );
+                                            let status_style = widget_book_theme_text_style(
+                                                theme,
+                                                theme.text.base,
+                                                theme.palette.accent,
+                                            );
+                                            let row_label = format!("#{:04}", row.row_index);
+                                            let asset = format!("asset_{:05}.png", row.row_index);
+                                            let status = match row.row_index % 4 {
+                                                0 => "Ready",
+                                                1 => "Dirty",
+                                                2 => "Cached",
+                                                _ => "Streaming",
+                                            };
+
+                                            if let Some(rect) = row.column_rects.first().copied() {
+                                                paint_widget_book_table_cell(
+                                                    ctx, rect, &row_label, &muted, 0.0,
+                                                );
+                                            }
+                                            if let Some(rect) = row.column_rects.get(1).copied() {
+                                                paint_widget_book_table_cell(
+                                                    ctx, rect, &asset, &body, 0.0,
+                                                );
+                                            }
+                                            if let Some(rect) = row.column_rects.get(2).copied() {
+                                                paint_widget_book_table_cell(
+                                                    ctx, rect, status, &status_style, 0.0,
+                                                );
+                                            }
+                                        });
+                                    SizedBox::new().width(420.0).height(170.0).with_child(table)
+                                }),
                         ),
                     ),
                 )
