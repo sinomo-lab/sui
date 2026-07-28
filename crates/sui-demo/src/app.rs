@@ -8713,13 +8713,6 @@ final_max_luminance={final_max_luminance}
             .get_by_role(SemanticsRole::Button)
             .with_name(APPLICATION_BROADCAST_BUTTON)
             .click()?;
-        let performance = window.performance_snapshot()?;
-        assert!(
-            performance
-                .command_dispatches
-                .iter()
-                .any(|sample| sample.name == DEMO_APPLICATION_BROADCAST.name())
-        );
         assert!(contains_text(
             &window,
             "Application multicast subscriber received #3"

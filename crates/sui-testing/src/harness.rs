@@ -875,6 +875,8 @@ impl LiveHarnessApp {
             return Ok(());
         }
 
+        self.runtime.process_commands();
+        self.runtime.process_reactive_updates();
         self.update_clock();
         self.runtime.tick(self.frame_clock);
 

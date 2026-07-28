@@ -92,7 +92,7 @@ impl Locator {
 
     pub fn click(&self) -> Result<()> {
         let point = self.action_point("click")?;
-        self.dispatch_event(Event::Pointer(PointerEvent::new(
+        self.dispatch_event_now(Event::Pointer(PointerEvent::new(
             PointerEventKind::Move,
             point,
         )))?;
@@ -100,11 +100,12 @@ impl Locator {
         let mut down = PointerEvent::new(PointerEventKind::Down, point);
         down.button = Some(PointerButton::Primary);
         down.buttons = PointerButtons::new(1);
-        self.dispatch_event(Event::Pointer(down))?;
+        self.dispatch_event_now(Event::Pointer(down))?;
 
         let mut up = PointerEvent::new(PointerEventKind::Up, point);
         up.button = Some(PointerButton::Primary);
-        self.dispatch_event(Event::Pointer(up))
+        self.dispatch_event_now(Event::Pointer(up))?;
+        self.harness.borrow_mut().run_until_idle()
     }
 
     pub fn touch_tap(&self) -> Result<()> {

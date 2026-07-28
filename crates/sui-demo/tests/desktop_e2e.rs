@@ -478,6 +478,8 @@ impl DesktopHarnessApp {
             return Ok(());
         }
 
+        self.runtime.process_commands();
+        self.runtime.process_reactive_updates();
         self.update_clock();
         self.runtime.tick(self.frame_clock);
 
@@ -3301,7 +3303,7 @@ fn run_text_editing_benchmark() -> Result<()> {
     );
     let syntax_scroll = find_node(
         &initial_snapshot,
-        SemanticsRole::ScrollView,
+        SemanticsRole::TextInput,
         TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
     );
     let editor_point = node_center(editor.bounds);
@@ -3582,23 +3584,14 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
 
     let before_frame = harness.capture(window_id)?;
     let before_snapshot = harness.snapshot(window_id)?;
+    let input_label = sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL;
     assert_eq!(
         before_snapshot.title,
         sui_demo_app::widget_book::WINDOW_TITLE
     );
-    assert_eq!(
-        text_input_value(
-            &before_snapshot,
-            sui_demo_app::widget_book::NAME_INPUT_LABEL
-        ),
-        ""
-    );
+    assert_eq!(text_input_value(&before_snapshot, input_label), "");
 
-    let input = find_node(
-        &before_snapshot,
-        SemanticsRole::TextInput,
-        sui_demo_app::widget_book::NAME_INPUT_LABEL,
-    );
+    let input = find_node(&before_snapshot, SemanticsRole::TextInput, input_label);
 
     click_at(&harness, window_id, node_center(input.bounds))?;
     harness.dispatch(
@@ -3611,10 +3604,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let after_frame = harness.capture(window_id)?;
     let after_snapshot = harness.snapshot(window_id)?;
 
-    assert_eq!(
-        text_input_value(&after_snapshot, sui_demo_app::widget_book::NAME_INPUT_LABEL),
-        "Ada"
-    );
+    assert_eq!(text_input_value(&after_snapshot, input_label), "Ada");
     assert!(
         frame_pixel_diff_count(&before_frame, &after_frame) > 0,
         "desktop IME commit should repaint the real renderer output"
@@ -3641,7 +3631,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let before_button = find_node(
         &before_scroll_snapshot,
         SemanticsRole::Button,
-        sui_demo_app::widget_book::PRIMARY_BUTTON_LABEL,
+        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
     );
 
     move_cursor(&harness, window_id, node_center(gallery.bounds))?;
@@ -3661,7 +3651,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     let after_button = find_node(
         &after_snapshot,
         SemanticsRole::Button,
-        sui_demo_app::widget_book::PRIMARY_BUTTON_LABEL,
+        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
     );
 
     assert!(
@@ -3936,7 +3926,7 @@ fn desktop_virtual_scroll_render_is_history_independent_for_same_offset() -> Res
             SemanticsRole::ScrollView,
             "History repro scroll",
         );
-        let scroll_point = Point::new(scroll.bounds.max_x() - 12.0, scroll.bounds.y() + 40.0);
+        let scroll_point = Point::new(scroll.bounds.x() + 48.0, scroll.bounds.y() + 40.0);
         move_cursor(&harness, window_id, scroll_point)?;
 
         for step in steps {
