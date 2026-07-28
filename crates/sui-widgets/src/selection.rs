@@ -65,6 +65,24 @@ pub enum SelectionIntent {
     Toggle,
 }
 
+/// Controls whether a selectable widget writes its selection to the clipboard
+/// from implicit widget-owned routes such as Ctrl+C and accessibility Copy.
+///
+/// `AppManaged` is the default for shared selection scopes: widgets publish
+/// selection state and the application decides how to expose copy commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionClipboardBehavior {
+    #[default]
+    AppManaged,
+    WidgetManaged,
+}
+
+impl SelectionClipboardBehavior {
+    pub const fn is_widget_managed(self) -> bool {
+        matches!(self, Self::WidgetManaged)
+    }
+}
+
 #[derive(Clone)]
 pub enum SelectionPayload {
     Text(String),

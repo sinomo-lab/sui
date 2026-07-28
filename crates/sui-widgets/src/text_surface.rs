@@ -23,7 +23,7 @@ use crate::{
         EditorCommand, EditorCommandResult, EditorDocument, EditorState, EditorTextEdit,
         clamp_to_grapheme_boundary, selection_range,
     },
-    selection::{SelectionChange, SelectionOwnerId, SelectionScope},
+    selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
     text_align::paint_aligned_text,
     text_command::TextCommand,
 };
@@ -154,6 +154,7 @@ pub struct TextSurface {
     line_layout_revision: u64,
     line_layout_style_revision: u64,
     selection_scope: Option<SelectionScope>,
+    clipboard_behavior: Option<SelectionClipboardBehavior>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -193,6 +194,7 @@ impl TextSurface {
             line_layout_revision: u64::MAX,
             line_layout_style_revision: u64::MAX,
             selection_scope: None,
+            clipboard_behavior: None,
             on_change: None,
         }
     }
@@ -327,6 +329,19 @@ impl TextSurface {
     pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
         self.selection_scope = Some(selection_scope);
         self
+    }
+
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.clipboard_behavior = Some(behavior);
+        self
+    }
+
+    pub fn copy_to_clipboard(self, enabled: bool) -> Self {
+        self.clipboard_behavior(if enabled {
+            SelectionClipboardBehavior::WidgetManaged
+        } else {
+            SelectionClipboardBehavior::AppManaged
+        })
     }
 
     pub fn current_value(&self) -> &str {
@@ -626,8 +641,17 @@ impl TextSurface {
         }
     }
 
+    fn handles_implicit_clipboard(&self) -> bool {
+        self.clipboard_behavior
+            .unwrap_or(if self.selection_scope.is_some() {
+                SelectionClipboardBehavior::AppManaged
+            } else {
+                SelectionClipboardBehavior::WidgetManaged
+            })
+            .is_widget_managed()
+    }
+
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let copied_to_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
             ctx.set_clipboard_text(text);
         }
@@ -648,7 +672,7 @@ impl TextSurface {
                 ctx.request_semantics();
             }
         }
-        if result.handled && !(copied_to_clipboard && self.selection_scope.is_some()) {
+        if result.handled {
             ctx.set_handled();
         }
     }
@@ -1446,8 +1470,14 @@ impl Widget for TextSurface {
                 let command_modifier = key.modifiers.control || key.modifiers.meta;
                 let result = match key.key.as_str() {
                     "a" | "A" if command_modifier => self.editor.execute(EditorCommand::SelectAll),
-                    "c" | "C" if command_modifier => self.editor.execute(EditorCommand::Copy),
-                    "x" | "X" if command_modifier && !self.read_only => {
+                    "c" | "C" if command_modifier && self.handles_implicit_clipboard() => {
+                        self.editor.execute(EditorCommand::Copy)
+                    }
+                    "x" | "X"
+                        if command_modifier
+                            && !self.read_only
+                            && self.handles_implicit_clipboard() =>
+                    {
                         self.editor.execute(EditorCommand::Cut)
                     }
                     "v" | "V" if command_modifier && !self.read_only => {
@@ -2017,27 +2047,29 @@ impl Widget for TextSurface {
             scroll_x: self.editor.scroll_x(),
             scroll_y: self.editor.scroll_y(),
         });
-        node.actions = if self.read_only {
-            vec![
-                SemanticsAction::Focus,
-                SemanticsAction::SetSelection,
-                SemanticsAction::Copy,
-            ]
-        } else {
-            vec![
-                SemanticsAction::Focus,
+        let handles_clipboard = self.handles_implicit_clipboard();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
+        if !self.read_only {
+            node.actions.extend([
                 SemanticsAction::SetValue,
-                SemanticsAction::SetSelection,
                 SemanticsAction::InsertText,
                 SemanticsAction::DeleteBackward,
                 SemanticsAction::DeleteForward,
-                SemanticsAction::Copy,
-                SemanticsAction::Cut,
+            ]);
+        }
+        if handles_clipboard {
+            node.actions.push(SemanticsAction::Copy);
+            if !self.read_only {
+                node.actions.push(SemanticsAction::Cut);
+            }
+        }
+        if !self.read_only {
+            node.actions.extend([
                 SemanticsAction::Paste,
                 SemanticsAction::Undo,
                 SemanticsAction::Redo,
-            ]
-        };
+            ]);
+        }
         ctx.push(node);
     }
 
@@ -2935,8 +2967,18 @@ mod tests {
         runtime
             .handle_event(window_id, command_key_event("a"))
             .expect("select all should succeed");
+        runtime.clipboard().set_text("app-owned");
+        runtime
+            .handle_event(window_id, command_key_event("c"))
+            .expect("copy shortcut should be routed to the app");
+        let output = runtime
+            .render(window_id)
+            .expect("render after selection should succeed");
+        let node = text_input_node(&output);
 
         assert_eq!(selection.selected_text().as_deref(), Some("alpha\nbeta"));
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("app-owned"));
+        assert!(!node.actions.contains(&SemanticsAction::Copy));
     }
 
     #[test]

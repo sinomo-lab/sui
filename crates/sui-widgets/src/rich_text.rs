@@ -11,7 +11,7 @@ use sui_text::{
     TextSelection, TextSpan, TextStyle,
 };
 
-use crate::{DefaultTheme, SelectionScope, TextCommand};
+use crate::{DefaultTheme, SelectionClipboardBehavior, SelectionScope, TextCommand};
 
 /// Maps byte ranges in rendered rich text back to the original source.
 ///
@@ -168,6 +168,7 @@ pub struct RichText {
     min_height: f32,
     layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
+    clipboard_behavior: SelectionClipboardBehavior,
     source_map: Option<RichTextSourceMap>,
     selection: TextSelection,
     selection_color: Color,
@@ -185,6 +186,7 @@ impl RichText {
             min_height: 0.0,
             layout: None,
             selection_scope: None,
+            clipboard_behavior: SelectionClipboardBehavior::AppManaged,
             source_map: None,
             selection: TextSelection::new(TextCursor::default(), TextCursor::default()),
             selection_color: Color::rgba(0.18, 0.62, 0.86, 0.32),
@@ -258,6 +260,19 @@ impl RichText {
     pub fn selectable(mut self, scope: SelectionScope) -> Self {
         self.selection_scope = Some(scope);
         self
+    }
+
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.clipboard_behavior = behavior;
+        self
+    }
+
+    pub fn copy_to_clipboard(self, enabled: bool) -> Self {
+        self.clipboard_behavior(if enabled {
+            SelectionClipboardBehavior::WidgetManaged
+        } else {
+            SelectionClipboardBehavior::AppManaged
+        })
     }
 
     /// Map copied rendered text back to an original source representation.
@@ -385,6 +400,10 @@ impl RichText {
         ctx.set_clipboard_text(selected);
         true
     }
+
+    fn handles_implicit_clipboard(&self) -> bool {
+        self.clipboard_behavior.is_widget_managed()
+    }
 }
 
 impl Default for RichText {
@@ -461,7 +480,7 @@ impl Widget for RichText {
                         self.set_selection(ctx, 0, len);
                         ctx.set_handled();
                     }
-                    "c" | "C" if command => {
+                    "c" | "C" if command && self.handles_implicit_clipboard() => {
                         if self.copy_selection(ctx) {
                             ctx.set_handled();
                         }

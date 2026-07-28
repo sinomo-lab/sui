@@ -123,8 +123,8 @@ pub use rich_document::{
 };
 pub use rich_text::{RichText, RichTextSourceMap, RichTextSourceSpan};
 pub use selection::{
-    SelectionChange, SelectionEntry, SelectionIntent, SelectionOrder, SelectionOwnerId,
-    SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
+    SelectionChange, SelectionClipboardBehavior, SelectionEntry, SelectionIntent, SelectionOrder,
+    SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
 };
 pub use text_align::{paint_aligned_text, paint_single_line_aligned_text, wrap_text_lines};
 pub use text_command::{TEXT_COMMAND, TextCommand};

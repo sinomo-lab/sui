@@ -5,7 +5,7 @@ use crate::{
     editor::{EditorCommand, EditorCommandResult, EditorState, selection_range},
     overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
-    selection::{SelectionChange, SelectionOwnerId, SelectionScope},
+    selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
     text_align::{
         HorizontalTextAlignmentMode, aligned_text_rect_for_layout,
         aligned_text_rect_for_layout_with_mode, aligned_text_rect_for_text, paint_aligned_text,
@@ -1336,6 +1336,7 @@ pub struct Label {
     measurement: Option<TextMeasurement>,
     layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
+    clipboard_behavior: SelectionClipboardBehavior,
     selection: TextSelection,
     dragging_selection: Option<u64>,
 }
@@ -1356,6 +1357,7 @@ impl Label {
             measurement: None,
             layout: None,
             selection_scope: None,
+            clipboard_behavior: SelectionClipboardBehavior::AppManaged,
             selection: TextSelection::new(TextCursor::new(0), TextCursor::new(0)),
             dragging_selection: None,
         }
@@ -1399,6 +1401,19 @@ impl Label {
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
         self.selection_scope = Some(selection_scope);
         self
+    }
+
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.clipboard_behavior = behavior;
+        self
+    }
+
+    pub fn copy_to_clipboard(self, enabled: bool) -> Self {
+        self.clipboard_behavior(if enabled {
+            SelectionClipboardBehavior::WidgetManaged
+        } else {
+            SelectionClipboardBehavior::AppManaged
+        })
     }
 
     pub fn selection_scope(&self) -> Option<&SelectionScope> {
@@ -1580,6 +1595,10 @@ impl Label {
         );
     }
 
+    fn handles_implicit_clipboard(&self) -> bool {
+        self.clipboard_behavior.is_widget_managed()
+    }
+
     fn copy_selection(&self, ctx: &mut EventCtx) -> bool {
         let text = self.current_text();
         let range = self.selected_range(text.len());
@@ -1680,7 +1699,8 @@ impl Widget for Label {
                 if key.state == KeyState::Pressed
                     && ctx.is_focused()
                     && (key.modifiers.control || key.modifiers.meta)
-                    && matches!(key.key.as_str(), "c" | "C") =>
+                    && matches!(key.key.as_str(), "c" | "C")
+                    && self.handles_implicit_clipboard() =>
             {
                 if self.copy_selection(ctx) {
                     ctx.set_handled();
@@ -1708,7 +1728,9 @@ impl Widget for Label {
                         ctx.request_semantics();
                         ctx.set_handled();
                     }
-                    SemanticsActionRequest::Copy if self.copy_selection(ctx) => {
+                    SemanticsActionRequest::Copy
+                        if self.handles_implicit_clipboard() && self.copy_selection(ctx) =>
+                    {
                         ctx.set_handled();
                     }
                     _ => {}
@@ -1875,11 +1897,10 @@ impl Widget for Label {
             node.value = Some(SemanticsValue::Text(text));
         }
         if self.selection_scope.is_some() {
-            node.actions = vec![
-                SemanticsAction::Focus,
-                SemanticsAction::SetSelection,
-                SemanticsAction::Copy,
-            ];
+            node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
+            if self.handles_implicit_clipboard() {
+                node.actions.push(SemanticsAction::Copy);
+            }
             node.state.focused = ctx.is_focused();
         }
         ctx.push(node);
@@ -6014,6 +6035,7 @@ pub struct TextArea {
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
+    clipboard_behavior: Option<SelectionClipboardBehavior>,
     on_change: Option<Box<dyn FnMut(String)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
     on_submit: Option<Box<dyn FnMut(&str)>>,
@@ -6045,6 +6067,7 @@ impl TextArea {
             display_layout: None,
             input_layout: None,
             selection_scope: None,
+            clipboard_behavior: None,
             on_change: None,
             on_change_with_ctx: None,
             on_submit: None,
@@ -6114,6 +6137,19 @@ impl TextArea {
     pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
         self.selection_scope = Some(selection_scope);
         self
+    }
+
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.clipboard_behavior = Some(behavior);
+        self
+    }
+
+    pub fn copy_to_clipboard(self, enabled: bool) -> Self {
+        self.clipboard_behavior(if enabled {
+            SelectionClipboardBehavior::WidgetManaged
+        } else {
+            SelectionClipboardBehavior::AppManaged
+        })
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
@@ -6229,8 +6265,17 @@ impl TextArea {
         }
     }
 
+    fn handles_implicit_clipboard(&self) -> bool {
+        self.clipboard_behavior
+            .unwrap_or(if self.selection_scope.is_some() {
+                SelectionClipboardBehavior::AppManaged
+            } else {
+                SelectionClipboardBehavior::WidgetManaged
+            })
+            .is_widget_managed()
+    }
+
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let copied_to_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
             ctx.set_clipboard_text(text);
         }
@@ -6251,9 +6296,7 @@ impl TextArea {
             if self.focused {
                 self.reset_caret_blink(ctx);
             }
-            if !(copied_to_clipboard && self.selection_scope.is_some()) {
-                ctx.set_handled();
-            }
+            ctx.set_handled();
         }
     }
 
@@ -6467,9 +6510,13 @@ impl Widget for TextArea {
                 }
             }
             Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
-                if let Some(commands) =
-                    semantics_editor_commands(ctx, &semantics.action, self.read_only, false)
-                {
+                if let Some(commands) = semantics_editor_commands(
+                    ctx,
+                    &semantics.action,
+                    self.read_only,
+                    false,
+                    self.handles_implicit_clipboard(),
+                ) {
                     for command in commands {
                         self.execute_editor_command(ctx, command);
                     }
@@ -6543,8 +6590,16 @@ impl Widget for TextArea {
                 let command_modifier = key.modifiers.control || key.modifiers.meta;
                 let command = match key.key.as_str() {
                     "a" | "A" if command_modifier => EditorCommand::SelectAll,
-                    "c" | "C" if command_modifier => EditorCommand::Copy,
-                    "x" | "X" if command_modifier && !self.read_only => EditorCommand::Cut,
+                    "c" | "C" if command_modifier && self.handles_implicit_clipboard() => {
+                        EditorCommand::Copy
+                    }
+                    "x" | "X"
+                        if command_modifier
+                            && !self.read_only
+                            && self.handles_implicit_clipboard() =>
+                    {
+                        EditorCommand::Cut
+                    }
                     "v" | "V" if command_modifier && !self.read_only => paste_command(ctx),
                     "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
                         EditorCommand::Redo
@@ -6823,27 +6878,29 @@ impl Widget for TextArea {
             scroll_x: 0.0,
             scroll_y: 0.0,
         });
-        node.actions = if self.read_only {
-            vec![
-                SemanticsAction::Focus,
-                SemanticsAction::SetSelection,
-                SemanticsAction::Copy,
-            ]
-        } else {
-            vec![
-                SemanticsAction::Focus,
+        let handles_clipboard = self.handles_implicit_clipboard();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
+        if !self.read_only {
+            node.actions.extend([
                 SemanticsAction::SetValue,
-                SemanticsAction::SetSelection,
                 SemanticsAction::InsertText,
                 SemanticsAction::DeleteBackward,
                 SemanticsAction::DeleteForward,
-                SemanticsAction::Copy,
-                SemanticsAction::Cut,
+            ]);
+        }
+        if handles_clipboard {
+            node.actions.push(SemanticsAction::Copy);
+            if !self.read_only {
+                node.actions.push(SemanticsAction::Cut);
+            }
+        }
+        if !self.read_only {
+            node.actions.extend([
                 SemanticsAction::Paste,
                 SemanticsAction::Undo,
                 SemanticsAction::Redo,
-            ]
-        };
+            ]);
+        }
         ctx.push(node);
     }
 
@@ -7933,6 +7990,7 @@ pub struct TextInput {
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
+    clipboard_behavior: Option<SelectionClipboardBehavior>,
     on_change: Option<Box<dyn FnMut(String)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
@@ -7967,6 +8025,7 @@ impl TextInput {
             display_layout: None,
             input_layout: None,
             selection_scope: None,
+            clipboard_behavior: None,
             on_change: None,
             on_change_with_ctx: None,
             on_focus_change: None,
@@ -8044,6 +8103,19 @@ impl TextInput {
     pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
         self.selection_scope = Some(selection_scope);
         self
+    }
+
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.clipboard_behavior = Some(behavior);
+        self
+    }
+
+    pub fn copy_to_clipboard(self, enabled: bool) -> Self {
+        self.clipboard_behavior(if enabled {
+            SelectionClipboardBehavior::WidgetManaged
+        } else {
+            SelectionClipboardBehavior::AppManaged
+        })
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
@@ -8166,8 +8238,17 @@ impl TextInput {
         }
     }
 
+    fn handles_implicit_clipboard(&self) -> bool {
+        self.clipboard_behavior
+            .unwrap_or(if self.selection_scope.is_some() {
+                SelectionClipboardBehavior::AppManaged
+            } else {
+                SelectionClipboardBehavior::WidgetManaged
+            })
+            .is_widget_managed()
+    }
+
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let copied_to_clipboard = result.clipboard_text.is_some();
         if let Some(text) = result.clipboard_text.take() {
             ctx.set_clipboard_text(text);
         }
@@ -8188,9 +8269,7 @@ impl TextInput {
             if self.focused {
                 self.reset_caret_blink(ctx);
             }
-            if !(copied_to_clipboard && self.selection_scope.is_some()) {
-                ctx.set_handled();
-            }
+            ctx.set_handled();
         }
     }
 
@@ -8473,9 +8552,13 @@ impl Widget for TextInput {
                 }
             }
             Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
-                if let Some(commands) =
-                    semantics_editor_commands(ctx, &semantics.action, self.read_only, true)
-                {
+                if let Some(commands) = semantics_editor_commands(
+                    ctx,
+                    &semantics.action,
+                    self.read_only,
+                    true,
+                    self.handles_implicit_clipboard(),
+                ) {
                     for command in commands {
                         self.execute_editor_command(ctx, command);
                     }
@@ -8584,8 +8667,16 @@ impl Widget for TextInput {
                 let command_modifier = key.modifiers.control || key.modifiers.meta;
                 let command = match key.key.as_str() {
                     "a" | "A" if command_modifier => EditorCommand::SelectAll,
-                    "c" | "C" if command_modifier => EditorCommand::Copy,
-                    "x" | "X" if command_modifier && !self.read_only => EditorCommand::Cut,
+                    "c" | "C" if command_modifier && self.handles_implicit_clipboard() => {
+                        EditorCommand::Copy
+                    }
+                    "x" | "X"
+                        if command_modifier
+                            && !self.read_only
+                            && self.handles_implicit_clipboard() =>
+                    {
+                        EditorCommand::Cut
+                    }
                     "v" | "V" if command_modifier && !self.read_only => match paste_command(ctx) {
                         EditorCommand::Paste(text) => EditorCommand::Paste(single_line_text(text)),
                         command => command,
@@ -8886,27 +8977,29 @@ impl Widget for TextInput {
             scroll_x: 0.0,
             scroll_y: 0.0,
         });
-        node.actions = if self.read_only {
-            vec![
-                SemanticsAction::Focus,
-                SemanticsAction::SetSelection,
-                SemanticsAction::Copy,
-            ]
-        } else {
-            vec![
-                SemanticsAction::Focus,
+        let handles_clipboard = self.handles_implicit_clipboard();
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
+        if !self.read_only {
+            node.actions.extend([
                 SemanticsAction::SetValue,
-                SemanticsAction::SetSelection,
                 SemanticsAction::InsertText,
                 SemanticsAction::DeleteBackward,
                 SemanticsAction::DeleteForward,
-                SemanticsAction::Copy,
-                SemanticsAction::Cut,
+            ]);
+        }
+        if handles_clipboard {
+            node.actions.push(SemanticsAction::Copy);
+            if !self.read_only {
+                node.actions.push(SemanticsAction::Cut);
+            }
+        }
+        if !self.read_only {
+            node.actions.extend([
                 SemanticsAction::Paste,
                 SemanticsAction::Undo,
                 SemanticsAction::Redo,
-            ]
-        };
+            ]);
+        }
         ctx.push(node);
     }
 
@@ -8989,6 +9082,16 @@ impl PasswordInput {
 
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
         self.inner = self.inner.selectable(selection_scope);
+        self
+    }
+
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.inner = self.inner.clipboard_behavior(behavior);
+        self
+    }
+
+    pub fn copy_to_clipboard(mut self, enabled: bool) -> Self {
+        self.inner = self.inner.copy_to_clipboard(enabled);
         self
     }
 
@@ -9115,6 +9218,16 @@ impl DateTimeInput {
         self
     }
 
+    pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
+        self.inner = self.inner.clipboard_behavior(behavior);
+        self
+    }
+
+    pub fn copy_to_clipboard(mut self, enabled: bool) -> Self {
+        self.inner = self.inner.copy_to_clipboard(enabled);
+        self
+    }
+
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(String) + 'static,
@@ -9216,6 +9329,7 @@ fn semantics_editor_commands(
     action: &SemanticsActionRequest,
     read_only: bool,
     single_line: bool,
+    handles_clipboard: bool,
 ) -> Option<Vec<EditorCommand>> {
     let normalize = |text: String| {
         if single_line {
@@ -9245,8 +9359,10 @@ fn semantics_editor_commands(
         SemanticsActionRequest::DeleteForward if !read_only => {
             Some(vec![EditorCommand::DeleteForward])
         }
-        SemanticsActionRequest::Copy => Some(vec![EditorCommand::Copy]),
-        SemanticsActionRequest::Cut if !read_only => Some(vec![EditorCommand::Cut]),
+        SemanticsActionRequest::Copy if handles_clipboard => Some(vec![EditorCommand::Copy]),
+        SemanticsActionRequest::Cut if !read_only && handles_clipboard => {
+            Some(vec![EditorCommand::Cut])
+        }
         SemanticsActionRequest::Paste if !read_only => {
             let command = match paste_command(ctx) {
                 EditorCommand::Paste(text) => EditorCommand::Paste(normalize(text)),
@@ -10498,9 +10614,10 @@ mod tests {
     }
 
     #[test]
-    fn selectable_label_copies_with_hotkey_command_and_semantics() -> Result<()> {
+    fn selectable_label_copy_shortcut_is_app_managed_by_default() -> Result<()> {
         let selection = SelectionScope::new();
-        let (mut runtime, window_id) = build_runtime(Label::new("Hello SUI").selectable(selection));
+        let (mut runtime, window_id) =
+            build_runtime(Label::new("Hello SUI").selectable(selection.clone()));
         let output = runtime.render(window_id)?;
         let label = output
             .semantics
@@ -10526,11 +10643,18 @@ mod tests {
             label.state.focused,
             "right click should focus selectable text"
         );
-        assert!(label.actions.contains(&SemanticsAction::Copy));
+        assert!(!label.actions.contains(&SemanticsAction::Copy));
 
         runtime.handle_event(window_id, command_key("a"))?;
+        assert_eq!(
+            selection.selected_text().as_deref(),
+            Some("Hello SUI"),
+            "selectable labels should still publish selection state"
+        );
+
+        runtime.clipboard().set_text("app-owned");
         runtime.handle_event(window_id, command_key("c"))?;
-        assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("app-owned"));
 
         runtime.clipboard().set_text("");
         runtime.handle_command(
@@ -10539,6 +10663,44 @@ mod tests {
             TEXT_COMMAND,
             TextCommand::Copy,
         );
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn selectable_label_can_opt_into_widget_managed_copy() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            Label::new("Hello SUI")
+                .selectable(selection)
+                .copy_to_clipboard(true),
+        );
+        let output = runtime.render(window_id)?;
+        let label = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Text && node.name.as_deref() == Some("Hello SUI")
+            })
+            .expect("selectable label semantics should exist");
+        let label_id = label.id;
+        let center = Point::new(
+            label.bounds.x() + 4.0,
+            label.bounds.y() + label.bounds.height() * 0.5,
+        );
+
+        runtime.handle_event(window_id, secondary_pointer_down(center))?;
+        let focused = runtime.render(window_id)?;
+        let label = focused
+            .semantics
+            .iter()
+            .find(|node| node.id == label_id)
+            .expect("selectable label semantics should remain present");
+        assert!(label.actions.contains(&SemanticsAction::Copy));
+
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.handle_event(window_id, command_key("c"))?;
         assert_eq!(runtime.clipboard().text().as_deref(), Some("Hello SUI"));
 
         runtime.clipboard().set_text("");
@@ -12470,6 +12632,29 @@ mod tests {
     }
 
     #[test]
+    fn selectable_text_input_copy_shortcut_is_app_managed_by_default() -> Result<()> {
+        let selection = SelectionScope::new();
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada Lovelace")
+                .selectable(selection.clone()),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.clipboard().set_text("app-owned");
+        runtime.handle_event(window_id, command_key("c"))?;
+
+        assert_eq!(selection.selected_text().as_deref(), Some("Ada Lovelace"));
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("app-owned"));
+        Ok(())
+    }
+
+    #[test]
     fn text_input_paints_keyboard_selection_and_copies_it() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(TextInput::new("Name").value("Ada Lovelace"));
@@ -12599,7 +12784,8 @@ mod tests {
             TextArea::new("Connection details")
                 .value("node = local\naddress = 127.0.0.1:21353")
                 .read_only()
-                .selectable(selection.clone()),
+                .selectable(selection.clone())
+                .copy_to_clipboard(true),
         );
 
         let _ = runtime.render(window_id)?;
@@ -12653,6 +12839,34 @@ mod tests {
 
         // Pasted text is coerced to a single line.
         assert_eq!(value.borrow().as_str(), "GraceHopper");
+        Ok(())
+    }
+
+    #[test]
+    fn text_input_can_opt_out_of_widget_managed_copy_shortcut() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            TextInput::new("Name")
+                .value("Ada Lovelace")
+                .copy_to_clipboard(false),
+        );
+
+        let _ = runtime.render(window_id)?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(8.0, 8.0), true),
+        )?;
+        runtime.handle_event(window_id, command_key("a"))?;
+        runtime.clipboard().set_text("app-owned");
+        runtime.handle_event(window_id, command_key("c"))?;
+        let output = runtime.render(window_id)?;
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::TextInput)
+            .expect("text input semantics present");
+
+        assert_eq!(runtime.clipboard().text().as_deref(), Some("app-owned"));
+        assert!(!input.actions.contains(&SemanticsAction::Copy));
         Ok(())
     }
 
