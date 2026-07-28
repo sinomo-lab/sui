@@ -123,12 +123,27 @@ impl ListItem {
         self
     }
 
+    /// Let otherwise unhandled pointer presses on custom content activate the
+    /// owning list row. Interactive descendants still receive the event first.
+    pub fn activate_with_content(self) -> Self {
+        self.activate_with_child()
+    }
+
     pub fn with_child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
     {
         self.content = Some(SingleChild::new(child));
         self
+    }
+
+    /// Replace the built-in label/detail presentation with arbitrary retained
+    /// widget content for this row.
+    pub fn with_content<W>(self, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.with_child(content)
     }
 
     pub fn label(&self) -> &str {
@@ -157,6 +172,7 @@ pub struct ListView {
     press_motion: IndexedInteractionMotion<usize>,
     focus_animation: AnimatedScalar,
     row_height: Option<f32>,
+    padding: Option<Insets>,
     scroll_y: f32,
     row_heights: Vec<f32>,
     row_offsets: Vec<f32>,
@@ -180,6 +196,7 @@ impl ListView {
             press_motion: IndexedInteractionMotion::new(),
             focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
+            padding: None,
             scroll_y: 0.0,
             row_heights: Vec::new(),
             row_offsets: Vec::new(),
@@ -232,6 +249,13 @@ impl ListView {
 
     pub fn row_height(mut self, row_height: f32) -> Self {
         self.row_height = Some(row_height.max(0.0));
+        self
+    }
+
+    /// Override the theme-provided padding between the list surface and its
+    /// rows. Pass `Insets::ZERO` for an edge-to-edge list.
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = Some(padding);
         self
     }
 
@@ -295,7 +319,12 @@ impl ListView {
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, self.resolved_theme().metrics.data_viewport_padding)
+        inset_rect(bounds, self.resolved_padding())
+    }
+
+    fn resolved_padding(&self) -> Insets {
+        self.padding
+            .unwrap_or(self.resolved_theme().metrics.data_viewport_padding)
     }
 
     fn measured_content_height(&self) -> f32 {
@@ -572,10 +601,11 @@ impl Widget for ListView {
         let text_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
         let base_row_height = self.resolved_row_height();
+        let padding = self.resolved_padding();
         let child_max_width = if constraints.max.width.is_finite() {
             (constraints.max.width
-                - metrics.data_viewport_padding.left
-                - metrics.data_viewport_padding.right
+                - padding.left
+                - padding.right
                 - metrics.data_row_padding.left
                 - metrics.data_row_padding.right)
                 .max(0.0)
@@ -655,12 +685,8 @@ impl Widget for ListView {
 
         self.content_height = content_height;
         let desired = Size::new(
-            content_width
-                + metrics.data_viewport_padding.left
-                + metrics.data_viewport_padding.right,
-            self.measured_content_height()
-                + metrics.data_viewport_padding.top
-                + metrics.data_viewport_padding.bottom,
+            content_width + padding.left + padding.right,
+            self.measured_content_height() + padding.top + padding.bottom,
         );
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
@@ -2085,7 +2111,6 @@ impl Widget for LayerList {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
 pub struct TreeItem {
     key: Option<u64>,
     label: String,
@@ -2093,6 +2118,23 @@ pub struct TreeItem {
     children: Vec<TreeItem>,
     expanded: bool,
     disabled: bool,
+    activate_with_content: bool,
+    content: Option<SingleChild>,
+}
+
+impl fmt::Debug for TreeItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TreeItem")
+            .field("key", &self.key)
+            .field("label", &self.label)
+            .field("detail", &self.detail)
+            .field("children", &self.children)
+            .field("expanded", &self.expanded)
+            .field("disabled", &self.disabled)
+            .field("activate_with_content", &self.activate_with_content)
+            .field("has_content", &self.content.is_some())
+            .finish()
+    }
 }
 
 impl TreeItem {
@@ -2104,6 +2146,8 @@ impl TreeItem {
             children: Vec::new(),
             expanded: false,
             disabled: false,
+            activate_with_content: false,
+            content: None,
         }
     }
 
@@ -2127,6 +2171,23 @@ impl TreeItem {
         self
     }
 
+    /// Let otherwise unhandled pointer presses on custom content activate the
+    /// owning tree row. Interactive descendants still receive the event first.
+    pub fn activate_with_content(mut self) -> Self {
+        self.activate_with_content = true;
+        self
+    }
+
+    /// Replace the built-in label/detail presentation with arbitrary retained
+    /// widget content while preserving this item's hierarchy and disclosure.
+    pub fn with_content<W>(mut self, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.content = Some(SingleChild::new(content));
+        self
+    }
+
     pub fn with_child(mut self, child: TreeItem) -> Self {
         self.children.push(child);
         self
@@ -2143,6 +2204,14 @@ impl TreeItem {
     pub fn label(&self) -> &str {
         &self.label
     }
+
+    pub fn has_content(&self) -> bool {
+        self.content.is_some()
+    }
+
+    fn can_activate_from_row(&self) -> bool {
+        !self.disabled && (self.content.is_none() || self.activate_with_content)
+    }
 }
 
 pub struct TreeView {
@@ -2157,9 +2226,13 @@ pub struct TreeView {
     press_motion: IndexedInteractionMotion<Vec<usize>>,
     focus_animation: AnimatedScalar,
     row_height: Option<f32>,
+    padding: Option<Insets>,
     scroll_y: f32,
     visible_rows: Vec<TreeRow>,
     visible_rows_dirty: Cell<bool>,
+    row_heights: Vec<f32>,
+    row_offsets: Vec<f32>,
+    content_height: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
 }
 
@@ -2177,9 +2250,13 @@ impl TreeView {
             press_motion: IndexedInteractionMotion::new(),
             focus_animation: AnimatedScalar::new(0.0),
             row_height: None,
+            padding: None,
             scroll_y: 0.0,
             visible_rows: Vec::new(),
             visible_rows_dirty: Cell::new(true),
+            row_heights: Vec::new(),
+            row_offsets: Vec::new(),
+            content_height: 0.0,
             on_change: None,
         }
     }
@@ -2218,6 +2295,13 @@ impl TreeView {
         self
     }
 
+    /// Override the theme-provided padding between the tree surface and its
+    /// rows. Pass `Insets::ZERO` for an edge-to-edge tree.
+    pub fn padding(mut self, padding: Insets) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = Some(vec![index]);
         self
@@ -2252,7 +2336,12 @@ impl TreeView {
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, self.resolved_theme().metrics.data_viewport_padding)
+        inset_rect(bounds, self.resolved_padding())
+    }
+
+    fn resolved_padding(&self) -> Insets {
+        self.padding
+            .unwrap_or(self.resolved_theme().metrics.data_viewport_padding)
     }
 
     fn sync_visible_rows(&mut self) {
@@ -2261,15 +2350,35 @@ impl TreeView {
         }
         self.visible_rows.clear();
         flatten_tree(&self.items, 0, &mut Vec::new(), &mut self.visible_rows);
+        self.row_heights.clear();
+        self.row_offsets.clear();
+        self.content_height = 0.0;
     }
 
-    fn content_height(&self) -> f32 {
-        self.visible_rows.len() as f32 * self.resolved_row_height()
+    fn measured_content_height(&self) -> f32 {
+        if self.row_heights.len() == self.visible_rows.len() {
+            self.content_height
+        } else {
+            self.visible_rows.len() as f32 * self.resolved_row_height()
+        }
     }
 
     fn clamp_scroll(&self, viewport_height: f32, scroll_y: f32) -> f32 {
-        let max_scroll = (self.content_height() - viewport_height).max(0.0);
+        let max_scroll = (self.measured_content_height() - viewport_height).max(0.0);
         scroll_y.clamp(0.0, max_scroll)
+    }
+
+    fn row_metrics(&self, index: usize) -> Option<(f32, f32)> {
+        self.row_offsets
+            .get(index)
+            .zip(self.row_heights.get(index))
+            .map(|(offset, height)| (*offset, *height))
+            .or_else(|| {
+                (index < self.visible_rows.len()).then(|| {
+                    let row_height = self.resolved_row_height();
+                    (index as f32 * row_height, row_height)
+                })
+            })
     }
 
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<TreeRow> {
@@ -2278,10 +2387,50 @@ impl TreeView {
             return None;
         }
 
-        let row_height = self.resolved_row_height();
         let y = position.y - viewport.y() + self.scroll_y;
-        let index = (y / row_height).floor() as usize;
-        self.visible_rows.get(index).cloned()
+        (0..self.visible_rows.len())
+            .find(|index| {
+                self.row_metrics(*index)
+                    .is_some_and(|(top, height)| y >= top && y < top + height)
+            })
+            .and_then(|index| self.visible_rows.get(index).cloned())
+    }
+
+    fn row_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        let viewport = self.viewport_rect(bounds);
+        let (top, height) = self.row_metrics(index)?;
+        Some(Rect::new(
+            viewport.x(),
+            viewport.y() + top - self.scroll_y,
+            viewport.width(),
+            height,
+        ))
+    }
+
+    fn position_targets_disclosure(&self, bounds: Rect, position: Point, row: &TreeRow) -> bool {
+        if !row.has_children {
+            return false;
+        }
+        let Some(index) = self
+            .visible_rows
+            .iter()
+            .position(|candidate| candidate.path == row.path)
+        else {
+            return false;
+        };
+        self.row_rect(bounds, index).is_some_and(|row_rect| {
+            disclosure_rect(&self.resolved_theme(), row_rect, row.depth).contains(position)
+        })
+    }
+
+    fn row_blocks_parent_activation(&self, path: &[usize]) -> bool {
+        tree_item(&self.items, path)
+            .is_some_and(|item| item.content.is_some() && !item.activate_with_content)
+    }
+
+    fn row_activation_waits_for_content_target(&self, path: &[usize]) -> bool {
+        tree_item(&self.items, path)
+            .is_some_and(|item| item.content.is_some() && item.activate_with_content)
     }
 
     fn select_path(&mut self, path: &[usize]) {
@@ -2313,8 +2462,9 @@ impl TreeView {
         let Some(index) = self.visible_rows.iter().position(|row| row.path == path) else {
             return;
         };
-        let row_height = self.resolved_row_height();
-        let top = index as f32 * row_height;
+        let Some((top, row_height)) = self.row_metrics(index) else {
+            return;
+        };
         let bottom = top + row_height;
         if top < self.scroll_y {
             self.scroll_y = top;
@@ -2395,9 +2545,26 @@ impl Widget for TreeView {
                     && pointer.button == Some(PointerButton::Primary)
                     && viewport.contains(pointer.position) =>
             {
-                let pressed = self
-                    .row_at_position(ctx.bounds(), pointer.position)
-                    .map(|row| row.path);
+                let pressed_row = self.row_at_position(ctx.bounds(), pointer.position);
+                let targets_disclosure = pressed_row.as_ref().is_some_and(|row| {
+                    self.position_targets_disclosure(ctx.bounds(), pointer.position, row)
+                });
+                if !targets_disclosure
+                    && pressed_row
+                        .as_ref()
+                        .is_some_and(|row| self.row_blocks_parent_activation(&row.path))
+                {
+                    return;
+                }
+                if ctx.phase() == EventPhase::Capture
+                    && !targets_disclosure
+                    && pressed_row
+                        .as_ref()
+                        .is_some_and(|row| self.row_activation_waits_for_content_target(&row.path))
+                {
+                    return;
+                }
+                let pressed = pressed_row.map(|row| row.path);
                 self.set_hovered(pressed.clone(), ctx);
                 self.set_pressed(pressed, ctx);
                 ctx.request_focus();
@@ -2408,27 +2575,15 @@ impl Widget for TreeView {
                 if pointer.kind == PointerEventKind::Up
                     && pointer.button == Some(PointerButton::Primary) =>
             {
+                if self.pressed.is_none() {
+                    return;
+                }
                 let hovered_row = self.row_at_position(ctx.bounds(), pointer.position);
                 if let Some(row) = hovered_row
                     .as_ref()
                     .filter(|row| self.pressed.as_deref() == Some(row.path.as_slice()))
                 {
-                    let row_height = self.resolved_row_height();
-                    let viewport_rect = self.viewport_rect(ctx.bounds());
-                    let index = self
-                        .visible_rows
-                        .iter()
-                        .position(|candidate| candidate.path == row.path)
-                        .unwrap_or(0);
-                    let row_rect = Rect::new(
-                        viewport_rect.x(),
-                        viewport_rect.y() + (index as f32 * row_height) - self.scroll_y,
-                        viewport_rect.width(),
-                        row_height,
-                    );
-                    if disclosure_rect(&self.resolved_theme(), row_rect, row.depth)
-                        .contains(pointer.position)
-                    {
+                    if self.position_targets_disclosure(ctx.bounds(), pointer.position, row) {
                         if self.toggle_path(&row.path) {
                             ctx.request_measure();
                         }
@@ -2585,29 +2740,82 @@ impl Widget for TreeView {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_visible_rows();
         let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
-        let width = self
-            .visible_rows
-            .iter()
-            .map(|row| {
-                let label_start = tree_label_offset(&theme, row.depth);
+        let base_row_height = self.resolved_row_height();
+        let padding = self.resolved_padding();
+        let explicit_row_height = self.row_height.is_some();
+        let mut content_width: f32 = 220.0;
+        let mut content_height = 0.0;
+        self.row_offsets.clear();
+        self.row_heights.clear();
+
+        for index in 0..self.visible_rows.len() {
+            self.row_offsets.push(content_height);
+            let row = &self.visible_rows[index];
+            let path = row.path.clone();
+            let depth = row.depth;
+            let detail = row.detail.clone();
+            let label_start = tree_label_offset(&theme, depth);
+            let child_max_width = if constraints.max.width.is_finite() {
+                (constraints.max.width
+                    - padding.left
+                    - padding.right
+                    - label_start
+                    - metrics.data_row_padding.right)
+                    .max(0.0)
+            } else {
+                260.0
+            };
+
+            let (row_width, row_height) = if let Some(content) =
+                tree_item_mut(&mut self.items, &path).and_then(|item| item.content.as_mut())
+            {
+                let content_constraints = if explicit_row_height {
+                    let child_height = (base_row_height
+                        - metrics.data_row_padding.top
+                        - metrics.data_row_padding.bottom)
+                        .max(0.0);
+                    Constraints::new(
+                        Size::new(0.0, child_height),
+                        Size::new(child_max_width, child_height),
+                    )
+                } else {
+                    Constraints::new(Size::ZERO, Size::new(child_max_width, f32::INFINITY))
+                };
+                let child_size = content.measure(ctx, content_constraints);
+                (
+                    label_start + child_size.width + metrics.data_row_padding.right,
+                    if explicit_row_height {
+                        base_row_height
+                    } else {
+                        (child_size.height
+                            + metrics.data_row_padding.top
+                            + metrics.data_row_padding.bottom)
+                            .max(base_row_height)
+                    },
+                )
+            } else {
                 let label = measure_text(ctx, &row.label, &label_style).width;
-                let detail = row
-                    .detail
+                let detail = detail
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
-                label_start + label.max(detail) + theme.metrics.data_row_padding.right
-            })
-            .fold(220.0, f32::max);
+                (
+                    label_start + label.max(detail) + metrics.data_row_padding.right,
+                    base_row_height,
+                )
+            };
+            content_width = content_width.max(row_width);
+            content_height += row_height;
+            self.row_heights.push(row_height);
+        }
+
+        self.content_height = content_height;
         let desired = Size::new(
-            width
-                + theme.metrics.data_viewport_padding.left
-                + theme.metrics.data_viewport_padding.right,
-            self.content_height()
-                + theme.metrics.data_viewport_padding.top
-                + theme.metrics.data_viewport_padding.bottom,
+            content_width + padding.left + padding.right,
+            self.measured_content_height() + padding.top + padding.bottom,
         );
         let size = constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
@@ -2625,22 +2833,59 @@ impl Widget for TreeView {
         size
     }
 
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_visible_rows();
+        let theme = self.resolved_theme();
+        let viewport = self.viewport_rect(bounds);
+        for index in 0..self.visible_rows.len() {
+            let Some((top, row_height)) = self.row_metrics(index) else {
+                continue;
+            };
+            let path = self.visible_rows[index].path.clone();
+            let depth = self.visible_rows[index].depth;
+            let Some(content) =
+                tree_item_mut(&mut self.items, &path).and_then(|item| item.content.as_mut())
+            else {
+                continue;
+            };
+            let row_y = viewport.y() + top - self.scroll_y;
+            if row_y + row_height < viewport.y() || row_y > viewport.max_y() {
+                content.arrange(ctx, Rect::from_origin_size(Point::ZERO, Size::ZERO));
+                continue;
+            }
+            let child_size = content.child().measured_size();
+            let content_x = viewport.x() + tree_label_offset(&theme, depth);
+            content.arrange(
+                ctx,
+                Rect::from_origin_size(
+                    Point::new(content_x, row_y + theme.metrics.data_row_padding.top),
+                    Size::new(
+                        (viewport.max_x() - content_x - theme.metrics.data_row_padding.right)
+                            .max(0.0),
+                        child_size.height,
+                    ),
+                ),
+            );
+        }
+    }
+
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
-        let row_height = self.resolved_row_height();
         let rows = &self.visible_rows;
 
         draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
         ctx.push_clip_rect(viewport);
 
-        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
-            .min(rows.len());
-
-        for (index, row) in rows.iter().enumerate().take(end).skip(start) {
-            let y = viewport.y() + (index as f32 * row_height) - self.scroll_y;
+        for (index, row) in rows.iter().enumerate() {
+            let Some((top, row_height)) = self.row_metrics(index) else {
+                continue;
+            };
+            let y = viewport.y() + top - self.scroll_y;
+            if y + row_height < viewport.y() || y > viewport.max_y() {
+                continue;
+            }
             let row_rect = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.selected.as_deref() == Some(row.path.as_slice());
             let hover_amount = self
@@ -2669,6 +2914,13 @@ impl Widget for TreeView {
                         palette.placeholder
                     },
                 );
+            }
+
+            if let Some(content) =
+                tree_item(&self.items, &row.path).and_then(|item| item.content.as_ref())
+            {
+                content.paint(ctx);
+                continue;
             }
 
             let label_x = row_rect.x() + tree_label_offset(&theme, row.depth);
@@ -2719,10 +2971,17 @@ impl Widget for TreeView {
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
         let viewport = self.viewport_rect(ctx.bounds());
-        let row_height = self.resolved_row_height();
-        let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let end = (((self.scroll_y + viewport.height()) / row_height).ceil() as usize + 1)
-            .min(self.visible_rows.len());
+        let visible_indices = (0..self.visible_rows.len())
+            .filter(|index| {
+                self.row_rect(ctx.bounds(), *index)
+                    .is_some_and(|rect| rect.intersection(viewport).is_some())
+            })
+            .collect::<Vec<_>>();
+        let start = visible_indices.first().copied().unwrap_or(0);
+        let end = visible_indices
+            .last()
+            .map(|index| index + 1)
+            .unwrap_or(start);
         node.value = self
             .selected
             .as_ref()
@@ -2744,13 +3003,14 @@ impl Widget for TreeView {
         ];
         ctx.push(node);
 
-        for (index, row) in self.visible_rows.iter().enumerate().take(end).skip(start) {
-            let row_rect = Rect::new(
-                viewport.x(),
-                viewport.y() + index as f32 * row_height - self.scroll_y,
-                viewport.width(),
-                row_height,
-            );
+        for index in visible_indices {
+            let row = &self.visible_rows[index];
+            let Some(row_rect) = self
+                .row_rect(ctx.bounds(), index)
+                .and_then(|rect| rect.intersection(viewport))
+            else {
+                continue;
+            };
             let mut item = SemanticsNode::new(
                 tree_view_row_id(ctx.widget_id(), row.key),
                 SemanticsRole::ListItem,
@@ -2771,17 +3031,22 @@ impl Widget for TreeView {
             item.state.disabled = row.disabled;
             item.state.selected = self.selected.as_deref() == Some(row.path.as_slice());
             item.state.expanded = row.has_children.then_some(row.expanded);
-            if !row.disabled {
+            let tree_item = tree_item(&self.items, &row.path);
+            if tree_item.is_some_and(TreeItem::can_activate_from_row) {
                 item.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
-                if row.has_children {
-                    item.actions.push(if row.expanded {
-                        SemanticsAction::Collapse
-                    } else {
-                        SemanticsAction::Expand
-                    });
-                }
+            }
+            if !row.disabled && row.has_children {
+                item.actions.push(if row.expanded {
+                    SemanticsAction::Collapse
+                } else {
+                    SemanticsAction::Expand
+                });
             }
             ctx.push(item);
+
+            if let Some(content) = tree_item.and_then(|item| item.content.as_ref()) {
+                content.semantics(ctx);
+            }
         }
     }
 
@@ -2794,6 +3059,31 @@ impl Widget for TreeView {
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        for row in &self.visible_rows {
+            if let Some(content) =
+                tree_item(&self.items, &row.path).and_then(|item| item.content.as_ref())
+            {
+                content.visit_children(visitor);
+            }
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        let paths = self
+            .visible_rows
+            .iter()
+            .map(|row| row.path.clone())
+            .collect::<Vec<_>>();
+        for path in paths {
+            if let Some(content) =
+                tree_item_mut(&mut self.items, &path).and_then(|item| item.content.as_mut())
+            {
+                content.visit_children_mut(visitor);
+            }
+        }
     }
 }
 
@@ -8163,12 +8453,10 @@ mod tests {
             .spacing(8.0)
             .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
             .with_child(Button::new("Open").on_press(move || *on_press.borrow_mut() += 1));
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(260.0)
-                .height(80.0)
-                .with_child(ListView::new("Actions").item(ListItem::new("Asset").with_child(row))),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(260.0).height(80.0).with_child(
+                ListView::new("Actions").item(ListItem::new("Asset").with_content(row)),
+            ));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -8205,8 +8493,8 @@ mod tests {
         let item = ListItem::new("Asset")
             .semantic_name("Asset row")
             .description("Selectable asset row")
-            .activate_with_child()
-            .with_child(row);
+            .activate_with_content()
+            .with_content(row);
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().width(260.0).height(80.0).with_child(
                 ListView::new("Actions")
@@ -8312,6 +8600,133 @@ mod tests {
             row_changes.borrow().as_slice(),
             &[(0, "Tall asset".to_string())]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn list_and_tree_padding_overrides_inset_row_viewports() {
+        let padding = Insets {
+            left: 24.0,
+            top: 16.0,
+            right: 20.0,
+            bottom: 12.0,
+        };
+        let list = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                ListView::new("Assets")
+                    .padding(padding)
+                    .item(ListItem::new("Asset")),
+            ),
+        );
+        let list_row = list
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Asset")
+            })
+            .expect("padded list row semantics");
+        assert!((list_row.bounds.x() - padding.left).abs() < 0.01);
+        assert!((list_row.bounds.y() - padding.top).abs() < 0.01);
+        assert!((list_row.bounds.width() - (320.0 - padding.left - padding.right)).abs() < 0.01);
+
+        let tree = render(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene")
+                    .padding(padding)
+                    .item(TreeItem::new("Node")),
+            ),
+        );
+        let tree_row = tree
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Node")
+            })
+            .expect("padded tree row semantics");
+        assert!((tree_row.bounds.x() - padding.left).abs() < 0.01);
+        assert!((tree_row.bounds.y() - padding.top).abs() < 0.01);
+        assert!((tree_row.bounds.width() - (320.0 - padding.left - padding.right)).abs() < 0.01);
+    }
+
+    #[test]
+    fn tree_item_content_widget_receives_pointer_events_and_drives_row_height() -> Result<()> {
+        let presses = Rc::new(RefCell::new(0));
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_press = Rc::clone(&presses);
+        let on_change = Rc::clone(&changes);
+        let content = SizedBox::new().height(52.0).with_child(
+            Stack::horizontal()
+                .spacing(8.0)
+                .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
+                .with_child(Button::new("Open").on_press(move || *on_press.borrow_mut() += 1)),
+        );
+        let padding = Insets::all(12.0);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(120.0).with_child(
+                TreeView::new("Scene")
+                    .padding(padding)
+                    .item(
+                        TreeItem::new("Root")
+                            .with_child(TreeItem::new("Asset row").with_content(content)),
+                    )
+                    .on_change(move |path, label| {
+                        on_change.borrow_mut().push((path, label));
+                    }),
+            ),
+        );
+
+        let collapsed = runtime.render(window_id)?;
+        let root_id = collapsed
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Root")
+            })
+            .expect("collapsed tree root semantics")
+            .id;
+        assert!(runtime.handle_semantics_action(
+            window_id,
+            root_id,
+            SemanticsActionRequest::Expand,
+        )?);
+        let before = runtime.render(window_id)?;
+        let row = before
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::ListItem && node.name.as_deref() == Some("Asset row")
+            })
+            .expect("custom tree row semantics");
+        let button = before
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open"))
+            .expect("custom tree content button semantics");
+        assert!(row.bounds.y() > padding.top);
+        assert!(
+            row.bounds.height() >= 52.0,
+            "custom content should determine the tree row height"
+        );
+        assert!(
+            !row.actions.contains(&SemanticsAction::Activate),
+            "interactive custom content should own pointer activation by default"
+        );
+
+        let position = Point::new(
+            button.bounds.x() + button.bounds.width() * 0.5,
+            button.bounds.y() + button.bounds.height() * 0.5,
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, position, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, position, false),
+        )?;
+
+        assert_eq!(*presses.borrow(), 1);
+        assert!(changes.borrow().is_empty());
         Ok(())
     }
 

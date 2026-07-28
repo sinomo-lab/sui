@@ -3585,7 +3585,7 @@ fn build_widget_book_gallery_with_theme_selection(
                 WidgetBookCategory::Data,
                 Rc::clone(&theme_reader),
                 "Collections and hierarchy",
-                "Lists, trees, and tables for structured tool data.",
+                "Padded lists and trees mix stock rows with arbitrary retained widgets.",
                 Stack::vertical()
                     .spacing(16.0)
                     .alignment(Alignment::Stretch)
@@ -3593,10 +3593,30 @@ fn build_widget_book_gallery_with_theme_selection(
                         SizedBox::new().width(360.0).height(220.0).with_child(
                             ListView::new(LIST_VIEW_NAME)
                                 .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                .padding(Insets::all(10.0))
                                 .items([
                                     ListItem::new("Hero texture").detail("2048 x 2048 RGBA").accent(Color::rgba(0.16, 0.54, 0.88, 1.0)),
                                     ListItem::new("Normals atlas").detail("Streaming mip chain"),
-                                    ListItem::new("Glass material").detail("Referenced in 3 prefabs"),
+                                    ListItem::new("Glass material").with_content(
+                                        Stack::horizontal()
+                                            .spacing(10.0)
+                                            .alignment(Alignment::Center)
+                                            .with_child(
+                                                SizedBox::new()
+                                                    .width(190.0)
+                                                    .with_child(demo_label(
+                                                        &theme_reader,
+                                                        "Glass material",
+                                                        DemoTextRole::Body,
+                                                        DemoTextColor::Text,
+                                                    )),
+                                            )
+                                            .with_child(
+                                                StatusBadge::new("3 prefabs")
+                                                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                                    .tone(SemanticTone::Accent),
+                                            ),
+                                    ),
                                     ListItem::new("UI icon sheet").detail("Tagged for export").accent(Color::rgba(0.78, 0.50, 0.17, 1.0)),
                                     ListItem::new("Archive cache").detail("Read only").disabled(),
                                 ])
@@ -3607,6 +3627,7 @@ fn build_widget_book_gallery_with_theme_selection(
                         SizedBox::new().width(420.0).height(240.0).with_child(
                             TreeView::new(TREE_VIEW_NAME)
                                 .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                .padding(Insets::all(10.0))
                                 .items([
                                     TreeItem::new("Scene")
                                         .expanded(true)
@@ -3619,7 +3640,24 @@ fn build_widget_book_gallery_with_theme_selection(
                                         .with_child(
                                             TreeItem::new("Characters")
                                                 .expanded(true)
-                                                .with_child(TreeItem::new("Pilot").detail("Selected"))
+                                                .with_child(
+                                                    TreeItem::new("Pilot").with_content(
+                                                        Stack::horizontal()
+                                                            .spacing(10.0)
+                                                            .alignment(Alignment::Center)
+                                                            .with_child(demo_label(
+                                                                &theme_reader,
+                                                                "Pilot",
+                                                                DemoTextRole::Body,
+                                                                DemoTextColor::Text,
+                                                            ))
+                                                            .with_child(
+                                                                StatusBadge::new("Selected")
+                                                                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                                                                    .tone(SemanticTone::Accent),
+                                                            ),
+                                                    ),
+                                                )
                                                 .with_child(TreeItem::new("Companion drone")),
                                         )
                                         .with_child(TreeItem::new("FX").detail("Collapsed group")),
