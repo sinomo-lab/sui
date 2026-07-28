@@ -1694,11 +1694,13 @@ fn syntax_color(theme: DefaultTheme, kind: RichSyntaxTokenKind) -> sui_core::Col
         RichSyntaxTokenKind::Keyword | RichSyntaxTokenKind::Header => {
             theme.palette.accent_soft_text
         }
-        RichSyntaxTokenKind::String | RichSyntaxTokenKind::Added => theme.palette.success_text,
-        RichSyntaxTokenKind::Number | RichSyntaxTokenKind::Property => theme.palette.info_text,
+        RichSyntaxTokenKind::String | RichSyntaxTokenKind::Added => theme.palette.success_soft_text,
+        RichSyntaxTokenKind::Number | RichSyntaxTokenKind::Property => theme.palette.info_soft_text,
         RichSyntaxTokenKind::Comment => theme.palette.text_muted,
-        RichSyntaxTokenKind::Type | RichSyntaxTokenKind::Function => theme.palette.warning_text,
-        RichSyntaxTokenKind::Removed => theme.palette.danger_text,
+        RichSyntaxTokenKind::Type | RichSyntaxTokenKind::Function => {
+            theme.palette.warning_soft_text
+        }
+        RichSyntaxTokenKind::Removed => theme.palette.danger_soft_text,
     }
 }
 
@@ -1838,7 +1840,9 @@ mod tests {
         RichDocumentBlock, RichDocumentBlockKind, RichDocumentModel, RichDocumentRenderContext,
         RichDocumentRendererRegistry, RichDocumentView, RichDocumentViewState,
         code_header_action_text_style, code_header_language_text_style, heading_text_style,
+        syntax_color,
     };
+    use crate::RichSyntaxTokenKind;
     use crate::{
         DefaultTheme, RichAttachment, RichExtensionBlock, TEXT_COMMAND, TextCommand, ThemeTextToken,
     };
@@ -1924,6 +1928,56 @@ mod tests {
                 .text_style(theme.palette.accent_soft_text)
                 .font_families
         );
+    }
+
+    #[test]
+    fn code_block_syntax_colors_use_on_surface_status_text() {
+        for theme in [
+            DefaultTheme::default(),
+            DefaultTheme::dark(),
+            DefaultTheme::high_contrast(),
+        ] {
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::String),
+                theme.palette.success_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Added),
+                theme.palette.success_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Number),
+                theme.palette.info_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Property),
+                theme.palette.info_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Type),
+                theme.palette.warning_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Function),
+                theme.palette.warning_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Removed),
+                theme.palette.danger_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Keyword),
+                theme.palette.accent_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Header),
+                theme.palette.accent_soft_text
+            );
+            assert_eq!(
+                syntax_color(theme, RichSyntaxTokenKind::Comment),
+                theme.palette.text_muted
+            );
+        }
     }
 
     #[test]
