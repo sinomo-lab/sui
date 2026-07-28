@@ -962,8 +962,8 @@ impl PixelCanvasBlendMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PixelCanvasBrushShape {
-    #[default]
     Square,
+    #[default]
     Round,
 }
 
@@ -1490,7 +1490,7 @@ impl Default for PixelCanvasState {
                 brush: accent,
                 brush_size: 1.0,
                 brush_opacity: 1.0,
-                brush_shape: PixelCanvasBrushShape::Square,
+                brush_shape: PixelCanvasBrushShape::Round,
                 blend_mode: PixelCanvasBlendMode::Normal,
                 display_visible: PixelCanvasDisplaySettings::DEFAULT.visible,
                 display_opacity: PixelCanvasDisplaySettings::DEFAULT.opacity,
@@ -4187,10 +4187,21 @@ mod tests {
     }
 
     #[test]
-    fn pixel_canvas_state_controls_brush_color_and_size() -> sui_core::Result<()> {
+    fn pixel_canvas_state_defaults_to_round_brush() {
+        let state = PixelCanvasState::new();
+        assert_eq!(state.brush_shape(), PixelCanvasBrushShape::Round);
+        assert_eq!(
+            PixelCanvasBrushShape::default(),
+            PixelCanvasBrushShape::Round
+        );
+    }
+
+    #[test]
+    fn pixel_canvas_square_brush_paints_full_stamp() -> sui_core::Result<()> {
         let state = PixelCanvasState::new();
         state.set_brush_color(Color::rgba(1.0, 0.0, 0.0, 1.0));
         state.set_brush_size(3.0);
+        state.set_brush_shape(PixelCanvasBrushShape::Square);
         let (mut runtime, window_id) = build_runtime(PixelCanvas::new("Paint", 8, 8).state(state));
 
         let _ = runtime.render(window_id)?;
@@ -4258,7 +4269,6 @@ mod tests {
         let state = PixelCanvasState::new();
         state.set_brush_color(Color::rgba(1.0, 0.0, 0.0, 1.0));
         state.set_brush_size(3.0);
-        state.set_brush_shape(PixelCanvasBrushShape::Round);
         let (mut runtime, window_id) = build_runtime(PixelCanvas::new("Paint", 8, 8).state(state));
 
         let _ = runtime.render(window_id)?;
