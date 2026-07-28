@@ -523,14 +523,16 @@ pub struct DropTarget {
     scope: DragDropScope,
     child: SingleChild,
     accept: DropAcceptCallback,
-    theme: DefaultTheme,
-    theme_reader: Option<ThemeReader>,
     hovered: bool,
     on_drop: Option<DropCallback>,
     on_hover_change: Option<HoverCallback>,
 }
 
 impl DropTarget {
+    /// Registers `child` as a drop target without imposing any hover visuals.
+    ///
+    /// Use [`Self::on_hover_change`] to let the target's own widget state decide
+    /// whether and how to respond to an accepted drag.
     pub fn new<W>(child: W) -> Self
     where
         W: Widget + 'static,
@@ -539,8 +541,6 @@ impl DropTarget {
             scope: DragDropScope::new(),
             child: SingleChild::new(child),
             accept: Box::new(|_| DropEffect::Copy),
-            theme: DefaultTheme::default(),
-            theme_reader: None,
             hovered: false,
             on_drop: None,
             on_hover_change: None,
@@ -549,20 +549,6 @@ impl DropTarget {
 
     pub fn scope(mut self, scope: DragDropScope) -> Self {
         self.scope = scope;
-        self
-    }
-
-    pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = theme;
-        self.theme_reader = None;
-        self
-    }
-
-    pub fn theme_when<F>(mut self, reader: F) -> Self
-    where
-        F: Fn() -> DefaultTheme + 'static,
-    {
-        self.theme_reader = Some(Rc::new(reader));
         self
     }
 
@@ -604,13 +590,6 @@ impl DropTarget {
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
-    }
-
-    fn resolved_theme(&self) -> DefaultTheme {
-        self.theme_reader
-            .as_ref()
-            .map(|reader| reader())
-            .unwrap_or(self.theme)
     }
 
     fn set_hovered(&mut self, ctx: &mut EventCtx, hovered: bool) {
@@ -669,9 +648,6 @@ impl Widget for DropTarget {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.child.paint(ctx);
-        if self.hovered {
-            paint_drop_target_highlight(ctx, ctx.bounds(), self.resolved_theme());
-        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -685,25 +661,6 @@ impl Widget for DropTarget {
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
     }
-}
-
-fn paint_drop_target_highlight(ctx: &mut PaintCtx, rect: Rect, theme: DefaultTheme) {
-    if rect.is_empty() {
-        return;
-    }
-
-    ctx.fill_rrect_bordered(
-        rect,
-        [theme.metrics.corner_radius; 4],
-        theme.palette.accent_soft,
-        Border {
-            width: theme
-                .metrics
-                .focus_ring_width
-                .max(theme.metrics.border_width),
-            color: theme.palette.accent_border_focus,
-        },
-    );
 }
 
 fn drag_preview_label(active: &DragPreview) -> String {
@@ -724,7 +681,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::*;
-    use crate::{SizedBox, Stack, ThemeTextToken};
+    use crate::{Label, SizedBox, Stack, Surface, ThemeTextToken};
     use sui_core::{
         DragOutcome, Modifiers, PointerButtons, PointerEvent, PointerKind, Result, WindowId,
     };
@@ -763,19 +720,81 @@ mod tests {
         (runtime, window_id)
     }
 
-    fn has_drop_target_highlight(output: &sui_runtime::RenderOutput, theme: DefaultTheme) -> bool {
+    fn has_fill_color(output: &sui_runtime::RenderOutput, color: sui_core::Color) -> bool {
         let mut found = false;
-        output.frame.scene.visit_commands(&mut |command| {
-            if let SceneCommand::FillRoundedRect {
-                brush: Brush::Solid(color),
-                ..
-            } = command
-                && *color == theme.palette.accent_soft
-            {
-                found = true;
-            }
-        });
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(fill),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(fill),
+                    ..
+                }
+                | SceneCommand::FillRoundedRect {
+                    brush: Brush::Solid(fill),
+                    ..
+                } if *fill == color => found = true,
+                _ => {}
+            });
         found
+    }
+
+    fn has_stroke_color(output: &sui_runtime::RenderOutput, color: sui_core::Color) -> bool {
+        let mut found = false;
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::StrokeRect {
+                    brush: Brush::Solid(stroke),
+                    ..
+                }
+                | SceneCommand::StrokePath {
+                    brush: Brush::Solid(stroke),
+                    ..
+                } if *stroke == color => found = true,
+                _ => {}
+            });
+        found
+    }
+
+    fn feedback_fill_precedes_text(
+        output: &sui_runtime::RenderOutput,
+        color: sui_core::Color,
+    ) -> bool {
+        let mut command_index = 0;
+        let mut fill_index = None;
+        let mut text_index = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            match command {
+                SceneCommand::FillRect {
+                    brush: Brush::Solid(fill),
+                    ..
+                }
+                | SceneCommand::FillPath {
+                    brush: Brush::Solid(fill),
+                    ..
+                }
+                | SceneCommand::FillRoundedRect {
+                    brush: Brush::Solid(fill),
+                    ..
+                } if *fill == color => {
+                    fill_index.get_or_insert(command_index);
+                }
+                SceneCommand::DrawText(_)
+                | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawShapedTextWindow(_) => {
+                    text_index.get_or_insert(command_index);
+                }
+                _ => {}
+            };
+            command_index += 1;
+        });
+        matches!((fill_index, text_index), (Some(fill), Some(text)) if fill < text)
     }
 
     #[test]
@@ -905,7 +924,7 @@ mod tests {
     }
 
     #[test]
-    fn accepting_drop_target_paints_hover_highlight() -> Result<()> {
+    fn accepting_drop_target_has_no_default_hover_feedback() -> Result<()> {
         let scope = DragDropScope::new();
         let theme = DefaultTheme::default();
         let source = Draggable::new(SizedBox::new().width(80.0).height(40.0))
@@ -914,7 +933,6 @@ mod tests {
             .effect(DropEffect::Copy)
             .preview_label("Item");
         let target = DropTarget::new(SizedBox::new().width(80.0).height(40.0))
-            .theme(theme)
             .scope(scope.clone())
             .accept(|_| DropEffect::Copy);
         let root = DragDropHost::new(
@@ -924,7 +942,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(root);
 
         let idle = runtime.render(window_id)?;
-        assert!(!has_drop_target_highlight(&idle, theme));
+        assert!(!has_fill_color(&idle, theme.palette.accent_soft));
 
         runtime.handle_event(
             window_id,
@@ -936,7 +954,67 @@ mod tests {
         )?;
 
         let hovering = runtime.render(window_id)?;
-        assert!(has_drop_target_highlight(&hovering, theme));
+        assert!(!has_fill_color(&hovering, theme.palette.accent_soft));
+        Ok(())
+    }
+
+    #[test]
+    fn drop_target_hover_callback_can_drive_child_feedback_behind_content() -> Result<()> {
+        let scope = DragDropScope::new();
+        let theme = DefaultTheme::default();
+        let hovered = Rc::new(RefCell::new(false));
+        let source = Draggable::new(SizedBox::new().width(80.0).height(40.0))
+            .scope(scope.clone())
+            .payload(|| DragPayload::text("item"))
+            .effect(DropEffect::Copy)
+            .preview_label("Item");
+        let surface_hovered = Rc::clone(&hovered);
+        let target = DropTarget::new(
+            Surface::panel(
+                SizedBox::new()
+                    .width(80.0)
+                    .height(40.0)
+                    .with_child(Label::new("Drop here")),
+            )
+            .theme_when(move || {
+                let mut resolved = theme;
+                if *surface_hovered.borrow() {
+                    resolved.surfaces.panel = resolved.palette.accent_soft;
+                    resolved.surfaces.border = resolved.palette.accent_border_focus;
+                }
+                resolved
+            }),
+        )
+        .scope(scope.clone())
+        .accept(|_| DropEffect::Copy)
+        .on_hover_change(move |value| *hovered.borrow_mut() = value);
+        let root = DragDropHost::new(
+            scope,
+            Stack::horizontal().with_child(source).with_child(target),
+        );
+        let (mut runtime, window_id) = build_runtime(root);
+        let idle = runtime.render(window_id)?;
+        assert!(!has_fill_color(&idle, theme.palette.accent_soft));
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(10.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(100.0, 20.0), true),
+        )?;
+
+        let hovering = runtime.render(window_id)?;
+        assert!(has_fill_color(&hovering, theme.palette.accent_soft));
+        assert!(has_stroke_color(
+            &hovering,
+            theme.palette.accent_border_focus
+        ));
+        assert!(feedback_fill_precedes_text(
+            &hovering,
+            theme.palette.accent_soft
+        ));
         Ok(())
     }
 

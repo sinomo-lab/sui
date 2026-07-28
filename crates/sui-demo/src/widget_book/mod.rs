@@ -5323,7 +5323,7 @@ fn build_data_and_interaction_gallery_with_theme(
                         control_story_with_theme(
                             Rc::clone(&theme_reader),
                             "Drag and drop",
-                            "DragDropHost coordinates Draggable and DropTarget under one scope.",
+                            "DragDropHost coordinates one scope; DropTarget stays visually neutral unless its child opts into hover feedback.",
                             SizedBox::new().width(380.0).with_child(DragDropHost::new(
                                 drag_scope.clone(),
                                 Stack::horizontal()
@@ -5356,7 +5356,6 @@ fn build_data_and_interaction_gallery_with_theme(
                                                 &theme_reader,
                                             )),
                                         )
-                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                         .scope(drag_scope)
                                         .accept(|_| DropEffect::Copy),
                                     ),

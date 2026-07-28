@@ -256,7 +256,7 @@ pub(crate) fn build_drag_drop_demo_with_theme(theme_reader: DevThemeReader) -> i
         .alignment(Alignment::Stretch)
         .with_child(section(
             "Text payloads",
-            "Copy text fragments into a shared text target.",
+            "Targets opt into background and border feedback without covering their content.",
             build_text_payload_example(Rc::clone(&theme_reader), scope.clone(), state.clone()),
             Rc::clone(&theme_reader),
         ))
@@ -648,10 +648,10 @@ fn text_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
-    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
-    DropTarget::new(panel(
+    let visual_state = state.clone();
+    DropTarget::new(drop_target_panel(
         "Text drop target",
         Stack::vertical()
             .spacing(8.0)
@@ -668,8 +668,9 @@ fn text_drop_target(
                 true,
             )),
         theme_reader,
+        visual_state,
+        DragDropDemoState::text_hovered,
     ))
-    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.as_text().is_some() {
@@ -693,10 +694,10 @@ fn asset_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
-    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
-    DropTarget::new(panel(
+    let visual_state = state.clone();
+    DropTarget::new(drop_target_panel(
         "Asset drop target",
         Stack::vertical()
             .spacing(8.0)
@@ -713,8 +714,9 @@ fn asset_drop_target(
                 true,
             )),
         theme_reader,
+        visual_state,
+        DragDropDemoState::asset_hovered,
     ))
-    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.custom_kind() == Some(ASSET_KIND) {
@@ -738,10 +740,10 @@ fn text_only_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
-    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
-    DropTarget::new(panel(
+    let visual_state = state.clone();
+    DropTarget::new(drop_target_panel(
         "Text only target",
         Stack::vertical()
             .spacing(8.0)
@@ -758,8 +760,9 @@ fn text_only_drop_target(
                 true,
             )),
         theme_reader,
+        visual_state,
+        DragDropDemoState::text_only_hovered,
     ))
-    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.as_text().is_some() {
@@ -783,10 +786,10 @@ fn scoped_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
-    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
-    DropTarget::new(panel(
+    let visual_state = state.clone();
+    DropTarget::new(drop_target_panel(
         "Shared scope target",
         Stack::vertical()
             .spacing(8.0)
@@ -805,8 +808,9 @@ fn scoped_drop_target(
                 true,
             )),
         theme_reader,
+        visual_state,
+        DragDropDemoState::scoped_hovered,
     ))
-    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.custom_kind() == Some(SCOPE_TOKEN_KIND) {
@@ -849,6 +853,32 @@ where
     Surface::panel(child)
         .name(name)
         .theme_when(clone_dev_theme_reader(&theme_reader))
+        .padding(Insets::all(14.0))
+        .elevation(SurfaceElevation::Small)
+        .fill_width()
+}
+
+fn drop_target_panel<W, F>(
+    name: &str,
+    child: W,
+    theme_reader: DevThemeReader,
+    state: DragDropDemoState,
+    hovered: F,
+) -> impl Widget
+where
+    W: Widget + 'static,
+    F: Fn(&DragDropDemoState) -> bool + 'static,
+{
+    Surface::panel(child)
+        .name(name)
+        .theme_when(move || {
+            let mut theme = theme_reader();
+            if hovered(&state) {
+                theme.surfaces.panel = theme.palette.accent_soft;
+                theme.surfaces.border = theme.palette.accent_border_focus;
+            }
+            theme
+        })
         .padding(Insets::all(14.0))
         .elevation(SurfaceElevation::Small)
         .fill_width()
