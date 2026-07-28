@@ -1,10 +1,9 @@
 use std::ops::Range;
 
 use sui_core::{
-    Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, KeyState, KeyboardEvent, Path, Point, PointerButton, PointerEventKind,
-    Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsTextRange,
-    SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
+    Color, EditableTextSemantics, Event, ImeEvent, KeyState, Path, Point, PointerButton,
+    PointerEventKind, Rect, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsTextRange,
+    SemanticsValue, Size, Vector, WakeEvent, WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -19,11 +18,12 @@ use sui_text::{
 
 use crate::{
     DefaultTheme, MotionScalar, ThemeColorScheme,
+    editable_text::{EditableTextController, EditableTextLineMode, paste_command},
     editor::{
-        EditorCommand, EditorCommandResult, EditorDocument, EditorState, EditorTextEdit,
+        EditorCommand, EditorCommandResult, EditorDocument, EditorTextEdit,
         clamp_to_grapheme_boundary, selection_range,
     },
-    selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
+    selection::{SelectionClipboardBehavior, SelectionScope},
     text_align::paint_aligned_text,
     text_command::TextCommand,
 };
@@ -126,7 +126,7 @@ pub struct TextSurface {
     name: String,
     placeholder: String,
     read_only: bool,
-    editor: EditorState,
+    editor: EditableTextController,
     text_style: Option<TextStyle>,
     text_style_reader: Option<Box<dyn Fn(DefaultTheme) -> TextStyle>>,
     padding: Option<Insets>,
@@ -153,8 +153,6 @@ pub struct TextSurface {
     line_layout_style: Option<TextStyle>,
     line_layout_revision: u64,
     line_layout_style_revision: u64,
-    selection_scope: Option<SelectionScope>,
-    clipboard_behavior: Option<SelectionClipboardBehavior>,
     on_change: Option<Box<dyn FnMut(String)>>,
 }
 
@@ -166,7 +164,7 @@ impl TextSurface {
             name: name.into(),
             placeholder: String::new(),
             read_only: false,
-            editor: EditorState::new(),
+            editor: EditableTextController::new(),
             text_style: None,
             text_style_reader: None,
             padding: None,
@@ -193,8 +191,6 @@ impl TextSurface {
             line_layout_style: None,
             line_layout_revision: u64::MAX,
             line_layout_style_revision: u64::MAX,
-            selection_scope: None,
-            clipboard_behavior: None,
             on_change: None,
         }
     }
@@ -246,7 +242,8 @@ impl TextSurface {
     pub fn wrap(mut self, wrap: TextWrap) -> Self {
         self.wrap = wrap;
         if self.wrap != TextWrap::NoWrap {
-            self.editor.set_scroll(0.0, self.editor.scroll_y());
+            let scroll_y = self.editor.scroll_y();
+            self.editor.set_scroll(0.0, scroll_y);
         }
         self.invalidate_line_layouts();
         self
@@ -322,17 +319,17 @@ impl TextSurface {
     }
 
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
-        self.selection_scope = Some(selection_scope);
+        self.editor.selectable(selection_scope);
         self
     }
 
     pub fn selection_scope(mut self, selection_scope: SelectionScope) -> Self {
-        self.selection_scope = Some(selection_scope);
+        self.editor.selection_scope(selection_scope);
         self
     }
 
     pub fn clipboard_behavior(mut self, behavior: SelectionClipboardBehavior) -> Self {
-        self.clipboard_behavior = Some(behavior);
+        self.editor.clipboard_behavior(behavior);
         self
     }
 
@@ -641,20 +638,8 @@ impl TextSurface {
         }
     }
 
-    fn handles_implicit_clipboard(&self) -> bool {
-        self.clipboard_behavior
-            .unwrap_or(if self.selection_scope.is_some() {
-                SelectionClipboardBehavior::AppManaged
-            } else {
-                SelectionClipboardBehavior::WidgetManaged
-            })
-            .is_widget_managed()
-    }
-
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        if let Some(text) = result.clipboard_text.take() {
-            ctx.set_clipboard_text(text);
-        }
+        self.editor.apply_result_common(ctx, &mut result);
         if result.text_changed {
             if let Some(edit) = self.editor.take_text_edit() {
                 self.rebase_style_ranges_after_edit(&edit);
@@ -667,13 +652,9 @@ impl TextSurface {
             self.request_after_overlay_change(ctx);
         }
         if result.text_changed || result.selection_changed || result.composition_changed {
-            sync_editor_selection_scope(ctx, self.selection_scope.as_ref(), &self.editor);
             if !result.layout_changed() {
                 ctx.request_semantics();
             }
-        }
-        if result.handled {
-            ctx.set_handled();
         }
     }
 
@@ -713,7 +694,7 @@ impl TextSurface {
         if self.read_only {
             return;
         }
-        let command = paste_command(ctx);
+        let command = paste_command(ctx, EditableTextLineMode::MultiLine);
         self.execute_editor_command(ctx, command);
     }
 
@@ -724,11 +705,13 @@ impl TextSurface {
     }
 
     fn apply_text_command(&mut self, ctx: &mut EventCtx, command: TextCommand) {
-        match command {
-            TextCommand::SelectAll => self.select_all(ctx),
-            TextCommand::Copy => self.copy(ctx),
-            TextCommand::Cut => self.cut(ctx),
-            TextCommand::Paste => self.paste(ctx),
+        if let Some(command) = self.editor.text_command(
+            ctx,
+            command,
+            self.read_only,
+            EditableTextLineMode::MultiLine,
+        ) {
+            self.execute_editor_command(ctx, command);
         }
     }
 
@@ -1106,10 +1089,9 @@ impl TextSurface {
             0.0
         };
         let max_y = (content_size.height - viewport_size.height).max(0.0);
-        self.editor.set_scroll(
-            self.editor.scroll_x().clamp(0.0, max_x),
-            self.editor.scroll_y().clamp(0.0, max_y),
-        );
+        let scroll_x = self.editor.scroll_x().clamp(0.0, max_x);
+        let scroll_y = self.editor.scroll_y().clamp(0.0, max_y);
+        self.editor.set_scroll(scroll_x, scroll_y);
         previous != (self.editor.scroll_x(), self.editor.scroll_y())
     }
 
@@ -1444,6 +1426,18 @@ impl Widget for TextSurface {
                     ctx.set_handled();
                 }
             }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                if let Some(commands) = self.editor.semantics_commands(
+                    ctx,
+                    &semantics.action,
+                    self.read_only,
+                    EditableTextLineMode::MultiLine,
+                ) {
+                    for command in commands {
+                        self.execute_editor_command(ctx, command);
+                    }
+                }
+            }
             Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() && !self.read_only => {
                 self.execute_editor_command(ctx, EditorCommand::StartComposition);
             }
@@ -1467,102 +1461,49 @@ impl Widget for TextSurface {
                 self.execute_editor_command(ctx, EditorCommand::EndComposition);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
-                let command_modifier = key.modifiers.control || key.modifiers.meta;
                 let result = match key.key.as_str() {
-                    "a" | "A" if command_modifier => self.editor.execute(EditorCommand::SelectAll),
-                    "c" | "C" if command_modifier && self.handles_implicit_clipboard() => {
-                        self.editor.execute(EditorCommand::Copy)
-                    }
-                    "x" | "X"
-                        if command_modifier
-                            && !self.read_only
-                            && self.handles_implicit_clipboard() =>
-                    {
-                        self.editor.execute(EditorCommand::Cut)
-                    }
-                    "v" | "V" if command_modifier && !self.read_only => {
-                        let command = paste_command(ctx);
-                        self.editor.execute(command)
-                    }
-                    "z" | "Z" if command_modifier && key.modifiers.shift && !self.read_only => {
-                        self.editor.execute(EditorCommand::Redo)
-                    }
-                    "z" | "Z" if command_modifier && !self.read_only => {
-                        self.editor.execute(EditorCommand::Undo)
-                    }
-                    "y" | "Y" if command_modifier && !self.read_only => {
-                        self.editor.execute(EditorCommand::Redo)
-                    }
-                    "ArrowLeft" if command_modifier => {
-                        self.editor.execute(EditorCommand::MoveWordLeft {
-                            extend: key.modifiers.shift,
-                        })
-                    }
-                    "ArrowRight" if command_modifier => {
-                        self.editor.execute(EditorCommand::MoveWordRight {
-                            extend: key.modifiers.shift,
-                        })
-                    }
-                    "ArrowLeft" => self.editor.execute(EditorCommand::MoveLeft {
-                        extend: key.modifiers.shift,
-                    }),
-                    "ArrowRight" => self.editor.execute(EditorCommand::MoveRight {
-                        extend: key.modifiers.shift,
-                    }),
-                    "ArrowUp" => self.move_vertical(
+                    "ArrowUp" => Some(self.move_vertical(
                         -1,
                         key.modifiers.shift,
                         self.content_viewport_size(ctx.bounds()).height,
-                    ),
-                    "ArrowDown" => self.move_vertical(
+                    )),
+                    "ArrowDown" => Some(self.move_vertical(
                         1,
                         key.modifiers.shift,
                         self.content_viewport_size(ctx.bounds()).height,
-                    ),
-                    "Home" => self.move_line_boundary(true, key.modifiers.shift),
-                    "End" => self.move_line_boundary(false, key.modifiers.shift),
+                    )),
+                    "Home" => Some(self.move_line_boundary(true, key.modifiers.shift)),
+                    "End" => Some(self.move_line_boundary(false, key.modifiers.shift)),
                     "PageUp" => {
                         let line_height = self.line_height().max(1.0);
                         let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
                             .floor()
                             .max(1.0) as isize;
-                        self.move_vertical(
+                        Some(self.move_vertical(
                             -delta,
                             key.modifiers.shift,
                             self.content_viewport_size(ctx.bounds()).height,
-                        )
+                        ))
                     }
                     "PageDown" => {
                         let line_height = self.line_height().max(1.0);
                         let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
                             .floor()
                             .max(1.0) as isize;
-                        self.move_vertical(
+                        Some(self.move_vertical(
                             delta,
                             key.modifiers.shift,
                             self.content_viewport_size(ctx.bounds()).height,
-                        )
+                        ))
                     }
-                    "Backspace" if !self.read_only => {
-                        self.editor.execute(EditorCommand::DeleteBackward)
-                    }
-                    "Delete" if !self.read_only => {
-                        self.editor.execute(EditorCommand::DeleteForward)
-                    }
-                    "Enter" if !self.read_only => self
+                    _ => self
                         .editor
-                        .execute(EditorCommand::InsertText("\n".to_string())),
-                    _ if !self.read_only && self.editor.composition().is_none() => {
-                        if let Some(text) = keyboard_text(key) {
-                            self.editor
-                                .execute(EditorCommand::InsertText(text.to_string()))
-                        } else {
-                            self.editor.execute(EditorCommand::Noop)
-                        }
-                    }
-                    _ => self.editor.execute(EditorCommand::Noop),
+                        .keyboard_command(ctx, key, self.read_only, EditableTextLineMode::MultiLine)
+                        .map(|command| self.editor.execute(command)),
                 };
-                self.apply_editor_result(ctx, result);
+                if let Some(result) = result {
+                    self.apply_editor_result(ctx, result);
+                }
             }
             Event::Window(WindowEvent::Focused(false)) => {
                 let result = self.editor.execute(EditorCommand::ClearComposition);
@@ -2047,29 +1988,7 @@ impl Widget for TextSurface {
             scroll_x: self.editor.scroll_x(),
             scroll_y: self.editor.scroll_y(),
         });
-        let handles_clipboard = self.handles_implicit_clipboard();
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetSelection];
-        if !self.read_only {
-            node.actions.extend([
-                SemanticsAction::SetValue,
-                SemanticsAction::InsertText,
-                SemanticsAction::DeleteBackward,
-                SemanticsAction::DeleteForward,
-            ]);
-        }
-        if handles_clipboard {
-            node.actions.push(SemanticsAction::Copy);
-            if !self.read_only {
-                node.actions.push(SemanticsAction::Cut);
-            }
-        }
-        if !self.read_only {
-            node.actions.extend([
-                SemanticsAction::Paste,
-                SemanticsAction::Undo,
-                SemanticsAction::Redo,
-            ]);
-        }
+        node.actions = self.editor.semantic_actions(self.read_only);
         ctx.push(node);
     }
 
@@ -2195,28 +2114,6 @@ fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
     }
 }
 
-fn keyboard_text(event: &KeyboardEvent) -> Option<&str> {
-    if event.state != KeyState::Pressed
-        || event.is_composing
-        || event.modifiers.control
-        || event.modifiers.alt
-        || event.modifiers.meta
-    {
-        return None;
-    }
-
-    if let Some(text) = event
-        .text
-        .as_deref()
-        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
-    {
-        return Some(text);
-    }
-
-    let key = event.key.as_str();
-    (key.chars().count() == 1 && !key.chars().any(char::is_control)).then_some(key)
-}
-
 fn layout_content_size(layout: &PersistentTextLayout) -> Size {
     let line_height = layout
         .lines()
@@ -2250,52 +2147,16 @@ fn rebased_text_range(range: &Range<usize>, edit: &EditorTextEdit) -> Option<Ran
     (start < end).then_some(start..end)
 }
 
-fn request_selection_change(ctx: &mut EventCtx, change: SelectionChange) {
-    for owner in change.affected_owners() {
-        let widget_id = WidgetId::new(owner.get());
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Widget(widget_id),
-            InvalidationKind::Paint,
-        ));
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Widget(widget_id),
-            InvalidationKind::Semantics,
-        ));
-    }
-}
-
-/// Paste command carrying the clipboard text, or `Noop` when the clipboard is
-/// empty so an empty paste cannot delete the current selection.
-pub(crate) fn paste_command(ctx: &EventCtx) -> EditorCommand {
-    ctx.clipboard_text()
-        .filter(|text| !text.is_empty())
-        .map(EditorCommand::Paste)
-        .unwrap_or(EditorCommand::Noop)
-}
-
-fn sync_editor_selection_scope(
-    ctx: &mut EventCtx,
-    selection_scope: Option<&SelectionScope>,
-    editor: &EditorState,
-) {
-    let Some(scope) = selection_scope else {
-        return;
-    };
-    let owner = SelectionOwnerId::from(ctx.widget_id());
-    let range = editor.selection_range();
-    let selected = editor.selected_text().to_string();
-    let change = scope.replace_text(owner, owner, range, editor.document().len(), selected);
-    request_selection_change(ctx, change);
-}
-
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+    use crate::editable_text::keyboard_text;
     use std::{cell::RefCell, rc::Rc};
 
     use sui_core::{
-        Event, Modifiers, PointerButtons, PointerEvent, PointerKind, SemanticsValue, WindowId,
+        Event, KeyboardEvent, Modifiers, PointerButtons, PointerEvent, PointerKind,
+        SemanticsAction, SemanticsValue, WindowId,
     };
     use sui_runtime::{
         Application, RenderOutput, Runtime, SceneStatisticsDetailMode, WindowBuilder,

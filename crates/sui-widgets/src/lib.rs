@@ -10,6 +10,7 @@ pub mod containers;
 pub mod controls;
 pub mod data;
 pub mod drag_drop;
+mod editable_text;
 mod editor;
 pub mod hdr_theme;
 pub mod layout_policy;
