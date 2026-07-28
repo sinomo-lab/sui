@@ -26,7 +26,8 @@ use sui::{
 #[cfg(test)]
 use crate::animation_demo::{
     ANIMATION_DEMO_NAME, ANIMATION_DEMO_SCROLL_NAME, ANIMATION_EDITOR_SURFACE_NAME,
-    ANIMATION_PAINT_INVALIDATION_NAME, ANIMATION_RETAINED_LAYER_NAME,
+    ANIMATION_PAINT_INVALIDATION_NAME, ANIMATION_PAUSE_BUTTON_LABEL, ANIMATION_PLAY_BUTTON_LABEL,
+    ANIMATION_RETAINED_LAYER_NAME, ANIMATION_RETARGET_BUTTON_LABEL,
     ANIMATION_TIMELINE_PREVIEW_NAME,
 };
 use crate::animation_demo::{ANIMATION_DEMO_TAB_LABEL, build_animation_demo_with_theme};
@@ -8229,6 +8230,65 @@ final_max_luminance={final_max_luminance}
         assert_ne!(
             restored_before_advance, restored_after_advance,
             "animation timeline should resume after switching back to the demo tab"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn animation_demo_transport_pauses_retargets_and_resumes_shared_motion() -> Result<()> {
+        let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
+        app.advance_time(0.12)?;
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(ANIMATION_PAUSE_BUTTON_LABEL)
+            .click()?;
+        let paused = semantic_text_value(
+            &window,
+            SemanticsRole::GenericContainer,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+        );
+        app.advance_time(0.18)?;
+        let still_paused = semantic_text_value(
+            &window,
+            SemanticsRole::GenericContainer,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+        );
+        assert_eq!(
+            paused, still_paused,
+            "paused transport should not advance primitive values"
+        );
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(ANIMATION_RETARGET_BUTTON_LABEL)
+            .click()?;
+        let retargeted = semantic_text_value(
+            &window,
+            SemanticsRole::GenericContainer,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+        );
+        assert_ne!(
+            still_paused, retargeted,
+            "retargeting should update the shared primitive target while paused"
+        );
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(ANIMATION_PLAY_BUTTON_LABEL)
+            .click()?;
+        app.advance_time(0.18)?;
+        let resumed = semantic_text_value(
+            &window,
+            SemanticsRole::GenericContainer,
+            ANIMATION_TIMELINE_PREVIEW_NAME,
+        );
+        assert_ne!(
+            retargeted, resumed,
+            "playing should resume the shared primitive motion"
         );
 
         Ok(())
