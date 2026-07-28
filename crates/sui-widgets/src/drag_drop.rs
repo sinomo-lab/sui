@@ -523,6 +523,8 @@ pub struct DropTarget {
     scope: DragDropScope,
     child: SingleChild,
     accept: DropAcceptCallback,
+    theme: DefaultTheme,
+    theme_reader: Option<ThemeReader>,
     hovered: bool,
     on_drop: Option<DropCallback>,
     on_hover_change: Option<HoverCallback>,
@@ -537,6 +539,8 @@ impl DropTarget {
             scope: DragDropScope::new(),
             child: SingleChild::new(child),
             accept: Box::new(|_| DropEffect::Copy),
+            theme: DefaultTheme::default(),
+            theme_reader: None,
             hovered: false,
             on_drop: None,
             on_hover_change: None,
@@ -545,6 +549,20 @@ impl DropTarget {
 
     pub fn scope(mut self, scope: DragDropScope) -> Self {
         self.scope = scope;
+        self
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Rc::new(reader));
         self
     }
 
@@ -586,6 +604,13 @@ impl DropTarget {
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|reader| reader())
+            .unwrap_or(self.theme)
     }
 
     fn set_hovered(&mut self, ctx: &mut EventCtx, hovered: bool) {
@@ -644,6 +669,9 @@ impl Widget for DropTarget {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.child.paint(ctx);
+        if self.hovered {
+            paint_drop_target_highlight(ctx, ctx.bounds(), self.resolved_theme());
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -657,6 +685,25 @@ impl Widget for DropTarget {
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
     }
+}
+
+fn paint_drop_target_highlight(ctx: &mut PaintCtx, rect: Rect, theme: DefaultTheme) {
+    if rect.is_empty() {
+        return;
+    }
+
+    ctx.fill_rrect_bordered(
+        rect,
+        [theme.metrics.corner_radius; 4],
+        theme.palette.accent_soft,
+        Border {
+            width: theme
+                .metrics
+                .focus_ring_width
+                .max(theme.metrics.border_width),
+            color: theme.palette.accent_border_focus,
+        },
+    );
 }
 
 fn drag_preview_label(active: &DragPreview) -> String {
@@ -682,6 +729,7 @@ mod tests {
         DragOutcome, Modifiers, PointerButtons, PointerEvent, PointerKind, Result, WindowId,
     };
     use sui_runtime::{Application, Runtime, WindowBuilder};
+    use sui_scene::{Brush, SceneCommand};
 
     fn primary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
         let mut buttons = PointerButtons::NONE;
@@ -713,6 +761,21 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    fn has_drop_target_highlight(output: &sui_runtime::RenderOutput, theme: DefaultTheme) -> bool {
+        let mut found = false;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRoundedRect {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+                && *color == theme.palette.accent_soft
+            {
+                found = true;
+            }
+        });
+        found
     }
 
     #[test]
@@ -838,6 +901,42 @@ mod tests {
         ));
         assert_eq!(&*hover_changes.borrow(), &[true, false]);
         assert!(scope.active_drag().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn accepting_drop_target_paints_hover_highlight() -> Result<()> {
+        let scope = DragDropScope::new();
+        let theme = DefaultTheme::default();
+        let source = Draggable::new(SizedBox::new().width(80.0).height(40.0))
+            .scope(scope.clone())
+            .payload(|| DragPayload::text("item"))
+            .effect(DropEffect::Copy)
+            .preview_label("Item");
+        let target = DropTarget::new(SizedBox::new().width(80.0).height(40.0))
+            .theme(theme)
+            .scope(scope.clone())
+            .accept(|_| DropEffect::Copy);
+        let root = DragDropHost::new(
+            scope,
+            Stack::horizontal().with_child(source).with_child(target),
+        );
+        let (mut runtime, window_id) = build_runtime(root);
+
+        let idle = runtime.render(window_id)?;
+        assert!(!has_drop_target_highlight(&idle, theme));
+
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(10.0, 20.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(100.0, 20.0), true),
+        )?;
+
+        let hovering = runtime.render(window_id)?;
+        assert!(has_drop_target_highlight(&hovering, theme));
         Ok(())
     }
 

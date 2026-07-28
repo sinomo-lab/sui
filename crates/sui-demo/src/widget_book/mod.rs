@@ -5356,6 +5356,7 @@ fn build_data_and_interaction_gallery_with_theme(
                                                 &theme_reader,
                                             )),
                                         )
+                                        .theme_when(clone_widget_book_theme_reader(&theme_reader))
                                         .scope(drag_scope)
                                         .accept(|_| DropEffect::Copy),
                                     ),

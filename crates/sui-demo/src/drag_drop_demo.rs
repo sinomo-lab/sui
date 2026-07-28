@@ -648,6 +648,7 @@ fn text_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
+    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
     DropTarget::new(panel(
@@ -668,6 +669,7 @@ fn text_drop_target(
             )),
         theme_reader,
     ))
+    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.as_text().is_some() {
@@ -691,6 +693,7 @@ fn asset_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
+    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
     DropTarget::new(panel(
@@ -711,6 +714,7 @@ fn asset_drop_target(
             )),
         theme_reader,
     ))
+    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.custom_kind() == Some(ASSET_KIND) {
@@ -734,6 +738,7 @@ fn text_only_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
+    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
     DropTarget::new(panel(
@@ -754,6 +759,7 @@ fn text_only_drop_target(
             )),
         theme_reader,
     ))
+    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.as_text().is_some() {
@@ -777,6 +783,7 @@ fn scoped_drop_target(
     scope: DragDropScope,
     state: DragDropDemoState,
 ) -> impl Widget {
+    let target_theme = Rc::clone(&theme_reader);
     let hover_state = state.clone();
     let drop_state = state.clone();
     DropTarget::new(panel(
@@ -799,6 +806,7 @@ fn scoped_drop_target(
             )),
         theme_reader,
     ))
+    .theme_when(clone_dev_theme_reader(&target_theme))
     .scope(scope)
     .accept(|drag| {
         if drag.payload.custom_kind() == Some(SCOPE_TOKEN_KIND) {
