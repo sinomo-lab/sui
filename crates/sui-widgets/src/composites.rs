@@ -32,7 +32,9 @@ use crate::{
         OverlayAlignment, OverlayPlacement, OverlayPlacementRequest, OverlaySide, place_overlay,
     },
     paint_theme_shadow, resolve_widget_hdr_style,
-    text_align::{paint_aligned_text, paint_single_line_aligned_text},
+    text_align::{
+        paint_aligned_text, paint_aligned_text_contained, paint_single_line_aligned_text,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6888,7 +6890,7 @@ pub fn paint_status_badge(
     let style = semibold_control_text_style(theme, tone_ink);
     let style = numeric_text_style_if_numeric(label, style);
     ctx.push_clip_rect(content_rect);
-    paint_aligned_text(ctx, content_rect, label, &style, style.line_height, 0.0);
+    paint_aligned_text_contained(ctx, content_rect, label, &style, style.line_height, 0.0);
     ctx.pop_clip();
 }
 

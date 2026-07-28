@@ -172,6 +172,46 @@ pub fn paint_aligned_text(
     );
 }
 
+pub(crate) fn paint_aligned_text_contained(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    text: &str,
+    style: &TextStyle,
+    line_height: f32,
+    horizontal_alignment: f32,
+) {
+    let horizontal_mode = HorizontalTextAlignmentMode::Optical;
+    if let Some(aligned) = aligned_text_layout_for_text_with_mode(
+        ctx,
+        rect,
+        text,
+        style,
+        line_height,
+        horizontal_alignment,
+        horizontal_mode,
+    ) {
+        let painted = painted_layout_rect(aligned.origin, &aligned.layout);
+        let offset = containment_offset(painted, rect);
+        ctx.draw_text_layout_with_color(aligned.origin + offset, &aligned.layout, aligned.color);
+        return;
+    }
+
+    let fallback_rect = aligned_text_rect_for_text_with_mode(
+        ctx,
+        rect,
+        text,
+        style,
+        line_height,
+        horizontal_alignment,
+        horizontal_mode,
+    );
+    ctx.draw_text(
+        fallback_rect.translate(containment_offset(fallback_rect, rect)),
+        text.to_string(),
+        style.clone(),
+    );
+}
+
 pub(crate) fn paint_aligned_text_with_mode(
     ctx: &mut PaintCtx,
     rect: Rect,
@@ -204,6 +244,43 @@ pub(crate) fn paint_aligned_text_with_mode(
         horizontal_mode,
     );
     ctx.draw_text(fallback_rect, text.to_string(), style.clone());
+}
+
+fn painted_layout_rect(origin: Point, layout: &TextLayout) -> Rect {
+    let measurement = layout.measurement();
+    let bounds = measurement.bounds;
+    let width = if bounds.width().is_finite() && bounds.width() > 0.0 {
+        bounds.width()
+    } else {
+        measurement.width
+    };
+    Rect::new(
+        origin.x + bounds.x(),
+        origin.y + ((layout.box_size().height - measurement.height).max(0.0) * 0.5),
+        width,
+        layout.style().line_height.max(measurement.height),
+    )
+}
+
+fn containment_offset(inner: Rect, outer: Rect) -> sui_core::Vector {
+    fn axis_offset(inner_min: f32, inner_max: f32, outer_min: f32, outer_max: f32) -> f32 {
+        let inner_size = inner_max - inner_min;
+        let outer_size = outer_max - outer_min;
+        if inner_size > outer_size {
+            outer_min - inner_min
+        } else if inner_min < outer_min {
+            outer_min - inner_min
+        } else if inner_max > outer_max {
+            outer_max - inner_max
+        } else {
+            0.0
+        }
+    }
+
+    sui_core::Vector::new(
+        axis_offset(inner.x(), inner.max_x(), outer.x(), outer.max_x()),
+        axis_offset(inner.y(), inner.max_y(), outer.y(), outer.max_y()),
+    )
 }
 
 /// Paint one unwrapped line using SUI's shared optical baseline alignment path.
