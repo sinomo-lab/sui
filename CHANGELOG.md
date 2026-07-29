@@ -4,6 +4,26 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [0.2.1]
+
+This release refines interaction behavior and rendering consistency across
+widgets, overlays, demos, and accessibility surfaces.
+
+### Highlights
+
+- Added configurable clipboard ownership and a shared editable-text controller
+  for consistent text editing, selection, and copy behavior.
+- Added recursive context-menu submenus with collision-aware cascade placement
+  and corrected activation lifecycle handling.
+- Improved list and tree row padding, typography, drop-target feedback,
+  slider updates, status badges, and pixel-canvas brush defaults.
+- Stabilized accessibility roots, empty-state actions, focus behavior, and
+  synchronous event processing in the test harness.
+- Kept nested retained layers synchronized with dialog and popover opacity and
+  translation animations.
+- Expanded the theme editor and motion demo while preserving scroll state and
+  preventing focus-ring clipping.
+
 ## [0.2.0]
 
 This release expands SUI from a retained widget and rendering foundation into
@@ -75,3 +95,4 @@ Initial public alpha release of the Rust workspace.
 
 [0.1.0]: https://github.com/sinomo-lab/sui/releases/tag/v0.1.0
 [0.2.0]: https://github.com/sinomo-lab/sui/compare/v0.1.0...v0.2.0
+[0.2.1]: https://github.com/sinomo-lab/sui/compare/v0.2.0...v0.2.1
