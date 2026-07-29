@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
+use sui_scene::LayerProperties;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CompositionContainerId {
@@ -295,6 +296,7 @@ struct RetainedRootNode {
 #[derive(Debug, Clone)]
 pub(crate) struct RetainedLayer {
     pub(crate) descriptor: sui_scene::SceneLayerDescriptor,
+    pub(crate) composed_properties: LayerProperties,
     pub(crate) parent: Option<SceneLayerId>,
     pub(crate) children: Vec<SceneLayerId>,
     items: Vec<CompositionItem>,
@@ -318,6 +320,7 @@ struct PacketSnapshot {
 #[derive(Debug, Clone)]
 struct LayerSnapshot {
     descriptor: sui_scene::SceneLayerDescriptor,
+    composed_properties: LayerProperties,
     parent: Option<SceneLayerId>,
     children: Vec<SceneLayerId>,
     items: Vec<CompositionItem>,
@@ -349,6 +352,7 @@ struct CompositionTraversalState {
     transform_stack: Vec<(Transform, TransformNodeId)>,
     clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
     effect_node: EffectNodeId,
+    composed_layer_properties: LayerProperties,
 }
 
 impl Default for CompositionTraversalState {
@@ -359,6 +363,7 @@ impl Default for CompositionTraversalState {
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
             effect_node: EffectNodeId::ROOT,
+            composed_layer_properties: LayerProperties::default(),
         }
     }
 }
@@ -589,9 +594,19 @@ impl RetainedCompositorState {
                     let layer_clip = if layer.descriptor.composition_mode
                         == sui_scene::LayerCompositionMode::Scroll
                     {
-                        Some(layer.descriptor.presented_bounds())
+                        Some(
+                            layer
+                                .descriptor
+                                .presented_bounds()
+                                .translate(state.composed_layer_properties.translation),
+                        )
                     } else if layer.descriptor.is_stack_surface {
-                        Some(layer.descriptor.presented_paint_bounds())
+                        Some(
+                            layer
+                                .descriptor
+                                .presented_paint_bounds()
+                                .translate(state.composed_layer_properties.translation),
+                        )
                     } else {
                         None
                     };
@@ -649,9 +664,12 @@ impl RetainedCompositorState {
         &mut self,
         layer: &SceneLayer,
         parent_layer: Option<SceneLayerId>,
-        state: CompositionTraversalState,
+        mut state: CompositionTraversalState,
         snapshot: &mut CompositorSnapshot,
     ) -> Result<LayerSnapshot> {
+        let composed_properties =
+            compose_layer_properties(state.composed_layer_properties, layer.descriptor.properties);
+        state.composed_layer_properties = composed_properties;
         let inherited_state = state.resolved_state();
         let container = self.build_container_snapshot(
             CompositionContainerId::Layer(layer.layer_id()),
@@ -663,7 +681,7 @@ impl RetainedCompositorState {
         )?;
         let clip_signature = normalized_clip_stack_signature(
             &inherited_state.clip_stack,
-            layer.descriptor.presented_bounds().origin.to_vector(),
+            layer.descriptor.bounds.origin.to_vector() + composed_properties.translation,
         );
         let children = container
             .items
@@ -676,6 +694,7 @@ impl RetainedCompositorState {
 
         Ok(LayerSnapshot {
             descriptor: layer.descriptor.clone(),
+            composed_properties,
             parent: parent_layer,
             children,
             items: container.items,
@@ -865,6 +884,7 @@ impl RetainedCompositorState {
                 .entry(layer_id)
                 .or_insert_with(|| RetainedLayer {
                     descriptor: layer_snapshot.descriptor.clone(),
+                    composed_properties: layer_snapshot.composed_properties,
                     parent: layer_snapshot.parent,
                     children: layer_snapshot.children.clone(),
                     items: layer_snapshot.items.clone(),
@@ -890,6 +910,7 @@ impl RetainedCompositorState {
             }
 
             retained.descriptor = layer_snapshot.descriptor.clone();
+            retained.composed_properties = layer_snapshot.composed_properties;
             retained.parent = layer_snapshot.parent;
             retained.children = layer_snapshot.children.clone();
             retained.items = layer_snapshot.items.clone();
@@ -903,11 +924,8 @@ impl RetainedCompositorState {
                 global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
             let coordinate_space = PacketCoordinateSpace::LayerLocal;
             let normalization_origin = layer_snapshot.descriptor.bounds.origin.to_vector();
-            let pixel_snap_origin = layer_snapshot
-                .descriptor
-                .presented_bounds()
-                .origin
-                .to_vector();
+            let pixel_snap_origin = layer_snapshot.descriptor.bounds.origin.to_vector()
+                + layer_snapshot.composed_properties.translation;
             for packet in layer_snapshot.packets {
                 self.upsert_packet(
                     frame,
@@ -1125,16 +1143,13 @@ impl RetainedCompositorState {
                                         .get(&layer_id)
                                         .map(|layer| {
                                             (
-                                                layer
-                                                    .descriptor
-                                                    .presented_bounds()
-                                                    .origin
-                                                    .to_vector(),
+                                                layer.descriptor.bounds.origin.to_vector()
+                                                    + layer.composed_properties.translation,
                                                 resolved_clip_primitives(
                                                     layer.clip_node,
                                                     &self.clips,
                                                 ),
-                                                layer.descriptor.properties.opacity,
+                                                layer.composed_properties.opacity,
                                             )
                                         })
                                         .unwrap_or((Vector::ZERO, Vec::new(), 1.0)),
@@ -1200,16 +1215,13 @@ impl RetainedCompositorState {
                                         .get(&layer_id)
                                         .map(|layer| {
                                             (
-                                                layer
-                                                    .descriptor
-                                                    .presented_bounds()
-                                                    .origin
-                                                    .to_vector(),
+                                                layer.descriptor.bounds.origin.to_vector()
+                                                    + layer.composed_properties.translation,
                                                 resolved_clip_primitives(
                                                     layer.clip_node,
                                                     &self.clips,
                                                 ),
-                                                layer.descriptor.properties.opacity,
+                                                layer.composed_properties.opacity,
                                             )
                                         })
                                         .unwrap_or((Vector::ZERO, Vec::new(), 1.0)),
@@ -1581,6 +1593,13 @@ fn descriptor_translation_delta(
     }
 
     Some(bounds_delta + (current.properties.translation - previous.properties.translation))
+}
+
+fn compose_layer_properties(parent: LayerProperties, local: LayerProperties) -> LayerProperties {
+    LayerProperties::new(
+        parent.opacity * local.opacity,
+        parent.translation + local.translation,
+    )
 }
 
 fn packet_signature(
@@ -2018,6 +2037,43 @@ mod tests {
         }
     }
 
+    fn build_nested_layer_frame(
+        parent_descriptor: sui_scene::SceneLayerDescriptor,
+        child_descriptor: sui_scene::SceneLayerDescriptor,
+        layer_updates: Vec<SceneLayerUpdate>,
+    ) -> SceneFrame {
+        let mut child_scene = Scene::new();
+        child_scene.push(SceneCommand::FillRect {
+            rect: child_descriptor.bounds,
+            brush: Color::rgba(0.82, 0.36, 0.18, 1.0).into(),
+        });
+
+        let mut parent_scene = Scene::new();
+        parent_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            child_descriptor,
+            child_scene,
+        )));
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            parent_descriptor,
+            parent_scene,
+        )));
+
+        SceneFrame {
+            window_id: WindowId::new(25),
+            viewport: Size::new(160.0, 80.0),
+            surface_size: Size::new(160.0, 80.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates,
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        }
+    }
+
     fn layer_packet_signature(compositor: &RetainedCompositorState, layer_id: WidgetId) -> u64 {
         let container = CompositionContainerId::Layer(SceneLayerId::from_widget(layer_id));
         let packet = compositor
@@ -2358,6 +2414,120 @@ mod tests {
                 .properties
                 .opacity,
             0.5
+        );
+    }
+
+    #[test]
+    fn nested_layers_inherit_ancestor_opacity_and_translation() {
+        let parent_id = WidgetId::new(55);
+        let child_id = WidgetId::new(56);
+        let parent_descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(parent_id),
+            parent_id,
+            Rect::new(8.0, 8.0, 112.0, 56.0),
+        )
+        .with_content_bounds(Rect::new(8.0, 8.0, 112.0, 56.0))
+        .with_paint_bounds(Rect::new(8.0, 8.0, 112.0, 56.0))
+        .with_is_stack_surface(true)
+        .with_composition_mode(LayerCompositionMode::Overlay);
+        let child_descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(child_id),
+            child_id,
+            Rect::new(32.0, 20.0, 48.0, 24.0),
+        )
+        .with_content_bounds(Rect::new(32.0, 20.0, 48.0, 24.0))
+        .with_paint_bounds(Rect::new(32.0, 20.0, 48.0, 24.0))
+        .with_opacity(0.5)
+        .with_translation(Vector::new(2.0, 0.0))
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        let initial_updates = vec![
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Content,
+                parent_descriptor.clone(),
+            ),
+            SceneLayerUpdate::from_descriptor(
+                SceneLayerUpdateKind::Content,
+                child_descriptor.clone(),
+            ),
+        ];
+        let mut frame = build_nested_layer_frame(
+            parent_descriptor.clone(),
+            child_descriptor.clone(),
+            initial_updates,
+        );
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let first_signature = layer_packet_signature(&compositor, child_id);
+        let first_content_version =
+            compositor.layers[&SceneLayerId::from_widget(child_id)].content_version;
+        let first_alpha = first.scene_vertices[0].color[3];
+        let first_min_x = first
+            .scene_vertices
+            .iter()
+            .map(|vertex| vertex.position[0])
+            .fold(f32::INFINITY, f32::min);
+
+        let transitioned_parent = parent_descriptor
+            .with_opacity(0.4)
+            .with_translation(Vector::new(10.0, 6.0));
+        frame = build_nested_layer_frame(
+            transitioned_parent.clone(),
+            child_descriptor.clone(),
+            vec![
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Transform,
+                    transitioned_parent.clone(),
+                ),
+                SceneLayerUpdate::from_descriptor(
+                    SceneLayerUpdateKind::Effect,
+                    transitioned_parent.clone(),
+                ),
+            ],
+        );
+        let second = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let second_signature = layer_packet_signature(&compositor, child_id);
+        let second_content_version =
+            compositor.layers[&SceneLayerId::from_widget(child_id)].content_version;
+        let second_alpha = second.scene_vertices[0].color[3];
+        let second_min_x = second
+            .scene_vertices
+            .iter()
+            .map(|vertex| vertex.position[0])
+            .fold(f32::INFINITY, f32::min);
+        let child_layer = &compositor.layers[&SceneLayerId::from_widget(child_id)];
+        let child_clips = layer_clip_rects(&compositor, child_id);
+
+        assert_eq!(first_signature, second_signature);
+        assert_eq!(first_content_version, second_content_version);
+        assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
+        assert!((second_alpha - (first_alpha * 0.4)).abs() < f32::EPSILON);
+        let expected_ndc_delta_x = (10.0 / frame.viewport.width) * 2.0;
+        assert!(
+            (second_min_x - first_min_x - expected_ndc_delta_x).abs() < f32::EPSILON,
+            "expected nested child vertices to move by {expected_ndc_delta_x}, got {}",
+            second_min_x - first_min_x
+        );
+        assert_eq!(
+            child_layer.composed_properties,
+            LayerProperties::new(0.2, Vector::new(12.0, 6.0))
+        );
+        assert!(
+            child_clips.contains(&transitioned_parent.presented_paint_bounds()),
+            "nested child lost its translated stack-surface clip: {child_clips:?}"
+        );
+        assert!(
+            child_clips.contains(
+                &child_descriptor
+                    .presented_bounds()
+                    .translate(transitioned_parent.properties.translation)
+            ),
+            "nested scroll clip did not follow the ancestor translation: {child_clips:?}"
         );
     }
 }
