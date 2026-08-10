@@ -20,9 +20,9 @@ pub use drag::{
 };
 pub use error::{Error, Result};
 pub use event::{
-    CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, PointerButton,
-    PointerButtons, PointerEvent, PointerEventKind, PointerKind, ScrollDelta, SemanticsEvent,
-    WakeEvent, WindowEvent,
+    CursorGrabMode, CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers,
+    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
+    RawMouseMotionEvent, ScrollDelta, SemanticsEvent, WakeEvent, WindowEvent,
 };
 pub use geometry::{Path, PathBuilder, PathElement, Point, Rect, Size, Transform, Vector};
 pub use id::{AsyncWakeToken, FontHandle, ImageHandle, SurfaceId, TimerToken, WidgetId, WindowId};

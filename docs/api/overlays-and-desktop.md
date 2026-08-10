@@ -170,6 +170,7 @@ use sui::prelude::*;
 
 let request = FileDialogRequest::new(FileDialogMode::OpenFiles)
     .title("Attach files")
+    .parent_window(window_id)
     .filter(FileDialogFilter::new("Documents", ["md", "txt", "pdf"]));
 
 if let Some(selection) = NativeFileDialogs.show(request).await? {
@@ -185,6 +186,18 @@ Cancellation returns `Ok(None)`. Desktop handles expose a filesystem `path`;
 web handles intentionally do not, so portable code should use `read` and
 `write`. Folder selection is unavailable in web builds. SUI does not block the
 UI thread or prescribe an async executor for application code.
+
+Call `NativeFileDialogs.show(request)` inside the UI callback that initiated
+the action. It resolves the logical parent window and constructs the rfd
+operation synchronously, satisfying macOS main-thread setup; the returned
+native future is `Send` and may then be polled by a background executor. The
+parent registry stores weak window references. Once resolved, the returned
+future retains its parent window while the future is active; a request for a
+window that has already closed returns an error. Web ignores `parent_window`,
+and the returned future must begin polling during browser user activation;
+simply storing it for later is insufficient. The free
+`show_file_dialog(request)` async helper defers setup until first poll, so use
+it only when that poll already occurs on the required UI/user-activation path.
 
 ## Platform File Drag and Drop
 

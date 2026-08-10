@@ -17,12 +17,12 @@ use std::{
 };
 
 use sui_core::{
-    AsyncWakeToken, Clipboard, ClipboardBackend, CustomEvent, DirtyRegion, DragEvent,
-    DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect, Error, Event,
-    FontHandle, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
-    Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-    SemanticsActionRequest, SemanticsEvent, SemanticsNode, Size, TimerToken, Vector, WakeEvent,
-    WidgetId, WindowEvent, WindowId,
+    AsyncWakeToken, Clipboard, ClipboardBackend, CursorGrabMode, CustomEvent, DirtyRegion,
+    DragEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect,
+    Error, Event, FontHandle, ImageHandle, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, KeyState, Point, PointerButton, PointerButtons, PointerEvent,
+    PointerEventKind, Rect, Result, SemanticsActionRequest, SemanticsEvent, SemanticsNode, Size,
+    TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -72,8 +72,8 @@ pub use widget::{
     WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use widget::{
-    BeginDragRequest, DragRequest, DropAcceptanceRequest, FocusRequest, PaintImageResource,
-    PointerCaptureRequest, WakeRequest,
+    BeginDragRequest, CursorRequest, DragRequest, DropAcceptanceRequest, FocusRequest,
+    PaintImageResource, PointerCaptureRequest, WakeRequest,
 };
 
 /// Internal typed notification delivered to widgets whose observable
@@ -512,6 +512,15 @@ impl Runtime {
         Ok(window.pointer_capture.get(&pointer_id).copied())
     }
 
+    /// Return the desired cursor state for a host window.
+    ///
+    /// Platform hosts should apply a newer `revision` promptly after event
+    /// dispatch so web pointer-lock requests remain inside the browser's user
+    /// activation callback.
+    pub fn window_cursor_state(&self, window_id: WindowId) -> Result<WindowCursorState> {
+        Ok(self.window(window_id)?.cursor.state)
+    }
+
     pub fn widget_graph(&self, window_id: WindowId) -> Result<WidgetGraphSnapshot> {
         let window = self.window(window_id)?;
         Ok(window.graph.snapshot())
@@ -850,6 +859,28 @@ pub struct FocusState {
     pub window_focused: bool,
 }
 
+/// Desired host cursor state for one runtime window.
+///
+/// `revision` advances for every accepted widget request, including a repeated
+/// request for the same value. Platform hosts use it to retry a best-effort
+/// grab from a later user-activation event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowCursorState {
+    pub grab_mode: CursorGrabMode,
+    pub visible: bool,
+    pub revision: u64,
+}
+
+impl Default for WindowCursorState {
+    fn default() -> Self {
+        Self {
+            grab_mode: CursorGrabMode::None,
+            visible: true,
+            revision: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FrameSchedule {
     pub measure: bool,
@@ -1181,6 +1212,13 @@ impl ActiveDrag {
     }
 }
 
+#[derive(Debug, Default)]
+struct RuntimeCursorState {
+    state: WindowCursorState,
+    grab_owner: Option<WidgetId>,
+    visibility_owner: Option<WidgetId>,
+}
+
 struct WindowState {
     id: WindowId,
     title: String,
@@ -1204,6 +1242,7 @@ struct WindowState {
     pending_reactive_diagnostics: Vec<ReactiveInvalidationSample>,
     reactive_hub: Arc<reactive::ReactiveInvalidationHub>,
     pointer_capture: HashMap<u64, WidgetId>,
+    cursor: RuntimeCursorState,
     last_pointer_events: HashMap<u64, PointerEvent>,
     pointer_hover_paths: HashMap<u64, Vec<WidgetId>>,
     active_drag: Option<ActiveDrag>,
@@ -1272,6 +1311,7 @@ impl WindowState {
             pending_reactive_diagnostics: Vec::new(),
             reactive_hub,
             pointer_capture: HashMap::new(),
+            cursor: RuntimeCursorState::default(),
             last_pointer_events: HashMap::new(),
             pointer_hover_paths: HashMap::new(),
             active_drag: None,
@@ -1415,6 +1455,7 @@ impl WindowState {
             self.pointer_capture.clear();
             self.last_pointer_events.clear();
             self.active_drag = None;
+            self.reset_cursor_state();
         }
         let mut skip_primary_route = false;
         if let Event::Pointer(pointer) = &event {
@@ -2244,6 +2285,11 @@ impl WindowState {
                 .copied()
                 .or(hit_target)
                 .unwrap_or(self.root.id()),
+            Event::RawMouseMotion(_) => self
+                .cursor
+                .grab_owner
+                .filter(|_| self.cursor.state.grab_mode != CursorGrabMode::None)
+                .unwrap_or(self.root.id()),
             Event::Keyboard(_) | Event::Ime(_) => {
                 self.focus.focused_widget.unwrap_or(self.root.id())
             }
@@ -2269,6 +2315,7 @@ impl WindowState {
         invalidations.extend(effects.invalidations);
         self.apply_wake_requests(effects.wake_requests);
         self.apply_pointer_capture_requests(effects.pointer_capture_requests, invalidations);
+        self.apply_cursor_requests(effects.cursor_requests);
         self.apply_drag_requests(effects.drag_requests, invalidations);
         self.apply_posted_events(effects.posted_events, invalidations);
         self.apply_posted_commands(effects.posted_commands, invalidations);
@@ -2295,6 +2342,7 @@ impl WindowState {
                     dispatch.pointer_capture_requests,
                     invalidations,
                 );
+                self.apply_cursor_requests(dispatch.cursor_requests);
                 self.apply_drag_requests(dispatch.drag_requests, invalidations);
                 posted.extend(dispatch.posted_events);
                 self.apply_posted_commands(dispatch.posted_commands, invalidations);
@@ -2306,6 +2354,7 @@ impl WindowState {
                         focus_effects.pointer_capture_requests,
                         invalidations,
                     );
+                    self.apply_cursor_requests(focus_effects.cursor_requests);
                     self.apply_drag_requests(focus_effects.drag_requests, invalidations);
                     posted.extend(focus_effects.posted_events);
                     self.apply_posted_commands(focus_effects.posted_commands, invalidations);
@@ -2346,6 +2395,7 @@ impl WindowState {
                     dispatch.pointer_capture_requests,
                     invalidations,
                 );
+                self.apply_cursor_requests(dispatch.cursor_requests);
                 self.apply_drag_requests(dispatch.drag_requests, invalidations);
                 self.apply_posted_events(dispatch.posted_events, invalidations);
                 posted.extend(dispatch.posted_commands);
@@ -2596,6 +2646,63 @@ impl WindowState {
                 }
             }
         }
+    }
+
+    fn apply_cursor_requests(&mut self, requests: Vec<CursorRequest>) {
+        for request in requests {
+            match request {
+                CursorRequest::Grab { target, mode } => {
+                    if !self.focus.window_focused && mode != CursorGrabMode::None {
+                        continue;
+                    }
+                    if mode == CursorGrabMode::None {
+                        if self.cursor.grab_owner.is_some()
+                            && self.cursor.grab_owner != Some(target)
+                        {
+                            continue;
+                        }
+                        self.cursor.grab_owner = None;
+                    } else {
+                        self.cursor.grab_owner = Some(target);
+                    }
+                    self.cursor.state.grab_mode = mode;
+                    self.cursor.state.revision = self.cursor.state.revision.wrapping_add(1);
+                }
+                CursorRequest::Visibility { target, visible } => {
+                    if !self.focus.window_focused && !visible {
+                        continue;
+                    }
+                    if visible {
+                        if self.cursor.visibility_owner.is_some()
+                            && self.cursor.visibility_owner != Some(target)
+                        {
+                            continue;
+                        }
+                        self.cursor.visibility_owner = None;
+                    } else {
+                        self.cursor.visibility_owner = Some(target);
+                    }
+                    self.cursor.state.visible = visible;
+                    self.cursor.state.revision = self.cursor.state.revision.wrapping_add(1);
+                }
+            }
+        }
+    }
+
+    fn reset_cursor_state(&mut self) {
+        if self.cursor.state.grab_mode == CursorGrabMode::None
+            && self.cursor.state.visible
+            && self.cursor.grab_owner.is_none()
+            && self.cursor.visibility_owner.is_none()
+        {
+            return;
+        }
+
+        self.cursor.state.grab_mode = CursorGrabMode::None;
+        self.cursor.state.visible = true;
+        self.cursor.state.revision = self.cursor.state.revision.wrapping_add(1);
+        self.cursor.grab_owner = None;
+        self.cursor.visibility_owner = None;
     }
 
     fn cancel_all_pointer_captures(&mut self, invalidations: &mut Vec<InvalidationRequest>) {
@@ -4156,6 +4263,17 @@ impl WindowState {
     fn prune_runtime_state(&mut self) {
         self.pointer_capture
             .retain(|_, widget_id| self.graph.contains(*widget_id));
+        let stale_grab_owner = self
+            .cursor
+            .grab_owner
+            .is_some_and(|widget_id| !self.graph.contains(widget_id));
+        let stale_visibility_owner = self
+            .cursor
+            .visibility_owner
+            .is_some_and(|widget_id| !self.graph.contains(widget_id));
+        if stale_grab_owner || stale_visibility_owner {
+            self.reset_cursor_state();
+        }
         if self
             .active_drag
             .as_ref()
@@ -4928,6 +5046,7 @@ struct EventEffects {
     invalidations: Vec<InvalidationRequest>,
     wake_requests: Vec<WakeRequest>,
     pointer_capture_requests: Vec<PointerCaptureRequest>,
+    cursor_requests: Vec<CursorRequest>,
     drag_requests: Vec<DragRequest>,
     drop_acceptances: Vec<DropAcceptanceRequest>,
     posted_events: Vec<widget::PostedEventRequest>,
@@ -4940,6 +5059,7 @@ impl EventEffects {
         self.wake_requests.extend(dispatch.wake_requests);
         self.pointer_capture_requests
             .extend(dispatch.pointer_capture_requests);
+        self.cursor_requests.extend(dispatch.cursor_requests);
         self.drag_requests.extend(dispatch.drag_requests);
         self.drop_acceptances.extend(dispatch.drop_acceptances);
         self.posted_events.extend(dispatch.posted_events);
@@ -4951,6 +5071,7 @@ impl EventEffects {
         self.wake_requests.extend(effects.wake_requests);
         self.pointer_capture_requests
             .extend(effects.pointer_capture_requests);
+        self.cursor_requests.extend(effects.cursor_requests);
         self.drag_requests.extend(effects.drag_requests);
         self.drop_acceptances.extend(effects.drop_acceptances);
         self.posted_events.extend(effects.posted_events);
@@ -4965,6 +5086,7 @@ fn empty_dispatch() -> widget::EventDispatch {
         focus_request: None,
         wake_requests: Vec::new(),
         pointer_capture_requests: Vec::new(),
+        cursor_requests: Vec::new(),
         drag_requests: Vec::new(),
         drop_acceptances: Vec::new(),
         posted_events: Vec::new(),
@@ -5022,6 +5144,7 @@ fn command_sample(
 fn event_trace_source(event: &Event) -> String {
     let kind = match event {
         Event::Pointer(event) => format!("pointer:{:?}", event.kind),
+        Event::RawMouseMotion(_) => "raw-mouse-motion".to_string(),
         Event::Drag(event) => format!("drag:{:?}", event.kind),
         Event::Keyboard(_) => "keyboard".to_string(),
         Event::Ime(_) => "ime".to_string(),
@@ -5036,6 +5159,7 @@ fn event_trace_source(event: &Event) -> String {
 fn inspector_event_kind(event: &Event) -> &'static str {
     match event {
         Event::Pointer(_) => "pointer",
+        Event::RawMouseMotion(_) => "raw-mouse-motion",
         Event::Drag(_) => "drag",
         Event::Keyboard(_) => "keyboard",
         Event::Ime(_) => "ime",

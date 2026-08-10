@@ -272,6 +272,7 @@ pub struct RendererInterop {
 pub struct WgpuExternalTextureContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    adapter_info: wgpu::AdapterInfo,
 }
 
 impl WgpuExternalTextureContext {
@@ -281,6 +282,14 @@ impl WgpuExternalTextureContext {
 
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// Identifies the physical/logical adapter backing the shared device.
+    ///
+    /// External renderers can persist the backend, adapter, and driver fields
+    /// alongside captures produced through SUI's device.
+    pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
+        &self.adapter_info
     }
 }
 
@@ -519,14 +528,18 @@ impl WgpuExternalTextureRegistry {
         self.len() == 0
     }
 
-    fn attach(&self, device: wgpu::Device, queue: wgpu::Queue) {
+    fn attach(&self, device: wgpu::Device, queue: wgpu::Queue, adapter_info: wgpu::AdapterInfo) {
         let mut context = self
             .inner
             .context
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if context.is_none() {
-            *context = Some(WgpuExternalTextureContext { device, queue });
+            *context = Some(WgpuExternalTextureContext {
+                device,
+                queue,
+                adapter_info,
+            });
             self.inner.context_ready.notify_all();
         }
     }
@@ -1581,7 +1594,11 @@ impl WgpuRenderer {
 
     pub fn set_external_texture_registry(&mut self, registry: WgpuExternalTextureRegistry) {
         if let Some(shared) = &self.shared {
-            registry.attach(shared.device.clone(), shared.queue.clone());
+            registry.attach(
+                shared.device.clone(),
+                shared.queue.clone(),
+                shared.adapter.get_info(),
+            );
         }
         self.external_texture_registry = Some(registry);
         self.external_image_cache.clear();
@@ -2281,7 +2298,11 @@ impl WgpuRenderer {
             dual_source_blending_enabled,
         });
         if let (Some(registry), Some(shared)) = (&self.external_texture_registry, &self.shared) {
-            registry.attach(shared.device.clone(), shared.queue.clone());
+            registry.attach(
+                shared.device.clone(),
+                shared.queue.clone(),
+                shared.adapter.get_info(),
+            );
         }
 
         Ok(())
@@ -2450,7 +2471,11 @@ impl WgpuRenderer {
             dual_source_blending_enabled,
         });
         if let (Some(registry), Some(shared)) = (&self.external_texture_registry, &self.shared) {
-            registry.attach(shared.device.clone(), shared.queue.clone());
+            registry.attach(
+                shared.device.clone(),
+                shared.queue.clone(),
+                shared.adapter.get_info(),
+            );
         }
 
         Ok(())
@@ -13310,6 +13335,13 @@ mod tests {
             .render(&SceneFrame::new(window_id, viewport))
             .unwrap();
         let context = registry.context().expect("renderer context attached");
+        let expected_adapter_info = renderer
+            .shared
+            .as_ref()
+            .expect("renderer device initialized")
+            .adapter
+            .get_info();
+        assert_eq!(context.adapter_info(), &expected_adapter_info);
 
         let direct_handle = ImageHandle::new(2302);
         let direct_texture = context.device().create_texture(&wgpu::TextureDescriptor {

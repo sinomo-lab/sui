@@ -150,6 +150,52 @@ Keyboard events remain important for navigation and commands. Custom editors
 should separate navigation/shortcut handling from committed text insertion in
 the same way.
 
+## Relative Mouse Motion and Cursor Grabs
+
+Viewport, camera, and canvas widgets can request host cursor policy directly
+from `EventCtx`:
+
+```rust,ignore
+match event {
+    Event::Pointer(pointer)
+        if pointer.kind == PointerEventKind::Down
+            && pointer.button == Some(PointerButton::Secondary) =>
+    {
+        ctx.request_cursor_grab(CursorGrabMode::Locked);
+        ctx.request_cursor_visibility(false);
+        ctx.set_handled();
+    }
+    Event::RawMouseMotion(motion) => {
+        camera.rotate(motion.delta);
+        ctx.request_paint();
+        ctx.set_handled();
+    }
+    Event::Pointer(pointer)
+        if pointer.kind == PointerEventKind::Up
+            && pointer.button == Some(PointerButton::Secondary) =>
+    {
+        ctx.request_cursor_grab(CursorGrabMode::None);
+        ctx.request_cursor_visibility(true);
+        ctx.set_handled();
+    }
+    _ => {}
+}
+```
+
+`Locked` is best effort: the desktop host tries a locked cursor, falls back to
+`Confined`, and otherwise leaves it ungrabbed. Web uses the browser pointer-lock
+request through Winit, so request it synchronously from the activating pointer
+callback. `RawMouseMotionEvent::delta` preserves Winit's raw, device-relative
+units without DPI normalization and routes to the widget that owns the grab.
+Apply an application-defined camera sensitivity rather than treating it as a
+layout-space distance. Window focus loss, host suspension, widget removal, and
+window removal release the grab and restore cursor visibility; applications
+must request it again after focus returns.
+
+Cursor visibility and grabbing are separate requests. Pair them explicitly if
+the interaction needs both, and retain Escape or button-release behavior that
+lets the user leave a capture intentionally.
+
 ## Multiline Submit Behavior
 
 By default, Enter inserts a newline in `TextArea`. Adding `on_submit` changes

@@ -260,6 +260,12 @@ widget registers renderer-neutral metadata and refers to the matching image
 handle. Keep this path for video, game, or renderer interop. Ordinary images
 should use `ResourceRegistry`.
 
+After renderer initialization, `WgpuExternalTextureRegistry::context()` exposes
+the renderer-owned device and queue together with `adapter_info()`. Persist the
+adapter name, backend, vendor/device identifiers, driver, and driver info when
+an external renderer needs capture or asset provenance tied to SUI's actual
+WGPU device.
+
 ## Icons and Accessibility
 
 `App::new()` registers SUI's built-in Lucide resources. Use `Icon` for a

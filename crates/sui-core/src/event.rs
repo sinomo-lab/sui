@@ -13,6 +13,36 @@ pub struct Modifiers {
     pub meta: bool,
 }
 
+/// Requested host behavior for the system cursor.
+///
+/// Cursor grabbing is best effort. A platform may fall back from [`Self::Locked`]
+/// to [`Self::Confined`], or leave the cursor ungrabbed when neither mode is
+/// supported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorGrabMode {
+    /// The cursor can leave the host viewport and absolute pointer motion is
+    /// available normally.
+    #[default]
+    None,
+    /// Keep the cursor inside the host viewport while retaining an absolute
+    /// cursor position.
+    Confined,
+    /// Decouple motion from the host's absolute cursor position and report
+    /// relative movement. Visibility remains a separate host request.
+    Locked,
+}
+
+/// Device-relative mouse motion in the host's raw, device-specific units.
+///
+/// This event is independent of [`PointerEvent::position`] and is not DPI
+/// normalized. Desktop hosts deliver it to the widget that owns the active
+/// cursor grab.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RawMouseMotionEvent {
+    pub delta: Vector,
+    pub modifiers: Modifiers,
+}
+
 impl Modifiers {
     pub const NONE: Self = Self {
         shift: false,
@@ -290,6 +320,7 @@ impl CustomEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Pointer(PointerEvent),
+    RawMouseMotion(RawMouseMotionEvent),
     Drag(DragEvent),
     Keyboard(KeyboardEvent),
     Ime(ImeEvent),

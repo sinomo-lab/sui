@@ -8,9 +8,9 @@ use std::{
 };
 
 use sui_core::{
-    Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Result, ScrollDelta,
-    SemanticsRole, Size, Vector, WindowEvent, WindowId,
+    CursorGrabMode, Error, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point,
+    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
+    RawMouseMotionEvent, Result, ScrollDelta, SemanticsRole, Size, Vector, WindowEvent, WindowId,
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuExternalTextureRegistry, WgpuRenderer};
 use sui_runtime::{
@@ -24,12 +24,14 @@ use winit::{
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
     error::{EventLoopError, OsError},
     event::{
-        ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase,
+        DeviceEvent, DeviceId, ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase,
         WindowEvent as WinitWindowEvent,
     },
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
-    window::{Window, WindowAttributes, WindowId as HostWindowId},
+    window::{
+        CursorGrabMode as WinitCursorGrabMode, Window, WindowAttributes, WindowId as HostWindowId,
+    },
 };
 
 #[cfg(target_os = "windows")]
@@ -653,6 +655,16 @@ impl DesktopApp {
             return;
         }
 
+        let window_ids = self.windows.keys().copied().collect::<Vec<_>>();
+        for window_id in window_ids {
+            if let Err(error) = self
+                .runtime
+                .handle_event(window_id, Event::Window(WindowEvent::Focused(false)))
+            {
+                self.last_error = Some(error);
+            }
+        }
+
         for (window_id, window) in &mut self.windows {
             // On Android the native SurfaceView is invalid as soon as this
             // callback returns. Drop wgpu surfaces synchronously while retaining
@@ -662,6 +674,7 @@ impl DesktopApp {
             window.redraw_requested = false;
             window.redraw_requested_at_ms = None;
             window.android_back_down_seen = false;
+            release_host_cursor(window);
             if window.ime_allowed {
                 window.window.set_ime_allowed(false);
                 window.ime_allowed = false;
@@ -680,7 +693,10 @@ impl DesktopApp {
             .collect();
 
         for window_id in removed_ids {
-            if let Some(window) = self.windows.remove(&window_id) {
+            if let Some(mut window) = self.windows.remove(&window_id) {
+                release_host_cursor(&mut window);
+                #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+                crate::file_dialog::unregister_native_file_dialog_parent(window_id);
                 self.renderer.remove_window(window_id);
                 self.host_to_runtime.remove(&window.window.id());
                 crate::clear_window_performance(window_id);
@@ -747,6 +763,8 @@ impl DesktopApp {
             let accesskit_snapshot = build_accesskit_snapshot(window_id, scale_factor, &title, &[]);
             self.renderer
                 .register_window(window_id, Arc::clone(&window))?;
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            crate::file_dialog::register_native_file_dialog_parent(window_id, &window);
 
             self.host_to_runtime.insert(host_id, window_id);
             self.windows.insert(
@@ -767,6 +785,9 @@ impl DesktopApp {
                     #[cfg(target_os = "windows")]
                     accesskit_snapshot,
                     pointer: PointerState::default(),
+                    focused: false,
+                    applied_cursor_grab: CursorGrabMode::None,
+                    applied_cursor_revision: 0,
                     touch_points: HashMap::new(),
                     android_back_down_seen: false,
                     ime_allowed: false,
@@ -971,6 +992,8 @@ impl DesktopApp {
         let handled = self.runtime.dispatch_event(window_id, event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
 
+        self.sync_window_cursor(window_id)?;
+
         if let Some(window) = self.windows.get_mut(&window_id) {
             if !is_redraw {
                 window.pending_event_time_ms += event_time_ms;
@@ -1001,6 +1024,9 @@ impl DesktopApp {
         }
 
         if is_close {
+            if let Some(window) = self.windows.get_mut(&window_id) {
+                release_host_cursor(window);
+            }
             self.runtime.remove_window(window_id)?;
             crate::clear_window_performance(window_id);
             self.sync_windows(event_loop)?;
@@ -1011,6 +1037,28 @@ impl DesktopApp {
         }
 
         Ok(handled)
+    }
+
+    fn sync_window_cursor(&mut self, window_id: WindowId) -> Result<()> {
+        let desired = self.runtime.window_cursor_state(window_id)?;
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return Ok(());
+        };
+        if window.applied_cursor_revision == desired.revision {
+            return Ok(());
+        }
+
+        let requested_grab = if window.focused {
+            desired.grab_mode
+        } else {
+            CursorGrabMode::None
+        };
+        window.applied_cursor_grab = apply_host_cursor_grab(window.window.as_ref(), requested_grab);
+        window
+            .window
+            .set_cursor_visible(desired.visible || !window.focused);
+        window.applied_cursor_revision = desired.revision;
+        Ok(())
     }
 
     fn render_window_if_needed(&mut self, window_id: WindowId, event_time_ms: f64) -> Result<()> {
@@ -1039,6 +1087,10 @@ impl DesktopApp {
 
         let runtime_started = Instant::now();
         let output = self.runtime.render(window_id)?;
+        // A render pass can rebuild the widget graph after reactive state
+        // removed the cursor owner. Apply the runtime's resulting reset even
+        // when no further input event arrives.
+        self.sync_window_cursor(window_id)?;
         let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
         let semantics = output.semantics.clone();
         let renderer_started = Instant::now();
@@ -1269,8 +1321,12 @@ impl DesktopApp {
                 )
             }
             WinitWindowEvent::Focused(focused) => {
-                if !focused && let Some(window) = self.windows.get_mut(&window_id) {
-                    window.android_back_down_seen = false;
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.focused = focused;
+                    if !focused {
+                        window.android_back_down_seen = false;
+                        release_host_cursor(window);
+                    }
                 }
                 self.process_event(
                     event_loop,
@@ -1535,6 +1591,28 @@ impl DesktopApp {
             }
             _ => Ok(()),
         }
+    }
+
+    fn handle_device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: DeviceEvent,
+    ) -> Result<()> {
+        let DeviceEvent::MouseMotion { delta } = event else {
+            return Ok(());
+        };
+        let Some((window_id, modifiers)) = self.windows.iter().find_map(|(&window_id, window)| {
+            (window.focused && window.applied_cursor_grab != CursorGrabMode::None)
+                .then_some((window_id, window.pointer.modifiers))
+        }) else {
+            return Ok(());
+        };
+        let delta = raw_mouse_motion_to_vector(delta);
+        self.process_event(
+            event_loop,
+            window_id,
+            Event::RawMouseMotion(RawMouseMotionEvent { delta, modifiers }),
+        )
     }
 
     #[cfg(target_os = "windows")]
@@ -2218,6 +2296,20 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
         }
     }
 
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        if !self.host_lifecycle.is_resumed() {
+            return;
+        }
+        if let Err(error) = self.handle_device_event(event_loop, event) {
+            self.handle_error(event_loop, error);
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.drive_runtime(event_loop) {
             self.handle_error(event_loop, error);
@@ -2242,6 +2334,9 @@ struct WindowState {
     #[cfg(target_os = "windows")]
     accesskit_snapshot: AccessKitSnapshot,
     pointer: PointerState,
+    focused: bool,
+    applied_cursor_grab: CursorGrabMode,
+    applied_cursor_revision: u64,
     touch_points: HashMap<u64, Point>,
     android_back_down_seen: bool,
     ime_allowed: bool,
@@ -2276,6 +2371,46 @@ impl Default for PointerState {
     }
 }
 
+fn apply_host_cursor_grab(window: &Window, requested: CursorGrabMode) -> CursorGrabMode {
+    apply_cursor_grab_with(requested, |mode| window.set_cursor_grab(mode))
+}
+
+fn apply_cursor_grab_with<E>(
+    requested: CursorGrabMode,
+    mut set_mode: impl FnMut(WinitCursorGrabMode) -> std::result::Result<(), E>,
+) -> CursorGrabMode {
+    match requested {
+        CursorGrabMode::None => {
+            let _ = set_mode(WinitCursorGrabMode::None);
+            CursorGrabMode::None
+        }
+        CursorGrabMode::Confined => {
+            if set_mode(WinitCursorGrabMode::Confined).is_ok() {
+                CursorGrabMode::Confined
+            } else {
+                let _ = set_mode(WinitCursorGrabMode::None);
+                CursorGrabMode::None
+            }
+        }
+        CursorGrabMode::Locked => {
+            if set_mode(WinitCursorGrabMode::Locked).is_ok() {
+                CursorGrabMode::Locked
+            } else if set_mode(WinitCursorGrabMode::Confined).is_ok() {
+                CursorGrabMode::Confined
+            } else {
+                let _ = set_mode(WinitCursorGrabMode::None);
+                CursorGrabMode::None
+            }
+        }
+    }
+}
+
+fn release_host_cursor(window: &mut WindowState) {
+    let _ = window.window.set_cursor_grab(WinitCursorGrabMode::None);
+    window.window.set_cursor_visible(true);
+    window.applied_cursor_grab = CursorGrabMode::None;
+}
+
 fn physical_size_to_logical_size(size: PhysicalSize<u32>, scale_factor: f64) -> Size {
     let logical = size.to_logical::<f32>(scale_factor);
     Size::new(logical.width, logical.height)
@@ -2292,6 +2427,10 @@ fn physical_position_to_logical_vector(
 ) -> Vector {
     let logical = position.to_logical::<f32>(scale_factor);
     Vector::new(logical.x, logical.y)
+}
+
+fn raw_mouse_motion_to_vector(delta: (f64, f64)) -> Vector {
+    Vector::new(delta.0 as f32, delta.1 as f32)
 }
 
 fn apply_ime_composition_rect(
@@ -2736,19 +2875,22 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        HostLifecycle, map_external_file_window_event, normalize_android_back_event,
-        physical_position_to_logical_point, physical_position_to_logical_vector,
-        physical_size_to_logical_size, rasterize_svg_window_icon_rgba8, sanitize_ime_cursor_area,
+        HostLifecycle, apply_cursor_grab_with, map_external_file_window_event,
+        normalize_android_back_event, physical_position_to_logical_point,
+        physical_position_to_logical_vector, physical_size_to_logical_size,
+        rasterize_svg_window_icon_rgba8, raw_mouse_motion_to_vector, sanitize_ime_cursor_area,
         web_click_semantics_action, window_icon_to_winit_icon,
     };
     use sui_core::{
-        Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, WindowEvent,
+        CursorGrabMode, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode,
+        SemanticsRole, WindowEvent,
     };
     use sui_runtime::WindowIcon;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::{
         event::{ElementState, WindowEvent as WinitWindowEvent},
         keyboard::{Key, NamedKey},
+        window::CursorGrabMode as WinitCursorGrabMode,
     };
 
     #[test]
@@ -2764,6 +2906,39 @@ mod tests {
         assert!(!lifecycle.is_resumed());
         assert!(!lifecycle.suspend());
         assert!(lifecycle.resume());
+    }
+
+    #[test]
+    fn locked_cursor_grab_falls_back_to_confined_then_releases() {
+        let mut attempts = Vec::new();
+        let applied = apply_cursor_grab_with(CursorGrabMode::Locked, |mode| {
+            attempts.push(mode);
+            match mode {
+                WinitCursorGrabMode::Locked => Err(()),
+                WinitCursorGrabMode::Confined => Ok(()),
+                WinitCursorGrabMode::None => Ok(()),
+            }
+        });
+        assert_eq!(applied, CursorGrabMode::Confined);
+        assert_eq!(
+            attempts,
+            [WinitCursorGrabMode::Locked, WinitCursorGrabMode::Confined]
+        );
+
+        attempts.clear();
+        let applied = apply_cursor_grab_with(CursorGrabMode::Locked, |mode| {
+            attempts.push(mode);
+            (mode == WinitCursorGrabMode::None).then_some(()).ok_or(())
+        });
+        assert_eq!(applied, CursorGrabMode::None);
+        assert_eq!(
+            attempts,
+            [
+                WinitCursorGrabMode::Locked,
+                WinitCursorGrabMode::Confined,
+                WinitCursorGrabMode::None
+            ]
+        );
     }
 
     #[test]
@@ -2788,6 +2963,14 @@ mod tests {
 
         assert_eq!(delta.x, 60.0);
         assert_eq!(delta.y, 30.0);
+    }
+
+    #[test]
+    fn preserves_raw_mouse_motion_without_dpi_scaling() {
+        let delta = raw_mouse_motion_to_vector((12.5, -7.25));
+
+        assert_eq!(delta.x, 12.5);
+        assert_eq!(delta.y, -7.25);
     }
 
     #[test]

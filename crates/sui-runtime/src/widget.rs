@@ -18,9 +18,10 @@ use crate::{
 };
 
 use sui_core::{
-    AsyncWakeToken, Clipboard, Color, DpiInfo, DragPayload, DragScopeId, DragSessionId, DropEffect,
-    Event, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, Path, Point,
-    Rect, SemanticsNode, Size, TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowId,
+    AsyncWakeToken, Clipboard, Color, CursorGrabMode, DpiInfo, DragPayload, DragScopeId,
+    DragSessionId, DropEffect, Event, ImageHandle, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, Path, Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector,
+    WakeEvent, WidgetId, WindowId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, LayoutContext};
 use sui_reactive::{Observable, Signal};
@@ -1297,6 +1298,7 @@ impl WidgetPod {
             focus_request: ctx.take_focus_request(),
             wake_requests: ctx.take_wake_requests(),
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
+            cursor_requests: ctx.take_cursor_requests(),
             drag_requests: ctx.take_drag_requests(),
             drop_acceptances: ctx.take_drop_acceptances(),
             posted_events: ctx.take_posted_events(),
@@ -1358,6 +1360,7 @@ impl WidgetPod {
             focus_request: ctx.take_focus_request(),
             wake_requests: ctx.take_wake_requests(),
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
+            cursor_requests: ctx.take_cursor_requests(),
             drag_requests: ctx.take_drag_requests(),
             drop_acceptances: ctx.take_drop_acceptances(),
             posted_events: ctx.take_posted_events(),
@@ -1581,6 +1584,18 @@ pub(crate) enum PointerCaptureRequest {
     Release { pointer_id: u64 },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CursorRequest {
+    Grab {
+        target: WidgetId,
+        mode: CursorGrabMode,
+    },
+    Visibility {
+        target: WidgetId,
+        visible: bool,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct BeginDragRequest {
     pub session_id: DragSessionId,
@@ -1625,6 +1640,7 @@ pub(crate) struct EventDispatch {
     pub focus_request: Option<FocusRequest>,
     pub wake_requests: Vec<WakeRequest>,
     pub pointer_capture_requests: Vec<PointerCaptureRequest>,
+    pub cursor_requests: Vec<CursorRequest>,
     pub drag_requests: Vec<DragRequest>,
     pub drop_acceptances: Vec<DropAcceptanceRequest>,
     pub posted_events: Vec<PostedEventRequest>,
@@ -1647,6 +1663,7 @@ pub struct EventCtx {
     focus_request: Option<FocusRequest>,
     wake_requests: Vec<WakeRequest>,
     pointer_capture_requests: Vec<PointerCaptureRequest>,
+    cursor_requests: Vec<CursorRequest>,
     drag_requests: Vec<DragRequest>,
     drop_acceptances: Vec<DropAcceptanceRequest>,
     posted_events: Vec<PostedEventRequest>,
@@ -1681,6 +1698,7 @@ impl EventCtx {
             focus_request: None,
             wake_requests: Vec::new(),
             pointer_capture_requests: Vec::new(),
+            cursor_requests: Vec::new(),
             drag_requests: Vec::new(),
             drop_acceptances: Vec::new(),
             posted_events: Vec::new(),
@@ -1695,6 +1713,7 @@ impl EventCtx {
             focus_request: self.take_focus_request(),
             wake_requests: self.take_wake_requests(),
             pointer_capture_requests: self.take_pointer_capture_requests(),
+            cursor_requests: self.take_cursor_requests(),
             drag_requests: self.take_drag_requests(),
             drop_acceptances: self.take_drop_acceptances(),
             posted_events: self.take_posted_events(),
@@ -1881,6 +1900,30 @@ impl EventCtx {
             .push(PointerCaptureRequest::Release { pointer_id });
     }
 
+    /// Request host-level cursor grabbing for this widget.
+    ///
+    /// The request is best effort. Desktop hosts try [`CursorGrabMode::Locked`]
+    /// first and then fall back to [`CursorGrabMode::Confined`]. Relative mouse
+    /// motion is routed to this widget while a grab is active. Request
+    /// [`CursorGrabMode::None`] to release a grab owned by this widget.
+    pub fn request_cursor_grab(&mut self, mode: CursorGrabMode) {
+        self.cursor_requests.push(CursorRequest::Grab {
+            target: self.widget_id,
+            mode,
+        });
+    }
+
+    /// Request whether the host system cursor is visible for this widget.
+    ///
+    /// Cursor visibility is independent of cursor grabbing. Focus loss always
+    /// restores visibility.
+    pub fn request_cursor_visibility(&mut self, visible: bool) {
+        self.cursor_requests.push(CursorRequest::Visibility {
+            target: self.widget_id,
+            visible,
+        });
+    }
+
     pub fn begin_drag(
         &mut self,
         scope_id: DragScopeId,
@@ -1991,6 +2034,10 @@ impl EventCtx {
 
     pub(crate) fn take_pointer_capture_requests(&mut self) -> Vec<PointerCaptureRequest> {
         std::mem::take(&mut self.pointer_capture_requests)
+    }
+
+    pub(crate) fn take_cursor_requests(&mut self) -> Vec<CursorRequest> {
+        std::mem::take(&mut self.cursor_requests)
     }
 
     pub(crate) fn take_drag_requests(&mut self) -> Vec<DragRequest> {

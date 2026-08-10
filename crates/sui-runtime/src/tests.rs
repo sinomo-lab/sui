@@ -20,11 +20,12 @@ use super::{
     set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
 };
 use sui_core::{
-    AsyncWakeToken, Color, CustomEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId,
-    DragSessionId, DropEffect, Event, FontHandle, ImageHandle, InvalidationKind, KeyState,
-    KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-    PointerKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size, TimerToken, Vector, WakeEvent, WidgetId, WindowEvent,
+    AsyncWakeToken, Color, CursorGrabMode, CustomEvent, DragEventKind, DragOutcome, DragPayload,
+    DragScopeId, DragSessionId, DropEffect, Event, FontHandle, ImageHandle, InvalidationKind,
+    KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons, PointerEvent,
+    PointerEventKind, PointerKind, RawMouseMotionEvent, Rect, SemanticsAction,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, Vector,
+    WakeEvent, WidgetId, WindowEvent,
 };
 use sui_layout::Constraints;
 use sui_reactive::Signal;
@@ -1126,6 +1127,36 @@ struct HoverTransitionState {
 struct PointerCaptureLeaf {
     state: Rc<RefCell<PointerCaptureState>>,
     recapture_on_move: bool,
+}
+
+#[derive(Default)]
+struct CursorRequestState {
+    raw_motion: Vec<Vector>,
+}
+
+struct CursorRequestLeaf {
+    state: Rc<RefCell<CursorRequestState>>,
+}
+
+impl Widget for CursorRequestLeaf {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
+                ctx.request_cursor_grab(CursorGrabMode::Locked);
+                ctx.request_cursor_visibility(false);
+                ctx.set_handled();
+            }
+            Event::RawMouseMotion(motion) => {
+                self.state.borrow_mut().raw_motion.push(motion.delta);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(120.0, 40.0))
+    }
 }
 
 struct PointerCaptureTransferRoot {
@@ -3631,6 +3662,67 @@ fn window_focus_loss_cancels_all_pointer_captures_and_applies_cleanup_effects() 
             None
         );
     }
+}
+
+#[test]
+fn cursor_requests_route_raw_motion_and_focus_loss_restores_host_defaults() {
+    let state = Rc::new(RefCell::new(CursorRequestState::default()));
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Cursor requests")
+                .root(ChildRoot::new(CursorRequestLeaf {
+                    state: Rc::clone(&state),
+                })),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    let _ = runtime.render(window_id).unwrap();
+
+    runtime
+        .handle_event(
+            window_id,
+            Event::Pointer(PointerEvent::new(
+                PointerEventKind::Down,
+                Point::new(48.0, 40.0),
+            )),
+        )
+        .unwrap();
+    let requested = runtime.window_cursor_state(window_id).unwrap();
+    assert_eq!(requested.grab_mode, CursorGrabMode::Locked);
+    assert!(!requested.visible);
+    assert_eq!(requested.revision, 2);
+
+    runtime
+        .handle_event(
+            window_id,
+            Event::RawMouseMotion(RawMouseMotionEvent {
+                delta: Vector::new(7.0, -3.0),
+                modifiers: Modifiers::NONE,
+            }),
+        )
+        .unwrap();
+    assert_eq!(state.borrow().raw_motion, [Vector::new(7.0, -3.0)]);
+
+    runtime
+        .handle_event(window_id, Event::Window(WindowEvent::Focused(false)))
+        .unwrap();
+    let released = runtime.window_cursor_state(window_id).unwrap();
+    assert_eq!(released.grab_mode, CursorGrabMode::None);
+    assert!(released.visible);
+    assert_eq!(released.revision, 3);
+
+    runtime
+        .handle_event(
+            window_id,
+            Event::RawMouseMotion(RawMouseMotionEvent {
+                delta: Vector::new(1.0, 1.0),
+                modifiers: Modifiers::NONE,
+            }),
+        )
+        .unwrap();
+    assert_eq!(state.borrow().raw_motion.len(), 1);
 }
 
 #[test]

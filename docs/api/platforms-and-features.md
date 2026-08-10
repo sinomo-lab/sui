@@ -149,6 +149,10 @@ The `wgpu` feature adds:
 - `App::feathering(...)` and `feather_width(...)`.
 - `App::external_texture_registry(...)`.
 
+The external texture context includes the renderer's `wgpu::AdapterInfo` so
+interop code can record the backend/adapter/driver provenance of generated
+content instead of guessing from a separately requested device.
+
 Most applications should remain renderer-neutral and use built-in widgets,
 `PaintCtx`, registered images, and `WindowRenderOptions`. Feature-gated WGPU
 types are intended for renderer configuration, app-owned GPU textures, debug
