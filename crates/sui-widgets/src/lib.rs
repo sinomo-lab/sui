@@ -9,6 +9,7 @@ pub mod composites;
 pub mod containers;
 pub mod controls;
 pub mod data;
+pub mod docking;
 pub mod drag_drop;
 mod editable_text;
 mod editor;
@@ -86,6 +87,10 @@ pub use data::{
     TableRow, TextBlockPaint, TextCellPaint, TreeItem, TreeView, VirtualTable, VirtualTableColumn,
     VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
     VirtualTableState, paint_leading_label_cell, paint_text_block, paint_text_cell,
+};
+pub use docking::{
+    DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
+    DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
 };
 pub use drag_drop::{DragDropHost, Draggable, DropTarget};
 pub use hdr_theme::{

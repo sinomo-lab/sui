@@ -380,11 +380,50 @@ When a state-backed sheet is dismissed by Escape or its scrim, it hides itself
 and invokes `on_dismiss`. Focus returns to the widget that owned focus before
 the sheet opened when that widget is still present.
 
-These APIs cover stable application-shell composition; they are not a docking
-framework. Use `FloatingWorkspace` for independent floating panels today.
-Tab docking, drop zones, detachable windows, and serialized dock graphs should
-remain a separate subsystem until more than one application needs the same
-policy.
+## Dock Workspaces
+
+`DockWorkspace` is a retained editor shell for tab groups, nested splits, and
+floating panels inside one SUI window. Panel IDs are application-defined and
+stable, while the registered widget instance remains owned by the workspace as
+the panel is docked, hidden, shown, or floated. This preserves widget-local
+state across layout changes.
+
+```rust
+use sui::prelude::*;
+
+const SCENE: DockPanelId = DockPanelId::new(1);
+const VIEWPORT: DockPanelId = DockPanelId::new(2);
+
+let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::split(
+    Axis::Horizontal,
+    0.25,
+    DockNode::tabs([SCENE], SCENE),
+    DockNode::tabs([VIEWPORT], VIEWPORT),
+)))?;
+
+let workspace = DockWorkspace::new(state.clone())
+    .with_panel(SCENE, "Scene", scene_tree)
+    .with_panel(VIEWPORT, "Viewport", viewport);
+
+// Commands can be issued by menus, shortcuts, or other retained widgets.
+state.float_panel(SCENE, Rect::new(80.0, 64.0, 360.0, 480.0))?;
+state.dock(SCENE, VIEWPORT, DockZone::Left)?;
+```
+
+Dragging a tab reveals edge and center drop zones; dropping outside a dock
+target creates a same-window floating group. Splitters and floating bounds are
+also pointer-adjustable. Use `DockWorkspaceState::snapshot` as the persistence
+boundary. `DockWorkspaceState::apply_snapshot` validates the split/tab graph,
+but state does not own the panel widget registry. After registering panels,
+prefer `DockWorkspace::apply_snapshot` for restored settings so both graph
+structure and referenced panel IDs are validated. If state was restored first,
+call `validate_registered_panels` before mounting the workspace. SUI
+deliberately does not prescribe a serializer or settings store.
+
+Floating panels are overlays in the current SUI window. Native operating-system
+tear-off windows are not part of `DockWorkspace`. `FloatingWorkspace` remains
+available for simpler independent overlays that do not need dock/reparent
+behavior.
 
 ## Layout Contract for Custom Widgets
 
