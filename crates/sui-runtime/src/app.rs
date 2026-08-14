@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sui_core::{Error, FontHandle, ImageHandle, Result, WindowId};
+use sui_core::{Error, FontHandle, ImageHandle, Point, Result, Size, WindowId};
 use sui_scene::{ImageRegistry, RegisteredImage};
 use sui_text::{FontRegistry, RegisteredFont};
 
@@ -14,6 +14,8 @@ use crate::{
 pub struct WindowBuilder {
     title: String,
     icon: Option<WindowIcon>,
+    initial_size: Option<Size>,
+    initial_position: Option<Point>,
     root: Option<WidgetPod>,
     command_listeners: CommandListeners,
 }
@@ -23,6 +25,8 @@ impl WindowBuilder {
         Self {
             title: "SUI Window".to_string(),
             icon: Some(WindowIcon::sui()),
+            initial_size: None,
+            initial_position: None,
             root: None,
             command_listeners: CommandListeners::default(),
         }
@@ -45,6 +49,21 @@ impl WindowBuilder {
 
     pub fn without_icon(mut self) -> Self {
         self.icon = None;
+        self
+    }
+
+    /// Request an initial logical client size for the native window.
+    pub fn initial_size(mut self, size: Size) -> Self {
+        self.initial_size = Some(size);
+        self
+    }
+
+    /// Request an initial physical desktop position for the native window.
+    ///
+    /// Desktop hosts may adjust or ignore an unsafe position after monitor
+    /// topology changes.
+    pub fn initial_position(mut self, position: Point) -> Self {
+        self.initial_position = Some(position);
         self
     }
 
@@ -86,6 +105,8 @@ impl WindowBuilder {
             window_id,
             self.title,
             self.icon,
+            self.initial_size,
+            self.initial_position,
             root,
             self.command_listeners,
             command_sender,

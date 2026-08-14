@@ -29,6 +29,7 @@ use winit::{
     },
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
+    monitor::MonitorHandle,
     window::{
         CursorGrabMode as WinitCursorGrabMode, Window, WindowAttributes, WindowId as HostWindowId,
     },
@@ -713,14 +714,31 @@ impl DesktopApp {
             #[cfg(target_arch = "wasm32")]
             let initial_size = Self::web_viewport_logical_size();
             #[cfg(not(target_arch = "wasm32"))]
-            let initial_size = LogicalSize::new(
-                DesktopPlatform::DEFAULT_WINDOW_SIZE.width,
-                DesktopPlatform::DEFAULT_WINDOW_SIZE.height,
+            let requested_size = self
+                .runtime
+                .window_initial_size(window_id)?
+                .unwrap_or(DesktopPlatform::DEFAULT_WINDOW_SIZE);
+            #[cfg(not(target_arch = "wasm32"))]
+            let monitors = event_loop.available_monitors().collect::<Vec<_>>();
+            #[cfg(not(target_arch = "wasm32"))]
+            let (initial_size, initial_position) = safe_initial_window_placement(
+                requested_size,
+                self.runtime.window_initial_position(window_id)?,
+                &monitors,
             );
+            #[cfg(not(target_arch = "wasm32"))]
+            let initial_size = LogicalSize::new(initial_size.width, initial_size.height);
             #[allow(unused_mut)]
             let mut attributes = WindowAttributes::default()
                 .with_title(title.clone())
                 .with_inner_size(initial_size);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(position) = initial_position {
+                attributes = attributes.with_position(PhysicalPosition::new(
+                    f64::from(position.x),
+                    f64::from(position.y),
+                ));
+            }
             #[cfg(target_os = "windows")]
             {
                 // AccessKit must attach its native provider before the HWND is shown for
@@ -1303,6 +1321,14 @@ impl DesktopApp {
                         .map(|window| physical_size_to_logical_size(size, window.scale_factor))
                         .unwrap_or_else(|| physical_size_to_logical_size(size, 1.0)),
                 )),
+            ),
+            WinitWindowEvent::Moved(position) => self.process_event(
+                event_loop,
+                window_id,
+                Event::Window(WindowEvent::Moved(Point::new(
+                    position.x as f32,
+                    position.y as f32,
+                ))),
             ),
             WinitWindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let suggested_size = self.windows.get_mut(&window_id).map(|window| {
@@ -2409,6 +2435,91 @@ fn release_host_cursor(window: &mut WindowState) {
     let _ = window.window.set_cursor_grab(WinitCursorGrabMode::None);
     window.window.set_cursor_visible(true);
     window.applied_cursor_grab = CursorGrabMode::None;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn safe_initial_window_placement(
+    requested_size: Size,
+    requested_position: Option<Point>,
+    monitors: &[MonitorHandle],
+) -> (Size, Option<Point>) {
+    let mut size = if requested_size.width.is_finite()
+        && requested_size.height.is_finite()
+        && requested_size.width > 0.0
+        && requested_size.height > 0.0
+    {
+        requested_size
+    } else {
+        DesktopPlatform::DEFAULT_WINDOW_SIZE
+    };
+    size.width = size.width.clamp(320.0, 8_192.0);
+    size.height = size.height.clamp(240.0, 8_192.0);
+
+    let requested_position = requested_position.filter(|position| {
+        position.x.is_finite()
+            && position.y.is_finite()
+            && position.x.abs() <= 1_000_000.0
+            && position.y.abs() <= 1_000_000.0
+    });
+    let mut best = None;
+    for monitor in monitors {
+        let origin = monitor.position();
+        let extent = monitor.size();
+        let scale = monitor.scale_factor().max(1.0);
+        let physical_width = f64::from(size.width) * scale;
+        let physical_height = f64::from(size.height) * scale;
+        let intersection = requested_position.map_or(0.0, |position| {
+            let left = f64::from(position.x).max(f64::from(origin.x));
+            let top = f64::from(position.y).max(f64::from(origin.y));
+            let right = (f64::from(position.x) + physical_width)
+                .min(f64::from(origin.x) + f64::from(extent.width));
+            let bottom = (f64::from(position.y) + physical_height)
+                .min(f64::from(origin.y) + f64::from(extent.height));
+            (right - left).max(0.0) * (bottom - top).max(0.0)
+        });
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_intersection): &(&MonitorHandle, f64)| {
+                intersection > *best_intersection
+            })
+        {
+            best = Some((monitor, intersection));
+        }
+    }
+
+    let Some((monitor, intersection)) = best else {
+        return (size, None);
+    };
+    let scale = monitor.scale_factor().max(1.0);
+    let monitor_size = monitor.size();
+    size.width = size
+        .width
+        .min((f64::from(monitor_size.width) / scale).max(320.0) as f32);
+    size.height = size
+        .height
+        .min((f64::from(monitor_size.height) / scale).max(240.0) as f32);
+
+    let Some(position) = requested_position else {
+        return (size, None);
+    };
+    let visible_threshold = 96.0 * 48.0;
+    if intersection < visible_threshold {
+        return (size, None);
+    }
+    let origin = monitor.position();
+    let physical_width = f64::from(size.width) * scale;
+    let minimum_x = f64::from(origin.x) - physical_width + 96.0;
+    let maximum_x = f64::from(origin.x) + f64::from(monitor_size.width) - 96.0;
+    let minimum_y = f64::from(origin.y);
+    let maximum_y = f64::from(origin.y) + f64::from(monitor_size.height) - 48.0;
+    let x = f64::from(position.x).clamp(minimum_x, maximum_x);
+    let y = f64::from(position.y).clamp(minimum_y, maximum_y);
+    (size, Some(Point::new(x as f32, y as f32)))
 }
 
 fn physical_size_to_logical_size(size: PhysicalSize<u32>, scale_factor: f64) -> Size {

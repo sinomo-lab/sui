@@ -260,6 +260,9 @@ pub enum WindowEvent {
     /// The host target's viewport changed size. The target may be a native
     /// window or an embedded viewport/region.
     Resized(Size),
+    /// The native desktop window moved to a new physical desktop position.
+    /// Embedded and web hosts may never emit this event.
+    Moved(Point),
     ScaleFactorChanged {
         scale_factor: f64,
         raw_dpi: Option<f32>,

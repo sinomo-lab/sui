@@ -233,6 +233,21 @@ impl Window {
         self
     }
 
+    /// Request an initial logical client size for the native window.
+    pub fn initial_size(mut self, size: crate::Size) -> Self {
+        self.builder = self.builder.initial_size(size);
+        self
+    }
+
+    /// Request an initial physical desktop position for the native window.
+    ///
+    /// Desktop hosts may adjust or ignore an unsafe position after monitor
+    /// topology changes.
+    pub fn initial_position(mut self, position: crate::Point) -> Self {
+        self.builder = self.builder.initial_position(position);
+        self
+    }
+
     pub(crate) fn into_window_builder(self) -> WindowBuilder {
         self.builder
     }

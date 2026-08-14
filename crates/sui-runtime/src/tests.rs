@@ -1991,6 +1991,32 @@ fn window_builder_can_override_or_disable_icon() {
 }
 
 #[test]
+fn window_builder_preserves_requested_initial_placement() {
+    let runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Placed window")
+                .initial_size(Size::new(1_440.0, 900.0))
+                .initial_position(Point::new(-1_920.0, 120.0))
+                .root(FocusLeaf {
+                    counters: Rc::new(RefCell::new(Counters::default())),
+                }),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+
+    assert_eq!(
+        runtime.window_initial_size(window_id).unwrap(),
+        Some(Size::new(1_440.0, 900.0))
+    );
+    assert_eq!(
+        runtime.window_initial_position(window_id).unwrap(),
+        Some(Point::new(-1_920.0, 120.0))
+    );
+}
+
+#[test]
 fn independent_runtimes_allocate_distinct_window_ids() {
     let first = Application::new()
         .window(WindowBuilder::new().title("First").root(FocusLeaf {

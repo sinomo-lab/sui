@@ -512,6 +512,16 @@ impl Runtime {
         Ok(window.pointer_capture.get(&pointer_id).copied())
     }
 
+    /// Return the logical initial size requested by the window builder.
+    pub fn window_initial_size(&self, window_id: WindowId) -> Result<Option<Size>> {
+        Ok(self.window(window_id)?.initial_size)
+    }
+
+    /// Return the physical desktop position requested by the window builder.
+    pub fn window_initial_position(&self, window_id: WindowId) -> Result<Option<Point>> {
+        Ok(self.window(window_id)?.initial_position)
+    }
+
     /// Return the desired cursor state for a host window.
     ///
     /// Platform hosts should apply a newer `revision` promptly after event
@@ -1223,6 +1233,8 @@ struct WindowState {
     id: WindowId,
     title: String,
     icon: Option<WindowIcon>,
+    initial_size: Option<Size>,
+    initial_position: Option<Point>,
     root: WidgetPod,
     graph: WidgetGraph,
     overlay_manager: overlay::OverlayManager,
@@ -1273,10 +1285,13 @@ struct WindowState {
 }
 
 impl WindowState {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: WindowId,
         title: String,
         icon: Option<WindowIcon>,
+        initial_size: Option<Size>,
+        initial_position: Option<Point>,
         root: WidgetPod,
         command_listeners: CommandListeners,
         command_sender: CommandSender,
@@ -1292,6 +1307,8 @@ impl WindowState {
             id,
             title,
             icon,
+            initial_size,
+            initial_position,
             graph: WidgetGraph::empty(root.id()),
             overlay_manager: overlay::OverlayManager::default(),
             pending_overlay_focus: None,
@@ -2235,6 +2252,7 @@ impl WindowState {
                 self.schedule.mark(InvalidationKind::Paint);
             }
             WindowEvent::CloseRequested
+            | WindowEvent::Moved(_)
             | WindowEvent::Occluded(_)
             | WindowEvent::ExternalFileHovered(_)
             | WindowEvent::ExternalFileHoverCancelled
