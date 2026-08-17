@@ -4152,6 +4152,47 @@ fn button_persistent_label_visual_center_matches_control_center() {
 }
 
 #[test]
+fn button_constrained_label_clips_around_the_control_center() {
+    const CONTROL_SIZE: Size = Size::new(160.0, 14.0);
+    let theme = DefaultTheme::default();
+    let style = TextStyle {
+        font_size: 28.0,
+        line_height: 34.0,
+        ..theme.button_text_style()
+    };
+    let output = render(
+        SizedBox::new()
+            .size(CONTROL_SIZE)
+            .with_child(Button::new("Centered").theme(theme).text_style(style)),
+    );
+    let text = first_shaped_text(&output);
+    let layout = text
+        .resolve(output.frame.text_layout_registry.as_ref())
+        .expect("constrained button label layout should resolve");
+    let line = layout
+        .lines()
+        .first()
+        .expect("constrained button label should contain one line");
+    let clip = draw_clip_rect_for(&output, "Centered");
+    let control_center = CONTROL_SIZE.height * 0.5;
+    let visual_center = text.origin.y + line.baseline + optical_visual_center(layout.measurement());
+
+    assert!(
+        clip.height() < layout.measurement().height,
+        "fixture must actually constrain the label: clip={clip:?}, measurement={:?}",
+        layout.measurement()
+    );
+    assert!(
+        (clip.y() + (clip.height() * 0.5) - control_center).abs() < 0.01,
+        "the visible label slice must remain centered in the control: {clip:?}"
+    );
+    assert!(
+        (visual_center - control_center).abs() < 0.75,
+        "the label itself must remain centered before clipping"
+    );
+}
+
+#[test]
 fn switch_label_visual_center_matches_control_center() {
     let output = render(Switch::new("Airplane mode"));
     let text = first_text_run(&output);

@@ -1,6 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{Error, Result};
+use sui_render_wgpu::WgpuExternalTextureRegistry;
 use sui_runtime::{Runtime, set_window_render_options};
 
 use crate::{harness::Harness, window::TestWindow};
@@ -98,6 +99,17 @@ impl TestApp {
 
     pub fn from_runtime(runtime: Runtime) -> Result<Self> {
         let harness = Rc::new(RefCell::new(Harness::new_headless(runtime)?));
+        Ok(Self { harness })
+    }
+
+    /// Build a headless test harness that can resolve app-owned WGPU textures.
+    pub fn from_runtime_with_external_texture_registry(
+        runtime: Runtime,
+        registry: WgpuExternalTextureRegistry,
+    ) -> Result<Self> {
+        let harness = Rc::new(RefCell::new(
+            Harness::new_headless_with_external_texture_registry(runtime, registry)?,
+        ));
         Ok(Self { harness })
     }
 

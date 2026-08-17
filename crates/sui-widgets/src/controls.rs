@@ -1982,6 +1982,7 @@ impl Widget for Button {
         if let (Some(icon), Some(icon_rect)) = (self.icon, icon_rect) {
             draw_icon_glyph(ctx, icon, icon_rect, visuals.label_color);
         }
+        ctx.push_clip_rect(label_slot);
         if self.is_enabled()
             && let Some(layout) = &self.label_layout
         {
@@ -1994,7 +1995,6 @@ impl Widget for Button {
                 HorizontalTextAlignmentMode::Optical,
             );
             let layout_bounds = layout.measurement().bounds;
-            ctx.push_clip_rect(layout_rect);
             ctx.draw_persistent_text_layout_with_color(
                 Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y()),
                 layout,
@@ -2015,6 +2015,7 @@ impl Widget for Button {
             paint_style.line_height,
             label_alignment,
         );
+        ctx.pop_clip();
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {

@@ -1,18 +1,24 @@
 use std::{
     cell::RefCell,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use sui_core::{
-    Color, Event, ImeEvent, KeyState, PointerEventKind, PointerKind, Result, SemanticsAction,
-    SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
+    Color, Event, ImageHandle, ImeEvent, KeyState, PointerEventKind, PointerKind, Result,
+    SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, WakeEvent,
+    WindowEvent,
 };
 use sui_layout::Constraints;
+use sui_render_wgpu::WgpuExternalTextureRegistry;
 use sui_runtime::{
     Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, WidgetChildren,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
 };
+use sui_scene::{ImageSource, RegisteredExternalImage};
 use sui_testing::prelude::*;
 
 #[test]
@@ -71,6 +77,56 @@ fn touch_tap_delivers_touch_pointer_events() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn registry_aware_headless_app_renders_an_external_texture() -> Result<()> {
+    let handle = ImageHandle::new(9_501);
+    let ready = Arc::new(AtomicBool::new(false));
+    let registry = WgpuExternalTextureRegistry::new();
+    let runtime =
+        Application::new()
+            .window(WindowBuilder::new().title("External texture test").root(
+                ExternalTextureProbe {
+                    handle,
+                    ready: Arc::clone(&ready),
+                },
+            ))
+            .build()?;
+    let app = TestApp::from_runtime_with_external_texture_registry(runtime, registry.clone())?;
+    let window = app.main_window()?;
+
+    registry.upload_rgba8(
+        handle,
+        2,
+        2,
+        Arc::<[u8]>::from(
+            [0_u8, 255, 0, 255]
+                .into_iter()
+                .cycle()
+                .take(2 * 2 * 4)
+                .collect::<Vec<_>>(),
+        ),
+        1,
+    )?;
+    ready.store(true, Ordering::Release);
+    window.dispatch_event_now(Event::Window(WindowEvent::Resized(Size::new(32.0, 32.0))))?;
+    window.run_until_idle()?;
+
+    window
+        .get_by_role(SemanticsRole::Image)
+        .with_name("External texture probe")
+        .expect()
+        .to_be_visible()?;
+    let screenshot = window.capture_screenshot()?;
+    assert!(
+        screenshot
+            .pixels()
+            .chunks_exact(4)
+            .any(|pixel| pixel[1] > 200 && pixel[0] < 20 && pixel[2] < 20),
+        "the headless renderer must sample the uploaded green texture"
+    );
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 struct AppState {
     name: String,
@@ -80,6 +136,37 @@ struct AppState {
 
 struct TouchProbe {
     state: Arc<Mutex<String>>,
+}
+
+struct ExternalTextureProbe {
+    handle: ImageHandle,
+    ready: Arc<AtomicBool>,
+}
+
+impl Widget for ExternalTextureProbe {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(32.0, 32.0))
+    }
+
+    fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: sui_core::Rect) {}
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if self.ready.load(Ordering::Acquire) {
+            ctx.register_external_image(
+                self.handle,
+                RegisteredExternalImage::new(2, 2).expect("valid external test image extent"),
+            );
+            ctx.draw_image_source(ctx.bounds(), ImageSource::new(self.handle));
+        } else {
+            ctx.fill_bounds(Color::BLACK);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Image, ctx.bounds());
+        node.name = Some("External texture probe".to_owned());
+        ctx.push(node);
+    }
 }
 
 impl TouchProbe {

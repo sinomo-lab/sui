@@ -23,7 +23,7 @@ use sui_runtime::{
 };
 use sui_scene::StrokeStyle;
 
-use crate::{DefaultTheme, text_align::paint_aligned_text};
+use crate::{DefaultTheme, text_align::paint_single_line_aligned_text};
 
 const MAX_DOCK_DEPTH: usize = 64;
 const MAX_DOCK_NODES: usize = 4_096;
@@ -1819,7 +1819,7 @@ impl DockWorkspace {
             });
             let text_rect = tab.bounds.inflate(-8.0, -2.0);
             ctx.push_clip_rect(text_rect);
-            paint_aligned_text(ctx, text_rect, label, &style, style.line_height, 0.0);
+            paint_single_line_aligned_text(ctx, text_rect, label, &style, style.line_height, 0.0);
             ctx.pop_clip();
         }
 
@@ -1865,7 +1865,7 @@ impl DockWorkspace {
         let style = theme.text_style(theme.palette.text);
         let text_bounds = inset_rect(bounds, 8.0);
         ctx.push_clip_rect(text_bounds);
-        paint_aligned_text(ctx, text_bounds, text, &style, style.line_height, 0.0);
+        paint_single_line_aligned_text(ctx, text_bounds, text, &style, style.line_height, 0.0);
         ctx.pop_clip();
     }
 }
@@ -2338,6 +2338,7 @@ mod tests {
         WindowEvent,
     };
     use sui_runtime::{Application, Runtime, WindowBuilder};
+    use sui_scene::SceneCommand;
 
     const SCENE: DockPanelId = DockPanelId::new(1);
     const VIEWPORT: DockPanelId = DockPanelId::new(2);
@@ -2496,6 +2497,46 @@ mod tests {
                 .any(|node| node.id == details_widget),
             "the original retained details widget must be reused"
         );
+    }
+
+    #[test]
+    fn dock_tab_titles_are_shaped_as_one_line() {
+        const WORKFLOW: DockPanelId = DockPanelId::new(10);
+        const MODELS: DockPanelId = DockPanelId::new(11);
+        const WORKFLOW_TITLE: &str = "Image-to-3D Workflow";
+        const MODELS_TITLE: &str = "Model Manager";
+
+        let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs(
+            [WORKFLOW, MODELS],
+            WORKFLOW,
+        )))
+        .expect("valid tabs");
+        let workspace = DockWorkspace::new(state)
+            .with_panel(WORKFLOW, WORKFLOW_TITLE, panel("Workflow body"))
+            .with_panel(MODELS, MODELS_TITLE, panel("Models body"));
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 340.0, 240.0);
+        let output = runtime.render(window_id).expect("dock tabs render");
+
+        for title in [WORKFLOW_TITLE, MODELS_TITLE] {
+            let mut line_counts = Vec::new();
+            output.frame.scene.visit_commands(&mut |command| {
+                let SceneCommand::DrawShapedText(run) = command else {
+                    return;
+                };
+                if let Some(layout) = run
+                    .resolve(output.frame.text_layout_registry.as_ref())
+                    .filter(|layout| layout.text() == title)
+                {
+                    line_counts.push(layout.lines().len());
+                }
+            });
+            assert_eq!(
+                line_counts,
+                vec![1],
+                "dock tab title {title:?} must remain a single line"
+            );
+        }
     }
 
     #[test]

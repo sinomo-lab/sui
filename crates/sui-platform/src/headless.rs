@@ -3,7 +3,7 @@ use std::{collections::VecDeque, time::Instant};
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
 use sui_render_wgpu::{
     DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, OutputStrategy, RgbaImage,
-    WgpuRenderer,
+    WgpuExternalTextureRegistry, WgpuRenderer,
 };
 use sui_runtime::{
     PresentationLatencyDiagnostics, Runtime, WindowRenderOptions, window_render_options,
@@ -172,6 +172,11 @@ impl HeadlessPlatform {
 
     pub fn set_feathering_enabled(&mut self, enabled: bool) {
         self.renderer.set_feathering_enabled(enabled);
+    }
+
+    /// Attach the registry used to resolve app-owned WGPU textures.
+    pub fn set_external_texture_registry(&mut self, registry: WgpuExternalTextureRegistry) {
+        self.renderer.set_external_texture_registry(registry);
     }
 
     pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {

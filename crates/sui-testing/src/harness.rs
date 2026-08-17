@@ -21,7 +21,7 @@ use sui_platform::{
 use sui_render_wgpu::{
     ColorManagementMode, DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions,
     RequestedColorManagementMode, RequestedDynamicRangeMode, RequestedOutputColorPrimaries,
-    RequestedToneMappingMode, WgpuRenderer,
+    RequestedToneMappingMode, WgpuExternalTextureRegistry, WgpuRenderer,
 };
 use sui_runtime::{
     FocusState, PresentationLatencyDiagnostics, Runtime, WidgetGraphSnapshot,
@@ -227,6 +227,20 @@ static LIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 impl Harness {
     pub(crate) fn new_headless(runtime: Runtime) -> Result<Self> {
         Self::new_headless_with_timeout(runtime, 5.0)
+    }
+
+    pub(crate) fn new_headless_with_external_texture_registry(
+        runtime: Runtime,
+        registry: WgpuExternalTextureRegistry,
+    ) -> Result<Self> {
+        let mut platform = HeadlessPlatform::new();
+        platform.set_external_texture_registry(registry);
+        let mut harness = Self {
+            backend: HarnessBackend::Headless(HeadlessHarness { runtime, platform }),
+            default_timeout: 5.0,
+        };
+        harness.run_until_idle()?;
+        Ok(harness)
     }
 
     pub(crate) fn new_headless_with_timeout(
