@@ -1144,6 +1144,7 @@ pub struct VirtualList<K, T> {
     estimated_row_height: Option<f32>,
     spacing: f32,
     padding: Option<Insets>,
+    row_padding: Option<Insets>,
     overscan_viewports: f32,
     cache_capacity: usize,
     selection_mode: VirtualListSelectionMode,
@@ -1200,6 +1201,7 @@ where
             estimated_row_height: None,
             spacing: 0.0,
             padding: None,
+            row_padding: None,
             overscan_viewports: DEFAULT_OVERSCAN_VIEWPORTS,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
             selection_mode: VirtualListSelectionMode::Single,
@@ -1249,6 +1251,16 @@ where
 
     pub fn padding(mut self, padding: Insets) -> Self {
         self.padding = Some(padding);
+        self
+    }
+
+    /// Overrides the theme-provided padding around each row's custom content.
+    ///
+    /// Virtual lists apply `data_row_padding` automatically so row builders do
+    /// not need to repeat edge padding. Pass `Insets::ZERO` for full-bleed row
+    /// content while preserving the list's viewport padding.
+    pub fn row_padding(mut self, padding: Insets) -> Self {
+        self.row_padding = Some(padding);
         self
     }
 
@@ -1393,6 +1405,11 @@ where
     fn resolved_padding(&self) -> Insets {
         self.padding
             .unwrap_or(self.resolved_theme().metrics.data_viewport_padding)
+    }
+
+    fn resolved_row_padding(&self) -> Insets {
+        self.row_padding
+            .unwrap_or(self.resolved_theme().metrics.data_row_padding)
     }
 
     fn estimated_extent(&self) -> f32 {
@@ -1690,9 +1707,11 @@ where
     ) -> bool {
         let next_range = self.visible_range(viewport_height, self.offset_y);
         let mut extent_changed = false;
+        let row_padding = self.resolved_row_padding();
+        let content_width = (viewport_width - row_padding.left - row_padding.right).max(0.0);
         let constraints = Constraints::new(
-            Size::new(viewport_width.max(0.0), 0.0),
-            Size::new(viewport_width.max(0.0), f32::INFINITY),
+            Size::new(content_width, 0.0),
+            Size::new(content_width, f32::INFINITY),
         );
         for index in next_range.clone() {
             if !self.ensure_realized(index) {
@@ -1703,9 +1722,10 @@ where
                 continue;
             };
             let size = row.pod.measure(ctx, constraints);
+            let row_height = size.height + row_padding.top + row_padding.bottom;
             extent_changed |= self
                 .extents
-                .update(index, size.height.max(1.0) + self.spacing);
+                .update(index, row_height.max(1.0) + self.spacing);
         }
         self.active_range = next_range;
         extent_changed
@@ -2362,6 +2382,7 @@ where
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let theme = self.sync_overlay_theme();
         let viewport = self.viewport_rect(bounds);
+        let row_padding = self.resolved_row_padding();
         self.offset_y = self.state.scroll.current_offset().y;
         let previous_offset = self.offset_y;
         self.sync_scroll_state(ctx, viewport.size);
@@ -2397,7 +2418,17 @@ where
                 continue;
             };
             if let Some(row) = self.realized.get_mut(&key) {
-                row.pod.arrange(ctx, rect);
+                let child_height = row.pod.measured_size().height;
+                row.pod.arrange(
+                    ctx,
+                    Rect::from_origin_size(
+                        Point::new(rect.x() + row_padding.left, rect.y() + row_padding.top),
+                        Size::new(
+                            (rect.width() - row_padding.left - row_padding.right).max(0.0),
+                            child_height,
+                        ),
+                    ),
+                );
             }
         }
 
@@ -2648,7 +2679,7 @@ mod tests {
         ScrollAlignment, VirtualCollectionModel, VirtualCollectionSource, VirtualList,
         VirtualListChrome, VirtualListSelectionMode, VirtualListState,
     };
-    use crate::SizedBox;
+    use crate::{DefaultTheme, SizedBox};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Point, PointerEvent, PointerEventKind, Rect, Result,
         ScrollDelta, SemanticsActionRequest, SemanticsNode, SemanticsRole, Size, Vector,
@@ -2936,6 +2967,40 @@ mod tests {
                 .iter()
                 .any(|entry| { entry.name == "total items" && entry.value == "1000" })
         );
+    }
+
+    #[test]
+    fn virtual_list_applies_theme_row_padding_to_custom_content() {
+        let theme = DefaultTheme::default();
+        let viewport_padding = theme.metrics.data_viewport_padding;
+        let row_padding = theme.metrics.data_row_padding;
+        let model = VirtualCollectionModel::from_items("rows", [(0_u64, (0_u64, 20.0))]).unwrap();
+        let list = VirtualList::new("Rows", model, |_key, value| RowBox { value })
+            .estimated_row_height(20.0);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(240.0, 100.0))
+                .with_child(list),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        let row = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Row 0"))
+            .expect("custom row semantics");
+
+        assert_eq!(row.bounds.x(), viewport_padding.left + row_padding.left);
+        assert_eq!(
+            row.bounds.width(),
+            240.0
+                - viewport_padding.left
+                - viewport_padding.right
+                - row_padding.left
+                - row_padding.right
+        );
+        assert_eq!(row.bounds.y(), viewport_padding.top + row_padding.top);
+        assert_eq!(row.bounds.height(), 20.0);
     }
 
     #[test]
