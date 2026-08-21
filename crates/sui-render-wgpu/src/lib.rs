@@ -2161,6 +2161,7 @@ impl WgpuRenderer {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("SUI renderer device"),
             required_features,
+            required_limits: adapter.limits(),
             ..Default::default()
         }))
         .map_err(|error| Error::new(format!("failed to create wgpu device: {error}")))?;
@@ -2333,6 +2334,7 @@ impl WgpuRenderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("SUI renderer device"),
                 required_features,
+                required_limits: adapter.limits(),
                 ..Default::default()
             })
             .await

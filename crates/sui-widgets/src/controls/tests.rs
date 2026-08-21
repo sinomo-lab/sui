@@ -20,7 +20,7 @@ use sui_core::{
     SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector,
     WidgetId, WindowEvent,
 };
-use sui_layout::{Constraints, Padding as TestPadding};
+use sui_layout::{Alignment, Constraints, Padding as TestPadding};
 use sui_reactive::Signal;
 use sui_render_wgpu::{RgbaImage, WgpuRenderer};
 use sui_runtime::{
@@ -6142,6 +6142,104 @@ fn expanded_select_popover_paints_outside_layout_bounds() -> Result<()> {
         select.bounds,
         descriptor.paint_bounds
     );
+    Ok(())
+}
+
+#[test]
+fn expanded_select_in_modal_dialog_paints_and_hits_above_later_body_content() -> Result<()> {
+    let mut menu_theme = DefaultTheme::default();
+    let menu_red = Color::srgba(0.92, 0.04, 0.04, 1.0);
+    menu_theme.palette.surface_raised = menu_red;
+    menu_theme.palette.control_hover = menu_red;
+    menu_theme.palette.selection = menu_red;
+
+    let mut button_theme = DefaultTheme::default();
+    let button_green = Color::srgba(0.04, 0.92, 0.04, 1.0);
+    button_theme.palette.control = button_green;
+    button_theme.palette.border = button_green;
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let on_change = Rc::clone(&changes);
+    let presses = Rc::new(RefCell::new(0usize));
+    let on_press = Rc::clone(&presses);
+    let body = Stack::vertical()
+        .alignment(Alignment::Stretch)
+        .with_child(
+            Select::new("Mode")
+                .theme(menu_theme)
+                .options(["Automatic", "Linear", "Gamma"])
+                .expanded(true)
+                .on_change(move |_, value| on_change.borrow_mut().push(value)),
+        )
+        .with_child(
+            Button::new("Later dialog action")
+                .theme(button_theme)
+                .appearance(ButtonAppearance::Filled)
+                .min_width(320.0)
+                .on_press(move || *on_press.borrow_mut() += 1),
+        );
+    let (mut runtime, window_id) = build_runtime(
+        SizedBox::new()
+            .size(Size::new(640.0, 420.0))
+            .with_child(crate::Dialog::new("Choose mode", body).max_width(420.0)),
+    );
+
+    let _ = runtime.render(window_id)?;
+    runtime.tick(entrance_duration());
+    let _ = handle_ready_events(&mut runtime)?;
+    let expanded = runtime.render(window_id)?;
+    let select = expanded
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::ComboBox)
+        .expect("select semantics present in modal dialog");
+    let button = expanded
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some("Later dialog action")
+        })
+        .expect("later dialog button semantics present");
+    let menu = overlay_layer_descriptor(&expanded).expect("select menu overlay layer present");
+    let overlap = menu
+        .bounds
+        .intersection(button.bounds)
+        .expect("expanded menu should overlap the later dialog button");
+    let probe = Point::new(overlap.max_x() - 12.0, overlap.y() + overlap.height() * 0.5);
+    assert!(menu.bounds.contains(probe));
+    assert!(button.bounds.contains(probe));
+
+    let mut renderer = WgpuRenderer::default().with_feathering_enabled(false);
+    renderer.render(&expanded.frame)?;
+    let image = renderer.capture_last_frame_rgba(window_id)?;
+    let probe_x = probe.x.floor() as usize;
+    let probe_y = probe.y.floor() as usize;
+    let pixel_offset = ((probe_y * image.width() as usize) + probe_x) * 4;
+    let pixel = &image.pixels()[pixel_offset..pixel_offset + 4];
+    assert!(
+        pixel[0] > pixel[1],
+        "the red select menu must paint above the later green dialog button; probe={probe:?}, rgba={pixel:?}, menu={:?}, button={:?}",
+        menu.bounds,
+        button.bounds,
+    );
+
+    let option_point = Point::new(
+        menu.bounds.x() + 20.0,
+        menu.bounds.y() + select.bounds.height() * 0.5,
+    );
+    assert!(button.bounds.contains(option_point));
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Down, option_point, true),
+    )?;
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Up, option_point, false),
+    )?;
+
+    assert_eq!(changes.borrow().as_slice(), &["Automatic".to_string()]);
+    assert_eq!(*presses.borrow(), 0);
     Ok(())
 }
 

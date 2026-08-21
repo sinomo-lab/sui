@@ -572,7 +572,6 @@ impl RetainedCompositorState {
             match command {
                 SceneCommand::Layer(layer) => {
                     flush_container_segment(
-                        &self.effects,
                         container,
                         &mut result,
                         &mut normal_items,
@@ -620,8 +619,7 @@ impl RetainedCompositorState {
                         let node_id = self.push_clip_node(Some(parent), clip.clone());
                         child_state.clip_stack.push((clip, node_id));
                     }
-                    let phase =
-                        composition_phase_for_effect_node(child_state.effect_node, &self.effects);
+                    let phase = composition_phase_for_mode(layer.descriptor.composition_mode);
                     let layer_snapshot =
                         self.build_layer_snapshot(layer, parent_layer, child_state, snapshot)?;
                     push_composition_item(
@@ -644,7 +642,6 @@ impl RetainedCompositorState {
         }
 
         flush_container_segment(
-            &self.effects,
             container,
             &mut result,
             &mut normal_items,
@@ -1282,7 +1279,6 @@ fn push_composition_item(
 }
 
 fn flush_container_segment(
-    effects: &HashMap<EffectNodeId, EffectNode>,
     container: CompositionContainerId,
     result: &mut RootSnapshot,
     normal_items: &mut Vec<CompositionItem>,
@@ -1301,7 +1297,11 @@ fn flush_container_segment(
     let initial_state = segment_start
         .take()
         .expect("segment state available before flush");
-    let phase = composition_phase_for_effect_node(initial_state.effect_node, effects);
+    // Each retained container is a local stacking context. Its direct raster
+    // content stays in the local normal phase while child Overlay and Effect
+    // layers are sorted above it by their own mode. The packet keeps its full
+    // effect-node chain, so global submission still respects ancestor modes.
+    let phase = CompositionPhase::Normal;
     let packet_id = RetainedPacketId {
         container,
         segment_index: result.packets.len() as u32,
@@ -1346,6 +1346,16 @@ fn composition_phase_for_effect_node(
     }
 
     phase
+}
+
+fn composition_phase_for_mode(mode: sui_scene::LayerCompositionMode) -> CompositionPhase {
+    match mode {
+        sui_scene::LayerCompositionMode::Normal | sui_scene::LayerCompositionMode::Scroll => {
+            CompositionPhase::Normal
+        }
+        sui_scene::LayerCompositionMode::Overlay => CompositionPhase::Overlay,
+        sui_scene::LayerCompositionMode::Effect => CompositionPhase::Effect,
+    }
 }
 
 fn resolved_clip_primitives(
@@ -2323,6 +2333,132 @@ mod tests {
         assert!(
             !clips.contains(&ancestor_clip),
             "overlay should not inherit ancestor clip: {clips:?}"
+        );
+    }
+
+    #[test]
+    fn nested_overlay_is_locally_above_later_effect_content() {
+        let first_dialog_id = WidgetId::new(65);
+        let popup_id = WidgetId::new(66);
+        let second_dialog_id = WidgetId::new(67);
+        let bounds = Rect::new(0.0, 0.0, 120.0, 80.0);
+        let first_dialog = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(first_dialog_id),
+            first_dialog_id,
+            bounds,
+        )
+        .with_content_bounds(bounds)
+        .with_paint_bounds(bounds)
+        .with_is_stack_surface(true)
+        .with_stack_order(0)
+        .with_composition_mode(LayerCompositionMode::Effect);
+        let popup = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(popup_id),
+            popup_id,
+            bounds,
+        )
+        .with_content_bounds(bounds)
+        .with_paint_bounds(bounds)
+        .with_is_stack_surface(true)
+        .with_stack_order(1)
+        .with_composition_mode(LayerCompositionMode::Overlay);
+        let second_dialog = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(second_dialog_id),
+            second_dialog_id,
+            bounds,
+        )
+        .with_content_bounds(bounds)
+        .with_paint_bounds(bounds)
+        .with_is_stack_surface(true)
+        .with_stack_order(2)
+        .with_composition_mode(LayerCompositionMode::Effect);
+
+        let mut popup_scene = Scene::new();
+        popup_scene.push(SceneCommand::FillRect {
+            rect: bounds,
+            brush: Color::rgba(0.9, 0.1, 0.2, 1.0).into(),
+        });
+        let mut first_dialog_scene = Scene::new();
+        first_dialog_scene.push(SceneCommand::FillRect {
+            rect: bounds,
+            brush: Color::rgba(0.1, 0.2, 0.3, 1.0).into(),
+        });
+        first_dialog_scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            popup.clone(),
+            popup_scene,
+        )));
+        first_dialog_scene.push(SceneCommand::FillRect {
+            rect: bounds,
+            brush: Color::rgba(0.1, 0.8, 0.2, 1.0).into(),
+        });
+        let mut second_dialog_scene = Scene::new();
+        second_dialog_scene.push(SceneCommand::FillRect {
+            rect: bounds,
+            brush: Color::rgba(0.1, 0.2, 0.9, 1.0).into(),
+        });
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            first_dialog.clone(),
+            first_dialog_scene,
+        )));
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            second_dialog.clone(),
+            second_dialog_scene,
+        )));
+
+        let frame = SceneFrame {
+            window_id: WindowId::new(28),
+            viewport: bounds.size,
+            surface_size: bounds.size,
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, first_dialog),
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, popup),
+                SceneLayerUpdate::from_descriptor(SceneLayerUpdateKind::Content, second_dialog),
+            ],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let _ = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+
+        let first_dialog_layer = compositor
+            .layers
+            .get(&SceneLayerId::from_widget(first_dialog_id))
+            .expect("first dialog retained layer");
+        assert_eq!(
+            first_dialog_layer.items,
+            vec![
+                CompositionItem::Packet(RetainedPacketId {
+                    container: CompositionContainerId::Layer(SceneLayerId::from_widget(
+                        first_dialog_id,
+                    )),
+                    segment_index: 0,
+                }),
+                CompositionItem::Packet(RetainedPacketId {
+                    container: CompositionContainerId::Layer(SceneLayerId::from_widget(
+                        first_dialog_id,
+                    )),
+                    segment_index: 1,
+                }),
+                CompositionItem::Layer(SceneLayerId::from_widget(popup_id)),
+            ],
+            "the popup must paint after all ordinary content in its owner surface"
+        );
+        assert_eq!(
+            compositor.root.items,
+            vec![
+                CompositionItem::Layer(SceneLayerId::from_widget(first_dialog_id)),
+                CompositionItem::Layer(SceneLayerId::from_widget(second_dialog_id)),
+            ],
+            "a popup in an older modal must remain below a newer modal"
         );
     }
 
