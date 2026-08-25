@@ -1463,6 +1463,35 @@ fn plain_choice_row_reveals_soft_hover_wash() -> Result<()> {
 }
 
 #[test]
+fn plain_choice_row_focus_wash_fades_without_black_rgb_flash() {
+    let theme = DefaultTheme::default();
+    let mid = super::choice_frame_visuals(
+        &theme,
+        ChoiceAppearance::Plain,
+        theme.palette.control,
+        theme.palette.border,
+        0.0,
+        0.0,
+        0.5,
+    )
+    .background;
+    let settled = super::choice_frame_visuals(
+        &theme,
+        ChoiceAppearance::Plain,
+        theme.palette.control,
+        theme.palette.border,
+        0.0,
+        0.0,
+        1.0,
+    )
+    .background;
+
+    assert!(mid.alpha > 0.0 && mid.alpha < settled.alpha);
+    assert_color_approx_eq(mid.with_alpha(settled.alpha), settled);
+    assert!(mid.red > 0.1 && mid.green > 0.1 && mid.blue > 0.1);
+}
+
+#[test]
 fn icon_button_appearance_and_tone_use_semantic_tokens() {
     let theme = DefaultTheme::default();
     let output = render(IconButtonPaintFixture {

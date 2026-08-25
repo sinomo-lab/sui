@@ -596,25 +596,47 @@ fn choice_frame_visuals(
         .palette
         .text
         .with_alpha(if theme.surfaces.dark { 0.10 } else { 0.07 });
-    let focus_wash = theme.palette.selection;
-    let background = mix_color(
-        mix_color(
-            mix_color(
-                Color::TRANSPARENT,
-                hover_wash,
-                hover_progress.clamp(0.0, 1.0),
-            ),
-            focus_wash,
-            focus_progress.clamp(0.0, 1.0),
+    let focus_wash =
+        theme
+            .palette
+            .focus
+            .with_alpha(if theme.surfaces.dark { 0.085 } else { 0.055 });
+    let background = composite_translucent_wash(
+        animated_translucent_wash(press_wash, press_progress),
+        composite_translucent_wash(
+            animated_translucent_wash(focus_wash, focus_progress),
+            animated_translucent_wash(hover_wash, hover_progress),
         ),
-        press_wash,
-        press_progress.clamp(0.0, 1.0),
     );
 
     ChoiceFrameVisuals {
         background,
         border: Color::TRANSPARENT,
     }
+}
+
+fn animated_translucent_wash(color: Color, progress: f32) -> Color {
+    color.with_alpha(color.alpha * progress.clamp(0.0, 1.0))
+}
+
+/// Source-over composition that preserves translucency. `Color::over` is for
+/// flattening a wash onto an opaque surface, while plain choice rows must stay
+/// transparent so their animated RGB channels never interpolate through black.
+fn composite_translucent_wash(foreground: Color, background: Color) -> Color {
+    let foreground_alpha = foreground.alpha.clamp(0.0, 1.0);
+    let background_alpha = background.alpha.clamp(0.0, 1.0);
+    let output_alpha = foreground_alpha + background_alpha * (1.0 - foreground_alpha);
+    if output_alpha <= f32::EPSILON {
+        return Color::TRANSPARENT;
+    }
+    let background_weight = background_alpha * (1.0 - foreground_alpha);
+    Color::new(
+        foreground.space,
+        (foreground.red * foreground_alpha + background.red * background_weight) / output_alpha,
+        (foreground.green * foreground_alpha + background.green * background_weight) / output_alpha,
+        (foreground.blue * foreground_alpha + background.blue * background_weight) / output_alpha,
+        output_alpha,
+    )
 }
 
 fn field_background(
