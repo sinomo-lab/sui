@@ -9,18 +9,17 @@ const pixels = Buffer.from([
   255, 230, 80, 255,
 ]);
 const texture = sui.ExternalTextureDescriptor.cpuRgba8(new sui.Size(2, 2), pixels, "1");
-const surface = sui.ExternalSurface(
+const surface = sui.externalSurface(
   texture,
-  new sui.Size(128, 96),
-  "CPU upload preview"
+  { desiredSize: new sui.Size(128, 96), name: "CPU upload preview" }
 );
 
-const root = sui.Column(
+const root = sui.column(
   [
     surface,
-    sui.Label("CPU fallback external surface"),
+    sui.label("CPU fallback external surface"),
   ],
-  8
+  { gap: 8 }
 );
 
 const window = new sui.Window("External surface");

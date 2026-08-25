@@ -4,12 +4,12 @@
 #![allow(clippy::too_many_arguments, clippy::wrong_self_convention)]
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     fmt,
     io::Cursor,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
@@ -18,28 +18,47 @@ use std::{
 use sui::CommandKey;
 use sui::containers::Padding as PaddingWidget;
 use sui::{
-    ActionCard, Align, Alignment, ArrangeCtx, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
+    ActionCard, AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, Align, Alignment, AnimatedValue,
+    AnimationBinding, AnimationDocument, AnimationEditorCommand, AnimationEditorState,
+    AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationTargetId, AnimationValue,
+    ArrangeCtx, AspectRatio, AspectRatioFit, Axis, Background, Border, Breadcrumb, BreadcrumbItem,
     BrowserTabBar, Brush, BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator, Button,
-    Checkbox, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSpace, ColorSwatch,
-    CommandGroup, Constraints, ContextMenu, CoverageDots, CustomEvent, DateTimeInput, DetailRow,
-    Dialog, Dock, DockPanel, DpiInfo, EmptyState, Event, EventCtx, EventPhase, FieldGroup,
-    FixedPaneSplit, Flex, FloatingStack, FontHandle, FormRow, FormSection, FramedField, Icon,
-    IconButton, IconGlyph, Image, ImageFit, ImageHandle, ImageSource, ImeEvent, Insets,
-    InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Label,
-    LayerList, LayerListItem, Link, ListItem, ListView, MeasureCtx, MeasuredBottomDock, Menu,
-    MenuItem, Modifiers, NumberInput, PaintCtx, PanelSection, PasswordInput, Path, PlacementBadge,
-    Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Popover,
-    PresetStrip, ProgressBar, PropertyRow, RadioButton, RadioGroup, Rect, RegisteredFont,
-    RegisteredImage, ReorderableList, RichText, Runtime, SceneCommand, ScrollDelta, ScrollView,
+    Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, Checkbox,
+    Clip, Color, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorSpace, ColorSwatch,
+    CommandGroup, CommandPalette, ConstraintOrientation, ConstraintQuery, ConstraintView,
+    Constraints, ContextMenu, ControlSize, CoverageDots, CustomEvent, DateTimeInput, DefaultTheme,
+    DetailRow, Dialog, Dock, DockFloatingGroup, DockNode, DockPanel, DockPanelId, DockWorkspace,
+    DockWorkspaceSnapshot, DockWorkspaceState, DockZone, DpiInfo, DragDropHost, DragDropScope,
+    DragEvent, DragPayload, Draggable, DropEffect, DropTarget, Easing, EmptyState, Event, EventCtx,
+    EventPhase, FieldGroup, FixedPaneSplit, Flex, FloatingStack, FloatingViewConfig,
+    FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState, FontHandle, FormRow,
+    FormSection, FramedField, Grid, GridTrack, Icon, IconButton, IconGlyph, Image, ImageFit,
+    ImageHandle, ImageSource, ImeEvent, Insets, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, KeyState, KeyboardEvent, Keyframe, Label, LayerList, LayerListItem,
+    LayoutTransition, Link, ListItem, ListView, LoopMode, MasterDetail, MasterDetailRoute,
+    MasterDetailState, MeasureCtx, MeasuredBottomDock, Menu, MenuItem, Modifiers,
+    NotificationCenter, NotificationHost, NotificationId, NotificationUrgency, NumberInput,
+    OverlayHost, PaintCtx, PanelSection, PasswordInput, Path, PixelCanvas, PixelCanvasBlendMode,
+    PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
+    PlacementBadge, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+    PointerKind, Popover, PresetStrip, ProgressBar, PropertyRow, RadioButton, RadioGroup,
+    RawMouseMotionEvent, Rect, RegisteredFont, RegisteredImage, ReorderableList, ResponsiveSidebar,
+    ResponsiveSidebarMode, ResponsiveSidebarState, RichAttachment, RichDocumentModel,
+    RichDocumentStatus, RichDocumentUpdate, RichDocumentView, RichExtensionBlock, RichText,
+    Runtime, SafeArea, SafeAreaEdges, SafeAreaInsets, SceneCommand, ScrollDelta, ScrollView,
     SectionLabel, SegmentedControl, SegmentedControlItem, Select, SemanticRegion, SemanticTone,
     SemanticsCtx, SemanticsNode, SemanticsRole, SemanticsValue, Separator, ShadowParams, SideSheet,
-    SideSheetPlacement, SignalMeter, Size, SizedBox, Slider, SplitView, Stack, StatusBadge,
-    StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle, Surface, SurfaceBorder,
-    SurfaceElevation, SurfaceRole, Switch, SwitchView, TabBar, Table, TableColumn,
-    TableColumnAlignment, TableRow, Tabs, TextArea, TextInput, TextSpan, TextStyle, TimerToken,
-    ToggleState, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, TrailingSlotRow,
-    Transform, TreeItem, TreeView, Vector, VirtualScrollView, Widget, WidgetId, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor, WidgetShader, WindowBuilder, WindowEvent, WindowId,
+    SideSheetPlacement, SignalMeter, SimpleColorPicker, SimpleColorPickerMode, Size, SizedBox,
+    Slider, SplitState, SplitView, SpringF32, Stack, StatusBadge, StatusBar, StatusBarHost,
+    StatusBarSegment, StrokeStyle, Surface, SurfaceBorder, SurfaceElevation, SurfaceRole, Switch,
+    SwitchView, TabBar, Table, TableColumn, TableColumnAlignment, TableRow, Tabs, TextArea,
+    TextInput, TextSpan, TextStyle, Timeline, TimerToken, ToggleState, ToolPalette,
+    ToolPaletteItem, Toolbar, Tooltip, TooltipPlacement, Track, TrailingSlotRow, Transform,
+    TransientNotification, Transition, TreeItem, TreeView, Vector, VirtualCollectionModel,
+    VirtualList, VirtualListChrome, VirtualListSelectionMode, VirtualScrollView, Widget, WidgetId,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WidgetShader, WindowBuilder,
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
+    WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
 };
 
 #[cfg(feature = "desktop")]
@@ -55,6 +74,17 @@ const BINDING_LOCAL_IMAGE_SLOT_MASK: u64 = BINDING_LOCAL_IMAGE_HANDLE_NAMESPACE 
 
 type UiTask = Box<dyn FnOnce() + Send + 'static>;
 type UiWake = Arc<dyn Fn() + Send + Sync + 'static>;
+
+macro_rules! themed_widget {
+    ($widget:expr, $context:expr) => {{
+        let widget = $widget;
+        if let Some(theme) = $context.theme.clone() {
+            widget.theme_when(move || theme.snapshot())
+        } else {
+            widget
+        }
+    }};
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ForeignWidgetId(u64);
@@ -212,6 +242,7 @@ impl UiTaskQueue {
     pub fn handle(&self) -> BindingUiHandle {
         BindingUiHandle {
             inner: Arc::clone(&self.inner),
+            messages: None,
         }
     }
 
@@ -272,9 +303,15 @@ impl fmt::Debug for UiTaskQueue {
 #[derive(Clone)]
 pub struct BindingUiHandle {
     inner: Arc<UiTaskQueueInner>,
+    messages: Option<BindingMessageBus>,
 }
 
 impl BindingUiHandle {
+    fn with_message_bus(mut self, messages: BindingMessageBus) -> Self {
+        self.messages = Some(messages);
+        self
+    }
+
     pub fn post(&self, task: impl FnOnce() + Send + 'static) {
         recover_lock(&self.inner.tasks).push_back(Box::new(task));
         let wake = recover_lock(&self.inner.wake).clone();
@@ -285,6 +322,30 @@ impl BindingUiHandle {
 
     pub fn pending_count(&self) -> usize {
         recover_lock(&self.inner.tasks).len()
+    }
+
+    pub fn emit(&self, name: impl Into<String>, payload: BindingValue) -> bool {
+        let Some(messages) = &self.messages else {
+            return false;
+        };
+        let name = name.into();
+        let actions = messages.actions(&name);
+        if actions.is_empty() {
+            return false;
+        }
+        let errors = messages.errors.clone();
+        self.post(move || {
+            for action in actions {
+                if let Err(error) = action.run(payload.clone()) {
+                    errors.push(ForeignCallbackError::new(
+                        ForeignWidgetId::new(0),
+                        ForeignCallbackPhase::Event,
+                        error.message,
+                    ));
+                }
+            }
+        });
+        true
     }
 
     fn is_draining(&self) -> bool {
@@ -305,6 +366,55 @@ pub enum BindingValue {
     String(String),
     Number(f64),
     Bool(bool),
+}
+
+#[derive(Clone)]
+pub struct BindingMessageAction {
+    callback: Arc<dyn Fn(BindingValue) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingMessageAction {
+    pub fn new(
+        callback: impl Fn(BindingValue) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, payload: BindingValue) -> ForeignCallbackResult<()> {
+        (self.callback)(payload)
+    }
+}
+
+impl fmt::Debug for BindingMessageAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingMessageAction")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct BindingMessageBus {
+    handlers: Arc<Mutex<BTreeMap<String, Vec<BindingMessageAction>>>>,
+    errors: ForeignErrorSink,
+}
+
+impl BindingMessageBus {
+    fn on(&self, name: impl Into<String>, action: BindingMessageAction) {
+        recover_lock(&self.handlers)
+            .entry(name.into())
+            .or_default()
+            .push(action);
+    }
+
+    fn actions(&self, name: &str) -> Vec<BindingMessageAction> {
+        recover_lock(&self.handlers)
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
+    }
 }
 
 impl BindingValue {
@@ -347,6 +457,330 @@ impl From<bool> for BindingValue {
     }
 }
 
+/// Live, thread-safe handle to SUI's built-in theme tokens.
+///
+/// Binding widgets capture this handle rather than a theme snapshot, so preset,
+/// accent, and control-size changes propagate without rebuilding the foreign tree.
+#[derive(Debug, Clone)]
+pub struct BindingTheme {
+    inner: Arc<BindingThemeInner>,
+}
+
+#[derive(Debug)]
+struct BindingThemeInner {
+    value: Mutex<DefaultTheme>,
+    ui_handle: Mutex<Option<BindingUiHandle>>,
+}
+
+impl BindingTheme {
+    pub fn preset(name: &str) -> Result<Self, String> {
+        Ok(Self {
+            inner: Arc::new(BindingThemeInner {
+                value: Mutex::new(binding_theme_preset(name)?),
+                ui_handle: Mutex::new(None),
+            }),
+        })
+    }
+
+    pub fn snapshot(&self) -> DefaultTheme {
+        *recover_lock(&self.inner.value)
+    }
+
+    pub fn set_preset(&self, name: &str) -> Result<(), String> {
+        self.publish(binding_theme_preset(name)?);
+        Ok(())
+    }
+
+    pub fn set_accent(&self, color: Color) {
+        let mut theme = self.snapshot();
+        theme.colors.primary = color;
+        theme.colors.accent = color;
+        theme.sync_derived_fields();
+        self.publish(theme);
+    }
+
+    pub fn accent(&self) -> Color {
+        self.snapshot().palette.accent
+    }
+
+    pub fn set_control_size(&self, size: &str) -> Result<(), String> {
+        let size = match normalized_option_name(size).as_str() {
+            "small" | "compact" => ControlSize::Small,
+            "medium" | "standard" => ControlSize::Medium,
+            "large" | "touch" => ControlSize::Large,
+            _ => {
+                return Err(format!(
+                    "control size must be 'small', 'medium', or 'large', got '{size}'"
+                ));
+            }
+        };
+        self.publish(self.snapshot().with_size(size));
+        Ok(())
+    }
+
+    pub fn color(&self, name: &str) -> Result<Color, String> {
+        let colors = self.snapshot().colors;
+        match normalized_option_name(name).as_str() {
+            "base100" | "background" => Ok(colors.base_100),
+            "base200" | "surface" => Ok(colors.base_200),
+            "base300" | "border" => Ok(colors.base_300),
+            "basecontent" | "foreground" | "text" => Ok(colors.base_content),
+            "primary" => Ok(colors.primary),
+            "primarycontent" => Ok(colors.primary_content),
+            "secondary" => Ok(colors.secondary),
+            "secondarycontent" => Ok(colors.secondary_content),
+            "accent" => Ok(colors.accent),
+            "accentcontent" => Ok(colors.accent_content),
+            "neutral" => Ok(colors.neutral),
+            "neutralcontent" => Ok(colors.neutral_content),
+            "info" => Ok(colors.info),
+            "infocontent" => Ok(colors.info_content),
+            "success" => Ok(colors.success),
+            "successcontent" => Ok(colors.success_content),
+            "warning" => Ok(colors.warning),
+            "warningcontent" => Ok(colors.warning_content),
+            "error" | "danger" => Ok(colors.error),
+            "errorcontent" | "dangercontent" => Ok(colors.error_content),
+            _ => Err(format!("unknown theme color token '{name}'")),
+        }
+    }
+
+    pub fn set_color(&self, name: &str, color: Color) -> Result<(), String> {
+        let mut theme = self.snapshot();
+        match normalized_option_name(name).as_str() {
+            "base100" | "background" => theme.colors.base_100 = color,
+            "base200" | "surface" => theme.colors.base_200 = color,
+            "base300" | "border" => theme.colors.base_300 = color,
+            "basecontent" | "foreground" | "text" => theme.colors.base_content = color,
+            "primary" => theme.colors.primary = color,
+            "primarycontent" => theme.colors.primary_content = color,
+            "secondary" => theme.colors.secondary = color,
+            "secondarycontent" => theme.colors.secondary_content = color,
+            "accent" => theme.colors.accent = color,
+            "accentcontent" => theme.colors.accent_content = color,
+            "neutral" => theme.colors.neutral = color,
+            "neutralcontent" => theme.colors.neutral_content = color,
+            "info" => theme.colors.info = color,
+            "infocontent" => theme.colors.info_content = color,
+            "success" => theme.colors.success = color,
+            "successcontent" => theme.colors.success_content = color,
+            "warning" => theme.colors.warning = color,
+            "warningcontent" => theme.colors.warning_content = color,
+            "error" | "danger" => theme.colors.error = color,
+            "errorcontent" | "dangercontent" => theme.colors.error_content = color,
+            _ => return Err(format!("unknown theme color token '{name}'")),
+        }
+        theme.sync_derived_fields();
+        self.publish(theme);
+        Ok(())
+    }
+
+    pub fn number(&self, name: &str) -> Result<f32, String> {
+        let theme = self.snapshot();
+        match normalized_option_name(name).as_str() {
+            "spacing" => Ok(theme.spacing),
+            "radiusxs" => Ok(theme.radius.xs),
+            "radiussm" => Ok(theme.radius.sm),
+            "radiusmd" => Ok(theme.radius.md),
+            "radiuslg" => Ok(theme.radius.lg),
+            "radiusxl" => Ok(theme.radius.xl),
+            "breakpointsm" | "breakpointmedium" => Ok(theme.breakpoints.sm),
+            "breakpointlg" | "breakpointexpanded" => Ok(theme.breakpoints.lg),
+            "motionfast" => Ok(theme.motion.duration_fast),
+            "motionnormal" => Ok(theme.motion.duration_normal),
+            "motionslow" => Ok(theme.motion.duration_slow),
+            "motionslower" => Ok(theme.motion.duration_slower),
+            _ => Err(format!("unknown theme number token '{name}'")),
+        }
+    }
+
+    pub fn set_number(&self, name: &str, value: f32) -> Result<(), String> {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!(
+                "theme number token '{name}' must be finite and non-negative"
+            ));
+        }
+        let mut theme = self.snapshot();
+        match normalized_option_name(name).as_str() {
+            "spacing" => theme.spacing = value,
+            "radiusxs" => theme.radius.xs = value,
+            "radiussm" => theme.radius.sm = value,
+            "radiusmd" => theme.radius.md = value,
+            "radiuslg" => theme.radius.lg = value,
+            "radiusxl" => theme.radius.xl = value,
+            "breakpointsm" | "breakpointmedium" => theme.breakpoints.sm = value,
+            "breakpointlg" | "breakpointexpanded" => theme.breakpoints.lg = value,
+            "motionfast" => theme.motion.duration_fast = value,
+            "motionnormal" => theme.motion.duration_normal = value,
+            "motionslow" => theme.motion.duration_slow = value,
+            "motionslower" => theme.motion.duration_slower = value,
+            _ => return Err(format!("unknown theme number token '{name}'")),
+        }
+        if matches!(
+            normalized_option_name(name).as_str(),
+            "spacing" | "radiusxs" | "radiussm" | "radiusmd" | "radiuslg" | "radiusxl"
+        ) {
+            theme.sync_derived_fields();
+        }
+        self.publish(theme);
+        Ok(())
+    }
+
+    pub fn bind_ui_handle(&self, handle: BindingUiHandle) {
+        *recover_lock(&self.inner.ui_handle) = Some(handle);
+    }
+
+    fn publish(&self, value: DefaultTheme) {
+        if let Some(handle) = recover_lock(&self.inner.ui_handle).clone()
+            && !handle.is_draining()
+        {
+            let theme = self.clone();
+            handle.post(move || theme.publish_immediate(value));
+        } else {
+            self.publish_immediate(value);
+        }
+    }
+
+    fn publish_immediate(&self, value: DefaultTheme) {
+        *recover_lock(&self.inner.value) = value;
+    }
+}
+
+fn binding_theme_preset(name: &str) -> Result<DefaultTheme, String> {
+    match normalized_option_name(name).as_str() {
+        "sui" | "light" | "default" => Ok(DefaultTheme::light()),
+        "dark" => Ok(DefaultTheme::dark()),
+        "neutral" | "neutrallight" => Ok(DefaultTheme::neutral()),
+        "neutraldark" => Ok(DefaultTheme::neutral_dark()),
+        "highcontrast" => Ok(DefaultTheme::high_contrast()),
+        "oled" | "void" => Ok(DefaultTheme::void()),
+        _ => Err(format!(
+            "unknown theme preset '{name}'; expected light, dark, neutral, neutral-dark, high-contrast, or oled"
+        )),
+    }
+}
+
+#[derive(Clone)]
+pub struct BindingRichDocument {
+    inner: RichDocumentModel,
+}
+
+impl BindingRichDocument {
+    pub fn new(markdown: impl Into<String>) -> Self {
+        Self {
+            inner: RichDocumentModel::from_markdown(markdown),
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.inner.revision()
+    }
+
+    pub fn markdown(&self) -> String {
+        self.inner.markdown()
+    }
+
+    pub fn set_markdown(&self, markdown: impl Into<String>) -> bool {
+        self.inner.set_markdown(markdown)
+    }
+
+    pub fn append_markdown(&self, fragment: &str) -> bool {
+        self.inner.append_markdown(fragment)
+    }
+
+    pub fn last_update(&self) -> BindingRichDocumentUpdate {
+        self.inner.last_update().into()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_attachment(
+        &self,
+        name: impl Into<String>,
+        media_type: Option<String>,
+        source: Option<String>,
+        size_bytes: Option<u64>,
+        description: Option<String>,
+    ) -> u64 {
+        let mut attachment = RichAttachment::new(name);
+        attachment.media_type = media_type;
+        attachment.source = source;
+        attachment.size_bytes = size_bytes;
+        attachment.description = description;
+        self.inner.append_attachment(attachment).get()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_extension(
+        &self,
+        renderer: impl Into<String>,
+        title: impl Into<String>,
+        summary: Option<String>,
+        body: impl Into<String>,
+        status: &str,
+        initially_expanded: bool,
+        metadata: Vec<(String, String)>,
+    ) -> Result<u64, String> {
+        let mut extension = RichExtensionBlock::new(renderer, title);
+        extension.summary = summary;
+        extension.body = body.into();
+        extension.status = binding_rich_document_status(status)?;
+        extension.initially_expanded = initially_expanded;
+        extension.metadata = metadata;
+        Ok(self.inner.append_extension(extension).get())
+    }
+}
+
+impl fmt::Debug for BindingRichDocument {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingRichDocument")
+            .field("revision", &self.revision())
+            .field("markdown_len", &self.markdown().len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingRichDocumentUpdate {
+    pub revision: u64,
+    pub reparsed_start: usize,
+    pub reparsed_end: usize,
+    pub reused_prefix_blocks: usize,
+    pub changed_block_ids: Vec<u64>,
+    pub append_only: bool,
+}
+
+impl From<RichDocumentUpdate> for BindingRichDocumentUpdate {
+    fn from(value: RichDocumentUpdate) -> Self {
+        Self {
+            revision: value.revision,
+            reparsed_start: value.reparsed_source.start,
+            reparsed_end: value.reparsed_source.end,
+            reused_prefix_blocks: value.reused_prefix_blocks,
+            changed_block_ids: value
+                .changed_block_ids
+                .into_iter()
+                .map(|id| id.get())
+                .collect(),
+            append_only: value.append_only,
+        }
+    }
+}
+
+fn binding_rich_document_status(value: &str) -> Result<RichDocumentStatus, String> {
+    match normalized_option_name(value).as_str() {
+        "neutral" => Ok(RichDocumentStatus::Neutral),
+        "pending" => Ok(RichDocumentStatus::Pending),
+        "running" | "active" => Ok(RichDocumentStatus::Running),
+        "success" | "complete" => Ok(RichDocumentStatus::Success),
+        "warning" | "warn" => Ok(RichDocumentStatus::Warning),
+        "error" | "failed" => Ok(RichDocumentStatus::Error),
+        _ => Err(format!(
+            "rich document status must be neutral, pending, running, success, warning, or error; got '{value}'"
+        )),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BindingState {
     inner: Arc<BindingStateInner>,
@@ -356,6 +790,47 @@ pub struct BindingState {
 struct BindingStateInner {
     value: Mutex<BindingValue>,
     ui_handle: Mutex<Option<BindingUiHandle>>,
+    observers: Mutex<BTreeMap<u64, BindingStateObserver>>,
+    next_observer_id: AtomicU64,
+    retained_subscriptions: Mutex<Vec<BindingStateSubscription>>,
+}
+
+#[derive(Clone)]
+struct BindingStateObserver {
+    callback: Arc<dyn Fn(BindingValue) + Send + Sync + 'static>,
+}
+
+impl fmt::Debug for BindingStateObserver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingStateObserver")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
+pub struct BindingStateSubscription {
+    source: Weak<BindingStateInner>,
+    id: u64,
+    active: bool,
+}
+
+impl BindingStateSubscription {
+    pub fn unsubscribe(&mut self) -> bool {
+        if !self.active {
+            return false;
+        }
+        self.active = false;
+        self.source
+            .upgrade()
+            .is_some_and(|source| recover_lock(&source.observers).remove(&self.id).is_some())
+    }
+}
+
+impl Drop for BindingStateSubscription {
+    fn drop(&mut self) {
+        self.unsubscribe();
+    }
 }
 
 impl BindingState {
@@ -364,6 +839,9 @@ impl BindingState {
             inner: Arc::new(BindingStateInner {
                 value: Mutex::new(value.into()),
                 ui_handle: Mutex::new(None),
+                observers: Mutex::new(BTreeMap::new()),
+                next_observer_id: AtomicU64::new(1),
+                retained_subscriptions: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -400,8 +878,47 @@ impl BindingState {
         recover_lock(&self.inner.ui_handle).is_some()
     }
 
+    pub fn observe(
+        &self,
+        callback: impl Fn(BindingValue) + Send + Sync + 'static,
+    ) -> BindingStateSubscription {
+        let id = self
+            .inner
+            .next_observer_id
+            .fetch_add(1, Ordering::Relaxed)
+            .max(1);
+        recover_lock(&self.inner.observers).insert(
+            id,
+            BindingStateObserver {
+                callback: Arc::new(callback),
+            },
+        );
+        BindingStateSubscription {
+            source: Arc::downgrade(&self.inner),
+            id,
+            active: true,
+        }
+    }
+
+    pub fn retain_subscription(&self, subscription: BindingStateSubscription) {
+        recover_lock(&self.inner.retained_subscriptions).push(subscription);
+    }
+
     fn set_immediate(&self, value: BindingValue) {
-        *recover_lock(&self.inner.value) = value;
+        {
+            let mut current = recover_lock(&self.inner.value);
+            if *current == value {
+                return;
+            }
+            *current = value.clone();
+        }
+        let observers = recover_lock(&self.inner.observers)
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for observer in observers {
+            (observer.callback)(value.clone());
+        }
     }
 }
 
@@ -458,6 +975,33 @@ pub struct BindingNumberAction {
     callback: Arc<dyn Fn(f64) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
 }
 
+#[derive(Clone)]
+pub struct BindingIdAction {
+    callback: Arc<dyn Fn(u64) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingIdAction {
+    pub fn new(
+        callback: impl Fn(u64) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, value: u64) -> ForeignCallbackResult<()> {
+        (self.callback)(value)
+    }
+}
+
+impl fmt::Debug for BindingIdAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingIdAction")
+            .finish_non_exhaustive()
+    }
+}
+
 impl BindingNumberAction {
     pub fn new(
         callback: impl Fn(f64) -> ForeignCallbackResult<()> + Send + Sync + 'static,
@@ -508,6 +1052,33 @@ impl fmt::Debug for BindingReorderAction {
 #[derive(Clone)]
 pub struct BindingStringAction {
     callback: Arc<dyn Fn(String) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+#[derive(Clone)]
+pub struct BindingStringsAction {
+    callback: Arc<dyn Fn(Vec<String>) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingStringsAction {
+    pub fn new(
+        callback: impl Fn(Vec<String>) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, values: Vec<String>) -> ForeignCallbackResult<()> {
+        (self.callback)(values)
+    }
+}
+
+impl fmt::Debug for BindingStringsAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingStringsAction")
+            .finish_non_exhaustive()
+    }
 }
 
 impl BindingStringAction {
@@ -1274,6 +1845,672 @@ pub fn binding_semantic_tone_from_name(value: &str) -> Option<SemanticTone> {
     }
 }
 
+pub fn binding_simple_color_picker_mode_from_name(value: &str) -> Option<SimpleColorPickerMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "hsl" => Some(SimpleColorPickerMode::Hsl),
+        "hsv" | "hsb" => Some(SimpleColorPickerMode::Hsv),
+        "rgb" => Some(SimpleColorPickerMode::Rgb),
+        _ => None,
+    }
+}
+
+pub fn binding_aspect_ratio_fit_from_name(value: &str) -> Option<AspectRatioFit> {
+    match normalized_option_name(value).as_str() {
+        "contain" => Some(AspectRatioFit::Contain),
+        "cover" => Some(AspectRatioFit::Cover),
+        _ => None,
+    }
+}
+
+pub fn binding_safe_area_edges_from_name(value: &str) -> Option<SafeAreaEdges> {
+    let normalized = normalized_option_name(value);
+    match normalized.as_str() {
+        "none" => return Some(SafeAreaEdges::NONE),
+        "all" | "" => return Some(SafeAreaEdges::ALL),
+        "horizontal" => return Some(SafeAreaEdges::HORIZONTAL),
+        "vertical" => return Some(SafeAreaEdges::VERTICAL),
+        _ => {}
+    }
+    let mut edges = SafeAreaEdges::NONE;
+    for edge in value.split([',', '|', ' ']).filter(|edge| !edge.is_empty()) {
+        edges = edges.union(match normalized_option_name(edge).as_str() {
+            "left" => SafeAreaEdges::LEFT,
+            "top" => SafeAreaEdges::TOP,
+            "right" => SafeAreaEdges::RIGHT,
+            "bottom" => SafeAreaEdges::BOTTOM,
+            _ => return None,
+        });
+    }
+    Some(edges)
+}
+
+pub fn binding_easing_from_name(value: &str) -> Option<Easing> {
+    match normalized_option_name(value).as_str() {
+        "linear" => Some(Easing::Linear),
+        "easein" => Some(Easing::EaseIn),
+        "easeout" => Some(Easing::EaseOut),
+        "easeinout" => Some(Easing::EaseInOut),
+        _ => None,
+    }
+}
+
+pub fn binding_animation_property_from_path(path: &str) -> AnimationProperty {
+    match normalize_binding_name(path).as_str() {
+        "layeropacity" | "opacity" => AnimationProperty::LayerOpacity,
+        "layertranslation" | "translation" => AnimationProperty::LayerTranslation,
+        "fillcolor" | "color" => AnimationProperty::FillColor,
+        "bounds" => AnimationProperty::Bounds,
+        _ => AnimationProperty::Custom(AnimationPropertyPath::new(path)),
+    }
+}
+
+/// A language-neutral animation value. Host bindings expose named constructors instead of the
+/// Rust enum so Python and JavaScript callers can work with ordinary geometry and color objects.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BindingAnimationValue {
+    Scalar(f32),
+    Point(Point),
+    Vector(Vector),
+    Size(Size),
+    Rect(Rect),
+    Color(Color),
+    Transform(Transform),
+}
+
+impl BindingAnimationValue {
+    pub const fn scalar(value: f32) -> Self {
+        Self::Scalar(value)
+    }
+
+    pub const fn point(value: Point) -> Self {
+        Self::Point(value)
+    }
+
+    pub const fn vector(value: Vector) -> Self {
+        Self::Vector(value)
+    }
+
+    pub const fn size(value: Size) -> Self {
+        Self::Size(value)
+    }
+
+    pub const fn rect(value: Rect) -> Self {
+        Self::Rect(value)
+    }
+
+    pub const fn color(value: Color) -> Self {
+        Self::Color(value)
+    }
+
+    pub const fn transform(value: Transform) -> Self {
+        Self::Transform(value)
+    }
+
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Scalar(_) => "scalar",
+            Self::Point(_) => "point",
+            Self::Vector(_) => "vector",
+            Self::Size(_) => "size",
+            Self::Rect(_) => "rect",
+            Self::Color(_) => "color",
+            Self::Transform(_) => "transform",
+        }
+    }
+
+    pub const fn as_scalar(&self) -> Option<f32> {
+        match self {
+            Self::Scalar(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub const fn as_point(&self) -> Option<Point> {
+        match self {
+            Self::Point(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub const fn as_vector(&self) -> Option<Vector> {
+        match self {
+            Self::Vector(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub const fn as_size(&self) -> Option<Size> {
+        match self {
+            Self::Size(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub const fn as_rect(&self) -> Option<Rect> {
+        match self {
+            Self::Rect(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub const fn as_color(&self) -> Option<Color> {
+        match self {
+            Self::Color(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub const fn as_transform(&self) -> Option<Transform> {
+        match self {
+            Self::Transform(value) => Some(*value),
+            _ => None,
+        }
+    }
+}
+
+impl From<BindingAnimationValue> for AnimationValue {
+    fn from(value: BindingAnimationValue) -> Self {
+        match value {
+            BindingAnimationValue::Scalar(value) => Self::Scalar(value),
+            BindingAnimationValue::Point(value) => Self::Point(value),
+            BindingAnimationValue::Vector(value) => Self::Vector(value),
+            BindingAnimationValue::Size(value) => Self::Size(value),
+            BindingAnimationValue::Rect(value) => Self::Rect(value),
+            BindingAnimationValue::Color(value) => Self::Color(value),
+            BindingAnimationValue::Transform(value) => Self::Transform(value),
+        }
+    }
+}
+
+impl From<AnimationValue> for BindingAnimationValue {
+    fn from(value: AnimationValue) -> Self {
+        match value {
+            AnimationValue::Scalar(value) => Self::Scalar(value),
+            AnimationValue::Point(value) => Self::Point(value),
+            AnimationValue::Vector(value) => Self::Vector(value),
+            AnimationValue::Size(value) => Self::Size(value),
+            AnimationValue::Rect(value) => Self::Rect(value),
+            AnimationValue::Color(value) => Self::Color(value),
+            AnimationValue::Transform(value) => Self::Transform(value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingTransition {
+    inner: Transition<AnimationValue>,
+}
+
+impl BindingTransition {
+    pub fn new(
+        start: BindingAnimationValue,
+        end: BindingAnimationValue,
+        start_time: f64,
+        duration: f64,
+        easing: Easing,
+    ) -> Self {
+        Self {
+            inner: Transition::new(start.into(), end.into(), start_time, duration, easing),
+        }
+    }
+
+    pub fn progress(&self, time: f64) -> f32 {
+        self.inner.progress(time)
+    }
+
+    pub fn sample(&self, time: f64) -> BindingAnimationValue {
+        self.inner.sample(time).into()
+    }
+
+    pub fn is_complete(&self, time: f64) -> bool {
+        self.inner.is_complete(time)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingSpring {
+    inner: SpringF32,
+}
+
+impl BindingSpring {
+    pub fn new(value: f32, stiffness: f32, damping: f32) -> Self {
+        Self {
+            inner: SpringF32::new(value).with_config(stiffness, damping),
+        }
+    }
+
+    pub fn step(&mut self, target: f32, delta_seconds: f64) -> f32 {
+        self.inner.step(target, delta_seconds)
+    }
+
+    pub const fn value(&self) -> f32 {
+        self.inner.value
+    }
+
+    pub const fn velocity(&self) -> f32 {
+        self.inner.velocity
+    }
+
+    pub const fn stiffness(&self) -> f32 {
+        self.inner.stiffness
+    }
+
+    pub const fn damping(&self) -> f32 {
+        self.inner.damping
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingAnimatedValue {
+    inner: AnimatedValue<AnimationValue>,
+}
+
+impl BindingAnimatedValue {
+    pub fn new(initial: BindingAnimationValue, duration: f32, easing: Easing) -> Self {
+        Self {
+            inner: AnimatedValue::new(initial.into())
+                .with_duration(duration)
+                .with_easing(easing),
+        }
+    }
+
+    pub fn set_duration(&mut self, seconds: f32) {
+        self.inner.set_duration(seconds);
+    }
+
+    pub fn set_easing(&mut self, easing: Easing) {
+        self.inner.set_easing(easing);
+    }
+
+    pub fn set_target(&mut self, target: BindingAnimationValue) {
+        self.inner.set_target(target.into());
+    }
+
+    pub fn jump_to(&mut self, value: BindingAnimationValue) {
+        self.inner.jump_to(value.into());
+    }
+
+    pub fn tick(&mut self, delta_seconds: f32) -> bool {
+        self.inner.tick(delta_seconds)
+    }
+
+    pub fn value(&self) -> BindingAnimationValue {
+        self.inner.value().into()
+    }
+
+    pub fn target(&self) -> BindingAnimationValue {
+        self.inner.target().into()
+    }
+
+    pub fn is_animating(&self) -> bool {
+        self.inner.is_animating()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingAnimationKeyframe {
+    inner: Keyframe<AnimationValue>,
+}
+
+impl BindingAnimationKeyframe {
+    pub fn new(time: f64, value: BindingAnimationValue, easing: Easing) -> Self {
+        Self {
+            inner: Keyframe::new(time, value.into()).with_easing(easing),
+        }
+    }
+
+    pub const fn time(&self) -> f64 {
+        self.inner.time
+    }
+
+    pub fn value(&self) -> BindingAnimationValue {
+        self.inner.value.into()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationTrack {
+    inner: Track<AnimationValue>,
+}
+
+impl BindingAnimationTrack {
+    pub fn new(target: impl Into<String>, property: impl Into<String>) -> Self {
+        let target = target.into();
+        let property = property.into();
+        Self {
+            inner: Track::new(AnimationBinding::new(
+                AnimationTargetId::new(target),
+                binding_animation_property_from_path(&property),
+            )),
+        }
+    }
+
+    pub fn add_keyframe(&mut self, keyframe: BindingAnimationKeyframe) {
+        self.inner.push_keyframe(keyframe.inner);
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.enabled = enabled;
+    }
+
+    pub fn sample(&self, time: f64) -> Option<BindingAnimationValue> {
+        self.inner.sample(time).map(Into::into)
+    }
+
+    pub fn target(&self) -> &str {
+        self.inner.binding.target.as_str()
+    }
+
+    pub fn property(&self) -> &str {
+        self.inner.binding.property.path()
+    }
+
+    pub fn keyframe_count(&self) -> usize {
+        self.inner.keyframes.len()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationClip {
+    inner: Clip<AnimationValue>,
+}
+
+impl BindingAnimationClip {
+    pub fn new(id: impl Into<String>, start_time: f64, duration: f64) -> Self {
+        Self {
+            inner: Clip::new(id, start_time, duration),
+        }
+    }
+
+    pub fn add_track(&mut self, track: BindingAnimationTrack) {
+        self.inner.push_track(track.inner);
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.enabled = enabled;
+    }
+
+    pub fn id(&self) -> &str {
+        &self.inner.id
+    }
+
+    pub fn start_time(&self) -> f64 {
+        self.inner.start_time
+    }
+
+    pub fn duration(&self) -> f64 {
+        self.inner.duration
+    }
+
+    pub fn track_count(&self) -> usize {
+        self.inner.tracks.len()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationSample {
+    pub clip_id: String,
+    pub target: String,
+    pub property: String,
+    pub time: f64,
+    pub value: BindingAnimationValue,
+}
+
+fn binding_animation_samples(
+    samples: Vec<sui::SampledAnimationValue>,
+) -> Vec<BindingAnimationSample> {
+    samples
+        .into_iter()
+        .map(|sample| BindingAnimationSample {
+            clip_id: sample.clip_id,
+            target: sample.binding.target.as_str().to_owned(),
+            property: sample.binding.property.path().to_owned(),
+            time: sample.time,
+            value: sample.value.into(),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationTimeline {
+    inner: Timeline<AnimationValue>,
+}
+
+impl BindingAnimationTimeline {
+    pub fn new(duration: f64) -> Self {
+        Self {
+            inner: Timeline::new(duration),
+        }
+    }
+
+    pub fn add_clip(&mut self, clip: BindingAnimationClip) {
+        self.inner.push_clip(clip.inner);
+    }
+
+    pub fn duration(&self) -> f64 {
+        self.inner.duration
+    }
+
+    pub fn clip_count(&self) -> usize {
+        self.inner.clips.len()
+    }
+
+    pub fn sample(&self, time: f64) -> Vec<BindingAnimationSample> {
+        binding_animation_samples(self.inner.sample(time))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationPlayer {
+    inner: AnimationPlayer<AnimationValue>,
+}
+
+impl BindingAnimationPlayer {
+    pub fn new(timeline: &BindingAnimationTimeline) -> Self {
+        Self {
+            inner: AnimationPlayer::from_compiled(timeline.inner.compile()),
+        }
+    }
+
+    pub fn play(&mut self) {
+        self.inner.play();
+    }
+
+    pub fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    pub fn stop(&mut self) {
+        self.inner.stop();
+    }
+
+    pub fn seek(&mut self, time: f64) {
+        self.inner.seek(time);
+    }
+
+    pub fn set_repeat(&mut self, repeat: bool) {
+        self.inner.playback_mut().loop_mode = if repeat {
+            LoopMode::Repeat
+        } else {
+            LoopMode::Once
+        };
+    }
+
+    pub fn set_playback_rate(&mut self, rate: f64) {
+        self.inner.playback_mut().playback_rate = rate;
+    }
+
+    pub fn playhead(&self) -> f64 {
+        self.inner.playback().playhead
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.inner.playback().playing
+    }
+
+    pub fn sample(&self) -> Vec<BindingAnimationSample> {
+        binding_animation_samples(self.inner.sample())
+    }
+
+    pub fn tick(&mut self, delta_seconds: f64) -> Vec<BindingAnimationSample> {
+        let duration = self.inner.timeline().duration();
+        self.inner.playback_mut().tick(delta_seconds, duration);
+        self.sample()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationDocument {
+    inner: AnimationDocument,
+}
+
+impl BindingAnimationDocument {
+    pub fn new(name: impl Into<String>, timeline: BindingAnimationTimeline) -> Self {
+        Self {
+            inner: AnimationDocument::new(name, timeline.inner),
+        }
+    }
+
+    pub fn parse(input: &str) -> Result<Self, String> {
+        AnimationDocument::from_document_format(input)
+            .map(|inner| Self { inner })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    pub fn timeline(&self) -> BindingAnimationTimeline {
+        BindingAnimationTimeline {
+            inner: self.inner.timeline.clone(),
+        }
+    }
+
+    pub fn to_document_format(&self) -> String {
+        self.inner.to_document_format()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationEditor {
+    inner: AnimationEditorState,
+}
+
+impl BindingAnimationEditor {
+    pub fn new(document: BindingAnimationDocument) -> Self {
+        Self {
+            inner: AnimationEditorState::new(document.inner),
+        }
+    }
+
+    pub fn document(&self) -> BindingAnimationDocument {
+        BindingAnimationDocument {
+            inner: self.inner.document.clone(),
+        }
+    }
+
+    pub fn set_playhead(&mut self, time: f64) {
+        self.inner
+            .apply_command(AnimationEditorCommand::SetPlayhead(time));
+    }
+
+    pub fn set_zoom(&mut self, zoom: f32) {
+        self.inner
+            .apply_command(AnimationEditorCommand::SetZoom(zoom));
+    }
+
+    pub fn set_scroll(&mut self, scroll: f32) {
+        self.inner
+            .apply_command(AnimationEditorCommand::SetScroll(scroll));
+    }
+
+    pub fn set_snapping(&mut self, enabled: bool, interval: f64) {
+        self.inner
+            .apply_command(AnimationEditorCommand::SetSnapping(if enabled {
+                sui::TimelineSnap::new(interval)
+            } else {
+                sui::TimelineSnap::disabled()
+            }));
+    }
+
+    pub fn add_keyframe(
+        &mut self,
+        clip_index: usize,
+        track_index: usize,
+        keyframe: BindingAnimationKeyframe,
+    ) -> bool {
+        self.inner
+            .apply_command(AnimationEditorCommand::AddKeyframe {
+                clip_index,
+                track_index,
+                keyframe: keyframe.inner,
+            })
+    }
+
+    pub fn update_keyframe_easing(
+        &mut self,
+        clip_index: usize,
+        track_index: usize,
+        keyframe_index: usize,
+        easing: Easing,
+    ) -> bool {
+        self.inner
+            .apply_command(AnimationEditorCommand::UpdateKeyframeEasing {
+                selection: sui::KeyframeSelection {
+                    clip_index,
+                    track_index,
+                    keyframe_index,
+                },
+                easing,
+            })
+    }
+
+    pub fn remove_keyframe(
+        &mut self,
+        clip_index: usize,
+        track_index: usize,
+        keyframe_index: usize,
+    ) -> bool {
+        self.inner
+            .apply_command(AnimationEditorCommand::RemoveKeyframe(
+                sui::KeyframeSelection {
+                    clip_index,
+                    track_index,
+                    keyframe_index,
+                },
+            ))
+    }
+
+    pub fn undo(&mut self) -> bool {
+        self.inner.undo()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.inner.redo()
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.inner.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.inner.can_redo()
+    }
+
+    pub fn playhead(&self) -> f64 {
+        self.inner.playback.playhead
+    }
+
+    pub fn zoom(&self) -> f32 {
+        self.inner.zoom
+    }
+
+    pub fn scroll(&self) -> f32 {
+        self.inner.scroll
+    }
+}
+
 pub fn binding_table_column_alignment_from_name(value: &str) -> Option<TableColumnAlignment> {
     match normalize_binding_name(value).as_str() {
         "start" | "left" => Some(TableColumnAlignment::Start),
@@ -1320,6 +2557,290 @@ pub struct BindingBrushPreviewSpec {
     shape: BrushPreviewShape,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingCanvasViewport {
+    pub pan: Vector,
+    pub zoom: f32,
+    pub rotation: f32,
+}
+
+impl BindingCanvasViewport {
+    pub fn new(pan: Vector, zoom: f32, rotation: f32) -> Self {
+        Self {
+            pan,
+            zoom: zoom.max(0.01),
+            rotation,
+        }
+    }
+
+    fn into_sui(self) -> CanvasViewport {
+        CanvasViewport::new()
+            .pan(self.pan)
+            .zoom(self.zoom)
+            .rotation(self.rotation)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingCanvasStroke {
+    pub color: Color,
+    pub width: f32,
+}
+
+impl BindingCanvasStroke {
+    pub fn new(color: Color, width: f32) -> Self {
+        Self {
+            color,
+            width: width.max(0.1),
+        }
+    }
+
+    fn into_sui(self) -> CanvasStroke {
+        CanvasStroke::new(self.color, self.width)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingCanvasShape {
+    inner: CanvasShape,
+}
+
+impl BindingCanvasShape {
+    pub fn path(path: Path, fill: Option<Color>, stroke: Option<BindingCanvasStroke>) -> Self {
+        Self {
+            inner: CanvasShape::Path {
+                path,
+                fill,
+                stroke: stroke.map(BindingCanvasStroke::into_sui),
+            },
+        }
+    }
+
+    pub fn rect(rect: Rect, fill: Option<Color>, stroke: Option<BindingCanvasStroke>) -> Self {
+        Self {
+            inner: CanvasShape::rect(rect, fill, stroke.map(BindingCanvasStroke::into_sui)),
+        }
+    }
+
+    pub fn circle(
+        center: Point,
+        radius: f32,
+        fill: Option<Color>,
+        stroke: Option<BindingCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: CanvasShape::circle(
+                center,
+                radius,
+                fill,
+                stroke.map(BindingCanvasStroke::into_sui),
+            ),
+        }
+    }
+
+    pub fn polyline(points: &[Point], stroke: BindingCanvasStroke) -> Result<Self, String> {
+        CanvasShape::polyline(points, stroke.into_sui())
+            .map(|inner| Self { inner })
+            .ok_or_else(|| "canvas polyline requires at least two distinct points".to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingPixelCanvasExport {
+    pub revision: u64,
+    pub name: String,
+    pub width: usize,
+    pub height: usize,
+    pub rgba8: Vec<u8>,
+}
+
+impl From<PixelCanvasExportSnapshot> for BindingPixelCanvasExport {
+    fn from(value: PixelCanvasExportSnapshot) -> Self {
+        Self {
+            revision: value.revision(),
+            name: value.name().to_owned(),
+            width: value.width(),
+            height: value.height(),
+            rgba8: value.rgba8().to_vec(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingPixelCanvasState {
+    inner: PixelCanvasState,
+}
+
+impl BindingPixelCanvasState {
+    pub fn new() -> Self {
+        Self {
+            inner: PixelCanvasState::new(),
+        }
+    }
+
+    pub fn tool(&self) -> &'static str {
+        match self.inner.tool() {
+            PixelCanvasTool::Brush => "brush",
+            PixelCanvasTool::Eraser => "eraser",
+            PixelCanvasTool::Fill => "fill",
+            PixelCanvasTool::Pan => "pan",
+        }
+    }
+
+    pub fn set_tool(&self, value: &str) -> Result<(), String> {
+        self.inner
+            .set_tool(match normalized_option_name(value).as_str() {
+                "brush" | "paint" => PixelCanvasTool::Brush,
+                "eraser" | "erase" => PixelCanvasTool::Eraser,
+                "fill" | "bucket" => PixelCanvasTool::Fill,
+                "pan" | "hand" => PixelCanvasTool::Pan,
+                _ => {
+                    return Err(format!(
+                        "pixel canvas tool must be brush, eraser, fill, or pan; got '{value}'"
+                    ));
+                }
+            });
+        Ok(())
+    }
+
+    pub fn brush_color(&self) -> Color {
+        self.inner.brush_color()
+    }
+
+    pub fn set_brush_color(&self, color: Color) {
+        self.inner.set_brush_color(color);
+    }
+
+    pub fn brush_size(&self) -> f32 {
+        self.inner.brush_size()
+    }
+
+    pub fn set_brush_size(&self, size: f32) {
+        self.inner.set_brush_size(size);
+    }
+
+    pub fn brush_opacity(&self) -> f32 {
+        self.inner.brush_opacity()
+    }
+
+    pub fn set_brush_opacity(&self, opacity: f32) {
+        self.inner.set_brush_opacity(opacity);
+    }
+
+    pub fn brush_shape(&self) -> &'static str {
+        match self.inner.brush_shape() {
+            PixelCanvasBrushShape::Square => "square",
+            PixelCanvasBrushShape::Round => "round",
+        }
+    }
+
+    pub fn set_brush_shape(&self, value: &str) -> Result<(), String> {
+        self.inner
+            .set_brush_shape(match normalized_option_name(value).as_str() {
+                "square" => PixelCanvasBrushShape::Square,
+                "round" | "circle" => PixelCanvasBrushShape::Round,
+                _ => {
+                    return Err(format!(
+                        "pixel brush shape must be square or round; got '{value}'"
+                    ));
+                }
+            });
+        Ok(())
+    }
+
+    pub fn blend_mode(&self) -> &'static str {
+        binding_pixel_blend_mode_name(self.inner.blend_mode())
+    }
+
+    pub fn set_blend_mode(&self, value: &str) -> Result<(), String> {
+        self.inner.set_blend_mode(binding_pixel_blend_mode(value)?);
+        Ok(())
+    }
+
+    pub fn editable(&self) -> bool {
+        self.inner.is_editable()
+    }
+
+    pub fn set_editable(&self, editable: bool) -> bool {
+        self.inner.set_editable(editable)
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.inner.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.inner.can_redo()
+    }
+
+    pub fn can_clear(&self) -> bool {
+        self.inner.can_clear()
+    }
+
+    pub fn request_undo(&self) {
+        self.inner.request_undo();
+    }
+
+    pub fn request_redo(&self) {
+        self.inner.request_redo();
+    }
+
+    pub fn request_clear(&self) {
+        self.inner.request_clear();
+    }
+
+    pub fn request_fit_view(&self) {
+        self.inner.request_fit_view();
+    }
+
+    pub fn request_actual_size(&self) {
+        self.inner.request_actual_size_view();
+    }
+
+    pub fn request_zoom_in(&self) {
+        self.inner.request_zoom_in();
+    }
+
+    pub fn request_zoom_out(&self) {
+        self.inner.request_zoom_out();
+    }
+
+    pub fn request_export(&self) {
+        self.inner.request_export_snapshot();
+    }
+
+    pub fn latest_export(&self) -> Option<BindingPixelCanvasExport> {
+        self.inner.latest_export_snapshot().map(Into::into)
+    }
+}
+
+impl Default for BindingPixelCanvasState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn binding_pixel_blend_mode(value: &str) -> Result<PixelCanvasBlendMode, String> {
+    match normalized_option_name(value).as_str() {
+        "normal" => Ok(PixelCanvasBlendMode::Normal),
+        "multiply" => Ok(PixelCanvasBlendMode::Multiply),
+        "screen" => Ok(PixelCanvasBlendMode::Screen),
+        "overlay" => Ok(PixelCanvasBlendMode::Overlay),
+        _ => Err(format!(
+            "pixel blend mode must be normal, multiply, screen, or overlay; got '{value}'"
+        )),
+    }
+}
+
+fn binding_pixel_blend_mode_name(value: PixelCanvasBlendMode) -> &'static str {
+    match value {
+        PixelCanvasBlendMode::Normal => "normal",
+        PixelCanvasBlendMode::Multiply => "multiply",
+        PixelCanvasBlendMode::Screen => "screen",
+        PixelCanvasBlendMode::Overlay => "overlay",
+    }
+}
+
 impl BindingBrushPreviewSpec {
     pub fn new(color: Color, size: f32, opacity: f32, shape: BrushPreviewShape) -> Self {
         Self {
@@ -1347,9 +2868,712 @@ impl BindingFloatingStackWindow {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BindingDockNode {
+    inner: DockNode,
+}
+
+impl BindingDockNode {
+    pub fn empty() -> Self {
+        Self {
+            inner: DockNode::empty(),
+        }
+    }
+
+    pub fn tabs(
+        panel_ids: impl IntoIterator<Item = u64>,
+        active: Option<u64>,
+    ) -> Result<Self, String> {
+        let panel_ids = panel_ids.into_iter().collect::<Vec<_>>();
+        if panel_ids.is_empty() {
+            return Err("dock tabs require at least one panel id".to_string());
+        }
+        if panel_ids.iter().any(|id| *id == 0) {
+            return Err("dock panel ids must be non-zero".to_string());
+        }
+        let active = active.unwrap_or(panel_ids[0]);
+        if !panel_ids.contains(&active) {
+            return Err(format!(
+                "active dock panel {active} is not present in the tab group"
+            ));
+        }
+        Ok(Self {
+            inner: DockNode::tabs(
+                panel_ids.into_iter().map(DockPanelId::new),
+                DockPanelId::new(active),
+            ),
+        })
+    }
+
+    pub fn split(axis: Axis, fraction: f32, first: Self, second: Self) -> Result<Self, String> {
+        if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+            return Err("dock split fraction must be finite and between 0 and 1".to_string());
+        }
+        Ok(Self {
+            inner: DockNode::split(axis, fraction, first.inner, second.inner),
+        })
+    }
+
+    fn into_sui(self) -> DockNode {
+        self.inner
+    }
+
+    fn from_sui(inner: DockNode) -> Self {
+        Self { inner }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingDockFloatingGroup {
+    pub id: u64,
+    pub panel_ids: Vec<u64>,
+    pub active: u64,
+    pub bounds: Rect,
+}
+
+impl BindingDockFloatingGroup {
+    pub fn new(
+        id: u64,
+        panel_ids: impl IntoIterator<Item = u64>,
+        active: u64,
+        bounds: Rect,
+    ) -> Self {
+        Self {
+            id,
+            panel_ids: panel_ids.into_iter().collect(),
+            active,
+            bounds,
+        }
+    }
+
+    fn into_sui(self) -> DockFloatingGroup {
+        DockFloatingGroup::new(
+            self.id,
+            self.panel_ids.into_iter().map(DockPanelId::new),
+            DockPanelId::new(self.active),
+            self.bounds,
+        )
+    }
+
+    fn from_sui(value: DockFloatingGroup) -> Self {
+        Self {
+            id: value.id,
+            panel_ids: value.panels.into_iter().map(DockPanelId::get).collect(),
+            active: value.active.get(),
+            bounds: value.bounds,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BindingDockLayout {
+    pub root: BindingDockNode,
+    pub floating: Vec<BindingDockFloatingGroup>,
+    pub hidden: Vec<u64>,
+}
+
+impl BindingDockLayout {
+    pub fn new(
+        root: BindingDockNode,
+        floating: impl IntoIterator<Item = BindingDockFloatingGroup>,
+        hidden: impl IntoIterator<Item = u64>,
+    ) -> Self {
+        Self {
+            root,
+            floating: floating.into_iter().collect(),
+            hidden: hidden.into_iter().collect(),
+        }
+    }
+
+    fn into_sui(self) -> DockWorkspaceSnapshot {
+        DockWorkspaceSnapshot {
+            root: self.root.into_sui(),
+            floating: self
+                .floating
+                .into_iter()
+                .map(BindingDockFloatingGroup::into_sui)
+                .collect(),
+            hidden: self.hidden.into_iter().map(DockPanelId::new).collect(),
+        }
+    }
+
+    fn from_sui(value: DockWorkspaceSnapshot) -> Self {
+        Self {
+            root: BindingDockNode::from_sui(value.root),
+            floating: value
+                .floating
+                .into_iter()
+                .map(BindingDockFloatingGroup::from_sui)
+                .collect(),
+            hidden: value.hidden.into_iter().map(DockPanelId::get).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingDockState {
+    inner: DockWorkspaceState,
+}
+
+impl BindingDockState {
+    pub fn new(layout: BindingDockLayout) -> Result<Self, String> {
+        DockWorkspaceState::new(layout.into_sui())
+            .map(|inner| Self { inner })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            inner: DockWorkspaceState::empty(),
+        }
+    }
+
+    pub fn snapshot(&self) -> BindingDockLayout {
+        BindingDockLayout::from_sui(self.inner.snapshot())
+    }
+
+    pub fn apply(&self, layout: BindingDockLayout) -> Result<bool, String> {
+        self.inner
+            .apply_snapshot(layout.into_sui())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn dock(&self, panel: u64, target: u64, zone: &str) -> Result<bool, String> {
+        self.inner
+            .dock(
+                DockPanelId::new(panel),
+                DockPanelId::new(target),
+                binding_dock_zone_from_name(zone)?,
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn dock_to_root(&self, panel: u64, zone: &str) -> Result<bool, String> {
+        self.inner
+            .dock_to_root(DockPanelId::new(panel), binding_dock_zone_from_name(zone)?)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn float_panel(&self, panel: u64, bounds: Rect) -> Result<u64, String> {
+        self.inner
+            .float_panel(DockPanelId::new(panel), bounds)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn hide(&self, panel: u64) -> Result<bool, String> {
+        self.inner
+            .hide(DockPanelId::new(panel))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn show(&self, panel: u64) -> Result<bool, String> {
+        self.inner
+            .show(DockPanelId::new(panel))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn activate(&self, panel: u64) -> Result<bool, String> {
+        self.inner
+            .activate(DockPanelId::new(panel))
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn binding_dock_zone_from_name(value: &str) -> Result<DockZone, String> {
+    match normalized_option_name(value).as_str() {
+        "center" | "tab" => Ok(DockZone::Center),
+        "left" => Ok(DockZone::Left),
+        "right" => Ok(DockZone::Right),
+        "top" => Ok(DockZone::Top),
+        "bottom" => Ok(DockZone::Bottom),
+        _ => Err(format!(
+            "dock zone must be 'center', 'left', 'right', 'top', or 'bottom', got '{value}'"
+        )),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingDockPanel {
+    pub id: u64,
+    pub title: String,
+    pub child: BindingWidget,
+}
+
+impl BindingDockPanel {
+    pub fn new(id: u64, title: impl Into<String>, child: BindingWidget) -> Result<Self, String> {
+        if id == 0 {
+            return Err("dock panel id must be non-zero".to_string());
+        }
+        Ok(Self {
+            id,
+            title: title.into(),
+            child,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingFloatingView {
+    id: Option<u64>,
+    pub title: String,
+    pub bounds: Rect,
+    pub min_size: Size,
+    pub visible: bool,
+    pub child: BindingWidget,
+}
+
+impl BindingFloatingView {
+    pub fn new(
+        title: impl Into<String>,
+        bounds: Rect,
+        min_size: Size,
+        visible: bool,
+        child: BindingWidget,
+    ) -> Self {
+        Self {
+            id: None,
+            title: title.into(),
+            bounds,
+            min_size,
+            visible,
+            child,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingFloatingViewSnapshot {
+    pub id: u64,
+    pub title: String,
+    pub bounds: Rect,
+    pub min_size: Size,
+    pub visible: bool,
+    pub maximized: bool,
+}
+
+impl From<FloatingViewSnapshot> for BindingFloatingViewSnapshot {
+    fn from(value: FloatingViewSnapshot) -> Self {
+        Self {
+            id: value.id,
+            title: value.title,
+            bounds: value.bounds,
+            min_size: value.min_size,
+            visible: value.visible,
+            maximized: value.maximized,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct BindingFloatingWorkspaceState {
+    inner: FloatingWorkspaceState,
+}
+
+impl fmt::Debug for BindingFloatingWorkspaceState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingFloatingWorkspaceState")
+            .field("views", &self.views())
+            .finish()
+    }
+}
+
+impl BindingFloatingWorkspaceState {
+    pub fn new() -> Self {
+        Self {
+            inner: FloatingWorkspaceState::new(),
+        }
+    }
+
+    pub fn views(&self) -> Vec<BindingFloatingViewSnapshot> {
+        self.inner.snapshots().into_iter().map(Into::into).collect()
+    }
+
+    pub fn set_visible(&self, id: u64, visible: bool) -> bool {
+        self.inner.set_view_visible(id, visible)
+    }
+
+    pub fn set_bounds(&self, id: u64, bounds: Rect) -> bool {
+        self.inner.set_view_bounds(id, bounds)
+    }
+
+    pub fn bring_to_front(&self, id: u64) -> bool {
+        self.inner.bring_to_front(id)
+    }
+
+    pub fn set_maximized(&self, id: u64, maximized: bool) -> bool {
+        self.inner.set_view_maximized(id, maximized)
+    }
+}
+
+impl Default for BindingFloatingWorkspaceState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingConstraintCase {
+    query: ConstraintQuery,
+    child: BindingWidget,
+}
+
+impl BindingConstraintCase {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        child: BindingWidget,
+        min_width: Option<f32>,
+        max_width: Option<f32>,
+        min_height: Option<f32>,
+        max_height: Option<f32>,
+        min_aspect_ratio: Option<f32>,
+        max_aspect_ratio: Option<f32>,
+        orientation: &str,
+    ) -> Result<Self, String> {
+        let mut query = ConstraintQuery::new();
+        if let Some(value) = min_width {
+            query = query.min_width(value);
+        }
+        if let Some(value) = max_width {
+            query = query.max_width(value);
+        }
+        if let Some(value) = min_height {
+            query = query.min_height(value);
+        }
+        if let Some(value) = max_height {
+            query = query.max_height(value);
+        }
+        if let Some(value) = min_aspect_ratio {
+            query = query.min_aspect_ratio(value);
+        }
+        if let Some(value) = max_aspect_ratio {
+            query = query.max_aspect_ratio(value);
+        }
+        query = query.orientation(match normalized_option_name(orientation).as_str() {
+            "any" => ConstraintOrientation::Any,
+            "portrait" => ConstraintOrientation::Portrait,
+            "landscape" => ConstraintOrientation::Landscape,
+            _ => {
+                return Err(format!(
+                    "constraint orientation must be 'any', 'portrait', or 'landscape', got '{orientation}'"
+                ));
+            }
+        });
+        Ok(Self { query, child })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingResponsiveSidebarState {
+    inner: ResponsiveSidebarState,
+}
+
+impl BindingResponsiveSidebarState {
+    pub fn new(expanded: bool, overlay_open: bool) -> Self {
+        let inner = ResponsiveSidebarState::new();
+        inner.set_expanded(expanded);
+        if overlay_open {
+            inner.open_overlay();
+        }
+        Self { inner }
+    }
+
+    pub fn expanded(&self) -> bool {
+        self.inner.snapshot().expanded
+    }
+
+    pub fn overlay_open(&self) -> bool {
+        self.inner.snapshot().overlay_open
+    }
+
+    pub fn set_expanded(&self, expanded: bool) -> bool {
+        self.inner.set_expanded(expanded)
+    }
+
+    pub fn toggle_expanded(&self) -> bool {
+        self.inner.toggle_expanded()
+    }
+
+    pub fn open_overlay(&self) -> bool {
+        self.inner.open_overlay()
+    }
+
+    pub fn close_overlay(&self) -> bool {
+        self.inner.close_overlay()
+    }
+
+    pub fn toggle_overlay(&self) -> bool {
+        self.inner.toggle_overlay()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingMasterDetailState {
+    inner: MasterDetailState,
+}
+
+impl BindingMasterDetailState {
+    pub fn new(route: &str) -> Result<Self, String> {
+        Ok(Self {
+            inner: MasterDetailState::new(binding_master_detail_route(route)?),
+        })
+    }
+
+    pub fn route(&self) -> &'static str {
+        match self.inner.route() {
+            MasterDetailRoute::Master => "master",
+            MasterDetailRoute::Detail => "detail",
+        }
+    }
+
+    pub fn set_route(&self, route: &str) -> Result<bool, String> {
+        Ok(self.inner.set_route(binding_master_detail_route(route)?))
+    }
+
+    pub fn show_master(&self) -> bool {
+        self.inner.show_master()
+    }
+
+    pub fn show_detail(&self) -> bool {
+        self.inner.show_detail()
+    }
+}
+
+fn binding_master_detail_route(value: &str) -> Result<MasterDetailRoute, String> {
+    match normalized_option_name(value).as_str() {
+        "master" | "list" => Ok(MasterDetailRoute::Master),
+        "detail" => Ok(MasterDetailRoute::Detail),
+        _ => Err(format!(
+            "master-detail route must be 'master' or 'detail', got '{value}'"
+        )),
+    }
+}
+
+#[derive(Clone)]
+pub struct BindingNotificationCenter {
+    inner: NotificationCenter,
+}
+
+impl BindingNotificationCenter {
+    pub fn new() -> Self {
+        Self {
+            inner: NotificationCenter::new(),
+        }
+    }
+
+    pub fn notify(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        duration: Option<f64>,
+        urgency: &str,
+    ) -> Result<u64, String> {
+        let mut notification = TransientNotification::new(title, message);
+        notification = match duration {
+            Some(duration) => notification.duration(duration),
+            None => notification.persistent(),
+        };
+        notification = notification.urgency(match normalized_option_name(urgency).as_str() {
+            "polite" => NotificationUrgency::Polite,
+            "assertive" | "urgent" => NotificationUrgency::Assertive,
+            _ => {
+                return Err(format!(
+                    "notification urgency must be 'polite' or 'assertive', got '{urgency}'"
+                ));
+            }
+        });
+        Ok(self.inner.push(notification).get())
+    }
+
+    pub fn dismiss(&self, id: u64) -> bool {
+        self.inner.dismiss(NotificationId::new(id))
+    }
+
+    pub fn clear(&self) -> bool {
+        self.inner.clear()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.snapshot().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Default for BindingNotificationCenter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for BindingNotificationCenter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingNotificationCenter")
+            .field("len", &self.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingVirtualListItem {
+    pub key: u64,
+    pub text: String,
+}
+
+impl BindingVirtualListItem {
+    pub fn new(key: u64, text: impl Into<String>) -> Result<Self, String> {
+        if key == 0 {
+            return Err("virtual-list keys must be non-zero".to_string());
+        }
+        Ok(Self {
+            key,
+            text: text.into(),
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct BindingVirtualListModel {
+    inner: VirtualCollectionModel<u64, String>,
+}
+
+impl BindingVirtualListModel {
+    pub fn new(
+        name: impl Into<String>,
+        items: impl IntoIterator<Item = BindingVirtualListItem>,
+    ) -> Result<Self, String> {
+        let name = name.into();
+        VirtualCollectionModel::from_items(
+            name,
+            items.into_iter().map(|item| (item.key, item.text)),
+        )
+        .map(|inner| Self { inner })
+        .map_err(|error| error.to_string())
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn append(&self, item: BindingVirtualListItem) -> Result<bool, String> {
+        self.inner
+            .append(item.key, item.text)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn prepend(
+        &self,
+        items: impl IntoIterator<Item = BindingVirtualListItem>,
+    ) -> Result<bool, String> {
+        self.inner
+            .prepend(items.into_iter().map(|item| (item.key, item.text)))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn update(&self, item: BindingVirtualListItem) -> Result<bool, String> {
+        self.inner
+            .update(item.key, item.text)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn remove(&self, key: u64) -> Result<bool, String> {
+        self.inner.remove(key).map_err(|error| error.to_string())
+    }
+
+    pub fn move_to(&self, key: u64, index: usize) -> Result<bool, String> {
+        self.inner
+            .move_to(key, index)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn replace(
+        &self,
+        items: impl IntoIterator<Item = BindingVirtualListItem>,
+    ) -> Result<bool, String> {
+        self.inner
+            .replace(items.into_iter().map(|item| (item.key, item.text)))
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl fmt::Debug for BindingVirtualListModel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindingVirtualListModel")
+            .field("len", &self.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingDragScope {
+    inner: DragDropScope,
+}
+
+impl BindingDragScope {
+    pub fn new() -> Self {
+        Self {
+            inner: DragDropScope::new(),
+        }
+    }
+
+    pub fn active(&self) -> bool {
+        self.inner.active_drag().is_some()
+    }
+}
+
+impl Default for BindingDragScope {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn binding_drop_effect(value: &str) -> Result<DropEffect, String> {
+    match normalized_option_name(value).as_str() {
+        "none" | "reject" => Ok(DropEffect::None),
+        "copy" => Ok(DropEffect::Copy),
+        "move" => Ok(DropEffect::Move),
+        "link" => Ok(DropEffect::Link),
+        _ => Err(format!(
+            "drop effect must be 'none', 'copy', 'move', or 'link', got '{value}'"
+        )),
+    }
+}
+
+fn binding_drag_payload_text(event: &DragEvent) -> String {
+    match &event.payload {
+        DragPayload::Text(text) => text.clone(),
+        DragPayload::Image { handle, .. } => format!("image:{}", handle.get()),
+        DragPayload::Custom { kind, .. } => kind.to_string(),
+    }
+}
+
 #[derive(Clone)]
 pub struct BindingWidget {
     inner: Arc<BindingWidgetKind>,
+}
+
+#[derive(Clone)]
+struct BindingBuildContext {
+    errors: ForeignErrorSink,
+    theme: Option<BindingTheme>,
+}
+
+impl BindingBuildContext {
+    fn new(errors: ForeignErrorSink, theme: Option<BindingTheme>) -> Self {
+        Self { errors, theme }
+    }
+}
+
+impl std::ops::Deref for BindingBuildContext {
+    type Target = ForeignErrorSink;
+
+    fn deref(&self) -> &Self::Target {
+        &self.errors
+    }
 }
 
 impl fmt::Debug for BindingWidget {
@@ -1456,6 +3680,10 @@ impl fmt::Debug for BindingWidget {
             }
             BindingWidgetKind::TextArea { .. } => f.debug_tuple("BindingWidget::TextArea").finish(),
             BindingWidgetKind::RichText { .. } => f.debug_tuple("BindingWidget::RichText").finish(),
+            BindingWidgetKind::RichDocument { document, .. } => f
+                .debug_struct("BindingWidget::RichDocument")
+                .field("document", document)
+                .finish(),
             BindingWidgetKind::Image { .. } => f.debug_tuple("BindingWidget::Image").finish(),
             BindingWidgetKind::ColorSwatch { .. } => {
                 f.debug_tuple("BindingWidget::ColorSwatch").finish()
@@ -1466,6 +3694,9 @@ impl fmt::Debug for BindingWidget {
                 .finish(),
             BindingWidgetKind::ColorPicker { .. } => {
                 f.debug_tuple("BindingWidget::ColorPicker").finish()
+            }
+            BindingWidgetKind::SimpleColorPicker { .. } => {
+                f.debug_tuple("BindingWidget::SimpleColorPicker").finish()
             }
             BindingWidgetKind::Separator { .. } => {
                 f.debug_tuple("BindingWidget::Separator").finish()
@@ -1602,6 +3833,108 @@ impl fmt::Debug for BindingWidget {
                 .field("axis", axis)
                 .field("children", children)
                 .finish(),
+            BindingWidgetKind::Grid {
+                columns, children, ..
+            } => f
+                .debug_struct("BindingWidget::Grid")
+                .field("columns", columns)
+                .field("children", children)
+                .finish(),
+            BindingWidgetKind::AspectRatio { child, ratio, .. } => f
+                .debug_struct("BindingWidget::AspectRatio")
+                .field("ratio", ratio)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::SafeArea { child, .. } => f
+                .debug_struct("BindingWidget::SafeArea")
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::LayoutTransition {
+                child, duration, ..
+            } => f
+                .debug_struct("BindingWidget::LayoutTransition")
+                .field("duration", duration)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::AdaptiveView { compact, .. } => f
+                .debug_struct("BindingWidget::AdaptiveView")
+                .field("compact", compact)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::ConstraintView { cases, fallback } => f
+                .debug_struct("BindingWidget::ConstraintView")
+                .field("cases", cases)
+                .field("fallback", fallback)
+                .finish(),
+            BindingWidgetKind::ResponsiveSidebar {
+                sidebar, content, ..
+            } => f
+                .debug_struct("BindingWidget::ResponsiveSidebar")
+                .field("sidebar", sidebar)
+                .field("content", content)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::MasterDetail { master, detail, .. } => f
+                .debug_struct("BindingWidget::MasterDetail")
+                .field("master", master)
+                .field("detail", detail)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::OverlayHost { child } => f
+                .debug_struct("BindingWidget::OverlayHost")
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::NotificationHost { center, width } => f
+                .debug_struct("BindingWidget::NotificationHost")
+                .field("center", center)
+                .field("width", width)
+                .finish(),
+            BindingWidgetKind::CommandPalette { name, content, .. } => f
+                .debug_struct("BindingWidget::CommandPalette")
+                .field("name", name)
+                .field("content", content)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::VirtualList { name, model, .. } => f
+                .debug_struct("BindingWidget::VirtualList")
+                .field("name", name)
+                .field("model", model)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::Canvas { name, shapes, .. } => f
+                .debug_struct("BindingWidget::Canvas")
+                .field("name", name)
+                .field("shapes", shapes)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::CanvasRuler { name, axis, .. } => f
+                .debug_struct("BindingWidget::CanvasRuler")
+                .field("name", name)
+                .field("axis", axis)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::DragDropHost { child, .. } => f
+                .debug_struct("BindingWidget::DragDropHost")
+                .field("child", child)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::Draggable { child, payload, .. } => f
+                .debug_struct("BindingWidget::Draggable")
+                .field("child", child)
+                .field("payload", payload)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::DropTarget { child, .. } => f
+                .debug_struct("BindingWidget::DropTarget")
+                .field("child", child)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::FloatingWorkspace { name, views, .. } => f
+                .debug_struct("BindingWidget::FloatingWorkspace")
+                .field("name", name)
+                .field("views", views)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::PixelCanvas {
+                name,
+                width,
+                height,
+                ..
+            } => f
+                .debug_struct("BindingWidget::PixelCanvas")
+                .field("name", name)
+                .field("width", width)
+                .field("height", height)
+                .finish_non_exhaustive(),
             BindingWidgetKind::Padding { child, insets, .. } => f
                 .debug_struct("BindingWidget::Padding")
                 .field("child", child)
@@ -1665,6 +3998,11 @@ impl fmt::Debug for BindingWidget {
                 .field("title", title)
                 .field("child", child)
                 .finish(),
+            BindingWidgetKind::DockWorkspace { name, panels, .. } => f
+                .debug_struct("BindingWidget::DockWorkspace")
+                .field("name", name)
+                .field("panels", panels)
+                .finish(),
             BindingWidgetKind::StatusBarHost {
                 content,
                 status_bar,
@@ -1716,7 +4054,10 @@ impl fmt::Debug for BindingWidget {
                 .field("gap", gap)
                 .field("children", children)
                 .finish(),
-            BindingWidgetKind::Foreign { .. } => f.debug_tuple("BindingWidget::Foreign").finish(),
+            BindingWidgetKind::Foreign { children, .. } => f
+                .debug_struct("BindingWidget::Foreign")
+                .field("children", children)
+                .finish(),
         }
     }
 }
@@ -1929,6 +4270,12 @@ enum BindingWidgetKind {
         min_width: f32,
         min_height: f32,
     },
+    RichDocument {
+        document: BindingRichDocument,
+        on_link: Option<BindingStringAction>,
+        on_image: Option<BindingStringAction>,
+        on_attachment: Option<BindingIdAction>,
+    },
     Image {
         image: BindingImageHandle,
         label: Option<String>,
@@ -1954,6 +4301,14 @@ enum BindingWidgetKind {
     ColorPicker {
         name: String,
         color: Option<Color>,
+        action: Option<BindingColorAction>,
+        show_alpha: bool,
+        compact: bool,
+    },
+    SimpleColorPicker {
+        name: String,
+        color: Option<Color>,
+        mode: SimpleColorPickerMode,
         action: Option<BindingColorAction>,
         show_alpha: bool,
         compact: bool,
@@ -2141,6 +4496,149 @@ enum BindingWidgetKind {
         background: Option<Color>,
         divider: bool,
     },
+    Grid {
+        columns: usize,
+        children: Vec<BindingWidget>,
+        name: Option<String>,
+        column_gap: f32,
+        row_gap: f32,
+    },
+    AspectRatio {
+        child: BindingWidget,
+        ratio: f32,
+        fit: AspectRatioFit,
+        horizontal: Alignment,
+        vertical: Alignment,
+    },
+    SafeArea {
+        child: BindingWidget,
+        edges: SafeAreaEdges,
+        minimum: SafeAreaInsets,
+    },
+    LayoutTransition {
+        child: BindingWidget,
+        duration: f64,
+        easing: Easing,
+    },
+    AdaptiveView {
+        compact: BindingWidget,
+        medium: BindingWidget,
+        expanded: BindingWidget,
+        medium_breakpoint: f32,
+        expanded_breakpoint: f32,
+        on_class_change: Option<BindingStringAction>,
+    },
+    ConstraintView {
+        cases: Vec<BindingConstraintCase>,
+        fallback: BindingWidget,
+    },
+    ResponsiveSidebar {
+        state: BindingResponsiveSidebarState,
+        sidebar: BindingWidget,
+        content: BindingWidget,
+        name: Option<String>,
+        medium_breakpoint: f32,
+        expanded_breakpoint: f32,
+        rail_width: f32,
+        overlay_width: f32,
+        dismiss_on_scrim: bool,
+        on_mode_change: Option<BindingStringAction>,
+    },
+    MasterDetail {
+        state: BindingMasterDetailState,
+        master: BindingWidget,
+        detail: BindingWidget,
+        medium_breakpoint: f32,
+        expanded_breakpoint: f32,
+        master_width: f32,
+    },
+    OverlayHost {
+        child: BindingWidget,
+    },
+    NotificationHost {
+        center: BindingNotificationCenter,
+        width: f32,
+    },
+    CommandPalette {
+        name: String,
+        content: BindingWidget,
+        description: Option<String>,
+        shown: BindingBool,
+        max_width: Option<f32>,
+        on_dismiss: Option<BindingAction>,
+    },
+    VirtualList {
+        name: String,
+        model: BindingVirtualListModel,
+        estimated_row_height: f32,
+        spacing: f32,
+        padding: Option<Insets>,
+        row_padding: Option<Insets>,
+        overscan_viewports: f32,
+        cache_capacity: usize,
+        selectable: bool,
+        transparent: bool,
+        stick_to_end: bool,
+        overlay_scroll_bars: bool,
+        on_change: Option<BindingIdAction>,
+        on_near_start: Option<BindingAction>,
+        on_near_end: Option<BindingAction>,
+    },
+    Canvas {
+        name: String,
+        viewport: BindingCanvasViewport,
+        shapes: Vec<BindingCanvasShape>,
+        draw_stroke: BindingCanvasStroke,
+        desired_size: Size,
+    },
+    CanvasRuler {
+        axis: CanvasRulerAxis,
+        name: String,
+        document_size: Size,
+        viewport: BindingCanvasViewport,
+        viewport_size: Size,
+        extent: Option<f32>,
+    },
+    DragDropHost {
+        scope: BindingDragScope,
+        child: BindingWidget,
+        on_external_hover: Option<BindingStringsAction>,
+        on_external_drop: Option<BindingStringAction>,
+        on_external_cancel: Option<BindingAction>,
+    },
+    Draggable {
+        scope: BindingDragScope,
+        child: BindingWidget,
+        payload: String,
+        effect: DropEffect,
+        preview_label: Option<String>,
+        threshold: f32,
+        on_start: Option<BindingStringAction>,
+        on_end: Option<BindingStringAction>,
+    },
+    DropTarget {
+        scope: BindingDragScope,
+        child: BindingWidget,
+        effect: DropEffect,
+        on_drop: Option<BindingStringAction>,
+        on_hover_change: Option<BindingBoolAction>,
+    },
+    FloatingWorkspace {
+        state: BindingFloatingWorkspaceState,
+        views: Vec<BindingFloatingView>,
+        name: Option<String>,
+    },
+    PixelCanvas {
+        state: BindingPixelCanvasState,
+        name: String,
+        width: usize,
+        height: usize,
+        paper_color: Option<Color>,
+        desired_size: Size,
+        viewport: BindingCanvasViewport,
+        fit_on_first_layout: bool,
+        pixels: Vec<Color>,
+    },
     Padding {
         child: BindingWidget,
         insets: Insets,
@@ -2219,6 +4717,11 @@ enum BindingWidgetKind {
         background: Option<Color>,
         header_background: Option<Color>,
     },
+    DockWorkspace {
+        state: BindingDockState,
+        panels: Vec<BindingDockPanel>,
+        name: String,
+    },
     StatusBarHost {
         content: BindingWidget,
         status_bar: BindingWidget,
@@ -2276,6 +4779,7 @@ enum BindingWidgetKind {
     },
     Foreign {
         callbacks: Arc<dyn ForeignWidgetCallbacks>,
+        children: Vec<BindingWidget>,
     },
 }
 
@@ -2757,6 +5261,20 @@ impl BindingWidget {
         })
     }
 
+    pub fn rich_document(
+        document: BindingRichDocument,
+        on_link: Option<BindingStringAction>,
+        on_image: Option<BindingStringAction>,
+        on_attachment: Option<BindingIdAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::RichDocument {
+            document,
+            on_link,
+            on_image,
+            on_attachment,
+        })
+    }
+
     pub fn image(
         image: BindingImageHandle,
         label: Option<String>,
@@ -2817,6 +5335,24 @@ impl BindingWidget {
         Self::from_kind(BindingWidgetKind::ColorPicker {
             name: name.into(),
             color,
+            action,
+            show_alpha,
+            compact,
+        })
+    }
+
+    pub fn simple_color_picker(
+        name: impl Into<String>,
+        color: Option<Color>,
+        mode: SimpleColorPickerMode,
+        action: Option<BindingColorAction>,
+        show_alpha: bool,
+        compact: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::SimpleColorPicker {
+            name: name.into(),
+            color,
+            mode,
             action,
             show_alpha,
             compact,
@@ -3083,6 +5619,34 @@ impl BindingWidget {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn bottom_sheet(
+        title: impl Into<String>,
+        body: BindingWidget,
+        description: Option<String>,
+        shown: impl Into<BindingBool>,
+        modal: bool,
+        dismiss_on_scrim: bool,
+        height: Option<f32>,
+        header_action: Option<BindingWidget>,
+        actions: impl IntoIterator<Item = BindingWidget>,
+        on_dismiss: Option<BindingAction>,
+    ) -> Self {
+        Self::side_sheet(
+            title,
+            body,
+            description,
+            shown,
+            modal,
+            dismiss_on_scrim,
+            SideSheetPlacement::Bottom,
+            height,
+            header_action,
+            actions,
+            on_dismiss,
+        )
+    }
+
     pub fn split_view(
         name: Option<String>,
         axis: Axis,
@@ -3235,6 +5799,338 @@ impl BindingWidget {
             background,
             divider,
         })
+    }
+
+    pub fn grid(
+        columns: usize,
+        children: impl IntoIterator<Item = BindingWidget>,
+        name: Option<String>,
+        column_gap: f32,
+        row_gap: f32,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Grid {
+            columns: columns.max(1),
+            children: children.into_iter().collect(),
+            name,
+            column_gap: column_gap.max(0.0),
+            row_gap: row_gap.max(0.0),
+        })
+    }
+
+    pub fn aspect_ratio(
+        child: BindingWidget,
+        ratio: f32,
+        fit: AspectRatioFit,
+        horizontal: Alignment,
+        vertical: Alignment,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::AspectRatio {
+            child,
+            ratio,
+            fit,
+            horizontal,
+            vertical,
+        })
+    }
+
+    pub fn safe_area(child: BindingWidget, edges: SafeAreaEdges, minimum: SafeAreaInsets) -> Self {
+        Self::from_kind(BindingWidgetKind::SafeArea {
+            child,
+            edges,
+            minimum,
+        })
+    }
+
+    pub fn layout_transition(child: BindingWidget, duration: f64, easing: Easing) -> Self {
+        Self::from_kind(BindingWidgetKind::LayoutTransition {
+            child,
+            duration: duration.max(0.0),
+            easing,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn adaptive_view(
+        compact: BindingWidget,
+        medium: BindingWidget,
+        expanded: BindingWidget,
+        medium_breakpoint: f32,
+        expanded_breakpoint: f32,
+        on_class_change: Option<BindingStringAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::AdaptiveView {
+            compact,
+            medium,
+            expanded,
+            medium_breakpoint,
+            expanded_breakpoint,
+            on_class_change,
+        })
+    }
+
+    pub fn constraint_view(
+        cases: impl IntoIterator<Item = BindingConstraintCase>,
+        fallback: BindingWidget,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ConstraintView {
+            cases: cases.into_iter().collect(),
+            fallback,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn responsive_sidebar(
+        state: BindingResponsiveSidebarState,
+        sidebar: BindingWidget,
+        content: BindingWidget,
+        name: Option<String>,
+        medium_breakpoint: f32,
+        expanded_breakpoint: f32,
+        rail_width: f32,
+        overlay_width: f32,
+        dismiss_on_scrim: bool,
+        on_mode_change: Option<BindingStringAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ResponsiveSidebar {
+            state,
+            sidebar,
+            content,
+            name,
+            medium_breakpoint,
+            expanded_breakpoint,
+            rail_width,
+            overlay_width,
+            dismiss_on_scrim,
+            on_mode_change,
+        })
+    }
+
+    pub fn master_detail(
+        state: BindingMasterDetailState,
+        master: BindingWidget,
+        detail: BindingWidget,
+        medium_breakpoint: f32,
+        expanded_breakpoint: f32,
+        master_width: f32,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::MasterDetail {
+            state,
+            master,
+            detail,
+            medium_breakpoint,
+            expanded_breakpoint,
+            master_width,
+        })
+    }
+
+    pub fn overlay_host(child: BindingWidget) -> Self {
+        Self::from_kind(BindingWidgetKind::OverlayHost { child })
+    }
+
+    pub fn notification_host(center: BindingNotificationCenter, width: f32) -> Self {
+        Self::from_kind(BindingWidgetKind::NotificationHost {
+            center,
+            width: width.max(120.0),
+        })
+    }
+
+    pub fn command_palette(
+        name: impl Into<String>,
+        content: BindingWidget,
+        description: Option<String>,
+        shown: impl Into<BindingBool>,
+        max_width: Option<f32>,
+        on_dismiss: Option<BindingAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::CommandPalette {
+            name: name.into(),
+            content,
+            description,
+            shown: shown.into(),
+            max_width,
+            on_dismiss,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn virtual_list(
+        name: impl Into<String>,
+        model: BindingVirtualListModel,
+        estimated_row_height: f32,
+        spacing: f32,
+        padding: Option<Insets>,
+        row_padding: Option<Insets>,
+        overscan_viewports: f32,
+        cache_capacity: usize,
+        selectable: bool,
+        transparent: bool,
+        stick_to_end: bool,
+        overlay_scroll_bars: bool,
+        on_change: Option<BindingIdAction>,
+        on_near_start: Option<BindingAction>,
+        on_near_end: Option<BindingAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::VirtualList {
+            name: name.into(),
+            model,
+            estimated_row_height,
+            spacing,
+            padding,
+            row_padding,
+            overscan_viewports,
+            cache_capacity,
+            selectable,
+            transparent,
+            stick_to_end,
+            overlay_scroll_bars,
+            on_change,
+            on_near_start,
+            on_near_end,
+        })
+    }
+
+    pub fn canvas(
+        name: impl Into<String>,
+        viewport: BindingCanvasViewport,
+        shapes: impl IntoIterator<Item = BindingCanvasShape>,
+        draw_stroke: BindingCanvasStroke,
+        desired_size: Size,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Canvas {
+            name: name.into(),
+            viewport,
+            shapes: shapes.into_iter().collect(),
+            draw_stroke,
+            desired_size,
+        })
+    }
+
+    pub fn canvas_ruler(
+        axis: Axis,
+        name: impl Into<String>,
+        document_size: Size,
+        viewport: BindingCanvasViewport,
+        viewport_size: Size,
+        extent: Option<f32>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::CanvasRuler {
+            axis: match axis {
+                Axis::Horizontal => CanvasRulerAxis::Horizontal,
+                Axis::Vertical => CanvasRulerAxis::Vertical,
+            },
+            name: name.into(),
+            document_size,
+            viewport,
+            viewport_size,
+            extent,
+        })
+    }
+
+    pub fn drag_drop_host(
+        scope: BindingDragScope,
+        child: BindingWidget,
+        on_external_hover: Option<BindingStringsAction>,
+        on_external_drop: Option<BindingStringAction>,
+        on_external_cancel: Option<BindingAction>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::DragDropHost {
+            scope,
+            child,
+            on_external_hover,
+            on_external_drop,
+            on_external_cancel,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draggable(
+        scope: BindingDragScope,
+        child: BindingWidget,
+        payload: impl Into<String>,
+        effect: &str,
+        preview_label: Option<String>,
+        threshold: f32,
+        on_start: Option<BindingStringAction>,
+        on_end: Option<BindingStringAction>,
+    ) -> Result<Self, String> {
+        Ok(Self::from_kind(BindingWidgetKind::Draggable {
+            scope,
+            child,
+            payload: payload.into(),
+            effect: binding_drop_effect(effect)?,
+            preview_label,
+            threshold: threshold.max(0.0),
+            on_start,
+            on_end,
+        }))
+    }
+
+    pub fn drop_target(
+        scope: BindingDragScope,
+        child: BindingWidget,
+        effect: &str,
+        on_drop: Option<BindingStringAction>,
+        on_hover_change: Option<BindingBoolAction>,
+    ) -> Result<Self, String> {
+        Ok(Self::from_kind(BindingWidgetKind::DropTarget {
+            scope,
+            child,
+            effect: binding_drop_effect(effect)?,
+            on_drop,
+            on_hover_change,
+        }))
+    }
+
+    pub fn floating_workspace(
+        state: BindingFloatingWorkspaceState,
+        views: impl IntoIterator<Item = BindingFloatingView>,
+        name: Option<String>,
+    ) -> Self {
+        let views = views
+            .into_iter()
+            .map(|mut view| {
+                let config = FloatingViewConfig::new(view.title.clone(), view.bounds)
+                    .min_size(view.min_size)
+                    .visible(view.visible);
+                view.id = Some(state.inner.add_view(config));
+                view
+            })
+            .collect();
+        Self::from_kind(BindingWidgetKind::FloatingWorkspace { state, views, name })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn pixel_canvas(
+        state: BindingPixelCanvasState,
+        name: impl Into<String>,
+        width: usize,
+        height: usize,
+        paper_color: Option<Color>,
+        desired_size: Size,
+        viewport: BindingCanvasViewport,
+        fit_on_first_layout: bool,
+        pixels: Vec<Color>,
+    ) -> Result<Self, String> {
+        let expected = width.max(1).saturating_mul(height.max(1));
+        if !pixels.is_empty() && pixels.len() != expected {
+            return Err(format!(
+                "pixel canvas expected {expected} colors for {}x{}, got {}",
+                width.max(1),
+                height.max(1),
+                pixels.len()
+            ));
+        }
+        Ok(Self::from_kind(BindingWidgetKind::PixelCanvas {
+            state,
+            name: name.into(),
+            width: width.max(1),
+            height: height.max(1),
+            paper_color,
+            desired_size,
+            viewport,
+            fit_on_first_layout,
+            pixels,
+        }))
     }
 
     pub fn padding(
@@ -3407,6 +6303,28 @@ impl BindingWidget {
         })
     }
 
+    pub fn dock_workspace(
+        state: BindingDockState,
+        panels: impl IntoIterator<Item = BindingDockPanel>,
+        name: impl Into<String>,
+    ) -> Result<Self, String> {
+        let panels = panels.into_iter().collect::<Vec<_>>();
+        let mut ids = std::collections::BTreeSet::new();
+        for panel in &panels {
+            if !ids.insert(panel.id) {
+                return Err(format!(
+                    "dock panel {} is registered more than once",
+                    panel.id
+                ));
+            }
+        }
+        Ok(Self::from_kind(BindingWidgetKind::DockWorkspace {
+            state,
+            panels,
+            name: name.into(),
+        }))
+    }
+
     pub fn status_bar_host(content: BindingWidget, status_bar: BindingWidget) -> Self {
         Self::from_kind(BindingWidgetKind::StatusBarHost {
             content,
@@ -3536,7 +6454,17 @@ impl BindingWidget {
     }
 
     pub fn foreign_arc(callbacks: Arc<dyn ForeignWidgetCallbacks>) -> Self {
-        Self::from_kind(BindingWidgetKind::Foreign { callbacks })
+        Self::foreign_arc_with_children(callbacks, [])
+    }
+
+    pub fn foreign_arc_with_children(
+        callbacks: Arc<dyn ForeignWidgetCallbacks>,
+        children: impl IntoIterator<Item = BindingWidget>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Foreign {
+            callbacks,
+            children: children.into_iter().collect(),
+        })
     }
 
     fn from_kind(kind: BindingWidgetKind) -> Self {
@@ -3713,7 +6641,7 @@ impl BindingWidget {
                 name.bind_ui_handle(handle);
                 value.bind_ui_handle(handle);
             }
-            BindingWidgetKind::RichText { .. } => {}
+            BindingWidgetKind::RichText { .. } | BindingWidgetKind::RichDocument { .. } => {}
             BindingWidgetKind::Image { .. } => {}
             BindingWidgetKind::ColorSwatch { .. } => {}
             BindingWidgetKind::ColorPalette { selected, .. } => {
@@ -3721,7 +6649,8 @@ impl BindingWidget {
                     selected.bind_ui_handle(handle);
                 }
             }
-            BindingWidgetKind::ColorPicker { .. } => {}
+            BindingWidgetKind::ColorPicker { .. } | BindingWidgetKind::SimpleColorPicker { .. } => {
+            }
             BindingWidgetKind::Separator { .. } => {}
             BindingWidgetKind::EmptyState { action, .. } => {
                 if let Some(action) = action {
@@ -3828,12 +6757,68 @@ impl BindingWidget {
                     child.bind_ui_handle(handle);
                 }
             }
+            BindingWidgetKind::Grid { children, .. } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::AdaptiveView {
+                compact,
+                medium,
+                expanded,
+                ..
+            } => {
+                compact.bind_ui_handle(handle);
+                medium.bind_ui_handle(handle);
+                expanded.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::ConstraintView { cases, fallback } => {
+                for case in cases {
+                    case.child.bind_ui_handle(handle);
+                }
+                fallback.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::ResponsiveSidebar {
+                sidebar, content, ..
+            } => {
+                sidebar.bind_ui_handle(handle);
+                content.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::MasterDetail { master, detail, .. } => {
+                master.bind_ui_handle(handle);
+                detail.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::OverlayHost { child } => child.bind_ui_handle(handle),
+            BindingWidgetKind::NotificationHost { .. } => {}
+            BindingWidgetKind::CommandPalette { content, shown, .. } => {
+                content.bind_ui_handle(handle);
+                shown.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::VirtualList { .. } => {}
+            BindingWidgetKind::Canvas { .. } | BindingWidgetKind::CanvasRuler { .. } => {}
+            BindingWidgetKind::DragDropHost { child, .. }
+            | BindingWidgetKind::Draggable { child, .. }
+            | BindingWidgetKind::DropTarget { child, .. } => child.bind_ui_handle(handle),
+            BindingWidgetKind::FloatingWorkspace { views, .. } => {
+                for view in views {
+                    view.child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::PixelCanvas { .. } => {}
             BindingWidgetKind::Padding { child, .. }
             | BindingWidgetKind::Align { child, .. }
             | BindingWidgetKind::Background { child, .. }
+            | BindingWidgetKind::AspectRatio { child, .. }
+            | BindingWidgetKind::SafeArea { child, .. }
+            | BindingWidgetKind::LayoutTransition { child, .. }
             | BindingWidgetKind::DockPanel { child, .. }
             | BindingWidgetKind::Tooltip { child, .. } => {
                 child.bind_ui_handle(handle);
+            }
+            BindingWidgetKind::DockWorkspace { panels, .. } => {
+                for panel in panels {
+                    panel.child.bind_ui_handle(handle);
+                }
             }
             BindingWidgetKind::SizedBox { child, .. } => {
                 if let Some(child) = child {
@@ -3900,17 +6885,25 @@ impl BindingWidget {
                     child.bind_ui_handle(handle);
                 }
             }
-            BindingWidgetKind::Foreign { .. } => {}
+            BindingWidgetKind::Foreign { children, .. } => {
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
         }
     }
 
-    fn into_runtime_widget(&self, errors: ForeignErrorSink) -> BindingRuntimeWidget {
+    fn into_runtime_widget(&self, context: BindingBuildContext) -> BindingRuntimeWidget {
+        let errors = context;
         match self.inner.as_ref() {
             BindingWidgetKind::Label { text } => {
-                let label = Label::dynamic(text.resolve(), {
+                let mut label = Label::dynamic(text.resolve(), {
                     let text = text.clone();
                     move || text.resolve()
                 });
+                if let Some(theme) = errors.theme.clone() {
+                    label = label.style_when(move || theme.snapshot().body_text_style());
+                }
                 BindingRuntimeWidget::new(label)
             }
             BindingWidgetKind::Button { label, action } => {
@@ -3929,7 +6922,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(button)
+                BindingRuntimeWidget::new(themed_widget!(button, errors))
             }
             BindingWidgetKind::Icon {
                 glyph,
@@ -3946,6 +6939,8 @@ impl BindingWidget {
                 }
                 if let Some(color) = color {
                     icon = icon.color(*color);
+                } else if let Some(theme) = errors.theme.clone() {
+                    icon = icon.color_when(move || theme.snapshot().palette.text);
                 }
                 BindingRuntimeWidget::new(icon)
             }
@@ -3991,7 +6986,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(button)
+                BindingRuntimeWidget::new(themed_widget!(button, errors))
             }
             BindingWidgetKind::Link {
                 label,
@@ -4028,7 +7023,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(link)
+                BindingRuntimeWidget::new(themed_widget!(link, errors))
             }
             BindingWidgetKind::Checkbox {
                 label,
@@ -4056,7 +7051,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingCheckboxWidget {
-                    inner: checkbox,
+                    inner: themed_widget!(checkbox, errors),
                     checked: checked.clone(),
                 })
             }
@@ -4082,7 +7077,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingSwitchWidget {
-                    inner: switch,
+                    inner: themed_widget!(switch, errors),
                     on: on.clone(),
                 })
             }
@@ -4112,7 +7107,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingRadioButtonWidget {
-                    inner: radio,
+                    inner: themed_widget!(radio, errors),
                     selected: selected.clone(),
                 })
             }
@@ -4152,7 +7147,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(radio_group)
+                BindingRuntimeWidget::new(themed_widget!(radio_group, errors))
             }
             BindingWidgetKind::SegmentedControl {
                 name,
@@ -4191,7 +7186,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(control)
+                BindingRuntimeWidget::new(themed_widget!(control, errors))
             }
             BindingWidgetKind::Breadcrumb {
                 name,
@@ -4234,7 +7229,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(breadcrumb)
+                BindingRuntimeWidget::new(themed_widget!(breadcrumb, errors))
             }
             BindingWidgetKind::ListView {
                 name,
@@ -4273,7 +7268,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(list_view)
+                BindingRuntimeWidget::new(themed_widget!(list_view, errors))
             }
             BindingWidgetKind::Table {
                 name,
@@ -4323,7 +7318,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(table)
+                BindingRuntimeWidget::new(themed_widget!(table, errors))
             }
             BindingWidgetKind::TreeView {
                 name,
@@ -4358,7 +7353,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(tree_view)
+                BindingRuntimeWidget::new(themed_widget!(tree_view, errors))
             }
             BindingWidgetKind::LayerList {
                 name,
@@ -4397,7 +7392,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(layer_list)
+                BindingRuntimeWidget::new(themed_widget!(layer_list, errors))
             }
             BindingWidgetKind::Menu {
                 name,
@@ -4431,7 +7426,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(menu)
+                BindingRuntimeWidget::new(themed_widget!(menu, errors))
             }
             BindingWidgetKind::ContextMenu {
                 name,
@@ -4454,7 +7449,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(menu)
+                BindingRuntimeWidget::new(themed_widget!(menu, errors))
             }
             BindingWidgetKind::TabBar {
                 name,
@@ -4492,7 +7487,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(tab_bar)
+                BindingRuntimeWidget::new(themed_widget!(tab_bar, errors))
             }
             BindingWidgetKind::Tabs {
                 name,
@@ -4508,16 +7503,18 @@ impl BindingWidget {
                 for label in tabs {
                     tab_widget = tab_widget.tab(label.clone(), Label::new(label.clone()));
                 }
-                BindingRuntimeWidget::new(tab_widget)
+                BindingRuntimeWidget::new(themed_widget!(tab_widget, errors))
             }
             BindingWidgetKind::Dialog {
                 title,
                 content,
                 shown,
-            } => BindingRuntimeWidget::new(
-                Dialog::new(title.resolve(), content.into_runtime_widget(errors.clone()))
-                    .shown(shown.resolve()),
-            ),
+            } => {
+                let dialog =
+                    Dialog::new(title.resolve(), content.into_runtime_widget(errors.clone()))
+                        .shown(shown.resolve());
+                BindingRuntimeWidget::new(dialog)
+            }
             BindingWidgetKind::SignalMeter {
                 name,
                 active,
@@ -4538,7 +7535,7 @@ impl BindingWidget {
                     let active = active.clone();
                     signal_meter = signal_meter.active_when(move || active.resolve());
                 }
-                BindingRuntimeWidget::new(signal_meter)
+                BindingRuntimeWidget::new(themed_widget!(signal_meter, errors))
             }
             BindingWidgetKind::StatusBadge {
                 label,
@@ -4561,7 +7558,7 @@ impl BindingWidget {
                 if let Some(min_width) = min_width {
                     badge = badge.min_width(*min_width);
                 }
-                BindingRuntimeWidget::new(badge)
+                BindingRuntimeWidget::new(themed_widget!(badge, errors))
             }
             BindingWidgetKind::StatusBar {
                 segments,
@@ -4586,7 +7583,7 @@ impl BindingWidget {
                 for segment in segments {
                     status_bar = status_bar.segment(segment.into_sui());
                 }
-                BindingRuntimeWidget::new(status_bar)
+                BindingRuntimeWidget::new(themed_widget!(status_bar, errors))
             }
             BindingWidgetKind::DetailRow {
                 label,
@@ -4605,7 +7602,7 @@ impl BindingWidget {
                 if let Some(max_value_lines) = max_value_lines {
                     detail_row = detail_row.max_value_lines(*max_value_lines);
                 }
-                BindingRuntimeWidget::new(detail_row)
+                BindingRuntimeWidget::new(themed_widget!(detail_row, errors))
             }
             BindingWidgetKind::Slider {
                 name,
@@ -4642,7 +7639,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(slider)
+                BindingRuntimeWidget::new(themed_widget!(slider, errors))
             }
             BindingWidgetKind::NumberInput {
                 name,
@@ -4681,7 +7678,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(number_input)
+                BindingRuntimeWidget::new(themed_widget!(number_input, errors))
             }
             BindingWidgetKind::Select {
                 name,
@@ -4723,7 +7720,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(select)
+                BindingRuntimeWidget::new(themed_widget!(select, errors))
             }
             BindingWidgetKind::ProgressBar {
                 name,
@@ -4737,12 +7734,14 @@ impl BindingWidget {
                 min: *min,
                 max: *max,
                 show_value: *show_value,
+                theme: errors.theme.clone(),
             }),
             BindingWidgetKind::BusyIndicator { name, label, size } => {
                 BindingRuntimeWidget::new(BindingBusyIndicatorWidget {
                     name: name.clone(),
                     label: label.clone(),
                     size: *size,
+                    theme: errors.theme.clone(),
                 })
             }
             BindingWidgetKind::TextInput {
@@ -4775,7 +7774,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingTextInputWidget {
-                    inner: text_input,
+                    inner: themed_widget!(text_input, errors),
                     value: value.clone(),
                 })
             }
@@ -4809,7 +7808,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingPasswordInputWidget {
-                    inner: password_input,
+                    inner: themed_widget!(password_input, errors),
                     value: value.clone(),
                 })
             }
@@ -4843,7 +7842,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingDateTimeInputWidget {
-                    inner: datetime_input,
+                    inner: themed_widget!(datetime_input, errors),
                     value: value.clone(),
                 })
             }
@@ -4877,7 +7876,7 @@ impl BindingWidget {
                     });
                 }
                 BindingRuntimeWidget::new(BindingTextAreaWidget {
-                    inner: text_area,
+                    inner: themed_widget!(text_area, errors),
                     value: value.clone(),
                 })
             }
@@ -4900,6 +7899,51 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(rich_text)
             }
+            BindingWidgetKind::RichDocument {
+                document,
+                on_link,
+                on_image,
+                on_attachment,
+            } => {
+                let mut view = RichDocumentView::new(document.inner.clone());
+                if let Some(action) = on_link.clone() {
+                    let errors = errors.clone();
+                    view = view.on_link(move |destination| {
+                        if let Err(error) = action.run(destination.to_owned()) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_image.clone() {
+                    let errors = errors.clone();
+                    view = view.on_image(move |source| {
+                        if let Err(error) = action.run(source.to_owned()) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_attachment.clone() {
+                    let errors = errors.clone();
+                    view = view.on_attachment(move |id| {
+                        if let Err(error) = action.run(id.get()) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(themed_widget!(view, errors))
+            }
             BindingWidgetKind::Image {
                 image,
                 label,
@@ -4913,7 +7957,7 @@ impl BindingWidget {
                 if let Some(size) = size {
                     image = image.size(*size);
                 }
-                BindingRuntimeWidget::new(image)
+                BindingRuntimeWidget::new(themed_widget!(image, errors))
             }
             BindingWidgetKind::ColorSwatch {
                 name,
@@ -4941,7 +7985,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(swatch)
+                BindingRuntimeWidget::new(themed_widget!(swatch, errors))
             }
             BindingWidgetKind::ColorPalette {
                 name,
@@ -4992,7 +8036,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(palette)
+                BindingRuntimeWidget::new(themed_widget!(palette, errors))
             }
             BindingWidgetKind::ColorPicker {
                 name,
@@ -5020,7 +8064,37 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(picker)
+                BindingRuntimeWidget::new(themed_widget!(picker, errors))
+            }
+            BindingWidgetKind::SimpleColorPicker {
+                name,
+                color,
+                mode,
+                action,
+                show_alpha,
+                compact,
+            } => {
+                let mut picker = if let Some(color) = color {
+                    SimpleColorPicker::from_color(name.clone(), *color)
+                } else {
+                    SimpleColorPicker::new(name.clone())
+                }
+                .mode(*mode)
+                .show_alpha(*show_alpha)
+                .compact(*compact);
+                if let Some(action) = action.clone() {
+                    let errors = errors.clone();
+                    picker = picker.on_change(move |color| {
+                        if let Err(error) = action.run(color) {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(themed_widget!(picker, errors))
             }
             BindingWidgetKind::Separator {
                 axis,
@@ -5039,7 +8113,7 @@ impl BindingWidget {
                 if let Some(length) = length {
                     separator = separator.length(*length);
                 }
-                BindingRuntimeWidget::new(separator)
+                BindingRuntimeWidget::new(themed_widget!(separator, errors))
             }
             BindingWidgetKind::EmptyState {
                 title,
@@ -5069,7 +8143,7 @@ impl BindingWidget {
                 if let Some(action) = action {
                     empty_state = empty_state.action(action.into_runtime_widget(errors.clone()));
                 }
-                BindingRuntimeWidget::new(empty_state)
+                BindingRuntimeWidget::new(themed_widget!(empty_state, errors))
             }
             BindingWidgetKind::ActionCard {
                 title,
@@ -5101,7 +8175,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(card)
+                BindingRuntimeWidget::new(themed_widget!(card, errors))
             }
             BindingWidgetKind::BrushPreview {
                 name,
@@ -5115,7 +8189,7 @@ impl BindingWidget {
                 if let Some(size) = size {
                     preview = preview.size(*size);
                 }
-                BindingRuntimeWidget::new(preview)
+                BindingRuntimeWidget::new(themed_widget!(preview, errors))
             }
             BindingWidgetKind::CommandGroup {
                 name,
@@ -5146,7 +8220,7 @@ impl BindingWidget {
                 for child in children {
                     group = group.with_child(child.into_runtime_widget(errors.clone()));
                 }
-                BindingRuntimeWidget::new(group)
+                BindingRuntimeWidget::new(themed_widget!(group, errors))
             }
             BindingWidgetKind::CoverageDots {
                 name,
@@ -5164,7 +8238,7 @@ impl BindingWidget {
                 if let Some(min_width) = min_width {
                     dots = dots.min_width(*min_width);
                 }
-                BindingRuntimeWidget::new(dots)
+                BindingRuntimeWidget::new(themed_widget!(dots, errors))
             }
             BindingWidgetKind::Dock {
                 body,
@@ -5247,7 +8321,7 @@ impl BindingWidget {
                     let invalid = invalid.clone();
                     field = field.invalid_when(move || invalid.resolve());
                 }
-                BindingRuntimeWidget::new(field)
+                BindingRuntimeWidget::new(themed_widget!(field, errors))
             }
             BindingWidgetKind::MeasuredBottomDock {
                 body,
@@ -5286,7 +8360,7 @@ impl BindingWidget {
                 if let Some(min_width) = min_width {
                     badge = badge.min_width(*min_width);
                 }
-                BindingRuntimeWidget::new(badge)
+                BindingRuntimeWidget::new(themed_widget!(badge, errors))
             }
             BindingWidgetKind::PropertyRow {
                 label,
@@ -5310,7 +8384,7 @@ impl BindingWidget {
                 if let Some(gap) = gap {
                     row = row.gap(*gap);
                 }
-                BindingRuntimeWidget::new(row)
+                BindingRuntimeWidget::new(themed_widget!(row, errors))
             }
             BindingWidgetKind::SectionLabel {
                 label,
@@ -5324,7 +8398,7 @@ impl BindingWidget {
                 if let Some(color) = color {
                     section = section.color(*color);
                 }
-                BindingRuntimeWidget::new(section)
+                BindingRuntimeWidget::new(themed_widget!(section, errors))
             }
             BindingWidgetKind::SideSheet {
                 title,
@@ -5364,7 +8438,11 @@ impl BindingWidget {
                         sheet = sheet.description(description.clone());
                     }
                     if let Some(width) = width {
-                        sheet = sheet.width(width);
+                        sheet = if placement == SideSheetPlacement::Bottom {
+                            sheet.height(width)
+                        } else {
+                            sheet.width(width)
+                        };
                     }
                     if let Some(header_action) = &header_action {
                         sheet = sheet
@@ -5392,7 +8470,7 @@ impl BindingWidget {
                             }
                         });
                     }
-                    sheet
+                    themed_widget!(sheet, build_errors)
                 };
                 if matches!(shown, BindingBool::State(_)) {
                     BindingRuntimeWidget::new(BindingSideSheetWidget::new(shown.clone(), build))
@@ -5455,7 +8533,7 @@ impl BindingWidget {
                             }
                         });
                     }
-                    split
+                    themed_widget!(split, build_errors)
                 };
                 if matches!(ratio, BindingNumber::State(_)) {
                     BindingRuntimeWidget::new(BindingSplitViewWidget::new(ratio.clone(), build))
@@ -5598,7 +8676,7 @@ impl BindingWidget {
                 } else if *fill_height {
                     surface = surface.fill_height();
                 }
-                BindingRuntimeWidget::new(surface)
+                BindingRuntimeWidget::new(themed_widget!(surface, errors))
             }
             BindingWidgetKind::ExternalSurface {
                 descriptor,
@@ -5639,7 +8717,532 @@ impl BindingWidget {
                 for child in children {
                     toolbar = toolbar.with_child(child.into_runtime_widget(errors.clone()));
                 }
-                BindingRuntimeWidget::new(toolbar)
+                BindingRuntimeWidget::new(themed_widget!(toolbar, errors))
+            }
+            BindingWidgetKind::Grid {
+                columns,
+                children,
+                name,
+                column_gap,
+                row_gap,
+            } => {
+                let mut grid = Grid::new(std::iter::repeat_n(GridTrack::fraction(1.0), *columns))
+                    .column_gap(*column_gap)
+                    .row_gap(*row_gap);
+                if let Some(name) = name {
+                    grid = grid.name(name.clone());
+                }
+                for child in children {
+                    grid = grid.with_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(grid)
+            }
+            BindingWidgetKind::AspectRatio {
+                child,
+                ratio,
+                fit,
+                horizontal,
+                vertical,
+            } => BindingRuntimeWidget::new(
+                AspectRatio::new(*ratio, child.into_runtime_widget(errors.clone()))
+                    .fit(*fit)
+                    .align(*horizontal, *vertical),
+            ),
+            BindingWidgetKind::SafeArea {
+                child,
+                edges,
+                minimum,
+            } => BindingRuntimeWidget::new(
+                SafeArea::new(child.into_runtime_widget(errors.clone()))
+                    .edges(*edges)
+                    .minimum(*minimum),
+            ),
+            BindingWidgetKind::LayoutTransition {
+                child,
+                duration,
+                easing,
+            } => BindingRuntimeWidget::new(
+                LayoutTransition::new(child.into_runtime_widget(errors.clone()))
+                    .duration(*duration)
+                    .easing(*easing),
+            ),
+            BindingWidgetKind::AdaptiveView {
+                compact,
+                medium,
+                expanded,
+                medium_breakpoint,
+                expanded_breakpoint,
+                on_class_change,
+            } => {
+                let mut view = AdaptiveView::new(
+                    compact.into_runtime_widget(errors.clone()),
+                    medium.into_runtime_widget(errors.clone()),
+                    expanded.into_runtime_widget(errors.clone()),
+                )
+                .breakpoints(AdaptiveBreakpoints::new(
+                    *medium_breakpoint,
+                    *expanded_breakpoint,
+                ));
+                if let Some(action) = on_class_change.clone() {
+                    let callback_errors = errors.clone();
+                    view = view.on_class_change(move |class| {
+                        let value = match class {
+                            AdaptiveClass::Compact => "compact",
+                            AdaptiveClass::Medium => "medium",
+                            AdaptiveClass::Expanded => "expanded",
+                        };
+                        if let Err(error) = action.run(value.to_owned()) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(view)
+            }
+            BindingWidgetKind::ConstraintView { cases, fallback } => {
+                let mut view = ConstraintView::new(fallback.into_runtime_widget(errors.clone()));
+                for case in cases {
+                    view = view.when(case.query, case.child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(view)
+            }
+            BindingWidgetKind::ResponsiveSidebar {
+                state,
+                sidebar,
+                content,
+                name,
+                medium_breakpoint,
+                expanded_breakpoint,
+                rail_width,
+                overlay_width,
+                dismiss_on_scrim,
+                on_mode_change,
+            } => {
+                let mut view = ResponsiveSidebar::new(
+                    sidebar.into_runtime_widget(errors.clone()),
+                    content.into_runtime_widget(errors.clone()),
+                )
+                .state(state.inner.clone())
+                .breakpoints(AdaptiveBreakpoints::new(
+                    *medium_breakpoint,
+                    *expanded_breakpoint,
+                ))
+                .rail_width(*rail_width)
+                .overlay_width(*overlay_width)
+                .dismiss_on_scrim(*dismiss_on_scrim);
+                if let Some(name) = name {
+                    view = view.name(name.clone());
+                }
+                if let Some(theme) = errors.theme.clone() {
+                    view = view.theme(theme.snapshot());
+                }
+                if let Some(action) = on_mode_change.clone() {
+                    let callback_errors = errors.clone();
+                    view = view.on_mode_change(move |mode| {
+                        let value = match mode {
+                            ResponsiveSidebarMode::OverlayClosed => "overlay-closed",
+                            ResponsiveSidebarMode::OverlayOpen => "overlay-open",
+                            ResponsiveSidebarMode::Rail => "rail",
+                            ResponsiveSidebarMode::Inline => "inline",
+                        };
+                        if let Err(error) = action.run(value.to_owned()) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(view)
+            }
+            BindingWidgetKind::MasterDetail {
+                state,
+                master,
+                detail,
+                medium_breakpoint,
+                expanded_breakpoint,
+                master_width,
+            } => BindingRuntimeWidget::new(
+                MasterDetail::new(
+                    master.into_runtime_widget(errors.clone()),
+                    detail.into_runtime_widget(errors.clone()),
+                )
+                .state(state.inner.clone())
+                .breakpoints(AdaptiveBreakpoints::new(
+                    *medium_breakpoint,
+                    *expanded_breakpoint,
+                ))
+                .split_state(SplitState::pixels(*master_width)),
+            ),
+            BindingWidgetKind::OverlayHost { child } => BindingRuntimeWidget::new(
+                OverlayHost::new(child.into_runtime_widget(errors.clone())),
+            ),
+            BindingWidgetKind::NotificationHost { center, width } => {
+                let mut host = NotificationHost::new(center.inner.clone()).width(*width);
+                if let Some(theme) = errors.theme.clone() {
+                    host = host.theme(theme.snapshot());
+                }
+                BindingRuntimeWidget::new(host)
+            }
+            BindingWidgetKind::CommandPalette {
+                name,
+                content,
+                description,
+                shown,
+                max_width,
+                on_dismiss,
+            } => {
+                let name = name.clone();
+                let content = content.clone();
+                let description = description.clone();
+                let max_width = *max_width;
+                let shown_state = shown.state();
+                let on_dismiss = on_dismiss.clone();
+                let build_errors = errors.clone();
+                let build = move |is_shown: bool| {
+                    let mut palette = CommandPalette::new(
+                        name.clone(),
+                        content.into_runtime_widget(build_errors.clone()),
+                    )
+                    .shown(is_shown);
+                    if let Some(description) = &description {
+                        palette = palette.description(description.clone());
+                    }
+                    if let Some(max_width) = max_width {
+                        palette = palette.max_width(max_width);
+                    }
+                    if let Some(theme) = build_errors.theme.clone() {
+                        palette = palette.theme(theme.snapshot());
+                    }
+                    if shown_state.is_some() || on_dismiss.is_some() {
+                        let shown_state = shown_state.clone();
+                        let action = on_dismiss.clone();
+                        let callback_errors = build_errors.clone();
+                        palette = palette.on_dismiss(move || {
+                            if let Some(state) = &shown_state {
+                                state.set(false);
+                            }
+                            if let Some(action) = &action
+                                && let Err(error) = action.run()
+                            {
+                                callback_errors.push(ForeignCallbackError::new(
+                                    ForeignWidgetId::new(0),
+                                    ForeignCallbackPhase::Event,
+                                    error.message,
+                                ));
+                            }
+                        });
+                    }
+                    palette
+                };
+                if matches!(shown, BindingBool::State(_)) {
+                    BindingRuntimeWidget::new(BindingCommandPaletteWidget::new(
+                        shown.clone(),
+                        build,
+                    ))
+                } else {
+                    BindingRuntimeWidget::new(build(shown.resolve()))
+                }
+            }
+            BindingWidgetKind::VirtualList {
+                name,
+                model,
+                estimated_row_height,
+                spacing,
+                padding,
+                row_padding,
+                overscan_viewports,
+                cache_capacity,
+                selectable,
+                transparent,
+                stick_to_end,
+                overlay_scroll_bars,
+                on_change,
+                on_near_start,
+                on_near_end,
+            } => {
+                let mut list =
+                    VirtualList::new(name.clone(), model.inner.clone(), |_key, value| {
+                        Label::new("").text_from(value)
+                    })
+                    .estimated_row_height(*estimated_row_height)
+                    .spacing(*spacing)
+                    .overscan_viewports(*overscan_viewports)
+                    .cache_capacity(*cache_capacity)
+                    .selection_mode(if *selectable {
+                        VirtualListSelectionMode::Single
+                    } else {
+                        VirtualListSelectionMode::None
+                    })
+                    .chrome(if *transparent {
+                        VirtualListChrome::Transparent
+                    } else {
+                        VirtualListChrome::Default
+                    })
+                    .stick_to_end(*stick_to_end)
+                    .overlay_scroll_bars(*overlay_scroll_bars)
+                    .row_name(|_, value| value.clone());
+                if let Some(padding) = padding {
+                    list = list.padding(*padding);
+                }
+                if let Some(row_padding) = row_padding {
+                    list = list.row_padding(*row_padding);
+                }
+                if let Some(action) = on_change.clone() {
+                    let callback_errors = errors.clone();
+                    list = list.on_change(move |key| {
+                        if let Err(error) = action.run(key) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_near_start.clone() {
+                    let callback_errors = errors.clone();
+                    list = list.on_near_start(move || {
+                        if let Err(error) = action.run() {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_near_end.clone() {
+                    let callback_errors = errors.clone();
+                    list = list.on_near_end(move || {
+                        if let Err(error) = action.run() {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(themed_widget!(list, errors))
+            }
+            BindingWidgetKind::Canvas {
+                name,
+                viewport,
+                shapes,
+                draw_stroke,
+                desired_size,
+            } => {
+                let canvas = Canvas::new(name.clone())
+                    .viewport(viewport.into_sui())
+                    .shapes(shapes.iter().map(|shape| shape.inner.clone()))
+                    .draw_stroke(draw_stroke.into_sui())
+                    .desired_size(*desired_size);
+                BindingRuntimeWidget::new(themed_widget!(canvas, errors))
+            }
+            BindingWidgetKind::CanvasRuler {
+                axis,
+                name,
+                document_size,
+                viewport,
+                viewport_size,
+                extent,
+            } => {
+                let mut ruler = CanvasRuler::new(*axis, name.clone(), *document_size)
+                    .viewport(viewport.into_sui(), *viewport_size);
+                if let Some(extent) = extent {
+                    ruler = ruler.extent(*extent);
+                }
+                BindingRuntimeWidget::new(themed_widget!(ruler, errors))
+            }
+            BindingWidgetKind::DragDropHost {
+                scope,
+                child,
+                on_external_hover,
+                on_external_drop,
+                on_external_cancel,
+            } => {
+                let mut host = DragDropHost::new(
+                    scope.inner.clone(),
+                    child.into_runtime_widget(errors.clone()),
+                );
+                if let Some(theme) = errors.theme.clone() {
+                    host = host.theme_when(move || theme.snapshot());
+                }
+                if let Some(action) = on_external_hover.clone() {
+                    let callback_errors = errors.clone();
+                    host = host.on_external_file_hover(move |_ctx, paths| {
+                        let paths = paths
+                            .iter()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .collect();
+                        if let Err(error) = action.run(paths) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_external_drop.clone() {
+                    let callback_errors = errors.clone();
+                    host = host.on_external_file_drop(move |_ctx, path| {
+                        if let Err(error) = action.run(path.to_string_lossy().into_owned()) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_external_cancel.clone() {
+                    let callback_errors = errors.clone();
+                    host = host.on_external_file_hover_cancelled(move |_ctx| {
+                        if let Err(error) = action.run() {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(host)
+            }
+            BindingWidgetKind::Draggable {
+                scope,
+                child,
+                payload,
+                effect,
+                preview_label,
+                threshold,
+                on_start,
+                on_end,
+            } => {
+                let payload_value = payload.clone();
+                let mut draggable = Draggable::new(child.into_runtime_widget(errors.clone()))
+                    .scope(scope.inner.clone())
+                    .payload(move || DragPayload::text(payload_value.clone()))
+                    .effect(*effect)
+                    .threshold(*threshold);
+                if let Some(preview_label) = preview_label {
+                    draggable = draggable.preview_label(preview_label.clone());
+                }
+                if let Some(action) = on_start.clone() {
+                    let callback_errors = errors.clone();
+                    draggable = draggable.on_drag_start(move |_ctx, preview| {
+                        let value = match &preview.payload {
+                            DragPayload::Text(text) => text.clone(),
+                            DragPayload::Image { handle, .. } => format!("image:{}", handle.get()),
+                            DragPayload::Custom { kind, .. } => kind.to_string(),
+                        };
+                        if let Err(error) = action.run(value) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_end.clone() {
+                    let callback_errors = errors.clone();
+                    draggable = draggable.on_drag_end(move |_ctx, event| {
+                        if let Err(error) = action.run(binding_drag_payload_text(event)) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(draggable)
+            }
+            BindingWidgetKind::DropTarget {
+                scope,
+                child,
+                effect,
+                on_drop,
+                on_hover_change,
+            } => {
+                let effect = *effect;
+                let mut target = DropTarget::new(child.into_runtime_widget(errors.clone()))
+                    .scope(scope.inner.clone())
+                    .accept(move |_| effect);
+                if let Some(action) = on_drop.clone() {
+                    let callback_errors = errors.clone();
+                    target = target.on_drop(move |_ctx, event| {
+                        if let Err(error) = action.run(binding_drag_payload_text(event)) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                if let Some(action) = on_hover_change.clone() {
+                    let callback_errors = errors.clone();
+                    target = target.on_hover_change(move |hovered| {
+                        if let Err(error) = action.run(hovered) {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(target)
+            }
+            BindingWidgetKind::FloatingWorkspace { state, views, name } => {
+                let mut workspace = FloatingWorkspace::new(state.inner.clone());
+                if let Some(name) = name {
+                    workspace = workspace.name(name.clone());
+                }
+                if let Some(theme) = errors.theme.clone() {
+                    workspace = workspace.theme_when(move || theme.snapshot());
+                }
+                for view in views {
+                    workspace = workspace.with_registered_view(
+                        view.id.expect("binding floating view id assigned"),
+                        view.child.into_runtime_widget(errors.clone()),
+                    );
+                }
+                BindingRuntimeWidget::new(workspace)
+            }
+            BindingWidgetKind::PixelCanvas {
+                state,
+                name,
+                width,
+                height,
+                paper_color,
+                desired_size,
+                viewport,
+                fit_on_first_layout,
+                pixels,
+            } => {
+                let mut canvas = PixelCanvas::new(name.clone(), *width, *height)
+                    .state(state.inner.clone())
+                    .desired_size(*desired_size)
+                    .viewport(viewport.into_sui());
+                if let Some(paper_color) = paper_color {
+                    canvas = canvas.paper_color(*paper_color);
+                }
+                if *fit_on_first_layout {
+                    canvas = canvas.fit_on_first_layout();
+                }
+                if !pixels.is_empty() {
+                    canvas = canvas.with_pixels(pixels.clone());
+                }
+                BindingRuntimeWidget::new(themed_widget!(canvas, errors))
             }
             BindingWidgetKind::Padding {
                 child,
@@ -5743,7 +9346,7 @@ impl BindingWidget {
                 if let Some(gap) = gap {
                     row = row.gap(*gap);
                 }
-                BindingRuntimeWidget::new(row)
+                BindingRuntimeWidget::new(themed_widget!(row, errors))
             }
             BindingWidgetKind::FieldGroup {
                 children,
@@ -5768,7 +9371,7 @@ impl BindingWidget {
                 for child in children {
                     group = group.with_child(child.into_runtime_widget(errors.clone()));
                 }
-                BindingRuntimeWidget::new(group)
+                BindingRuntimeWidget::new(themed_widget!(group, errors))
             }
             BindingWidgetKind::FormSection {
                 title,
@@ -5813,7 +9416,7 @@ impl BindingWidget {
                 if let Some(elevation) = elevation {
                     section = section.elevation(*elevation);
                 }
-                BindingRuntimeWidget::new(section)
+                BindingRuntimeWidget::new(themed_widget!(section, errors))
             }
             BindingWidgetKind::PanelSection {
                 title,
@@ -5838,7 +9441,7 @@ impl BindingWidget {
                 if let Some(action_gap) = action_gap {
                     section = section.action_gap(*action_gap);
                 }
-                BindingRuntimeWidget::new(section)
+                BindingRuntimeWidget::new(themed_widget!(section, errors))
             }
             BindingWidgetKind::DockPanel {
                 title,
@@ -5866,7 +9469,22 @@ impl BindingWidget {
                 if let Some(header_background) = header_background {
                     panel = panel.header_background(*header_background);
                 }
-                BindingRuntimeWidget::new(panel)
+                BindingRuntimeWidget::new(themed_widget!(panel, errors))
+            }
+            BindingWidgetKind::DockWorkspace {
+                state,
+                panels,
+                name,
+            } => {
+                let mut workspace = DockWorkspace::new(state.inner.clone()).name(name.clone());
+                for panel in panels {
+                    workspace = workspace.with_panel(
+                        DockPanelId::new(panel.id),
+                        panel.title.clone(),
+                        panel.child.into_runtime_widget(errors.clone()),
+                    );
+                }
+                BindingRuntimeWidget::new(themed_widget!(workspace, errors))
             }
             BindingWidgetKind::StatusBarHost {
                 content,
@@ -5960,7 +9578,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(palette)
+                BindingRuntimeWidget::new(themed_widget!(palette, errors))
             }
             BindingWidgetKind::PresetStrip {
                 name,
@@ -6010,7 +9628,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(strip)
+                BindingRuntimeWidget::new(themed_widget!(strip, errors))
             }
             BindingWidgetKind::BrowserTabBar {
                 name,
@@ -6060,7 +9678,7 @@ impl BindingWidget {
                         }
                     });
                 }
-                BindingRuntimeWidget::new(tab_bar)
+                BindingRuntimeWidget::new(themed_widget!(tab_bar, errors))
             }
             BindingWidgetKind::ScrollView { child, axes, name } => {
                 let child = child.into_runtime_widget(errors.clone());
@@ -6072,7 +9690,7 @@ impl BindingWidget {
                 if let Some(name) = name {
                     scroll_view = scroll_view.name(name.clone());
                 }
-                BindingRuntimeWidget::new(scroll_view)
+                BindingRuntimeWidget::new(themed_widget!(scroll_view, errors))
             }
             BindingWidgetKind::Flex {
                 axis,
@@ -6085,9 +9703,17 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(flex)
             }
-            BindingWidgetKind::Foreign { callbacks } => BindingRuntimeWidget::new(
-                ForeignWidget::from_arc(Arc::clone(callbacks)).with_error_sink(errors),
-            ),
+            BindingWidgetKind::Foreign {
+                callbacks,
+                children,
+            } => {
+                let mut widget = ForeignWidget::from_arc(Arc::clone(callbacks))
+                    .with_error_sink(errors.errors.clone());
+                for child in children {
+                    widget.push_child(child.into_runtime_widget(errors.clone()));
+                }
+                BindingRuntimeWidget::new(widget)
+            }
         }
     }
 }
@@ -6129,6 +9755,78 @@ impl Widget for BindingSideSheetWidget {
 
     fn debug_name(&self) -> &'static str {
         "sui_bindings_core::BindingSideSheetWidget"
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_state();
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.sync_state();
+        self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.sync_state();
+        self.inner.focus_changed(ctx, focused);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.inner.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.sync_state();
+        self.inner.visit_children_mut(visitor);
+    }
+}
+
+struct BindingCommandPaletteWidget {
+    inner: CommandPalette,
+    shown: BindingBool,
+    last_shown: bool,
+}
+
+impl BindingCommandPaletteWidget {
+    fn new(shown: BindingBool, build: impl Fn(bool) -> CommandPalette + 'static) -> Self {
+        let last_shown = shown.resolve();
+        Self {
+            inner: build(last_shown),
+            shown,
+            last_shown,
+        }
+    }
+
+    fn sync_state(&mut self) {
+        let shown = self.shown.resolve();
+        if shown != self.last_shown {
+            self.inner.set_shown(shown);
+            self.last_shown = shown;
+        }
+    }
+}
+
+impl Widget for BindingCommandPaletteWidget {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_state();
+        self.inner.event(ctx, event);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "sui_bindings_core::BindingCommandPaletteWidget"
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
@@ -6241,6 +9939,7 @@ struct BindingBusyIndicatorWidget {
     name: BindingText,
     label: Option<BindingText>,
     size: f32,
+    theme: Option<BindingTheme>,
 }
 
 impl BindingBusyIndicatorWidget {
@@ -6248,6 +9947,10 @@ impl BindingBusyIndicatorWidget {
         let mut indicator = BusyIndicator::new(self.name.resolve()).size(self.size);
         if let Some(label) = &self.label {
             indicator = indicator.label(label.resolve());
+        }
+        if let Some(theme) = &self.theme {
+            let theme = theme.clone();
+            indicator = indicator.theme_when(move || theme.snapshot());
         }
         indicator
     }
@@ -6281,14 +9984,20 @@ struct BindingProgressBarWidget {
     min: f64,
     max: f64,
     show_value: bool,
+    theme: Option<BindingTheme>,
 }
 
 impl BindingProgressBarWidget {
     fn inner(&self) -> ProgressBar {
-        ProgressBar::new(self.name.resolve())
+        let mut progress = ProgressBar::new(self.name.resolve())
             .range(self.min, self.max)
             .value(self.value.resolve())
-            .show_value(self.show_value)
+            .show_value(self.show_value);
+        if let Some(theme) = &self.theme {
+            let theme = theme.clone();
+            progress = progress.theme_when(move || theme.snapshot());
+        }
+        progress
     }
 }
 
@@ -6826,6 +10535,17 @@ const BINDING_UI_TASKS_READY: CommandKey<()> = CommandKey::new("sui.bindings.ui-
 pub struct BindingWindow {
     title: String,
     root: BindingWidget,
+    initial_size: Option<Size>,
+    initial_position: Option<Point>,
+    icon: BindingWindowIcon,
+}
+
+#[derive(Debug, Clone, Default)]
+enum BindingWindowIcon {
+    #[default]
+    Default,
+    None,
+    Svg(Vec<u8>),
 }
 
 impl BindingWindow {
@@ -6833,7 +10553,30 @@ impl BindingWindow {
         Self {
             title: title.into(),
             root,
+            initial_size: None,
+            initial_position: None,
+            icon: BindingWindowIcon::Default,
         }
+    }
+
+    pub fn with_initial_size(mut self, size: Size) -> Self {
+        self.initial_size = Some(size);
+        self
+    }
+
+    pub fn with_initial_position(mut self, position: Point) -> Self {
+        self.initial_position = Some(position);
+        self
+    }
+
+    pub fn with_icon_svg(mut self, svg: impl Into<Vec<u8>>) -> Self {
+        self.icon = BindingWindowIcon::Svg(svg.into());
+        self
+    }
+
+    pub fn without_icon(mut self) -> Self {
+        self.icon = BindingWindowIcon::None;
+        self
     }
 
     pub fn title(&self) -> &str {
@@ -6843,15 +10586,154 @@ impl BindingWindow {
     pub fn root(&self) -> &BindingWidget {
         &self.root
     }
+
+    pub fn initial_size(&self) -> Option<Size> {
+        self.initial_size
+    }
+
+    pub fn initial_position(&self) -> Option<Point> {
+        self.initial_position
+    }
+
+    fn configure_builder(&self, mut builder: WindowBuilder) -> WindowBuilder {
+        if let Some(size) = self.initial_size {
+            builder = builder.initial_size(size);
+        }
+        if let Some(position) = self.initial_position {
+            builder = builder.initial_position(position);
+        }
+        match &self.icon {
+            BindingWindowIcon::Default => builder,
+            BindingWindowIcon::None => builder.without_icon(),
+            BindingWindowIcon::Svg(svg) => builder.icon_svg(svg.clone()),
+        }
+    }
+
+    #[cfg(feature = "desktop")]
+    fn configure_app_window(&self, mut window: SuiWindow) -> SuiWindow {
+        if let Some(size) = self.initial_size {
+            window = window.initial_size(size);
+        }
+        if let Some(position) = self.initial_position {
+            window = window.initial_position(position);
+        }
+        match &self.icon {
+            BindingWindowIcon::Default => window,
+            BindingWindowIcon::None => window.without_icon(),
+            BindingWindowIcon::Svg(svg) => window.icon_svg(svg.clone()),
+        }
+    }
+}
+
+/// Renderer-neutral window output policy shared by the Python and JavaScript APIs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingRenderOptions {
+    inner: WindowRenderOptions,
+}
+
+impl BindingRenderOptions {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        feathering_enabled: bool,
+        feather_width: f32,
+        optical_text_alignment: bool,
+        output_color_primaries: &str,
+        dynamic_range: &str,
+        tone_mapping: &str,
+        color_management: &str,
+        sdr_content_brightness_nits: f32,
+        use_system_sdr_brightness: bool,
+    ) -> Result<Self, String> {
+        let options = WindowRenderOptions::new(feathering_enabled, feather_width)
+            .with_optical_vertical_text_alignment_enabled(optical_text_alignment)
+            .with_output_color_primaries(parse_output_color_primaries(output_color_primaries)?)
+            .with_dynamic_range_mode(parse_dynamic_range(dynamic_range)?)
+            .with_tone_mapping_mode(parse_tone_mapping(tone_mapping)?)
+            .with_color_management_mode(parse_color_management(color_management)?)
+            .with_sdr_content_brightness_nits(sdr_content_brightness_nits)
+            .with_system_sdr_content_brightness_enabled(use_system_sdr_brightness)
+            .clamped();
+        Ok(Self { inner: options })
+    }
+
+    pub const fn into_sui(self) -> WindowRenderOptions {
+        self.inner
+    }
+
+    pub const fn feathering_enabled(self) -> bool {
+        self.inner.feathering_enabled
+    }
+
+    pub const fn feather_width(self) -> f32 {
+        self.inner.feather_width
+    }
+}
+
+fn parse_output_color_primaries(value: &str) -> Result<WindowOutputColorPrimaries, String> {
+    match normalized_option_name(value).as_str() {
+        "auto" | "automatic" => Ok(WindowOutputColorPrimaries::Automatic),
+        "srgb" => Ok(WindowOutputColorPrimaries::Srgb),
+        "displayp3" | "p3" => Ok(WindowOutputColorPrimaries::DisplayP3),
+        _ => Err(format!(
+            "output_color_primaries must be 'auto', 'srgb', or 'display-p3', got '{value}'"
+        )),
+    }
+}
+
+fn parse_dynamic_range(value: &str) -> Result<WindowDynamicRangeMode, String> {
+    match normalized_option_name(value).as_str() {
+        "auto" | "automatic" => Ok(WindowDynamicRangeMode::Automatic),
+        "sdr" | "standard" | "standarddynamicrange" => {
+            Ok(WindowDynamicRangeMode::StandardDynamicRange)
+        }
+        "hdr" | "high" | "highdynamicrange" => Ok(WindowDynamicRangeMode::HighDynamicRange),
+        _ => Err(format!(
+            "dynamic_range must be 'auto', 'sdr', or 'hdr', got '{value}'"
+        )),
+    }
+}
+
+fn parse_tone_mapping(value: &str) -> Result<WindowToneMappingMode, String> {
+    match normalized_option_name(value).as_str() {
+        "auto" | "automatic" => Ok(WindowToneMappingMode::Automatic),
+        "clamp" => Ok(WindowToneMappingMode::Clamp),
+        "reinhard" => Ok(WindowToneMappingMode::Reinhard),
+        _ => Err(format!(
+            "tone_mapping must be 'auto', 'clamp', or 'reinhard', got '{value}'"
+        )),
+    }
+}
+
+fn parse_color_management(value: &str) -> Result<WindowColorManagementMode, String> {
+    match normalized_option_name(value).as_str() {
+        "auto" | "automatic" => Ok(WindowColorManagementMode::Automatic),
+        "forcesdr" | "sdr" => Ok(WindowColorManagementMode::ForceSdr),
+        "preferwidegamut" | "widegamut" => Ok(WindowColorManagementMode::PreferWideGamut),
+        "preferhdr" | "hdr" => Ok(WindowColorManagementMode::PreferHdr),
+        _ => Err(format!(
+            "color_management must be 'auto', 'force-sdr', 'prefer-wide-gamut', or 'prefer-hdr', got '{value}'"
+        )),
+    }
+}
+
+fn normalized_option_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !matches!(character, '-' | '_' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct BindingApp {
     windows: Vec<BindingWindow>,
+    theme: Option<BindingTheme>,
     font_resources: Vec<BindingFontResource>,
     next_font_slot: u64,
     image_resources: Vec<BindingImageResource>,
     next_image_slot: u64,
+    render_options: Option<BindingRenderOptions>,
+    messages: BindingMessageBus,
     errors: ForeignErrorSink,
 }
 
@@ -6879,6 +10761,26 @@ impl BindingApp {
 
     pub fn push_window(&mut self, window: BindingWindow) {
         self.windows.push(window);
+    }
+
+    pub fn set_theme(&mut self, theme: BindingTheme) {
+        self.theme = Some(theme);
+    }
+
+    pub fn theme(&self) -> Option<BindingTheme> {
+        self.theme.clone()
+    }
+
+    pub fn set_render_options(&mut self, options: BindingRenderOptions) {
+        self.render_options = Some(options);
+    }
+
+    pub fn render_options(&self) -> Option<BindingRenderOptions> {
+        self.render_options
+    }
+
+    pub fn on_message(&mut self, name: impl Into<String>, action: BindingMessageAction) {
+        self.messages.on(name, action);
     }
 
     pub fn window_count(&self) -> usize {
@@ -6976,7 +10878,7 @@ impl BindingApp {
 
     pub fn start(&self) -> Result<BindingRuntime, String> {
         let ui_tasks = UiTaskQueue::new();
-        let ui_handle = ui_tasks.handle();
+        let ui_handle = ui_tasks.handle().with_message_bus(self.messages.clone());
         let mut runtime = Runtime::new();
         let mut window_ids = Vec::with_capacity(self.windows.len());
 
@@ -6985,13 +10887,24 @@ impl BindingApp {
 
         for window in &self.windows {
             window.root.bind_ui_handle(&ui_handle);
+            if let Some(theme) = &self.theme {
+                theme.bind_ui_handle(ui_handle.clone());
+            }
             let root = BindingUiTaskRootWidget::new(
-                window.root.into_runtime_widget(self.errors.clone()),
+                window.root.into_runtime_widget(BindingBuildContext::new(
+                    self.errors.clone(),
+                    self.theme.clone(),
+                )),
                 ui_tasks.clone(),
             );
+            let builder = window
+                .configure_builder(WindowBuilder::new().title(window.title.clone()).root(root));
             let window_id = runtime
-                .add_window(WindowBuilder::new().title(window.title.clone()).root(root))
+                .add_window(builder)
                 .map_err(|error| error.to_string())?;
+            if let Some(options) = self.render_options {
+                sui::set_window_render_options(window_id, options.into_sui());
+            }
             window_ids.push(BindingWindowId::from(window_id));
         }
 
@@ -6999,6 +10912,7 @@ impl BindingApp {
             runtime,
             window_ids,
             ui_tasks,
+            messages: self.messages.clone(),
         })
     }
 
@@ -7015,8 +10929,11 @@ impl BindingApp {
     #[cfg(feature = "desktop")]
     pub fn run_with_handle(&self, on_ready: impl FnOnce(BindingUiHandle)) -> Result<(), String> {
         let ui_tasks = UiTaskQueue::new();
-        let ui_handle = ui_tasks.handle();
+        let ui_handle = ui_tasks.handle().with_message_bus(self.messages.clone());
         let mut app = SuiApp::new();
+        if let Some(options) = self.render_options {
+            app = app.render_options(options.into_sui());
+        }
 
         {
             let mut resources = app.resources();
@@ -7034,20 +10951,26 @@ impl BindingApp {
 
         for window in &self.windows {
             window.root.bind_ui_handle(&ui_handle);
+            if let Some(theme) = &self.theme {
+                theme.bind_ui_handle(ui_handle.clone());
+            }
             let root = BindingUiTaskRootWidget::new(
-                window.root.into_runtime_widget(self.errors.clone()),
+                window.root.into_runtime_widget(BindingBuildContext::new(
+                    self.errors.clone(),
+                    self.theme.clone(),
+                )),
                 ui_tasks.clone(),
             );
             let tasks_for_window = ui_tasks.clone();
-            app = app.window(SuiWindow::new(window.title.clone()).root(root).on_command(
-                BINDING_UI_TASKS_READY,
-                move |ctx, _| {
+            let app_window = window
+                .configure_app_window(SuiWindow::new(window.title.clone()).root(root))
+                .on_command(BINDING_UI_TASKS_READY, move |ctx, _| {
                     tasks_for_window.drain();
                     ctx.request_measure();
                     ctx.request_paint();
                     ctx.request_semantics();
-                },
-            ));
+                });
+            app = app.window(app_window);
         }
 
         let tasks_for_waker = ui_tasks.clone();
@@ -7073,13 +10996,19 @@ impl BindingApp {
         let mut runtime = Runtime::new();
         self.register_font_resources(&mut runtime)?;
         self.register_image_resources(&mut runtime)?;
+        let builder =
+            window.configure_builder(WindowBuilder::new().title(window.title.clone()).root(
+                window.root.into_runtime_widget(BindingBuildContext::new(
+                    self.errors.clone(),
+                    self.theme.clone(),
+                )),
+            ));
         let window_id = runtime
-            .add_window(
-                WindowBuilder::new()
-                    .title(window.title.clone())
-                    .root(window.root.into_runtime_widget(self.errors.clone())),
-            )
+            .add_window(builder)
             .map_err(|error| error.to_string())?;
+        if let Some(options) = self.render_options {
+            sui::set_window_render_options(window_id, options.into_sui());
+        }
         let output = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
@@ -7099,6 +11028,7 @@ impl BindingApp {
         Ok(BindingRenderSnapshot {
             command_count,
             semantics_count: output.semantics.len(),
+            semantics_nodes: binding_semantics_nodes(&output.semantics),
             semantics_roles: binding_semantics_roles(&output.semantics),
             semantics_names: binding_semantics_names(&output.semantics),
             semantics_values: binding_semantics_values(&output.semantics),
@@ -7294,11 +11224,14 @@ pub struct BindingRuntime {
     runtime: Runtime,
     window_ids: Vec<BindingWindowId>,
     ui_tasks: UiTaskQueue,
+    messages: BindingMessageBus,
 }
 
 impl BindingRuntime {
     pub fn ui_handle(&self) -> BindingUiHandle {
-        self.ui_tasks.handle()
+        self.ui_tasks
+            .handle()
+            .with_message_bus(self.messages.clone())
     }
 
     pub fn set_waker(&self, wake: impl Fn() + Send + Sync + 'static) {
@@ -7364,9 +11297,121 @@ impl BindingRuntime {
             .map_err(|error| error.to_string())
     }
 
+    pub fn set_render_options(
+        &mut self,
+        window_id: BindingWindowId,
+        options: BindingRenderOptions,
+    ) -> Result<(), String> {
+        if !self.window_ids.contains(&window_id) {
+            return Err(format!(
+                "window {} does not belong to this application",
+                window_id.get()
+            ));
+        }
+        sui::set_window_render_options(window_id.into_sui(), options.into_sui());
+        self.request_redraw(window_id)
+    }
+
+    pub fn set_inspector_tracing(
+        &mut self,
+        window_id: BindingWindowId,
+        enabled: bool,
+    ) -> Result<(), String> {
+        self.runtime
+            .set_inspector_tracing(window_id.into_sui(), enabled)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn inspector_snapshot(
+        &self,
+        window_id: BindingWindowId,
+    ) -> Result<BindingInspectorSnapshot, String> {
+        self.runtime
+            .inspector_snapshot(window_id.into_sui())
+            .map(BindingInspectorSnapshot::from)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn handle_event_at(&mut self, index: usize, event: BindingEvent) -> Result<(), String> {
         let window_id = self.window_id_at(index)?;
         self.handle_event(window_id, event)
+    }
+
+    pub fn hover_node_at(
+        &mut self,
+        index: usize,
+        node: &BindingSemanticNode,
+    ) -> Result<(), String> {
+        if !node.visible() || node.disabled {
+            return Err("semantic node is not actionable".to_owned());
+        }
+        self.handle_event_at(
+            index,
+            BindingEvent::Pointer(BindingPointerEvent::new(
+                BindingPointerEventKind::Move,
+                node.center(),
+            )),
+        )
+    }
+
+    pub fn click_node_at(
+        &mut self,
+        index: usize,
+        node: &BindingSemanticNode,
+    ) -> Result<(), String> {
+        self.hover_node_at(index, node)?;
+        let mut down = BindingPointerEvent::new(BindingPointerEventKind::Down, node.center());
+        down.button = Some(BindingPointerButton::Primary);
+        down.buttons = 1;
+        self.handle_event_at(index, BindingEvent::Pointer(down))?;
+        let mut up = BindingPointerEvent::new(BindingPointerEventKind::Up, node.center());
+        up.button = Some(BindingPointerButton::Primary);
+        self.handle_event_at(index, BindingEvent::Pointer(up))
+    }
+
+    pub fn press_node_at(
+        &mut self,
+        index: usize,
+        node: &BindingSemanticNode,
+        key: impl Into<String>,
+    ) -> Result<(), String> {
+        self.click_node_at(index, node)?;
+        let key = key.into();
+        self.handle_event_at(
+            index,
+            BindingEvent::Keyboard(BindingKeyboardEvent::new(
+                key.clone(),
+                BindingKeyState::Pressed,
+            )),
+        )?;
+        self.handle_event_at(
+            index,
+            BindingEvent::Keyboard(BindingKeyboardEvent::new(key, BindingKeyState::Released)),
+        )
+    }
+
+    pub fn fill_node_at(
+        &mut self,
+        index: usize,
+        node: &BindingSemanticNode,
+        text: impl Into<String>,
+    ) -> Result<(), String> {
+        self.click_node_at(index, node)?;
+        let text = text.into();
+        self.handle_event_at(index, BindingEvent::Ime(BindingImeEvent::CompositionStart))?;
+        self.handle_event_at(
+            index,
+            BindingEvent::Ime(BindingImeEvent::CompositionUpdate {
+                text: text.clone(),
+                cursor_start: None,
+                cursor_end: None,
+            }),
+        )?;
+        self.handle_event_at(
+            index,
+            BindingEvent::Ime(BindingImeEvent::CompositionCommit { text }),
+        )?;
+        self.handle_event_at(index, BindingEvent::Ime(BindingImeEvent::CompositionEnd))
     }
 
     pub fn handle_event(
@@ -7424,6 +11469,7 @@ impl BindingRuntime {
         Ok(BindingRenderSnapshot {
             command_count,
             semantics_count: output.semantics.len(),
+            semantics_nodes: binding_semantics_nodes(&output.semantics),
             semantics_roles: binding_semantics_roles(&output.semantics),
             semantics_names: binding_semantics_names(&output.semantics),
             semantics_values: binding_semantics_values(&output.semantics),
@@ -7454,10 +11500,11 @@ impl fmt::Debug for BindingRuntime {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BindingRenderSnapshot {
     pub command_count: usize,
     pub semantics_count: usize,
+    pub semantics_nodes: Vec<BindingSemanticNode>,
     pub semantics_roles: Vec<String>,
     pub semantics_names: Vec<String>,
     pub semantics_values: Vec<String>,
@@ -7475,6 +11522,310 @@ pub struct BindingRenderSnapshot {
     pub draw_image_count: usize,
     pub registered_font_count: usize,
     pub registered_image_count: usize,
+}
+
+impl BindingRenderSnapshot {
+    pub fn find_nodes(
+        &self,
+        role: Option<&str>,
+        name: Option<&str>,
+        text: Option<&str>,
+        description: Option<&str>,
+        focused: Option<bool>,
+        visible: Option<bool>,
+    ) -> Vec<BindingSemanticNode> {
+        self.semantics_nodes
+            .iter()
+            .filter(|node| role.is_none_or(|role| node.role == role))
+            .filter(|node| name.is_none_or(|name| node.name.as_deref() == Some(name)))
+            .filter(|node| {
+                text.is_none_or(|text| {
+                    node.name.as_deref() == Some(text) || node.value.as_deref() == Some(text)
+                })
+            })
+            .filter(|node| {
+                description
+                    .is_none_or(|description| node.description.as_deref() == Some(description))
+            })
+            .filter(|node| focused.is_none_or(|focused| node.focused == focused))
+            .filter(|node| visible.is_none_or(|visible| node.visible() == visible))
+            .cloned()
+            .collect()
+    }
+
+    pub fn get_one(
+        &self,
+        role: Option<&str>,
+        name: Option<&str>,
+        text: Option<&str>,
+    ) -> Result<BindingSemanticNode, String> {
+        let nodes = self.find_nodes(role, name, text, None, None, Some(true));
+        match nodes.as_slice() {
+            [node] => Ok(node.clone()),
+            [] => Err("semantic query did not match any visible nodes".to_owned()),
+            _ => Err(format!(
+                "semantic query matched {} visible nodes instead of exactly one",
+                nodes.len()
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingSemanticNode {
+    pub id: u64,
+    pub parent_id: Option<u64>,
+    pub role: String,
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub description: Option<String>,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub actions: Vec<String>,
+    pub checked: Option<String>,
+    pub busy: bool,
+    pub disabled: bool,
+    pub focused: bool,
+    pub hidden: bool,
+    pub hovered: bool,
+    pub selected: bool,
+    pub expanded: Option<bool>,
+    pub editable: bool,
+    pub multiline: bool,
+}
+
+impl BindingSemanticNode {
+    pub fn center(&self) -> Point {
+        Point::new(self.x + self.width * 0.5, self.y + self.height * 0.5)
+    }
+
+    pub fn visible(&self) -> bool {
+        !self.hidden && self.width > 0.0 && self.height > 0.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingInspectorSnapshot {
+    pub window_id: u64,
+    pub title: String,
+    pub tracing_enabled: bool,
+    pub focused_widget_id: Option<u64>,
+    pub window_focused: bool,
+    pub scheduled_phases: Vec<String>,
+    pub semantics_count: usize,
+    pub semantics_nodes: Vec<BindingSemanticNode>,
+    pub widget_count: usize,
+    pub stack_host_count: usize,
+    pub overlay_count: usize,
+    pub timer_count: usize,
+    pub async_task_count: usize,
+    pub requested_animation_frame_count: usize,
+    pub widget_diagnostics_count: usize,
+    pub event_route_count: usize,
+    pub reactive_invalidation_count: usize,
+    pub command_dispatch_count: usize,
+    pub invalidation_count: usize,
+    pub widget_rebuild_count: usize,
+    pub frame_timings: Vec<BindingFrameTiming>,
+    pub widget_timings: Vec<BindingWidgetTiming>,
+    pub event_routes: Vec<BindingEventRouteTrace>,
+    pub reactive_invalidations: Vec<BindingReactiveInvalidationTrace>,
+    pub command_dispatches: Vec<BindingCommandDispatchTrace>,
+    pub invalidations: Vec<BindingInvalidationTrace>,
+    pub widget_rebuilds: Vec<BindingWidgetRebuildTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingFrameTiming {
+    pub phase: String,
+    pub duration_ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingWidgetTiming {
+    pub widget_id: u64,
+    pub widget_name: String,
+    pub phase: String,
+    pub duration_ms: f64,
+    pub calls: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingEventRouteTrace {
+    pub sequence: u64,
+    pub event_kind: String,
+    pub target_id: u64,
+    pub path: Vec<u64>,
+    pub handled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingReactiveInvalidationTrace {
+    pub widget_id: u64,
+    pub source_name: String,
+    pub version: u64,
+    pub kind: String,
+    pub delivered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingCommandDispatchTrace {
+    pub sequence: u64,
+    pub name: String,
+    pub payload_type: String,
+    pub target: String,
+    pub delivery: String,
+    pub handlers: Vec<String>,
+    pub handled: bool,
+    pub delivered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingInvalidationTrace {
+    pub target: String,
+    pub kind: String,
+    pub source: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingWidgetRebuildTrace {
+    pub widget_id: u64,
+    pub widget_name: String,
+    pub reason: String,
+}
+
+impl From<sui::WindowInspectorSnapshot> for BindingInspectorSnapshot {
+    fn from(value: sui::WindowInspectorSnapshot) -> Self {
+        let schedule = value.schedule;
+        let mut scheduled_phases = Vec::new();
+        for (name, scheduled) in [
+            ("measure", schedule.measure),
+            ("arrange", schedule.arrange),
+            ("ordering", schedule.ordering),
+            ("paint", schedule.paint),
+            ("semantics", schedule.semantics),
+            ("hit_test", schedule.hit_test),
+            ("text", schedule.text),
+            ("resources", schedule.resources),
+        ] {
+            if scheduled {
+                scheduled_phases.push(name.to_owned());
+            }
+        }
+        let frame_timings = value
+            .last_render_diagnostics
+            .phase_timings
+            .iter()
+            .map(|sample| BindingFrameTiming {
+                phase: sample.phase.label().to_owned(),
+                duration_ms: sample.duration_ms,
+            })
+            .collect();
+        let widget_timings = value
+            .last_render_diagnostics
+            .widget_timings
+            .iter()
+            .map(|sample| BindingWidgetTiming {
+                widget_id: sample.widget_id.get(),
+                widget_name: sample.widget_name.to_owned(),
+                phase: sample.phase.label().to_owned(),
+                duration_ms: sample.duration_ms,
+                calls: sample.calls,
+            })
+            .collect();
+        let event_routes = value
+            .history
+            .event_routes
+            .iter()
+            .map(|sample| BindingEventRouteTrace {
+                sequence: sample.sequence,
+                event_kind: sample.event_kind.to_owned(),
+                target_id: sample.target.get(),
+                path: sample.path.iter().map(|id| id.get()).collect(),
+                handled: sample.handled,
+            })
+            .collect();
+        let reactive_invalidations = value
+            .history
+            .reactive_invalidations
+            .iter()
+            .map(|sample| BindingReactiveInvalidationTrace {
+                widget_id: sample.widget_id.get(),
+                source_name: sample.source_name.clone(),
+                version: sample.version,
+                kind: format!("{:?}", sample.kind),
+                delivered: sample.delivered,
+            })
+            .collect();
+        let command_dispatches = value
+            .history
+            .command_dispatches
+            .iter()
+            .map(|sample| BindingCommandDispatchTrace {
+                sequence: sample.sequence,
+                name: sample.name.clone(),
+                payload_type: sample.payload_type.clone(),
+                target: format!("{:?}", sample.target),
+                delivery: format!("{:?}", sample.delivery),
+                handlers: sample.handlers.clone(),
+                handled: sample.handled,
+                delivered: sample.delivered,
+            })
+            .collect();
+        let invalidations = value
+            .history
+            .invalidations
+            .iter()
+            .map(|sample| BindingInvalidationTrace {
+                target: format!("{:?}", sample.target),
+                kind: format!("{:?}", sample.kind),
+                source: sample.source.clone(),
+                reason: sample.reason.clone(),
+            })
+            .collect();
+        let widget_rebuilds = value
+            .history
+            .widget_rebuilds
+            .iter()
+            .map(|sample| BindingWidgetRebuildTrace {
+                widget_id: sample.widget_id.get(),
+                widget_name: sample.widget_name.to_owned(),
+                reason: sample.reason.clone(),
+            })
+            .collect();
+        Self {
+            window_id: value.window_id.get(),
+            title: value.title,
+            tracing_enabled: value.tracing_enabled,
+            focused_widget_id: value.focus_state.focused_widget.map(WidgetId::get),
+            window_focused: value.focus_state.window_focused,
+            scheduled_phases,
+            semantics_count: value.semantics.len(),
+            semantics_nodes: binding_semantics_nodes(&value.semantics),
+            widget_count: value.widget_graph.nodes.len(),
+            stack_host_count: value.widget_graph.stack_hosts.len(),
+            overlay_count: value.overlays.overlays.len(),
+            timer_count: value.scheduler.timers.len(),
+            async_task_count: value.scheduler.async_tasks.len(),
+            requested_animation_frame_count: value.scheduler.requested_animation_frames.len(),
+            widget_diagnostics_count: value.widget_diagnostics.len(),
+            event_route_count: value.history.event_routes.len(),
+            reactive_invalidation_count: value.history.reactive_invalidations.len(),
+            command_dispatch_count: value.history.command_dispatches.len(),
+            invalidation_count: value.history.invalidations.len(),
+            widget_rebuild_count: value.history.widget_rebuilds.len(),
+            frame_timings,
+            widget_timings,
+            event_routes,
+            reactive_invalidations,
+            command_dispatches,
+            invalidations,
+            widget_rebuilds,
+        }
+    }
 }
 
 pub fn binding_semantics_role_name(role: &SemanticsRole) -> &'static str {
@@ -7629,6 +11980,62 @@ pub fn binding_semantics_values(nodes: &[SemanticsNode]) -> Vec<String> {
                 };
             }
             binding_semantics_value_text(node.value.as_ref())
+        })
+        .collect()
+}
+
+pub fn binding_semantics_nodes(nodes: &[SemanticsNode]) -> Vec<BindingSemanticNode> {
+    nodes
+        .iter()
+        .map(|node| {
+            let value = if node
+                .editable_text
+                .as_ref()
+                .is_some_and(|editable| editable.password)
+            {
+                match node.value.as_ref() {
+                    Some(SemanticsValue::Text(value)) => Some("•".repeat(value.chars().count())),
+                    _ => None,
+                }
+            } else {
+                node.value
+                    .as_ref()
+                    .map(|value| binding_semantics_value_text(Some(value)))
+            };
+            BindingSemanticNode {
+                id: node.id.get(),
+                parent_id: node.parent.map(WidgetId::get),
+                role: binding_semantics_role_name(&node.role).to_owned(),
+                name: node.name.clone(),
+                value,
+                description: node.description.clone(),
+                x: node.bounds.x(),
+                y: node.bounds.y(),
+                width: node.bounds.width(),
+                height: node.bounds.height(),
+                actions: node
+                    .actions
+                    .iter()
+                    .map(|action| format!("{action:?}"))
+                    .collect(),
+                checked: node
+                    .state
+                    .checked
+                    .map(binding_toggle_state_name)
+                    .map(str::to_owned),
+                busy: node.state.busy,
+                disabled: node.state.disabled,
+                focused: node.state.focused,
+                hidden: node.state.hidden,
+                hovered: node.state.hovered,
+                selected: node.state.selected,
+                expanded: node.state.expanded,
+                editable: node.editable_text.is_some(),
+                multiline: node
+                    .editable_text
+                    .as_ref()
+                    .is_some_and(|editable| editable.multiline),
+            }
         })
         .collect()
 }
@@ -7874,6 +12281,30 @@ pub struct BindingPointerEvent {
     pub is_primary: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingRawMouseMotionEvent {
+    pub delta: Vector,
+    pub modifiers: BindingModifiers,
+}
+
+impl From<&RawMouseMotionEvent> for BindingRawMouseMotionEvent {
+    fn from(value: &RawMouseMotionEvent) -> Self {
+        Self {
+            delta: value.delta,
+            modifiers: value.modifiers.into(),
+        }
+    }
+}
+
+impl From<BindingRawMouseMotionEvent> for RawMouseMotionEvent {
+    fn from(value: BindingRawMouseMotionEvent) -> Self {
+        Self {
+            delta: value.delta,
+            modifiers: value.modifiers.into(),
+        }
+    }
+}
+
 impl BindingPointerEvent {
     pub fn new(kind: BindingPointerEventKind, position: Point) -> Self {
         let event = PointerEvent::new(kind.into(), position);
@@ -8039,6 +12470,7 @@ impl From<BindingImeEvent> for ImeEvent {
 pub enum BindingWindowEvent {
     CloseRequested,
     Resized(Size),
+    Moved(Point),
     ScaleFactorChanged {
         scale_factor: f64,
         raw_dpi: Option<f32>,
@@ -8063,6 +12495,7 @@ impl From<&WindowEvent> for BindingWindowEvent {
         match value {
             WindowEvent::CloseRequested => Self::CloseRequested,
             WindowEvent::Resized(size) => Self::Resized(*size),
+            WindowEvent::Moved(position) => Self::Moved(*position),
             WindowEvent::ScaleFactorChanged {
                 scale_factor,
                 raw_dpi,
@@ -8097,6 +12530,7 @@ impl From<BindingWindowEvent> for WindowEvent {
         match value {
             BindingWindowEvent::CloseRequested => Self::CloseRequested,
             BindingWindowEvent::Resized(size) => Self::Resized(size),
+            BindingWindowEvent::Moved(position) => Self::Moved(position),
             BindingWindowEvent::ScaleFactorChanged {
                 scale_factor,
                 raw_dpi,
@@ -8149,6 +12583,7 @@ impl From<BindingCustomEvent> for CustomEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BindingEvent {
     Pointer(BindingPointerEvent),
+    RawMouseMotion(BindingRawMouseMotionEvent),
     Keyboard(BindingKeyboardEvent),
     Ime(BindingImeEvent),
     Window(BindingWindowEvent),
@@ -8160,6 +12595,7 @@ impl BindingEvent {
     pub fn kind(&self) -> &str {
         match self {
             Self::Pointer(_) => "pointer",
+            Self::RawMouseMotion(_) => "raw_mouse_motion",
             Self::Keyboard(_) => "keyboard",
             Self::Ime(_) => "ime",
             Self::Window(_) => "window",
@@ -8171,6 +12607,7 @@ impl BindingEvent {
     pub fn into_sui_event(self) -> Result<Event, String> {
         match self {
             Self::Pointer(event) => Ok(Event::Pointer(event.into())),
+            Self::RawMouseMotion(event) => Ok(Event::RawMouseMotion(event.into())),
             Self::Keyboard(event) => Ok(Event::Keyboard(event.into())),
             Self::Ime(event) => Ok(Event::Ime(event.into())),
             Self::Window(event) => Ok(Event::Window(event.into())),
@@ -8186,6 +12623,9 @@ impl From<&Event> for BindingEvent {
     fn from(value: &Event) -> Self {
         match value {
             Event::Pointer(event) => Self::Pointer(BindingPointerEvent::from(event)),
+            Event::RawMouseMotion(event) => {
+                Self::RawMouseMotion(BindingRawMouseMotionEvent::from(event))
+            }
             Event::Keyboard(event) => Self::Keyboard(BindingKeyboardEvent::from(event)),
             Event::Ime(event) => Self::Ime(BindingImeEvent::from(event)),
             Event::Window(event) => Self::Window(BindingWindowEvent::from(event)),
@@ -8743,6 +13183,151 @@ impl Widget for ForeignWidget {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BindingEventContext {
+    pub window_id: u64,
+    pub widget_id: u64,
+    pub bounds: Rect,
+    pub current_time: f64,
+    pub phase: &'static str,
+    pub focused: bool,
+    pub clipboard_text: Option<String>,
+    handled: bool,
+    focus_request: BindingFocusRequest,
+    request_measure: bool,
+    request_arrange: bool,
+    request_paint: bool,
+    request_paint_rect: Option<Rect>,
+    request_semantics: bool,
+    request_animation_frame: bool,
+    capture_pointers: Vec<u64>,
+    release_pointers: Vec<u64>,
+    next_clipboard_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum BindingFocusRequest {
+    #[default]
+    None,
+    Focus,
+    Clear,
+}
+
+impl BindingEventContext {
+    pub fn from_foreign(ctx: &ForeignEventCtx<'_>) -> Self {
+        Self {
+            window_id: ctx.window_id().get(),
+            widget_id: ctx.widget_id().get(),
+            bounds: ctx.bounds(),
+            current_time: ctx.current_time(),
+            phase: match ctx.phase() {
+                EventPhase::Capture => "capture",
+                EventPhase::Target => "target",
+                EventPhase::Bubble => "bubble",
+            },
+            focused: ctx.is_focused(),
+            clipboard_text: ctx.clipboard_text(),
+            handled: false,
+            focus_request: BindingFocusRequest::None,
+            request_measure: false,
+            request_arrange: false,
+            request_paint: false,
+            request_paint_rect: None,
+            request_semantics: false,
+            request_animation_frame: false,
+            capture_pointers: Vec::new(),
+            release_pointers: Vec::new(),
+            next_clipboard_text: None,
+        }
+    }
+
+    pub fn set_handled(&mut self) {
+        self.handled = true;
+    }
+
+    pub fn request_focus(&mut self) {
+        self.focus_request = BindingFocusRequest::Focus;
+    }
+
+    pub fn clear_focus(&mut self) {
+        self.focus_request = BindingFocusRequest::Clear;
+    }
+
+    pub fn request_measure(&mut self) {
+        self.request_measure = true;
+    }
+
+    pub fn request_arrange(&mut self) {
+        self.request_arrange = true;
+    }
+
+    pub fn request_paint(&mut self) {
+        self.request_paint = true;
+    }
+
+    pub fn request_paint_rect(&mut self, rect: Rect) {
+        self.request_paint_rect = Some(rect);
+    }
+
+    pub fn request_semantics(&mut self) {
+        self.request_semantics = true;
+    }
+
+    pub fn request_animation_frame(&mut self) {
+        self.request_animation_frame = true;
+    }
+
+    pub fn capture_pointer(&mut self, pointer_id: u64) {
+        self.capture_pointers.push(pointer_id);
+    }
+
+    pub fn release_pointer(&mut self, pointer_id: u64) {
+        self.release_pointers.push(pointer_id);
+    }
+
+    pub fn set_clipboard_text(&mut self, text: impl Into<String>) {
+        self.next_clipboard_text = Some(text.into());
+    }
+
+    pub fn apply(&self, ctx: &mut ForeignEventCtx<'_>) {
+        if self.handled {
+            ctx.set_handled();
+        }
+        match self.focus_request {
+            BindingFocusRequest::None => {}
+            BindingFocusRequest::Focus => ctx.request_focus(),
+            BindingFocusRequest::Clear => ctx.clear_focus(),
+        }
+        if self.request_measure {
+            ctx.request_measure();
+        }
+        if self.request_arrange {
+            ctx.request_arrange();
+        }
+        if self.request_paint {
+            ctx.request_paint();
+        }
+        if let Some(rect) = self.request_paint_rect {
+            ctx.request_paint_rect(rect);
+        }
+        if self.request_semantics {
+            ctx.request_semantics();
+        }
+        if self.request_animation_frame {
+            ctx.request_animation_frame();
+        }
+        for pointer_id in &self.capture_pointers {
+            ctx.request_pointer_capture(*pointer_id);
+        }
+        for pointer_id in &self.release_pointers {
+            ctx.release_pointer_capture(*pointer_id);
+        }
+        if let Some(text) = &self.next_clipboard_text {
+            ctx.set_clipboard_text(text);
+        }
+    }
+}
+
 pub struct ForeignEventCtx<'a> {
     inner: &'a mut EventCtx,
 }
@@ -8774,6 +13359,14 @@ impl ForeignEventCtx<'_> {
 
     pub fn is_focused(&self) -> bool {
         self.inner.is_focused()
+    }
+
+    pub fn clipboard_text(&self) -> Option<String> {
+        self.inner.clipboard_text()
+    }
+
+    pub fn set_clipboard_text(&mut self, text: impl AsRef<str>) {
+        self.inner.set_clipboard_text(text);
     }
 
     pub fn set_handled(&mut self) {
@@ -8814,6 +13407,14 @@ impl ForeignEventCtx<'_> {
 
     pub fn request_animation_frame(&mut self) {
         self.inner.request_animation_frame();
+    }
+
+    pub fn request_pointer_capture(&mut self, pointer_id: u64) {
+        self.inner.request_pointer_capture(pointer_id);
+    }
+
+    pub fn release_pointer_capture(&mut self, pointer_id: u64) {
+        self.inner.release_pointer_capture(pointer_id);
     }
 
     pub fn schedule_timer_after(&mut self, delay: f64) -> TimerToken {
@@ -12495,6 +17096,475 @@ mod tests {
         assert_eq!(runtime.pending_ui_task_count(), 0);
         assert_eq!(state.label_text(), "Awake");
         assert!(runtime.needs_render(window_id).unwrap());
+    }
+
+    #[test]
+    fn binding_theme_updates_are_live_and_use_the_ui_queue() {
+        let theme = BindingTheme::preset("dark").unwrap();
+        let mut app = BindingApp::new().with_window(BindingWindow::new(
+            "Themed",
+            BindingWidget::button("Save", None),
+        ));
+        app.set_theme(theme.clone());
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        runtime.render_window(window_id).unwrap();
+        theme.set_preset("light").unwrap();
+        assert_eq!(runtime.pending_ui_task_count(), 1);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        assert!(runtime.needs_render(window_id).unwrap());
+
+        theme.set_accent(Color::rgba(0.2, 0.5, 0.9, 1.0));
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        assert!(theme.accent().blue > theme.accent().red);
+        theme
+            .set_color("success", Color::rgba(0.1, 0.8, 0.3, 1.0))
+            .unwrap();
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        assert!(theme.color("success").unwrap().green > 0.7);
+        theme.set_number("radius-md", 9.0).unwrap();
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        assert_eq!(theme.number("radius-md").unwrap(), 9.0);
+    }
+
+    #[test]
+    fn binding_state_observers_are_distinct_and_unsubscribable() {
+        let state = BindingState::new(1.0);
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let mut subscription = state.observe({
+            let observed = Arc::clone(&observed);
+            move |value| recover_lock(&observed).push(value)
+        });
+
+        state.set(1.0);
+        assert!(recover_lock(&observed).is_empty());
+        state.set(2.0);
+        assert_eq!(
+            recover_lock(&observed).as_slice(),
+            &[BindingValue::Number(2.0)]
+        );
+        assert!(subscription.unsubscribe());
+        assert!(!subscription.unsubscribe());
+        state.set(3.0);
+        assert_eq!(recover_lock(&observed).len(), 1);
+    }
+
+    #[test]
+    fn binding_message_bus_posts_named_payloads_to_the_ui_queue() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let mut app = BindingApp::new().with_window(BindingWindow::new(
+            "Messages",
+            BindingWidget::label("Ready"),
+        ));
+        app.on_message(
+            "background.complete",
+            BindingMessageAction::new({
+                let received = Arc::clone(&received);
+                move |payload| {
+                    recover_lock(&received).push(payload);
+                    Ok(())
+                }
+            }),
+        );
+        let mut runtime = app.start().unwrap();
+        let handle = runtime.ui_handle();
+
+        assert!(handle.emit("background.complete", "Loaded".into()));
+        assert!(!handle.emit("unknown", true.into()));
+        assert_eq!(runtime.pending_ui_task_count(), 1);
+        assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+        assert_eq!(
+            recover_lock(&received).as_slice(),
+            &[BindingValue::String("Loaded".to_owned())]
+        );
+    }
+
+    #[test]
+    fn binding_runtime_exposes_renderer_neutral_inspector_counts() {
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Inspector",
+            BindingWidget::column(
+                [
+                    BindingWidget::label("Ready"),
+                    BindingWidget::button("Run", None),
+                ],
+                4.0,
+            ),
+        ));
+        let mut runtime = app.start().unwrap();
+        let window = runtime.window_id_at(0).unwrap();
+        runtime.set_inspector_tracing(window, true).unwrap();
+        runtime.render_window(window).unwrap();
+        runtime
+            .handle_event(
+                window,
+                BindingEvent::Custom(BindingCustomEvent {
+                    kind: "inspect".to_owned(),
+                    payload: None,
+                }),
+            )
+            .unwrap();
+
+        let snapshot = runtime.inspector_snapshot(window).unwrap();
+        assert!(snapshot.tracing_enabled);
+        assert_eq!(snapshot.title, "Inspector");
+        assert!(snapshot.widget_count >= 3);
+        assert!(snapshot.semantics_count >= 2);
+        assert!(snapshot.event_route_count >= 1);
+        assert_eq!(snapshot.semantics_nodes.len(), snapshot.semantics_count);
+        assert_eq!(snapshot.event_routes.len(), snapshot.event_route_count);
+        assert!(
+            snapshot
+                .event_routes
+                .iter()
+                .any(|event| event.event_kind == "custom")
+        );
+    }
+
+    #[test]
+    fn adaptive_workspace_bindings_retain_state_and_switch_local_presentations() {
+        let classes = Arc::new(Mutex::new(Vec::new()));
+        let adaptive = BindingWidget::adaptive_view(
+            BindingWidget::label("Compact branch"),
+            BindingWidget::label("Medium branch"),
+            BindingWidget::label("Expanded branch"),
+            300.0,
+            600.0,
+            Some(BindingStringAction::new({
+                let classes = Arc::clone(&classes);
+                move |value| {
+                    recover_lock(&classes).push(value);
+                    Ok(())
+                }
+            })),
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Adaptive", adaptive));
+        let mut runtime = app.start().unwrap();
+        let window = runtime.window_id_at(0).unwrap();
+
+        runtime
+            .handle_event(
+                window,
+                BindingEvent::Window(BindingWindowEvent::Resized(Size::new(200.0, 300.0))),
+            )
+            .unwrap();
+        let compact = runtime.render_window(window).unwrap();
+        assert!(
+            compact
+                .semantics_names
+                .iter()
+                .any(|name| name == "Compact branch")
+        );
+
+        runtime
+            .handle_event(
+                window,
+                BindingEvent::Window(BindingWindowEvent::Resized(Size::new(800.0, 300.0))),
+            )
+            .unwrap();
+        let expanded = runtime.render_window(window).unwrap();
+        assert!(
+            expanded
+                .semantics_names
+                .iter()
+                .any(|name| name == "Expanded branch")
+        );
+        assert!(
+            recover_lock(&classes)
+                .iter()
+                .any(|class| class == "expanded")
+        );
+
+        let sidebar = BindingResponsiveSidebarState::new(true, false);
+        assert!(sidebar.set_expanded(false));
+        assert!(!sidebar.expanded());
+        assert!(sidebar.open_overlay());
+        assert!(sidebar.overlay_open());
+
+        let master_detail = BindingMasterDetailState::new("master").unwrap();
+        assert!(master_detail.show_detail());
+        assert_eq!(master_detail.route(), "detail");
+    }
+
+    #[test]
+    fn binding_virtual_list_model_updates_keyed_rows_without_realizing_the_dataset() {
+        let items = (1..=500)
+            .map(|key| BindingVirtualListItem::new(key, format!("Row {key}")).unwrap())
+            .collect::<Vec<_>>();
+        let model = BindingVirtualListModel::new("Rows", items).unwrap();
+        let root = BindingWidget::virtual_list(
+            "Rows",
+            model.clone(),
+            28.0,
+            0.0,
+            None,
+            None,
+            1.0,
+            64,
+            true,
+            false,
+            false,
+            true,
+            None,
+            None,
+            None,
+        );
+        let app = BindingApp::new().with_window(BindingWindow::new("Virtual", root));
+        let mut runtime = app.start().unwrap();
+        let window = runtime.window_id_at(0).unwrap();
+        let initial = runtime.render_window(window).unwrap();
+
+        assert_eq!(model.len(), 500);
+        assert!(initial.semantics_count < 100);
+        assert!(
+            model
+                .update(BindingVirtualListItem::new(1, "Updated row").unwrap())
+                .unwrap()
+        );
+        let updated = runtime.render_window(window).unwrap();
+        assert!(
+            updated
+                .semantics_names
+                .iter()
+                .any(|name| name == "Updated row")
+        );
+    }
+
+    #[test]
+    fn binding_pixel_canvas_state_is_thread_safe_and_exports_rgba_bytes() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BindingPixelCanvasState>();
+
+        let state = BindingPixelCanvasState::new();
+        state.set_tool("fill").unwrap();
+        state.set_brush_color(Color::rgba(0.2, 0.5, 0.9, 1.0));
+        state.set_brush_size(2.0);
+        state.request_export();
+        let root = BindingWidget::pixel_canvas(
+            state.clone(),
+            "Pixel editor",
+            4,
+            4,
+            None,
+            Size::new(240.0, 180.0),
+            BindingCanvasViewport::new(Vector::ZERO, 14.0, 0.0),
+            true,
+            Vec::new(),
+        )
+        .unwrap();
+        let app = BindingApp::new().with_window(BindingWindow::new("Pixels", root));
+        let snapshot = app.render_window(0).unwrap();
+
+        assert!(snapshot.command_count > 0);
+        let export = state.latest_export().expect("pixel export");
+        assert_eq!((export.width, export.height), (4, 4));
+        assert_eq!(export.rgba8.len(), 4 * 4 * 4);
+    }
+
+    #[test]
+    fn binding_render_options_validate_host_facing_names() {
+        let options = BindingRenderOptions::new(
+            true,
+            -2.0,
+            true,
+            "display-p3",
+            "hdr",
+            "reinhard",
+            "prefer-hdr",
+            203.0,
+            true,
+        )
+        .unwrap();
+        assert_eq!(options.feather_width(), 0.0);
+        assert!(
+            BindingRenderOptions::new(
+                true, 1.0, true, "rec2020", "auto", "auto", "auto", 203.0, true,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn binding_window_retains_geometry_and_icon_configuration() {
+        let window = BindingWindow::new("Configured", BindingWidget::label("Ready"))
+            .with_initial_size(Size::new(800.0, 600.0))
+            .with_initial_position(Point::new(40.0, 60.0))
+            .without_icon();
+        assert_eq!(window.initial_size(), Some(Size::new(800.0, 600.0)));
+        assert_eq!(window.initial_position(), Some(Point::new(40.0, 60.0)));
+    }
+
+    #[test]
+    fn raw_mouse_motion_and_window_movement_round_trip() {
+        let raw = BindingEvent::RawMouseMotion(BindingRawMouseMotionEvent {
+            delta: Vector::new(3.0, -2.0),
+            modifiers: BindingModifiers {
+                shift: true,
+                ..BindingModifiers::default()
+            },
+        });
+        let Event::RawMouseMotion(raw) = raw.into_sui_event().unwrap() else {
+            panic!("raw mouse motion event expected");
+        };
+        assert_eq!(raw.delta, Vector::new(3.0, -2.0));
+        assert!(raw.modifiers.shift);
+
+        let moved = BindingEvent::from(&Event::Window(WindowEvent::Moved(Point::new(9.0, 12.0))));
+        assert!(matches!(
+            moved,
+            BindingEvent::Window(BindingWindowEvent::Moved(Point { x: 9.0, y: 12.0 }))
+        ));
+    }
+
+    #[test]
+    fn binding_dock_workspace_preserves_portable_state_and_panels() {
+        let layout =
+            BindingDockLayout::new(BindingDockNode::tabs([1, 2], Some(1)).unwrap(), [], []);
+        let state = BindingDockState::new(layout).unwrap();
+        let workspace = BindingWidget::dock_workspace(
+            state.clone(),
+            [
+                BindingDockPanel::new(1, "Files", BindingWidget::label("Files panel")).unwrap(),
+                BindingDockPanel::new(2, "Search", BindingWidget::label("Search panel")).unwrap(),
+            ],
+            "Editor workspace",
+        )
+        .unwrap();
+        let app = BindingApp::new().with_window(BindingWindow::new("Docking", workspace));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let snapshot = runtime.render_window(window_id).unwrap();
+        assert!(snapshot.semantics_names.iter().any(|name| name == "Files"));
+        assert!(state.activate(2).unwrap());
+        assert!(state.hide(1).unwrap());
+        assert!(state.snapshot().hidden.contains(&1));
+        assert!(state.show(1).unwrap());
+        assert!(!state.snapshot().hidden.contains(&1));
+    }
+
+    #[test]
+    fn binding_rich_document_streams_across_threads_and_renders_structured_blocks() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BindingRichDocument>();
+
+        let document = BindingRichDocument::new("# Report\n\nWaiting");
+        let root = BindingWidget::rich_document(document.clone(), None, None, None);
+        let app = BindingApp::new().with_window(BindingWindow::new("Document", root));
+        let mut runtime = app.start().unwrap();
+        let window_id = runtime.window_id_at(0).unwrap();
+
+        let initial = runtime.render_window(window_id).unwrap();
+        assert!(initial.semantics_names.iter().any(|name| name == "Report"));
+
+        let producer = document.clone();
+        std::thread::spawn(move || {
+            producer.append_markdown("\n\n```text\nready\n```");
+        })
+        .join()
+        .unwrap();
+        let update = document.last_update();
+        assert!(update.append_only);
+        assert!(update.reparsed_end > update.reparsed_start);
+
+        let attachment = document.append_attachment(
+            "trace.json",
+            Some("application/json".to_owned()),
+            Some("artifact:trace".to_owned()),
+            Some(128),
+            Some("Execution trace".to_owned()),
+        );
+        assert!(attachment > 0);
+        let extension = document
+            .append_extension(
+                "tool-call",
+                "Build",
+                Some("Completed".to_owned()),
+                "cargo test",
+                "success",
+                false,
+                vec![("exit_code".to_owned(), "0".to_owned())],
+            )
+            .unwrap();
+        assert!(extension > attachment);
+
+        let updated = runtime.render_window(window_id).unwrap();
+        assert!(updated.semantics_names.iter().any(|name| name == "Build"));
+    }
+
+    #[test]
+    fn portable_animation_values_timelines_documents_and_editor_round_trip() {
+        let zero = BindingAnimationValue::scalar(0.0);
+        let ten = BindingAnimationValue::scalar(10.0);
+        let transition = BindingTransition::new(zero, ten, 0.0, 1.0, Easing::Linear);
+        assert_eq!(transition.sample(0.5).as_scalar(), Some(5.0));
+
+        let mut track = BindingAnimationTrack::new("card", "layer.opacity");
+        track.add_keyframe(BindingAnimationKeyframe::new(0.0, zero, Easing::Linear));
+        track.add_keyframe(BindingAnimationKeyframe::new(1.0, ten, Easing::Linear));
+        let mut clip = BindingAnimationClip::new("fade", 0.0, 1.0);
+        clip.add_track(track);
+        let mut timeline = BindingAnimationTimeline::new(1.0);
+        timeline.add_clip(clip);
+        let samples = timeline.sample(0.5);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].target, "card");
+        assert_eq!(samples[0].value.as_scalar(), Some(5.0));
+
+        let document = BindingAnimationDocument::new("Card motion", timeline.clone());
+        let encoded = document.to_document_format();
+        let decoded = BindingAnimationDocument::parse(&encoded).unwrap();
+        assert_eq!(decoded.name(), "Card motion");
+        assert_eq!(
+            decoded.timeline().sample(0.5)[0].value.as_scalar(),
+            Some(5.0)
+        );
+
+        let mut player = BindingAnimationPlayer::new(&timeline);
+        player.play();
+        assert_eq!(player.tick(0.25)[0].value.as_scalar(), Some(2.5));
+
+        let mut editor = BindingAnimationEditor::new(decoded);
+        assert!(editor.add_keyframe(
+            0,
+            0,
+            BindingAnimationKeyframe::new(0.75, ten, Easing::EaseOut),
+        ));
+        assert!(editor.can_undo());
+        assert!(editor.undo());
+        assert!(editor.can_redo());
+    }
+
+    #[test]
+    fn semantic_queries_and_locator_style_actions_drive_the_runtime() {
+        let pressed = Arc::new(AtomicBool::new(false));
+        let action = BindingAction::new({
+            let pressed = Arc::clone(&pressed);
+            move || {
+                pressed.store(true, Ordering::Relaxed);
+                Ok(())
+            }
+        });
+        let app = BindingApp::new().with_window(BindingWindow::new(
+            "Testing",
+            BindingWidget::button("Save", Some(action)),
+        ));
+        let mut runtime = app.start().unwrap();
+        let snapshot = runtime.render_window_at(0).unwrap();
+        let node = snapshot
+            .get_one(Some("button"), Some("Save"), None)
+            .unwrap();
+        assert!(node.visible());
+        assert_eq!(
+            snapshot
+                .find_nodes(Some("button"), None, None, None, None, Some(true))
+                .len(),
+            1
+        );
+
+        runtime.click_node_at(0, &node).unwrap();
+        assert!(pressed.load(Ordering::Relaxed));
     }
 
     #[cfg(not(feature = "desktop"))]

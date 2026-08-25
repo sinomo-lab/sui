@@ -11,15 +11,16 @@ def increment():
     count.set(count.get() + 1)
 
 
-app = sui.App()
-root = sui.Column(
+theme = sui.Theme.dark()
+app = sui.App(theme=theme)
+root = sui.column(
     [
-        sui.Label(count),
-        sui.Button("Increment", on_press=increment),
-        sui.Checkbox("Enabled", enabled),
-        sui.Switch("Preview", True),
-        sui.Slider("Opacity", opacity, min_value=0.0, max_value=1.0, step=0.05),
-        sui.TextInput("Name", name, placeholder="Optional label"),
+        sui.label(count),
+        sui.button("Increment", on_press=increment),
+        sui.checkbox("Enabled", enabled),
+        sui.switch("Preview", True),
+        sui.slider("Opacity", opacity, min_value=0.0, max_value=1.0, step=0.05),
+        sui.text_input("Name", name, placeholder="Optional label"),
     ],
     gap=8,
 )
@@ -32,3 +33,7 @@ running.ui_handle().post(increment)
 running.drain()
 print("count:", count.get())
 print("updated commands:", running.render().command_count)
+
+theme.set_preset("light")
+running.drain()
+print("theme updated commands:", running.render().command_count)

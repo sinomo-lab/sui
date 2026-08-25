@@ -1,4 +1,7 @@
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
@@ -203,7 +206,7 @@ struct FloatingWorkspaceStateInner {
 
 #[derive(Clone, Default)]
 pub struct FloatingWorkspaceState {
-    inner: std::rc::Rc<std::cell::RefCell<FloatingWorkspaceStateInner>>,
+    inner: Arc<Mutex<FloatingWorkspaceStateInner>>,
 }
 
 impl FloatingWorkspaceState {
@@ -211,8 +214,14 @@ impl FloatingWorkspaceState {
         Self::default()
     }
 
+    fn lock_inner(&self) -> MutexGuard<'_, FloatingWorkspaceStateInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn add_view(&self, config: FloatingViewConfig) -> u64 {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         let id = inner.next_id.max(1);
         inner.next_id = id + 1;
         inner.views.push(FloatingViewState {
@@ -231,7 +240,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn snapshots(&self) -> Vec<FloatingViewSnapshot> {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         inner
             .views
             .iter()
@@ -248,7 +257,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn snapshot(&self, view_id: u64) -> Option<FloatingViewSnapshot> {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         inner
             .views
             .iter()
@@ -265,7 +274,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn set_view_surface_widget(&self, view_id: u64, widget_id: WidgetId) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         let Some(view) = inner.views.iter_mut().find(|view| view.id == view_id) else {
             return false;
         };
@@ -278,7 +287,8 @@ impl FloatingWorkspaceState {
 
     pub fn view_surface_widget_id(&self, view_id: u64) -> Option<WidgetId> {
         self.inner
-            .borrow()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .views
             .iter()
             .find(|view| view.id == view_id)
@@ -286,7 +296,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn set_view_visible(&self, view_id: u64, visible: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         let Some(view) = inner.views.iter_mut().find(|view| view.id == view_id) else {
             return false;
         };
@@ -307,7 +317,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn set_view_bounds(&self, view_id: u64, bounds: Rect) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         let Some(view) = inner.views.iter_mut().find(|view| view.id == view_id) else {
             return false;
         };
@@ -319,7 +329,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn bring_to_front(&self, view_id: u64) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         let Some(index) = inner.z_order.iter().position(|id| *id == view_id) else {
             return false;
         };
@@ -332,7 +342,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn set_view_maximized(&self, view_id: u64, maximized: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         let Some(index) = inner.views.iter().position(|view| view.id == view_id) else {
             return false;
         };
@@ -366,7 +376,7 @@ impl FloatingWorkspaceState {
     }
 
     pub fn active_view_ids(&self) -> Vec<u64> {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         if let Some(maximized) = inner.maximized_view {
             return inner
                 .views
@@ -390,11 +400,11 @@ impl FloatingWorkspaceState {
     }
 
     pub fn active_resize_view(&self) -> Option<u64> {
-        self.inner.borrow().active_resize_view
+        self.lock_inner().active_resize_view
     }
 
     pub fn set_active_resize_view(&self, view_id: Option<u64>) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.active_resize_view == view_id {
             return false;
         }
@@ -470,6 +480,30 @@ impl FloatingWorkspace {
         W: Widget + 'static,
     {
         self.push_view(config, child);
+        self
+    }
+
+    /// Attach a child to a view that was already registered in `state`.
+    ///
+    /// This is useful for language bindings and restored layouts where view
+    /// identities are allocated before the retained widget is constructed.
+    pub fn with_registered_view<W>(mut self, view_id: u64, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        assert!(
+            self.state.snapshot(view_id).is_some(),
+            "floating workspace view must be registered before attaching its widget"
+        );
+        let child = WidgetPod::new(FloatingViewSurface::new(
+            self.resolved_theme(),
+            self.theme_reader.clone(),
+            self.state.clone(),
+            view_id,
+            child,
+        ));
+        self.state.set_view_surface_widget(view_id, child.id());
+        self.views.push(FloatingWorkspaceEntry { view_id, child });
         self
     }
 

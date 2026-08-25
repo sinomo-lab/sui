@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, PathElement, Point, PointerButton, PointerEventKind,
@@ -1016,7 +1019,7 @@ pub struct PixelCanvasExportSnapshot {
     name: String,
     width: usize,
     height: usize,
-    rgba8: Rc<[u8]>,
+    rgba8: Arc<[u8]>,
 }
 
 impl PixelCanvasExportSnapshot {
@@ -1026,7 +1029,7 @@ impl PixelCanvasExportSnapshot {
             name,
             width,
             height,
-            rgba8: Rc::from(rgba8.into_boxed_slice()),
+            rgba8: Arc::from(rgba8.into_boxed_slice()),
         }
     }
 
@@ -1134,7 +1137,7 @@ struct PixelCanvasImageCache {
 
 #[derive(Clone, Debug)]
 pub struct PixelCanvasState {
-    inner: Rc<RefCell<PixelCanvasStateInner>>,
+    inner: Arc<Mutex<PixelCanvasStateInner>>,
 }
 
 impl PixelCanvasState {
@@ -1142,64 +1145,70 @@ impl PixelCanvasState {
         Self::default()
     }
 
+    fn lock_inner(&self) -> MutexGuard<'_, PixelCanvasStateInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn brush_color(&self) -> Color {
-        self.inner.borrow().brush
+        self.lock_inner().brush
     }
 
     pub fn tool(&self) -> PixelCanvasTool {
-        self.inner.borrow().tool
+        self.lock_inner().tool
     }
 
     pub fn set_tool(&self, tool: PixelCanvasTool) {
-        self.inner.borrow_mut().tool = tool;
+        self.lock_inner().tool = tool;
     }
 
     pub fn request_undo(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_undo = inner.pending_undo.saturating_add(1);
     }
 
     pub fn request_redo(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_redo = inner.pending_redo.saturating_add(1);
     }
 
     pub fn request_fit_view(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_fit_view = inner.pending_fit_view.saturating_add(1);
     }
 
     pub fn request_actual_size_view(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_actual_size = inner.pending_actual_size.saturating_add(1);
     }
 
     pub fn request_zoom_in(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_zoom_delta = inner.pending_zoom_delta.saturating_add(1);
     }
 
     pub fn request_zoom_out(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_zoom_delta = inner.pending_zoom_delta.saturating_sub(1);
     }
 
     pub fn request_export_snapshot(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_export = inner.pending_export.saturating_add(1);
     }
 
     pub fn request_clear(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.pending_clear = inner.pending_clear.saturating_add(1);
     }
 
     pub fn is_editable(&self) -> bool {
-        self.inner.borrow().editable
+        self.lock_inner().editable
     }
 
     pub fn set_editable(&self, editable: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.editable == editable {
             return false;
         }
@@ -1213,75 +1222,75 @@ impl PixelCanvasState {
     }
 
     pub fn latest_export_snapshot(&self) -> Option<PixelCanvasExportSnapshot> {
-        self.inner.borrow().latest_export.clone()
+        self.lock_inner().latest_export.clone()
     }
 
     pub fn can_undo(&self) -> bool {
-        self.inner.borrow().can_undo
+        self.lock_inner().can_undo
     }
 
     pub fn can_redo(&self) -> bool {
-        self.inner.borrow().can_redo
+        self.lock_inner().can_redo
     }
 
     pub fn can_clear(&self) -> bool {
-        self.inner.borrow().can_clear
+        self.lock_inner().can_clear
     }
 
     pub fn viewport(&self) -> CanvasViewport {
-        self.inner.borrow().viewport
+        self.lock_inner().viewport
     }
 
     pub fn viewport_size(&self) -> Size {
-        self.inner.borrow().viewport_size
+        self.lock_inner().viewport_size
     }
 
     pub fn cursor_position(&self) -> Option<Point> {
-        self.inner.borrow().cursor_position
+        self.lock_inner().cursor_position
     }
 
     pub fn set_brush_color(&self, color: Color) {
-        self.inner.borrow_mut().brush = color;
+        self.lock_inner().brush = color;
     }
 
     pub fn brush_size(&self) -> f32 {
-        self.inner.borrow().brush_size
+        self.lock_inner().brush_size
     }
 
     pub fn set_brush_size(&self, size: f32) {
-        self.inner.borrow_mut().brush_size = size.max(1.0);
+        self.lock_inner().brush_size = size.max(1.0);
     }
 
     pub fn brush_opacity(&self) -> f32 {
-        self.inner.borrow().brush_opacity
+        self.lock_inner().brush_opacity
     }
 
     pub fn set_brush_opacity(&self, opacity: f32) {
-        self.inner.borrow_mut().brush_opacity = opacity.clamp(0.0, 1.0);
+        self.lock_inner().brush_opacity = opacity.clamp(0.0, 1.0);
     }
 
     pub fn brush_shape(&self) -> PixelCanvasBrushShape {
-        self.inner.borrow().brush_shape
+        self.lock_inner().brush_shape
     }
 
     pub fn set_brush_shape(&self, brush_shape: PixelCanvasBrushShape) {
-        self.inner.borrow_mut().brush_shape = brush_shape;
+        self.lock_inner().brush_shape = brush_shape;
     }
 
     pub fn blend_mode(&self) -> PixelCanvasBlendMode {
-        self.inner.borrow().blend_mode
+        self.lock_inner().blend_mode
     }
 
     pub fn set_blend_mode(&self, blend_mode: PixelCanvasBlendMode) {
-        self.inner.borrow_mut().blend_mode = blend_mode;
+        self.lock_inner().blend_mode = blend_mode;
     }
 
     pub fn display_visible(&self) -> bool {
-        self.inner.borrow().display_visible
+        self.lock_inner().display_visible
     }
 
     pub fn set_display_visible(&self, visible: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.display_visible == visible {
             return false;
         }
@@ -1290,12 +1299,12 @@ impl PixelCanvasState {
     }
 
     pub fn display_opacity(&self) -> f32 {
-        self.inner.borrow().display_opacity
+        self.lock_inner().display_opacity
     }
 
     pub fn set_display_opacity(&self, opacity: f32) -> bool {
         let opacity = opacity.clamp(0.0, 1.0);
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if (inner.display_opacity - opacity).abs() < f32::EPSILON {
             return false;
         }
@@ -1304,11 +1313,11 @@ impl PixelCanvasState {
     }
 
     pub fn display_blend_mode(&self) -> PixelCanvasBlendMode {
-        self.inner.borrow().display_blend_mode
+        self.lock_inner().display_blend_mode
     }
 
     pub fn set_display_blend_mode(&self, blend_mode: PixelCanvasBlendMode) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.display_blend_mode == blend_mode {
             return false;
         }
@@ -1317,11 +1326,11 @@ impl PixelCanvasState {
     }
 
     pub fn display_above_paper(&self) -> bool {
-        self.inner.borrow().display_above_paper
+        self.lock_inner().display_above_paper
     }
 
     pub fn set_display_above_paper(&self, above: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.display_above_paper == above {
             return false;
         }
@@ -1330,11 +1339,11 @@ impl PixelCanvasState {
     }
 
     pub fn paper_visible(&self) -> bool {
-        self.inner.borrow().paper_visible
+        self.lock_inner().paper_visible
     }
 
     pub fn set_paper_visible(&self, visible: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.paper_visible == visible {
             return false;
         }
@@ -1343,12 +1352,12 @@ impl PixelCanvasState {
     }
 
     pub fn paper_opacity(&self) -> f32 {
-        self.inner.borrow().paper_opacity
+        self.lock_inner().paper_opacity
     }
 
     pub fn set_paper_opacity(&self, opacity: f32) -> bool {
         let opacity = opacity.clamp(0.0, 1.0);
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if (inner.paper_opacity - opacity).abs() < f32::EPSILON {
             return false;
         }
@@ -1357,7 +1366,7 @@ impl PixelCanvasState {
     }
 
     fn brush(&self) -> PixelCanvasBrushSettings {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         PixelCanvasBrushSettings {
             tool: inner.tool,
             brush: inner.brush,
@@ -1369,7 +1378,7 @@ impl PixelCanvasState {
     }
 
     fn display(&self) -> PixelCanvasDisplaySettings {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         PixelCanvasDisplaySettings {
             visible: inner.display_visible,
             opacity: inner.display_opacity,
@@ -1378,7 +1387,7 @@ impl PixelCanvasState {
     }
 
     fn paper(&self) -> PixelCanvasPaperSettings {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         PixelCanvasPaperSettings {
             visible: inner.paper_visible,
             opacity: inner.paper_opacity,
@@ -1386,7 +1395,7 @@ impl PixelCanvasState {
     }
 
     fn take_history_command(&self) -> Option<PixelCanvasHistoryCommand> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.pending_undo > 0 {
             inner.pending_undo -= 1;
             return Some(PixelCanvasHistoryCommand::Undo);
@@ -1399,7 +1408,7 @@ impl PixelCanvasState {
     }
 
     fn take_viewport_command(&self) -> Option<PixelCanvasViewportCommand> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.pending_fit_view > 0 {
             inner.pending_fit_view -= 1;
             return Some(PixelCanvasViewportCommand::Fit);
@@ -1420,7 +1429,7 @@ impl PixelCanvasState {
     }
 
     fn take_export_request(&self) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.pending_export == 0 {
             return false;
         }
@@ -1429,7 +1438,7 @@ impl PixelCanvasState {
     }
 
     fn take_clear_request(&self) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.pending_clear == 0 {
             return false;
         }
@@ -1438,7 +1447,7 @@ impl PixelCanvasState {
     }
 
     fn publish_export_snapshot(&self, name: String, width: usize, height: usize, rgba8: Vec<u8>) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         inner.export_revision = inner.export_revision.saturating_add(1);
         inner.latest_export = Some(PixelCanvasExportSnapshot::new(
             inner.export_revision,
@@ -1450,7 +1459,7 @@ impl PixelCanvasState {
     }
 
     fn set_canvas_availability(&self, can_undo: bool, can_redo: bool, can_clear: bool) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.can_undo == can_undo && inner.can_redo == can_redo && inner.can_clear == can_clear
         {
             return false;
@@ -1462,7 +1471,7 @@ impl PixelCanvasState {
     }
 
     fn set_viewport_state(&self, viewport: CanvasViewport, viewport_size: Size) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.viewport == viewport && inner.viewport_size == viewport_size {
             return false;
         }
@@ -1472,7 +1481,7 @@ impl PixelCanvasState {
     }
 
     fn set_cursor_position(&self, cursor_position: Option<Point>) -> bool {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock_inner();
         if inner.cursor_position == cursor_position {
             return false;
         }
@@ -1485,7 +1494,7 @@ impl Default for PixelCanvasState {
     fn default() -> Self {
         let accent = DefaultTheme::default().palette.accent;
         Self {
-            inner: Rc::new(RefCell::new(PixelCanvasStateInner {
+            inner: Arc::new(Mutex::new(PixelCanvasStateInner {
                 tool: PixelCanvasTool::Brush,
                 brush: accent,
                 brush_size: 1.0,

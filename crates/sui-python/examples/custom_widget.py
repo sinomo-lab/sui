@@ -55,10 +55,10 @@ marker = app.rgba_image(2, 1, bytes([255, 255, 255, 255, 80, 180, 255, 255]))
 meter = Meter(0.62, marker)
 app.window(
     sui.Window("Custom widget").root(
-        sui.Column(
+        sui.column(
             [
                 sui.Widget(meter),
-                sui.Label("Host-driven custom widget"),
+                sui.label("Host-driven custom widget"),
             ],
             gap=8,
         )

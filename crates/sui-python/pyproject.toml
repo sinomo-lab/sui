@@ -22,3 +22,4 @@ classifiers = [
 bindings = "pyo3"
 module-name = "sui"
 features = ["extension-module", "desktop"]
+include = ["sui.pyi", "py.typed"]

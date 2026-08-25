@@ -1,10 +1,8 @@
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
     fmt,
     ops::Range,
-    rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use pulldown_cmark::{
@@ -302,7 +300,7 @@ pub struct RichDocumentSnapshot {
 
 #[derive(Clone)]
 pub struct RichDocumentModel {
-    inner: Rc<RefCell<RichDocumentModelInner>>,
+    inner: Arc<Mutex<RichDocumentModelInner>>,
     revision: Signal<u64>,
     structure_revision: Signal<u64>,
 }
@@ -337,7 +335,7 @@ impl RichDocumentSegment {
 impl RichDocumentModel {
     pub fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(RichDocumentModelInner {
+            inner: Arc::new(Mutex::new(RichDocumentModelInner {
                 markdown: String::new(),
                 segments: Vec::new(),
                 block_signals: HashMap::new(),
@@ -357,20 +355,26 @@ impl RichDocumentModel {
         model
     }
 
+    fn lock_inner(&self) -> MutexGuard<'_, RichDocumentModelInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn revision(&self) -> u64 {
-        self.inner.borrow().revision
+        self.lock_inner().revision
     }
 
     pub fn markdown(&self) -> String {
-        self.inner.borrow().markdown.clone()
+        self.lock_inner().markdown.clone()
     }
 
     pub fn blocks(&self) -> Vec<RichDocumentBlock> {
-        flatten_blocks(&self.inner.borrow())
+        flatten_blocks(&self.lock_inner())
     }
 
     pub fn snapshot(&self) -> RichDocumentSnapshot {
-        let inner = self.inner.borrow();
+        let inner = self.lock_inner();
         RichDocumentSnapshot {
             revision: inner.revision,
             markdown: inner.markdown.clone(),
@@ -380,7 +384,7 @@ impl RichDocumentModel {
     }
 
     pub fn last_update(&self) -> RichDocumentUpdate {
-        self.inner.borrow().last_update.clone()
+        self.lock_inner().last_update.clone()
     }
 
     pub(crate) fn structure_observable(&self) -> &Signal<u64> {
@@ -388,13 +392,13 @@ impl RichDocumentModel {
     }
 
     pub(crate) fn block_signal(&self, id: RichBlockId) -> Option<Signal<RichDocumentBlock>> {
-        self.inner.borrow().block_signals.get(&id).cloned()
+        self.lock_inner().block_signals.get(&id).cloned()
     }
 
     pub fn set_markdown(&self, markdown: impl Into<String>) -> bool {
         let markdown = markdown.into();
         let (changed, structure_changed) = {
-            let mut inner = self.inner.borrow_mut();
+            let mut inner = self.lock_inner();
             if inner.markdown == markdown {
                 return false;
             }
@@ -442,7 +446,7 @@ impl RichDocumentModel {
             return false;
         }
         let (changed, structure_changed) = {
-            let mut inner = self.inner.borrow_mut();
+            let mut inner = self.lock_inner();
             let old = flatten_blocks(&inner);
             let old_source_len = inner.markdown.len();
             let last_markdown = inner.segments.last().and_then(|segment| match segment {
@@ -523,7 +527,7 @@ impl RichDocumentModel {
             return false;
         }
         let (changed, structure_changed) = {
-            let mut inner = self.inner.borrow_mut();
+            let mut inner = self.lock_inner();
             let old = flatten_blocks(&inner);
             let Some(segment_index) = inner.segments.iter().position(
                 |segment| matches!(segment, RichDocumentSegment::Structured(block) if block.id == id),
@@ -562,7 +566,7 @@ impl RichDocumentModel {
 
     fn append_structured(&self, kind: RichDocumentBlockKind) -> RichBlockId {
         let (id, revision, structure_changed) = {
-            let mut inner = self.inner.borrow_mut();
+            let mut inner = self.lock_inner();
             let old = flatten_blocks(&inner);
             let id = RichBlockId::new(inner.next_id);
             inner.next_id = inner.next_id.wrapping_add(1).max(1);

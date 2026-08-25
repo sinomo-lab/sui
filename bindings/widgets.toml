@@ -392,6 +392,37 @@ docs = ["RichText"]
 compat = true
 
 [[item]]
+name = "RichDocument"
+kind = "descriptor"
+core_descriptor = "BindingRichDocument"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["RichDocument"]
+
+[[item]]
+name = "RichDocumentUpdate"
+kind = "descriptor"
+core_descriptor = "BindingRichDocumentUpdate"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["RichDocumentUpdate"]
+
+[[item]]
+name = "RichDocumentView"
+kind = "widget"
+core_kind = "RichDocument"
+core_constructor = "rich_document"
+python_kind = "function"
+python_rust = "py_rich_document_view"
+js_kind = "function"
+js_rust = "js_rich_document_view"
+ts_kind = "function"
+docs = ["RichDocumentView"]
+compat = true
+
+[[item]]
 name = "Image"
 kind = "widget"
 core_kind = "Image"
@@ -489,6 +520,335 @@ js_kind = "function"
 js_rust = "js_row"
 ts_kind = "function"
 docs = ["Row"]
+
+[[item]]
+name = "Grid"
+kind = "layout"
+core_kind = "Grid"
+core_constructor = "grid"
+python_kind = "function"
+python_rust = "py_grid"
+js_kind = "function"
+js_rust = "js_grid"
+ts_kind = "function"
+docs = ["Grid"]
+compat = true
+
+[[item]]
+name = "AspectRatio"
+kind = "layout"
+core_kind = "AspectRatio"
+core_constructor = "aspect_ratio"
+python_kind = "function"
+python_rust = "py_aspect_ratio"
+js_kind = "function"
+js_rust = "js_aspect_ratio"
+ts_kind = "function"
+docs = ["AspectRatio"]
+compat = true
+
+[[item]]
+name = "SafeArea"
+kind = "layout"
+core_kind = "SafeArea"
+core_constructor = "safe_area"
+python_kind = "function"
+python_rust = "py_safe_area"
+js_kind = "function"
+js_rust = "js_safe_area"
+ts_kind = "function"
+docs = ["SafeArea"]
+compat = true
+
+[[item]]
+name = "LayoutTransition"
+kind = "layout"
+core_kind = "LayoutTransition"
+core_constructor = "layout_transition"
+python_kind = "function"
+python_rust = "py_layout_transition"
+js_kind = "function"
+js_rust = "js_layout_transition"
+ts_kind = "function"
+docs = ["LayoutTransition"]
+compat = true
+
+[[item]]
+name = "AdaptiveView"
+kind = "widget"
+core_kind = "AdaptiveView"
+core_constructor = "adaptive_view"
+python_kind = "function"
+python_rust = "py_adaptive_view"
+js_kind = "function"
+js_rust = "js_adaptive_view"
+ts_kind = "function"
+docs = ["AdaptiveView"]
+compat = true
+
+[[item]]
+name = "ConstraintCase"
+kind = "descriptor"
+core_descriptor = "BindingConstraintCase"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["ConstraintCase"]
+
+[[item]]
+name = "ConstraintView"
+kind = "widget"
+core_kind = "ConstraintView"
+core_constructor = "constraint_view"
+python_kind = "function"
+python_rust = "py_constraint_view"
+js_kind = "function"
+js_rust = "js_constraint_view"
+ts_kind = "function"
+docs = ["ConstraintView"]
+compat = true
+
+[[item]]
+name = "ResponsiveSidebarState"
+kind = "descriptor"
+core_descriptor = "BindingResponsiveSidebarState"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["ResponsiveSidebarState"]
+
+[[item]]
+name = "ResponsiveSidebar"
+kind = "widget"
+core_kind = "ResponsiveSidebar"
+core_constructor = "responsive_sidebar"
+python_kind = "function"
+python_rust = "py_responsive_sidebar"
+js_kind = "function"
+js_rust = "js_responsive_sidebar"
+ts_kind = "function"
+docs = ["ResponsiveSidebar"]
+compat = true
+
+[[item]]
+name = "MasterDetailState"
+kind = "descriptor"
+core_descriptor = "BindingMasterDetailState"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["MasterDetailState"]
+
+[[item]]
+name = "MasterDetail"
+kind = "widget"
+core_kind = "MasterDetail"
+core_constructor = "master_detail"
+python_kind = "function"
+python_rust = "py_master_detail"
+js_kind = "function"
+js_rust = "js_master_detail"
+ts_kind = "function"
+docs = ["MasterDetail"]
+compat = true
+
+[[item]]
+name = "OverlayHost"
+kind = "widget"
+core_kind = "OverlayHost"
+core_constructor = "overlay_host"
+python_kind = "function"
+python_rust = "py_overlay_host"
+js_kind = "function"
+js_rust = "js_overlay_host"
+ts_kind = "function"
+docs = ["OverlayHost"]
+compat = true
+
+[[item]]
+name = "NotificationCenter"
+kind = "descriptor"
+core_descriptor = "BindingNotificationCenter"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["NotificationCenter"]
+
+[[item]]
+name = "NotificationHost"
+kind = "widget"
+core_kind = "NotificationHost"
+core_constructor = "notification_host"
+python_kind = "function"
+python_rust = "py_notification_host"
+js_kind = "function"
+js_rust = "js_notification_host"
+ts_kind = "function"
+docs = ["NotificationHost"]
+compat = true
+
+[[item]]
+name = "VirtualListItem"
+kind = "descriptor"
+core_descriptor = "BindingVirtualListItem"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["VirtualListItem"]
+
+[[item]]
+name = "VirtualListModel"
+kind = "descriptor"
+core_descriptor = "BindingVirtualListModel"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["VirtualListModel"]
+
+[[item]]
+name = "CanvasViewport"
+kind = "descriptor"
+core_descriptor = "BindingCanvasViewport"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["CanvasViewport"]
+
+[[item]]
+name = "CanvasStroke"
+kind = "descriptor"
+core_descriptor = "BindingCanvasStroke"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["CanvasStroke"]
+
+[[item]]
+name = "CanvasShape"
+kind = "descriptor"
+core_descriptor = "BindingCanvasShape"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["CanvasShape"]
+
+[[item]]
+name = "Canvas"
+kind = "widget"
+core_kind = "Canvas"
+core_constructor = "canvas"
+python_kind = "function"
+python_rust = "py_canvas"
+js_kind = "function"
+js_rust = "js_canvas"
+ts_kind = "function"
+docs = ["Canvas"]
+compat = true
+
+[[item]]
+name = "CanvasRuler"
+kind = "widget"
+core_kind = "CanvasRuler"
+core_constructor = "canvas_ruler"
+python_kind = "function"
+python_rust = "py_canvas_ruler"
+js_kind = "function"
+js_rust = "js_canvas_ruler"
+ts_kind = "function"
+docs = ["CanvasRuler"]
+compat = true
+
+[[item]]
+name = "PixelCanvasExport"
+kind = "descriptor"
+core_descriptor = "BindingPixelCanvasExport"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["PixelCanvasExport"]
+
+[[item]]
+name = "PixelCanvasState"
+kind = "descriptor"
+core_descriptor = "BindingPixelCanvasState"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["PixelCanvasState"]
+
+[[item]]
+name = "PixelCanvas"
+kind = "widget"
+core_kind = "PixelCanvas"
+core_constructor = "pixel_canvas"
+python_kind = "function"
+python_rust = "py_pixel_canvas"
+js_kind = "function"
+js_rust = "js_pixel_canvas"
+ts_kind = "function"
+docs = ["PixelCanvas"]
+compat = true
+
+[[item]]
+name = "DragScope"
+kind = "descriptor"
+core_descriptor = "BindingDragScope"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DragScope"]
+
+[[item]]
+name = "DragDropHost"
+kind = "widget"
+core_kind = "DragDropHost"
+core_constructor = "drag_drop_host"
+python_kind = "function"
+python_rust = "py_drag_drop_host"
+js_kind = "function"
+js_rust = "js_drag_drop_host"
+ts_kind = "function"
+docs = ["DragDropHost"]
+compat = true
+
+[[item]]
+name = "Draggable"
+kind = "widget"
+core_kind = "Draggable"
+core_constructor = "draggable"
+python_kind = "function"
+python_rust = "py_draggable"
+js_kind = "function"
+js_rust = "js_draggable"
+ts_kind = "function"
+docs = ["Draggable"]
+compat = true
+
+[[item]]
+name = "DropTarget"
+kind = "widget"
+core_kind = "DropTarget"
+core_constructor = "drop_target"
+python_kind = "function"
+python_rust = "py_drop_target"
+js_kind = "function"
+js_rust = "js_drop_target"
+ts_kind = "function"
+docs = ["DropTarget"]
+compat = true
+
+[[item]]
+name = "VirtualList"
+kind = "widget"
+core_kind = "VirtualList"
+core_constructor = "virtual_list"
+python_kind = "function"
+python_rust = "py_virtual_list"
+js_kind = "function"
+js_rust = "js_virtual_list"
+ts_kind = "function"
+docs = ["VirtualList"]
+compat = true
 
 [[item]]
 name = "ScrollView"
@@ -643,6 +1003,19 @@ js_kind = "function"
 js_rust = "js_dialog"
 ts_kind = "function"
 docs = ["Dialog"]
+
+[[item]]
+name = "CommandPalette"
+kind = "widget"
+core_kind = "CommandPalette"
+core_constructor = "command_palette"
+python_kind = "function"
+python_rust = "py_command_palette"
+js_kind = "function"
+js_rust = "js_command_palette"
+ts_kind = "function"
+docs = ["CommandPalette"]
+compat = true
 
 [[item]]
 name = "Padding"
@@ -873,6 +1246,19 @@ ts_kind = "function"
 docs = ["ColorPicker"]
 
 [[item]]
+name = "SimpleColorPicker"
+kind = "widget"
+core_kind = "SimpleColorPicker"
+core_constructor = "simple_color_picker"
+python_kind = "function"
+python_rust = "py_simple_color_picker"
+js_kind = "function"
+js_rust = "js_simple_color_picker"
+ts_kind = "function"
+docs = ["SimpleColorPicker"]
+compat = true
+
+[[item]]
 name = "BrushPreviewSpec"
 kind = "descriptor"
 core_descriptor = "BindingBrushPreviewSpec"
@@ -1064,6 +1450,19 @@ docs = ["SideSheet"]
 compat = true
 
 [[item]]
+name = "BottomSheet"
+kind = "widget"
+core_kind = "SideSheet"
+core_constructor = "bottom_sheet"
+python_kind = "function"
+python_rust = "py_bottom_sheet"
+js_kind = "function"
+js_rust = "js_bottom_sheet"
+ts_kind = "function"
+docs = ["BottomSheet"]
+compat = true
+
+[[item]]
 name = "SplitView"
 kind = "widget"
 core_kind = "SplitView"
@@ -1112,6 +1511,104 @@ ts_kind = "class"
 docs = ["FloatingStackWindow"]
 
 [[item]]
+name = "FloatingView"
+kind = "descriptor"
+core_descriptor = "BindingFloatingView"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["FloatingView"]
+
+[[item]]
+name = "FloatingViewSnapshot"
+kind = "descriptor"
+core_descriptor = "BindingFloatingViewSnapshot"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["FloatingViewSnapshot"]
+
+[[item]]
+name = "FloatingWorkspaceState"
+kind = "descriptor"
+core_descriptor = "BindingFloatingWorkspaceState"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["FloatingWorkspaceState"]
+
+[[item]]
+name = "FloatingWorkspace"
+kind = "widget"
+core_kind = "FloatingWorkspace"
+core_constructor = "floating_workspace"
+python_kind = "function"
+python_rust = "py_floating_workspace"
+js_kind = "function"
+js_rust = "js_floating_workspace"
+ts_kind = "function"
+docs = ["FloatingWorkspace"]
+compat = true
+
+[[item]]
+name = "DockNode"
+kind = "descriptor"
+core_descriptor = "BindingDockNode"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockNode"]
+
+[[item]]
+name = "DockFloatingGroup"
+kind = "descriptor"
+core_descriptor = "BindingDockFloatingGroup"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockFloatingGroup"]
+
+[[item]]
+name = "DockLayout"
+kind = "descriptor"
+core_descriptor = "BindingDockLayout"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockLayout"]
+
+[[item]]
+name = "DockState"
+kind = "descriptor"
+core_descriptor = "BindingDockState"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockState"]
+
+[[item]]
+name = "DockPanelSpec"
+kind = "descriptor"
+core_descriptor = "BindingDockPanel"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockPanel"]
+
+[[item]]
+name = "DockWorkspace"
+kind = "widget"
+core_kind = "DockWorkspace"
+core_constructor = "dock_workspace"
+python_kind = "function"
+python_rust = "py_dock_workspace"
+js_kind = "function"
+js_rust = "js_dock_workspace"
+ts_kind = "function"
+docs = ["DockWorkspace"]
+compat = true
+
+[[item]]
 name = "FloatingStack"
 kind = "widget"
 core_kind = "FloatingStack"
@@ -1158,7 +1655,8 @@ bindings = ["ActionCard"]
 
 [[rust_widget]]
 name = "AdaptiveView"
-classification = "rust-only"
+classification = "bound"
+bindings = ["AdaptiveView"]
 
 [[rust_widget]]
 name = "Align"
@@ -1167,7 +1665,8 @@ bindings = ["Align"]
 
 [[rust_widget]]
 name = "AspectRatio"
-classification = "rust-only"
+classification = "bound"
+bindings = ["AspectRatio"]
 
 [[rust_widget]]
 name = "Background"
@@ -1176,7 +1675,8 @@ bindings = ["Background"]
 
 [[rust_widget]]
 name = "BottomSheet"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["BottomSheet"]
 
 [[rust_widget]]
 name = "Breadcrumb"
@@ -1200,11 +1700,13 @@ bindings = ["Button"]
 
 [[rust_widget]]
 name = "Canvas"
-classification = "rust-only"
+classification = "bound"
+bindings = ["Canvas"]
 
 [[rust_widget]]
 name = "CanvasRuler"
-classification = "rust-only"
+classification = "bound"
+bindings = ["CanvasRuler"]
 
 [[rust_widget]]
 name = "Checkbox"
@@ -1233,11 +1735,13 @@ bindings = ["CommandGroup"]
 
 [[rust_widget]]
 name = "CommandPalette"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["CommandPalette"]
 
 [[rust_widget]]
 name = "ConstraintView"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["ConstraintView"]
 
 [[rust_widget]]
 name = "ContextMenu"
@@ -1275,16 +1779,24 @@ classification = "bound"
 bindings = ["DockPanel"]
 
 [[rust_widget]]
+name = "DockWorkspace"
+classification = "manual-wrapper"
+bindings = ["DockWorkspace"]
+
+[[rust_widget]]
 name = "DragDropHost"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["DragDropHost"]
 
 [[rust_widget]]
 name = "Draggable"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["Draggable"]
 
 [[rust_widget]]
 name = "DropTarget"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["DropTarget"]
 
 [[rust_widget]]
 name = "EmptyState"
@@ -1313,7 +1825,8 @@ bindings = ["FloatingStack"]
 
 [[rust_widget]]
 name = "FloatingWorkspace"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["FloatingWorkspace"]
 
 [[rust_widget]]
 name = "FormRow"
@@ -1332,7 +1845,8 @@ bindings = ["FramedField"]
 
 [[rust_widget]]
 name = "Grid"
-classification = "rust-only"
+classification = "bound"
+bindings = ["Grid"]
 
 [[rust_widget]]
 name = "Icon"
@@ -1361,7 +1875,8 @@ bindings = ["LayerList"]
 
 [[rust_widget]]
 name = "LayoutTransition"
-classification = "rust-only"
+classification = "bound"
+bindings = ["LayoutTransition"]
 
 [[rust_widget]]
 name = "Link"
@@ -1375,7 +1890,8 @@ bindings = ["ListView"]
 
 [[rust_widget]]
 name = "MasterDetail"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["MasterDetail"]
 
 [[rust_widget]]
 name = "MeasuredBottomDock"
@@ -1389,7 +1905,8 @@ bindings = ["Menu"]
 
 [[rust_widget]]
 name = "NotificationHost"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["NotificationHost"]
 
 [[rust_widget]]
 name = "NumberInput"
@@ -1398,7 +1915,8 @@ bindings = ["NumberInput"]
 
 [[rust_widget]]
 name = "OverlayHost"
-classification = "rust-only"
+classification = "bound"
+bindings = ["OverlayHost"]
 
 [[rust_widget]]
 name = "Padding"
@@ -1417,7 +1935,8 @@ bindings = ["PasswordInput"]
 
 [[rust_widget]]
 name = "PixelCanvas"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["PixelCanvas"]
 
 [[rust_widget]]
 name = "PlacementBadge"
@@ -1456,11 +1975,13 @@ bindings = ["RadioGroup"]
 
 [[rust_widget]]
 name = "RebuildOnChange"
-classification = "rust-only"
+classification = "equivalent"
+bindings = ["SwitchView"]
 
 [[rust_widget]]
 name = "RebuildOnConstraints"
-classification = "rust-only"
+classification = "equivalent"
+bindings = ["ConstraintView"]
 
 [[rust_widget]]
 name = "ReorderableList"
@@ -1469,11 +1990,13 @@ bindings = ["ReorderableList"]
 
 [[rust_widget]]
 name = "ResponsiveSidebar"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["ResponsiveSidebar"]
 
 [[rust_widget]]
 name = "RichDocumentView"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["RichDocumentView"]
 
 [[rust_widget]]
 name = "RichText"
@@ -1482,11 +2005,13 @@ bindings = ["RichText"]
 
 [[rust_widget]]
 name = "SafeArea"
-classification = "rust-only"
+classification = "bound"
+bindings = ["SafeArea"]
 
 [[rust_widget]]
 name = "ScrollBar"
-classification = "rust-only"
+classification = "equivalent"
+bindings = ["ScrollView"]
 
 [[rust_widget]]
 name = "ScrollView"
@@ -1527,6 +2052,11 @@ bindings = ["SideSheet"]
 name = "SignalMeter"
 classification = "bound"
 bindings = ["SignalMeter"]
+
+[[rust_widget]]
+name = "SimpleColorPicker"
+classification = "bound"
+bindings = ["SimpleColorPicker"]
 
 [[rust_widget]]
 name = "SizedBox"
@@ -1640,7 +2170,8 @@ bindings = ["TreeView"]
 
 [[rust_widget]]
 name = "VirtualList"
-classification = "rust-only"
+classification = "manual-wrapper"
+bindings = ["VirtualList"]
 
 [[rust_widget]]
 name = "VirtualScrollView"

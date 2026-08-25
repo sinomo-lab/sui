@@ -1,10 +1,8 @@
 use std::{
     any::Any,
-    cell::RefCell,
     fmt,
-    rc::Rc,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -254,14 +252,14 @@ struct DragDropState {
 #[derive(Clone, Debug)]
 pub struct DragDropScope {
     id: DragScopeId,
-    inner: Rc<RefCell<DragDropState>>,
+    inner: Arc<Mutex<DragDropState>>,
 }
 
 impl DragDropScope {
     pub fn new() -> Self {
         Self {
             id: DragScopeId::new(NEXT_DRAG_SCOPE_ID.fetch_add(1, Ordering::Relaxed)),
-            inner: Rc::new(RefCell::new(DragDropState::default())),
+            inner: Arc::new(Mutex::new(DragDropState::default())),
         }
     }
 
@@ -270,15 +268,25 @@ impl DragDropScope {
     }
 
     pub fn active_drag(&self) -> Option<DragPreview> {
-        self.inner.borrow().active.clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active
+            .clone()
     }
 
     pub fn set_active_drag(&self, active: DragPreview) {
-        self.inner.borrow_mut().active = Some(active);
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active = Some(active);
     }
 
     pub fn update_drag_position(&self, session_id: DragSessionId, position: Point) -> bool {
-        let mut state = self.inner.borrow_mut();
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(active) = &mut state.active else {
             return false;
         };
@@ -290,7 +298,10 @@ impl DragDropScope {
     }
 
     pub fn finish_drag(&self, session_id: DragSessionId) -> bool {
-        let mut state = self.inner.borrow_mut();
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state
             .active
             .as_ref()
@@ -304,7 +315,10 @@ impl DragDropScope {
     }
 
     pub fn clear(&self) {
-        self.inner.borrow_mut().active = None;
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active = None;
     }
 }
 

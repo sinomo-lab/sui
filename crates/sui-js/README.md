@@ -6,7 +6,8 @@ ships CommonJS entry points plus TypeScript declarations in `index.d.ts`.
 The binding supports retained widget trees, desktop event-loop execution,
 host-driven rendering, thread-safe state updates, JavaScript-owned custom
 widgets, accessibility semantics, renderer-neutral paint commands, image and
-font resources, and external-surface descriptors. It is an alpha,
+font resources, live theme handles, renderer/HDR policy, and external-surface
+descriptors. It is an alpha,
 source-built package; the npm package and prebuilt native binaries are not
 published yet.
 
@@ -80,12 +81,12 @@ Use `App.run()` when JavaScript owns the normal desktop event loop:
 
 const sui = require("@sui/ui");
 
-const root = sui.Column(
+const root = sui.column(
   [
-    sui.Label("Ready"),
-    sui.Button("No-op", () => {}),
+    sui.label("Ready"),
+    sui.button("No-op", { onPress() {} }),
   ],
-  8
+  { gap: 8 }
 );
 
 const window = new sui.Window("Hello from JavaScript");
@@ -95,6 +96,65 @@ const app = new sui.App();
 app.window(window);
 app.run();
 ```
+
+JavaScript factories use `lowerCamelCase` and collect optional values in an
+options object. This avoids positional `undefined` placeholders as APIs grow.
+The original `PascalCase` positional functions remain available for existing
+applications.
+
+The portable media surface includes both `colorPicker(...)` and the compact,
+mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, or `rgb`).
+Editor shells can use `DockState`, serializable `DockLayout`/`DockNode` values,
+stable `DockPanelSpec` descriptors, and `dockWorkspace(...)` without exposing
+Rust-local widget ownership.
+Responsive composition includes idiomatic `grid(...)`, `aspectRatio(...)`,
+`safeArea(...)`, and `layoutTransition(...)` factories without exposing Rust
+track or animation implementation types.
+`adaptiveView(...)`, `constraintView(...)`, `responsiveSidebar(...)`, and
+`masterDetail(...)` retain each branch or pane while exposing ordinary
+JavaScript state objects and options callbacks.
+`bottomSheet(...)` uses height-oriented options and the same retained shown
+state and dismissal callbacks as `sideSheet(...)`.
+Thread-safe `NotificationCenter` producers feed `notificationHost(...)`, and
+`overlayHost(...)` creates an independent stacking root for embedded regions.
+`commandPalette(...)` exposes retained shown state and an options-object
+dismissal callback; querying, ranking, and execution remain JavaScript policy.
+`VirtualListModel` provides stable keyed, thread-safe incremental text rows;
+`virtualList(...)` realizes only visible rows and exposes options-object
+selection and near-edge callbacks.
+`CanvasViewport`, `CanvasStroke`, and `CanvasShape` are value descriptors used
+by retained `canvas(...)` and `canvasRuler(...)` factories.
+Portable `DragScope`, `dragDropHost(...)`, `draggable(...)`, and
+`dropTarget(...)` use text payloads and JavaScript callbacks, including
+external file hover/drop delivery.
+`FloatingWorkspaceState`, `FloatingView`, and `floatingWorkspace(...)` expose
+stable same-window editor panes with move, resize, visibility, z-order, and
+maximize controls.
+`PixelCanvasState`, `PixelCanvasExport`, and `pixelCanvas(...)` expose editable
+pixel documents, brush/tool controls, undo/redo requests, viewport commands,
+and `Uint8Array` RGBA exports.
+
+Streaming Markdown uses a thread-safe `RichDocument` model and a retained
+`richDocumentView(...)`. `appendMarkdown(...)` preserves the native incremental
+tail-reparse behavior; attachment and extension blocks take JavaScript options
+objects rather than positional Rust-style argument lists.
+
+```javascript
+const theme = sui.Theme.dark();
+const app = new sui.App();
+app.setTheme(theme);
+app.configureRendering({
+  outputColorPrimaries: "display-p3",
+  colorManagement: "prefer-wide-gamut",
+});
+
+theme.setAccent(new sui.Color(0.2, 0.55, 1, 1));
+```
+
+Use `theme.color(...)`/`setColor(...)` for source semantic colors and
+`theme.number(...)`/`setNumber(...)` for spacing, radii, breakpoints, and
+motion durations. Derived control palettes and metrics are synchronized by the
+binding.
 
 When running directly from this checkout, replace `require("@sui/ui")` with
 `require(".")` from `crates/sui-js`, or
@@ -116,6 +176,37 @@ The returned `RunningApp` can render windows, dispatch binding event
 descriptors, drain posted work, request redraws, and expose window handles. It
 does not create or present a native desktop surface by itself.
 
+`running.setInspectorTracing()` and `running.inspect()` expose a
+renderer-neutral diagnostic snapshot: the accessibility nodes, focus and
+pending phases, frame/widget timings, plus structured reactive, command,
+invalidation, rebuild, and privacy-safe event-route histories.
+
+## Animation and semantic testing
+
+Animations use ordinary JavaScript objects and options bags. `AnimationValue`
+supports scalar, point/vector, size, rectangle, color, and transform values;
+`Transition`, `Spring`, and `AnimatedValue` cover local motion. Reusable motion
+uses `Keyframe`, `AnimationTrack`, `AnimationClip`, and `AnimationTimeline`,
+with `AnimationPlayer`, serializable `AnimationDocument`, and undoable
+`AnimationEditor` APIs for tools.
+
+```javascript
+const zero = sui.AnimationValue.scalar(0);
+const one = sui.AnimationValue.scalar(1);
+const track = new sui.AnimationTrack("card", "layer.opacity");
+track.addKeyframe(new sui.Keyframe(0, zero));
+track.addKeyframe(new sui.Keyframe(1, one, { easing: "ease-out" }));
+const clip = new sui.AnimationClip("fade", 0, 1);
+clip.addTrack(track);
+const timeline = new sui.AnimationTimeline(1);
+timeline.addClip(clip);
+```
+
+`RenderSnapshot.find(...)` and `getOne(...)` query complete semantic nodes by
+role, name, text, description, focus, and visibility. Nodes retain hierarchy,
+bounds, actions, values, and interaction state; pass one to `running.hover`,
+`click`, `press`, or `fill` for locator-style deterministic tests.
+
 ## State and threading
 
 `State` values used by an application are attached to its UI task queue when
@@ -127,6 +218,15 @@ Widget and custom-paint callbacks run synchronously on the UI thread. Keep them
 short; perform blocking I/O or long computation elsewhere, then publish the
 result through `State` or `UiHandle`.
 
+`state.select(fn)` creates a retained derived state, and `state.watch(fn)`
+returns an explicit `StateSubscription`. Selectors suppress unchanged values;
+subscriptions can be released with `unsubscribe()`.
+
+For application services and worker results, register a named handler with
+`app.on(name, callback)` and publish through `uiHandle.emit(name, payload)`.
+The binding maps this JavaScript message API onto the UI task queue, preserving
+UI-thread delivery without exposing Rust generic command keys.
+
 ## Custom widgets and resources
 
 An object wrapped with `new sui.Widget(object)` may implement:
@@ -135,6 +235,18 @@ An object wrapped with `new sui.Widget(object)` may implement:
 - `event(event)` to process binding-safe event descriptors;
 - `semantics(semantics)` to expose roles, names, values, ranges, and actions;
 - `paint(paint)` to emit validated scene commands.
+
+The `event` callback receives `(event, context)`. `EventContext` exposes focus,
+handled state, targeted paint/layout/semantics requests, animation-frame
+requests, pointer capture, clipboard access, stable IDs, bounds, routing phase,
+and frame time. JavaScript callbacks that only declare one parameter continue
+to work because extra arguments are ignored by the language.
+
+`new sui.Widget(callbacks, children)` creates a retained foreign composite.
+Use `measureWithChildren(constraints, childSizes)` and
+`arrange(bounds, childSizes)` for custom layout; return one `Rect` per child.
+Children are painted after the custom paint commands and are automatically
+included in semantics unless the callback explicitly includes them.
 
 The paint surface supports styled text, paths and path clips, rounded
 rectangles, shadows, transforms, image quads, and validated built-in shaders.
@@ -168,10 +280,10 @@ Build the native addon before importing that dependency at runtime.
   users build from source.
 - This package targets Node.js and Electron. Browser/WASM bindings are not
   implemented.
-- The JavaScript surface intentionally omits Rust-native widgets whose
-  contracts require local `Widget` closures, `Any` payloads, shared `Rc`
-  state, or custom paint models. The checked binding manifest records those
-  exclusions instead of silently treating them as missing coverage.
+- Every public Rust widget is classified as directly bound, manually wrapped,
+  or represented by a documented JavaScript-level equivalent. Some equivalents
+  intentionally expose portable value models instead of Rust closure or `Any`
+  implementation details.
 - Desktop `run` entry points exist, but the repository does not yet have broad
   real-window smoke coverage for every supported platform.
 - Custom WGSL, arbitrary shader resources, and uniforms are not exposed;

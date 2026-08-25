@@ -14479,6 +14479,14 @@ impl Dialog {
     }
 
     pub fn shown(mut self, shown: bool) -> Self {
+        self.set_shown(shown);
+        self
+    }
+
+    pub fn set_shown(&mut self, shown: bool) -> bool {
+        if self.shown == shown {
+            return false;
+        }
         self.shown = shown;
         if !shown {
             self.reveal = AnimatedScalar::new(0.0);
@@ -14488,7 +14496,7 @@ impl Dialog {
             focus.shown = false;
             focus.animation = AnimatedScalar::new(0.0);
         }
-        self
+        true
     }
 
     pub fn modal(mut self, modal: bool) -> Self {
@@ -15030,6 +15038,10 @@ impl CommandPalette {
     pub fn shown(mut self, shown: bool) -> Self {
         self.inner = self.inner.shown(shown);
         self
+    }
+
+    pub fn set_shown(&mut self, shown: bool) -> bool {
+        self.inner.set_shown(shown)
     }
 
     pub fn description(mut self, description: impl Into<String>) -> Self {

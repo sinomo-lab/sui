@@ -1,8 +1,8 @@
 # Cross-language bindings roadmap
 
 **Status:** Active. Native Python and Node/Electron bindings have an alpha
-foundation, but they are not published and do not yet cover every Rust widget
-or deployment target.
+foundation and classify every public Rust widget, but they are not published
+and do not yet cover every deployment target.
 
 This document tracks unfinished binding work. Current setup and examples live
 in the [Python guide](../../crates/sui-python/README.md), the
@@ -25,7 +25,20 @@ The workspace currently includes:
 - explicit external-texture, synchronization, backend-handle, and capability
   descriptors, with a CPU RGBA fallback for `ExternalSurface`;
 - generated widget manifests, a complete Rust-widget classification, and
-  cross-language compatibility tests.
+  cross-language compatibility tests;
+- generated Python registration, `snake_case` factories, `sui.pyi`, and
+  `py.typed` metadata, plus generated JavaScript options-object factories and
+  matching TypeScript interfaces;
+- live shared themes, selector/watch state APIs, named UI-thread messages,
+  custom composite children/layout, event contexts, inspector summaries,
+  renderer/HDR configuration, and window geometry/icon policy;
+- thread-safe streaming rich documents with attachments and extension blocks,
+  plus portable docking state and editor workspace composition;
+- first-class portable animation values, transitions, springs, retained values,
+  tracks, clips, timelines, players, serialized documents, and undoable editor
+  operations;
+- complete semantic-node snapshots with host-language queries and actionable
+  hover/click/press/fill helpers for deterministic binding tests.
 
 The checked manifest currently has complete core, Python, JavaScript,
 TypeScript, documentation, and required compatibility coverage:
@@ -42,26 +55,37 @@ auditable:
 - Descriptors: `TextSpan`, `StatusBarSegment`, `SegmentedControlItem`,
   `TableColumn`, `TableRow`, `TreeItem`, `LayerListItem`, `MenuItem`,
   `ToolPaletteItem`, `ColorPaletteSwatch`, `BrushPreviewSpec`, and
-  `FloatingStackWindow`.
+  `FloatingStackWindow`, `RichDocument`, `RichDocumentUpdate`, `ConstraintCase`,
+  `ResponsiveSidebarState`, `MasterDetailState`, `NotificationCenter`,
+  `VirtualListItem`, `VirtualListModel`, `CanvasViewport`, `CanvasStroke`,
+  `CanvasShape`, `PixelCanvasState`, `PixelCanvasExport`, `DragScope`,
+  `FloatingView`, `FloatingViewSnapshot`, and `FloatingWorkspaceState`, plus the
+  `DockNode`, `DockFloatingGroup`, `DockLayout`, `DockState`, and
+  `DockPanelSpec` docking model.
 - Basic controls: `Label`, `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`,
   `Switch`, `RadioButton`, `RadioGroup`, `SegmentedControl`, `Slider`,
   `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,
   `PasswordInput`, `DateTimeInput`, and `TextArea`.
 - Content and data: `Breadcrumb`, `PathBar`, `ListView`, `Table`, `DataGrid`,
-  `TreeView`, `LayerList`, `RichText`, `Image`, `ColorSwatch`, `ColorPalette`,
-  `ColorPicker`, `SignalMeter`, `StatusBadge`, `StatusBar`, and `DetailRow`.
+  `TreeView`, `LayerList`, `RichText`, `RichDocumentView`, `Image`, `Canvas`,
+  `CanvasRuler`, `PixelCanvas`, `ColorSwatch`, `ColorPalette`,
+  `ColorPicker`, `SimpleColorPicker`, `SignalMeter`, `StatusBadge`, `StatusBar`, and `DetailRow`.
 - Containers and application widgets: `Separator`, `EmptyState`, `Surface`,
-  `Toolbar`, `ToolPalette`, `PresetStrip`, `BrowserTabBar`, `ScrollView`,
-  `Menu`, `ContextMenu`, `TabBar`, `Tabs`, `Dialog`, `StatusBarHost`,
+  `Toolbar`, `ToolPalette`, `PresetStrip`, `BrowserTabBar`, `ScrollView`, `OverlayHost`,
+  `Menu`, `ContextMenu`, `TabBar`, `Tabs`, `Dialog`, `CommandPalette`, `StatusBarHost`,
   `Tooltip`, `Popover`, `DockPanel`, `ActionCard`, `BrushPreview`,
   `CommandGroup`, `CoverageDots`, `FramedField`, `PlacementBadge`,
-  `PropertyRow`, `SectionLabel`, `SideSheet`, `FloatingStack`, and
+  `PropertyRow`, `SectionLabel`, `SideSheet`, `BottomSheet`, `NotificationHost`,
+  `DragDropHost`, `Draggable`, `DropTarget`,
+  `DockWorkspace`, `FloatingWorkspace`, `FloatingStack`, and
   `ReorderableList`.
 - Layout and forms: `Column`, `Row`, `Padding`, `Align`, `Background`,
-  `SizedBox`, `Stack`, `SemanticRegion`, `FormRow`, `FieldGroup`,
+  `Grid`, `AspectRatio`, `SafeArea`, `LayoutTransition`, `AdaptiveView`,
+  `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SizedBox`, `Stack`,
+  `SemanticRegion`, `FormRow`, `FieldGroup`,
   `FormSection`, `PanelSection`, `Dock`, `FixedPaneSplit`,
-  `MeasuredBottomDock`, `SplitView`, `SwitchView`, `TrailingSlotRow`, and
-  `VirtualScrollView`.
+  `MeasuredBottomDock`, `SplitView`, `SwitchView`, `TrailingSlotRow`,
+  `VirtualScrollView`, and `VirtualList`.
 - Interop: `ExternalSurface`.
 
 The manifest also classifies every public Rust `Widget` implementation. Most
@@ -72,14 +96,14 @@ state-synchronization policy; `ReorderableList` also uses a manual wrapper to
 translate its reorder event. `Spinner` is represented by `BusyIndicator`, and
 `Flex` by `Column` and `Row`.
 
-The intentionally Rust-only tier is `Canvas`, `CanvasRuler`, `DragDropHost`,
-`Draggable`, `DropTarget`, `FloatingWorkspace`, `PixelCanvas`,
-`RebuildOnChange`, `RebuildOnConstraints`, and `ScrollBar`. These widgets
-expose Rust-local closures, type-erased payloads, shared
-non-thread-safe state, or output/control contracts that do not have a safe
-portable value model. `TextSurface` is represented by the supported `TextArea`
-facade, while `VirtualTable` is represented by `Table` unless an application
-implements its own virtualized foreign widget.
+Every current public Rust `Widget` implementation now has a cross-language
+binding, a manual portable wrapper, or a documented host-language equivalent.
+`TextSurface` is represented by `TextArea`, while `VirtualTable` is currently
+represented by `Table`; arbitrary foreign row renderers and true virtual-table
+parity remain unfinished.
+`RebuildOnChange` maps to retained `SwitchView`, `RebuildOnConstraints` maps to
+`ConstraintView`, and standalone `ScrollBar` behavior is owned by `ScrollView`
+in the host-language APIs.
 
 ## Stable design constraints
 

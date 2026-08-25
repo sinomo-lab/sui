@@ -22,7 +22,7 @@ pixels = bytes(
     ]
 )
 texture = sui.ExternalTextureDescriptor.cpu_rgba8(sui.Size(2, 2), pixels, generation=1)
-surface = sui.ExternalSurface(
+surface = sui.external_surface(
     texture,
     desired_size=sui.Size(128, 96),
     name="CPU upload preview",
@@ -31,10 +31,10 @@ surface = sui.ExternalSurface(
 app = sui.App()
 app.window(
     sui.Window("External surface").root(
-        sui.Column(
+        sui.column(
             [
                 surface,
-                sui.Label("CPU fallback external surface"),
+                sui.label("CPU fallback external surface"),
             ],
             gap=8,
         )

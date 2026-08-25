@@ -3,6 +3,135 @@
 
 // Python widget bindings.
 
+#[pyclass(name = "RichDocumentUpdate", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyRichDocumentUpdate {
+    inner: BindingRichDocumentUpdate,
+}
+
+#[pymethods]
+impl PyRichDocumentUpdate {
+    #[getter]
+    pub fn revision(&self) -> u64 {
+        self.inner.revision
+    }
+
+    #[getter]
+    pub fn reparsed_start(&self) -> usize {
+        self.inner.reparsed_start
+    }
+
+    #[getter]
+    pub fn reparsed_end(&self) -> usize {
+        self.inner.reparsed_end
+    }
+
+    #[getter]
+    pub fn reused_prefix_blocks(&self) -> usize {
+        self.inner.reused_prefix_blocks
+    }
+
+    #[getter]
+    pub fn changed_block_ids(&self) -> Vec<u64> {
+        self.inner.changed_block_ids.clone()
+    }
+
+    #[getter]
+    pub fn append_only(&self) -> bool {
+        self.inner.append_only
+    }
+}
+
+#[pyclass(name = "RichDocument", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyRichDocument {
+    inner: BindingRichDocument,
+}
+
+#[pymethods]
+impl PyRichDocument {
+    #[new]
+    #[pyo3(signature = (markdown=""))]
+    pub fn new(markdown: &str) -> Self {
+        Self {
+            inner: BindingRichDocument::new(markdown),
+        }
+    }
+
+    #[getter]
+    pub fn revision(&self) -> u64 {
+        self.inner.revision()
+    }
+
+    #[getter]
+    pub fn markdown(&self) -> String {
+        self.inner.markdown()
+    }
+
+    pub fn set_markdown(&self, markdown: String) -> bool {
+        self.inner.set_markdown(markdown)
+    }
+
+    pub fn append_markdown(&self, fragment: &str) -> bool {
+        self.inner.append_markdown(fragment)
+    }
+
+    pub fn last_update(&self) -> PyRichDocumentUpdate {
+        PyRichDocumentUpdate {
+            inner: self.inner.last_update(),
+        }
+    }
+
+    #[pyo3(signature = (name, *, media_type=None, source=None, size_bytes=None, description=None))]
+    pub fn append_attachment(
+        &self,
+        name: String,
+        media_type: Option<String>,
+        source: Option<String>,
+        size_bytes: Option<u64>,
+        description: Option<String>,
+    ) -> u64 {
+        self.inner
+            .append_attachment(name, media_type, source, size_bytes, description)
+    }
+
+    #[pyo3(signature = (
+        renderer, title, *, summary=None, body="", status="neutral",
+        initially_expanded=false, metadata=None
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_extension(
+        &self,
+        renderer: String,
+        title: String,
+        summary: Option<String>,
+        body: &str,
+        status: &str,
+        initially_expanded: bool,
+        metadata: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<u64> {
+        let metadata = metadata
+            .map(|metadata| {
+                metadata
+                    .extract::<std::collections::BTreeMap<String, String>>()
+                    .map(|metadata| metadata.into_iter().collect())
+            })
+            .transpose()?
+            .unwrap_or_default();
+        self.inner
+            .append_extension(
+                renderer,
+                title,
+                summary,
+                body,
+                status,
+                initially_expanded,
+                metadata,
+            )
+            .map_err(PyValueError::new_err)
+    }
+}
+
 #[pyclass(name = "TextSpan", module = "sui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTextSpan {
@@ -344,6 +473,990 @@ impl PyFloatingStackWindow {
     fn __repr__(&self) -> String {
         "FloatingStackWindow(...)".to_string()
     }
+}
+
+#[pyclass(name = "FloatingView", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyFloatingView {
+    inner: BindingFloatingView,
+}
+
+#[pymethods]
+impl PyFloatingView {
+    #[new]
+    #[pyo3(signature = (title, bounds, child, min_size=None, visible=true))]
+    pub fn new(
+        title: String,
+        bounds: PyRect,
+        child: PyRef<'_, PyWidget>,
+        min_size: Option<PySize>,
+        visible: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingFloatingView::new(
+                title,
+                bounds.into(),
+                min_size
+                    .map(Into::into)
+                    .unwrap_or_else(|| Size::new(220.0, 160.0)),
+                visible,
+                child.binding_widget()?,
+            ),
+        })
+    }
+
+    #[getter]
+    pub fn title(&self) -> &str {
+        &self.inner.title
+    }
+
+    #[getter]
+    pub fn bounds(&self) -> PyRect {
+        self.inner.bounds.into()
+    }
+
+    #[getter]
+    pub fn min_size(&self) -> PySize {
+        self.inner.min_size.into()
+    }
+
+    #[getter]
+    pub fn visible(&self) -> bool {
+        self.inner.visible
+    }
+}
+
+#[pyclass(name = "FloatingViewSnapshot", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyFloatingViewSnapshot {
+    inner: BindingFloatingViewSnapshot,
+}
+
+#[pymethods]
+impl PyFloatingViewSnapshot {
+    #[getter]
+    pub fn id(&self) -> u64 {
+        self.inner.id
+    }
+
+    #[getter]
+    pub fn title(&self) -> &str {
+        &self.inner.title
+    }
+
+    #[getter]
+    pub fn bounds(&self) -> PyRect {
+        self.inner.bounds.into()
+    }
+
+    #[getter]
+    pub fn min_size(&self) -> PySize {
+        self.inner.min_size.into()
+    }
+
+    #[getter]
+    pub fn visible(&self) -> bool {
+        self.inner.visible
+    }
+
+    #[getter]
+    pub fn maximized(&self) -> bool {
+        self.inner.maximized
+    }
+}
+
+#[pyclass(name = "FloatingWorkspaceState", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyFloatingWorkspaceState {
+    inner: BindingFloatingWorkspaceState,
+}
+
+#[pymethods]
+impl PyFloatingWorkspaceState {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingFloatingWorkspaceState::new(),
+        }
+    }
+
+    pub fn views(&self) -> Vec<PyFloatingViewSnapshot> {
+        self.inner
+            .views()
+            .into_iter()
+            .map(|inner| PyFloatingViewSnapshot { inner })
+            .collect()
+    }
+
+    pub fn set_visible(&self, id: u64, visible: bool) -> bool {
+        self.inner.set_visible(id, visible)
+    }
+
+    pub fn set_bounds(&self, id: u64, bounds: PyRect) -> bool {
+        self.inner.set_bounds(id, bounds.into())
+    }
+
+    pub fn bring_to_front(&self, id: u64) -> bool {
+        self.inner.bring_to_front(id)
+    }
+
+    pub fn set_maximized(&self, id: u64, maximized: bool) -> bool {
+        self.inner.set_maximized(id, maximized)
+    }
+}
+
+fn extract_floating_views(views: &Bound<'_, PyAny>) -> PyResult<Vec<BindingFloatingView>> {
+    Ok(views
+        .extract::<Vec<PyRef<'_, PyFloatingView>>>()?
+        .iter()
+        .map(|view| view.inner.clone())
+        .collect())
+}
+
+#[pyclass(name = "DockNode", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyDockNode {
+    inner: BindingDockNode,
+}
+
+#[pymethods]
+impl PyDockNode {
+    #[staticmethod]
+    pub fn empty() -> Self {
+        Self {
+            inner: BindingDockNode::empty(),
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (panel_ids, active=None))]
+    pub fn tabs(panel_ids: Vec<u64>, active: Option<u64>) -> PyResult<Self> {
+        BindingDockNode::tabs(panel_ids, active)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[staticmethod]
+    pub fn split(
+        axis: &str,
+        fraction: f32,
+        first: PyRef<'_, Self>,
+        second: PyRef<'_, Self>,
+    ) -> PyResult<Self> {
+        BindingDockNode::split(
+            py_axis(axis)?,
+            fraction,
+            first.inner.clone(),
+            second.inner.clone(),
+        )
+        .map(|inner| Self { inner })
+        .map_err(PyValueError::new_err)
+    }
+}
+
+#[pyclass(name = "DockFloatingGroup", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyDockFloatingGroup {
+    inner: BindingDockFloatingGroup,
+}
+
+#[pymethods]
+impl PyDockFloatingGroup {
+    #[new]
+    pub fn new(id: u64, panel_ids: Vec<u64>, active: u64, bounds: PyRect) -> Self {
+        Self {
+            inner: BindingDockFloatingGroup::new(id, panel_ids, active, bounds.into()),
+        }
+    }
+
+    #[getter]
+    pub fn id(&self) -> u64 {
+        self.inner.id
+    }
+
+    #[getter]
+    pub fn panel_ids(&self) -> Vec<u64> {
+        self.inner.panel_ids.clone()
+    }
+
+    #[getter]
+    pub fn active(&self) -> u64 {
+        self.inner.active
+    }
+
+    #[getter]
+    pub fn bounds(&self) -> PyRect {
+        self.inner.bounds.into()
+    }
+}
+
+#[pyclass(name = "DockLayout", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyDockLayout {
+    inner: BindingDockLayout,
+}
+
+#[pymethods]
+impl PyDockLayout {
+    #[new]
+    #[pyo3(signature = (root, floating=None, hidden=None))]
+    pub fn new(
+        root: PyRef<'_, PyDockNode>,
+        floating: Option<&Bound<'_, PyAny>>,
+        hidden: Option<Vec<u64>>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingDockLayout::new(
+                root.inner.clone(),
+                floating
+                    .map(extract_dock_floating_groups)
+                    .transpose()?
+                    .unwrap_or_default(),
+                hidden.unwrap_or_default(),
+            ),
+        })
+    }
+
+    #[getter]
+    pub fn root(&self) -> PyDockNode {
+        PyDockNode {
+            inner: self.inner.root.clone(),
+        }
+    }
+
+    #[getter]
+    pub fn floating(&self) -> Vec<PyDockFloatingGroup> {
+        self.inner
+            .floating
+            .iter()
+            .cloned()
+            .map(|inner| PyDockFloatingGroup { inner })
+            .collect()
+    }
+
+    #[getter]
+    pub fn hidden(&self) -> Vec<u64> {
+        self.inner.hidden.clone()
+    }
+}
+
+#[pyclass(name = "DockState", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyDockState {
+    inner: BindingDockState,
+}
+
+#[pymethods]
+impl PyDockState {
+    #[new]
+    #[pyo3(signature = (layout=None))]
+    pub fn new(layout: Option<PyRef<'_, PyDockLayout>>) -> PyResult<Self> {
+        layout.map_or_else(
+            || Ok(Self {
+                inner: BindingDockState::empty(),
+            }),
+            |layout| {
+                BindingDockState::new(layout.inner.clone())
+                    .map(|inner| Self { inner })
+                    .map_err(PyValueError::new_err)
+            },
+        )
+    }
+
+    pub fn snapshot(&self) -> PyDockLayout {
+        PyDockLayout {
+            inner: self.inner.snapshot(),
+        }
+    }
+
+    pub fn apply(&self, layout: PyRef<'_, PyDockLayout>) -> PyResult<bool> {
+        self.inner
+            .apply(layout.inner.clone())
+            .map_err(PyValueError::new_err)
+    }
+
+    #[pyo3(signature = (panel, target, zone="center"))]
+    pub fn dock(&self, panel: u64, target: u64, zone: &str) -> PyResult<bool> {
+        self.inner
+            .dock(panel, target, zone)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[pyo3(signature = (panel, zone="center"))]
+    pub fn dock_to_root(&self, panel: u64, zone: &str) -> PyResult<bool> {
+        self.inner
+            .dock_to_root(panel, zone)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn float_panel(&self, panel: u64, bounds: PyRect) -> PyResult<u64> {
+        self.inner
+            .float_panel(panel, bounds.into())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn hide(&self, panel: u64) -> PyResult<bool> {
+        self.inner.hide(panel).map_err(PyValueError::new_err)
+    }
+
+    pub fn show(&self, panel: u64) -> PyResult<bool> {
+        self.inner.show(panel).map_err(PyValueError::new_err)
+    }
+
+    pub fn activate(&self, panel: u64) -> PyResult<bool> {
+        self.inner.activate(panel).map_err(PyValueError::new_err)
+    }
+}
+
+#[pyclass(name = "DockPanelSpec", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyDockPanelSpec {
+    inner: BindingDockPanel,
+}
+
+#[pymethods]
+impl PyDockPanelSpec {
+    #[new]
+    pub fn new(id: u64, title: String, child: PyRef<'_, PyWidget>) -> PyResult<Self> {
+        BindingDockPanel::new(id, title, child.binding_widget()?)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn id(&self) -> u64 {
+        self.inner.id
+    }
+
+    #[getter]
+    pub fn title(&self) -> &str {
+        &self.inner.title
+    }
+}
+
+#[pyclass(name = "ConstraintCase", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyConstraintCase {
+    inner: BindingConstraintCase,
+}
+
+#[pymethods]
+impl PyConstraintCase {
+    #[new]
+    #[pyo3(signature = (
+        child, *, min_width=None, max_width=None, min_height=None, max_height=None,
+        min_aspect_ratio=None, max_aspect_ratio=None, orientation="any"
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        child: PyRef<'_, PyWidget>,
+        min_width: Option<f32>,
+        max_width: Option<f32>,
+        min_height: Option<f32>,
+        max_height: Option<f32>,
+        min_aspect_ratio: Option<f32>,
+        max_aspect_ratio: Option<f32>,
+        orientation: &str,
+    ) -> PyResult<Self> {
+        BindingConstraintCase::new(
+            child.binding_widget()?,
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+            min_aspect_ratio,
+            max_aspect_ratio,
+            orientation,
+        )
+        .map(|inner| Self { inner })
+        .map_err(PyValueError::new_err)
+    }
+}
+
+#[pyclass(name = "ResponsiveSidebarState", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyResponsiveSidebarState {
+    inner: BindingResponsiveSidebarState,
+}
+
+#[pymethods]
+impl PyResponsiveSidebarState {
+    #[new]
+    #[pyo3(signature = (expanded=true, overlay_open=false))]
+    pub fn new(expanded: bool, overlay_open: bool) -> Self {
+        Self {
+            inner: BindingResponsiveSidebarState::new(expanded, overlay_open),
+        }
+    }
+
+    #[getter]
+    pub fn expanded(&self) -> bool {
+        self.inner.expanded()
+    }
+
+    #[getter]
+    pub fn overlay_open(&self) -> bool {
+        self.inner.overlay_open()
+    }
+
+    pub fn set_expanded(&self, expanded: bool) -> bool {
+        self.inner.set_expanded(expanded)
+    }
+
+    pub fn toggle_expanded(&self) -> bool {
+        self.inner.toggle_expanded()
+    }
+
+    pub fn open_overlay(&self) -> bool {
+        self.inner.open_overlay()
+    }
+
+    pub fn close_overlay(&self) -> bool {
+        self.inner.close_overlay()
+    }
+
+    pub fn toggle_overlay(&self) -> bool {
+        self.inner.toggle_overlay()
+    }
+}
+
+#[pyclass(name = "MasterDetailState", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyMasterDetailState {
+    inner: BindingMasterDetailState,
+}
+
+#[pymethods]
+impl PyMasterDetailState {
+    #[new]
+    #[pyo3(signature = (route="master"))]
+    pub fn new(route: &str) -> PyResult<Self> {
+        BindingMasterDetailState::new(route)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn route(&self) -> &'static str {
+        self.inner.route()
+    }
+
+    pub fn set_route(&self, route: &str) -> PyResult<bool> {
+        self.inner.set_route(route).map_err(PyValueError::new_err)
+    }
+
+    pub fn show_master(&self) -> bool {
+        self.inner.show_master()
+    }
+
+    pub fn show_detail(&self) -> bool {
+        self.inner.show_detail()
+    }
+}
+
+#[pyclass(name = "NotificationCenter", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyNotificationCenter {
+    inner: BindingNotificationCenter,
+}
+
+#[pymethods]
+impl PyNotificationCenter {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingNotificationCenter::new(),
+        }
+    }
+
+    #[pyo3(signature = (title, message, duration=Some(5.0), urgency="polite"))]
+    pub fn notify(
+        &self,
+        title: String,
+        message: String,
+        duration: Option<f64>,
+        urgency: &str,
+    ) -> PyResult<u64> {
+        self.inner
+            .notify(title, message, duration, urgency)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn dismiss(&self, id: u64) -> bool {
+        self.inner.dismiss(id)
+    }
+
+    pub fn clear(&self) -> bool {
+        self.inner.clear()
+    }
+
+    #[getter]
+    pub fn size(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+#[pyclass(name = "VirtualListItem", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyVirtualListItem {
+    inner: BindingVirtualListItem,
+}
+
+#[pymethods]
+impl PyVirtualListItem {
+    #[new]
+    pub fn new(key: u64, text: String) -> PyResult<Self> {
+        BindingVirtualListItem::new(key, text)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn key(&self) -> u64 {
+        self.inner.key
+    }
+
+    #[getter]
+    pub fn text(&self) -> &str {
+        &self.inner.text
+    }
+}
+
+#[pyclass(name = "VirtualListModel", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyVirtualListModel {
+    inner: BindingVirtualListModel,
+}
+
+#[pymethods]
+impl PyVirtualListModel {
+    #[new]
+    #[pyo3(signature = (name, items=None))]
+    pub fn new(name: String, items: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        BindingVirtualListModel::new(
+            name,
+            items
+                .map(extract_virtual_list_items)
+                .transpose()?
+                .unwrap_or_default(),
+        )
+        .map(|inner| Self { inner })
+        .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn size(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn append(&self, item: PyRef<'_, PyVirtualListItem>) -> PyResult<bool> {
+        self.inner
+            .append(item.inner.clone())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn prepend(&self, items: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.inner
+            .prepend(extract_virtual_list_items(items)?)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn update(&self, item: PyRef<'_, PyVirtualListItem>) -> PyResult<bool> {
+        self.inner
+            .update(item.inner.clone())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn remove(&self, key: u64) -> PyResult<bool> {
+        self.inner.remove(key).map_err(PyValueError::new_err)
+    }
+
+    pub fn move_to(&self, key: u64, index: usize) -> PyResult<bool> {
+        self.inner
+            .move_to(key, index)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn replace(&self, items: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.inner
+            .replace(extract_virtual_list_items(items)?)
+            .map_err(PyValueError::new_err)
+    }
+}
+
+#[pyclass(name = "CanvasViewport", module = "sui", from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyCanvasViewport {
+    inner: BindingCanvasViewport,
+}
+
+#[pymethods]
+impl PyCanvasViewport {
+    #[new]
+    #[pyo3(signature = (pan_x=0.0, pan_y=0.0, zoom=1.0, rotation=0.0))]
+    pub fn new(pan_x: f32, pan_y: f32, zoom: f32, rotation: f32) -> Self {
+        Self {
+            inner: BindingCanvasViewport::new(Vector::new(pan_x, pan_y), zoom, rotation),
+        }
+    }
+
+    #[getter]
+    pub fn pan_x(&self) -> f32 {
+        self.inner.pan.x
+    }
+
+    #[getter]
+    pub fn pan_y(&self) -> f32 {
+        self.inner.pan.y
+    }
+
+    #[getter]
+    pub fn zoom(&self) -> f32 {
+        self.inner.zoom
+    }
+
+    #[getter]
+    pub fn rotation(&self) -> f32 {
+        self.inner.rotation
+    }
+}
+
+#[pyclass(name = "CanvasStroke", module = "sui", from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyCanvasStroke {
+    inner: BindingCanvasStroke,
+}
+
+#[pymethods]
+impl PyCanvasStroke {
+    #[new]
+    #[pyo3(signature = (color, width=1.0))]
+    pub fn new(color: PyColor, width: f32) -> Self {
+        Self {
+            inner: BindingCanvasStroke::new(color.into(), width),
+        }
+    }
+
+    #[getter]
+    pub fn color(&self) -> PyColor {
+        self.inner.color.into()
+    }
+
+    #[getter]
+    pub fn width(&self) -> f32 {
+        self.inner.width
+    }
+}
+
+#[pyclass(name = "CanvasShape", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyCanvasShape {
+    inner: BindingCanvasShape,
+}
+
+#[pymethods]
+impl PyCanvasShape {
+    #[staticmethod]
+    #[pyo3(signature = (path, fill=None, stroke=None))]
+    pub fn path(
+        path: PyRef<'_, PyPath>,
+        fill: Option<PyColor>,
+        stroke: Option<PyCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasShape::path(
+                path.inner.clone(),
+                fill.map(Into::into),
+                stroke.map(|stroke| stroke.inner),
+            ),
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (rect, fill=None, stroke=None))]
+    pub fn rect(
+        rect: PyRect,
+        fill: Option<PyColor>,
+        stroke: Option<PyCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasShape::rect(
+                rect.into(),
+                fill.map(Into::into),
+                stroke.map(|stroke| stroke.inner),
+            ),
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (center, radius, fill=None, stroke=None))]
+    pub fn circle(
+        center: PyPoint,
+        radius: f32,
+        fill: Option<PyColor>,
+        stroke: Option<PyCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasShape::circle(
+                center.into(),
+                radius,
+                fill.map(Into::into),
+                stroke.map(|stroke| stroke.inner),
+            ),
+        }
+    }
+
+    #[staticmethod]
+    pub fn polyline(points: Vec<PyPoint>, stroke: PyCanvasStroke) -> PyResult<Self> {
+        BindingCanvasShape::polyline(
+            &points.into_iter().map(Into::into).collect::<Vec<_>>(),
+            stroke.inner,
+        )
+        .map(|inner| Self { inner })
+        .map_err(PyValueError::new_err)
+    }
+}
+
+#[pyclass(name = "PixelCanvasExport", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyPixelCanvasExport {
+    inner: BindingPixelCanvasExport,
+}
+
+#[pymethods]
+impl PyPixelCanvasExport {
+    #[getter]
+    pub fn revision(&self) -> u64 {
+        self.inner.revision
+    }
+
+    #[getter]
+    pub fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    #[getter]
+    pub fn width(&self) -> usize {
+        self.inner.width
+    }
+
+    #[getter]
+    pub fn height(&self) -> usize {
+        self.inner.height
+    }
+
+    #[getter]
+    pub fn rgba8(&self, py: Python<'_>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.inner.rgba8).unbind()
+    }
+}
+
+#[pyclass(name = "PixelCanvasState", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyPixelCanvasState {
+    inner: BindingPixelCanvasState,
+}
+
+#[pymethods]
+impl PyPixelCanvasState {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingPixelCanvasState::new(),
+        }
+    }
+
+    #[getter]
+    pub fn tool(&self) -> &'static str {
+        self.inner.tool()
+    }
+
+    #[setter]
+    pub fn set_tool(&self, value: &str) -> PyResult<()> {
+        self.inner.set_tool(value).map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn brush_color(&self) -> PyColor {
+        self.inner.brush_color().into()
+    }
+
+    #[setter]
+    pub fn set_brush_color(&self, value: PyColor) {
+        self.inner.set_brush_color(value.into());
+    }
+
+    #[getter]
+    pub fn brush_size(&self) -> f32 {
+        self.inner.brush_size()
+    }
+
+    #[setter]
+    pub fn set_brush_size(&self, value: f32) {
+        self.inner.set_brush_size(value);
+    }
+
+    #[getter]
+    pub fn brush_opacity(&self) -> f32 {
+        self.inner.brush_opacity()
+    }
+
+    #[setter]
+    pub fn set_brush_opacity(&self, value: f32) {
+        self.inner.set_brush_opacity(value);
+    }
+
+    #[getter]
+    pub fn brush_shape(&self) -> &'static str {
+        self.inner.brush_shape()
+    }
+
+    #[setter]
+    pub fn set_brush_shape(&self, value: &str) -> PyResult<()> {
+        self.inner
+            .set_brush_shape(value)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn blend_mode(&self) -> &'static str {
+        self.inner.blend_mode()
+    }
+
+    #[setter]
+    pub fn set_blend_mode(&self, value: &str) -> PyResult<()> {
+        self.inner
+            .set_blend_mode(value)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn editable(&self) -> bool {
+        self.inner.editable()
+    }
+
+    #[setter]
+    pub fn set_editable(&self, value: bool) {
+        self.inner.set_editable(value);
+    }
+
+    #[getter]
+    pub fn can_undo(&self) -> bool {
+        self.inner.can_undo()
+    }
+
+    #[getter]
+    pub fn can_redo(&self) -> bool {
+        self.inner.can_redo()
+    }
+
+    #[getter]
+    pub fn can_clear(&self) -> bool {
+        self.inner.can_clear()
+    }
+
+    pub fn undo(&self) {
+        self.inner.request_undo();
+    }
+
+    pub fn redo(&self) {
+        self.inner.request_redo();
+    }
+
+    pub fn clear(&self) {
+        self.inner.request_clear();
+    }
+
+    pub fn fit_view(&self) {
+        self.inner.request_fit_view();
+    }
+
+    pub fn actual_size(&self) {
+        self.inner.request_actual_size();
+    }
+
+    pub fn zoom_in(&self) {
+        self.inner.request_zoom_in();
+    }
+
+    pub fn zoom_out(&self) {
+        self.inner.request_zoom_out();
+    }
+
+    pub fn request_export(&self) {
+        self.inner.request_export();
+    }
+
+    pub fn latest_export(&self) -> Option<PyPixelCanvasExport> {
+        self.inner
+            .latest_export()
+            .map(|inner| PyPixelCanvasExport { inner })
+    }
+}
+
+#[pyclass(name = "DragScope", module = "sui", from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyDragScope {
+    inner: BindingDragScope,
+}
+
+#[pymethods]
+impl PyDragScope {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingDragScope::new(),
+        }
+    }
+
+    #[getter]
+    pub fn active(&self) -> bool {
+        self.inner.active()
+    }
+}
+
+fn extract_dock_floating_groups(
+    groups: &Bound<'_, PyAny>,
+) -> PyResult<Vec<BindingDockFloatingGroup>> {
+    Ok(groups
+        .extract::<Vec<PyRef<'_, PyDockFloatingGroup>>>()?
+        .iter()
+        .map(|group| group.inner.clone())
+        .collect())
+}
+
+fn extract_dock_panels(panels: &Bound<'_, PyAny>) -> PyResult<Vec<BindingDockPanel>> {
+    Ok(panels
+        .extract::<Vec<PyRef<'_, PyDockPanelSpec>>>()?
+        .iter()
+        .map(|panel| panel.inner.clone())
+        .collect())
+}
+
+fn extract_constraint_cases(cases: &Bound<'_, PyAny>) -> PyResult<Vec<BindingConstraintCase>> {
+    Ok(cases
+        .extract::<Vec<PyRef<'_, PyConstraintCase>>>()?
+        .iter()
+        .map(|case| case.inner.clone())
+        .collect())
+}
+
+fn extract_virtual_list_items(
+    items: &Bound<'_, PyAny>,
+) -> PyResult<Vec<BindingVirtualListItem>> {
+    Ok(items
+        .extract::<Vec<PyRef<'_, PyVirtualListItem>>>()?
+        .iter()
+        .map(|item| item.inner.clone())
+        .collect())
+}
+
+fn extract_canvas_shapes(shapes: &Bound<'_, PyAny>) -> PyResult<Vec<BindingCanvasShape>> {
+    Ok(shapes
+        .extract::<Vec<PyRef<'_, PyCanvasShape>>>()?
+        .iter()
+        .map(|shape| shape.inner.clone())
+        .collect())
 }
 
 fn optional_uniform_insets(value: Option<f32>) -> Option<sui_crate::Insets> {
@@ -1261,6 +2374,58 @@ pub fn py_side_sheet(
     )))
 }
 
+#[pyfunction(name = "BottomSheet")]
+#[pyo3(signature = (
+    title, body, description=None, shown=None, modal=true, dismiss_on_scrim=true,
+    height=None, header_action=None, actions=None, on_dismiss=None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_bottom_sheet(
+    title: String,
+    body: PyRef<'_, PyWidget>,
+    description: Option<String>,
+    shown: Option<&Bound<'_, PyAny>>,
+    modal: bool,
+    dismiss_on_scrim: bool,
+    height: Option<f32>,
+    header_action: Option<PyRef<'_, PyWidget>>,
+    actions: Option<&Bound<'_, PyAny>>,
+    on_dismiss: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let shown = shown
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(true));
+    let action = on_dismiss.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::bottom_sheet(
+        title,
+        body.binding_widget()?,
+        description,
+        shown,
+        modal,
+        dismiss_on_scrim,
+        height,
+        header_action
+            .as_ref()
+            .map(|widget| widget.binding_widget())
+            .transpose()?,
+        actions
+            .map(extract_binding_widgets)
+            .transpose()?
+            .unwrap_or_default(),
+        action,
+    )))
+}
+
 #[pyfunction(name = "SplitView")]
 #[pyo3(signature = (first, second, axis="horizontal", name=None, ratio=None, min_first=120.0, min_second=120.0, divider_thickness=None, on_change=None))]
 pub fn py_split_view(
@@ -1349,6 +2514,36 @@ pub fn py_floating_stack(
     Ok(PyWidget::from_binding(BindingWidget::floating_stack(
         windows, name,
     )))
+}
+
+#[pyfunction(name = "FloatingWorkspace")]
+#[pyo3(signature = (state, views, name=None))]
+pub fn py_floating_workspace(
+    state: PyRef<'_, PyFloatingWorkspaceState>,
+    views: &Bound<'_, PyAny>,
+    name: Option<String>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::floating_workspace(
+        state.inner.clone(),
+        extract_floating_views(views)?,
+        name,
+    )))
+}
+
+#[pyfunction(name = "DockWorkspace")]
+#[pyo3(signature = (state, panels, name="Dock workspace"))]
+pub fn py_dock_workspace(
+    state: PyRef<'_, PyDockState>,
+    panels: &Bound<'_, PyAny>,
+    name: &str,
+) -> PyResult<PyWidget> {
+    BindingWidget::dock_workspace(
+        state.inner.clone(),
+        extract_dock_panels(panels)?,
+        name,
+    )
+    .map(PyWidget::from_binding)
+    .map_err(PyValueError::new_err)
 }
 
 #[pyfunction(name = "VirtualScrollView")]
@@ -1533,6 +2728,42 @@ pub fn py_rich_text(
     )))
 }
 
+#[pyfunction(name = "RichDocumentView")]
+#[pyo3(signature = (document, on_link=None, on_image=None, on_attachment=None))]
+pub fn py_rich_document_view(
+    document: PyRef<'_, PyRichDocument>,
+    on_link: Option<Py<PyAny>>,
+    on_image: Option<Py<PyAny>>,
+    on_attachment: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let string_action = |callback: Py<PyAny>| {
+        BindingStringAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    };
+    let attachment_action = on_attachment.map(|callback| {
+        BindingIdAction::new(move |id| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (id,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::rich_document(
+        document.inner.clone(),
+        on_link.map(string_action),
+        on_image.map(string_action),
+        attachment_action,
+    )))
+}
+
 #[pyfunction(name = "Image")]
 #[pyo3(signature = (image, label=None, fit="contain", size=None))]
 pub fn py_image(
@@ -1688,6 +2919,504 @@ pub fn py_row(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
         extract_binding_widgets(children)?,
         gap,
     )))
+}
+
+#[pyfunction(name = "Grid")]
+#[pyo3(signature = (children, columns=2, name=None, gap=0.0, column_gap=None, row_gap=None))]
+pub fn py_grid(
+    children: &Bound<'_, PyAny>,
+    columns: usize,
+    name: Option<String>,
+    gap: f32,
+    column_gap: Option<f32>,
+    row_gap: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::grid(
+        columns,
+        extract_binding_widgets(children)?,
+        name,
+        column_gap.unwrap_or(gap),
+        row_gap.unwrap_or(gap),
+    )))
+}
+
+#[pyfunction(name = "AspectRatio")]
+#[pyo3(signature = (child, ratio, fit="contain", horizontal="center", vertical="center"))]
+pub fn py_aspect_ratio(
+    child: PyRef<'_, PyWidget>,
+    ratio: f32,
+    fit: &str,
+    horizontal: &str,
+    vertical: &str,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::aspect_ratio(
+        child.binding_widget()?,
+        ratio,
+        binding_aspect_ratio_fit_from_name(fit)
+            .ok_or_else(|| PyValueError::new_err("fit must be 'contain' or 'cover'"))?,
+        py_alignment(horizontal)?,
+        py_alignment(vertical)?,
+    )))
+}
+
+#[pyfunction(name = "SafeArea")]
+#[pyo3(signature = (
+    child, edges="all", minimum_left=0.0, minimum_top=0.0,
+    minimum_right=0.0, minimum_bottom=0.0
+))]
+pub fn py_safe_area(
+    child: PyRef<'_, PyWidget>,
+    edges: &str,
+    minimum_left: f32,
+    minimum_top: f32,
+    minimum_right: f32,
+    minimum_bottom: f32,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::safe_area(
+        child.binding_widget()?,
+        binding_safe_area_edges_from_name(edges).ok_or_else(|| {
+            PyValueError::new_err("edges must be all, none, horizontal, vertical, or edge names")
+        })?,
+        sui_crate::SafeAreaInsets::new(
+            minimum_left,
+            minimum_top,
+            minimum_right,
+            minimum_bottom,
+        ),
+    )))
+}
+
+#[pyfunction(name = "LayoutTransition")]
+#[pyo3(signature = (child, duration=0.22, easing="ease-in-out"))]
+pub fn py_layout_transition(
+    child: PyRef<'_, PyWidget>,
+    duration: f64,
+    easing: &str,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::layout_transition(
+        child.binding_widget()?,
+        duration,
+        binding_easing_from_name(easing).ok_or_else(|| {
+            PyValueError::new_err("easing must be linear, ease-in, ease-out, or ease-in-out")
+        })?,
+    )))
+}
+
+#[pyfunction(name = "AdaptiveView")]
+#[pyo3(signature = (
+    compact, medium, expanded, medium_breakpoint=640.0,
+    expanded_breakpoint=1024.0, on_class_change=None
+))]
+pub fn py_adaptive_view(
+    compact: PyRef<'_, PyWidget>,
+    medium: PyRef<'_, PyWidget>,
+    expanded: PyRef<'_, PyWidget>,
+    medium_breakpoint: f32,
+    expanded_breakpoint: f32,
+    on_class_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let action = on_class_change.map(|callback| {
+        BindingStringAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::adaptive_view(
+        compact.binding_widget()?,
+        medium.binding_widget()?,
+        expanded.binding_widget()?,
+        medium_breakpoint,
+        expanded_breakpoint,
+        action,
+    )))
+}
+
+#[pyfunction(name = "ConstraintView")]
+pub fn py_constraint_view(
+    cases: &Bound<'_, PyAny>,
+    fallback: PyRef<'_, PyWidget>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::constraint_view(
+        extract_constraint_cases(cases)?,
+        fallback.binding_widget()?,
+    )))
+}
+
+#[pyfunction(name = "ResponsiveSidebar")]
+#[pyo3(signature = (
+    state, sidebar, content, name=None, medium_breakpoint=640.0,
+    expanded_breakpoint=1024.0, rail_width=56.0, overlay_width=320.0,
+    dismiss_on_scrim=true, on_mode_change=None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_responsive_sidebar(
+    state: PyRef<'_, PyResponsiveSidebarState>,
+    sidebar: PyRef<'_, PyWidget>,
+    content: PyRef<'_, PyWidget>,
+    name: Option<String>,
+    medium_breakpoint: f32,
+    expanded_breakpoint: f32,
+    rail_width: f32,
+    overlay_width: f32,
+    dismiss_on_scrim: bool,
+    on_mode_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let action = on_mode_change.map(|callback| {
+        BindingStringAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::responsive_sidebar(
+        state.inner.clone(),
+        sidebar.binding_widget()?,
+        content.binding_widget()?,
+        name,
+        medium_breakpoint,
+        expanded_breakpoint,
+        rail_width,
+        overlay_width,
+        dismiss_on_scrim,
+        action,
+    )))
+}
+
+#[pyfunction(name = "MasterDetail")]
+#[pyo3(signature = (
+    state, master, detail, medium_breakpoint=640.0,
+    expanded_breakpoint=1024.0, master_width=320.0
+))]
+pub fn py_master_detail(
+    state: PyRef<'_, PyMasterDetailState>,
+    master: PyRef<'_, PyWidget>,
+    detail: PyRef<'_, PyWidget>,
+    medium_breakpoint: f32,
+    expanded_breakpoint: f32,
+    master_width: f32,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::master_detail(
+        state.inner.clone(),
+        master.binding_widget()?,
+        detail.binding_widget()?,
+        medium_breakpoint,
+        expanded_breakpoint,
+        master_width,
+    )))
+}
+
+#[pyfunction(name = "OverlayHost")]
+pub fn py_overlay_host(child: PyRef<'_, PyWidget>) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::overlay_host(
+        child.binding_widget()?,
+    )))
+}
+
+#[pyfunction(name = "NotificationHost")]
+#[pyo3(signature = (center, width=340.0))]
+pub fn py_notification_host(
+    center: PyRef<'_, PyNotificationCenter>,
+    width: f32,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::notification_host(
+        center.inner.clone(),
+        width,
+    )))
+}
+
+#[pyfunction(name = "VirtualList")]
+#[pyo3(signature = (
+    name, model, estimated_row_height=32.0, spacing=0.0, padding=None,
+    row_padding=None, overscan_viewports=1.0, cache_capacity=128,
+    selectable=true, transparent=false, stick_to_end=false,
+    overlay_scroll_bars=true, on_change=None, on_near_start=None, on_near_end=None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_virtual_list(
+    name: String,
+    model: PyRef<'_, PyVirtualListModel>,
+    estimated_row_height: f32,
+    spacing: f32,
+    padding: Option<f32>,
+    row_padding: Option<f32>,
+    overscan_viewports: f32,
+    cache_capacity: usize,
+    selectable: bool,
+    transparent: bool,
+    stick_to_end: bool,
+    overlay_scroll_bars: bool,
+    on_change: Option<Py<PyAny>>,
+    on_near_start: Option<Py<PyAny>>,
+    on_near_end: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let id_action = on_change.map(|callback| {
+        BindingIdAction::new(move |key| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (key,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    let action = |callback: Py<PyAny>| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    };
+    Ok(PyWidget::from_binding(BindingWidget::virtual_list(
+        name,
+        model.inner.clone(),
+        estimated_row_height,
+        spacing,
+        optional_uniform_insets(padding),
+        optional_uniform_insets(row_padding),
+        overscan_viewports,
+        cache_capacity,
+        selectable,
+        transparent,
+        stick_to_end,
+        overlay_scroll_bars,
+        id_action,
+        on_near_start.map(action),
+        on_near_end.map(action),
+    )))
+}
+
+#[pyfunction(name = "Canvas")]
+#[pyo3(signature = (name, shapes=None, viewport=None, draw_stroke=None, desired_size=None))]
+pub fn py_canvas(
+    name: String,
+    shapes: Option<&Bound<'_, PyAny>>,
+    viewport: Option<PyCanvasViewport>,
+    draw_stroke: Option<PyCanvasStroke>,
+    desired_size: Option<PySize>,
+) -> PyResult<PyWidget> {
+    let theme = sui_crate::DefaultTheme::default();
+    Ok(PyWidget::from_binding(BindingWidget::canvas(
+        name,
+        viewport
+            .map(|viewport| viewport.inner)
+            .unwrap_or_else(|| BindingCanvasViewport::new(Vector::ZERO, 1.0, 0.0)),
+        shapes
+            .map(extract_canvas_shapes)
+            .transpose()?
+            .unwrap_or_default(),
+        draw_stroke
+            .map(|stroke| stroke.inner)
+            .unwrap_or_else(|| BindingCanvasStroke::new(theme.palette.accent, 2.5)),
+        desired_size
+            .map(Into::into)
+            .unwrap_or_else(|| Size::new(520.0, 360.0)),
+    )))
+}
+
+#[pyfunction(name = "CanvasRuler")]
+#[pyo3(signature = (
+    axis, name, document_size, viewport=None, viewport_size=None, extent=None
+))]
+pub fn py_canvas_ruler(
+    axis: &str,
+    name: String,
+    document_size: PySize,
+    viewport: Option<PyCanvasViewport>,
+    viewport_size: Option<PySize>,
+    extent: Option<f32>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::canvas_ruler(
+        py_axis(axis)?,
+        name,
+        document_size.into(),
+        viewport
+            .map(|viewport| viewport.inner)
+            .unwrap_or_else(|| BindingCanvasViewport::new(Vector::ZERO, 1.0, 0.0)),
+        viewport_size
+            .map(Into::into)
+            .unwrap_or_else(|| Size::new(520.0, 360.0)),
+        extent,
+    )))
+}
+
+#[pyfunction(name = "PixelCanvas")]
+#[pyo3(signature = (
+    state, name, width, height, paper_color=None, desired_size=None,
+    viewport=None, fit_on_first_layout=false, pixels=None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_pixel_canvas(
+    state: PyRef<'_, PyPixelCanvasState>,
+    name: String,
+    width: usize,
+    height: usize,
+    paper_color: Option<PyColor>,
+    desired_size: Option<PySize>,
+    viewport: Option<PyCanvasViewport>,
+    fit_on_first_layout: bool,
+    pixels: Option<Vec<PyColor>>,
+) -> PyResult<PyWidget> {
+    BindingWidget::pixel_canvas(
+        state.inner.clone(),
+        name,
+        width,
+        height,
+        paper_color.map(Into::into),
+        desired_size
+            .map(Into::into)
+            .unwrap_or_else(|| Size::new(520.0, 360.0)),
+        viewport
+            .map(|viewport| viewport.inner)
+            .unwrap_or_else(|| BindingCanvasViewport::new(Vector::ZERO, 14.0, 0.0)),
+        fit_on_first_layout,
+        pixels
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+    )
+    .map(PyWidget::from_binding)
+    .map_err(PyValueError::new_err)
+}
+
+#[pyfunction(name = "DragDropHost")]
+#[pyo3(signature = (
+    scope, child, on_external_hover=None, on_external_drop=None, on_external_cancel=None
+))]
+pub fn py_drag_drop_host(
+    scope: PyRef<'_, PyDragScope>,
+    child: PyRef<'_, PyWidget>,
+    on_external_hover: Option<Py<PyAny>>,
+    on_external_drop: Option<Py<PyAny>>,
+    on_external_cancel: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let hover = on_external_hover.map(|callback| {
+        BindingStringsAction::new(move |paths| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (paths,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    let drop = on_external_drop.map(|callback| {
+        BindingStringAction::new(move |path| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (path,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    let cancel = on_external_cancel.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::drag_drop_host(
+        scope.inner.clone(),
+        child.binding_widget()?,
+        hover,
+        drop,
+        cancel,
+    )))
+}
+
+#[pyfunction(name = "Draggable")]
+#[pyo3(signature = (
+    scope, child, payload, effect="move", preview_label=None, threshold=4.0,
+    on_start=None, on_end=None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_draggable(
+    scope: PyRef<'_, PyDragScope>,
+    child: PyRef<'_, PyWidget>,
+    payload: String,
+    effect: &str,
+    preview_label: Option<String>,
+    threshold: f32,
+    on_start: Option<Py<PyAny>>,
+    on_end: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let action = |callback: Py<PyAny>| {
+        BindingStringAction::new(move |payload| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (payload,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    };
+    BindingWidget::draggable(
+        scope.inner.clone(),
+        child.binding_widget()?,
+        payload,
+        effect,
+        preview_label,
+        threshold,
+        on_start.map(action),
+        on_end.map(action),
+    )
+    .map(PyWidget::from_binding)
+    .map_err(PyValueError::new_err)
+}
+
+#[pyfunction(name = "DropTarget")]
+#[pyo3(signature = (scope, child, effect="copy", on_drop=None, on_hover_change=None))]
+pub fn py_drop_target(
+    scope: PyRef<'_, PyDragScope>,
+    child: PyRef<'_, PyWidget>,
+    effect: &str,
+    on_drop: Option<Py<PyAny>>,
+    on_hover_change: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let drop = on_drop.map(|callback| {
+        BindingStringAction::new(move |payload| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (payload,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    let hover = on_hover_change.map(|callback| {
+        BindingBoolAction::new(move |hovered| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (hovered,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    BindingWidget::drop_target(
+        scope.inner.clone(),
+        child.binding_widget()?,
+        effect,
+        drop,
+        hover,
+    )
+    .map(PyWidget::from_binding)
+    .map_err(PyValueError::new_err)
 }
 
 #[pyfunction(name = "ScrollView")]
@@ -1853,6 +3582,39 @@ pub fn py_dialog(
         binding_text_from_py(title)?,
         content.binding_widget()?,
         shown,
+    )))
+}
+
+#[pyfunction(name = "CommandPalette")]
+#[pyo3(signature = (name, content, description=None, shown=None, max_width=None, on_dismiss=None))]
+pub fn py_command_palette(
+    name: String,
+    content: PyRef<'_, PyWidget>,
+    description: Option<String>,
+    shown: Option<&Bound<'_, PyAny>>,
+    max_width: Option<f32>,
+    on_dismiss: Option<Py<PyAny>>,
+) -> PyResult<PyWidget> {
+    let action = on_dismiss.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::command_palette(
+        name,
+        content.binding_widget()?,
+        description,
+        shown
+            .map(binding_bool_from_py)
+            .transpose()?
+            .unwrap_or(BindingBool::Static(true)),
+        max_width,
+        action,
     )))
 }
 
@@ -2311,4 +4073,289 @@ pub fn py_color_picker(
         show_alpha,
         compact,
     )))
+}
+
+#[pyfunction(name = "SimpleColorPicker")]
+#[pyo3(signature = (name, color=None, mode="hsv", on_change=None, show_alpha=true, compact=false))]
+pub fn py_simple_color_picker(
+    name: String,
+    color: Option<PyColor>,
+    mode: &str,
+    on_change: Option<Py<PyAny>>,
+    show_alpha: bool,
+    compact: bool,
+) -> PyResult<PyWidget> {
+    let mode = binding_simple_color_picker_mode_from_name(mode)
+        .ok_or_else(|| PyValueError::new_err("mode must be 'hsl', 'hsv', or 'rgb'"))?;
+    let action = on_change.map(|callback| {
+        BindingColorAction::new(move |color| {
+            Python::attach(|py| {
+                let color = Py::new(py, PyColor::from(color))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call1(py, (color,))
+                    .map(|_| ())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::simple_color_picker(
+        name,
+        color.map(Into::into),
+        mode,
+        action,
+        show_alpha,
+        compact,
+    )))
+}
+
+/// Register generated descriptors, legacy constructors, and idiomatic factories.
+pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyTextSpan>()?;
+    m.add_class::<PyStatusBarSegment>()?;
+    m.add_class::<PySegmentedControlItem>()?;
+    m.add_class::<PyTableColumn>()?;
+    m.add_class::<PyTableRow>()?;
+    m.add_function(wrap_pyfunction!(py_label, m)?)?;
+    m.add_function(wrap_pyfunction!(py_button, m)?)?;
+    m.add_function(wrap_pyfunction!(py_icon, m)?)?;
+    m.add_function(wrap_pyfunction!(py_icon_button, m)?)?;
+    m.add_function(wrap_pyfunction!(py_link, m)?)?;
+    m.add_function(wrap_pyfunction!(py_checkbox, m)?)?;
+    m.add_function(wrap_pyfunction!(py_switch, m)?)?;
+    m.add_function(wrap_pyfunction!(py_radio_button, m)?)?;
+    m.add_function(wrap_pyfunction!(py_radio_group, m)?)?;
+    m.add_function(wrap_pyfunction!(py_segmented_control, m)?)?;
+    m.add_function(wrap_pyfunction!(py_breadcrumb, m)?)?;
+    m.add_function(wrap_pyfunction!(py_path_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_list_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_table, m)?)?;
+    m.add_function(wrap_pyfunction!(py_data_grid, m)?)?;
+    m.add_function(wrap_pyfunction!(py_slider, m)?)?;
+    m.add_function(wrap_pyfunction!(py_number_input, m)?)?;
+    m.add_function(wrap_pyfunction!(py_select, m)?)?;
+    m.add_function(wrap_pyfunction!(py_progress_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_signal_meter, m)?)?;
+    m.add_function(wrap_pyfunction!(py_status_badge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_status_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_detail_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_busy_indicator, m)?)?;
+    m.add_function(wrap_pyfunction!(py_text_input, m)?)?;
+    m.add_function(wrap_pyfunction!(py_text_area, m)?)?;
+    m.add_function(wrap_pyfunction!(py_rich_text, m)?)?;
+    m.add_class::<PyRichDocument>()?;
+    m.add_class::<PyRichDocumentUpdate>()?;
+    m.add_function(wrap_pyfunction!(py_rich_document_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_image, m)?)?;
+    m.add_function(wrap_pyfunction!(py_color_swatch, m)?)?;
+    m.add_function(wrap_pyfunction!(py_separator, m)?)?;
+    m.add_function(wrap_pyfunction!(py_empty_state, m)?)?;
+    m.add_function(wrap_pyfunction!(py_surface, m)?)?;
+    m.add_function(wrap_pyfunction!(py_toolbar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_column, m)?)?;
+    m.add_function(wrap_pyfunction!(py_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_grid, m)?)?;
+    m.add_function(wrap_pyfunction!(py_aspect_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(py_safe_area, m)?)?;
+    m.add_function(wrap_pyfunction!(py_layout_transition, m)?)?;
+    m.add_function(wrap_pyfunction!(py_adaptive_view, m)?)?;
+    m.add_class::<PyConstraintCase>()?;
+    m.add_function(wrap_pyfunction!(py_constraint_view, m)?)?;
+    m.add_class::<PyResponsiveSidebarState>()?;
+    m.add_function(wrap_pyfunction!(py_responsive_sidebar, m)?)?;
+    m.add_class::<PyMasterDetailState>()?;
+    m.add_function(wrap_pyfunction!(py_master_detail, m)?)?;
+    m.add_function(wrap_pyfunction!(py_overlay_host, m)?)?;
+    m.add_class::<PyNotificationCenter>()?;
+    m.add_function(wrap_pyfunction!(py_notification_host, m)?)?;
+    m.add_class::<PyVirtualListItem>()?;
+    m.add_class::<PyVirtualListModel>()?;
+    m.add_class::<PyCanvasViewport>()?;
+    m.add_class::<PyCanvasStroke>()?;
+    m.add_class::<PyCanvasShape>()?;
+    m.add_function(wrap_pyfunction!(py_canvas, m)?)?;
+    m.add_function(wrap_pyfunction!(py_canvas_ruler, m)?)?;
+    m.add_class::<PyPixelCanvasExport>()?;
+    m.add_class::<PyPixelCanvasState>()?;
+    m.add_function(wrap_pyfunction!(py_pixel_canvas, m)?)?;
+    m.add_class::<PyDragScope>()?;
+    m.add_function(wrap_pyfunction!(py_drag_drop_host, m)?)?;
+    m.add_function(wrap_pyfunction!(py_draggable, m)?)?;
+    m.add_function(wrap_pyfunction!(py_drop_target, m)?)?;
+    m.add_function(wrap_pyfunction!(py_virtual_list, m)?)?;
+    m.add_function(wrap_pyfunction!(py_scroll_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_external_surface, m)?)?;
+    m.add_class::<PyTreeItem>()?;
+    m.add_function(wrap_pyfunction!(py_tree_view, m)?)?;
+    m.add_class::<PyLayerListItem>()?;
+    m.add_function(wrap_pyfunction!(py_layer_list, m)?)?;
+    m.add_class::<PyMenuItem>()?;
+    m.add_class::<PyToolPaletteItem>()?;
+    m.add_class::<PyColorPaletteSwatch>()?;
+    m.add_function(wrap_pyfunction!(py_menu, m)?)?;
+    m.add_function(wrap_pyfunction!(py_context_menu, m)?)?;
+    m.add_function(wrap_pyfunction!(py_tab_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_tabs, m)?)?;
+    m.add_function(wrap_pyfunction!(py_dialog, m)?)?;
+    m.add_function(wrap_pyfunction!(py_command_palette, m)?)?;
+    m.add_function(wrap_pyfunction!(py_padding, m)?)?;
+    m.add_function(wrap_pyfunction!(py_align, m)?)?;
+    m.add_function(wrap_pyfunction!(py_background, m)?)?;
+    m.add_function(wrap_pyfunction!(py_sized_box, m)?)?;
+    m.add_function(wrap_pyfunction!(py_stack, m)?)?;
+    m.add_function(wrap_pyfunction!(py_semantic_region, m)?)?;
+    m.add_function(wrap_pyfunction!(py_form_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_field_group, m)?)?;
+    m.add_function(wrap_pyfunction!(py_form_section, m)?)?;
+    m.add_function(wrap_pyfunction!(py_panel_section, m)?)?;
+    m.add_function(wrap_pyfunction!(py_dock_panel, m)?)?;
+    m.add_function(wrap_pyfunction!(py_status_bar_host, m)?)?;
+    m.add_function(wrap_pyfunction!(py_tooltip, m)?)?;
+    m.add_function(wrap_pyfunction!(py_popover, m)?)?;
+    m.add_function(wrap_pyfunction!(py_tool_palette, m)?)?;
+    m.add_function(wrap_pyfunction!(py_preset_strip, m)?)?;
+    m.add_function(wrap_pyfunction!(py_browser_tab_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(py_color_palette, m)?)?;
+    m.add_function(wrap_pyfunction!(py_color_picker, m)?)?;
+    m.add_function(wrap_pyfunction!(py_simple_color_picker, m)?)?;
+    m.add_class::<PyBrushPreviewSpec>()?;
+    m.add_function(wrap_pyfunction!(py_password_input, m)?)?;
+    m.add_function(wrap_pyfunction!(py_datetime_input, m)?)?;
+    m.add_function(wrap_pyfunction!(py_action_card, m)?)?;
+    m.add_function(wrap_pyfunction!(py_brush_preview, m)?)?;
+    m.add_function(wrap_pyfunction!(py_command_group, m)?)?;
+    m.add_function(wrap_pyfunction!(py_coverage_dots, m)?)?;
+    m.add_function(wrap_pyfunction!(py_dock, m)?)?;
+    m.add_function(wrap_pyfunction!(py_fixed_pane_split, m)?)?;
+    m.add_function(wrap_pyfunction!(py_framed_field, m)?)?;
+    m.add_function(wrap_pyfunction!(py_measured_bottom_dock, m)?)?;
+    m.add_function(wrap_pyfunction!(py_placement_badge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_property_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_section_label, m)?)?;
+    m.add_function(wrap_pyfunction!(py_side_sheet, m)?)?;
+    m.add_function(wrap_pyfunction!(py_bottom_sheet, m)?)?;
+    m.add_function(wrap_pyfunction!(py_split_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_switch_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_trailing_slot_row, m)?)?;
+    m.add_class::<PyFloatingStackWindow>()?;
+    m.add_class::<PyFloatingView>()?;
+    m.add_class::<PyFloatingViewSnapshot>()?;
+    m.add_class::<PyFloatingWorkspaceState>()?;
+    m.add_function(wrap_pyfunction!(py_floating_workspace, m)?)?;
+    m.add_class::<PyDockNode>()?;
+    m.add_class::<PyDockFloatingGroup>()?;
+    m.add_class::<PyDockLayout>()?;
+    m.add_class::<PyDockState>()?;
+    m.add_class::<PyDockPanelSpec>()?;
+    m.add_function(wrap_pyfunction!(py_dock_workspace, m)?)?;
+    m.add_function(wrap_pyfunction!(py_floating_stack, m)?)?;
+    m.add_function(wrap_pyfunction!(py_virtual_scroll_view, m)?)?;
+    m.add_function(wrap_pyfunction!(py_reorderable_list, m)?)?;
+    m.add("label", m.getattr("Label")?)?;
+    m.add("button", m.getattr("Button")?)?;
+    m.add("icon", m.getattr("Icon")?)?;
+    m.add("icon_button", m.getattr("IconButton")?)?;
+    m.add("link", m.getattr("Link")?)?;
+    m.add("checkbox", m.getattr("Checkbox")?)?;
+    m.add("switch", m.getattr("Switch")?)?;
+    m.add("radio_button", m.getattr("RadioButton")?)?;
+    m.add("radio_group", m.getattr("RadioGroup")?)?;
+    m.add("segmented_control", m.getattr("SegmentedControl")?)?;
+    m.add("breadcrumb", m.getattr("Breadcrumb")?)?;
+    m.add("path_bar", m.getattr("PathBar")?)?;
+    m.add("list_view", m.getattr("ListView")?)?;
+    m.add("table", m.getattr("Table")?)?;
+    m.add("data_grid", m.getattr("DataGrid")?)?;
+    m.add("slider", m.getattr("Slider")?)?;
+    m.add("number_input", m.getattr("NumberInput")?)?;
+    m.add("select", m.getattr("Select")?)?;
+    m.add("progress_bar", m.getattr("ProgressBar")?)?;
+    m.add("signal_meter", m.getattr("SignalMeter")?)?;
+    m.add("status_badge", m.getattr("StatusBadge")?)?;
+    m.add("status_bar", m.getattr("StatusBar")?)?;
+    m.add("detail_row", m.getattr("DetailRow")?)?;
+    m.add("busy_indicator", m.getattr("BusyIndicator")?)?;
+    m.add("text_input", m.getattr("TextInput")?)?;
+    m.add("text_area", m.getattr("TextArea")?)?;
+    m.add("rich_text", m.getattr("RichText")?)?;
+    m.add("rich_document_view", m.getattr("RichDocumentView")?)?;
+    m.add("image", m.getattr("Image")?)?;
+    m.add("color_swatch", m.getattr("ColorSwatch")?)?;
+    m.add("separator", m.getattr("Separator")?)?;
+    m.add("empty_state", m.getattr("EmptyState")?)?;
+    m.add("surface", m.getattr("Surface")?)?;
+    m.add("toolbar", m.getattr("Toolbar")?)?;
+    m.add("column", m.getattr("Column")?)?;
+    m.add("row", m.getattr("Row")?)?;
+    m.add("grid", m.getattr("Grid")?)?;
+    m.add("aspect_ratio", m.getattr("AspectRatio")?)?;
+    m.add("safe_area", m.getattr("SafeArea")?)?;
+    m.add("layout_transition", m.getattr("LayoutTransition")?)?;
+    m.add("adaptive_view", m.getattr("AdaptiveView")?)?;
+    m.add("constraint_view", m.getattr("ConstraintView")?)?;
+    m.add("responsive_sidebar", m.getattr("ResponsiveSidebar")?)?;
+    m.add("master_detail", m.getattr("MasterDetail")?)?;
+    m.add("overlay_host", m.getattr("OverlayHost")?)?;
+    m.add("notification_host", m.getattr("NotificationHost")?)?;
+    m.add("canvas", m.getattr("Canvas")?)?;
+    m.add("canvas_ruler", m.getattr("CanvasRuler")?)?;
+    m.add("pixel_canvas", m.getattr("PixelCanvas")?)?;
+    m.add("drag_drop_host", m.getattr("DragDropHost")?)?;
+    m.add("draggable", m.getattr("Draggable")?)?;
+    m.add("drop_target", m.getattr("DropTarget")?)?;
+    m.add("virtual_list", m.getattr("VirtualList")?)?;
+    m.add("scroll_view", m.getattr("ScrollView")?)?;
+    m.add("external_surface", m.getattr("ExternalSurface")?)?;
+    m.add("tree_view", m.getattr("TreeView")?)?;
+    m.add("layer_list", m.getattr("LayerList")?)?;
+    m.add("menu", m.getattr("Menu")?)?;
+    m.add("context_menu", m.getattr("ContextMenu")?)?;
+    m.add("tab_bar", m.getattr("TabBar")?)?;
+    m.add("tabs", m.getattr("Tabs")?)?;
+    m.add("dialog", m.getattr("Dialog")?)?;
+    m.add("command_palette", m.getattr("CommandPalette")?)?;
+    m.add("padding", m.getattr("Padding")?)?;
+    m.add("align", m.getattr("Align")?)?;
+    m.add("background", m.getattr("Background")?)?;
+    m.add("sized_box", m.getattr("SizedBox")?)?;
+    m.add("stack", m.getattr("Stack")?)?;
+    m.add("semantic_region", m.getattr("SemanticRegion")?)?;
+    m.add("form_row", m.getattr("FormRow")?)?;
+    m.add("field_group", m.getattr("FieldGroup")?)?;
+    m.add("form_section", m.getattr("FormSection")?)?;
+    m.add("panel_section", m.getattr("PanelSection")?)?;
+    m.add("dock_panel", m.getattr("DockPanel")?)?;
+    m.add("status_bar_host", m.getattr("StatusBarHost")?)?;
+    m.add("tooltip", m.getattr("Tooltip")?)?;
+    m.add("popover", m.getattr("Popover")?)?;
+    m.add("tool_palette", m.getattr("ToolPalette")?)?;
+    m.add("preset_strip", m.getattr("PresetStrip")?)?;
+    m.add("browser_tab_bar", m.getattr("BrowserTabBar")?)?;
+    m.add("color_palette", m.getattr("ColorPalette")?)?;
+    m.add("color_picker", m.getattr("ColorPicker")?)?;
+    m.add("simple_color_picker", m.getattr("SimpleColorPicker")?)?;
+    m.add("password_input", m.getattr("PasswordInput")?)?;
+    m.add("date_time_input", m.getattr("DateTimeInput")?)?;
+    m.add("action_card", m.getattr("ActionCard")?)?;
+    m.add("brush_preview", m.getattr("BrushPreview")?)?;
+    m.add("command_group", m.getattr("CommandGroup")?)?;
+    m.add("coverage_dots", m.getattr("CoverageDots")?)?;
+    m.add("dock", m.getattr("Dock")?)?;
+    m.add("fixed_pane_split", m.getattr("FixedPaneSplit")?)?;
+    m.add("framed_field", m.getattr("FramedField")?)?;
+    m.add("measured_bottom_dock", m.getattr("MeasuredBottomDock")?)?;
+    m.add("placement_badge", m.getattr("PlacementBadge")?)?;
+    m.add("property_row", m.getattr("PropertyRow")?)?;
+    m.add("section_label", m.getattr("SectionLabel")?)?;
+    m.add("side_sheet", m.getattr("SideSheet")?)?;
+    m.add("bottom_sheet", m.getattr("BottomSheet")?)?;
+    m.add("split_view", m.getattr("SplitView")?)?;
+    m.add("switch_view", m.getattr("SwitchView")?)?;
+    m.add("trailing_slot_row", m.getattr("TrailingSlotRow")?)?;
+    m.add("floating_workspace", m.getattr("FloatingWorkspace")?)?;
+    m.add("dock_workspace", m.getattr("DockWorkspace")?)?;
+    m.add("floating_stack", m.getattr("FloatingStack")?)?;
+    m.add("virtual_scroll_view", m.getattr("VirtualScrollView")?)?;
+    m.add("reorderable_list", m.getattr("ReorderableList")?)?;
+    Ok(())
 }

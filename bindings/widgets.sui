@@ -5,24 +5,24 @@
 # backed by a purpose-built adapter, `equivalent` names the portable binding
 # replacement, and `rust-only` is reserved for Rust-native contracts.
 rust-widget ActionCard manual-wrapper ActionCard
-rust-widget AdaptiveView rust-only
+rust-widget AdaptiveView bound AdaptiveView
 rust-widget Align bound Align
-rust-widget AspectRatio rust-only
+rust-widget AspectRatio bound AspectRatio
 rust-widget Background bound Background
-rust-widget BottomSheet rust-only
+rust-widget BottomSheet manual-wrapper BottomSheet
 rust-widget Breadcrumb bound Breadcrumb
 rust-widget BrowserTabBar bound BrowserTabBar
 rust-widget BrushPreview manual-wrapper BrushPreview
 rust-widget Button bound Button
-rust-widget Canvas rust-only
-rust-widget CanvasRuler rust-only
+rust-widget Canvas bound Canvas
+rust-widget CanvasRuler bound CanvasRuler
 rust-widget Checkbox bound Checkbox
 rust-widget ColorPalette bound ColorPalette
 rust-widget ColorPicker bound ColorPicker
 rust-widget ColorSwatch bound ColorSwatch
-rust-widget CommandPalette rust-only
+rust-widget CommandPalette manual-wrapper CommandPalette
 rust-widget CommandGroup bound CommandGroup
-rust-widget ConstraintView rust-only
+rust-widget ConstraintView manual-wrapper ConstraintView
 rust-widget ContextMenu bound ContextMenu
 rust-widget CoverageDots bound CoverageDots
 rust-widget DateTimeInput manual-wrapper DateTimeInput
@@ -30,37 +30,38 @@ rust-widget DetailRow bound DetailRow
 rust-widget Dialog bound Dialog
 rust-widget Dock bound Dock
 rust-widget DockPanel bound DockPanel
-rust-widget DragDropHost rust-only
-rust-widget Draggable rust-only
-rust-widget DropTarget rust-only
+rust-widget DockWorkspace manual-wrapper DockWorkspace
+rust-widget DragDropHost manual-wrapper DragDropHost
+rust-widget Draggable manual-wrapper Draggable
+rust-widget DropTarget manual-wrapper DropTarget
 rust-widget EmptyState bound EmptyState
 rust-widget FieldGroup bound FieldGroup
 rust-widget FixedPaneSplit bound FixedPaneSplit
 rust-widget Flex equivalent Column Row
 rust-widget FloatingStack bound FloatingStack
-rust-widget FloatingWorkspace rust-only
+rust-widget FloatingWorkspace manual-wrapper FloatingWorkspace
 rust-widget FormRow bound FormRow
 rust-widget FormSection bound FormSection
 rust-widget FramedField bound FramedField
-rust-widget Grid rust-only
+rust-widget Grid bound Grid
 rust-widget Icon bound Icon
 rust-widget IconButton bound IconButton
 rust-widget Image bound Image
 rust-widget Label bound Label
 rust-widget LayerList bound LayerList
-rust-widget LayoutTransition rust-only
+rust-widget LayoutTransition bound LayoutTransition
 rust-widget Link bound Link
 rust-widget ListView bound ListView
-rust-widget MasterDetail rust-only
+rust-widget MasterDetail manual-wrapper MasterDetail
 rust-widget MeasuredBottomDock bound MeasuredBottomDock
 rust-widget Menu bound Menu
 rust-widget NumberInput bound NumberInput
-rust-widget NotificationHost rust-only
-rust-widget OverlayHost rust-only
+rust-widget NotificationHost manual-wrapper NotificationHost
+rust-widget OverlayHost bound OverlayHost
 rust-widget Padding bound Padding
 rust-widget PanelSection bound PanelSection
 rust-widget PasswordInput manual-wrapper PasswordInput
-rust-widget PixelCanvas rust-only
+rust-widget PixelCanvas manual-wrapper PixelCanvas
 rust-widget PlacementBadge bound PlacementBadge
 rust-widget Popover bound Popover
 rust-widget PresetStrip bound PresetStrip
@@ -68,14 +69,14 @@ rust-widget ProgressBar bound ProgressBar
 rust-widget PropertyRow bound PropertyRow
 rust-widget RadioButton bound RadioButton
 rust-widget RadioGroup bound RadioGroup
-rust-widget RebuildOnChange rust-only
-rust-widget RebuildOnConstraints rust-only
+rust-widget RebuildOnChange equivalent SwitchView
+rust-widget RebuildOnConstraints equivalent ConstraintView
 rust-widget ReorderableList manual-wrapper ReorderableList
-rust-widget ResponsiveSidebar rust-only
-rust-widget RichDocumentView rust-only
+rust-widget ResponsiveSidebar manual-wrapper ResponsiveSidebar
+rust-widget RichDocumentView manual-wrapper RichDocumentView
 rust-widget RichText bound RichText
-rust-widget SafeArea rust-only
-rust-widget ScrollBar rust-only
+rust-widget SafeArea bound SafeArea
+rust-widget ScrollBar equivalent ScrollView
 rust-widget ScrollView bound ScrollView
 rust-widget SectionLabel bound SectionLabel
 rust-widget SegmentedControl bound SegmentedControl
@@ -84,6 +85,7 @@ rust-widget SemanticRegion bound SemanticRegion
 rust-widget Separator bound Separator
 rust-widget SideSheet manual-wrapper SideSheet
 rust-widget SignalMeter bound SignalMeter
+rust-widget SimpleColorPicker bound SimpleColorPicker
 rust-widget SizedBox bound SizedBox
 rust-widget Slider bound Slider
 rust-widget Spinner equivalent BusyIndicator
@@ -106,7 +108,7 @@ rust-widget Toolbar bound Toolbar
 rust-widget Tooltip bound Tooltip
 rust-widget TrailingSlotRow bound TrailingSlotRow
 rust-widget TreeView bound TreeView
-rust-widget VirtualList rust-only
+rust-widget VirtualList manual-wrapper VirtualList
 rust-widget VirtualScrollView bound VirtualScrollView
 rust-widget VirtualTable equivalent Table
 
@@ -425,6 +427,48 @@ widget RichText
   compat
 end
 
+descriptor RichDocument
+  core_descriptor BindingRichDocument
+  python class
+  js class
+  ts class
+    constructor(markdown?: string);
+    readonly revision: string;
+    readonly markdown: string;
+    setMarkdown(markdown: string): boolean;
+    appendMarkdown(fragment: string): boolean;
+    lastUpdate(): RichDocumentUpdate;
+    appendAttachment(name: string, options?: RichAttachmentOptions): string;
+    appendExtension(renderer: string, title: string, options?: RichExtensionOptions): string;
+  endts
+  docs RichDocument
+end
+
+descriptor RichDocumentUpdate
+  core_descriptor BindingRichDocumentUpdate
+  python class
+  js class
+  ts class
+    readonly revision: string;
+    readonly reparsedStart: number;
+    readonly reparsedEnd: number;
+    readonly reusedPrefixBlocks: number;
+    readonly changedBlockIds: string[];
+    readonly appendOnly: boolean;
+  endts
+  docs RichDocumentUpdate
+end
+
+widget RichDocumentView
+  core_kind RichDocument
+  core_constructor rich_document
+  python function py_rich_document_view
+  js function js_rich_document_view
+  ts function RichDocumentView(document: RichDocument, onLink?: (destination: string) => void, onImage?: (source: string) => void, onAttachment?: (blockId: string) => void): Widget;
+  docs RichDocumentView
+  compat
+end
+
 widget Image
   core_kind Image
   core_constructor image
@@ -498,6 +542,353 @@ layout Row
   js function js_row
   ts function Row(children: Widget[], gap?: number): Widget;
   docs Row
+end
+
+layout Grid
+  core_kind Grid
+  core_constructor grid
+  python function py_grid
+  js function js_grid
+  ts function Grid(children: Widget[], columns?: number, name?: string, gap?: number, columnGap?: number, rowGap?: number): Widget;
+  docs Grid
+  compat
+end
+
+layout AspectRatio
+  core_kind AspectRatio
+  core_constructor aspect_ratio
+  python function py_aspect_ratio
+  js function js_aspect_ratio
+  ts function AspectRatio(child: Widget, ratio: number, fit?: "contain" | "cover", horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+  docs AspectRatio
+  compat
+end
+
+layout SafeArea
+  core_kind SafeArea
+  core_constructor safe_area
+  python function py_safe_area
+  js function js_safe_area
+  ts function SafeArea(child: Widget, edges?: string, minimumLeft?: number, minimumTop?: number, minimumRight?: number, minimumBottom?: number): Widget;
+  docs SafeArea
+  compat
+end
+
+layout LayoutTransition
+  core_kind LayoutTransition
+  core_constructor layout_transition
+  python function py_layout_transition
+  js function js_layout_transition
+  ts function LayoutTransition(child: Widget, duration?: number, easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out"): Widget;
+  docs LayoutTransition
+  compat
+end
+
+widget AdaptiveView
+  core_kind AdaptiveView
+  core_constructor adaptive_view
+  python function py_adaptive_view
+  js function js_adaptive_view
+  ts function AdaptiveView(compact: Widget, medium: Widget, expanded: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, onClassChange?: (value: "compact" | "medium" | "expanded") => void): Widget;
+  docs AdaptiveView
+  compat
+end
+
+descriptor ConstraintCase
+  core_descriptor BindingConstraintCase
+  python class
+  js class
+  ts class
+    constructor(child: Widget, minWidth?: number, maxWidth?: number, minHeight?: number, maxHeight?: number, minAspectRatio?: number, maxAspectRatio?: number, orientation?: "any" | "portrait" | "landscape");
+  endts
+  docs ConstraintCase
+end
+
+widget ConstraintView
+  core_kind ConstraintView
+  core_constructor constraint_view
+  python function py_constraint_view
+  js function js_constraint_view
+  ts function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
+  docs ConstraintView
+  compat
+end
+
+descriptor ResponsiveSidebarState
+  core_descriptor BindingResponsiveSidebarState
+  python class
+  js class
+  ts class
+    constructor(expanded?: boolean, overlayOpen?: boolean);
+    readonly expanded: boolean;
+    readonly overlayOpen: boolean;
+    setExpanded(expanded: boolean): boolean;
+    toggleExpanded(): boolean;
+    openOverlay(): boolean;
+    closeOverlay(): boolean;
+    toggleOverlay(): boolean;
+  endts
+  docs ResponsiveSidebarState
+end
+
+widget ResponsiveSidebar
+  core_kind ResponsiveSidebar
+  core_constructor responsive_sidebar
+  python function py_responsive_sidebar
+  js function js_responsive_sidebar
+  ts function ResponsiveSidebar(state: ResponsiveSidebarState, sidebar: Widget, content: Widget, name?: string, mediumBreakpoint?: number, expandedBreakpoint?: number, railWidth?: number, overlayWidth?: number, dismissOnScrim?: boolean, onModeChange?: (mode: "overlay-closed" | "overlay-open" | "rail" | "inline") => void): Widget;
+  docs ResponsiveSidebar
+  compat
+end
+
+descriptor MasterDetailState
+  core_descriptor BindingMasterDetailState
+  python class
+  js class
+  ts class
+    constructor(route?: "master" | "detail");
+    readonly route: "master" | "detail";
+    setRoute(route: "master" | "detail"): boolean;
+    showMaster(): boolean;
+    showDetail(): boolean;
+  endts
+  docs MasterDetailState
+end
+
+widget MasterDetail
+  core_kind MasterDetail
+  core_constructor master_detail
+  python function py_master_detail
+  js function js_master_detail
+  ts function MasterDetail(state: MasterDetailState, master: Widget, detail: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, masterWidth?: number): Widget;
+  docs MasterDetail
+  compat
+end
+
+widget OverlayHost
+  core_kind OverlayHost
+  core_constructor overlay_host
+  python function py_overlay_host
+  js function js_overlay_host
+  ts function OverlayHost(child: Widget): Widget;
+  docs OverlayHost
+  compat
+end
+
+descriptor NotificationCenter
+  core_descriptor BindingNotificationCenter
+  python class
+  js class
+  ts class
+    constructor();
+    notify(title: string, message: string, options?: NotificationOptions): string;
+    dismiss(id: string): boolean;
+    clear(): boolean;
+    readonly size: number;
+  endts
+  docs NotificationCenter
+end
+
+widget NotificationHost
+  core_kind NotificationHost
+  core_constructor notification_host
+  python function py_notification_host
+  js function js_notification_host
+  ts function NotificationHost(center: NotificationCenter, width?: number): Widget;
+  docs NotificationHost
+  compat
+end
+
+descriptor VirtualListItem
+  core_descriptor BindingVirtualListItem
+  python class
+  js class
+  ts class
+    constructor(key: string, text: string);
+    readonly key: string;
+    readonly text: string;
+  endts
+  docs VirtualListItem
+end
+
+descriptor VirtualListModel
+  core_descriptor BindingVirtualListModel
+  python class
+  js class
+  ts class
+    constructor(name: string, items?: VirtualListItem[]);
+    readonly size: number;
+    append(item: VirtualListItem): boolean;
+    prepend(items: VirtualListItem[]): boolean;
+    update(item: VirtualListItem): boolean;
+    remove(key: string): boolean;
+    moveTo(key: string, index: number): boolean;
+    replace(items: VirtualListItem[]): boolean;
+  endts
+  docs VirtualListModel
+end
+
+descriptor CanvasViewport
+  core_descriptor BindingCanvasViewport
+  python class
+  js class
+  ts class
+    constructor(panX?: number, panY?: number, zoom?: number, rotation?: number);
+    readonly panX: number;
+    readonly panY: number;
+    readonly zoom: number;
+    readonly rotation: number;
+  endts
+  docs CanvasViewport
+end
+
+descriptor CanvasStroke
+  core_descriptor BindingCanvasStroke
+  python class
+  js class
+  ts class
+    constructor(color: Color, width?: number);
+    readonly color: Color;
+    readonly width: number;
+  endts
+  docs CanvasStroke
+end
+
+descriptor CanvasShape
+  core_descriptor BindingCanvasShape
+  python class
+  js class
+  ts class
+    static path(path: Path, fill?: Color, stroke?: CanvasStroke): CanvasShape;
+    static rect(rect: Rect, fill?: Color, stroke?: CanvasStroke): CanvasShape;
+    static circle(center: Point, radius: number, fill?: Color, stroke?: CanvasStroke): CanvasShape;
+    static polyline(points: Point[], stroke: CanvasStroke): CanvasShape;
+  endts
+  docs CanvasShape
+end
+
+widget Canvas
+  core_kind Canvas
+  core_constructor canvas
+  python function py_canvas
+  js function js_canvas
+  ts function Canvas(name: string, shapes?: CanvasShape[], viewport?: CanvasViewport, drawStroke?: CanvasStroke, desiredSize?: Size): Widget;
+  docs Canvas
+  compat
+end
+
+widget CanvasRuler
+  core_kind CanvasRuler
+  core_constructor canvas_ruler
+  python function py_canvas_ruler
+  js function js_canvas_ruler
+  ts function CanvasRuler(axis: Axis, name: string, documentSize: Size, viewport?: CanvasViewport, viewportSize?: Size, extent?: number): Widget;
+  docs CanvasRuler
+  compat
+end
+
+descriptor PixelCanvasExport
+  core_descriptor BindingPixelCanvasExport
+  python class
+  js class
+  ts class
+    readonly revision: string;
+    readonly name: string;
+    readonly width: number;
+    readonly height: number;
+    readonly rgba8: Uint8Array;
+  endts
+  docs PixelCanvasExport
+end
+
+descriptor PixelCanvasState
+  core_descriptor BindingPixelCanvasState
+  python class
+  js class
+  ts class
+    constructor();
+    tool: "brush" | "eraser" | "fill" | "pan";
+    brushColor: Color;
+    brushSize: number;
+    brushOpacity: number;
+    brushShape: "square" | "round";
+    blendMode: "normal" | "multiply" | "screen" | "overlay";
+    editable: boolean;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly canClear: boolean;
+    undo(): void;
+    redo(): void;
+    clear(): void;
+    fitView(): void;
+    actualSize(): void;
+    zoomIn(): void;
+    zoomOut(): void;
+    requestExport(): void;
+    latestExport(): PixelCanvasExport | undefined;
+  endts
+  docs PixelCanvasState
+end
+
+widget PixelCanvas
+  core_kind PixelCanvas
+  core_constructor pixel_canvas
+  python function py_pixel_canvas
+  js function js_pixel_canvas
+  ts function PixelCanvas(state: PixelCanvasState, name: string, width: number, height: number, paperColor?: Color, desiredSize?: Size, viewport?: CanvasViewport, fitOnFirstLayout?: boolean, pixels?: Color[]): Widget;
+  docs PixelCanvas
+  compat
+end
+
+descriptor DragScope
+  core_descriptor BindingDragScope
+  python class
+  js class
+  ts class
+    constructor();
+    readonly active: boolean;
+  endts
+  docs DragScope
+end
+
+widget DragDropHost
+  core_kind DragDropHost
+  core_constructor drag_drop_host
+  python function py_drag_drop_host
+  js function js_drag_drop_host
+  ts function DragDropHost(scope: DragScope, child: Widget, onExternalHover?: (paths: string[]) => void, onExternalDrop?: (path: string) => void, onExternalCancel?: () => void): Widget;
+  docs DragDropHost
+  compat
+end
+
+widget Draggable
+  core_kind Draggable
+  core_constructor draggable
+  python function py_draggable
+  js function js_draggable
+  ts function Draggable(scope: DragScope, child: Widget, payload: string, effect?: "copy" | "move" | "link", previewLabel?: string, threshold?: number, onStart?: (payload: string) => void, onEnd?: (payload: string) => void): Widget;
+  docs Draggable
+  compat
+end
+
+widget DropTarget
+  core_kind DropTarget
+  core_constructor drop_target
+  python function py_drop_target
+  js function js_drop_target
+  ts function DropTarget(scope: DragScope, child: Widget, effect?: "none" | "copy" | "move" | "link", onDrop?: (payload: string) => void, onHoverChange?: (hovered: boolean) => void): Widget;
+  docs DropTarget
+  compat
+end
+
+widget VirtualList
+  core_kind VirtualList
+  core_constructor virtual_list
+  python function py_virtual_list
+  js function js_virtual_list
+  ts function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, spacing?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
+  docs VirtualList
+  compat
 end
 
 widget ScrollView
@@ -632,6 +1023,16 @@ widget Dialog
   js function js_dialog
   ts function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
   docs Dialog
+end
+
+widget CommandPalette
+  core_kind CommandPalette
+  core_constructor command_palette
+  python function py_command_palette
+  js function js_command_palette
+  ts function CommandPalette(name: string, content: Widget, description?: string, shown?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
+  docs CommandPalette
+  compat
 end
 
 widget Padding
@@ -805,6 +1206,16 @@ widget ColorPicker
   docs ColorPicker
 end
 
+widget SimpleColorPicker
+  core_kind SimpleColorPicker
+  core_constructor simple_color_picker
+  python function py_simple_color_picker
+  js function js_simple_color_picker
+  ts function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+  docs SimpleColorPicker
+  compat
+end
+
 descriptor BrushPreviewSpec
   core_descriptor BindingBrushPreviewSpec
   python class
@@ -959,6 +1370,16 @@ widget SideSheet
   compat
 end
 
+widget BottomSheet
+  core_kind SideSheet
+  core_constructor bottom_sheet
+  python function py_bottom_sheet
+  js function js_bottom_sheet
+  ts function BottomSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+  docs BottomSheet
+  compat
+end
+
 widget SplitView
   core_kind SplitView
   core_constructor split_view
@@ -997,6 +1418,139 @@ descriptor FloatingStackWindow
     constructor(bounds: Rect, child: Widget);
   endts
   docs FloatingStackWindow
+end
+
+descriptor FloatingView
+  core_descriptor BindingFloatingView
+  python class
+  js class
+  ts class
+    constructor(title: string, bounds: Rect, child: Widget, minSize?: Size, visible?: boolean);
+    readonly title: string;
+    readonly bounds: Rect;
+    readonly minSize: Size;
+    readonly visible: boolean;
+  endts
+  docs FloatingView
+end
+
+descriptor FloatingViewSnapshot
+  core_descriptor BindingFloatingViewSnapshot
+  python class
+  js class
+  ts class
+    readonly id: string;
+    readonly title: string;
+    readonly bounds: Rect;
+    readonly minSize: Size;
+    readonly visible: boolean;
+    readonly maximized: boolean;
+  endts
+  docs FloatingViewSnapshot
+end
+
+descriptor FloatingWorkspaceState
+  core_descriptor BindingFloatingWorkspaceState
+  python class
+  js class
+  ts class
+    constructor();
+    views(): FloatingViewSnapshot[];
+    setVisible(id: string, visible: boolean): boolean;
+    setBounds(id: string, bounds: Rect): boolean;
+    bringToFront(id: string): boolean;
+    setMaximized(id: string, maximized: boolean): boolean;
+  endts
+  docs FloatingWorkspaceState
+end
+
+widget FloatingWorkspace
+  core_kind FloatingWorkspace
+  core_constructor floating_workspace
+  python function py_floating_workspace
+  js function js_floating_workspace
+  ts function FloatingWorkspace(state: FloatingWorkspaceState, views: FloatingView[], name?: string): Widget;
+  docs FloatingWorkspace
+  compat
+end
+
+descriptor DockNode
+  core_descriptor BindingDockNode
+  python class
+  js class
+  ts class
+    static empty(): DockNode;
+    static tabs(panelIds: string[], active?: string): DockNode;
+    static split(axis: Axis, fraction: number, first: DockNode, second: DockNode): DockNode;
+  endts
+  docs DockNode
+end
+
+descriptor DockFloatingGroup
+  core_descriptor BindingDockFloatingGroup
+  python class
+  js class
+  ts class
+    constructor(id: string, panelIds: string[], active: string, bounds: Rect);
+    readonly id: string;
+    readonly panelIds: string[];
+    readonly active: string;
+    readonly bounds: Rect;
+  endts
+  docs DockFloatingGroup
+end
+
+descriptor DockLayout
+  core_descriptor BindingDockLayout
+  python class
+  js class
+  ts class
+    constructor(root: DockNode, floating?: DockFloatingGroup[], hidden?: string[]);
+    readonly root: DockNode;
+    readonly floating: DockFloatingGroup[];
+    readonly hidden: string[];
+  endts
+  docs DockLayout
+end
+
+descriptor DockState
+  core_descriptor BindingDockState
+  python class
+  js class
+  ts class
+    constructor(layout?: DockLayout);
+    snapshot(): DockLayout;
+    apply(layout: DockLayout): boolean;
+    dock(panel: string, target: string, zone?: "center" | "left" | "right" | "top" | "bottom"): boolean;
+    dockToRoot(panel: string, zone?: "center" | "left" | "right" | "top" | "bottom"): boolean;
+    floatPanel(panel: string, bounds: Rect): string;
+    hide(panel: string): boolean;
+    show(panel: string): boolean;
+    activate(panel: string): boolean;
+  endts
+  docs DockState
+end
+
+descriptor DockPanelSpec
+  core_descriptor BindingDockPanel
+  python class
+  js class
+  ts class
+    constructor(id: string, title: string, child: Widget);
+    readonly id: string;
+    readonly title: string;
+  endts
+  docs DockPanel
+end
+
+widget DockWorkspace
+  core_kind DockWorkspace
+  core_constructor dock_workspace
+  python function py_dock_workspace
+  js function js_dock_workspace
+  ts function DockWorkspace(state: DockState, panels: DockPanelSpec[], name?: string): Widget;
+  docs DockWorkspace
+  compat
 end
 
 widget FloatingStack

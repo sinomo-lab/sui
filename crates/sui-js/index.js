@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("path");
+const { decorateApi } = require("./api");
 
 const platform = process.platform;
 const arch = process.arch;
@@ -20,7 +21,7 @@ const errors = [];
 for (const candidate of candidates) {
   const nativePath = path.join(__dirname, candidate);
   try {
-    module.exports = require(nativePath);
+    module.exports = decorateApi(require(nativePath));
     return;
   } catch (error) {
     if (error && error.code !== "MODULE_NOT_FOUND") {

@@ -287,6 +287,7 @@ pub struct RichDocumentView {
     state: RichDocumentViewState,
     registry: RichDocumentRendererRegistry,
     theme: DefaultTheme,
+    theme_reader: Option<Rc<dyn Fn() -> DefaultTheme>>,
     highlighter: Rc<dyn RichSyntaxHighlighter>,
     blocks: HashMap<RichBlockId, RetainedBlock>,
     order: Vec<RichBlockId>,
@@ -307,6 +308,7 @@ impl RichDocumentView {
             state: RichDocumentViewState::new(),
             registry: RichDocumentRendererRegistry::new(),
             theme: DefaultTheme::default(),
+            theme_reader: None,
             highlighter: Rc::new(BasicSyntaxHighlighter),
             blocks: HashMap::new(),
             order: Vec::new(),
@@ -333,6 +335,15 @@ impl RichDocumentView {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Rc::new(theme));
         self
     }
 
@@ -389,6 +400,13 @@ impl RichDocumentView {
     }
 
     fn sync_blocks(&mut self) {
+        if let Some(theme) = self.theme_reader.as_ref().map(|reader| reader())
+            && theme != self.theme
+        {
+            self.theme = theme;
+            self.blocks.clear();
+            self.measured_heights.clear();
+        }
         let blocks = self.model.blocks();
         let order = blocks.iter().map(|block| block.id).collect::<Vec<_>>();
         let live = order.iter().copied().collect::<HashSet<_>>();

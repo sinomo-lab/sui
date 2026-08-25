@@ -5,6 +5,7 @@
 )]
 
 use std::{
+    collections::HashMap,
     fs,
     sync::{Arc, Mutex},
 };
@@ -13,36 +14,52 @@ use ::sui as sui_crate;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use sui_bindings_core::{
-    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec,
-    BindingColorAction, BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent,
-    BindingEvent, BindingFloatingStackWindow, BindingFontHandle, BindingImageFit,
-    BindingImageHandle, BindingImeEvent, BindingKeyState, BindingKeyboardEvent,
-    BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber, BindingNumberAction,
-    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
-    BindingRenderSnapshot, BindingReorderAction, BindingRuntime, BindingScrollAxes,
-    BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingShader,
-    BindingState, BindingStatusBarSegment, BindingStringAction, BindingTableColumn,
-    BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
-    BindingUiHandle, BindingValue, BindingWidget, BindingWindow, BindingWindowEvent,
+    BindingAction, BindingAnimatedValue, BindingAnimationClip, BindingAnimationDocument,
+    BindingAnimationEditor, BindingAnimationKeyframe, BindingAnimationPlayer,
+    BindingAnimationSample, BindingAnimationTimeline, BindingAnimationTrack, BindingAnimationValue,
+    BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingCanvasShape,
+    BindingCanvasStroke, BindingCanvasViewport, BindingColorAction, BindingColorPaletteSwatch,
+    BindingColorSelectAction, BindingCommandDispatchTrace, BindingConstraintCase,
+    BindingCustomEvent, BindingDockFloatingGroup, BindingDockLayout, BindingDockNode,
+    BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent, BindingEventContext,
+    BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
+    BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
+    BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
+    BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
+    BindingLayerListItem, BindingMasterDetailState, BindingMenuItem, BindingMessageAction,
+    BindingModifiers, BindingNotificationCenter, BindingNumber, BindingNumberAction,
+    BindingPixelCanvasExport, BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent,
+    BindingPointerEventKind, BindingPointerKind, BindingRawMouseMotionEvent,
+    BindingReactiveInvalidationTrace, BindingRenderOptions, BindingRenderSnapshot,
+    BindingReorderAction, BindingResponsiveSidebarState, BindingRichDocument,
+    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollDelta,
+    BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode, BindingShader,
+    BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
+    BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
+    BindingTextSpan, BindingTheme, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
+    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
+    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
     BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
-    ExternalTextureFormat, ExternalTextureValidationError, ForeignCallbackFailure,
-    ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx, ForeignPaintCtx,
-    ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks, NativeGraphicsBackend,
-    PaintCommand, PaintCommandBuilder, PaintValidationError, RendererInteropCapabilities,
-    RendererInteropTier, UiTaskQueue, binding_alignment_from_name, binding_icon_glyph_from_name,
-    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
-    binding_semantics_descriptions, binding_semantics_disabled,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
+    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
+    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
+    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
+    binding_aspect_ratio_fit_from_name, binding_easing_from_name, binding_icon_glyph_from_name,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
+    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
-    binding_semantics_role_from_name, binding_semantics_roles, binding_semantics_selected,
-    binding_semantics_values, binding_surface_border_from_name,
+    binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
+    binding_semantics_selected, binding_semantics_values,
+    binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
     binding_tooltip_placement_from_name, resolve_binding_image_slots,
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
-    PathBuilder, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
+    PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
     SemanticsRole, SemanticsValue, ShadowParams, Size, StrokeStyle, TextStyle, ToggleState,
     Transform, Vector, WidgetId, WindowBuilder,
 };
@@ -137,6 +154,16 @@ pub struct JsEvent {
 
 #[napi]
 impl JsEvent {
+    #[napi(factory, js_name = "rawMouseMotion")]
+    pub fn raw_mouse_motion(delta: &JsPoint, modifiers: Option<&JsModifiers>) -> Self {
+        Self {
+            inner: BindingEvent::RawMouseMotion(BindingRawMouseMotionEvent {
+                delta: Vector::new(delta.x as f32, delta.y as f32),
+                modifiers: modifiers.copied().unwrap_or_default().into(),
+            }),
+        }
+    }
+
     #[napi(factory, js_name = "pointer")]
     pub fn pointer_with_modifiers(
         kind: String,
@@ -271,12 +298,19 @@ impl JsEvent {
         scale_factor: Option<f64>,
         raw_dpi: Option<f64>,
         suggested_size: Option<&JsSize>,
+        position: Option<&JsPoint>,
     ) -> Result<Self> {
         let inner = match kind.as_str() {
             "closeRequested" | "close_requested" | "close" => BindingWindowEvent::CloseRequested,
             "resized" | "resize" => BindingWindowEvent::Resized(
                 size.ok_or_else(|| napi_invalid_arg("resized window events require size"))?
                     .to_sui(),
+            ),
+            "moved" | "move" => BindingWindowEvent::Moved(
+                position
+                    .ok_or_else(|| napi_invalid_arg("moved window events require position"))?
+                    .to_owned()
+                    .into(),
             ),
             "scaleFactorChanged" | "scale_factor_changed" => {
                 BindingWindowEvent::ScaleFactorChanged {
@@ -292,7 +326,7 @@ impl JsEvent {
             }
             _ => {
                 return Err(napi_invalid_arg(
-                    "window kind must be 'closeRequested', 'resized', 'scaleFactorChanged', 'focused', 'occluded', or 'redrawRequested'",
+                    "window kind must be 'closeRequested', 'resized', 'moved', 'scaleFactorChanged', 'focused', 'occluded', or 'redrawRequested'",
                 ));
             }
         };
@@ -321,6 +355,7 @@ impl JsEvent {
             BindingEvent::Window(event) => Some(window_event_kind_name(event).to_string()),
             BindingEvent::Custom(_)
             | BindingEvent::Keyboard(_)
+            | BindingEvent::RawMouseMotion(_)
             | BindingEvent::Unsupported { .. } => None,
         }
     }
@@ -337,6 +372,7 @@ impl JsEvent {
     pub fn position(&self) -> Option<JsPoint> {
         match &self.inner {
             BindingEvent::Pointer(event) => Some(event.position.into()),
+            BindingEvent::Window(BindingWindowEvent::Moved(position)) => Some((*position).into()),
             _ => None,
         }
     }
@@ -345,6 +381,10 @@ impl JsEvent {
     pub fn delta(&self) -> Option<JsPoint> {
         match &self.inner {
             BindingEvent::Pointer(event) => Some(JsPoint::new(
+                f64::from(event.delta.x),
+                f64::from(event.delta.y),
+            )),
+            BindingEvent::RawMouseMotion(event) => Some(JsPoint::new(
                 f64::from(event.delta.x),
                 f64::from(event.delta.y),
             )),
@@ -384,6 +424,7 @@ impl JsEvent {
     pub fn modifiers(&self) -> Option<JsModifiers> {
         match &self.inner {
             BindingEvent::Pointer(event) => Some(event.modifiers.into()),
+            BindingEvent::RawMouseMotion(event) => Some(event.modifiers.into()),
             BindingEvent::Keyboard(event) => Some(event.modifiers.into()),
             _ => None,
         }
@@ -593,6 +634,124 @@ impl JsEvent {
 
     fn binding_event(&self) -> BindingEvent {
         self.inner.clone()
+    }
+}
+
+#[napi(js_name = "EventContext")]
+#[derive(Clone)]
+pub struct JsEventContext {
+    inner: Arc<Mutex<BindingEventContext>>,
+}
+
+#[napi]
+impl JsEventContext {
+    #[napi(getter, js_name = "windowId")]
+    pub fn window_id(&self) -> String {
+        recover_lock(&self.inner).window_id.to_string()
+    }
+
+    #[napi(getter, js_name = "widgetId")]
+    pub fn widget_id(&self) -> String {
+        recover_lock(&self.inner).widget_id.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn bounds(&self) -> JsRect {
+        recover_lock(&self.inner).bounds.into()
+    }
+
+    #[napi(getter, js_name = "currentTime")]
+    pub fn current_time(&self) -> f64 {
+        recover_lock(&self.inner).current_time
+    }
+
+    #[napi(getter)]
+    pub fn phase(&self) -> String {
+        recover_lock(&self.inner).phase.to_owned()
+    }
+
+    #[napi(getter)]
+    pub fn focused(&self) -> bool {
+        recover_lock(&self.inner).focused
+    }
+
+    #[napi(getter, js_name = "clipboardText")]
+    pub fn clipboard_text(&self) -> Option<String> {
+        recover_lock(&self.inner).clipboard_text.clone()
+    }
+
+    #[napi(js_name = "setHandled")]
+    pub fn set_handled(&self) {
+        recover_lock(&self.inner).set_handled();
+    }
+
+    #[napi(js_name = "requestFocus")]
+    pub fn request_focus(&self) {
+        recover_lock(&self.inner).request_focus();
+    }
+
+    #[napi(js_name = "clearFocus")]
+    pub fn clear_focus(&self) {
+        recover_lock(&self.inner).clear_focus();
+    }
+
+    #[napi(js_name = "requestMeasure")]
+    pub fn request_measure(&self) {
+        recover_lock(&self.inner).request_measure();
+    }
+
+    #[napi(js_name = "requestArrange")]
+    pub fn request_arrange(&self) {
+        recover_lock(&self.inner).request_arrange();
+    }
+
+    #[napi(js_name = "requestPaint")]
+    pub fn request_paint(&self, rect: Option<&JsRect>) {
+        let mut context = recover_lock(&self.inner);
+        if let Some(rect) = rect {
+            context.request_paint_rect((*rect).into());
+        } else {
+            context.request_paint();
+        }
+    }
+
+    #[napi(js_name = "requestSemantics")]
+    pub fn request_semantics(&self) {
+        recover_lock(&self.inner).request_semantics();
+    }
+
+    #[napi(js_name = "requestAnimationFrame")]
+    pub fn request_animation_frame(&self) {
+        recover_lock(&self.inner).request_animation_frame();
+    }
+
+    #[napi(js_name = "capturePointer")]
+    pub fn capture_pointer(&self, pointer_id: String) -> Result<()> {
+        recover_lock(&self.inner).capture_pointer(parse_u64_string(&pointer_id, "pointer id")?);
+        Ok(())
+    }
+
+    #[napi(js_name = "releasePointer")]
+    pub fn release_pointer(&self, pointer_id: String) -> Result<()> {
+        recover_lock(&self.inner).release_pointer(parse_u64_string(&pointer_id, "pointer id")?);
+        Ok(())
+    }
+
+    #[napi(js_name = "setClipboardText")]
+    pub fn set_clipboard_text(&self, text: String) {
+        recover_lock(&self.inner).set_clipboard_text(text);
+    }
+}
+
+impl JsEventContext {
+    fn new(inner: BindingEventContext) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(inner)),
+        }
+    }
+
+    fn apply(&self, context: &mut ForeignEventCtx<'_>) {
+        recover_lock(&self.inner).apply(context);
     }
 }
 
@@ -943,6 +1102,697 @@ impl From<Color> for JsColor {
             f64::from(value.blue),
             Some(f64::from(value.alpha)),
         )
+    }
+}
+
+fn js_easing(value: Option<&str>) -> Result<sui_crate::Easing> {
+    let value = value.unwrap_or("ease-in-out");
+    binding_easing_from_name(value).ok_or_else(|| {
+        Error::new(
+            Status::InvalidArg,
+            format!("unknown easing '{value}'; expected linear, ease-in, ease-out, or ease-in-out"),
+        )
+    })
+}
+
+#[napi(js_name = "AnimationValue")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsAnimationValue {
+    inner: BindingAnimationValue,
+}
+
+#[napi]
+impl JsAnimationValue {
+    #[napi(factory)]
+    pub fn scalar(value: f64) -> Self {
+        Self {
+            inner: BindingAnimationValue::scalar(value as f32),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn point(value: &JsPoint) -> Self {
+        Self {
+            inner: BindingAnimationValue::point((*value).into()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn vector(value: &JsPoint) -> Self {
+        Self {
+            inner: BindingAnimationValue::vector((*value).into()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn size(value: &JsSize) -> Self {
+        Self {
+            inner: BindingAnimationValue::size((*value).into()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn rect(value: &JsRect) -> Self {
+        Self {
+            inner: BindingAnimationValue::rect((*value).into()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn color(value: &JsColor) -> Self {
+        Self {
+            inner: BindingAnimationValue::color((*value).into()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn transform(value: &JsTransform) -> Self {
+        Self {
+            inner: BindingAnimationValue::transform((*value).into()),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+
+    #[napi(getter, js_name = "scalarValue")]
+    pub fn scalar_value(&self) -> Option<f64> {
+        self.inner.as_scalar().map(f64::from)
+    }
+
+    #[napi(getter, js_name = "pointValue")]
+    pub fn point_value(&self) -> Option<JsPoint> {
+        self.inner.as_point().map(Into::into)
+    }
+
+    #[napi(getter, js_name = "vectorValue")]
+    pub fn vector_value(&self) -> Option<JsPoint> {
+        self.inner
+            .as_vector()
+            .map(|value| JsPoint::new(f64::from(value.x), f64::from(value.y)))
+    }
+
+    #[napi(getter, js_name = "sizeValue")]
+    pub fn size_value(&self) -> Option<JsSize> {
+        self.inner.as_size().map(Into::into)
+    }
+
+    #[napi(getter, js_name = "rectValue")]
+    pub fn rect_value(&self) -> Option<JsRect> {
+        self.inner.as_rect().map(Into::into)
+    }
+
+    #[napi(getter, js_name = "colorValue")]
+    pub fn color_value(&self) -> Option<JsColor> {
+        self.inner.as_color().map(Into::into)
+    }
+
+    #[napi(getter, js_name = "transformValue")]
+    pub fn transform_value(&self) -> Option<JsTransform> {
+        self.inner.as_transform().map(Into::into)
+    }
+}
+
+impl From<BindingAnimationValue> for JsAnimationValue {
+    fn from(inner: BindingAnimationValue) -> Self {
+        Self { inner }
+    }
+}
+
+#[napi(object, js_name = "TransitionOptions")]
+pub struct JsTransitionOptions {
+    #[napi(js_name = "startTime")]
+    pub start_time: Option<f64>,
+    pub easing: Option<String>,
+}
+
+#[napi(js_name = "Transition")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsTransition {
+    inner: BindingTransition,
+}
+
+#[napi]
+impl JsTransition {
+    #[napi(constructor)]
+    pub fn new(
+        start: &JsAnimationValue,
+        end: &JsAnimationValue,
+        duration: f64,
+        options: Option<JsTransitionOptions>,
+    ) -> Result<Self> {
+        let start_time = options
+            .as_ref()
+            .and_then(|options| options.start_time)
+            .unwrap_or(0.0);
+        let easing = js_easing(
+            options
+                .as_ref()
+                .and_then(|options| options.easing.as_deref()),
+        )?;
+        Ok(Self {
+            inner: BindingTransition::new(start.inner, end.inner, start_time, duration, easing),
+        })
+    }
+
+    #[napi]
+    pub fn progress(&self, time: f64) -> f64 {
+        f64::from(self.inner.progress(time))
+    }
+
+    #[napi]
+    pub fn sample(&self, time: f64) -> JsAnimationValue {
+        self.inner.sample(time).into()
+    }
+
+    #[napi(js_name = "isComplete")]
+    pub fn is_complete(&self, time: f64) -> bool {
+        self.inner.is_complete(time)
+    }
+}
+
+#[napi(object, js_name = "SpringOptions")]
+pub struct JsSpringOptions {
+    pub stiffness: Option<f64>,
+    pub damping: Option<f64>,
+}
+
+#[napi(js_name = "Spring")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsSpring {
+    inner: BindingSpring,
+}
+
+#[napi]
+impl JsSpring {
+    #[napi(constructor)]
+    pub fn new(value: f64, options: Option<JsSpringOptions>) -> Self {
+        Self {
+            inner: BindingSpring::new(
+                value as f32,
+                options
+                    .as_ref()
+                    .and_then(|options| options.stiffness)
+                    .unwrap_or(180.0) as f32,
+                options
+                    .as_ref()
+                    .and_then(|options| options.damping)
+                    .unwrap_or(24.0) as f32,
+            ),
+        }
+    }
+
+    #[napi]
+    pub fn step(&mut self, target: f64, delta_seconds: f64) -> f64 {
+        f64::from(self.inner.step(target as f32, delta_seconds))
+    }
+
+    #[napi(getter)]
+    pub fn value(&self) -> f64 {
+        f64::from(self.inner.value())
+    }
+    #[napi(getter)]
+    pub fn velocity(&self) -> f64 {
+        f64::from(self.inner.velocity())
+    }
+    #[napi(getter)]
+    pub fn stiffness(&self) -> f64 {
+        f64::from(self.inner.stiffness())
+    }
+    #[napi(getter)]
+    pub fn damping(&self) -> f64 {
+        f64::from(self.inner.damping())
+    }
+}
+
+#[napi(object, js_name = "AnimatedValueOptions")]
+pub struct JsAnimatedValueOptions {
+    pub duration: Option<f64>,
+    pub easing: Option<String>,
+}
+
+#[napi(js_name = "AnimatedValue")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsAnimatedValue {
+    inner: BindingAnimatedValue,
+}
+
+#[napi]
+impl JsAnimatedValue {
+    #[napi(constructor)]
+    pub fn new(
+        initial: &JsAnimationValue,
+        options: Option<JsAnimatedValueOptions>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingAnimatedValue::new(
+                initial.inner,
+                options
+                    .as_ref()
+                    .and_then(|options| options.duration)
+                    .unwrap_or(0.2) as f32,
+                js_easing(
+                    options
+                        .as_ref()
+                        .and_then(|options| options.easing.as_deref()),
+                )?,
+            ),
+        })
+    }
+
+    #[napi(js_name = "setDuration")]
+    pub fn set_duration(&mut self, seconds: f64) {
+        self.inner.set_duration(seconds as f32);
+    }
+
+    #[napi(js_name = "setEasing")]
+    pub fn set_easing(&mut self, easing: String) -> Result<()> {
+        self.inner.set_easing(js_easing(Some(&easing))?);
+        Ok(())
+    }
+
+    #[napi(js_name = "setTarget")]
+    pub fn set_target(&mut self, target: &JsAnimationValue) {
+        self.inner.set_target(target.inner);
+    }
+
+    #[napi(js_name = "jumpTo")]
+    pub fn jump_to(&mut self, value: &JsAnimationValue) {
+        self.inner.jump_to(value.inner);
+    }
+
+    #[napi]
+    pub fn tick(&mut self, delta_seconds: f64) -> bool {
+        self.inner.tick(delta_seconds as f32)
+    }
+
+    #[napi(getter)]
+    pub fn value(&self) -> JsAnimationValue {
+        self.inner.value().into()
+    }
+    #[napi(getter)]
+    pub fn target(&self) -> JsAnimationValue {
+        self.inner.target().into()
+    }
+    #[napi(getter, js_name = "isAnimating")]
+    pub fn is_animating(&self) -> bool {
+        self.inner.is_animating()
+    }
+}
+
+#[napi(object, js_name = "KeyframeOptions")]
+pub struct JsKeyframeOptions {
+    pub easing: Option<String>,
+}
+
+#[napi(js_name = "Keyframe")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsAnimationKeyframe {
+    inner: BindingAnimationKeyframe,
+}
+
+#[napi]
+impl JsAnimationKeyframe {
+    #[napi(constructor)]
+    pub fn new(
+        time: f64,
+        value: &JsAnimationValue,
+        options: Option<JsKeyframeOptions>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingAnimationKeyframe::new(
+                time,
+                value.inner,
+                js_easing(
+                    options
+                        .as_ref()
+                        .and_then(|options| options.easing.as_deref())
+                        .or(Some("linear")),
+                )?,
+            ),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn time(&self) -> f64 {
+        self.inner.time()
+    }
+    #[napi(getter)]
+    pub fn value(&self) -> JsAnimationValue {
+        self.inner.value().into()
+    }
+}
+
+#[napi(js_name = "AnimationTrack")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationTrack {
+    inner: BindingAnimationTrack,
+}
+
+#[napi]
+impl JsAnimationTrack {
+    #[napi(constructor)]
+    pub fn new(target: String, property: String) -> Self {
+        Self {
+            inner: BindingAnimationTrack::new(target, property),
+        }
+    }
+    #[napi(js_name = "addKeyframe")]
+    pub fn add_keyframe(&mut self, keyframe: &JsAnimationKeyframe) {
+        self.inner.add_keyframe(keyframe.inner);
+    }
+    #[napi(js_name = "setEnabled")]
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.set_enabled(enabled);
+    }
+    #[napi]
+    pub fn sample(&self, time: f64) -> Option<JsAnimationValue> {
+        self.inner.sample(time).map(Into::into)
+    }
+    #[napi(getter)]
+    pub fn target(&self) -> String {
+        self.inner.target().to_owned()
+    }
+    #[napi(getter)]
+    pub fn property(&self) -> String {
+        self.inner.property().to_owned()
+    }
+    #[napi(getter, js_name = "keyframeCount")]
+    pub fn keyframe_count(&self) -> u32 {
+        self.inner.keyframe_count() as u32
+    }
+}
+
+#[napi(js_name = "AnimationClip")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationClip {
+    inner: BindingAnimationClip,
+}
+
+#[napi]
+impl JsAnimationClip {
+    #[napi(constructor)]
+    pub fn new(id: String, start_time: f64, duration: f64) -> Self {
+        Self {
+            inner: BindingAnimationClip::new(id, start_time, duration),
+        }
+    }
+    #[napi(js_name = "addTrack")]
+    pub fn add_track(&mut self, track: &JsAnimationTrack) {
+        self.inner.add_track(track.inner.clone());
+    }
+    #[napi(js_name = "setEnabled")]
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.set_enabled(enabled);
+    }
+    #[napi(getter)]
+    pub fn id(&self) -> String {
+        self.inner.id().to_owned()
+    }
+    #[napi(getter, js_name = "startTime")]
+    pub fn start_time(&self) -> f64 {
+        self.inner.start_time()
+    }
+    #[napi(getter)]
+    pub fn duration(&self) -> f64 {
+        self.inner.duration()
+    }
+    #[napi(getter, js_name = "trackCount")]
+    pub fn track_count(&self) -> u32 {
+        self.inner.track_count() as u32
+    }
+}
+
+#[napi(js_name = "AnimationSample")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationSample {
+    #[napi(readonly, js_name = "clipId")]
+    pub clip_id: String,
+    #[napi(readonly)]
+    pub target: String,
+    #[napi(readonly)]
+    pub property: String,
+    #[napi(readonly)]
+    pub time: f64,
+    value: JsAnimationValue,
+}
+
+#[napi]
+impl JsAnimationSample {
+    #[napi(getter)]
+    pub fn value(&self) -> JsAnimationValue {
+        self.value
+    }
+}
+
+impl From<BindingAnimationSample> for JsAnimationSample {
+    fn from(value: BindingAnimationSample) -> Self {
+        Self {
+            clip_id: value.clip_id,
+            target: value.target,
+            property: value.property,
+            time: value.time,
+            value: value.value.into(),
+        }
+    }
+}
+
+#[napi(js_name = "AnimationTimeline")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationTimeline {
+    inner: BindingAnimationTimeline,
+}
+
+#[napi]
+impl JsAnimationTimeline {
+    #[napi(constructor)]
+    pub fn new(duration: f64) -> Self {
+        Self {
+            inner: BindingAnimationTimeline::new(duration),
+        }
+    }
+    #[napi(js_name = "addClip")]
+    pub fn add_clip(&mut self, clip: &JsAnimationClip) {
+        self.inner.add_clip(clip.inner.clone());
+    }
+    #[napi]
+    pub fn sample(&self, time: f64) -> Vec<JsAnimationSample> {
+        self.inner
+            .sample(time)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+    #[napi(getter)]
+    pub fn duration(&self) -> f64 {
+        self.inner.duration()
+    }
+    #[napi(getter, js_name = "clipCount")]
+    pub fn clip_count(&self) -> u32 {
+        self.inner.clip_count() as u32
+    }
+}
+
+#[napi(js_name = "AnimationPlayer")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationPlayer {
+    inner: BindingAnimationPlayer,
+}
+
+#[napi]
+impl JsAnimationPlayer {
+    #[napi(constructor)]
+    pub fn new(timeline: &JsAnimationTimeline) -> Self {
+        Self {
+            inner: BindingAnimationPlayer::new(&timeline.inner),
+        }
+    }
+    #[napi]
+    pub fn play(&mut self) {
+        self.inner.play();
+    }
+    #[napi]
+    pub fn pause(&mut self) {
+        self.inner.pause();
+    }
+    #[napi]
+    pub fn stop(&mut self) {
+        self.inner.stop();
+    }
+    #[napi]
+    pub fn seek(&mut self, time: f64) {
+        self.inner.seek(time);
+    }
+    #[napi(js_name = "setRepeat")]
+    pub fn set_repeat(&mut self, repeat: bool) {
+        self.inner.set_repeat(repeat);
+    }
+    #[napi(js_name = "setPlaybackRate")]
+    pub fn set_playback_rate(&mut self, rate: f64) {
+        self.inner.set_playback_rate(rate);
+    }
+    #[napi]
+    pub fn sample(&self) -> Vec<JsAnimationSample> {
+        self.inner.sample().into_iter().map(Into::into).collect()
+    }
+    #[napi]
+    pub fn tick(&mut self, delta_seconds: f64) -> Vec<JsAnimationSample> {
+        self.inner
+            .tick(delta_seconds)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+    #[napi(getter)]
+    pub fn playhead(&self) -> f64 {
+        self.inner.playhead()
+    }
+    #[napi(getter, js_name = "isPlaying")]
+    pub fn is_playing(&self) -> bool {
+        self.inner.is_playing()
+    }
+}
+
+#[napi(js_name = "AnimationDocument")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationDocument {
+    inner: BindingAnimationDocument,
+}
+
+#[napi]
+impl JsAnimationDocument {
+    #[napi(constructor)]
+    pub fn new(name: String, timeline: &JsAnimationTimeline) -> Self {
+        Self {
+            inner: BindingAnimationDocument::new(name, timeline.inner.clone()),
+        }
+    }
+    #[napi(factory)]
+    pub fn parse(input: String) -> Result<Self> {
+        BindingAnimationDocument::parse(&input)
+            .map(|inner| Self { inner })
+            .map_err(napi_runtime_error)
+    }
+    #[napi(getter)]
+    pub fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+    #[napi(getter)]
+    pub fn timeline(&self) -> JsAnimationTimeline {
+        JsAnimationTimeline {
+            inner: self.inner.timeline(),
+        }
+    }
+    #[napi(js_name = "toDocumentFormat")]
+    pub fn to_document_format(&self) -> String {
+        self.inner.to_document_format()
+    }
+}
+
+#[napi(js_name = "AnimationEditor")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationEditor {
+    inner: BindingAnimationEditor,
+}
+
+#[napi]
+impl JsAnimationEditor {
+    #[napi(constructor)]
+    pub fn new(document: &JsAnimationDocument) -> Self {
+        Self {
+            inner: BindingAnimationEditor::new(document.inner.clone()),
+        }
+    }
+    #[napi(getter)]
+    pub fn document(&self) -> JsAnimationDocument {
+        JsAnimationDocument {
+            inner: self.inner.document(),
+        }
+    }
+    #[napi(js_name = "setPlayhead")]
+    pub fn set_playhead(&mut self, time: f64) {
+        self.inner.set_playhead(time);
+    }
+    #[napi(js_name = "setZoom")]
+    pub fn set_zoom(&mut self, zoom: f64) {
+        self.inner.set_zoom(zoom as f32);
+    }
+    #[napi(js_name = "setScroll")]
+    pub fn set_scroll(&mut self, scroll: f64) {
+        self.inner.set_scroll(scroll as f32);
+    }
+    #[napi(js_name = "setSnapping")]
+    pub fn set_snapping(&mut self, enabled: Option<bool>, interval: Option<f64>) {
+        self.inner
+            .set_snapping(enabled.unwrap_or(true), interval.unwrap_or(1.0 / 24.0));
+    }
+    #[napi(js_name = "addKeyframe")]
+    pub fn add_keyframe(
+        &mut self,
+        clip_index: u32,
+        track_index: u32,
+        keyframe: &JsAnimationKeyframe,
+    ) -> bool {
+        self.inner
+            .add_keyframe(clip_index as usize, track_index as usize, keyframe.inner)
+    }
+    #[napi(js_name = "updateKeyframeEasing")]
+    pub fn update_keyframe_easing(
+        &mut self,
+        clip_index: u32,
+        track_index: u32,
+        keyframe_index: u32,
+        easing: String,
+    ) -> Result<bool> {
+        Ok(self.inner.update_keyframe_easing(
+            clip_index as usize,
+            track_index as usize,
+            keyframe_index as usize,
+            js_easing(Some(&easing))?,
+        ))
+    }
+    #[napi(js_name = "removeKeyframe")]
+    pub fn remove_keyframe(
+        &mut self,
+        clip_index: u32,
+        track_index: u32,
+        keyframe_index: u32,
+    ) -> bool {
+        self.inner.remove_keyframe(
+            clip_index as usize,
+            track_index as usize,
+            keyframe_index as usize,
+        )
+    }
+    #[napi]
+    pub fn undo(&mut self) -> bool {
+        self.inner.undo()
+    }
+    #[napi]
+    pub fn redo(&mut self) -> bool {
+        self.inner.redo()
+    }
+    #[napi(getter, js_name = "canUndo")]
+    pub fn can_undo(&self) -> bool {
+        self.inner.can_undo()
+    }
+    #[napi(getter, js_name = "canRedo")]
+    pub fn can_redo(&self) -> bool {
+        self.inner.can_redo()
+    }
+    #[napi(getter)]
+    pub fn playhead(&self) -> f64 {
+        self.inner.playhead()
+    }
+    #[napi(getter)]
+    pub fn zoom(&self) -> f64 {
+        f64::from(self.inner.zoom())
+    }
+    #[napi(getter)]
+    pub fn scroll(&self) -> f64 {
+        f64::from(self.inner.scroll())
     }
 }
 
@@ -1554,6 +2404,7 @@ pub struct JsWidget {
 enum JsWidgetKind {
     Foreign {
         callbacks: Mutex<Option<JsObjectCallbacks>>,
+        children: Vec<BindingWidget>,
     },
     Binding(BindingWidget),
 }
@@ -1561,10 +2412,11 @@ enum JsWidgetKind {
 #[napi]
 impl JsWidget {
     #[napi(constructor)]
-    pub fn new(env: Env, callbacks: Object<'_>) -> Result<Self> {
+    pub fn new(env: Env, callbacks: Object<'_>, children: Option<Array<'_>>) -> Result<Self> {
         Ok(Self {
             kind: JsWidgetKind::Foreign {
                 callbacks: Mutex::new(Some(JsObjectCallbacks::new(env, callbacks)?)),
+                children: extract_js_widget_children(children.as_ref())?,
             },
         })
     }
@@ -1580,27 +2432,35 @@ impl JsWidget {
     fn binding_widget(&self) -> Result<BindingWidget> {
         match &self.kind {
             JsWidgetKind::Binding(widget) => Ok(widget.clone()),
-            JsWidgetKind::Foreign { callbacks } => {
+            JsWidgetKind::Foreign {
+                callbacks,
+                children,
+            } => {
                 let callbacks = recover_lock(callbacks)
                     .as_ref()
                     .ok_or_else(|| napi_runtime_error("JavaScript widget callbacks were released"))?
                     .clone_ref()?;
-                Ok(BindingWidget::foreign(JsWidgetCallbacks {
-                    callbacks: Mutex::new(Some(callbacks)),
-                }))
+                Ok(BindingWidget::foreign_arc_with_children(
+                    Arc::new(JsWidgetCallbacks {
+                        callbacks: Mutex::new(Some(callbacks)),
+                        child_sizes: Mutex::new(Vec::new()),
+                    }),
+                    children.clone(),
+                ))
             }
         }
     }
 
     fn into_sui_widget(&self) -> Result<ForeignWidget> {
         match &self.kind {
-            JsWidgetKind::Foreign { callbacks } => {
+            JsWidgetKind::Foreign { callbacks, .. } => {
                 let callbacks = recover_lock(callbacks)
                     .as_ref()
                     .ok_or_else(|| napi_runtime_error("JavaScript widget callbacks were released"))?
                     .clone_ref()?;
                 Ok(ForeignWidget::new(JsWidgetCallbacks {
                     callbacks: Mutex::new(Some(callbacks)),
+                    child_sizes: Mutex::new(Vec::new()),
                 }))
             }
             JsWidgetKind::Binding(_) => Err(napi_invalid_arg(
@@ -1608,6 +2468,20 @@ impl JsWidget {
             )),
         }
     }
+}
+
+fn extract_js_widget_children(children: Option<&Array<'_>>) -> Result<Vec<BindingWidget>> {
+    let Some(children) = children else {
+        return Ok(Vec::new());
+    };
+    let mut widgets = Vec::with_capacity(children.len() as usize);
+    for index in 0..children.len() {
+        let child = children
+            .get::<ClassInstance<'_, JsWidget>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("child index {index} is out of range")))?;
+        widgets.push(child.binding_widget()?);
+    }
+    Ok(widgets)
 }
 
 #[napi(js_name = "State")]
@@ -1639,6 +2513,158 @@ impl JsState {
     pub fn text(&self) -> String {
         self.inner.label_text()
     }
+
+    #[napi]
+    pub fn select(
+        &self,
+        env: Env,
+        selector: Function<'_, FnArgs<(Either3<String, f64, bool>,)>, Either3<String, f64, bool>>,
+    ) -> Result<Self> {
+        let initial = selector.call(FnArgs::from((self.get(),)))?;
+        let derived = BindingState::new(binding_value_from_js(initial));
+        let derived_for_observer = derived.clone();
+        let env = JsEnvHandle::from_env(env);
+        let selector = selector.create_ref()?;
+        let subscription = self.inner.observe(move |value| {
+            let env = env.to_env();
+            if let Ok(selector) = selector.borrow_back(&env)
+                && let Ok(selected) = selector.call(FnArgs::from((binding_value_to_js(value),)))
+            {
+                derived_for_observer.set(binding_value_from_js(selected));
+            }
+        });
+        derived.retain_subscription(subscription);
+        Ok(Self { inner: derived })
+    }
+
+    #[napi]
+    pub fn watch(
+        &self,
+        env: Env,
+        callback: Function<'_, FnArgs<(Either3<String, f64, bool>,)>, ()>,
+    ) -> Result<JsStateSubscription> {
+        let env = JsEnvHandle::from_env(env);
+        let callback = callback.create_ref()?;
+        Ok(JsStateSubscription {
+            inner: Mutex::new(Some(self.inner.observe(move |value| {
+                let env = env.to_env();
+                if let Ok(callback) = callback.borrow_back(&env) {
+                    let _ = callback.call(FnArgs::from((binding_value_to_js(value),)));
+                }
+            }))),
+        })
+    }
+}
+
+#[napi(js_name = "StateSubscription")]
+pub struct JsStateSubscription {
+    inner: Mutex<Option<BindingStateSubscription>>,
+}
+
+#[napi]
+impl JsStateSubscription {
+    #[napi]
+    pub fn unsubscribe(&self) -> bool {
+        recover_lock(&self.inner)
+            .take()
+            .is_some_and(|mut subscription| subscription.unsubscribe())
+    }
+}
+
+#[napi(js_name = "Theme")]
+#[derive(Clone)]
+pub struct JsTheme {
+    inner: BindingTheme,
+}
+
+#[napi]
+impl JsTheme {
+    #[napi(constructor)]
+    pub fn new(preset: Option<String>) -> Result<Self> {
+        BindingTheme::preset(preset.as_deref().unwrap_or("light"))
+            .map(|inner| Self { inner })
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(factory)]
+    pub fn light() -> Result<Self> {
+        Self::new(Some("light".to_owned()))
+    }
+
+    #[napi(factory)]
+    pub fn dark() -> Result<Self> {
+        Self::new(Some("dark".to_owned()))
+    }
+
+    #[napi(factory)]
+    pub fn neutral() -> Result<Self> {
+        Self::new(Some("neutral".to_owned()))
+    }
+
+    #[napi(factory, js_name = "neutralDark")]
+    pub fn neutral_dark() -> Result<Self> {
+        Self::new(Some("neutral-dark".to_owned()))
+    }
+
+    #[napi(factory, js_name = "highContrast")]
+    pub fn high_contrast() -> Result<Self> {
+        Self::new(Some("high-contrast".to_owned()))
+    }
+
+    #[napi(factory)]
+    pub fn oled() -> Result<Self> {
+        Self::new(Some("oled".to_owned()))
+    }
+
+    #[napi(js_name = "setPreset")]
+    pub fn set_preset(&self, preset: String) -> Result<()> {
+        self.inner.set_preset(&preset).map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "setAccent")]
+    pub fn set_accent(&self, color: &JsColor) {
+        self.inner.set_accent((*color).into());
+    }
+
+    #[napi(js_name = "setControlSize")]
+    pub fn set_control_size(&self, size: String) -> Result<()> {
+        self.inner.set_control_size(&size).map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn color(&self, name: String) -> Result<JsColor> {
+        self.inner
+            .color(&name)
+            .map(JsColor::from)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "setColor")]
+    pub fn set_color(&self, name: String, color: &JsColor) -> Result<()> {
+        self.inner
+            .set_color(&name, (*color).into())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn number(&self, name: String) -> Result<f64> {
+        self.inner
+            .number(&name)
+            .map(f64::from)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "setNumber")]
+    pub fn set_number(&self, name: String, value: f64) -> Result<()> {
+        self.inner
+            .set_number(&name, value as f32)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn accent(&self) -> JsColor {
+        self.inner.accent().into()
+    }
 }
 
 #[napi(js_name = "Window")]
@@ -1646,19 +2672,52 @@ impl JsState {
 pub struct JsWindow {
     title: String,
     root: Option<BindingWidget>,
+    initial_size: Option<Size>,
+    initial_position: Option<Point>,
+    icon_svg: Option<Vec<u8>>,
+    use_default_icon: bool,
 }
 
 #[napi]
 impl JsWindow {
     #[napi(constructor)]
     pub fn new(title: String) -> Self {
-        Self { title, root: None }
+        Self {
+            title,
+            root: None,
+            initial_size: None,
+            initial_position: None,
+            icon_svg: None,
+            use_default_icon: true,
+        }
     }
 
     #[napi]
     pub fn root(&mut self, widget: &JsWidget) -> Result<()> {
         self.root = Some(widget.binding_widget()?);
         Ok(())
+    }
+
+    #[napi(js_name = "setInitialSize")]
+    pub fn set_initial_size(&mut self, size: &JsSize) {
+        self.initial_size = Some((*size).into());
+    }
+
+    #[napi(js_name = "setInitialPosition")]
+    pub fn set_initial_position(&mut self, position: &JsPoint) {
+        self.initial_position = Some((*position).into());
+    }
+
+    #[napi(js_name = "setIconSvg")]
+    pub fn set_icon_svg(&mut self, svg: Buffer) {
+        self.icon_svg = Some(svg.as_ref().to_vec());
+        self.use_default_icon = true;
+    }
+
+    #[napi(js_name = "removeIcon")]
+    pub fn remove_icon(&mut self) {
+        self.icon_svg = None;
+        self.use_default_icon = false;
     }
 }
 
@@ -1668,7 +2727,60 @@ impl JsWindow {
             .root
             .clone()
             .ok_or_else(|| napi_invalid_arg("window root has not been set"))?;
-        Ok(BindingWindow::new(self.title.clone(), root))
+        let mut window = BindingWindow::new(self.title.clone(), root);
+        if let Some(size) = self.initial_size {
+            window = window.with_initial_size(size);
+        }
+        if let Some(position) = self.initial_position {
+            window = window.with_initial_position(position);
+        }
+        if let Some(svg) = &self.icon_svg {
+            window = window.with_icon_svg(svg.clone());
+        } else if !self.use_default_icon {
+            window = window.without_icon();
+        }
+        Ok(window)
+    }
+}
+
+/// Object-literal configuration for renderer and HDR output policy.
+#[napi(object, js_name = "RenderOptions")]
+pub struct JsRenderOptions {
+    pub feathering: Option<bool>,
+    #[napi(js_name = "featherWidth")]
+    pub feather_width: Option<f64>,
+    #[napi(js_name = "opticalTextAlignment")]
+    pub optical_text_alignment: Option<bool>,
+    #[napi(js_name = "outputColorPrimaries")]
+    pub output_color_primaries: Option<String>,
+    #[napi(js_name = "dynamicRange")]
+    pub dynamic_range: Option<String>,
+    #[napi(js_name = "toneMapping")]
+    pub tone_mapping: Option<String>,
+    #[napi(js_name = "colorManagement")]
+    pub color_management: Option<String>,
+    #[napi(js_name = "sdrContentBrightnessNits")]
+    pub sdr_content_brightness_nits: Option<f64>,
+    #[napi(js_name = "useSystemSdrBrightness")]
+    pub use_system_sdr_brightness: Option<bool>,
+}
+
+impl TryFrom<JsRenderOptions> for BindingRenderOptions {
+    type Error = napi::Error;
+
+    fn try_from(value: JsRenderOptions) -> Result<Self> {
+        BindingRenderOptions::new(
+            value.feathering.unwrap_or(true),
+            value.feather_width.unwrap_or(1.0) as f32,
+            value.optical_text_alignment.unwrap_or(true),
+            value.output_color_primaries.as_deref().unwrap_or("auto"),
+            value.dynamic_range.as_deref().unwrap_or("auto"),
+            value.tone_mapping.as_deref().unwrap_or("auto"),
+            value.color_management.as_deref().unwrap_or("auto"),
+            value.sdr_content_brightness_nits.unwrap_or(203.0) as f32,
+            value.use_system_sdr_brightness.unwrap_or(true),
+        )
+        .map_err(napi_invalid_arg)
     }
 }
 
@@ -1689,6 +2801,41 @@ impl JsApp {
     #[napi]
     pub fn window(&self, window: &JsWindow) -> Result<()> {
         recover_lock(&self.inner).push_window(window.to_binding()?);
+        Ok(())
+    }
+
+    #[napi(js_name = "configureRendering")]
+    pub fn configure_rendering(&self, options: JsRenderOptions) -> Result<()> {
+        recover_lock(&self.inner).set_render_options(options.try_into()?);
+        Ok(())
+    }
+
+    #[napi(js_name = "setTheme")]
+    pub fn set_theme(&self, theme: &JsTheme) {
+        recover_lock(&self.inner).set_theme(theme.inner.clone());
+    }
+
+    #[napi]
+    pub fn on(
+        &self,
+        env: Env,
+        name: String,
+        callback: Function<'_, FnArgs<(Either3<String, f64, bool>,)>, ()>,
+    ) -> Result<()> {
+        let env = JsEnvHandle::from_env(env);
+        let callback = callback.create_ref()?;
+        recover_lock(&self.inner).on_message(
+            name,
+            BindingMessageAction::new(move |payload| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((binding_value_to_js(payload),)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }),
+        );
         Ok(())
     }
 
@@ -1881,6 +3028,11 @@ impl JsUiHandle {
     pub fn pending_count(&self) -> u32 {
         self.inner.pending_count() as u32
     }
+
+    #[napi]
+    pub fn emit(&self, name: String, payload: Either3<String, f64, bool>) -> bool {
+        self.inner.emit(name, binding_value_from_js(payload))
+    }
 }
 
 impl From<BindingUiHandle> for JsUiHandle {
@@ -1892,6 +3044,294 @@ impl From<BindingUiHandle> for JsUiHandle {
 #[napi(js_name = "RunningApp")]
 pub struct JsRunningApp {
     inner: Mutex<BindingRuntime>,
+}
+
+#[napi(object, js_name = "FrameTiming")]
+#[derive(Clone)]
+pub struct JsFrameTiming {
+    pub phase: String,
+    #[napi(js_name = "durationMs")]
+    pub duration_ms: f64,
+}
+
+impl From<BindingFrameTiming> for JsFrameTiming {
+    fn from(value: BindingFrameTiming) -> Self {
+        Self {
+            phase: value.phase,
+            duration_ms: value.duration_ms,
+        }
+    }
+}
+
+#[napi(object, js_name = "WidgetTiming")]
+#[derive(Clone)]
+pub struct JsWidgetTiming {
+    #[napi(js_name = "widgetId")]
+    pub widget_id: String,
+    #[napi(js_name = "widgetName")]
+    pub widget_name: String,
+    pub phase: String,
+    #[napi(js_name = "durationMs")]
+    pub duration_ms: f64,
+    pub calls: u32,
+}
+
+impl From<BindingWidgetTiming> for JsWidgetTiming {
+    fn from(value: BindingWidgetTiming) -> Self {
+        Self {
+            widget_id: value.widget_id.to_string(),
+            widget_name: value.widget_name,
+            phase: value.phase,
+            duration_ms: value.duration_ms,
+            calls: value.calls as u32,
+        }
+    }
+}
+
+#[napi(object, js_name = "EventRouteTrace")]
+#[derive(Clone)]
+pub struct JsEventRouteTrace {
+    pub sequence: String,
+    #[napi(js_name = "eventKind")]
+    pub event_kind: String,
+    #[napi(js_name = "targetId")]
+    pub target_id: String,
+    pub path: Vec<String>,
+    pub handled: bool,
+}
+
+impl From<BindingEventRouteTrace> for JsEventRouteTrace {
+    fn from(value: BindingEventRouteTrace) -> Self {
+        Self {
+            sequence: value.sequence.to_string(),
+            event_kind: value.event_kind,
+            target_id: value.target_id.to_string(),
+            path: value.path.into_iter().map(|id| id.to_string()).collect(),
+            handled: value.handled,
+        }
+    }
+}
+
+#[napi(object, js_name = "ReactiveInvalidationTrace")]
+#[derive(Clone)]
+pub struct JsReactiveInvalidationTrace {
+    #[napi(js_name = "widgetId")]
+    pub widget_id: String,
+    #[napi(js_name = "sourceName")]
+    pub source_name: String,
+    pub version: String,
+    pub kind: String,
+    pub delivered: bool,
+}
+
+impl From<BindingReactiveInvalidationTrace> for JsReactiveInvalidationTrace {
+    fn from(value: BindingReactiveInvalidationTrace) -> Self {
+        Self {
+            widget_id: value.widget_id.to_string(),
+            source_name: value.source_name,
+            version: value.version.to_string(),
+            kind: value.kind,
+            delivered: value.delivered,
+        }
+    }
+}
+
+#[napi(object, js_name = "CommandDispatchTrace")]
+#[derive(Clone)]
+pub struct JsCommandDispatchTrace {
+    pub sequence: String,
+    pub name: String,
+    #[napi(js_name = "payloadType")]
+    pub payload_type: String,
+    pub target: String,
+    pub delivery: String,
+    pub handlers: Vec<String>,
+    pub handled: bool,
+    pub delivered: bool,
+}
+
+impl From<BindingCommandDispatchTrace> for JsCommandDispatchTrace {
+    fn from(value: BindingCommandDispatchTrace) -> Self {
+        Self {
+            sequence: value.sequence.to_string(),
+            name: value.name,
+            payload_type: value.payload_type,
+            target: value.target,
+            delivery: value.delivery,
+            handlers: value.handlers,
+            handled: value.handled,
+            delivered: value.delivered,
+        }
+    }
+}
+
+#[napi(object, js_name = "InvalidationTrace")]
+#[derive(Clone)]
+pub struct JsInvalidationTrace {
+    pub target: String,
+    pub kind: String,
+    pub source: String,
+    pub reason: Option<String>,
+}
+
+impl From<BindingInvalidationTrace> for JsInvalidationTrace {
+    fn from(value: BindingInvalidationTrace) -> Self {
+        Self {
+            target: value.target,
+            kind: value.kind,
+            source: value.source,
+            reason: value.reason,
+        }
+    }
+}
+
+#[napi(object, js_name = "WidgetRebuildTrace")]
+#[derive(Clone)]
+pub struct JsWidgetRebuildTrace {
+    #[napi(js_name = "widgetId")]
+    pub widget_id: String,
+    #[napi(js_name = "widgetName")]
+    pub widget_name: String,
+    pub reason: String,
+}
+
+impl From<BindingWidgetRebuildTrace> for JsWidgetRebuildTrace {
+    fn from(value: BindingWidgetRebuildTrace) -> Self {
+        Self {
+            widget_id: value.widget_id.to_string(),
+            widget_name: value.widget_name,
+            reason: value.reason,
+        }
+    }
+}
+
+#[napi(js_name = "InspectorSnapshot")]
+pub struct JsInspectorSnapshot {
+    #[napi(readonly, js_name = "windowId")]
+    pub window_id: String,
+    #[napi(readonly)]
+    pub title: String,
+    #[napi(readonly, js_name = "tracingEnabled")]
+    pub tracing_enabled: bool,
+    #[napi(readonly, js_name = "focusedWidgetId")]
+    pub focused_widget_id: Option<String>,
+    #[napi(readonly, js_name = "windowFocused")]
+    pub window_focused: bool,
+    #[napi(readonly, js_name = "scheduledPhases")]
+    pub scheduled_phases: Vec<String>,
+    #[napi(readonly, js_name = "semanticsCount")]
+    pub semantics_count: u32,
+    semantics_nodes: Vec<JsSemanticNode>,
+    #[napi(readonly, js_name = "widgetCount")]
+    pub widget_count: u32,
+    #[napi(readonly, js_name = "stackHostCount")]
+    pub stack_host_count: u32,
+    #[napi(readonly, js_name = "overlayCount")]
+    pub overlay_count: u32,
+    #[napi(readonly, js_name = "timerCount")]
+    pub timer_count: u32,
+    #[napi(readonly, js_name = "asyncTaskCount")]
+    pub async_task_count: u32,
+    #[napi(readonly, js_name = "requestedAnimationFrameCount")]
+    pub requested_animation_frame_count: u32,
+    #[napi(readonly, js_name = "widgetDiagnosticsCount")]
+    pub widget_diagnostics_count: u32,
+    #[napi(readonly, js_name = "eventRouteCount")]
+    pub event_route_count: u32,
+    #[napi(readonly, js_name = "reactiveInvalidationCount")]
+    pub reactive_invalidation_count: u32,
+    #[napi(readonly, js_name = "commandDispatchCount")]
+    pub command_dispatch_count: u32,
+    #[napi(readonly, js_name = "invalidationCount")]
+    pub invalidation_count: u32,
+    #[napi(readonly, js_name = "widgetRebuildCount")]
+    pub widget_rebuild_count: u32,
+    frame_timings: Vec<JsFrameTiming>,
+    widget_timings: Vec<JsWidgetTiming>,
+    event_routes: Vec<JsEventRouteTrace>,
+    reactive_invalidations: Vec<JsReactiveInvalidationTrace>,
+    command_dispatches: Vec<JsCommandDispatchTrace>,
+    invalidations: Vec<JsInvalidationTrace>,
+    widget_rebuilds: Vec<JsWidgetRebuildTrace>,
+}
+
+#[napi]
+impl JsInspectorSnapshot {
+    #[napi(getter, js_name = "semanticsNodes")]
+    pub fn semantics_nodes(&self) -> Vec<JsSemanticNode> {
+        self.semantics_nodes.clone()
+    }
+
+    #[napi(getter, js_name = "frameTimings")]
+    pub fn frame_timings(&self) -> Vec<JsFrameTiming> {
+        self.frame_timings.clone()
+    }
+    #[napi(getter, js_name = "widgetTimings")]
+    pub fn widget_timings(&self) -> Vec<JsWidgetTiming> {
+        self.widget_timings.clone()
+    }
+    #[napi(getter, js_name = "eventRoutes")]
+    pub fn event_routes(&self) -> Vec<JsEventRouteTrace> {
+        self.event_routes.clone()
+    }
+    #[napi(getter, js_name = "reactiveInvalidations")]
+    pub fn reactive_invalidations(&self) -> Vec<JsReactiveInvalidationTrace> {
+        self.reactive_invalidations.clone()
+    }
+    #[napi(getter, js_name = "commandDispatches")]
+    pub fn command_dispatches(&self) -> Vec<JsCommandDispatchTrace> {
+        self.command_dispatches.clone()
+    }
+    #[napi(getter)]
+    pub fn invalidations(&self) -> Vec<JsInvalidationTrace> {
+        self.invalidations.clone()
+    }
+    #[napi(getter, js_name = "widgetRebuilds")]
+    pub fn widget_rebuilds(&self) -> Vec<JsWidgetRebuildTrace> {
+        self.widget_rebuilds.clone()
+    }
+}
+
+impl From<BindingInspectorSnapshot> for JsInspectorSnapshot {
+    fn from(value: BindingInspectorSnapshot) -> Self {
+        Self {
+            window_id: value.window_id.to_string(),
+            title: value.title,
+            tracing_enabled: value.tracing_enabled,
+            focused_widget_id: value.focused_widget_id.map(|id| id.to_string()),
+            window_focused: value.window_focused,
+            scheduled_phases: value.scheduled_phases,
+            semantics_count: value.semantics_count as u32,
+            semantics_nodes: value.semantics_nodes.into_iter().map(Into::into).collect(),
+            widget_count: value.widget_count as u32,
+            stack_host_count: value.stack_host_count as u32,
+            overlay_count: value.overlay_count as u32,
+            timer_count: value.timer_count as u32,
+            async_task_count: value.async_task_count as u32,
+            requested_animation_frame_count: value.requested_animation_frame_count as u32,
+            widget_diagnostics_count: value.widget_diagnostics_count as u32,
+            event_route_count: value.event_route_count as u32,
+            reactive_invalidation_count: value.reactive_invalidation_count as u32,
+            command_dispatch_count: value.command_dispatch_count as u32,
+            invalidation_count: value.invalidation_count as u32,
+            widget_rebuild_count: value.widget_rebuild_count as u32,
+            frame_timings: value.frame_timings.into_iter().map(Into::into).collect(),
+            widget_timings: value.widget_timings.into_iter().map(Into::into).collect(),
+            event_routes: value.event_routes.into_iter().map(Into::into).collect(),
+            reactive_invalidations: value
+                .reactive_invalidations
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            command_dispatches: value
+                .command_dispatches
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            invalidations: value.invalidations.into_iter().map(Into::into).collect(),
+            widget_rebuilds: value.widget_rebuilds.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 #[napi]
@@ -1906,6 +3346,72 @@ impl JsRunningApp {
         recover_lock(&self.inner)
             .drain_ui_tasks()
             .map(|count| count as u32)
+            .map_err(napi_runtime_error)
+    }
+
+    /// Advance host-driven timers and animations to an absolute frame time in seconds.
+    #[napi]
+    pub fn tick(&self, frame_time: f64) {
+        recover_lock(&self.inner).tick(frame_time);
+    }
+
+    #[napi(js_name = "drainReadyEvents")]
+    pub fn drain_ready_events(&self) -> u32 {
+        recover_lock(&self.inner).drain_ready_event_count() as u32
+    }
+
+    #[napi(js_name = "requestRedrawAll")]
+    pub fn request_redraw_all(&self) -> Result<()> {
+        recover_lock(&self.inner)
+            .request_redraw_all()
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi(js_name = "wakeWindow")]
+    pub fn wake_window(&self, window: &JsWindowHandle) -> Result<()> {
+        recover_lock(&self.inner)
+            .wake_window(window.inner)
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi(js_name = "handleEventFor")]
+    pub fn handle_event_for(&self, window: &JsWindowHandle, event: &JsEvent) -> Result<()> {
+        recover_lock(&self.inner)
+            .handle_event(window.inner, event.binding_event())
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi(js_name = "setRenderOptions")]
+    pub fn set_render_options(
+        &self,
+        window: &JsWindowHandle,
+        options: JsRenderOptions,
+    ) -> Result<()> {
+        recover_lock(&self.inner)
+            .set_render_options(window.inner, options.try_into()?)
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi(js_name = "setInspectorTracing")]
+    pub fn set_inspector_tracing(&self, enabled: Option<bool>, index: Option<u32>) -> Result<()> {
+        let mut runtime = recover_lock(&self.inner);
+        let window = runtime
+            .window_id_at(index.unwrap_or(0) as usize)
+            .map_err(napi_runtime_error)?;
+        runtime
+            .set_inspector_tracing(window, enabled.unwrap_or(true))
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi]
+    pub fn inspect(&self, index: Option<u32>) -> Result<JsInspectorSnapshot> {
+        let runtime = recover_lock(&self.inner);
+        let window = runtime
+            .window_id_at(index.unwrap_or(0) as usize)
+            .map_err(napi_runtime_error)?;
+        runtime
+            .inspector_snapshot(window)
+            .map(JsInspectorSnapshot::from)
             .map_err(napi_runtime_error)
     }
 
@@ -1949,6 +3455,34 @@ impl JsRunningApp {
     pub fn handle_event(&self, event: &JsEvent, index: Option<u32>) -> Result<()> {
         recover_lock(&self.inner)
             .handle_event_at(index.unwrap_or(0) as usize, event.binding_event())
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi]
+    pub fn hover(&self, node: &JsSemanticNode, index: Option<u32>) -> Result<()> {
+        recover_lock(&self.inner)
+            .hover_node_at(index.unwrap_or(0) as usize, &node.inner)
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi]
+    pub fn click(&self, node: &JsSemanticNode, index: Option<u32>) -> Result<()> {
+        recover_lock(&self.inner)
+            .click_node_at(index.unwrap_or(0) as usize, &node.inner)
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi]
+    pub fn press(&self, node: &JsSemanticNode, key: String, index: Option<u32>) -> Result<()> {
+        recover_lock(&self.inner)
+            .press_node_at(index.unwrap_or(0) as usize, &node.inner, key)
+            .map_err(napi_runtime_error)
+    }
+
+    #[napi]
+    pub fn fill(&self, node: &JsSemanticNode, text: String, index: Option<u32>) -> Result<()> {
+        recover_lock(&self.inner)
+            .fill_node_at(index.unwrap_or(0) as usize, &node.inner, text)
             .map_err(napi_runtime_error)
     }
 
@@ -2267,6 +3801,7 @@ impl Drop for JsObjectCallbacks {
 
 struct JsWidgetCallbacks {
     callbacks: Mutex<Option<JsObjectCallbacks>>,
+    child_sizes: Mutex<Vec<Size>>,
 }
 
 impl ForeignWidgetCallbacks for JsWidgetCallbacks {
@@ -2286,20 +3821,33 @@ impl ForeignWidgetCallbacks for JsWidgetCallbacks {
                 "JavaScript widget callbacks were released",
             ));
         };
-        let handled = callbacks.call_event(event).map_err(foreign_js_error)?;
+        let context = JsEventContext::new(BindingEventContext::from_foreign(ctx));
+        let handled = callbacks
+            .call_event(event, context.clone())
+            .map_err(foreign_js_error)?;
         if handled {
-            ctx.set_handled();
-            ctx.request_paint();
+            let mut requests = recover_lock(&context.inner);
+            requests.set_handled();
+            requests.request_paint();
         }
+        context.apply(ctx);
         Ok(())
     }
 
     fn measure(
         &self,
         _id: sui_bindings_core::ForeignWidgetId,
-        _ctx: &mut ForeignMeasureCtx<'_>,
+        ctx: &mut ForeignMeasureCtx<'_>,
         constraints: Constraints,
     ) -> ForeignCallbackResult<Size> {
+        let child_constraints = constraints.loosen();
+        let child_sizes = (0..ctx.child_count())
+            .map(|index| {
+                ctx.measure_child(index, child_constraints)
+                    .unwrap_or(Size::ZERO)
+            })
+            .collect::<Vec<_>>();
+        *recover_lock(&self.child_sizes) = child_sizes.clone();
         let callbacks = recover_lock(&self.callbacks);
         let Some(callbacks) = callbacks.as_ref() else {
             return Err(ForeignCallbackFailure::new(
@@ -2307,8 +3855,46 @@ impl ForeignWidgetCallbacks for JsWidgetCallbacks {
             ));
         };
         callbacks
-            .call_measure(constraints)
+            .call_measure(constraints, &child_sizes)
             .map_err(foreign_js_error)
+    }
+
+    fn arrange(
+        &self,
+        _id: sui_bindings_core::ForeignWidgetId,
+        ctx: &mut ForeignArrangeCtx<'_>,
+        bounds: Rect,
+    ) -> ForeignCallbackResult<()> {
+        let child_sizes = recover_lock(&self.child_sizes).clone();
+        let callbacks = recover_lock(&self.callbacks);
+        let Some(callbacks) = callbacks.as_ref() else {
+            return Err(ForeignCallbackFailure::new(
+                "JavaScript widget callbacks were released",
+            ));
+        };
+        let custom_bounds = callbacks
+            .call_arrange(bounds, &child_sizes)
+            .map_err(foreign_js_error)?;
+        if let Some(custom_bounds) = custom_bounds {
+            if custom_bounds.len() != ctx.child_count() {
+                return Err(ForeignCallbackFailure::new(format!(
+                    "arrange returned {} child bounds for {} children",
+                    custom_bounds.len(),
+                    ctx.child_count()
+                )));
+            }
+            for (index, bounds) in custom_bounds.into_iter().enumerate() {
+                ctx.arrange_child(index, bounds);
+            }
+        } else {
+            let mut y = bounds.y();
+            for index in 0..ctx.child_count() {
+                let size = child_sizes.get(index).copied().unwrap_or(Size::ZERO);
+                ctx.arrange_child(index, Rect::new(bounds.x(), y, bounds.width(), size.height));
+                y += size.height;
+            }
+        }
+        Ok(())
     }
 
     fn paint(
@@ -2331,7 +3917,11 @@ impl ForeignWidgetCallbacks for JsWidgetCallbacks {
                     ctx.register_image(ctx.widget_image_handle(pending.slot), pending.image);
                 }
                 ctx.apply_all(commands)
-                    .map_err(ForeignCallbackFailure::from)
+                    .map_err(ForeignCallbackFailure::from)?;
+                for index in 0..ctx.child_count() {
+                    ctx.paint_child(index);
+                }
+                Ok(())
             })
     }
 
@@ -2346,6 +3936,7 @@ impl ForeignWidgetCallbacks for JsWidgetCallbacks {
                 "JavaScript widget callbacks were released",
             ));
         };
+        let mut included_children = vec![false; ctx.child_count()];
         if let Some(commands) = callbacks
             .call_semantics(
                 ctx.widget_id(),
@@ -2360,6 +3951,9 @@ impl ForeignWidgetCallbacks for JsWidgetCallbacks {
                     JsSemanticsCommand::Node(node) => ctx.push(node),
                     JsSemanticsCommand::Child(index) => {
                         ctx.semantics_child(index);
+                        if let Some(included) = included_children.get_mut(index) {
+                            *included = true;
+                        }
                     }
                 }
             }
@@ -2372,35 +3966,78 @@ impl ForeignWidgetCallbacks for JsWidgetCallbacks {
             node.name = Some(name);
             ctx.push(node);
         }
+        for (index, included) in included_children.into_iter().enumerate() {
+            if !included {
+                ctx.semantics_child(index);
+            }
+        }
         Ok(())
     }
 }
 
 impl JsObjectCallbacks {
-    fn call_event(&self, event: &Event) -> Result<bool> {
+    fn call_event(&self, event: &Event, context: JsEventContext) -> Result<bool> {
         let env = self.env.to_env();
         let object = self.object(&env)?;
         if !object.has_named_property("event")? {
             return Ok(false);
         }
-        let event_fn: Function<'_, FnArgs<(JsEvent,)>, bool> =
+        let event_fn: Function<'_, FnArgs<(JsEvent, JsEventContext)>, bool> =
             object.get_named_property("event")?;
         event_fn.apply(
             object,
-            FnArgs::from((JsEvent::from_binding(BindingEvent::from(event)),)),
+            FnArgs::from((JsEvent::from_binding(BindingEvent::from(event)), context)),
         )
     }
 
-    fn call_measure(&self, constraints: Constraints) -> Result<Size> {
+    fn call_measure(&self, constraints: Constraints, child_sizes: &[Size]) -> Result<Size> {
         let env = self.env.to_env();
         let object = self.object(&env)?;
+        if object.has_named_property("measureWithChildren")? {
+            let measure: Function<
+                '_,
+                FnArgs<(JsConstraints, Vec<JsSize>)>,
+                ClassInstance<'_, JsSize>,
+            > = object.get_named_property("measureWithChildren")?;
+            let size = measure.apply(
+                object,
+                FnArgs::from((
+                    JsConstraints::from(constraints),
+                    child_sizes.iter().copied().map(JsSize::from).collect(),
+                )),
+            )?;
+            return Ok(Size::from(*size));
+        }
         if !object.has_named_property("measure")? {
-            return Ok(constraints.clamp(Size::ZERO));
+            let natural = child_sizes.iter().fold(Size::ZERO, |size, child| {
+                Size::new(size.width.max(child.width), size.height + child.height)
+            });
+            return Ok(constraints.clamp(natural));
         }
         let measure: Function<'_, FnArgs<(JsConstraints,)>, ClassInstance<'_, JsSize>> =
             object.get_named_property("measure")?;
         let size = measure.apply(object, FnArgs::from((JsConstraints::from(constraints),)))?;
         Ok(Size::from(*size))
+    }
+
+    fn call_arrange(&self, bounds: Rect, child_sizes: &[Size]) -> Result<Option<Vec<Rect>>> {
+        let env = self.env.to_env();
+        let object = self.object(&env)?;
+        if !object.has_named_property("arrange")? {
+            return Ok(None);
+        }
+        let arrange: Function<'_, FnArgs<(JsRect, Vec<JsSize>)>, Vec<ClassInstance<'_, JsRect>>> =
+            object.get_named_property("arrange")?;
+        arrange
+            .apply(
+                object,
+                FnArgs::from((
+                    JsRect::from(bounds),
+                    child_sizes.iter().copied().map(JsSize::from).collect(),
+                )),
+            )
+            .map(|bounds| bounds.into_iter().map(|bounds| (*bounds).into()).collect())
+            .map(Some)
     }
 
     fn call_paint(&self, bounds: Rect) -> Result<(Vec<PaintCommand>, Vec<PendingPaintImage>)> {
@@ -2497,11 +4134,123 @@ impl JsUiTaskQueue {
     }
 }
 
+#[napi(object, js_name = "SemanticsQuery")]
+pub struct JsSemanticsQuery {
+    pub role: Option<String>,
+    pub name: Option<String>,
+    pub text: Option<String>,
+    pub description: Option<String>,
+    pub focused: Option<bool>,
+    pub visible: Option<bool>,
+}
+
+#[napi(js_name = "SemanticNode")]
+#[derive(Debug, Clone)]
+pub struct JsSemanticNode {
+    inner: BindingSemanticNode,
+}
+
+#[napi]
+impl JsSemanticNode {
+    #[napi(getter)]
+    pub fn id(&self) -> String {
+        self.inner.id.to_string()
+    }
+    #[napi(getter, js_name = "parentId")]
+    pub fn parent_id(&self) -> Option<String> {
+        self.inner.parent_id.map(|id| id.to_string())
+    }
+    #[napi(getter)]
+    pub fn role(&self) -> String {
+        self.inner.role.clone()
+    }
+    #[napi(getter)]
+    pub fn name(&self) -> Option<String> {
+        self.inner.name.clone()
+    }
+    #[napi(getter)]
+    pub fn value(&self) -> Option<String> {
+        self.inner.value.clone()
+    }
+    #[napi(getter)]
+    pub fn description(&self) -> Option<String> {
+        self.inner.description.clone()
+    }
+    #[napi(getter)]
+    pub fn bounds(&self) -> JsRect {
+        JsRect::new(
+            f64::from(self.inner.x),
+            f64::from(self.inner.y),
+            f64::from(self.inner.width),
+            f64::from(self.inner.height),
+        )
+    }
+    #[napi(getter)]
+    pub fn center(&self) -> JsPoint {
+        self.inner.center().into()
+    }
+    #[napi(getter)]
+    pub fn actions(&self) -> Vec<String> {
+        self.inner.actions.clone()
+    }
+    #[napi(getter)]
+    pub fn checked(&self) -> Option<String> {
+        self.inner.checked.clone()
+    }
+    #[napi(getter)]
+    pub fn busy(&self) -> bool {
+        self.inner.busy
+    }
+    #[napi(getter)]
+    pub fn disabled(&self) -> bool {
+        self.inner.disabled
+    }
+    #[napi(getter)]
+    pub fn focused(&self) -> bool {
+        self.inner.focused
+    }
+    #[napi(getter)]
+    pub fn hidden(&self) -> bool {
+        self.inner.hidden
+    }
+    #[napi(getter)]
+    pub fn hovered(&self) -> bool {
+        self.inner.hovered
+    }
+    #[napi(getter)]
+    pub fn selected(&self) -> bool {
+        self.inner.selected
+    }
+    #[napi(getter)]
+    pub fn expanded(&self) -> Option<bool> {
+        self.inner.expanded
+    }
+    #[napi(getter)]
+    pub fn editable(&self) -> bool {
+        self.inner.editable
+    }
+    #[napi(getter)]
+    pub fn multiline(&self) -> bool {
+        self.inner.multiline
+    }
+    #[napi(getter)]
+    pub fn visible(&self) -> bool {
+        self.inner.visible()
+    }
+}
+
+impl From<BindingSemanticNode> for JsSemanticNode {
+    fn from(inner: BindingSemanticNode) -> Self {
+        Self { inner }
+    }
+}
+
 #[napi(js_name = "RenderSnapshot")]
 #[derive(Debug, Clone)]
 pub struct JsRenderSnapshot {
     pub command_count: u32,
     pub semantics_count: u32,
+    semantics_nodes: Vec<JsSemanticNode>,
     pub semantics_roles: Vec<String>,
     pub semantics_names: Vec<String>,
     pub semantics_values: Vec<String>,
@@ -2521,11 +4270,95 @@ pub struct JsRenderSnapshot {
     pub registered_image_count: u32,
 }
 
+#[napi]
+impl JsRenderSnapshot {
+    #[napi(getter, js_name = "semanticsNodes")]
+    pub fn semantics_nodes(&self) -> Vec<JsSemanticNode> {
+        self.semantics_nodes.clone()
+    }
+
+    #[napi]
+    pub fn find(&self, query: Option<JsSemanticsQuery>) -> Vec<JsSemanticNode> {
+        let query = query.unwrap_or(JsSemanticsQuery {
+            role: None,
+            name: None,
+            text: None,
+            description: None,
+            focused: None,
+            visible: Some(true),
+        });
+        self.inner_snapshot()
+            .find_nodes(
+                query.role.as_deref(),
+                query.name.as_deref(),
+                query.text.as_deref(),
+                query.description.as_deref(),
+                query.focused,
+                query.visible.or(Some(true)),
+            )
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    #[napi(js_name = "getOne")]
+    pub fn get_one(&self, query: Option<JsSemanticsQuery>) -> Result<JsSemanticNode> {
+        let query = query.unwrap_or(JsSemanticsQuery {
+            role: None,
+            name: None,
+            text: None,
+            description: None,
+            focused: None,
+            visible: None,
+        });
+        self.inner_snapshot()
+            .get_one(
+                query.role.as_deref(),
+                query.name.as_deref(),
+                query.text.as_deref(),
+            )
+            .map(Into::into)
+            .map_err(napi_runtime_error)
+    }
+}
+
+impl JsRenderSnapshot {
+    fn inner_snapshot(&self) -> BindingRenderSnapshot {
+        BindingRenderSnapshot {
+            command_count: self.command_count as usize,
+            semantics_count: self.semantics_count as usize,
+            semantics_nodes: self
+                .semantics_nodes
+                .iter()
+                .map(|node| node.inner.clone())
+                .collect(),
+            semantics_roles: self.semantics_roles.clone(),
+            semantics_names: self.semantics_names.clone(),
+            semantics_values: self.semantics_values.clone(),
+            semantics_descriptions: self.semantics_descriptions.clone(),
+            semantics_checked: self.semantics_checked.clone(),
+            semantics_busy: self.semantics_busy.clone(),
+            semantics_editable_multiline: self.semantics_editable_multiline.clone(),
+            semantics_disabled: self.semantics_disabled.clone(),
+            semantics_focused: self.semantics_focused.clone(),
+            semantics_hidden: self.semantics_hidden.clone(),
+            semantics_hovered: self.semantics_hovered.clone(),
+            semantics_selected: self.semantics_selected.clone(),
+            semantics_expanded: self.semantics_expanded.clone(),
+            fill_rect_count: self.fill_rect_count as usize,
+            draw_image_count: self.draw_image_count as usize,
+            registered_font_count: self.registered_font_count as usize,
+            registered_image_count: self.registered_image_count as usize,
+        }
+    }
+}
+
 impl From<BindingRenderSnapshot> for JsRenderSnapshot {
     fn from(value: BindingRenderSnapshot) -> Self {
         Self {
             command_count: value.command_count as u32,
             semantics_count: value.semantics_count as u32,
+            semantics_nodes: value.semantics_nodes.into_iter().map(Into::into).collect(),
             semantics_roles: value.semantics_roles,
             semantics_names: value.semantics_names,
             semantics_values: value.semantics_values,
@@ -2617,6 +4450,10 @@ fn render_foreign_widget(
     Ok(JsRenderSnapshot {
         command_count,
         semantics_count: output.semantics.len() as u32,
+        semantics_nodes: binding_semantics_nodes(&output.semantics)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
         semantics_roles: binding_semantics_roles(&output.semantics),
         semantics_names: binding_semantics_names(&output.semantics),
         semantics_values: binding_semantics_values(&output.semantics),
@@ -3007,6 +4844,7 @@ fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
     match value {
         BindingWindowEvent::CloseRequested => "closeRequested",
         BindingWindowEvent::Resized(_) => "resized",
+        BindingWindowEvent::Moved(_) => "moved",
         BindingWindowEvent::ScaleFactorChanged { .. } => "scaleFactorChanged",
         BindingWindowEvent::Focused(_) => "focused",
         BindingWindowEvent::Occluded(_) => "occluded",
@@ -4729,12 +6567,111 @@ mod tests {
                     BindingScrollAxes::Vertical,
                     Some("Scrollable content".to_owned()),
                 ),
+                BindingWidget::rich_document(
+                    BindingRichDocument::new("# Streaming report\n\nReady"),
+                    None,
+                    None,
+                    None,
+                ),
                 BindingWidget::color_swatch(
                     "Accent",
                     Color::rgba(0.25, 0.5, 0.75, 1.0),
                     Some(Size::new(24.0, 24.0)),
                     false,
                     None,
+                ),
+                BindingWidget::simple_color_picker(
+                    "Compact accent",
+                    Some(Color::rgba(0.25, 0.5, 0.75, 1.0)),
+                    sui_crate::SimpleColorPickerMode::Hsv,
+                    None,
+                    true,
+                    true,
+                ),
+                BindingWidget::dock_workspace(
+                    BindingDockState::new(BindingDockLayout::new(
+                        BindingDockNode::tabs([101], None).unwrap(),
+                        [],
+                        [],
+                    ))
+                    .unwrap(),
+                    [BindingDockPanel::new(
+                        101,
+                        "Inspector",
+                        BindingWidget::label("Docked inspector"),
+                    )
+                    .unwrap()],
+                    "Dock workspace",
+                )
+                .unwrap(),
+                BindingWidget::grid(
+                    2,
+                    [
+                        BindingWidget::label("Grid one"),
+                        BindingWidget::label("Grid two"),
+                    ],
+                    Some("Responsive grid".to_owned()),
+                    4.0,
+                    4.0,
+                ),
+                BindingWidget::aspect_ratio(
+                    BindingWidget::label("Aspect content"),
+                    16.0 / 9.0,
+                    sui_crate::AspectRatioFit::Contain,
+                    sui_crate::Alignment::Center,
+                    sui_crate::Alignment::Center,
+                ),
+                BindingWidget::safe_area(
+                    BindingWidget::label("Safe content"),
+                    sui_crate::SafeAreaEdges::ALL,
+                    sui_crate::SafeAreaInsets::ZERO,
+                ),
+                BindingWidget::layout_transition(
+                    BindingWidget::label("Animated layout"),
+                    0.22,
+                    sui_crate::Easing::EaseInOut,
+                ),
+                BindingWidget::adaptive_view(
+                    BindingWidget::label("Compact branch"),
+                    BindingWidget::label("Medium branch"),
+                    BindingWidget::label("Expanded branch"),
+                    640.0,
+                    1024.0,
+                    None,
+                ),
+                BindingWidget::constraint_view(
+                    [BindingConstraintCase::new(
+                        BindingWidget::label("Wide query"),
+                        Some(800.0),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        "any",
+                    )
+                    .unwrap()],
+                    BindingWidget::label("Query fallback"),
+                ),
+                BindingWidget::responsive_sidebar(
+                    BindingResponsiveSidebarState::new(true, false),
+                    BindingWidget::label("Navigation pane"),
+                    BindingWidget::label("Sidebar content"),
+                    Some("Navigation".to_owned()),
+                    640.0,
+                    1024.0,
+                    56.0,
+                    320.0,
+                    true,
+                    None,
+                ),
+                BindingWidget::master_detail(
+                    BindingMasterDetailState::new("master").unwrap(),
+                    BindingWidget::label("Master pane"),
+                    BindingWidget::label("Detail pane"),
+                    640.0,
+                    1024.0,
+                    320.0,
                 ),
                 BindingWidget::separator(
                     Axis::Horizontal,

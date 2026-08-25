@@ -30,7 +30,8 @@ if (!fs.existsSync(nativePath)) {
 const nativeModule = new Module(nativePath, module);
 nativeModule.filename = nativePath;
 process.dlopen(nativeModule, nativePath);
-const sui = nativeModule.exports;
+const { decorateApi } = require("../api");
+const sui = decorateApi(nativeModule.exports);
 
 function runExample(name) {
   const filename = path.join(__dirname, "..", "examples", name);
@@ -68,18 +69,292 @@ runExample("counter.js");
 runExample("custom-widget.js");
 
 const text = new sui.State("Ready");
-const textRunning = start(sui.Label(text), "State text");
+const textRunning = start(sui.label(text), "State text");
 text.set("Updated");
 assert.equal(textRunning.pendingCount, 1);
 assert.equal(textRunning.drain(), 1);
 assert.equal(text.get(), "Updated");
 
+const sourceState = new sui.State(2);
+const doubledState = sourceState.select((value) => Number(value) * 2);
+const observedState = [];
+const stateSubscription = sourceState.watch((value) => observedState.push(value));
+sourceState.set(3);
+assert.equal(doubledState.get(), 6);
+assert.deepEqual(observedState, [3]);
+
+const animationZero = sui.AnimationValue.scalar(0);
+const animationOne = sui.AnimationValue.scalar(1);
+const transition = new sui.Transition(animationZero, animationOne, 1, {
+  easing: "linear",
+});
+assert.equal(transition.sample(0.5).scalarValue, 0.5);
+const spring = new sui.Spring(0);
+assert.equal(spring.step(1, 1 / 60) > 0, true);
+const animated = new sui.AnimatedValue(animationZero, { duration: 1, easing: "linear" });
+animated.setTarget(animationOne);
+assert.equal(animated.tick(0.5), true);
+assert.equal(animated.value.scalarValue, 0.5);
+const animationTrack = new sui.AnimationTrack("card", "layer.opacity");
+animationTrack.addKeyframe(new sui.Keyframe(0, animationZero, { easing: "linear" }));
+animationTrack.addKeyframe(new sui.Keyframe(1, animationOne, { easing: "linear" }));
+const animationClip = new sui.AnimationClip("fade", 0, 1);
+animationClip.addTrack(animationTrack);
+const animationTimeline = new sui.AnimationTimeline(1);
+animationTimeline.addClip(animationClip);
+assert.equal(animationTimeline.sample(0.5)[0].value.scalarValue, 0.5);
+const animationPlayer = new sui.AnimationPlayer(animationTimeline);
+animationPlayer.play();
+assert.equal(animationPlayer.tick(0.25)[0].value.scalarValue, 0.25);
+const animationDocument = new sui.AnimationDocument("Card motion", animationTimeline);
+const decodedAnimation = sui.AnimationDocument.parse(animationDocument.toDocumentFormat());
+assert.equal(decodedAnimation.name, "Card motion");
+const animationEditor = new sui.AnimationEditor(decodedAnimation);
+assert.equal(
+  animationEditor.addKeyframe(
+    0,
+    0,
+    new sui.Keyframe(0.75, animationOne, { easing: "ease-out" }),
+  ),
+  true,
+);
+assert.equal(animationEditor.canUndo, true);
+assert.equal(animationEditor.undo(), true);
+
+let semanticButtonPressed = false;
+const semanticRunning = start(
+  sui.button("Semantic save", { onPress: () => { semanticButtonPressed = true; } }),
+  "Semantic testing",
+);
+semanticRunning.setInspectorTracing();
+const semanticSnapshot = semanticRunning.render();
+const semanticButton = semanticSnapshot.getOne({ role: "button", name: "Semantic save" });
+assert.equal(semanticButton.visible, true);
+assert.equal(semanticSnapshot.find({ role: "button" }).length, 1);
+semanticRunning.click(semanticButton);
+assert.equal(semanticButtonPressed, true);
+const semanticInspector = semanticRunning.inspect();
+assert.equal(semanticInspector.semanticsNodes.length, semanticInspector.semanticsCount);
+assert.equal(semanticInspector.eventRoutes.length, semanticInspector.eventRouteCount);
+
+const responsiveState = new sui.ResponsiveSidebarState();
+assert.equal(responsiveState.setExpanded(false), true);
+assert.equal(responsiveState.openOverlay(), true);
+assert.equal(responsiveState.overlayOpen, true);
+const masterState = new sui.MasterDetailState();
+assert.equal(masterState.showDetail(), true);
+assert.equal(masterState.route, "detail");
+assert.equal(sui.renderWidget(sui.adaptiveView(
+  sui.label("Compact"),
+  sui.label("Medium"),
+  sui.label("Expanded"),
+)).commandCount > 0, true);
+assert.equal(sui.renderWidget(sui.constraintView([
+  new sui.ConstraintCase(sui.label("Wide"), 800),
+], sui.label("Fallback"))).commandCount > 0, true);
+
+const notifications = new sui.NotificationCenter();
+const notificationId = notifications.notify("Build complete", "All tests passed", {
+  duration: 5,
+  urgency: "polite",
+});
+assert.equal(notifications.size, 1);
+assert.equal(sui.renderWidget(sui.notificationHost(notifications)).commandCount > 0, true);
+assert.equal(notifications.dismiss(notificationId), true);
+assert.equal(notifications.size, 0);
+
+const virtualModel = new sui.VirtualListModel("Rows", [
+  new sui.VirtualListItem("1", "First row"),
+  new sui.VirtualListItem("2", "Second row"),
+]);
+assert.equal(virtualModel.size, 2);
+assert.equal(sui.renderWidget(sui.virtualList("Rows", virtualModel)).commandCount > 0, true);
+assert.equal(virtualModel.update(new sui.VirtualListItem("1", "Updated row")), true);
+assert.equal(virtualModel.append(new sui.VirtualListItem("3", "Third row")), true);
+assert.equal(virtualModel.size, 3);
+
+const canvasStroke = new sui.CanvasStroke(new sui.Color(0.2, 0.5, 0.9, 1), 2);
+const canvasShape = sui.CanvasShape.rect(
+  new sui.Rect(10, 10, 80, 48),
+  new sui.Color(0.2, 0.5, 0.9, 1),
+  canvasStroke,
+);
+const canvasViewport = new sui.CanvasViewport(0, 0, 1, 0);
+assert.equal(sui.renderWidget(sui.canvas("Vector canvas", {
+  shapes: [canvasShape],
+  viewport: canvasViewport,
+  desiredSize: new sui.Size(240, 160),
+})).commandCount > 0, true);
+assert.equal(sui.renderWidget(sui.canvasRuler(
+  "horizontal",
+  "Canvas ruler",
+  new sui.Size(1024, 768),
+  { viewport: canvasViewport, viewportSize: new sui.Size(240, 160) },
+)).commandCount > 0, true);
+
+const dragScope = new sui.DragScope();
+const dragHost = sui.dragDropHost(dragScope, sui.row([
+  sui.draggable(dragScope, sui.button("Drag source"), "asset:brush", {
+    previewLabel: "Brush asset",
+  }),
+  sui.dropTarget(dragScope, sui.button("Drop target"), { effect: "copy" }),
+], { gap: 8 }));
+assert.equal(sui.renderWidget(dragHost).commandCount > 0, true);
+assert.equal(dragScope.active, false);
+
+const floatingWorkspaceState = new sui.FloatingWorkspaceState();
+const floatingWorkspace = sui.floatingWorkspace(floatingWorkspaceState, [
+  new sui.FloatingView(
+    "Inspector view",
+    new sui.Rect(12, 12, 240, 180),
+    sui.label("Inspector content"),
+  ),
+], { name: "Editor floating workspace" });
+assert.equal(sui.renderWidget(floatingWorkspace).commandCount > 0, true);
+const floatingViews = floatingWorkspaceState.views();
+assert.equal(floatingViews.length, 1);
+assert.equal(floatingWorkspaceState.setMaximized(floatingViews[0].id, true), true);
+assert.equal(floatingWorkspaceState.views()[0].maximized, true);
+
+const pixelState = new sui.PixelCanvasState();
+pixelState.brushColor = new sui.Color(0.2, 0.5, 0.9, 1);
+pixelState.brushSize = 2;
+pixelState.requestExport();
+const pixelCanvas = sui.pixelCanvas(pixelState, "Pixel editor", 4, 4, {
+  desiredSize: new sui.Size(240, 180),
+  fitOnFirstLayout: true,
+});
+assert.equal(sui.renderWidget(pixelCanvas).commandCount > 0, true);
+const pixelExport = pixelState.latestExport();
+assert.equal(pixelExport.width, 4);
+assert.equal(pixelExport.height, 4);
+assert.equal(pixelExport.rgba8.length, 64);
+
+assert.equal(sui.renderWidget(sui.overlayHost(sui.label("Overlay content"))).commandCount > 0, true);
+assert.equal(sui.renderWidget(sui.commandPalette(
+  "Commands",
+  sui.textInput("Search"),
+  { shown: false },
+)).commandCount >= 0, true);
+assert.equal(sui.renderWidget(sui.bottomSheet(
+  "Build output",
+  sui.label("Bottom content"),
+  { shown: false, height: 220 },
+)).commandCount >= 0, true);
+assert.equal(stateSubscription.unsubscribe(), true);
+sourceState.set(4);
+assert.equal(doubledState.get(), 8);
+assert.deepEqual(observedState, [3]);
+
+const theme = sui.Theme.dark();
+theme.setControlSize("small");
+theme.setAccent(new sui.Color(0.2, 0.5, 0.9, 1));
+theme.setColor("success", new sui.Color(0.1, 0.8, 0.3, 1));
+assert.equal(theme.color("success").green > 0.7, true);
+theme.setNumber("radius-md", 9);
+assert.equal(theme.number("radius-md"), 9);
+const configuredWindow = new sui.Window("Configured");
+configuredWindow.setInitialSize(new sui.Size(800, 600));
+configuredWindow.setInitialPosition(new sui.Point(40, 60));
+configuredWindow.removeIcon();
+configuredWindow.root(sui.button("Save"));
+const configuredApp = new sui.App();
+const configuredMessages = [];
+configuredApp.on("background.complete", (payload) => configuredMessages.push(payload));
+configuredApp.setTheme(theme);
+configuredApp.configureRendering({
+  outputColorPrimaries: "display-p3",
+  dynamicRange: "hdr",
+  colorManagement: "prefer-hdr",
+});
+configuredApp.window(configuredWindow);
+const configuredRunning = configuredApp.start();
+const configuredHandle = configuredRunning.windowId(0);
+assert.equal(configuredRunning.uiHandle().emit("background.complete", "Loaded"), true);
+assert.equal(configuredRunning.drain(), 1);
+assert.deepEqual(configuredMessages, ["Loaded"]);
+configuredRunning.setInspectorTracing();
+configuredRunning.render();
+theme.setPreset("light");
+assert.equal(configuredRunning.pendingCount, 1);
+assert.equal(configuredRunning.drain(), 1);
+configuredRunning.tick(1);
+configuredRunning.requestRedrawAll();
+configuredRunning.wakeWindow(configuredHandle);
+configuredRunning.handleEventFor(
+  configuredHandle,
+  sui.Event.rawMouseMotion(new sui.Point(3, -2)),
+);
+configuredRunning.handleEventFor(
+  configuredHandle,
+  sui.Event.window(
+    "moved",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    new sui.Point(12, 24),
+  ),
+);
+const inspector = configuredRunning.inspect();
+assert.equal(inspector.tracingEnabled, true);
+assert.equal(inspector.widgetCount >= 1, true);
+assert.equal(inspector.semanticsCount >= 1, true);
+assert.equal(inspector.eventRouteCount >= 1, true);
+configuredRunning.setRenderOptions(configuredHandle, {
+  outputColorPrimaries: "display-p3",
+  colorManagement: "prefer-wide-gamut",
+});
+
+const dockState = new sui.DockState(
+  new sui.DockLayout(sui.DockNode.tabs(["101", "102"], "101")),
+);
+const dockWidget = sui.dockWorkspace(
+  dockState,
+  [
+    new sui.DockPanelSpec("101", "Files", sui.label("Files panel")),
+    new sui.DockPanelSpec("102", "Search", sui.label("Search panel")),
+  ],
+  { name: "Editor workspace" },
+);
+assert.equal(sui.renderWidget(dockWidget).commandCount > 0, true);
+assert.equal(dockState.activate("102"), true);
+assert.equal(dockState.hide("101"), true);
+assert.deepEqual(dockState.snapshot().hidden, ["101"]);
+assert.equal(dockState.show("101"), true);
+assert.deepEqual(dockState.snapshot().hidden, []);
+
+const simplePicker = sui.simpleColorPicker("Accent", {
+  color: new sui.Color(0.25, 0.5, 0.75, 1),
+  mode: "hsv",
+  compact: true,
+});
+assert.equal(sui.renderWidget(simplePicker).commandCount > 0, true);
+
+const richDocument = new sui.RichDocument("# Report");
+assert.equal(richDocument.appendMarkdown("\n\nWaiting"), true);
+assert.equal(richDocument.lastUpdate().appendOnly, true);
+const attachmentId = richDocument.appendAttachment("trace.json", {
+  mediaType: "application/json",
+  source: "artifact:trace",
+  sizeBytes: "128",
+});
+const extensionId = richDocument.appendExtension("tool-call", "Build", {
+  body: "cargo test",
+  status: "success",
+  metadata: { exit_code: "0" },
+});
+assert.equal(BigInt(extensionId) > BigInt(attachmentId), true);
+const richDocumentWidget = sui.richDocumentView(richDocument);
+assert.equal(sui.renderWidget(richDocumentWidget).commandCount > 0, true);
+
 const checked = new sui.State(false);
 let toggled;
 const checkboxRunning = start(
-  sui.Checkbox("Enabled", checked, (value) => {
+  sui.checkbox("Enabled", { checked, onToggle(value) {
     toggled = value;
-  }),
+  }}),
   "State boolean"
 );
 click(checkboxRunning, 32, 18);
@@ -91,10 +366,10 @@ const selected = new sui.State(0);
 let selectedIndex;
 let selectedValue;
 const radioRunning = start(
-  sui.RadioGroup("Priority", ["Low", "Medium", "High"], selected, (index, value) => {
+  sui.radioGroup("Priority", ["Low", "Medium", "High"], { selected, onChange(index, value) {
     selectedIndex = index;
     selectedValue = value;
-  }),
+  }}),
   "State number"
 );
 click(radioRunning, 20, 52);
@@ -111,9 +386,15 @@ const custom = {
     customCalls.add("measure");
     return constraints.clamp(new sui.Size(80, 24));
   },
-  event(event) {
+  event(event, context) {
     assert.equal(this, custom);
     assert.equal(event instanceof sui.Event, true);
+    assert.equal(context instanceof sui.EventContext, true);
+    assert.equal(["capture", "target", "bubble"].includes(context.phase), true);
+    context.setHandled();
+    context.requestPaint();
+    context.requestSemantics();
+    context.setClipboardText("custom widget copied text");
     assert.equal(event.customKind, "consumer-probe");
     customCalls.add("event");
     return true;
@@ -137,6 +418,40 @@ const customSnapshot = sui.renderWidget(
 );
 assert.equal(customSnapshot.commandCount > 0, true);
 assert.deepEqual([...customCalls].sort(), ["event", "measure", "paint", "semantics"]);
+
+const composite = {
+  name: "Composite",
+  measured: [],
+  arranged: [],
+  measureWithChildren(constraints, childSizes) {
+    this.measured = childSizes.map((size) => [size.width, size.height]);
+    return constraints.clamp(new sui.Size(
+      Math.max(...childSizes.map((size) => size.width)),
+      childSizes.reduce((height, size) => height + size.height, 0),
+    ));
+  },
+  arrange(bounds, childSizes) {
+    let y = bounds.y;
+    this.arranged = childSizes.map((size) => {
+      const childBounds = new sui.Rect(bounds.x, y, bounds.width, size.height);
+      y += size.height;
+      return childBounds;
+    });
+    return this.arranged;
+  },
+  paint(paint) {
+    paint.fillRect(paint.bounds, new sui.Color(0.1, 0.1, 0.1, 1));
+  },
+};
+const compositeSnapshot = sui.renderWidget(new sui.Widget(composite, [
+  sui.sizedBox({ child: sui.label("First child"), width: 100, height: 24 }),
+  sui.sizedBox({ child: sui.label("Second child"), width: 120, height: 28 }),
+]));
+assert.deepEqual(composite.measured, [[100, 24], [120, 28]]);
+assert.equal(composite.arranged.length, 2);
+assert.equal(compositeSnapshot.semanticsNames.includes("First child"), true);
+assert.equal(compositeSnapshot.semanticsNames.includes("Second child"), true);
+assert.equal(compositeSnapshot.commandCount > 1, true);
 
 const modifiers = new sui.Modifiers(true, true, false, false);
 const pointer = sui.Event.pointer(

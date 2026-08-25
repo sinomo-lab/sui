@@ -63,12 +63,12 @@ const meter = {
   },
 };
 
-const root = sui.Column(
+const root = sui.column(
   [
     new sui.Widget(meter),
-    sui.Label("Host-driven custom widget"),
+    sui.label("Host-driven custom widget"),
   ],
-  8
+  { gap: 8 }
 );
 
 const window = new sui.Window("Custom widget");

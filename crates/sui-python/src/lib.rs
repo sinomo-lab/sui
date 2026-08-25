@@ -16,39 +16,55 @@ use pyo3::{
     Bound, Py, PyAny, PyErr, PyResult, Python,
     exceptions::{PyOSError, PyRuntimeError, PyValueError},
     prelude::*,
-    types::PyModule,
+    types::{PyBytes, PyModule},
 };
 use sui_bindings_core::{
-    BindingAction, BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec,
-    BindingColorAction, BindingColorPaletteSwatch, BindingColorSelectAction, BindingCustomEvent,
-    BindingEvent, BindingFloatingStackWindow, BindingFontHandle, BindingImageFit,
-    BindingImageHandle, BindingImeEvent, BindingKeyState, BindingKeyboardEvent,
-    BindingLayerListItem, BindingMenuItem, BindingModifiers, BindingNumber, BindingNumberAction,
-    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
-    BindingRenderSnapshot, BindingReorderAction, BindingRuntime, BindingScrollAxes,
-    BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingShader,
-    BindingState, BindingStatusBarSegment, BindingStringAction, BindingTableColumn,
-    BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
-    BindingUiHandle, BindingValue, BindingWidget, BindingWindow, BindingWindowEvent,
+    BindingAction, BindingAnimatedValue, BindingAnimationClip, BindingAnimationDocument,
+    BindingAnimationEditor, BindingAnimationKeyframe, BindingAnimationPlayer,
+    BindingAnimationSample, BindingAnimationTimeline, BindingAnimationTrack, BindingAnimationValue,
+    BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingCanvasShape,
+    BindingCanvasStroke, BindingCanvasViewport, BindingColorAction, BindingColorPaletteSwatch,
+    BindingColorSelectAction, BindingCommandDispatchTrace, BindingConstraintCase,
+    BindingCustomEvent, BindingDockFloatingGroup, BindingDockLayout, BindingDockNode,
+    BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent, BindingEventContext,
+    BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
+    BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
+    BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
+    BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
+    BindingLayerListItem, BindingMasterDetailState, BindingMenuItem, BindingMessageAction,
+    BindingModifiers, BindingNotificationCenter, BindingNumber, BindingNumberAction,
+    BindingPixelCanvasExport, BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent,
+    BindingPointerEventKind, BindingPointerKind, BindingRawMouseMotionEvent,
+    BindingReactiveInvalidationTrace, BindingRenderOptions, BindingRenderSnapshot,
+    BindingReorderAction, BindingResponsiveSidebarState, BindingRichDocument,
+    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollDelta,
+    BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode, BindingShader,
+    BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
+    BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
+    BindingTextSpan, BindingTheme, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
+    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
+    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
     BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
-    ExternalTextureFormat, ExternalTextureValidationError, ForeignCallbackFailure,
-    ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx, ForeignPaintCtx,
-    ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks, NativeGraphicsBackend,
-    PaintCommand, PaintCommandBuilder, PaintValidationError, RendererInteropCapabilities,
-    RendererInteropTier, UiTaskQueue, binding_alignment_from_name, binding_icon_glyph_from_name,
-    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
-    binding_semantics_descriptions, binding_semantics_disabled,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
+    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
+    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
+    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
+    binding_aspect_ratio_fit_from_name, binding_easing_from_name, binding_icon_glyph_from_name,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
+    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
-    binding_semantics_role_from_name, binding_semantics_roles, binding_semantics_selected,
-    binding_semantics_values, binding_surface_border_from_name,
+    binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
+    binding_semantics_selected, binding_semantics_values,
+    binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
     binding_tooltip_placement_from_name, resolve_binding_image_slots,
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
-    PathBuilder, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
+    PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
     SemanticsRole, SemanticsValue, ShadowParams, Size, StrokeStyle, TextStyle, ToggleState,
     Transform, Vector, WidgetId, WindowBuilder,
 };
@@ -156,6 +172,17 @@ pub struct PyEvent {
 
 #[pymethods]
 impl PyEvent {
+    #[staticmethod]
+    #[pyo3(signature = (delta, modifiers=None))]
+    pub fn raw_mouse_motion(delta: PyPoint, modifiers: Option<PyModifiers>) -> Self {
+        Self {
+            inner: BindingEvent::RawMouseMotion(BindingRawMouseMotionEvent {
+                delta: Vector::new(delta.x, delta.y),
+                modifiers: modifiers.unwrap_or_default().into(),
+            }),
+        }
+    }
+
     #[staticmethod]
     #[pyo3(signature = (kind, position, pointer_id=0, delta=None, button=None, buttons=0, modifiers=None, pointer_kind="mouse", is_primary=true))]
     pub fn pointer(
@@ -282,7 +309,7 @@ impl PyEvent {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (kind, value=None, size=None, scale_factor=None, raw_dpi=None, suggested_size=None))]
+    #[pyo3(signature = (kind, value=None, size=None, scale_factor=None, raw_dpi=None, suggested_size=None, position=None))]
     pub fn window(
         kind: &str,
         value: Option<bool>,
@@ -290,11 +317,17 @@ impl PyEvent {
         scale_factor: Option<f64>,
         raw_dpi: Option<f32>,
         suggested_size: Option<PySize>,
+        position: Option<PyPoint>,
     ) -> PyResult<Self> {
         let inner = match kind {
             "close_requested" | "close-requested" | "close" => BindingWindowEvent::CloseRequested,
             "resized" | "resize" => BindingWindowEvent::Resized(
                 size.ok_or_else(|| PyValueError::new_err("resized window events require size"))?
+                    .into(),
+            ),
+            "moved" | "move" => BindingWindowEvent::Moved(
+                position
+                    .ok_or_else(|| PyValueError::new_err("moved window events require position"))?
                     .into(),
             ),
             "scale_factor_changed" | "scale-factor-changed" => {
@@ -311,7 +344,7 @@ impl PyEvent {
             }
             _ => {
                 return Err(PyValueError::new_err(
-                    "window kind must be 'close_requested', 'resized', 'scale_factor_changed', 'focused', 'occluded', or 'redraw_requested'",
+                    "window kind must be 'close_requested', 'resized', 'moved', 'scale_factor_changed', 'focused', 'occluded', or 'redraw_requested'",
                 ));
             }
         };
@@ -341,6 +374,7 @@ impl PyEvent {
             BindingEvent::Window(event) => Some(window_event_kind_name(event)),
             BindingEvent::Custom(_)
             | BindingEvent::Keyboard(_)
+            | BindingEvent::RawMouseMotion(_)
             | BindingEvent::Unsupported { .. } => None,
         }
     }
@@ -357,6 +391,7 @@ impl PyEvent {
     pub fn position(&self) -> Option<PyPoint> {
         match &self.inner {
             BindingEvent::Pointer(event) => Some(event.position.into()),
+            BindingEvent::Window(BindingWindowEvent::Moved(position)) => Some((*position).into()),
             _ => None,
         }
     }
@@ -365,6 +400,7 @@ impl PyEvent {
     pub fn delta(&self) -> Option<PyPoint> {
         match &self.inner {
             BindingEvent::Pointer(event) => Some(PyPoint::new(event.delta.x, event.delta.y)),
+            BindingEvent::RawMouseMotion(event) => Some(PyPoint::new(event.delta.x, event.delta.y)),
             _ => None,
         }
     }
@@ -401,6 +437,7 @@ impl PyEvent {
     pub fn modifiers(&self) -> Option<PyModifiers> {
         match &self.inner {
             BindingEvent::Pointer(event) => Some(event.modifiers.into()),
+            BindingEvent::RawMouseMotion(event) => Some(event.modifiers.into()),
             BindingEvent::Keyboard(event) => Some(event.modifiers.into()),
             _ => None,
         }
@@ -511,6 +548,111 @@ impl PyEvent {
 
     fn binding_event(&self) -> BindingEvent {
         self.inner.clone()
+    }
+}
+
+#[pyclass(name = "EventContext", module = "sui", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyEventContext {
+    inner: Arc<Mutex<BindingEventContext>>,
+}
+
+#[pymethods]
+impl PyEventContext {
+    #[getter]
+    pub fn window_id(&self) -> u64 {
+        recover_lock(&self.inner).window_id
+    }
+
+    #[getter]
+    pub fn widget_id(&self) -> u64 {
+        recover_lock(&self.inner).widget_id
+    }
+
+    #[getter]
+    pub fn bounds(&self) -> PyRect {
+        recover_lock(&self.inner).bounds.into()
+    }
+
+    #[getter]
+    pub fn current_time(&self) -> f64 {
+        recover_lock(&self.inner).current_time
+    }
+
+    #[getter]
+    pub fn phase(&self) -> &'static str {
+        recover_lock(&self.inner).phase
+    }
+
+    #[getter]
+    pub fn focused(&self) -> bool {
+        recover_lock(&self.inner).focused
+    }
+
+    #[getter]
+    pub fn clipboard_text(&self) -> Option<String> {
+        recover_lock(&self.inner).clipboard_text.clone()
+    }
+
+    pub fn set_handled(&self) {
+        recover_lock(&self.inner).set_handled();
+    }
+
+    pub fn request_focus(&self) {
+        recover_lock(&self.inner).request_focus();
+    }
+
+    pub fn clear_focus(&self) {
+        recover_lock(&self.inner).clear_focus();
+    }
+
+    pub fn request_measure(&self) {
+        recover_lock(&self.inner).request_measure();
+    }
+
+    pub fn request_arrange(&self) {
+        recover_lock(&self.inner).request_arrange();
+    }
+
+    pub fn request_paint(&self, rect: Option<PyRect>) {
+        let mut context = recover_lock(&self.inner);
+        if let Some(rect) = rect {
+            context.request_paint_rect(rect.into());
+        } else {
+            context.request_paint();
+        }
+    }
+
+    pub fn request_semantics(&self) {
+        recover_lock(&self.inner).request_semantics();
+    }
+
+    pub fn request_animation_frame(&self) {
+        recover_lock(&self.inner).request_animation_frame();
+    }
+
+    pub fn capture_pointer(&self, pointer_id: u64) {
+        recover_lock(&self.inner).capture_pointer(pointer_id);
+    }
+
+    pub fn release_pointer(&self, pointer_id: u64) {
+        recover_lock(&self.inner).release_pointer(pointer_id);
+    }
+
+    pub fn set_clipboard_text(&self, text: String) {
+        recover_lock(&self.inner).set_clipboard_text(text);
+    }
+}
+
+impl PyEventContext {
+    fn new(inner: BindingEventContext) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(inner)),
+        }
+    }
+
+    fn apply(&self, context: &mut ForeignEventCtx<'_>) {
+        recover_lock(&self.inner).apply(context);
     }
 }
 
@@ -861,6 +1003,653 @@ impl From<PyColor> for Color {
 impl From<Color> for PyColor {
     fn from(value: Color) -> Self {
         Self::new(value.red, value.green, value.blue, value.alpha)
+    }
+}
+
+fn py_easing(value: &str) -> PyResult<sui_crate::Easing> {
+    binding_easing_from_name(value).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown easing '{value}'; expected linear, ease-in, ease-out, or ease-in-out"
+        ))
+    })
+}
+
+#[pyclass(name = "AnimationValue", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyAnimationValue {
+    inner: BindingAnimationValue,
+}
+
+#[pymethods]
+impl PyAnimationValue {
+    #[staticmethod]
+    pub const fn scalar(value: f32) -> Self {
+        Self {
+            inner: BindingAnimationValue::scalar(value),
+        }
+    }
+
+    #[staticmethod]
+    pub fn point(value: PyPoint) -> Self {
+        Self {
+            inner: BindingAnimationValue::point(value.into()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn vector(value: PyPoint) -> Self {
+        Self {
+            inner: BindingAnimationValue::vector(value.into()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn size(value: PySize) -> Self {
+        Self {
+            inner: BindingAnimationValue::size(value.into()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn rect(value: PyRect) -> Self {
+        Self {
+            inner: BindingAnimationValue::rect(value.into()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn color(value: PyColor) -> Self {
+        Self {
+            inner: BindingAnimationValue::color(value.into()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn transform(value: PyTransform) -> Self {
+        Self {
+            inner: BindingAnimationValue::transform(value.into()),
+        }
+    }
+
+    #[getter]
+    pub fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+
+    #[getter]
+    pub fn scalar_value(&self) -> Option<f32> {
+        self.inner.as_scalar()
+    }
+
+    #[getter]
+    pub fn point_value(&self) -> Option<PyPoint> {
+        self.inner.as_point().map(Into::into)
+    }
+
+    #[getter]
+    pub fn vector_value(&self) -> Option<PyPoint> {
+        self.inner
+            .as_vector()
+            .map(|value| PyPoint::new(value.x, value.y))
+    }
+
+    #[getter]
+    pub fn size_value(&self) -> Option<PySize> {
+        self.inner.as_size().map(Into::into)
+    }
+
+    #[getter]
+    pub fn rect_value(&self) -> Option<PyRect> {
+        self.inner.as_rect().map(Into::into)
+    }
+
+    #[getter]
+    pub fn color_value(&self) -> Option<PyColor> {
+        self.inner.as_color().map(Into::into)
+    }
+
+    #[getter]
+    pub fn transform_value(&self) -> Option<PyTransform> {
+        self.inner.as_transform().map(Into::into)
+    }
+}
+
+impl From<BindingAnimationValue> for PyAnimationValue {
+    fn from(inner: BindingAnimationValue) -> Self {
+        Self { inner }
+    }
+}
+
+#[pyclass(name = "Transition", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyTransition {
+    inner: BindingTransition,
+}
+
+#[pymethods]
+impl PyTransition {
+    #[new]
+    #[pyo3(signature = (start, end, duration, *, start_time=0.0, easing="ease-in-out"))]
+    pub fn new(
+        start: PyRef<'_, PyAnimationValue>,
+        end: PyRef<'_, PyAnimationValue>,
+        duration: f64,
+        start_time: f64,
+        easing: &str,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingTransition::new(
+                start.inner,
+                end.inner,
+                start_time,
+                duration,
+                py_easing(easing)?,
+            ),
+        })
+    }
+
+    pub fn progress(&self, time: f64) -> f32 {
+        self.inner.progress(time)
+    }
+
+    pub fn sample(&self, time: f64) -> PyAnimationValue {
+        self.inner.sample(time).into()
+    }
+
+    pub fn is_complete(&self, time: f64) -> bool {
+        self.inner.is_complete(time)
+    }
+}
+
+#[pyclass(name = "Spring", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PySpring {
+    inner: BindingSpring,
+}
+
+#[pymethods]
+impl PySpring {
+    #[new]
+    #[pyo3(signature = (value, *, stiffness=180.0, damping=24.0))]
+    pub fn new(value: f32, stiffness: f32, damping: f32) -> Self {
+        Self {
+            inner: BindingSpring::new(value, stiffness, damping),
+        }
+    }
+
+    pub fn step(&mut self, target: f32, delta_seconds: f64) -> f32 {
+        self.inner.step(target, delta_seconds)
+    }
+
+    #[getter]
+    pub fn value(&self) -> f32 {
+        self.inner.value()
+    }
+
+    #[getter]
+    pub fn velocity(&self) -> f32 {
+        self.inner.velocity()
+    }
+
+    #[getter]
+    pub fn stiffness(&self) -> f32 {
+        self.inner.stiffness()
+    }
+
+    #[getter]
+    pub fn damping(&self) -> f32 {
+        self.inner.damping()
+    }
+}
+
+#[pyclass(name = "AnimatedValue", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyAnimatedValue {
+    inner: BindingAnimatedValue,
+}
+
+#[pymethods]
+impl PyAnimatedValue {
+    #[new]
+    #[pyo3(signature = (initial, *, duration=0.2, easing="ease-in-out"))]
+    pub fn new(
+        initial: PyRef<'_, PyAnimationValue>,
+        duration: f32,
+        easing: &str,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingAnimatedValue::new(initial.inner, duration, py_easing(easing)?),
+        })
+    }
+
+    pub fn set_duration(&mut self, seconds: f32) {
+        self.inner.set_duration(seconds);
+    }
+
+    pub fn set_easing(&mut self, easing: &str) -> PyResult<()> {
+        self.inner.set_easing(py_easing(easing)?);
+        Ok(())
+    }
+
+    pub fn set_target(&mut self, target: PyRef<'_, PyAnimationValue>) {
+        self.inner.set_target(target.inner);
+    }
+
+    pub fn jump_to(&mut self, value: PyRef<'_, PyAnimationValue>) {
+        self.inner.jump_to(value.inner);
+    }
+
+    pub fn tick(&mut self, delta_seconds: f32) -> bool {
+        self.inner.tick(delta_seconds)
+    }
+
+    #[getter]
+    pub fn value(&self) -> PyAnimationValue {
+        self.inner.value().into()
+    }
+
+    #[getter]
+    pub fn target(&self) -> PyAnimationValue {
+        self.inner.target().into()
+    }
+
+    #[getter]
+    pub fn is_animating(&self) -> bool {
+        self.inner.is_animating()
+    }
+}
+
+#[pyclass(name = "Keyframe", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyAnimationKeyframe {
+    inner: BindingAnimationKeyframe,
+}
+
+#[pymethods]
+impl PyAnimationKeyframe {
+    #[new]
+    #[pyo3(signature = (time, value, *, easing="linear"))]
+    pub fn new(time: f64, value: PyRef<'_, PyAnimationValue>, easing: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingAnimationKeyframe::new(time, value.inner, py_easing(easing)?),
+        })
+    }
+
+    #[getter]
+    pub fn time(&self) -> f64 {
+        self.inner.time()
+    }
+
+    #[getter]
+    pub fn value(&self) -> PyAnimationValue {
+        self.inner.value().into()
+    }
+}
+
+#[pyclass(name = "AnimationTrack", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationTrack {
+    inner: BindingAnimationTrack,
+}
+
+#[pymethods]
+impl PyAnimationTrack {
+    #[new]
+    pub fn new(target: String, property: String) -> Self {
+        Self {
+            inner: BindingAnimationTrack::new(target, property),
+        }
+    }
+
+    pub fn add_keyframe(&mut self, keyframe: PyRef<'_, PyAnimationKeyframe>) {
+        self.inner.add_keyframe(keyframe.inner);
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.set_enabled(enabled);
+    }
+
+    pub fn sample(&self, time: f64) -> Option<PyAnimationValue> {
+        self.inner.sample(time).map(Into::into)
+    }
+
+    #[getter]
+    pub fn target(&self) -> String {
+        self.inner.target().to_owned()
+    }
+
+    #[getter]
+    pub fn property(&self) -> String {
+        self.inner.property().to_owned()
+    }
+
+    #[getter]
+    pub fn keyframe_count(&self) -> usize {
+        self.inner.keyframe_count()
+    }
+}
+
+#[pyclass(name = "AnimationClip", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationClip {
+    inner: BindingAnimationClip,
+}
+
+#[pymethods]
+impl PyAnimationClip {
+    #[new]
+    pub fn new(id: String, start_time: f64, duration: f64) -> Self {
+        Self {
+            inner: BindingAnimationClip::new(id, start_time, duration),
+        }
+    }
+
+    pub fn add_track(&mut self, track: PyRef<'_, PyAnimationTrack>) {
+        self.inner.add_track(track.inner.clone());
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.set_enabled(enabled);
+    }
+
+    #[getter]
+    pub fn id(&self) -> String {
+        self.inner.id().to_owned()
+    }
+
+    #[getter]
+    pub fn start_time(&self) -> f64 {
+        self.inner.start_time()
+    }
+
+    #[getter]
+    pub fn duration(&self) -> f64 {
+        self.inner.duration()
+    }
+
+    #[getter]
+    pub fn track_count(&self) -> usize {
+        self.inner.track_count()
+    }
+}
+
+#[pyclass(name = "AnimationSample", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationSample {
+    #[pyo3(get)]
+    pub clip_id: String,
+    #[pyo3(get)]
+    pub target: String,
+    #[pyo3(get)]
+    pub property: String,
+    #[pyo3(get)]
+    pub time: f64,
+    #[pyo3(get)]
+    pub value: PyAnimationValue,
+}
+
+impl From<BindingAnimationSample> for PyAnimationSample {
+    fn from(value: BindingAnimationSample) -> Self {
+        Self {
+            clip_id: value.clip_id,
+            target: value.target,
+            property: value.property,
+            time: value.time,
+            value: value.value.into(),
+        }
+    }
+}
+
+#[pyclass(name = "AnimationTimeline", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationTimeline {
+    inner: BindingAnimationTimeline,
+}
+
+#[pymethods]
+impl PyAnimationTimeline {
+    #[new]
+    pub fn new(duration: f64) -> Self {
+        Self {
+            inner: BindingAnimationTimeline::new(duration),
+        }
+    }
+
+    pub fn add_clip(&mut self, clip: PyRef<'_, PyAnimationClip>) {
+        self.inner.add_clip(clip.inner.clone());
+    }
+
+    pub fn sample(&self, time: f64) -> Vec<PyAnimationSample> {
+        self.inner
+            .sample(time)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    #[getter]
+    pub fn duration(&self) -> f64 {
+        self.inner.duration()
+    }
+
+    #[getter]
+    pub fn clip_count(&self) -> usize {
+        self.inner.clip_count()
+    }
+}
+
+#[pyclass(name = "AnimationPlayer", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationPlayer {
+    inner: BindingAnimationPlayer,
+}
+
+#[pymethods]
+impl PyAnimationPlayer {
+    #[new]
+    pub fn new(timeline: PyRef<'_, PyAnimationTimeline>) -> Self {
+        Self {
+            inner: BindingAnimationPlayer::new(&timeline.inner),
+        }
+    }
+
+    pub fn play(&mut self) {
+        self.inner.play();
+    }
+
+    pub fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    pub fn stop(&mut self) {
+        self.inner.stop();
+    }
+
+    pub fn seek(&mut self, time: f64) {
+        self.inner.seek(time);
+    }
+
+    pub fn set_repeat(&mut self, repeat: bool) {
+        self.inner.set_repeat(repeat);
+    }
+
+    pub fn set_playback_rate(&mut self, rate: f64) {
+        self.inner.set_playback_rate(rate);
+    }
+
+    pub fn sample(&self) -> Vec<PyAnimationSample> {
+        self.inner.sample().into_iter().map(Into::into).collect()
+    }
+
+    pub fn tick(&mut self, delta_seconds: f64) -> Vec<PyAnimationSample> {
+        self.inner
+            .tick(delta_seconds)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    #[getter]
+    pub fn playhead(&self) -> f64 {
+        self.inner.playhead()
+    }
+
+    #[getter]
+    pub fn is_playing(&self) -> bool {
+        self.inner.is_playing()
+    }
+}
+
+#[pyclass(
+    name = "AnimationDocument",
+    frozen,
+    module = "sui",
+    skip_from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationDocument {
+    inner: BindingAnimationDocument,
+}
+
+#[pymethods]
+impl PyAnimationDocument {
+    #[new]
+    pub fn new(name: String, timeline: PyRef<'_, PyAnimationTimeline>) -> Self {
+        Self {
+            inner: BindingAnimationDocument::new(name, timeline.inner.clone()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn parse(input: &str) -> PyResult<Self> {
+        BindingAnimationDocument::parse(input)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+
+    #[getter]
+    pub fn timeline(&self) -> PyAnimationTimeline {
+        PyAnimationTimeline {
+            inner: self.inner.timeline(),
+        }
+    }
+
+    pub fn to_document_format(&self) -> String {
+        self.inner.to_document_format()
+    }
+}
+
+#[pyclass(name = "AnimationEditor", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationEditor {
+    inner: BindingAnimationEditor,
+}
+
+#[pymethods]
+impl PyAnimationEditor {
+    #[new]
+    pub fn new(document: PyRef<'_, PyAnimationDocument>) -> Self {
+        Self {
+            inner: BindingAnimationEditor::new(document.inner.clone()),
+        }
+    }
+
+    #[getter]
+    pub fn document(&self) -> PyAnimationDocument {
+        PyAnimationDocument {
+            inner: self.inner.document(),
+        }
+    }
+
+    pub fn set_playhead(&mut self, time: f64) {
+        self.inner.set_playhead(time);
+    }
+
+    pub fn set_zoom(&mut self, zoom: f32) {
+        self.inner.set_zoom(zoom);
+    }
+
+    pub fn set_scroll(&mut self, scroll: f32) {
+        self.inner.set_scroll(scroll);
+    }
+
+    #[pyo3(signature = (enabled=true, interval=1.0 / 24.0))]
+    pub fn set_snapping(&mut self, enabled: bool, interval: f64) {
+        self.inner.set_snapping(enabled, interval);
+    }
+
+    pub fn add_keyframe(
+        &mut self,
+        clip_index: usize,
+        track_index: usize,
+        keyframe: PyRef<'_, PyAnimationKeyframe>,
+    ) -> bool {
+        self.inner
+            .add_keyframe(clip_index, track_index, keyframe.inner)
+    }
+
+    #[pyo3(signature = (clip_index, track_index, keyframe_index, *, easing))]
+    pub fn update_keyframe_easing(
+        &mut self,
+        clip_index: usize,
+        track_index: usize,
+        keyframe_index: usize,
+        easing: &str,
+    ) -> PyResult<bool> {
+        Ok(self.inner.update_keyframe_easing(
+            clip_index,
+            track_index,
+            keyframe_index,
+            py_easing(easing)?,
+        ))
+    }
+
+    pub fn remove_keyframe(
+        &mut self,
+        clip_index: usize,
+        track_index: usize,
+        keyframe_index: usize,
+    ) -> bool {
+        self.inner
+            .remove_keyframe(clip_index, track_index, keyframe_index)
+    }
+
+    pub fn undo(&mut self) -> bool {
+        self.inner.undo()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.inner.redo()
+    }
+
+    #[getter]
+    pub fn can_undo(&self) -> bool {
+        self.inner.can_undo()
+    }
+
+    #[getter]
+    pub fn can_redo(&self) -> bool {
+        self.inner.can_redo()
+    }
+
+    #[getter]
+    pub fn playhead(&self) -> f64 {
+        self.inner.playhead()
+    }
+
+    #[getter]
+    pub fn zoom(&self) -> f32 {
+        self.inner.zoom()
+    }
+
+    #[getter]
+    pub fn scroll(&self) -> f32 {
+        self.inner.scroll()
     }
 }
 
@@ -1442,17 +2231,27 @@ pub struct PyWidget {
 }
 
 enum PyWidgetKind {
-    Foreign { callbacks: Py<PyAny> },
+    Foreign {
+        callbacks: Py<PyAny>,
+        children: Vec<BindingWidget>,
+    },
     Binding(BindingWidget),
 }
 
 #[pymethods]
 impl PyWidget {
     #[new]
-    pub fn new(callbacks: Py<PyAny>) -> Self {
-        Self {
-            kind: PyWidgetKind::Foreign { callbacks },
-        }
+    #[pyo3(signature = (callbacks, children=None))]
+    pub fn new(callbacks: Py<PyAny>, children: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        Ok(Self {
+            kind: PyWidgetKind::Foreign {
+                callbacks,
+                children: children
+                    .map(extract_binding_widgets)
+                    .transpose()?
+                    .unwrap_or_default(),
+            },
+        })
     }
 }
 
@@ -1466,21 +2265,29 @@ impl PyWidget {
     fn binding_widget(&self) -> PyResult<BindingWidget> {
         match &self.kind {
             PyWidgetKind::Binding(widget) => Ok(widget.clone()),
-            PyWidgetKind::Foreign { callbacks } => {
+            PyWidgetKind::Foreign {
+                callbacks,
+                children,
+            } => {
                 let callbacks = Python::attach(|py| callbacks.clone_ref(py));
-                Ok(BindingWidget::foreign(PyWidgetCallbacks {
-                    callbacks: Mutex::new(callbacks),
-                }))
+                Ok(BindingWidget::foreign_arc_with_children(
+                    Arc::new(PyWidgetCallbacks {
+                        callbacks: Mutex::new(callbacks),
+                        child_sizes: Mutex::new(Vec::new()),
+                    }),
+                    children.clone(),
+                ))
             }
         }
     }
 
     fn into_sui_widget(&self) -> PyResult<ForeignWidget> {
         match &self.kind {
-            PyWidgetKind::Foreign { callbacks } => {
+            PyWidgetKind::Foreign { callbacks, .. } => {
                 let callbacks = Python::attach(|py| callbacks.clone_ref(py));
                 Ok(ForeignWidget::new(PyWidgetCallbacks {
                     callbacks: Mutex::new(callbacks),
+                    child_sizes: Mutex::new(Vec::new()),
                 }))
             }
             PyWidgetKind::Binding(_) => Err(PyValueError::new_err(
@@ -1513,6 +2320,156 @@ impl PyState {
         self.inner.set(binding_value_from_py(value)?);
         Ok(())
     }
+
+    pub fn select(&self, py: Python<'_>, selector: Py<PyAny>) -> PyResult<Self> {
+        let initial = selector.call1(py, (self.get(py)?,))?;
+        let derived = BindingState::new(binding_value_from_py(initial.bind(py))?);
+        let derived_for_observer = derived.clone();
+        let selector_for_observer = selector.clone_ref(py);
+        let subscription = self.inner.observe(move |value| {
+            Python::attach(|py| {
+                let value = binding_value_to_py(py, value);
+                match value.and_then(|value| selector_for_observer.call1(py, (value,))) {
+                    Ok(selected) => match binding_value_from_py(selected.bind(py)) {
+                        Ok(selected) => derived_for_observer.set(selected),
+                        Err(error) => error.print(py),
+                    },
+                    Err(error) => error.print(py),
+                }
+            });
+        });
+        derived.retain_subscription(subscription);
+        Ok(Self { inner: derived })
+    }
+
+    pub fn watch(&self, py: Python<'_>, callback: Py<PyAny>) -> PyStateSubscription {
+        let callback = callback.clone_ref(py);
+        PyStateSubscription {
+            inner: Mutex::new(Some(self.inner.observe(move |value| {
+                Python::attach(|py| {
+                    if let Ok(value) = binding_value_to_py(py, value)
+                        && let Err(error) = callback.call1(py, (value,))
+                    {
+                        error.print(py);
+                    }
+                });
+            }))),
+        }
+    }
+}
+
+#[pyclass(name = "StateSubscription", module = "sui", skip_from_py_object)]
+pub struct PyStateSubscription {
+    inner: Mutex<Option<BindingStateSubscription>>,
+}
+
+#[pymethods]
+impl PyStateSubscription {
+    pub fn unsubscribe(&self) -> bool {
+        recover_lock(&self.inner)
+            .take()
+            .is_some_and(|mut subscription| subscription.unsubscribe())
+    }
+}
+
+#[pyclass(name = "Theme", module = "sui", from_py_object)]
+#[derive(Clone)]
+pub struct PyTheme {
+    inner: BindingTheme,
+}
+
+#[pymethods]
+impl PyTheme {
+    #[new]
+    #[pyo3(signature = (preset="light", *, accent=None, control_size=None))]
+    pub fn new(
+        preset: &str,
+        accent: Option<PyColor>,
+        control_size: Option<&str>,
+    ) -> PyResult<Self> {
+        let inner = BindingTheme::preset(preset).map_err(PyValueError::new_err)?;
+        if let Some(accent) = accent {
+            inner.set_accent(accent.into());
+        }
+        if let Some(control_size) = control_size {
+            inner
+                .set_control_size(control_size)
+                .map_err(PyValueError::new_err)?;
+        }
+        Ok(Self { inner })
+    }
+
+    #[staticmethod]
+    pub fn light() -> PyResult<Self> {
+        Self::new("light", None, None)
+    }
+
+    #[staticmethod]
+    pub fn dark() -> PyResult<Self> {
+        Self::new("dark", None, None)
+    }
+
+    #[staticmethod]
+    pub fn neutral() -> PyResult<Self> {
+        Self::new("neutral", None, None)
+    }
+
+    #[staticmethod]
+    pub fn neutral_dark() -> PyResult<Self> {
+        Self::new("neutral-dark", None, None)
+    }
+
+    #[staticmethod]
+    pub fn high_contrast() -> PyResult<Self> {
+        Self::new("high-contrast", None, None)
+    }
+
+    #[staticmethod]
+    pub fn oled() -> PyResult<Self> {
+        Self::new("oled", None, None)
+    }
+
+    pub fn set_preset(&self, preset: &str) -> PyResult<()> {
+        self.inner.set_preset(preset).map_err(PyValueError::new_err)
+    }
+
+    pub fn set_accent(&self, color: PyColor) {
+        self.inner.set_accent(color.into());
+    }
+
+    pub fn set_control_size(&self, size: &str) -> PyResult<()> {
+        self.inner
+            .set_control_size(size)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn color(&self, name: &str) -> PyResult<PyColor> {
+        self.inner
+            .color(name)
+            .map(PyColor::from)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn set_color(&self, name: &str, color: PyColor) -> PyResult<()> {
+        self.inner
+            .set_color(name, color.into())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn number(&self, name: &str) -> PyResult<f32> {
+        self.inner.number(name).map_err(PyValueError::new_err)
+    }
+
+    pub fn set_number(&self, name: &str, value: f32) -> PyResult<()> {
+        self.inner
+            .set_number(name, value)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn accent(&self) -> PyColor {
+        self.inner.accent().into()
+    }
 }
 
 #[pyclass(name = "Window", module = "sui", from_py_object)]
@@ -1520,19 +2477,129 @@ impl PyState {
 pub struct PyWindow {
     title: String,
     root: Option<BindingWidget>,
+    initial_size: Option<Size>,
+    initial_position: Option<Point>,
+    icon_svg: Option<Vec<u8>>,
+    use_default_icon: bool,
+}
+
+#[pyclass(name = "RenderOptions", frozen, module = "sui", from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyRenderOptions {
+    inner: BindingRenderOptions,
+}
+
+#[pymethods]
+impl PyRenderOptions {
+    #[new]
+    #[pyo3(signature = (
+        *, feathering=true, feather_width=1.0, optical_text_alignment=true,
+        output_color_primaries="auto", dynamic_range="auto", tone_mapping="auto",
+        color_management="auto", sdr_content_brightness_nits=203.0,
+        use_system_sdr_brightness=true
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        feathering: bool,
+        feather_width: f32,
+        optical_text_alignment: bool,
+        output_color_primaries: &str,
+        dynamic_range: &str,
+        tone_mapping: &str,
+        color_management: &str,
+        sdr_content_brightness_nits: f32,
+        use_system_sdr_brightness: bool,
+    ) -> PyResult<Self> {
+        BindingRenderOptions::new(
+            feathering,
+            feather_width,
+            optical_text_alignment,
+            output_color_primaries,
+            dynamic_range,
+            tone_mapping,
+            color_management,
+            sdr_content_brightness_nits,
+            use_system_sdr_brightness,
+        )
+        .map(|inner| Self { inner })
+        .map_err(PyValueError::new_err)
+    }
+
+    #[staticmethod]
+    pub fn hdr() -> PyResult<Self> {
+        Self::new(
+            true,
+            1.0,
+            true,
+            "display-p3",
+            "hdr",
+            "auto",
+            "prefer-hdr",
+            203.0,
+            true,
+        )
+    }
+
+    #[staticmethod]
+    pub fn wide_gamut() -> PyResult<Self> {
+        Self::new(
+            true,
+            1.0,
+            true,
+            "display-p3",
+            "auto",
+            "auto",
+            "prefer-wide-gamut",
+            203.0,
+            true,
+        )
+    }
+
+    #[getter]
+    pub fn feathering(&self) -> bool {
+        self.inner.feathering_enabled()
+    }
+
+    #[getter]
+    pub fn feather_width(&self) -> f32 {
+        self.inner.feather_width()
+    }
 }
 
 #[pymethods]
 impl PyWindow {
     #[new]
-    pub fn new(title: String) -> Self {
-        Self { title, root: None }
+    #[pyo3(signature = (title, *, size=None, position=None, icon_svg=None, use_default_icon=true))]
+    pub fn new(
+        title: String,
+        size: Option<PySize>,
+        position: Option<PyPoint>,
+        icon_svg: Option<Vec<u8>>,
+        use_default_icon: bool,
+    ) -> PyResult<Self> {
+        if icon_svg.is_some() && !use_default_icon {
+            return Err(PyValueError::new_err(
+                "icon_svg and use_default_icon=False cannot be combined",
+            ));
+        }
+        Ok(Self {
+            title,
+            root: None,
+            initial_size: size.map(Into::into),
+            initial_position: position.map(Into::into),
+            icon_svg,
+            use_default_icon,
+        })
     }
 
     pub fn root(&self, widget: PyRef<'_, PyWidget>) -> PyResult<Self> {
         Ok(Self {
             title: self.title.clone(),
             root: Some(widget.binding_widget()?),
+            initial_size: self.initial_size,
+            initial_position: self.initial_position,
+            icon_svg: self.icon_svg.clone(),
+            use_default_icon: self.use_default_icon,
         })
     }
 }
@@ -1543,7 +2610,19 @@ impl PyWindow {
             .root
             .clone()
             .ok_or_else(|| PyValueError::new_err("window root has not been set"))?;
-        Ok(BindingWindow::new(self.title.clone(), root))
+        let mut window = BindingWindow::new(self.title.clone(), root);
+        if let Some(size) = self.initial_size {
+            window = window.with_initial_size(size);
+        }
+        if let Some(position) = self.initial_position {
+            window = window.with_initial_position(position);
+        }
+        if let Some(svg) = &self.icon_svg {
+            window = window.with_icon_svg(svg.clone());
+        } else if !self.use_default_icon {
+            window = window.without_icon();
+        }
+        Ok(window)
     }
 }
 
@@ -1555,15 +2634,45 @@ pub struct PyApp {
 #[pymethods]
 impl PyApp {
     #[new]
-    pub fn new() -> Self {
-        Self {
-            inner: BindingApp::new(),
+    #[pyo3(signature = (*, theme=None, render_options=None))]
+    pub fn new(theme: Option<PyTheme>, render_options: Option<PyRenderOptions>) -> Self {
+        let mut inner = BindingApp::new();
+        if let Some(theme) = theme {
+            inner.set_theme(theme.inner);
         }
+        if let Some(options) = render_options {
+            inner.set_render_options(options.inner);
+        }
+        Self { inner }
     }
 
     pub fn window(&mut self, window: PyRef<'_, PyWindow>) -> PyResult<()> {
         self.inner.push_window(window.to_binding()?);
         Ok(())
+    }
+
+    pub fn configure_rendering(&mut self, options: PyRenderOptions) {
+        self.inner.set_render_options(options.inner);
+    }
+
+    pub fn set_theme(&mut self, theme: PyTheme) {
+        self.inner.set_theme(theme.inner);
+    }
+
+    pub fn on(&mut self, name: String, callback: Py<PyAny>) {
+        self.inner.on_message(
+            name,
+            BindingMessageAction::new(move |payload| {
+                Python::attach(|py| {
+                    let payload = binding_value_to_py(py, payload)
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                    callback
+                        .call1(py, (payload,))
+                        .map(|_| ())
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                })
+            }),
+        );
     }
 
     #[pyo3(signature = (index=0))]
@@ -1715,7 +2824,7 @@ impl PyApp {
 
 impl Default for PyApp {
     fn default() -> Self {
-        Self::new()
+        Self::new(None, None)
     }
 }
 
@@ -1769,6 +2878,10 @@ impl PyUiHandle {
     pub fn pending_count(&self) -> usize {
         self.inner.pending_count()
     }
+
+    pub fn emit(&self, name: String, payload: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(self.inner.emit(name, binding_value_from_py(payload)?))
+    }
 }
 
 impl From<BindingUiHandle> for PyUiHandle {
@@ -1782,6 +2895,312 @@ pub struct PyRunningApp {
     inner: RefCell<BindingRuntime>,
 }
 
+#[pyclass(name = "FrameTiming", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyFrameTiming {
+    #[pyo3(get)]
+    pub phase: String,
+    #[pyo3(get)]
+    pub duration_ms: f64,
+}
+
+impl From<BindingFrameTiming> for PyFrameTiming {
+    fn from(value: BindingFrameTiming) -> Self {
+        Self {
+            phase: value.phase,
+            duration_ms: value.duration_ms,
+        }
+    }
+}
+
+#[pyclass(name = "WidgetTiming", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyWidgetTiming {
+    #[pyo3(get)]
+    pub widget_id: u64,
+    #[pyo3(get)]
+    pub widget_name: String,
+    #[pyo3(get)]
+    pub phase: String,
+    #[pyo3(get)]
+    pub duration_ms: f64,
+    #[pyo3(get)]
+    pub calls: usize,
+}
+
+impl From<BindingWidgetTiming> for PyWidgetTiming {
+    fn from(value: BindingWidgetTiming) -> Self {
+        Self {
+            widget_id: value.widget_id,
+            widget_name: value.widget_name,
+            phase: value.phase,
+            duration_ms: value.duration_ms,
+            calls: value.calls,
+        }
+    }
+}
+
+#[pyclass(name = "EventRouteTrace", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyEventRouteTrace {
+    #[pyo3(get)]
+    pub sequence: u64,
+    #[pyo3(get)]
+    pub event_kind: String,
+    #[pyo3(get)]
+    pub target_id: u64,
+    #[pyo3(get)]
+    pub path: Vec<u64>,
+    #[pyo3(get)]
+    pub handled: bool,
+}
+
+impl From<BindingEventRouteTrace> for PyEventRouteTrace {
+    fn from(value: BindingEventRouteTrace) -> Self {
+        Self {
+            sequence: value.sequence,
+            event_kind: value.event_kind,
+            target_id: value.target_id,
+            path: value.path,
+            handled: value.handled,
+        }
+    }
+}
+
+#[pyclass(
+    name = "ReactiveInvalidationTrace",
+    frozen,
+    module = "sui",
+    skip_from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyReactiveInvalidationTrace {
+    #[pyo3(get)]
+    pub widget_id: u64,
+    #[pyo3(get)]
+    pub source_name: String,
+    #[pyo3(get)]
+    pub version: u64,
+    #[pyo3(get)]
+    pub kind: String,
+    #[pyo3(get)]
+    pub delivered: bool,
+}
+
+impl From<BindingReactiveInvalidationTrace> for PyReactiveInvalidationTrace {
+    fn from(value: BindingReactiveInvalidationTrace) -> Self {
+        Self {
+            widget_id: value.widget_id,
+            source_name: value.source_name,
+            version: value.version,
+            kind: value.kind,
+            delivered: value.delivered,
+        }
+    }
+}
+
+#[pyclass(
+    name = "CommandDispatchTrace",
+    frozen,
+    module = "sui",
+    skip_from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyCommandDispatchTrace {
+    #[pyo3(get)]
+    pub sequence: u64,
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub payload_type: String,
+    #[pyo3(get)]
+    pub target: String,
+    #[pyo3(get)]
+    pub delivery: String,
+    #[pyo3(get)]
+    pub handlers: Vec<String>,
+    #[pyo3(get)]
+    pub handled: bool,
+    #[pyo3(get)]
+    pub delivered: bool,
+}
+
+impl From<BindingCommandDispatchTrace> for PyCommandDispatchTrace {
+    fn from(value: BindingCommandDispatchTrace) -> Self {
+        Self {
+            sequence: value.sequence,
+            name: value.name,
+            payload_type: value.payload_type,
+            target: value.target,
+            delivery: value.delivery,
+            handlers: value.handlers,
+            handled: value.handled,
+            delivered: value.delivered,
+        }
+    }
+}
+
+#[pyclass(
+    name = "InvalidationTrace",
+    frozen,
+    module = "sui",
+    skip_from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyInvalidationTrace {
+    #[pyo3(get)]
+    pub target: String,
+    #[pyo3(get)]
+    pub kind: String,
+    #[pyo3(get)]
+    pub source: String,
+    #[pyo3(get)]
+    pub reason: Option<String>,
+}
+
+impl From<BindingInvalidationTrace> for PyInvalidationTrace {
+    fn from(value: BindingInvalidationTrace) -> Self {
+        Self {
+            target: value.target,
+            kind: value.kind,
+            source: value.source,
+            reason: value.reason,
+        }
+    }
+}
+
+#[pyclass(
+    name = "WidgetRebuildTrace",
+    frozen,
+    module = "sui",
+    skip_from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyWidgetRebuildTrace {
+    #[pyo3(get)]
+    pub widget_id: u64,
+    #[pyo3(get)]
+    pub widget_name: String,
+    #[pyo3(get)]
+    pub reason: String,
+}
+
+impl From<BindingWidgetRebuildTrace> for PyWidgetRebuildTrace {
+    fn from(value: BindingWidgetRebuildTrace) -> Self {
+        Self {
+            widget_id: value.widget_id,
+            widget_name: value.widget_name,
+            reason: value.reason,
+        }
+    }
+}
+
+#[pyclass(
+    name = "InspectorSnapshot",
+    frozen,
+    module = "sui",
+    skip_from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyInspectorSnapshot {
+    #[pyo3(get)]
+    pub window_id: u64,
+    #[pyo3(get)]
+    pub title: String,
+    #[pyo3(get)]
+    pub tracing_enabled: bool,
+    #[pyo3(get)]
+    pub focused_widget_id: Option<u64>,
+    #[pyo3(get)]
+    pub window_focused: bool,
+    #[pyo3(get)]
+    pub scheduled_phases: Vec<String>,
+    #[pyo3(get)]
+    pub semantics_count: usize,
+    #[pyo3(get)]
+    pub semantics_nodes: Vec<PySemanticNode>,
+    #[pyo3(get)]
+    pub widget_count: usize,
+    #[pyo3(get)]
+    pub stack_host_count: usize,
+    #[pyo3(get)]
+    pub overlay_count: usize,
+    #[pyo3(get)]
+    pub timer_count: usize,
+    #[pyo3(get)]
+    pub async_task_count: usize,
+    #[pyo3(get)]
+    pub requested_animation_frame_count: usize,
+    #[pyo3(get)]
+    pub widget_diagnostics_count: usize,
+    #[pyo3(get)]
+    pub event_route_count: usize,
+    #[pyo3(get)]
+    pub reactive_invalidation_count: usize,
+    #[pyo3(get)]
+    pub command_dispatch_count: usize,
+    #[pyo3(get)]
+    pub invalidation_count: usize,
+    #[pyo3(get)]
+    pub widget_rebuild_count: usize,
+    #[pyo3(get)]
+    pub frame_timings: Vec<PyFrameTiming>,
+    #[pyo3(get)]
+    pub widget_timings: Vec<PyWidgetTiming>,
+    #[pyo3(get)]
+    pub event_routes: Vec<PyEventRouteTrace>,
+    #[pyo3(get)]
+    pub reactive_invalidations: Vec<PyReactiveInvalidationTrace>,
+    #[pyo3(get)]
+    pub command_dispatches: Vec<PyCommandDispatchTrace>,
+    #[pyo3(get)]
+    pub invalidations: Vec<PyInvalidationTrace>,
+    #[pyo3(get)]
+    pub widget_rebuilds: Vec<PyWidgetRebuildTrace>,
+}
+
+impl From<BindingInspectorSnapshot> for PyInspectorSnapshot {
+    fn from(value: BindingInspectorSnapshot) -> Self {
+        Self {
+            window_id: value.window_id,
+            title: value.title,
+            tracing_enabled: value.tracing_enabled,
+            focused_widget_id: value.focused_widget_id,
+            window_focused: value.window_focused,
+            scheduled_phases: value.scheduled_phases,
+            semantics_count: value.semantics_count,
+            semantics_nodes: value.semantics_nodes.into_iter().map(Into::into).collect(),
+            widget_count: value.widget_count,
+            stack_host_count: value.stack_host_count,
+            overlay_count: value.overlay_count,
+            timer_count: value.timer_count,
+            async_task_count: value.async_task_count,
+            requested_animation_frame_count: value.requested_animation_frame_count,
+            widget_diagnostics_count: value.widget_diagnostics_count,
+            event_route_count: value.event_route_count,
+            reactive_invalidation_count: value.reactive_invalidation_count,
+            command_dispatch_count: value.command_dispatch_count,
+            invalidation_count: value.invalidation_count,
+            widget_rebuild_count: value.widget_rebuild_count,
+            frame_timings: value.frame_timings.into_iter().map(Into::into).collect(),
+            widget_timings: value.widget_timings.into_iter().map(Into::into).collect(),
+            event_routes: value.event_routes.into_iter().map(Into::into).collect(),
+            reactive_invalidations: value
+                .reactive_invalidations
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            command_dispatches: value
+                .command_dispatches
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            invalidations: value.invalidations.into_iter().map(Into::into).collect(),
+            widget_rebuilds: value.widget_rebuilds.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyRunningApp {
     pub fn ui_handle(&self) -> PyUiHandle {
@@ -1792,6 +3211,70 @@ impl PyRunningApp {
         self.inner
             .borrow_mut()
             .drain_ui_tasks()
+            .map_err(py_runtime_error)
+    }
+
+    /// Advance host-driven timers and animations to an absolute frame time in seconds.
+    pub fn tick(&self, frame_time: f64) {
+        self.inner.borrow_mut().tick(frame_time);
+    }
+
+    pub fn drain_ready_events(&self) -> usize {
+        self.inner.borrow_mut().drain_ready_event_count()
+    }
+
+    pub fn request_redraw_all(&self) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .request_redraw_all()
+            .map_err(py_runtime_error)
+    }
+
+    pub fn wake_window(&self, window: PyRef<'_, PyWindowHandle>) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .wake_window(window.inner)
+            .map_err(py_runtime_error)
+    }
+
+    pub fn handle_event_for(
+        &self,
+        window: PyRef<'_, PyWindowHandle>,
+        event: PyRef<'_, PyEvent>,
+    ) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .handle_event(window.inner, event.binding_event())
+            .map_err(py_runtime_error)
+    }
+
+    pub fn set_render_options(
+        &self,
+        window: PyRef<'_, PyWindowHandle>,
+        options: PyRenderOptions,
+    ) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .set_render_options(window.inner, options.inner)
+            .map_err(py_runtime_error)
+    }
+
+    #[pyo3(signature = (enabled=true, index=0))]
+    pub fn set_inspector_tracing(&self, enabled: bool, index: usize) -> PyResult<()> {
+        let mut runtime = self.inner.borrow_mut();
+        let window = runtime.window_id_at(index).map_err(py_runtime_error)?;
+        runtime
+            .set_inspector_tracing(window, enabled)
+            .map_err(py_runtime_error)
+    }
+
+    #[pyo3(signature = (index=0))]
+    pub fn inspect(&self, index: usize) -> PyResult<PyInspectorSnapshot> {
+        let runtime = self.inner.borrow();
+        let window = runtime.window_id_at(index).map_err(py_runtime_error)?;
+        runtime
+            .inspector_snapshot(window)
+            .map(PyInspectorSnapshot::from)
             .map_err(py_runtime_error)
     }
 
@@ -1831,6 +3314,48 @@ impl PyRunningApp {
         self.inner
             .borrow_mut()
             .handle_event_at(index, event.binding_event())
+            .map_err(py_runtime_error)
+    }
+
+    #[pyo3(signature = (node, index=0))]
+    pub fn hover(&self, node: PyRef<'_, PySemanticNode>, index: usize) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .hover_node_at(index, &node.inner)
+            .map_err(py_runtime_error)
+    }
+
+    #[pyo3(signature = (node, index=0))]
+    pub fn click(&self, node: PyRef<'_, PySemanticNode>, index: usize) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .click_node_at(index, &node.inner)
+            .map_err(py_runtime_error)
+    }
+
+    #[pyo3(signature = (node, key, index=0))]
+    pub fn press(
+        &self,
+        node: PyRef<'_, PySemanticNode>,
+        key: String,
+        index: usize,
+    ) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .press_node_at(index, &node.inner, key)
+            .map_err(py_runtime_error)
+    }
+
+    #[pyo3(signature = (node, text, index=0))]
+    pub fn fill(
+        &self,
+        node: PyRef<'_, PySemanticNode>,
+        text: String,
+        index: usize,
+    ) -> PyResult<()> {
+        self.inner
+            .borrow_mut()
+            .fill_node_at(index, &node.inner, text)
             .map_err(py_runtime_error)
     }
 
@@ -2099,6 +3624,7 @@ impl PyExternalTextureDescriptor {
 
 struct PyWidgetCallbacks {
     callbacks: Mutex<Py<PyAny>>,
+    child_sizes: Mutex<Vec<Size>>,
 }
 
 impl ForeignWidgetCallbacks for PyWidgetCallbacks {
@@ -2115,18 +3641,30 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
         Python::attach(|py| {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
-            if !object.hasattr("event").map_err(foreign_py_error)? {
-                return Ok(());
-            }
             let py_event = Py::new(py, PyEvent::from_binding(BindingEvent::from(event)))
                 .map_err(foreign_py_error)?;
-            let result = object
-                .call_method1("event", (py_event,))
-                .map_err(foreign_py_error)?;
+            let binding_context = PyEventContext::new(BindingEventContext::from_foreign(ctx));
+            let result = if object
+                .hasattr("event_with_context")
+                .map_err(foreign_py_error)?
+            {
+                let py_context = Py::new(py, binding_context.clone()).map_err(foreign_py_error)?;
+                object
+                    .call_method1("event_with_context", (py_event, py_context))
+                    .map_err(foreign_py_error)?
+            } else if object.hasattr("event").map_err(foreign_py_error)? {
+                object
+                    .call_method1("event", (py_event,))
+                    .map_err(foreign_py_error)?
+            } else {
+                return Ok(());
+            };
             if result.extract::<bool>().unwrap_or(false) {
-                ctx.set_handled();
-                ctx.request_paint();
+                let mut context = recover_lock(&binding_context.inner);
+                context.set_handled();
+                context.request_paint();
             }
+            binding_context.apply(ctx);
             Ok(())
         })
     }
@@ -2134,20 +3672,96 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
     fn measure(
         &self,
         _id: sui_bindings_core::ForeignWidgetId,
-        _ctx: &mut ForeignMeasureCtx<'_>,
+        ctx: &mut ForeignMeasureCtx<'_>,
         constraints: Constraints,
     ) -> ForeignCallbackResult<Size> {
+        let child_constraints = constraints.loosen();
+        let child_sizes = (0..ctx.child_count())
+            .map(|index| {
+                ctx.measure_child(index, child_constraints)
+                    .unwrap_or(Size::ZERO)
+            })
+            .collect::<Vec<_>>();
+        *recover_lock(&self.child_sizes) = child_sizes.clone();
         Python::attach(|py| {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
+            if object
+                .hasattr("measure_with_children")
+                .map_err(foreign_py_error)?
+            {
+                let sizes = child_sizes
+                    .iter()
+                    .copied()
+                    .map(PySize::from)
+                    .collect::<Vec<_>>();
+                let value = object
+                    .call_method1(
+                        "measure_with_children",
+                        (PyConstraints::from(constraints), sizes),
+                    )
+                    .map_err(foreign_py_error)?;
+                return extract_size(&value).map_err(foreign_py_error);
+            }
             if !object.hasattr("measure").map_err(foreign_py_error)? {
-                return Ok(constraints.clamp(Size::new(0.0, 0.0)));
+                let natural = child_sizes.iter().fold(Size::ZERO, |size, child| {
+                    Size::new(size.width.max(child.width), size.height + child.height)
+                });
+                return Ok(constraints.clamp(natural));
             }
             let value = object
                 .call_method1("measure", (PyConstraints::from(constraints),))
                 .map_err(foreign_py_error)?;
             extract_size(&value).map_err(foreign_py_error)
         })
+    }
+
+    fn arrange(
+        &self,
+        _id: sui_bindings_core::ForeignWidgetId,
+        ctx: &mut ForeignArrangeCtx<'_>,
+        bounds: Rect,
+    ) -> ForeignCallbackResult<()> {
+        let child_sizes = recover_lock(&self.child_sizes).clone();
+        let custom_bounds = Python::attach(|py| -> PyResult<Option<Vec<PyRect>>> {
+            let callbacks = recover_lock(&self.callbacks);
+            let object = callbacks.bind(py);
+            if !object.hasattr("arrange")? {
+                return Ok(None);
+            }
+            let sizes = child_sizes
+                .iter()
+                .copied()
+                .map(PySize::from)
+                .collect::<Vec<_>>();
+            object
+                .call_method1("arrange", (PyRect::from(bounds), sizes))?
+                .extract::<Vec<PyRect>>()
+                .map(Some)
+        })
+        .map_err(foreign_py_error)?;
+
+        if let Some(custom_bounds) = custom_bounds {
+            if custom_bounds.len() != ctx.child_count() {
+                return Err(ForeignCallbackFailure::new(format!(
+                    "arrange returned {} child bounds for {} children",
+                    custom_bounds.len(),
+                    ctx.child_count()
+                )));
+            }
+            for (index, bounds) in custom_bounds.into_iter().enumerate() {
+                ctx.arrange_child(index, bounds.into());
+            }
+        } else {
+            let mut y = bounds.y();
+            for index in 0..ctx.child_count() {
+                let size = child_sizes.get(index).copied().unwrap_or(Size::ZERO);
+                let child_bounds = Rect::new(bounds.x(), y, bounds.width(), size.height);
+                ctx.arrange_child(index, child_bounds);
+                y += size.height;
+            }
+        }
+        Ok(())
     }
 
     fn paint(
@@ -2159,6 +3773,9 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
             if !object.hasattr("paint").map_err(foreign_py_error)? {
+                for index in 0..ctx.child_count() {
+                    ctx.paint_child(index);
+                }
                 return Ok(());
             }
             let paint = PyPaint::new(ctx.bounds());
@@ -2172,7 +3789,11 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
                 ctx.register_image(ctx.widget_image_handle(pending.slot), pending.image);
             }
             ctx.apply_all(commands)
-                .map_err(ForeignCallbackFailure::from)
+                .map_err(ForeignCallbackFailure::from)?;
+            for index in 0..ctx.child_count() {
+                ctx.paint_child(index);
+            }
+            Ok(())
         })
     }
 
@@ -2184,6 +3805,7 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
         Python::attach(|py| {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
+            let mut included_children = vec![false; ctx.child_count()];
             if object.hasattr("semantics").map_err(foreign_py_error)? {
                 let semantics = PySemantics::new(
                     ctx.widget_id(),
@@ -2200,30 +3822,37 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
                         PySemanticsCommand::Node(node) => ctx.push(node),
                         PySemanticsCommand::Child(index) => {
                             ctx.semantics_child(index);
+                            if let Some(included) = included_children.get_mut(index) {
+                                *included = true;
+                            }
                         }
                     }
                 }
-                return Ok(());
-            }
-
-            let name = if object.hasattr("name").map_err(foreign_py_error)? {
-                Some(
-                    object
-                        .getattr("name")
-                        .and_then(|value| value.extract::<String>())
-                        .map_err(foreign_py_error)?,
-                )
             } else {
-                None
-            };
-            if name.is_some() {
-                let mut node = SemanticsNode::new(
-                    ctx.widget_id(),
-                    SemanticsRole::GenericContainer,
-                    ctx.bounds(),
-                );
-                node.name = name;
-                ctx.push(node);
+                let name = if object.hasattr("name").map_err(foreign_py_error)? {
+                    Some(
+                        object
+                            .getattr("name")
+                            .and_then(|value| value.extract::<String>())
+                            .map_err(foreign_py_error)?,
+                    )
+                } else {
+                    None
+                };
+                if name.is_some() {
+                    let mut node = SemanticsNode::new(
+                        ctx.widget_id(),
+                        SemanticsRole::GenericContainer,
+                        ctx.bounds(),
+                    );
+                    node.name = name;
+                    ctx.push(node);
+                }
+            }
+            for (index, included) in included_children.into_iter().enumerate() {
+                if !included {
+                    ctx.semantics_child(index);
+                }
             }
             Ok(())
         })
@@ -2268,6 +3897,107 @@ impl Default for PyUiTaskQueue {
     }
 }
 
+#[pyclass(name = "SemanticNode", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PySemanticNode {
+    inner: BindingSemanticNode,
+}
+
+#[pymethods]
+impl PySemanticNode {
+    #[getter]
+    pub fn id(&self) -> u64 {
+        self.inner.id
+    }
+    #[getter]
+    pub fn parent_id(&self) -> Option<u64> {
+        self.inner.parent_id
+    }
+    #[getter]
+    pub fn role(&self) -> String {
+        self.inner.role.clone()
+    }
+    #[getter]
+    pub fn name(&self) -> Option<String> {
+        self.inner.name.clone()
+    }
+    #[getter]
+    pub fn value(&self) -> Option<String> {
+        self.inner.value.clone()
+    }
+    #[getter]
+    pub fn description(&self) -> Option<String> {
+        self.inner.description.clone()
+    }
+    #[getter]
+    pub fn bounds(&self) -> PyRect {
+        PyRect::new(
+            self.inner.x,
+            self.inner.y,
+            self.inner.width,
+            self.inner.height,
+        )
+    }
+    #[getter]
+    pub fn center(&self) -> PyPoint {
+        self.inner.center().into()
+    }
+    #[getter]
+    pub fn actions(&self) -> Vec<String> {
+        self.inner.actions.clone()
+    }
+    #[getter]
+    pub fn checked(&self) -> Option<String> {
+        self.inner.checked.clone()
+    }
+    #[getter]
+    pub fn busy(&self) -> bool {
+        self.inner.busy
+    }
+    #[getter]
+    pub fn disabled(&self) -> bool {
+        self.inner.disabled
+    }
+    #[getter]
+    pub fn focused(&self) -> bool {
+        self.inner.focused
+    }
+    #[getter]
+    pub fn hidden(&self) -> bool {
+        self.inner.hidden
+    }
+    #[getter]
+    pub fn hovered(&self) -> bool {
+        self.inner.hovered
+    }
+    #[getter]
+    pub fn selected(&self) -> bool {
+        self.inner.selected
+    }
+    #[getter]
+    pub fn expanded(&self) -> Option<bool> {
+        self.inner.expanded
+    }
+    #[getter]
+    pub fn editable(&self) -> bool {
+        self.inner.editable
+    }
+    #[getter]
+    pub fn multiline(&self) -> bool {
+        self.inner.multiline
+    }
+    #[getter]
+    pub fn visible(&self) -> bool {
+        self.inner.visible()
+    }
+}
+
+impl From<BindingSemanticNode> for PySemanticNode {
+    fn from(inner: BindingSemanticNode) -> Self {
+        Self { inner }
+    }
+}
+
 #[pyclass(name = "RenderSnapshot", frozen, module = "sui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRenderSnapshot {
@@ -2275,6 +4005,8 @@ pub struct PyRenderSnapshot {
     pub command_count: usize,
     #[pyo3(get)]
     pub semantics_count: usize,
+    #[pyo3(get)]
+    pub semantics_nodes: Vec<PySemanticNode>,
     #[pyo3(get)]
     pub semantics_roles: Vec<String>,
     #[pyo3(get)]
@@ -2311,11 +4043,76 @@ pub struct PyRenderSnapshot {
     pub registered_image_count: usize,
 }
 
+#[pymethods]
+impl PyRenderSnapshot {
+    #[pyo3(signature = (*, role=None, name=None, text=None, description=None, focused=None, visible=true))]
+    pub fn find(
+        &self,
+        role: Option<&str>,
+        name: Option<&str>,
+        text: Option<&str>,
+        description: Option<&str>,
+        focused: Option<bool>,
+        visible: Option<bool>,
+    ) -> Vec<PySemanticNode> {
+        self.inner_snapshot()
+            .find_nodes(role, name, text, description, focused, visible)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    #[pyo3(signature = (*, role=None, name=None, text=None))]
+    pub fn get_one(
+        &self,
+        role: Option<&str>,
+        name: Option<&str>,
+        text: Option<&str>,
+    ) -> PyResult<PySemanticNode> {
+        self.inner_snapshot()
+            .get_one(role, name, text)
+            .map(Into::into)
+            .map_err(PyValueError::new_err)
+    }
+}
+
+impl PyRenderSnapshot {
+    fn inner_snapshot(&self) -> BindingRenderSnapshot {
+        BindingRenderSnapshot {
+            command_count: self.command_count,
+            semantics_count: self.semantics_count,
+            semantics_nodes: self
+                .semantics_nodes
+                .iter()
+                .map(|node| node.inner.clone())
+                .collect(),
+            semantics_roles: self.semantics_roles.clone(),
+            semantics_names: self.semantics_names.clone(),
+            semantics_values: self.semantics_values.clone(),
+            semantics_descriptions: self.semantics_descriptions.clone(),
+            semantics_checked: self.semantics_checked.clone(),
+            semantics_busy: self.semantics_busy.clone(),
+            semantics_editable_multiline: self.semantics_editable_multiline.clone(),
+            semantics_disabled: self.semantics_disabled.clone(),
+            semantics_focused: self.semantics_focused.clone(),
+            semantics_hidden: self.semantics_hidden.clone(),
+            semantics_hovered: self.semantics_hovered.clone(),
+            semantics_selected: self.semantics_selected.clone(),
+            semantics_expanded: self.semantics_expanded.clone(),
+            fill_rect_count: self.fill_rect_count,
+            draw_image_count: self.draw_image_count,
+            registered_font_count: self.registered_font_count,
+            registered_image_count: self.registered_image_count,
+        }
+    }
+}
+
 impl From<BindingRenderSnapshot> for PyRenderSnapshot {
     fn from(value: BindingRenderSnapshot) -> Self {
         Self {
             command_count: value.command_count,
             semantics_count: value.semantics_count,
+            semantics_nodes: value.semantics_nodes.into_iter().map(Into::into).collect(),
             semantics_roles: value.semantics_roles,
             semantics_names: value.semantics_names,
             semantics_values: value.semantics_values,
@@ -2400,6 +4197,10 @@ pub fn render_widget(
     Ok(PyRenderSnapshot {
         command_count,
         semantics_count: output.semantics.len(),
+        semantics_nodes: binding_semantics_nodes(&output.semantics)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
         semantics_roles: binding_semantics_roles(&output.semantics),
         semantics_names: binding_semantics_names(&output.semantics),
         semantics_values: binding_semantics_values(&output.semantics),
@@ -2425,12 +4226,25 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPoint>()?;
     m.add_class::<PyModifiers>()?;
     m.add_class::<PyEvent>()?;
+    m.add_class::<PyEventContext>()?;
     m.add_class::<PySize>()?;
     m.add_class::<PyRect>()?;
     m.add_class::<PyPath>()?;
     m.add_class::<PyPathBuilder>()?;
     m.add_class::<PyTransform>()?;
     m.add_class::<PyColor>()?;
+    m.add_class::<PyAnimationValue>()?;
+    m.add_class::<PyTransition>()?;
+    m.add_class::<PySpring>()?;
+    m.add_class::<PyAnimatedValue>()?;
+    m.add_class::<PyAnimationKeyframe>()?;
+    m.add_class::<PyAnimationTrack>()?;
+    m.add_class::<PyAnimationClip>()?;
+    m.add_class::<PyAnimationSample>()?;
+    m.add_class::<PyAnimationTimeline>()?;
+    m.add_class::<PyAnimationPlayer>()?;
+    m.add_class::<PyAnimationDocument>()?;
+    m.add_class::<PyAnimationEditor>()?;
     m.add_class::<PyShadow>()?;
     m.add_class::<PyConstraints>()?;
     m.add_class::<PyFontHandle>()?;
@@ -2440,112 +4254,30 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyShader>()?;
     m.add_class::<PyWidget>()?;
     m.add_class::<PyState>()?;
+    m.add_class::<PyStateSubscription>()?;
+    m.add_class::<PyTheme>()?;
     m.add_class::<PyWindow>()?;
+    m.add_class::<PyRenderOptions>()?;
     m.add_class::<PyApp>()?;
     m.add_class::<PyWindowHandle>()?;
     m.add_class::<PyUiHandle>()?;
     m.add_class::<PyRunningApp>()?;
+    m.add_class::<PyFrameTiming>()?;
+    m.add_class::<PyWidgetTiming>()?;
+    m.add_class::<PyEventRouteTrace>()?;
+    m.add_class::<PyReactiveInvalidationTrace>()?;
+    m.add_class::<PyCommandDispatchTrace>()?;
+    m.add_class::<PyInvalidationTrace>()?;
+    m.add_class::<PyWidgetRebuildTrace>()?;
+    m.add_class::<PyInspectorSnapshot>()?;
     m.add_class::<PyRendererInteropCapabilities>()?;
     m.add_class::<PyExternalBackendHandle>()?;
     m.add_class::<PyExternalSync>()?;
     m.add_class::<PyExternalTextureDescriptor>()?;
     m.add_class::<PyUiTaskQueue>()?;
+    m.add_class::<PySemanticNode>()?;
     m.add_class::<PyRenderSnapshot>()?;
-    m.add_class::<PyTextSpan>()?;
-    m.add_class::<PyStatusBarSegment>()?;
-    m.add_class::<PySegmentedControlItem>()?;
-    m.add_class::<PyTableColumn>()?;
-    m.add_class::<PyTableRow>()?;
-    m.add_class::<PyTreeItem>()?;
-    m.add_class::<PyLayerListItem>()?;
-    m.add_class::<PyMenuItem>()?;
-    m.add_class::<PyToolPaletteItem>()?;
-    m.add_class::<PyColorPaletteSwatch>()?;
-    m.add_class::<PyBrushPreviewSpec>()?;
-    m.add_class::<PyFloatingStackWindow>()?;
-    m.add_function(wrap_pyfunction!(py_label, m)?)?;
-    m.add_function(wrap_pyfunction!(py_button, m)?)?;
-    m.add_function(wrap_pyfunction!(py_icon, m)?)?;
-    m.add_function(wrap_pyfunction!(py_icon_button, m)?)?;
-    m.add_function(wrap_pyfunction!(py_link, m)?)?;
-    m.add_function(wrap_pyfunction!(py_checkbox, m)?)?;
-    m.add_function(wrap_pyfunction!(py_switch, m)?)?;
-    m.add_function(wrap_pyfunction!(py_radio_button, m)?)?;
-    m.add_function(wrap_pyfunction!(py_radio_group, m)?)?;
-    m.add_function(wrap_pyfunction!(py_segmented_control, m)?)?;
-    m.add_function(wrap_pyfunction!(py_breadcrumb, m)?)?;
-    m.add_function(wrap_pyfunction!(py_path_bar, m)?)?;
-    m.add_function(wrap_pyfunction!(py_list_view, m)?)?;
-    m.add_function(wrap_pyfunction!(py_table, m)?)?;
-    m.add_function(wrap_pyfunction!(py_data_grid, m)?)?;
-    m.add_function(wrap_pyfunction!(py_slider, m)?)?;
-    m.add_function(wrap_pyfunction!(py_number_input, m)?)?;
-    m.add_function(wrap_pyfunction!(py_select, m)?)?;
-    m.add_function(wrap_pyfunction!(py_progress_bar, m)?)?;
-    m.add_function(wrap_pyfunction!(py_signal_meter, m)?)?;
-    m.add_function(wrap_pyfunction!(py_status_badge, m)?)?;
-    m.add_function(wrap_pyfunction!(py_status_bar, m)?)?;
-    m.add_function(wrap_pyfunction!(py_detail_row, m)?)?;
-    m.add_function(wrap_pyfunction!(py_busy_indicator, m)?)?;
-    m.add_function(wrap_pyfunction!(py_action_card, m)?)?;
-    m.add_function(wrap_pyfunction!(py_brush_preview, m)?)?;
-    m.add_function(wrap_pyfunction!(py_command_group, m)?)?;
-    m.add_function(wrap_pyfunction!(py_coverage_dots, m)?)?;
-    m.add_function(wrap_pyfunction!(py_dock, m)?)?;
-    m.add_function(wrap_pyfunction!(py_fixed_pane_split, m)?)?;
-    m.add_function(wrap_pyfunction!(py_framed_field, m)?)?;
-    m.add_function(wrap_pyfunction!(py_measured_bottom_dock, m)?)?;
-    m.add_function(wrap_pyfunction!(py_placement_badge, m)?)?;
-    m.add_function(wrap_pyfunction!(py_property_row, m)?)?;
-    m.add_function(wrap_pyfunction!(py_section_label, m)?)?;
-    m.add_function(wrap_pyfunction!(py_side_sheet, m)?)?;
-    m.add_function(wrap_pyfunction!(py_split_view, m)?)?;
-    m.add_function(wrap_pyfunction!(py_switch_view, m)?)?;
-    m.add_function(wrap_pyfunction!(py_trailing_slot_row, m)?)?;
-    m.add_function(wrap_pyfunction!(py_floating_stack, m)?)?;
-    m.add_function(wrap_pyfunction!(py_virtual_scroll_view, m)?)?;
-    m.add_function(wrap_pyfunction!(py_reorderable_list, m)?)?;
-    m.add_function(wrap_pyfunction!(py_text_input, m)?)?;
-    m.add_function(wrap_pyfunction!(py_password_input, m)?)?;
-    m.add_function(wrap_pyfunction!(py_datetime_input, m)?)?;
-    m.add_function(wrap_pyfunction!(py_text_area, m)?)?;
-    m.add_function(wrap_pyfunction!(py_rich_text, m)?)?;
-    m.add_function(wrap_pyfunction!(py_image, m)?)?;
-    m.add_function(wrap_pyfunction!(py_color_swatch, m)?)?;
-    m.add_function(wrap_pyfunction!(py_separator, m)?)?;
-    m.add_function(wrap_pyfunction!(py_empty_state, m)?)?;
-    m.add_function(wrap_pyfunction!(py_surface, m)?)?;
-    m.add_function(wrap_pyfunction!(py_toolbar, m)?)?;
-    m.add_function(wrap_pyfunction!(py_column, m)?)?;
-    m.add_function(wrap_pyfunction!(py_row, m)?)?;
-    m.add_function(wrap_pyfunction!(py_scroll_view, m)?)?;
-    m.add_function(wrap_pyfunction!(py_external_surface, m)?)?;
-    m.add_function(wrap_pyfunction!(py_tree_view, m)?)?;
-    m.add_function(wrap_pyfunction!(py_layer_list, m)?)?;
-    m.add_function(wrap_pyfunction!(py_menu, m)?)?;
-    m.add_function(wrap_pyfunction!(py_context_menu, m)?)?;
-    m.add_function(wrap_pyfunction!(py_tab_bar, m)?)?;
-    m.add_function(wrap_pyfunction!(py_tabs, m)?)?;
-    m.add_function(wrap_pyfunction!(py_dialog, m)?)?;
-    m.add_function(wrap_pyfunction!(py_padding, m)?)?;
-    m.add_function(wrap_pyfunction!(py_align, m)?)?;
-    m.add_function(wrap_pyfunction!(py_background, m)?)?;
-    m.add_function(wrap_pyfunction!(py_sized_box, m)?)?;
-    m.add_function(wrap_pyfunction!(py_stack, m)?)?;
-    m.add_function(wrap_pyfunction!(py_semantic_region, m)?)?;
-    m.add_function(wrap_pyfunction!(py_form_row, m)?)?;
-    m.add_function(wrap_pyfunction!(py_field_group, m)?)?;
-    m.add_function(wrap_pyfunction!(py_form_section, m)?)?;
-    m.add_function(wrap_pyfunction!(py_panel_section, m)?)?;
-    m.add_function(wrap_pyfunction!(py_dock_panel, m)?)?;
-    m.add_function(wrap_pyfunction!(py_status_bar_host, m)?)?;
-    m.add_function(wrap_pyfunction!(py_tooltip, m)?)?;
-    m.add_function(wrap_pyfunction!(py_popover, m)?)?;
-    m.add_function(wrap_pyfunction!(py_tool_palette, m)?)?;
-    m.add_function(wrap_pyfunction!(py_preset_strip, m)?)?;
-    m.add_function(wrap_pyfunction!(py_browser_tab_bar, m)?)?;
-    m.add_function(wrap_pyfunction!(py_color_palette, m)?)?;
-    m.add_function(wrap_pyfunction!(py_color_picker, m)?)?;
+    register_generated_python(m)?;
     m.add_function(wrap_pyfunction!(render_widget, m)?)?;
     Ok(())
 }
@@ -2904,6 +4636,7 @@ fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
     match value {
         BindingWindowEvent::CloseRequested => "close_requested",
         BindingWindowEvent::Resized(_) => "resized",
+        BindingWindowEvent::Moved(_) => "moved",
         BindingWindowEvent::ScaleFactorChanged { .. } => "scale_factor_changed",
         BindingWindowEvent::Focused(_) => "focused",
         BindingWindowEvent::Occluded(_) => "occluded",
@@ -3191,7 +4924,7 @@ class Meter:
                 c"meter",
             )?;
             let callbacks = module.getattr("Meter")?.call0()?.unbind();
-            let widget = Py::new(py, PyWidget::new(callbacks))?;
+            let widget = Py::new(py, PyWidget::new(callbacks, None)?)?;
             let snapshot = render_widget(widget.bind(py).borrow(), None)?;
 
             assert!(snapshot.command_count >= 2);
@@ -3244,6 +4977,30 @@ snapshot = sui.render_widget(widget, event)
 assert snapshot.command_count >= 1
 assert probe.events == [('pointer', 'down', 8.0, 'primary', True)]
 
+class ContextProbe:
+    def __init__(self):
+        self.context = None
+
+    def measure(self, constraints):
+        return constraints.clamp(sui.Size(80, 24))
+
+    def event_with_context(self, event, context):
+        assert isinstance(context, sui.EventContext)
+        self.context = (context.window_id, context.widget_id, context.phase, context.bounds.width)
+        context.set_handled()
+        context.request_paint()
+        context.request_semantics()
+        context.capture_pointer(event.pointer_id)
+        context.release_pointer(event.pointer_id)
+        context.set_clipboard_text('context copied text')
+
+context_probe = ContextProbe()
+sui.render_widget(sui.Widget(context_probe), event)
+assert context_probe.context[0] > 0
+assert context_probe.context[1] > 0
+assert context_probe.context[2] in ('capture', 'target', 'bubble')
+assert context_probe.context[3] == 80.0
+
 key = sui.Event.keyboard('Enter')
 assert key.kind == 'keyboard'
 assert key.key == 'Enter'
@@ -3251,6 +5008,61 @@ assert key.state == 'pressed'
 ",
                 c"events.py",
                 c"events",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_custom_widget_can_own_measure_arrange_paint_and_expose_children() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+class Composite:
+    name = 'Composite'
+
+    def __init__(self):
+        self.measured = []
+        self.arranged = []
+
+    def measure_with_children(self, constraints, child_sizes):
+        self.measured = [(size.width, size.height) for size in child_sizes]
+        return constraints.clamp(sui.Size(
+            max(size.width for size in child_sizes),
+            sum(size.height for size in child_sizes),
+        ))
+
+    def arrange(self, bounds, child_sizes):
+        y = bounds.y
+        result = []
+        for size in child_sizes:
+            result.append(sui.Rect(bounds.x, y, bounds.width, size.height))
+            y += size.height
+        self.arranged = result
+        return result
+
+    def paint(self, paint):
+        paint.fill_rect(paint.bounds, sui.Color.rgba(0.1, 0.1, 0.1, 1))
+
+composite = Composite()
+widget = sui.Widget(composite, [
+    sui.sized_box(sui.label('First child'), width=100, height=24),
+    sui.sized_box(sui.label('Second child'), width=120, height=28),
+])
+snapshot = sui.render_widget(widget)
+
+assert composite.measured == [(100.0, 24.0), (120.0, 28.0)]
+assert len(composite.arranged) == 2
+assert 'First child' in snapshot.semantics_names
+assert 'Second child' in snapshot.semantics_names
+assert snapshot.command_count > 1
+",
+                c"custom_composite.py",
+                c"custom_composite",
             )?;
             Ok(())
         })
@@ -3787,6 +5599,21 @@ brush = sui.BrushPreviewSpec(
     opacity=0.75,
     shape='round',
 )
+dock_state = sui.DockState(sui.DockLayout(sui.DockNode.tabs([101])))
+rich_document = sui.RichDocument('# Streaming report' + chr(10) + chr(10) + 'Ready')
+sidebar_state = sui.ResponsiveSidebarState()
+master_detail_state = sui.MasterDetailState()
+notification_center = sui.NotificationCenter()
+notification_center.notify('Build complete', 'All tests passed')
+virtual_model = sui.VirtualListModel('Virtual results', [
+    sui.VirtualListItem(1, 'Virtual item one'),
+    sui.VirtualListItem(2, 'Virtual item two'),
+])
+drag_scope = sui.DragScope()
+floating_workspace_state = sui.FloatingWorkspaceState()
+pixel_canvas_state = sui.PixelCanvasState()
+pixel_canvas_state.brush_color = sui.Color.rgba(0.2, 0.5, 0.9, 1)
+pixel_canvas_state.brush_size = 2
 app = sui.App()
 root = sui.Column([
     sui.Label('Ready'),
@@ -3888,6 +5715,20 @@ root = sui.Column([
         header_action=sui.Button('Close inspector'),
         actions=[sui.Button('Save inspector')],
     ),
+    sui.BottomSheet(
+        'Build output',
+        sui.Label('Bottom sheet body'),
+        description='Latest build details',
+        shown=False,
+        height=220,
+    ),
+    sui.CommandPalette(
+        'Commands',
+        sui.TextInput('Command search'),
+        description='Search application commands',
+        shown=False,
+        max_width=560,
+    ),
     sui.SplitView(
         sui.Label('Split first'),
         sui.Label('Split second'),
@@ -3933,7 +5774,90 @@ root = sui.Column([
         ], semantic_name='Rich summary'),
         name='Scrollable content',
     ),
+    sui.RichDocumentView(rich_document),
     sui.ColorSwatch('Accent', sui.Color.rgba(0.25, 0.5, 0.75, 1.0), size=sui.Size(24, 24)),
+    sui.SimpleColorPicker(
+        'Compact accent',
+        sui.Color.rgba(0.25, 0.5, 0.75, 1.0),
+        mode='hsv',
+        compact=True,
+    ),
+    sui.DockWorkspace(dock_state, [
+        sui.DockPanelSpec(101, 'Inspector', sui.Label('Docked inspector')),
+    ]),
+    sui.Grid([
+        sui.Label('Grid one'),
+        sui.Label('Grid two'),
+    ], columns=2, name='Responsive grid', gap=4),
+    sui.AspectRatio(sui.Label('Aspect content'), 16 / 9),
+    sui.SafeArea(sui.Label('Safe content')),
+    sui.LayoutTransition(sui.Label('Animated layout')),
+    sui.AdaptiveView(
+        sui.Label('Compact branch'),
+        sui.Label('Medium branch'),
+        sui.Label('Expanded branch'),
+    ),
+    sui.ConstraintView([
+        sui.ConstraintCase(sui.Label('Wide query'), min_width=800),
+    ], sui.Label('Query fallback')),
+    sui.ResponsiveSidebar(
+        sidebar_state,
+        sui.Label('Navigation pane'),
+        sui.Label('Sidebar content'),
+        name='Navigation',
+    ),
+    sui.MasterDetail(
+        master_detail_state,
+        sui.Label('Master pane'),
+        sui.Label('Detail pane'),
+    ),
+    sui.OverlayHost(sui.Label('Overlay host content')),
+    sui.NotificationHost(notification_center),
+    sui.VirtualList('Virtual results', virtual_model, estimated_row_height=28),
+    sui.Canvas(
+        'Vector canvas',
+        shapes=[
+            sui.CanvasShape.rect(
+                sui.Rect(10, 10, 80, 48),
+                fill=sui.Color.rgba(0.2, 0.5, 0.9, 1),
+            ),
+        ],
+        desired_size=sui.Size(240, 160),
+    ),
+    sui.CanvasRuler(
+        'horizontal',
+        'Canvas ruler',
+        sui.Size(1024, 768),
+        viewport_size=sui.Size(240, 160),
+    ),
+    sui.DragDropHost(drag_scope, sui.Row([
+        sui.Draggable(
+            drag_scope,
+            sui.Button('Drag source'),
+            'asset:brush',
+            preview_label='Brush asset',
+        ),
+        sui.DropTarget(
+            drag_scope,
+            sui.Button('Drop target'),
+            effect='copy',
+        ),
+    ], gap=8)),
+    sui.FloatingWorkspace(floating_workspace_state, [
+        sui.FloatingView(
+            'Inspector view',
+            sui.Rect(12, 12, 240, 180),
+            sui.Label('Inspector content'),
+        ),
+    ], name='Editor floating workspace'),
+    sui.PixelCanvas(
+        pixel_canvas_state,
+        'Pixel editor',
+        16,
+        16,
+        desired_size=sui.Size(240, 180),
+        fit_on_first_layout=True,
+    ),
     sui.Separator('horizontal', name='Section divider', length=24.0),
     sui.EmptyState(
         'No projects',
@@ -4691,6 +6615,155 @@ assert running.render().command_count > 0
 ",
                 c"running_app.py",
                 c"running_app",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_idiomatic_factories_theme_and_host_configuration_work() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sui
+
+assert sui.button is sui.Button
+assert sui.virtual_scroll_view is sui.VirtualScrollView
+
+source = sui.State(2)
+doubled = source.select(lambda value: value * 2)
+seen = []
+subscription = source.watch(seen.append)
+source.set(3)
+assert doubled.get() == 6
+assert seen == [3]
+assert subscription.unsubscribe()
+source.set(4)
+assert doubled.get() == 8
+assert seen == [3]
+
+responsive_state = sui.ResponsiveSidebarState()
+assert responsive_state.set_expanded(False)
+assert responsive_state.open_overlay()
+assert responsive_state.overlay_open
+master_state = sui.MasterDetailState()
+assert master_state.show_detail()
+assert master_state.route == 'detail'
+adaptive = sui.adaptive_view(
+    sui.label('Compact'),
+    sui.label('Medium'),
+    sui.label('Expanded'),
+)
+assert sui.render_widget(adaptive).command_count > 0
+constraint = sui.constraint_view([
+    sui.ConstraintCase(sui.label('Wide'), min_width=800),
+], sui.label('Fallback'))
+assert sui.render_widget(constraint).command_count > 0
+
+zero = sui.AnimationValue.scalar(0)
+one = sui.AnimationValue.scalar(1)
+transition = sui.Transition(zero, one, 1, easing='linear')
+assert transition.sample(0.5).scalar_value == 0.5
+spring = sui.Spring(0)
+assert spring.step(1, 1 / 60) > 0
+animated = sui.AnimatedValue(zero, duration=1, easing='linear')
+animated.set_target(one)
+assert animated.tick(0.5)
+assert animated.value.scalar_value == 0.5
+track = sui.AnimationTrack('card', 'layer.opacity')
+track.add_keyframe(sui.Keyframe(0, zero, easing='linear'))
+track.add_keyframe(sui.Keyframe(1, one, easing='linear'))
+clip = sui.AnimationClip('fade', 0, 1)
+clip.add_track(track)
+timeline = sui.AnimationTimeline(1)
+timeline.add_clip(clip)
+assert timeline.sample(0.5)[0].value.scalar_value == 0.5
+player = sui.AnimationPlayer(timeline)
+player.play()
+assert player.tick(0.25)[0].value.scalar_value == 0.25
+animation_document = sui.AnimationDocument('Card motion', timeline)
+decoded_animation = sui.AnimationDocument.parse(animation_document.to_document_format())
+assert decoded_animation.name == 'Card motion'
+animation_editor = sui.AnimationEditor(decoded_animation)
+assert animation_editor.add_keyframe(0, 0, sui.Keyframe(0.75, one, easing='ease-out'))
+assert animation_editor.can_undo
+assert animation_editor.undo()
+
+theme = sui.Theme.dark()
+theme.set_control_size('small')
+theme.set_accent(sui.Color.rgba(0.2, 0.5, 0.9, 1.0))
+theme.set_color('success', sui.Color.rgba(0.1, 0.8, 0.3, 1.0))
+assert theme.color('success').green > 0.7
+theme.set_number('radius-md', 9)
+assert theme.number('radius-md') == 9
+options = sui.RenderOptions.hdr()
+document = sui.RichDocument('# Report')
+assert document.append_markdown(chr(10) + chr(10) + 'Waiting')
+assert document.last_update().append_only
+attachment = document.append_attachment(
+    'trace.json',
+    media_type='application/json',
+    source='artifact:trace',
+    size_bytes=128,
+)
+extension = document.append_extension(
+    'tool-call',
+    'Build',
+    body='cargo test',
+    status='success',
+    metadata={'exit_code': '0'},
+)
+assert extension > attachment
+app = sui.App(theme=theme, render_options=options)
+messages = []
+app.on('background.complete', messages.append)
+clicked = []
+app.window(sui.Window(
+    'Configured',
+    size=sui.Size(800, 600),
+    position=sui.Point(40, 60),
+    use_default_icon=False,
+).root(sui.column([
+    sui.button('Save', on_press=lambda: clicked.append('Save')),
+    sui.rich_document_view(document),
+])))
+
+running = app.start()
+window = running.window_handle(0)
+assert running.ui_handle().emit('background.complete', 'Loaded')
+assert running.drain() == 1
+assert messages == ['Loaded']
+running.set_inspector_tracing()
+snapshot = running.render()
+save = snapshot.get_one(role='button', name='Save')
+assert save.visible
+assert len(snapshot.find(role='button')) == 1
+running.click(save)
+assert clicked == ['Save']
+theme.set_preset('light')
+assert running.pending_count() == 1
+assert running.drain() == 1
+running.tick(1.0)
+running.request_redraw_all()
+running.wake_window(window)
+running.handle_event_for(window, sui.Event.raw_mouse_motion(sui.Point(3, -2)))
+running.handle_event_for(
+    window,
+    sui.Event.window('moved', position=sui.Point(12, 24)),
+)
+inspector = running.inspect()
+assert inspector.tracing_enabled
+assert inspector.widget_count >= 3
+assert inspector.semantics_count >= 2
+assert inspector.event_route_count >= 1
+assert len(inspector.semantics_nodes) == inspector.semantics_count
+assert len(inspector.event_routes) == inspector.event_route_count
+running.set_render_options(window, sui.RenderOptions.wide_gamut())
+",
+                c"idiomatic_api.py",
+                c"idiomatic_api",
             )?;
             Ok(())
         })

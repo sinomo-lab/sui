@@ -11,22 +11,24 @@ function increment() {
   count.set(Number(count.get()) + 1);
 }
 
-const root = sui.Column(
+const theme = sui.Theme.dark();
+const root = sui.column(
   [
-    sui.Label(count),
-    sui.Button("Increment", increment),
-    sui.Checkbox("Enabled", enabled),
-    sui.Switch("Preview", true),
-    sui.Slider("Opacity", opacity, 0, 1, 0.05),
-    sui.TextInput("Name", name, "Optional label"),
+    sui.label(count),
+    sui.button("Increment", { onPress: increment }),
+    sui.checkbox("Enabled", { checked: enabled }),
+    sui.switchControl("Preview", { on: true }),
+    sui.slider("Opacity", { value: opacity, min: 0, max: 1, step: 0.05 }),
+    sui.textInput("Name", { value: name, placeholder: "Optional label" }),
   ],
-  8
+  { gap: 8 }
 );
 
 const window = new sui.Window("Counter");
 window.root(root);
 
 const app = new sui.App();
+app.setTheme(theme);
 app.window(window);
 
 const running = app.start();
@@ -36,3 +38,7 @@ running.uiHandle().post(increment);
 running.drain();
 console.log("count:", count.get());
 console.log("updated commands:", running.render().commandCount);
+
+theme.setPreset("light");
+running.drain();
+console.log("theme updated commands:", running.render().commandCount);

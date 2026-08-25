@@ -6,6 +6,169 @@
 type JsColorSelectCallback<'env> = Function<'env, FnArgs<(u32, String, JsColor)>, ()>;
 type JsReorderCallback<'env> = Function<'env, FnArgs<(u32, u32, u32)>, ()>;
 
+#[napi(object, js_name = "RichAttachmentOptions")]
+pub struct JsRichAttachmentOptions {
+    #[napi(js_name = "mediaType")]
+    pub media_type: Option<String>,
+    pub source: Option<String>,
+    #[napi(js_name = "sizeBytes")]
+    pub size_bytes: Option<String>,
+    pub description: Option<String>,
+}
+
+#[napi(object, js_name = "RichExtensionOptions")]
+pub struct JsRichExtensionOptions {
+    pub summary: Option<String>,
+    pub body: Option<String>,
+    pub status: Option<String>,
+    #[napi(js_name = "initiallyExpanded")]
+    pub initially_expanded: Option<bool>,
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+#[napi(js_name = "RichDocumentUpdate")]
+#[derive(Debug, Clone)]
+pub struct JsRichDocumentUpdate {
+    inner: BindingRichDocumentUpdate,
+}
+
+#[napi]
+impl JsRichDocumentUpdate {
+    #[napi(getter)]
+    pub fn revision(&self) -> String {
+        self.inner.revision.to_string()
+    }
+
+    #[napi(getter, js_name = "reparsedStart")]
+    pub fn reparsed_start(&self) -> u32 {
+        self.inner.reparsed_start as u32
+    }
+
+    #[napi(getter, js_name = "reparsedEnd")]
+    pub fn reparsed_end(&self) -> u32 {
+        self.inner.reparsed_end as u32
+    }
+
+    #[napi(getter, js_name = "reusedPrefixBlocks")]
+    pub fn reused_prefix_blocks(&self) -> u32 {
+        self.inner.reused_prefix_blocks as u32
+    }
+
+    #[napi(getter, js_name = "changedBlockIds")]
+    pub fn changed_block_ids(&self) -> Vec<String> {
+        self.inner
+            .changed_block_ids
+            .iter()
+            .map(u64::to_string)
+            .collect()
+    }
+
+    #[napi(getter, js_name = "appendOnly")]
+    pub fn append_only(&self) -> bool {
+        self.inner.append_only
+    }
+}
+
+#[napi(js_name = "RichDocument")]
+#[derive(Debug, Clone)]
+pub struct JsRichDocument {
+    inner: BindingRichDocument,
+}
+
+#[napi]
+impl JsRichDocument {
+    #[napi(constructor)]
+    pub fn new(markdown: Option<String>) -> Self {
+        Self {
+            inner: BindingRichDocument::new(markdown.unwrap_or_default()),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn revision(&self) -> String {
+        self.inner.revision().to_string()
+    }
+
+    #[napi(getter)]
+    pub fn markdown(&self) -> String {
+        self.inner.markdown()
+    }
+
+    #[napi(js_name = "setMarkdown")]
+    pub fn set_markdown(&self, markdown: String) -> bool {
+        self.inner.set_markdown(markdown)
+    }
+
+    #[napi(js_name = "appendMarkdown")]
+    pub fn append_markdown(&self, fragment: String) -> bool {
+        self.inner.append_markdown(&fragment)
+    }
+
+    #[napi(js_name = "lastUpdate")]
+    pub fn last_update(&self) -> JsRichDocumentUpdate {
+        JsRichDocumentUpdate {
+            inner: self.inner.last_update(),
+        }
+    }
+
+    #[napi(js_name = "appendAttachment")]
+    pub fn append_attachment(
+        &self,
+        name: String,
+        options: Option<JsRichAttachmentOptions>,
+    ) -> Result<String> {
+        let options = options.unwrap_or(JsRichAttachmentOptions {
+            media_type: None,
+            source: None,
+            size_bytes: None,
+            description: None,
+        });
+        let size_bytes = options
+            .size_bytes
+            .as_deref()
+            .map(|value| parse_u64_string(value, "attachment sizeBytes"))
+            .transpose()?;
+        Ok(self
+            .inner
+            .append_attachment(
+                name,
+                options.media_type,
+                options.source,
+                size_bytes,
+                options.description,
+            )
+            .to_string())
+    }
+
+    #[napi(js_name = "appendExtension")]
+    pub fn append_extension(
+        &self,
+        renderer: String,
+        title: String,
+        options: Option<JsRichExtensionOptions>,
+    ) -> Result<String> {
+        let options = options.unwrap_or(JsRichExtensionOptions {
+            summary: None,
+            body: None,
+            status: None,
+            initially_expanded: None,
+            metadata: None,
+        });
+        self.inner
+            .append_extension(
+                renderer,
+                title,
+                options.summary,
+                options.body.unwrap_or_default(),
+                options.status.as_deref().unwrap_or("neutral"),
+                options.initially_expanded.unwrap_or(false),
+                options.metadata.unwrap_or_default().into_iter().collect(),
+            )
+            .map(|id| id.to_string())
+            .map_err(napi_invalid_arg)
+    }
+}
+
 #[napi(js_name = "TextSpan")]
 #[derive(Debug, Clone)]
 pub struct JsTextSpan {
@@ -369,6 +532,1136 @@ impl JsFloatingStackWindow {
             inner: BindingFloatingStackWindow::new((*bounds).into(), child.binding_widget()?),
         })
     }
+}
+
+#[napi(js_name = "FloatingView")]
+#[derive(Debug, Clone)]
+pub struct JsFloatingView {
+    inner: BindingFloatingView,
+}
+
+#[napi]
+impl JsFloatingView {
+    #[napi(constructor)]
+    pub fn new(
+        title: String,
+        bounds: &JsRect,
+        child: &JsWidget,
+        min_size: Option<&JsSize>,
+        visible: Option<bool>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingFloatingView::new(
+                title,
+                (*bounds).into(),
+                min_size
+                    .map(|size| (*size).into())
+                    .unwrap_or_else(|| Size::new(220.0, 160.0)),
+                visible.unwrap_or(true),
+                child.binding_widget()?,
+            ),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn title(&self) -> String {
+        self.inner.title.clone()
+    }
+
+    #[napi(getter)]
+    pub fn bounds(&self) -> JsRect {
+        self.inner.bounds.into()
+    }
+
+    #[napi(getter, js_name = "minSize")]
+    pub fn min_size(&self) -> JsSize {
+        self.inner.min_size.into()
+    }
+
+    #[napi(getter)]
+    pub fn visible(&self) -> bool {
+        self.inner.visible
+    }
+}
+
+#[napi(js_name = "FloatingViewSnapshot")]
+#[derive(Debug, Clone)]
+pub struct JsFloatingViewSnapshot {
+    inner: BindingFloatingViewSnapshot,
+}
+
+#[napi]
+impl JsFloatingViewSnapshot {
+    #[napi(getter)]
+    pub fn id(&self) -> String {
+        self.inner.id.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn title(&self) -> String {
+        self.inner.title.clone()
+    }
+
+    #[napi(getter)]
+    pub fn bounds(&self) -> JsRect {
+        self.inner.bounds.into()
+    }
+
+    #[napi(getter, js_name = "minSize")]
+    pub fn min_size(&self) -> JsSize {
+        self.inner.min_size.into()
+    }
+
+    #[napi(getter)]
+    pub fn visible(&self) -> bool {
+        self.inner.visible
+    }
+
+    #[napi(getter)]
+    pub fn maximized(&self) -> bool {
+        self.inner.maximized
+    }
+}
+
+#[napi(js_name = "FloatingWorkspaceState")]
+#[derive(Debug, Clone)]
+pub struct JsFloatingWorkspaceState {
+    inner: BindingFloatingWorkspaceState,
+}
+
+#[napi]
+impl JsFloatingWorkspaceState {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingFloatingWorkspaceState::new(),
+        }
+    }
+
+    #[napi]
+    pub fn views(&self) -> Vec<JsFloatingViewSnapshot> {
+        self.inner
+            .views()
+            .into_iter()
+            .map(|inner| JsFloatingViewSnapshot { inner })
+            .collect()
+    }
+
+    #[napi(js_name = "setVisible")]
+    pub fn set_visible(&self, id: String, visible: bool) -> Result<bool> {
+        Ok(self.inner.set_visible(
+            parse_u64_string(&id, "floating view id")?,
+            visible,
+        ))
+    }
+
+    #[napi(js_name = "setBounds")]
+    pub fn set_bounds(&self, id: String, bounds: &JsRect) -> Result<bool> {
+        Ok(self.inner.set_bounds(
+            parse_u64_string(&id, "floating view id")?,
+            (*bounds).into(),
+        ))
+    }
+
+    #[napi(js_name = "bringToFront")]
+    pub fn bring_to_front(&self, id: String) -> Result<bool> {
+        Ok(self
+            .inner
+            .bring_to_front(parse_u64_string(&id, "floating view id")?))
+    }
+
+    #[napi(js_name = "setMaximized")]
+    pub fn set_maximized(&self, id: String, maximized: bool) -> Result<bool> {
+        Ok(self.inner.set_maximized(
+            parse_u64_string(&id, "floating view id")?,
+            maximized,
+        ))
+    }
+}
+
+fn extract_floating_views(views: &Array<'_>) -> Result<Vec<BindingFloatingView>> {
+    let mut out = Vec::with_capacity(views.len() as usize);
+    for index in 0..views.len() {
+        let view = views
+            .get::<ClassInstance<'_, JsFloatingView>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("floating view {index} is missing")))?;
+        out.push(view.inner.clone());
+    }
+    Ok(out)
+}
+
+#[napi(js_name = "DockNode")]
+#[derive(Debug, Clone)]
+pub struct JsDockNode {
+    inner: BindingDockNode,
+}
+
+#[napi]
+impl JsDockNode {
+    #[napi(factory)]
+    pub fn empty() -> Self {
+        Self {
+            inner: BindingDockNode::empty(),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn tabs(panel_ids: Vec<String>, active: Option<String>) -> Result<Self> {
+        let panel_ids = panel_ids
+            .iter()
+            .map(|id| parse_u64_string(id, "dock panel id"))
+            .collect::<Result<Vec<_>>>()?;
+        let active = active
+            .as_deref()
+            .map(|id| parse_u64_string(id, "active dock panel id"))
+            .transpose()?;
+        BindingDockNode::tabs(panel_ids, active)
+            .map(|inner| Self { inner })
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(factory)]
+    pub fn split(
+        axis: String,
+        fraction: f64,
+        first: &JsDockNode,
+        second: &JsDockNode,
+    ) -> Result<Self> {
+        BindingDockNode::split(
+            js_axis(&axis)?,
+            fraction as f32,
+            first.inner.clone(),
+            second.inner.clone(),
+        )
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+}
+
+#[napi(js_name = "DockFloatingGroup")]
+#[derive(Debug, Clone)]
+pub struct JsDockFloatingGroup {
+    inner: BindingDockFloatingGroup,
+}
+
+#[napi]
+impl JsDockFloatingGroup {
+    #[napi(constructor)]
+    pub fn new(
+        id: String,
+        panel_ids: Vec<String>,
+        active: String,
+        bounds: &JsRect,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingDockFloatingGroup::new(
+                parse_u64_string(&id, "floating dock group id")?,
+                panel_ids
+                    .iter()
+                    .map(|id| parse_u64_string(id, "dock panel id"))
+                    .collect::<Result<Vec<_>>>()?,
+                parse_u64_string(&active, "active dock panel id")?,
+                (*bounds).into(),
+            ),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn id(&self) -> String {
+        self.inner.id.to_string()
+    }
+
+    #[napi(getter, js_name = "panelIds")]
+    pub fn panel_ids(&self) -> Vec<String> {
+        self.inner.panel_ids.iter().map(u64::to_string).collect()
+    }
+
+    #[napi(getter)]
+    pub fn active(&self) -> String {
+        self.inner.active.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn bounds(&self) -> JsRect {
+        self.inner.bounds.into()
+    }
+}
+
+#[napi(js_name = "DockLayout")]
+#[derive(Debug, Clone)]
+pub struct JsDockLayout {
+    inner: BindingDockLayout,
+}
+
+#[napi]
+impl JsDockLayout {
+    #[napi(constructor)]
+    pub fn new(
+        root: &JsDockNode,
+        floating: Option<Array<'_>>,
+        hidden: Option<Vec<String>>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingDockLayout::new(
+                root.inner.clone(),
+                floating
+                    .as_ref()
+                    .map(extract_dock_floating_groups)
+                    .transpose()?
+                    .unwrap_or_default(),
+                hidden
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|id| parse_u64_string(id, "hidden dock panel id"))
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn root(&self) -> JsDockNode {
+        JsDockNode {
+            inner: self.inner.root.clone(),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn floating(&self) -> Vec<JsDockFloatingGroup> {
+        self.inner
+            .floating
+            .iter()
+            .cloned()
+            .map(|inner| JsDockFloatingGroup { inner })
+            .collect()
+    }
+
+    #[napi(getter)]
+    pub fn hidden(&self) -> Vec<String> {
+        self.inner.hidden.iter().map(u64::to_string).collect()
+    }
+}
+
+#[napi(js_name = "DockState")]
+#[derive(Debug, Clone)]
+pub struct JsDockState {
+    inner: BindingDockState,
+}
+
+#[napi]
+impl JsDockState {
+    #[napi(constructor)]
+    pub fn new(layout: Option<&JsDockLayout>) -> Result<Self> {
+        layout.map_or_else(
+            || Ok(Self {
+                inner: BindingDockState::empty(),
+            }),
+            |layout| {
+                BindingDockState::new(layout.inner.clone())
+                    .map(|inner| Self { inner })
+                    .map_err(napi_invalid_arg)
+            },
+        )
+    }
+
+    #[napi]
+    pub fn snapshot(&self) -> JsDockLayout {
+        JsDockLayout {
+            inner: self.inner.snapshot(),
+        }
+    }
+
+    #[napi]
+    pub fn apply(&self, layout: &JsDockLayout) -> Result<bool> {
+        self.inner
+            .apply(layout.inner.clone())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn dock(
+        &self,
+        panel: String,
+        target: String,
+        zone: Option<String>,
+    ) -> Result<bool> {
+        self.inner
+            .dock(
+                parse_u64_string(&panel, "dock panel id")?,
+                parse_u64_string(&target, "dock target panel id")?,
+                zone.as_deref().unwrap_or("center"),
+            )
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "dockToRoot")]
+    pub fn dock_to_root(&self, panel: String, zone: Option<String>) -> Result<bool> {
+        self.inner
+            .dock_to_root(
+                parse_u64_string(&panel, "dock panel id")?,
+                zone.as_deref().unwrap_or("center"),
+            )
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "floatPanel")]
+    pub fn float_panel(&self, panel: String, bounds: &JsRect) -> Result<String> {
+        self.inner
+            .float_panel(
+                parse_u64_string(&panel, "dock panel id")?,
+                (*bounds).into(),
+            )
+            .map(|id| id.to_string())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn hide(&self, panel: String) -> Result<bool> {
+        self.inner
+            .hide(parse_u64_string(&panel, "dock panel id")?)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn show(&self, panel: String) -> Result<bool> {
+        self.inner
+            .show(parse_u64_string(&panel, "dock panel id")?)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn activate(&self, panel: String) -> Result<bool> {
+        self.inner
+            .activate(parse_u64_string(&panel, "dock panel id")?)
+            .map_err(napi_invalid_arg)
+    }
+}
+
+#[napi(js_name = "DockPanelSpec")]
+#[derive(Debug, Clone)]
+pub struct JsDockPanelSpec {
+    inner: BindingDockPanel,
+}
+
+#[napi]
+impl JsDockPanelSpec {
+    #[napi(constructor)]
+    pub fn new(id: String, title: String, child: ClassInstance<'_, JsWidget>) -> Result<Self> {
+        BindingDockPanel::new(
+            parse_u64_string(&id, "dock panel id")?,
+            title,
+            child.binding_widget()?,
+        )
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn id(&self) -> String {
+        self.inner.id.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn title(&self) -> String {
+        self.inner.title.clone()
+    }
+}
+
+#[napi(js_name = "ConstraintCase")]
+#[derive(Debug, Clone)]
+pub struct JsConstraintCase {
+    inner: BindingConstraintCase,
+}
+
+#[napi]
+impl JsConstraintCase {
+    #[napi(constructor)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        child: &JsWidget,
+        min_width: Option<f64>,
+        max_width: Option<f64>,
+        min_height: Option<f64>,
+        max_height: Option<f64>,
+        min_aspect_ratio: Option<f64>,
+        max_aspect_ratio: Option<f64>,
+        orientation: Option<String>,
+    ) -> Result<Self> {
+        BindingConstraintCase::new(
+            child.binding_widget()?,
+            min_width.map(|value| value as f32),
+            max_width.map(|value| value as f32),
+            min_height.map(|value| value as f32),
+            max_height.map(|value| value as f32),
+            min_aspect_ratio.map(|value| value as f32),
+            max_aspect_ratio.map(|value| value as f32),
+            orientation.as_deref().unwrap_or("any"),
+        )
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+}
+
+#[napi(js_name = "ResponsiveSidebarState")]
+#[derive(Debug, Clone)]
+pub struct JsResponsiveSidebarState {
+    inner: BindingResponsiveSidebarState,
+}
+
+#[napi]
+impl JsResponsiveSidebarState {
+    #[napi(constructor)]
+    pub fn new(expanded: Option<bool>, overlay_open: Option<bool>) -> Self {
+        Self {
+            inner: BindingResponsiveSidebarState::new(
+                expanded.unwrap_or(true),
+                overlay_open.unwrap_or(false),
+            ),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn expanded(&self) -> bool {
+        self.inner.expanded()
+    }
+
+    #[napi(getter, js_name = "overlayOpen")]
+    pub fn overlay_open(&self) -> bool {
+        self.inner.overlay_open()
+    }
+
+    #[napi(js_name = "setExpanded")]
+    pub fn set_expanded(&self, expanded: bool) -> bool {
+        self.inner.set_expanded(expanded)
+    }
+
+    #[napi(js_name = "toggleExpanded")]
+    pub fn toggle_expanded(&self) -> bool {
+        self.inner.toggle_expanded()
+    }
+
+    #[napi(js_name = "openOverlay")]
+    pub fn open_overlay(&self) -> bool {
+        self.inner.open_overlay()
+    }
+
+    #[napi(js_name = "closeOverlay")]
+    pub fn close_overlay(&self) -> bool {
+        self.inner.close_overlay()
+    }
+
+    #[napi(js_name = "toggleOverlay")]
+    pub fn toggle_overlay(&self) -> bool {
+        self.inner.toggle_overlay()
+    }
+}
+
+#[napi(js_name = "MasterDetailState")]
+#[derive(Debug, Clone)]
+pub struct JsMasterDetailState {
+    inner: BindingMasterDetailState,
+}
+
+#[napi]
+impl JsMasterDetailState {
+    #[napi(constructor)]
+    pub fn new(route: Option<String>) -> Result<Self> {
+        BindingMasterDetailState::new(route.as_deref().unwrap_or("master"))
+            .map(|inner| Self { inner })
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn route(&self) -> String {
+        self.inner.route().to_owned()
+    }
+
+    #[napi(js_name = "setRoute")]
+    pub fn set_route(&self, route: String) -> Result<bool> {
+        self.inner.set_route(&route).map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "showMaster")]
+    pub fn show_master(&self) -> bool {
+        self.inner.show_master()
+    }
+
+    #[napi(js_name = "showDetail")]
+    pub fn show_detail(&self) -> bool {
+        self.inner.show_detail()
+    }
+}
+
+#[napi(object, js_name = "NotificationOptions")]
+pub struct JsNotificationOptions {
+    pub duration: Option<f64>,
+    pub persistent: Option<bool>,
+    pub urgency: Option<String>,
+}
+
+#[napi(js_name = "NotificationCenter")]
+#[derive(Debug, Clone)]
+pub struct JsNotificationCenter {
+    inner: BindingNotificationCenter,
+}
+
+#[napi]
+impl JsNotificationCenter {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingNotificationCenter::new(),
+        }
+    }
+
+    #[napi]
+    pub fn notify(
+        &self,
+        title: String,
+        message: String,
+        options: Option<JsNotificationOptions>,
+    ) -> Result<String> {
+        let options = options.unwrap_or(JsNotificationOptions {
+            duration: None,
+            persistent: None,
+            urgency: None,
+        });
+        self.inner
+            .notify(
+                title,
+                message,
+                if options.persistent.unwrap_or(false) {
+                    None
+                } else {
+                    Some(options.duration.unwrap_or(5.0))
+                },
+                options.urgency.as_deref().unwrap_or("polite"),
+            )
+            .map(|id| id.to_string())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn dismiss(&self, id: String) -> Result<bool> {
+        Ok(self.inner.dismiss(parse_u64_string(&id, "notification id")?))
+    }
+
+    #[napi]
+    pub fn clear(&self) -> bool {
+        self.inner.clear()
+    }
+
+    #[napi(getter)]
+    pub fn size(&self) -> u32 {
+        self.inner.len() as u32
+    }
+}
+
+#[napi(js_name = "VirtualListItem")]
+#[derive(Debug, Clone)]
+pub struct JsVirtualListItem {
+    inner: BindingVirtualListItem,
+}
+
+#[napi]
+impl JsVirtualListItem {
+    #[napi(constructor)]
+    pub fn new(key: String, text: String) -> Result<Self> {
+        BindingVirtualListItem::new(parse_u64_string(&key, "virtual-list key")?, text)
+            .map(|inner| Self { inner })
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn key(&self) -> String {
+        self.inner.key.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn text(&self) -> String {
+        self.inner.text.clone()
+    }
+}
+
+#[napi(js_name = "VirtualListModel")]
+#[derive(Debug, Clone)]
+pub struct JsVirtualListModel {
+    inner: BindingVirtualListModel,
+}
+
+#[napi]
+impl JsVirtualListModel {
+    #[napi(constructor)]
+    pub fn new(name: String, items: Option<Array<'_>>) -> Result<Self> {
+        BindingVirtualListModel::new(
+            name,
+            items
+                .as_ref()
+                .map(extract_virtual_list_items)
+                .transpose()?
+                .unwrap_or_default(),
+        )
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn size(&self) -> u32 {
+        self.inner.len() as u32
+    }
+
+    #[napi]
+    pub fn append(&self, item: &JsVirtualListItem) -> Result<bool> {
+        self.inner
+            .append(item.inner.clone())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn prepend(&self, items: Array<'_>) -> Result<bool> {
+        self.inner
+            .prepend(extract_virtual_list_items(&items)?)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn update(&self, item: &JsVirtualListItem) -> Result<bool> {
+        self.inner
+            .update(item.inner.clone())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn remove(&self, key: String) -> Result<bool> {
+        self.inner
+            .remove(parse_u64_string(&key, "virtual-list key")?)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "moveTo")]
+    pub fn move_to(&self, key: String, index: u32) -> Result<bool> {
+        self.inner
+            .move_to(parse_u64_string(&key, "virtual-list key")?, index as usize)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn replace(&self, items: Array<'_>) -> Result<bool> {
+        self.inner
+            .replace(extract_virtual_list_items(&items)?)
+            .map_err(napi_invalid_arg)
+    }
+}
+
+#[napi(js_name = "CanvasViewport")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsCanvasViewport {
+    inner: BindingCanvasViewport,
+}
+
+#[napi]
+impl JsCanvasViewport {
+    #[napi(constructor)]
+    pub fn new(
+        pan_x: Option<f64>,
+        pan_y: Option<f64>,
+        zoom: Option<f64>,
+        rotation: Option<f64>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasViewport::new(
+                Vector::new(pan_x.unwrap_or(0.0) as f32, pan_y.unwrap_or(0.0) as f32),
+                zoom.unwrap_or(1.0) as f32,
+                rotation.unwrap_or(0.0) as f32,
+            ),
+        }
+    }
+
+    #[napi(getter, js_name = "panX")]
+    pub fn pan_x(&self) -> f64 {
+        f64::from(self.inner.pan.x)
+    }
+
+    #[napi(getter, js_name = "panY")]
+    pub fn pan_y(&self) -> f64 {
+        f64::from(self.inner.pan.y)
+    }
+
+    #[napi(getter)]
+    pub fn zoom(&self) -> f64 {
+        f64::from(self.inner.zoom)
+    }
+
+    #[napi(getter)]
+    pub fn rotation(&self) -> f64 {
+        f64::from(self.inner.rotation)
+    }
+}
+
+#[napi(js_name = "CanvasStroke")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsCanvasStroke {
+    inner: BindingCanvasStroke,
+}
+
+#[napi]
+impl JsCanvasStroke {
+    #[napi(constructor)]
+    pub fn new(color: &JsColor, width: Option<f64>) -> Self {
+        Self {
+            inner: BindingCanvasStroke::new((*color).into(), width.unwrap_or(1.0) as f32),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn color(&self) -> JsColor {
+        self.inner.color.into()
+    }
+
+    #[napi(getter)]
+    pub fn width(&self) -> f64 {
+        f64::from(self.inner.width)
+    }
+}
+
+#[napi(js_name = "CanvasShape")]
+#[derive(Debug, Clone)]
+pub struct JsCanvasShape {
+    inner: BindingCanvasShape,
+}
+
+#[napi]
+impl JsCanvasShape {
+    #[napi(factory)]
+    pub fn path(
+        path: &JsPath,
+        fill: Option<&JsColor>,
+        stroke: Option<&JsCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasShape::path(
+                path.inner.clone(),
+                fill.map(|fill| (*fill).into()),
+                stroke.map(|stroke| stroke.inner),
+            ),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn rect(
+        rect: &JsRect,
+        fill: Option<&JsColor>,
+        stroke: Option<&JsCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasShape::rect(
+                (*rect).into(),
+                fill.map(|fill| (*fill).into()),
+                stroke.map(|stroke| stroke.inner),
+            ),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn circle(
+        center: &JsPoint,
+        radius: f64,
+        fill: Option<&JsColor>,
+        stroke: Option<&JsCanvasStroke>,
+    ) -> Self {
+        Self {
+            inner: BindingCanvasShape::circle(
+                (*center).into(),
+                radius as f32,
+                fill.map(|fill| (*fill).into()),
+                stroke.map(|stroke| stroke.inner),
+            ),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn polyline(points: Array<'_>, stroke: &JsCanvasStroke) -> Result<Self> {
+        let mut native_points = Vec::with_capacity(points.len() as usize);
+        for index in 0..points.len() {
+            let point = points
+                .get::<ClassInstance<'_, JsPoint>>(index)?
+                .ok_or_else(|| napi_invalid_arg(format!("canvas point {index} is missing")))?;
+            native_points.push((*point).into());
+        }
+        BindingCanvasShape::polyline(&native_points, stroke.inner)
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+}
+
+#[napi(js_name = "PixelCanvasExport")]
+#[derive(Debug, Clone)]
+pub struct JsPixelCanvasExport {
+    inner: BindingPixelCanvasExport,
+}
+
+#[napi]
+impl JsPixelCanvasExport {
+    #[napi(getter)]
+    pub fn revision(&self) -> String {
+        self.inner.revision.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    #[napi(getter)]
+    pub fn width(&self) -> u32 {
+        self.inner.width as u32
+    }
+
+    #[napi(getter)]
+    pub fn height(&self) -> u32 {
+        self.inner.height as u32
+    }
+
+    #[napi(getter)]
+    pub fn rgba8(&self) -> Buffer {
+        Buffer::from(self.inner.rgba8.clone())
+    }
+}
+
+#[napi(js_name = "PixelCanvasState")]
+#[derive(Debug, Clone)]
+pub struct JsPixelCanvasState {
+    inner: BindingPixelCanvasState,
+}
+
+#[napi]
+impl JsPixelCanvasState {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingPixelCanvasState::new(),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn tool(&self) -> String {
+        self.inner.tool().to_owned()
+    }
+
+    #[napi(setter)]
+    pub fn set_tool(&self, value: String) -> Result<()> {
+        self.inner.set_tool(&value).map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter, js_name = "brushColor")]
+    pub fn brush_color(&self) -> JsColor {
+        self.inner.brush_color().into()
+    }
+
+    #[napi(setter, js_name = "brushColor")]
+    pub fn set_brush_color(&self, value: &JsColor) {
+        self.inner.set_brush_color((*value).into());
+    }
+
+    #[napi(getter, js_name = "brushSize")]
+    pub fn brush_size(&self) -> f64 {
+        f64::from(self.inner.brush_size())
+    }
+
+    #[napi(setter, js_name = "brushSize")]
+    pub fn set_brush_size(&self, value: f64) {
+        self.inner.set_brush_size(value as f32);
+    }
+
+    #[napi(getter, js_name = "brushOpacity")]
+    pub fn brush_opacity(&self) -> f64 {
+        f64::from(self.inner.brush_opacity())
+    }
+
+    #[napi(setter, js_name = "brushOpacity")]
+    pub fn set_brush_opacity(&self, value: f64) {
+        self.inner.set_brush_opacity(value as f32);
+    }
+
+    #[napi(getter, js_name = "brushShape")]
+    pub fn brush_shape(&self) -> String {
+        self.inner.brush_shape().to_owned()
+    }
+
+    #[napi(setter, js_name = "brushShape")]
+    pub fn set_brush_shape(&self, value: String) -> Result<()> {
+        self.inner.set_brush_shape(&value).map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter, js_name = "blendMode")]
+    pub fn blend_mode(&self) -> String {
+        self.inner.blend_mode().to_owned()
+    }
+
+    #[napi(setter, js_name = "blendMode")]
+    pub fn set_blend_mode(&self, value: String) -> Result<()> {
+        self.inner.set_blend_mode(&value).map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn editable(&self) -> bool {
+        self.inner.editable()
+    }
+
+    #[napi(setter)]
+    pub fn set_editable(&self, value: bool) {
+        self.inner.set_editable(value);
+    }
+
+    #[napi(getter, js_name = "canUndo")]
+    pub fn can_undo(&self) -> bool {
+        self.inner.can_undo()
+    }
+
+    #[napi(getter, js_name = "canRedo")]
+    pub fn can_redo(&self) -> bool {
+        self.inner.can_redo()
+    }
+
+    #[napi(getter, js_name = "canClear")]
+    pub fn can_clear(&self) -> bool {
+        self.inner.can_clear()
+    }
+
+    #[napi]
+    pub fn undo(&self) {
+        self.inner.request_undo();
+    }
+
+    #[napi]
+    pub fn redo(&self) {
+        self.inner.request_redo();
+    }
+
+    #[napi]
+    pub fn clear(&self) {
+        self.inner.request_clear();
+    }
+
+    #[napi(js_name = "fitView")]
+    pub fn fit_view(&self) {
+        self.inner.request_fit_view();
+    }
+
+    #[napi(js_name = "actualSize")]
+    pub fn actual_size(&self) {
+        self.inner.request_actual_size();
+    }
+
+    #[napi(js_name = "zoomIn")]
+    pub fn zoom_in(&self) {
+        self.inner.request_zoom_in();
+    }
+
+    #[napi(js_name = "zoomOut")]
+    pub fn zoom_out(&self) {
+        self.inner.request_zoom_out();
+    }
+
+    #[napi(js_name = "requestExport")]
+    pub fn request_export(&self) {
+        self.inner.request_export();
+    }
+
+    #[napi(js_name = "latestExport")]
+    pub fn latest_export(&self) -> Option<JsPixelCanvasExport> {
+        self.inner
+            .latest_export()
+            .map(|inner| JsPixelCanvasExport { inner })
+    }
+}
+
+#[napi(js_name = "DragScope")]
+#[derive(Debug, Clone)]
+pub struct JsDragScope {
+    inner: BindingDragScope,
+}
+
+#[napi]
+impl JsDragScope {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingDragScope::new(),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn active(&self) -> bool {
+        self.inner.active()
+    }
+}
+
+fn extract_dock_floating_groups(
+    groups: &Array<'_>,
+) -> Result<Vec<BindingDockFloatingGroup>> {
+    let mut out = Vec::with_capacity(groups.len() as usize);
+    for index in 0..groups.len() {
+        let group = groups
+            .get::<ClassInstance<'_, JsDockFloatingGroup>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("dock group index {index} is out of range")))?;
+        out.push(group.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_dock_panels(panels: &Array<'_>) -> Result<Vec<BindingDockPanel>> {
+    let mut out = Vec::with_capacity(panels.len() as usize);
+    for index in 0..panels.len() {
+        let panel = panels
+            .get::<ClassInstance<'_, JsDockPanelSpec>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("dock panel index {index} is out of range")))?;
+        out.push(panel.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_constraint_cases(cases: &Array<'_>) -> Result<Vec<BindingConstraintCase>> {
+    let mut out = Vec::with_capacity(cases.len() as usize);
+    for index in 0..cases.len() {
+        let case = cases
+            .get::<ClassInstance<'_, JsConstraintCase>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("constraint case {index} is missing")))?;
+        out.push(case.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_virtual_list_items(items: &Array<'_>) -> Result<Vec<BindingVirtualListItem>> {
+    let mut out = Vec::with_capacity(items.len() as usize);
+    for index in 0..items.len() {
+        let item = items
+            .get::<ClassInstance<'_, JsVirtualListItem>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("virtual-list item {index} is missing")))?;
+        out.push(item.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_canvas_shapes(shapes: &Array<'_>) -> Result<Vec<BindingCanvasShape>> {
+    let mut out = Vec::with_capacity(shapes.len() as usize);
+    for index in 0..shapes.len() {
+        let shape = shapes
+            .get::<ClassInstance<'_, JsCanvasShape>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("canvas shape {index} is missing")))?;
+        out.push(shape.inner.clone());
+    }
+    Ok(out)
+}
+
+fn extract_pixel_colors(pixels: &Array<'_>) -> Result<Vec<sui_crate::Color>> {
+    let mut out = Vec::with_capacity(pixels.len() as usize);
+    for index in 0..pixels.len() {
+        let color = pixels
+            .get::<ClassInstance<'_, JsColor>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("pixel color {index} is missing")))?;
+        out.push((*color).into());
+    }
+    Ok(out)
 }
 
 fn extract_floating_stack_windows(windows: &Array<'_>) -> Result<Vec<BindingFloatingStackWindow>> {
@@ -1098,6 +2391,37 @@ pub fn js_rich_text(
     )))
 }
 
+#[napi(js_name = "RichDocumentView")]
+pub fn js_rich_document_view(
+    env: Env,
+    document: &JsRichDocument,
+    on_link: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_image: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_attachment: Option<Function<'_, FnArgs<(String,)>, ()>>,
+) -> Result<JsWidget> {
+    let attachment_action = on_attachment
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingIdAction::new(move |id| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((id.to_string(),)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::rich_document(
+        document.inner.clone(),
+        binding_string_action_from_js_callback(env, on_link)?,
+        binding_string_action_from_js_callback(env, on_image)?,
+        attachment_action,
+    )))
+}
+
 #[napi(js_name = "Image")]
 pub fn js_image(
     image: &JsImageHandle,
@@ -1251,6 +2575,411 @@ pub fn js_row(children: Array<'_>, gap: Option<f64>) -> Result<JsWidget> {
         extract_binding_widgets(&children)?,
         gap.unwrap_or(0.0) as f32,
     )))
+}
+
+#[napi(js_name = "Grid")]
+pub fn js_grid(
+    children: Array<'_>,
+    columns: Option<u32>,
+    name: Option<String>,
+    gap: Option<f64>,
+    column_gap: Option<f64>,
+    row_gap: Option<f64>,
+) -> Result<JsWidget> {
+    let gap = gap.unwrap_or(0.0) as f32;
+    Ok(JsWidget::from_binding(BindingWidget::grid(
+        columns.unwrap_or(2) as usize,
+        extract_binding_widgets(&children)?,
+        name,
+        column_gap.map(|value| value as f32).unwrap_or(gap),
+        row_gap.map(|value| value as f32).unwrap_or(gap),
+    )))
+}
+
+#[napi(js_name = "AspectRatio")]
+pub fn js_aspect_ratio(
+    child: &JsWidget,
+    ratio: f64,
+    fit: Option<String>,
+    horizontal: Option<String>,
+    vertical: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::aspect_ratio(
+        child.binding_widget()?,
+        ratio as f32,
+        binding_aspect_ratio_fit_from_name(fit.as_deref().unwrap_or("contain"))
+            .ok_or_else(|| napi_invalid_arg("fit must be 'contain' or 'cover'"))?,
+        alignment_from_js(horizontal.as_deref().unwrap_or("center"))?,
+        alignment_from_js(vertical.as_deref().unwrap_or("center"))?,
+    )))
+}
+
+#[napi(js_name = "SafeArea")]
+pub fn js_safe_area(
+    child: &JsWidget,
+    edges: Option<String>,
+    minimum_left: Option<f64>,
+    minimum_top: Option<f64>,
+    minimum_right: Option<f64>,
+    minimum_bottom: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::safe_area(
+        child.binding_widget()?,
+        binding_safe_area_edges_from_name(edges.as_deref().unwrap_or("all")).ok_or_else(|| {
+            napi_invalid_arg("edges must be all, none, horizontal, vertical, or edge names")
+        })?,
+        sui_crate::SafeAreaInsets::new(
+            minimum_left.unwrap_or(0.0) as f32,
+            minimum_top.unwrap_or(0.0) as f32,
+            minimum_right.unwrap_or(0.0) as f32,
+            minimum_bottom.unwrap_or(0.0) as f32,
+        ),
+    )))
+}
+
+#[napi(js_name = "LayoutTransition")]
+pub fn js_layout_transition(
+    child: &JsWidget,
+    duration: Option<f64>,
+    easing: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::layout_transition(
+        child.binding_widget()?,
+        duration.unwrap_or(0.22),
+        binding_easing_from_name(easing.as_deref().unwrap_or("ease-in-out")).ok_or_else(|| {
+            napi_invalid_arg("easing must be linear, ease-in, ease-out, or ease-in-out")
+        })?,
+    )))
+}
+
+#[napi(js_name = "AdaptiveView")]
+pub fn js_adaptive_view(
+    env: Env,
+    compact: &JsWidget,
+    medium: &JsWidget,
+    expanded: &JsWidget,
+    medium_breakpoint: Option<f64>,
+    expanded_breakpoint: Option<f64>,
+    on_class_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::adaptive_view(
+        compact.binding_widget()?,
+        medium.binding_widget()?,
+        expanded.binding_widget()?,
+        medium_breakpoint.unwrap_or(640.0) as f32,
+        expanded_breakpoint.unwrap_or(1024.0) as f32,
+        binding_string_action_from_js_callback(env, on_class_change)?,
+    )))
+}
+
+#[napi(js_name = "ConstraintView")]
+pub fn js_constraint_view(cases: Array<'_>, fallback: &JsWidget) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::constraint_view(
+        extract_constraint_cases(&cases)?,
+        fallback.binding_widget()?,
+    )))
+}
+
+#[napi(js_name = "ResponsiveSidebar")]
+#[allow(clippy::too_many_arguments)]
+pub fn js_responsive_sidebar(
+    env: Env,
+    state: &JsResponsiveSidebarState,
+    sidebar: &JsWidget,
+    content: &JsWidget,
+    name: Option<String>,
+    medium_breakpoint: Option<f64>,
+    expanded_breakpoint: Option<f64>,
+    rail_width: Option<f64>,
+    overlay_width: Option<f64>,
+    dismiss_on_scrim: Option<bool>,
+    on_mode_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::responsive_sidebar(
+        state.inner.clone(),
+        sidebar.binding_widget()?,
+        content.binding_widget()?,
+        name,
+        medium_breakpoint.unwrap_or(640.0) as f32,
+        expanded_breakpoint.unwrap_or(1024.0) as f32,
+        rail_width.unwrap_or(56.0) as f32,
+        overlay_width.unwrap_or(320.0) as f32,
+        dismiss_on_scrim.unwrap_or(true),
+        binding_string_action_from_js_callback(env, on_mode_change)?,
+    )))
+}
+
+#[napi(js_name = "MasterDetail")]
+pub fn js_master_detail(
+    state: &JsMasterDetailState,
+    master: &JsWidget,
+    detail: &JsWidget,
+    medium_breakpoint: Option<f64>,
+    expanded_breakpoint: Option<f64>,
+    master_width: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::master_detail(
+        state.inner.clone(),
+        master.binding_widget()?,
+        detail.binding_widget()?,
+        medium_breakpoint.unwrap_or(640.0) as f32,
+        expanded_breakpoint.unwrap_or(1024.0) as f32,
+        master_width.unwrap_or(320.0) as f32,
+    )))
+}
+
+#[napi(js_name = "OverlayHost")]
+pub fn js_overlay_host(child: &JsWidget) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::overlay_host(
+        child.binding_widget()?,
+    )))
+}
+
+#[napi(js_name = "NotificationHost")]
+pub fn js_notification_host(
+    center: &JsNotificationCenter,
+    width: Option<f64>,
+) -> JsWidget {
+    JsWidget::from_binding(BindingWidget::notification_host(
+        center.inner.clone(),
+        width.unwrap_or(340.0) as f32,
+    ))
+}
+
+#[napi(js_name = "VirtualList")]
+#[allow(clippy::too_many_arguments)]
+pub fn js_virtual_list(
+    env: Env,
+    name: String,
+    model: &JsVirtualListModel,
+    estimated_row_height: Option<f64>,
+    spacing: Option<f64>,
+    padding: Option<f64>,
+    row_padding: Option<f64>,
+    overscan_viewports: Option<f64>,
+    cache_capacity: Option<u32>,
+    selectable: Option<bool>,
+    transparent: Option<bool>,
+    stick_to_end: Option<bool>,
+    overlay_scroll_bars: Option<bool>,
+    on_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_near_start: Option<Function<'_, (), ()>>,
+    on_near_end: Option<Function<'_, (), ()>>,
+) -> Result<JsWidget> {
+    let change_action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingIdAction::new(move |key| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((key.to_string(),)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::virtual_list(
+        name,
+        model.inner.clone(),
+        estimated_row_height.unwrap_or(32.0) as f32,
+        spacing.unwrap_or(0.0) as f32,
+        optional_uniform_insets(padding),
+        optional_uniform_insets(row_padding),
+        overscan_viewports.unwrap_or(1.0) as f32,
+        cache_capacity.unwrap_or(128) as usize,
+        selectable.unwrap_or(true),
+        transparent.unwrap_or(false),
+        stick_to_end.unwrap_or(false),
+        overlay_scroll_bars.unwrap_or(true),
+        change_action,
+        binding_action_from_js_callback(env, on_near_start)?,
+        binding_action_from_js_callback(env, on_near_end)?,
+    )))
+}
+
+#[napi(js_name = "Canvas")]
+pub fn js_canvas(
+    name: String,
+    shapes: Option<Array<'_>>,
+    viewport: Option<&JsCanvasViewport>,
+    draw_stroke: Option<&JsCanvasStroke>,
+    desired_size: Option<&JsSize>,
+) -> Result<JsWidget> {
+    let theme = sui_crate::DefaultTheme::default();
+    Ok(JsWidget::from_binding(BindingWidget::canvas(
+        name,
+        viewport
+            .map(|viewport| viewport.inner)
+            .unwrap_or_else(|| BindingCanvasViewport::new(Vector::ZERO, 1.0, 0.0)),
+        shapes
+            .as_ref()
+            .map(extract_canvas_shapes)
+            .transpose()?
+            .unwrap_or_default(),
+        draw_stroke
+            .map(|stroke| stroke.inner)
+            .unwrap_or_else(|| BindingCanvasStroke::new(theme.palette.accent, 2.5)),
+        desired_size
+            .map(|size| (*size).into())
+            .unwrap_or_else(|| Size::new(520.0, 360.0)),
+    )))
+}
+
+#[napi(js_name = "CanvasRuler")]
+pub fn js_canvas_ruler(
+    axis: String,
+    name: String,
+    document_size: &JsSize,
+    viewport: Option<&JsCanvasViewport>,
+    viewport_size: Option<&JsSize>,
+    extent: Option<f64>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::canvas_ruler(
+        js_axis(&axis)?,
+        name,
+        (*document_size).into(),
+        viewport
+            .map(|viewport| viewport.inner)
+            .unwrap_or_else(|| BindingCanvasViewport::new(Vector::ZERO, 1.0, 0.0)),
+        viewport_size
+            .map(|size| (*size).into())
+            .unwrap_or_else(|| Size::new(520.0, 360.0)),
+        extent.map(|extent| extent as f32),
+    )))
+}
+
+#[napi(js_name = "PixelCanvas")]
+#[allow(clippy::too_many_arguments)]
+pub fn js_pixel_canvas(
+    state: &JsPixelCanvasState,
+    name: String,
+    width: u32,
+    height: u32,
+    paper_color: Option<&JsColor>,
+    desired_size: Option<&JsSize>,
+    viewport: Option<&JsCanvasViewport>,
+    fit_on_first_layout: Option<bool>,
+    pixels: Option<Array<'_>>,
+) -> Result<JsWidget> {
+    BindingWidget::pixel_canvas(
+        state.inner.clone(),
+        name,
+        width as usize,
+        height as usize,
+        paper_color.map(|color| (*color).into()),
+        desired_size
+            .map(|size| (*size).into())
+            .unwrap_or_else(|| Size::new(520.0, 360.0)),
+        viewport
+            .map(|viewport| viewport.inner)
+            .unwrap_or_else(|| BindingCanvasViewport::new(Vector::ZERO, 14.0, 0.0)),
+        fit_on_first_layout.unwrap_or(false),
+        pixels
+            .as_ref()
+            .map(extract_pixel_colors)
+            .transpose()?
+            .unwrap_or_default(),
+    )
+    .map(JsWidget::from_binding)
+    .map_err(napi_invalid_arg)
+}
+
+#[napi(js_name = "DragDropHost")]
+pub fn js_drag_drop_host(
+    env: Env,
+    scope: &JsDragScope,
+    child: &JsWidget,
+    on_external_hover: Option<Function<'_, FnArgs<(Vec<String>,)>, ()>>,
+    on_external_drop: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_external_cancel: Option<Function<'_, (), ()>>,
+) -> Result<JsWidget> {
+    let hover = on_external_hover
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingStringsAction::new(move |paths| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((paths,)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::drag_drop_host(
+        scope.inner.clone(),
+        child.binding_widget()?,
+        hover,
+        binding_string_action_from_js_callback(env, on_external_drop)?,
+        binding_action_from_js_callback(env, on_external_cancel)?,
+    )))
+}
+
+#[napi(js_name = "Draggable")]
+#[allow(clippy::too_many_arguments)]
+pub fn js_draggable(
+    env: Env,
+    scope: &JsDragScope,
+    child: &JsWidget,
+    payload: String,
+    effect: Option<String>,
+    preview_label: Option<String>,
+    threshold: Option<f64>,
+    on_start: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_end: Option<Function<'_, FnArgs<(String,)>, ()>>,
+) -> Result<JsWidget> {
+    BindingWidget::draggable(
+        scope.inner.clone(),
+        child.binding_widget()?,
+        payload,
+        effect.as_deref().unwrap_or("move"),
+        preview_label,
+        threshold.unwrap_or(4.0) as f32,
+        binding_string_action_from_js_callback(env, on_start)?,
+        binding_string_action_from_js_callback(env, on_end)?,
+    )
+    .map(JsWidget::from_binding)
+    .map_err(napi_invalid_arg)
+}
+
+#[napi(js_name = "DropTarget")]
+pub fn js_drop_target(
+    env: Env,
+    scope: &JsDragScope,
+    child: &JsWidget,
+    effect: Option<String>,
+    on_drop: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_hover_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+) -> Result<JsWidget> {
+    let hover = on_hover_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingBoolAction::new(move |hovered| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((hovered,)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    BindingWidget::drop_target(
+        scope.inner.clone(),
+        child.binding_widget()?,
+        effect.as_deref().unwrap_or("copy"),
+        binding_string_action_from_js_callback(env, on_drop)?,
+        hover,
+    )
+    .map(JsWidget::from_binding)
+    .map_err(napi_invalid_arg)
 }
 
 #[napi(js_name = "ScrollView")]
@@ -1430,6 +3159,28 @@ pub fn js_dialog(
         shown
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
+    )))
+}
+
+#[napi(js_name = "CommandPalette")]
+pub fn js_command_palette(
+    env: Env,
+    name: String,
+    content: &JsWidget,
+    description: Option<String>,
+    shown: Option<JsBindingBoolArg>,
+    max_width: Option<f64>,
+    on_dismiss: Option<Function<'_, (), ()>>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::command_palette(
+        name,
+        content.binding_widget()?,
+        description,
+        shown
+            .map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(true)),
+        max_width.map(|value| value as f32),
+        binding_action_from_js_callback(env, on_dismiss)?,
     )))
 }
 
@@ -1911,6 +3662,44 @@ pub fn js_color_picker(
     )))
 }
 
+#[napi(js_name = "SimpleColorPicker")]
+pub fn js_simple_color_picker(
+    env: Env,
+    name: String,
+    color: Option<&JsColor>,
+    mode: Option<String>,
+    on_change: Option<Function<'_, FnArgs<(JsColor,)>, ()>>,
+    show_alpha: Option<bool>,
+    compact: Option<bool>,
+) -> Result<JsWidget> {
+    let mode_name = mode.as_deref().unwrap_or("hsv");
+    let mode = binding_simple_color_picker_mode_from_name(mode_name)
+        .ok_or_else(|| napi_invalid_arg("mode must be 'hsl', 'hsv', or 'rgb'"))?;
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingColorAction::new(move |color| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((JsColor::from(color),)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::simple_color_picker(
+        name,
+        color.map(|value| (*value).into()),
+        mode,
+        action,
+        show_alpha.unwrap_or(true),
+        compact.unwrap_or(false),
+    )))
+}
+
 fn binding_action_from_js_callback(
     env: Env,
     callback: Option<Function<'_, (), ()>>,
@@ -2269,6 +4058,43 @@ pub fn js_side_sheet(
     )))
 }
 
+#[napi(js_name = "BottomSheet")]
+#[allow(clippy::too_many_arguments)]
+pub fn js_bottom_sheet(
+    env: Env,
+    title: String,
+    body: ClassInstance<'_, JsWidget>,
+    description: Option<String>,
+    shown: Option<JsBindingBoolArg>,
+    modal: Option<bool>,
+    dismiss_on_scrim: Option<bool>,
+    height: Option<f64>,
+    header_action: Option<ClassInstance<'_, JsWidget>>,
+    actions: Option<Array<'_>>,
+    on_dismiss: Option<Function<'_, (), ()>>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::bottom_sheet(
+        title,
+        body.binding_widget()?,
+        description,
+        shown
+            .map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(true)),
+        modal.unwrap_or(true),
+        dismiss_on_scrim.unwrap_or(true),
+        height.map(|value| value as f32),
+        header_action
+            .map(|widget| widget.binding_widget())
+            .transpose()?,
+        actions
+            .as_ref()
+            .map(extract_binding_widgets)
+            .transpose()?
+            .unwrap_or_default(),
+        binding_action_from_js_callback(env, on_dismiss)?,
+    )))
+}
+
 #[napi(js_name = "SplitView")]
 pub fn js_split_view(
     env: Env,
@@ -2348,6 +4174,34 @@ pub fn js_floating_stack(windows: Array<'_>, name: Option<String>) -> Result<JsW
         extract_floating_stack_windows(&windows)?,
         name,
     )))
+}
+
+#[napi(js_name = "FloatingWorkspace")]
+pub fn js_floating_workspace(
+    state: &JsFloatingWorkspaceState,
+    views: Array<'_>,
+    name: Option<String>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::floating_workspace(
+        state.inner.clone(),
+        extract_floating_views(&views)?,
+        name,
+    )))
+}
+
+#[napi(js_name = "DockWorkspace")]
+pub fn js_dock_workspace(
+    state: &JsDockState,
+    panels: Array<'_>,
+    name: Option<String>,
+) -> Result<JsWidget> {
+    BindingWidget::dock_workspace(
+        state.inner.clone(),
+        extract_dock_panels(&panels)?,
+        name.unwrap_or_else(|| "Dock workspace".to_owned()),
+    )
+    .map(JsWidget::from_binding)
+    .map_err(napi_invalid_arg)
 }
 
 #[napi(js_name = "VirtualScrollView")]
