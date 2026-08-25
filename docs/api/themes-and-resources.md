@@ -72,6 +72,13 @@ background or routine interaction fills. Custom widgets should pair
 `border_focus`, and `focus_ring` for focus rather than mixing surfaces with
 `palette.accent`.
 
+The demo theme editor exposes the complete editable color inventory in five
+layers: source colors, control/interaction roles, general surfaces,
+canvas/color-tool roles, and surface status roles. Derived-role edits are
+stored as explicit overrides and reapplied after source, spacing, radius, or
+typography changes; selecting a preset clears them. Alpha is editable for
+translucent roles such as hover washes and overlay scrims.
+
 ## Applying a Static Theme
 
 Built-in widgets expose `theme(DefaultTheme)` where styling is relevant.

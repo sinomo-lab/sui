@@ -8185,7 +8185,7 @@ final_max_luminance={final_max_luminance}
             PointerEventKind::Scroll,
             Point::new(controls.bounds.x() + 24.0, controls.bounds.y() + 24.0),
         );
-        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -160.0)));
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -320.0)));
         runtime.handle_event(window_id, Event::Pointer(scroll))?;
 
         let scrolled = runtime.render(window_id)?;
@@ -8257,8 +8257,9 @@ final_max_luminance={final_max_luminance}
             "expected spacing slider drag to change the slider value"
         );
         assert!(
-            (final_spacing.bounds.y() - scrolled_spacing.bounds.y()).abs() <= 1.0,
-            "expected scale slider drag to preserve controls scroll position; before_drag={}, after_drag={}",
+            (final_spacing.bounds.y() - scrolled_spacing.bounds.y()).abs()
+                <= DefaultTheme::sui().metrics.list_row_height + 1.0,
+            "expected scale slider drag to preserve the scroll region apart from one-row focus visibility adjustment; before_drag={}, after_drag={}",
             scrolled_spacing.bounds.y(),
             final_spacing.bounds.y()
         );

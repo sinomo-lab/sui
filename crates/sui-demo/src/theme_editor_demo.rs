@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::Rc,
 };
 
@@ -76,129 +77,241 @@ impl ThemeEditorPreset {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ThemeColorVariable {
-    Base100,
-    Base200,
-    Base300,
-    BaseContent,
-    Primary,
-    PrimaryContent,
-    Secondary,
-    SecondaryContent,
-    Accent,
-    AccentContent,
-    Neutral,
-    NeutralContent,
-    Info,
-    InfoContent,
-    Success,
-    SuccessContent,
-    Warning,
-    WarningContent,
-    Error,
-    ErrorContent,
+const THEME_COLOR_LAYER_NAME: &str = "Color layer";
+const THEME_COLOR_LAYER_OPTIONS: [&str; 5] = ["Source", "Control", "Surface", "Canvas", "Status"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ThemeColorGroup {
+    Source,
+    Controls,
+    Surfaces,
+    Canvas,
+    Status,
 }
 
-impl ThemeColorVariable {
-    const ALL: [Self; 20] = [
-        Self::Base100,
-        Self::Base200,
-        Self::Base300,
-        Self::BaseContent,
-        Self::Primary,
-        Self::PrimaryContent,
-        Self::Secondary,
-        Self::SecondaryContent,
-        Self::Accent,
-        Self::AccentContent,
-        Self::Neutral,
-        Self::NeutralContent,
-        Self::Info,
-        Self::InfoContent,
-        Self::Success,
-        Self::SuccessContent,
-        Self::Warning,
-        Self::WarningContent,
-        Self::Error,
-        Self::ErrorContent,
+impl ThemeColorGroup {
+    const ALL: [Self; 5] = [
+        Self::Source,
+        Self::Controls,
+        Self::Surfaces,
+        Self::Canvas,
+        Self::Status,
     ];
 
+    const fn index(self) -> usize {
+        match self {
+            Self::Source => 0,
+            Self::Controls => 1,
+            Self::Surfaces => 2,
+            Self::Canvas => 3,
+            Self::Status => 4,
+        }
+    }
+
+    const fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Controls,
+            2 => Self::Surfaces,
+            3 => Self::Canvas,
+            4 => Self::Status,
+            _ => Self::Source,
+        }
+    }
+
     const fn label(self) -> &'static str {
-        match self {
-            Self::Base100 => "Base 100",
-            Self::Base200 => "Base 200",
-            Self::Base300 => "Base 300",
-            Self::BaseContent => "Base content",
-            Self::Primary => "Primary",
-            Self::PrimaryContent => "On primary",
-            Self::Secondary => "Secondary",
-            Self::SecondaryContent => "On secondary",
-            Self::Accent => "Accent",
-            Self::AccentContent => "On accent",
-            Self::Neutral => "Neutral",
-            Self::NeutralContent => "On neutral",
-            Self::Info => "Info",
-            Self::InfoContent => "On info",
-            Self::Success => "Success",
-            Self::SuccessContent => "On success",
-            Self::Warning => "Warning",
-            Self::WarningContent => "On warning",
-            Self::Error => "Error",
-            Self::ErrorContent => "On error",
-        }
+        THEME_COLOR_LAYER_OPTIONS[self.index()]
     }
 
-    const fn color(self, colors: &ThemeColors) -> Color {
-        match self {
-            Self::Base100 => colors.base_100,
-            Self::Base200 => colors.base_200,
-            Self::Base300 => colors.base_300,
-            Self::BaseContent => colors.base_content,
-            Self::Primary => colors.primary,
-            Self::PrimaryContent => colors.primary_content,
-            Self::Secondary => colors.secondary,
-            Self::SecondaryContent => colors.secondary_content,
-            Self::Accent => colors.accent,
-            Self::AccentContent => colors.accent_content,
-            Self::Neutral => colors.neutral,
-            Self::NeutralContent => colors.neutral_content,
-            Self::Info => colors.info,
-            Self::InfoContent => colors.info_content,
-            Self::Success => colors.success,
-            Self::SuccessContent => colors.success_content,
-            Self::Warning => colors.warning,
-            Self::WarningContent => colors.warning_content,
-            Self::Error => colors.error,
-            Self::ErrorContent => colors.error_content,
-        }
+    fn variables(self) -> impl Iterator<Item = ThemeColorVariable> {
+        ThemeColorVariable::ALL
+            .iter()
+            .copied()
+            .filter(move |variable| variable.group() == self)
     }
 
-    fn set_color(self, colors: &mut ThemeColors, color: Color) {
-        let color = color.clamped().with_alpha(1.0);
-        match self {
-            Self::Base100 => colors.base_100 = color,
-            Self::Base200 => colors.base_200 = color,
-            Self::Base300 => colors.base_300 = color,
-            Self::BaseContent => colors.base_content = color,
-            Self::Primary => colors.primary = color,
-            Self::PrimaryContent => colors.primary_content = color,
-            Self::Secondary => colors.secondary = color,
-            Self::SecondaryContent => colors.secondary_content = color,
-            Self::Accent => colors.accent = color,
-            Self::AccentContent => colors.accent_content = color,
-            Self::Neutral => colors.neutral = color,
-            Self::NeutralContent => colors.neutral_content = color,
-            Self::Info => colors.info = color,
-            Self::InfoContent => colors.info_content = color,
-            Self::Success => colors.success = color,
-            Self::SuccessContent => colors.success_content = color,
-            Self::Warning => colors.warning = color,
-            Self::WarningContent => colors.warning_content = color,
-            Self::Error => colors.error = color,
-            Self::ErrorContent => colors.error_content = color,
-        }
+    fn first_variable(self) -> ThemeColorVariable {
+        self.variables()
+            .next()
+            .expect("every theme color group has at least one variable")
     }
+}
+
+macro_rules! define_theme_color_variables {
+    ($( $variant:ident => $group:ident, $label:literal, $root:ident.$field:ident; )+) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        enum ThemeColorVariable {
+            $( $variant, )+
+        }
+
+        impl ThemeColorVariable {
+            const ALL: &'static [Self] = &[$( Self::$variant, )+];
+
+            const fn group(self) -> ThemeColorGroup {
+                match self {
+                    $( Self::$variant => ThemeColorGroup::$group, )+
+                }
+            }
+
+            const fn label(self) -> &'static str {
+                match self {
+                    $( Self::$variant => $label, )+
+                }
+            }
+
+            fn color(self, theme: &DefaultTheme) -> Color {
+                match self {
+                    $( Self::$variant => theme.$root.$field, )+
+                }
+            }
+
+            fn set_color(self, theme: &mut DefaultTheme, color: Color) {
+                let color = color.clamped();
+                match self {
+                    $( Self::$variant => theme.$root.$field = color, )+
+                }
+            }
+        }
+    };
+}
+
+define_theme_color_variables! {
+    Base100 => Source, "Base 100", colors.base_100;
+    Base200 => Source, "Base 200", colors.base_200;
+    Base300 => Source, "Base 300", colors.base_300;
+    BaseContent => Source, "Base content", colors.base_content;
+    Primary => Source, "Primary", colors.primary;
+    PrimaryContent => Source, "On primary", colors.primary_content;
+    Secondary => Source, "Secondary", colors.secondary;
+    SecondaryContent => Source, "On secondary", colors.secondary_content;
+    Accent => Source, "Accent", colors.accent;
+    AccentContent => Source, "On accent", colors.accent_content;
+    Neutral => Source, "Neutral", colors.neutral;
+    NeutralContent => Source, "On neutral", colors.neutral_content;
+    Info => Source, "Info", colors.info;
+    InfoContent => Source, "On info", colors.info_content;
+    Success => Source, "Success", colors.success;
+    SuccessContent => Source, "On success", colors.success_content;
+    Warning => Source, "Warning", colors.warning;
+    WarningContent => Source, "On warning", colors.warning_content;
+    Error => Source, "Error", colors.error;
+    ErrorContent => Source, "On error", colors.error_content;
+
+    ControlText => Controls, "Text", palette.text;
+    ControlTextMuted => Controls, "Text muted", palette.text_muted;
+    ControlPlaceholder => Controls, "Placeholder", palette.placeholder;
+    ControlSurface => Controls, "Surface", palette.surface;
+    ControlSurfaceRaised => Controls, "Surface raised", palette.surface_raised;
+    ControlFill => Controls, "Control", palette.control;
+    ControlHover => Controls, "Control hover", palette.control_hover;
+    ControlActive => Controls, "Control active", palette.control_active;
+    ControlField => Controls, "Field", palette.field;
+    ControlSurfaceHover => Controls, "Surface hover", palette.surface_hover;
+    ControlSurfacePressed => Controls, "Surface pressed", palette.surface_pressed;
+    ControlSurfaceFocus => Controls, "Surface focus", palette.surface_focus;
+    ControlBorder => Controls, "Border", palette.border;
+    ControlBorderStrong => Controls, "Border strong", palette.border_strong;
+    ControlBorderHover => Controls, "Border hover", palette.border_hover;
+    ControlBorderFocus => Controls, "Border focus", palette.border_focus;
+    ControlFocus => Controls, "Focus", palette.focus;
+    ControlFocusRing => Controls, "Focus ring", palette.focus_ring;
+    ControlCaret => Controls, "Caret", palette.caret;
+    ControlSelection => Controls, "Selection", palette.selection;
+    ControlSelectionBorder => Controls, "Selection border", palette.selection_border;
+    ControlAccent => Controls, "Accent", palette.accent;
+    ControlAccentHover => Controls, "Accent hover", palette.accent_hover;
+    ControlAccentPressed => Controls, "Accent pressed", palette.accent_pressed;
+    ControlAccentBorder => Controls, "Accent border", palette.accent_border;
+    ControlAccentBorderHover => Controls, "Accent border hover", palette.accent_border_hover;
+    ControlAccentBorderFocus => Controls, "Accent border focus", palette.accent_border_focus;
+    ControlAccentText => Controls, "On accent", palette.accent_text;
+    ControlAccentSoft => Controls, "Accent soft", palette.accent_soft;
+    ControlAccentSoftText => Controls, "Accent soft text", palette.accent_soft_text;
+    ControlInfo => Controls, "Info", palette.info;
+    ControlInfoText => Controls, "On info", palette.info_text;
+    ControlInfoSoft => Controls, "Info soft", palette.info_soft;
+    ControlInfoSoftText => Controls, "Info soft text", palette.info_soft_text;
+    ControlSuccess => Controls, "Success", palette.success;
+    ControlSuccessText => Controls, "On success", palette.success_text;
+    ControlSuccessSoft => Controls, "Success soft", palette.success_soft;
+    ControlSuccessSoftText => Controls, "Success soft text", palette.success_soft_text;
+    ControlWarning => Controls, "Warning", palette.warning;
+    ControlWarningText => Controls, "On warning", palette.warning_text;
+    ControlWarningSoft => Controls, "Warning soft", palette.warning_soft;
+    ControlWarningSoftText => Controls, "Warning soft text", palette.warning_soft_text;
+    ControlDanger => Controls, "Danger", palette.danger;
+    ControlDangerText => Controls, "On danger", palette.danger_text;
+    ControlDangerSoft => Controls, "Danger soft", palette.danger_soft;
+    ControlDangerSoftText => Controls, "Danger soft text", palette.danger_soft_text;
+    ControlDangerHover => Controls, "Danger hover", palette.danger_hover;
+
+    SurfaceWindow => Surfaces, "Window", surfaces.window;
+    SurfaceWindowSubtle => Surfaces, "Window subtle", surfaces.window_subtle;
+    SurfaceSidebar => Surfaces, "Sidebar", surfaces.sidebar;
+    SurfacePanel => Surfaces, "Panel", surfaces.panel;
+    Surface2 => Surfaces, "Surface 2", surfaces.surface_2;
+    Surface3 => Surfaces, "Surface 3", surfaces.surface_3;
+    SurfaceOverlay => Surfaces, "Overlay", surfaces.overlay;
+    SurfaceTitlebar => Surfaces, "Titlebar", surfaces.titlebar;
+    SurfaceField => Surfaces, "Field", surfaces.field;
+    SurfaceBorder => Surfaces, "Border", surfaces.border;
+    SurfaceBorderStrong => Surfaces, "Border strong", surfaces.border_strong;
+    SurfaceBorderSubtle => Surfaces, "Border subtle", surfaces.border_subtle;
+    SurfaceText => Surfaces, "Text", surfaces.text;
+    SurfaceTextMuted => Surfaces, "Text muted", surfaces.text_muted;
+    SurfaceTextFaint => Surfaces, "Text faint", surfaces.text_faint;
+    SurfaceTextDisabled => Surfaces, "Text disabled", surfaces.text_disabled;
+    SurfaceTextInvert => Surfaces, "Text invert", surfaces.text_invert;
+    SurfaceAccent => Surfaces, "Accent", surfaces.accent;
+    SurfaceAccentHover => Surfaces, "Accent hover", surfaces.accent_hover;
+    SurfaceOnAccent => Surfaces, "On accent", surfaces.on_accent;
+    SurfaceAccentText => Surfaces, "Accent text", surfaces.accent_text;
+    SurfaceAccentSoft => Surfaces, "Accent soft", surfaces.accent_soft;
+    SurfaceAccentBorder => Surfaces, "Accent border", surfaces.accent_border;
+    SurfaceFocus => Surfaces, "Focus", surfaces.focus;
+    SurfaceHover => Surfaces, "Hover", surfaces.hover;
+    SurfaceSelected => Surfaces, "Selected", surfaces.selected;
+    SurfaceSelectedBorder => Surfaces, "Selected border", surfaces.selected_border;
+    SurfaceOverlayScrim => Surfaces, "Overlay scrim", surfaces.overlay_scrim;
+    SurfaceTooltip => Surfaces, "Tooltip", surfaces.tooltip;
+    SurfaceTooltipBorder => Surfaces, "Tooltip border", surfaces.tooltip_border;
+    SurfaceTooltipText => Surfaces, "Tooltip text", surfaces.tooltip_text;
+
+    CanvasSurface => Canvas, "Canvas", surfaces.canvas;
+    CanvasGrid => Canvas, "Canvas grid", surfaces.canvas_grid;
+    CanvasAxisX => Canvas, "Axis X", surfaces.canvas_axis_x;
+    CanvasAxisY => Canvas, "Axis Y", surfaces.canvas_axis_y;
+    PixelCanvasPaper => Canvas, "Pixel paper", surfaces.pixel_canvas_paper;
+    PixelCanvasDocumentEdge => Canvas, "Document edge", surfaces.pixel_canvas_document_edge;
+    PixelCanvasShadowNear => Canvas, "Shadow near", surfaces.pixel_canvas_shadow_near;
+    PixelCanvasShadowFar => Canvas, "Shadow far", surfaces.pixel_canvas_shadow_far;
+    PixelCanvasGrid => Canvas, "Pixel grid", surfaces.pixel_canvas_grid;
+    CanvasRuler => Canvas, "Ruler", surfaces.canvas_ruler;
+    CanvasRulerBorder => Canvas, "Ruler border", surfaces.canvas_ruler_border;
+    CanvasRulerTick => Canvas, "Ruler tick", surfaces.canvas_ruler_tick;
+    CanvasRulerText => Canvas, "Ruler text", surfaces.canvas_ruler_text;
+    CheckerboardLight => Canvas, "Checker light", surfaces.checkerboard_light;
+    CheckerboardDark => Canvas, "Checker dark", surfaces.checkerboard_dark;
+    ColorPickerChromeBorder => Canvas, "Picker chrome", surfaces.color_picker_chrome_border;
+    ColorPickerPlaneBorder => Canvas, "Picker plane", surfaces.color_picker_plane_border;
+    ColorPickerBarBorder => Canvas, "Picker bar", surfaces.color_picker_bar_border;
+    ColorPickerMarkerOuter => Canvas, "Marker outer", surfaces.color_picker_marker_outer;
+    ColorPickerMarkerDark => Canvas, "Marker dark", surfaces.color_picker_marker_dark;
+    ColorPickerMarkerLight => Canvas, "Marker light", surfaces.color_picker_marker_light;
+    ColorPickerSdrMarker => Canvas, "SDR marker", surfaces.color_picker_sdr_marker;
+    ColorPickerHdrDivider => Canvas, "HDR divider", surfaces.color_picker_hdr_divider;
+
+    StatusGood => Status, "Good", surfaces.good;
+    StatusGoodText => Status, "Good text", surfaces.good_text;
+    StatusGoodSoft => Status, "Good soft", surfaces.good_soft;
+    StatusWarn => Status, "Warn", surfaces.warn;
+    StatusWarnText => Status, "Warn text", surfaces.warn_text;
+    StatusWarnSoft => Status, "Warn soft", surfaces.warn_soft;
+    StatusBad => Status, "Bad", surfaces.bad;
+    StatusBadText => Status, "Bad text", surfaces.bad_text;
+    StatusBadSoft => Status, "Bad soft", surfaces.bad_soft;
+    StatusInfo => Status, "Info", surfaces.info;
+    StatusInfoText => Status, "Info text", surfaces.info_text;
+    StatusInfoSoft => Status, "Info soft", surfaces.info_soft;
 }
 
 #[derive(Clone, Default)]
@@ -317,6 +430,15 @@ fn request_theme_editor_controls_refresh(ctx: &mut EventCtx, target: &ThemeEdito
     }
 }
 
+fn request_theme_editor_controls_layout_refresh(
+    ctx: &mut EventCtx,
+    target: &ThemeEditorRefreshTarget,
+) {
+    if !target.request_layout(ctx) {
+        request_window_refresh(ctx, true);
+    }
+}
+
 #[derive(Clone)]
 struct ThemeEditorState {
     inner: Rc<RefCell<ThemeEditorStateInner>>,
@@ -325,7 +447,9 @@ struct ThemeEditorState {
 struct ThemeEditorStateInner {
     theme: DefaultTheme,
     preset: ThemeEditorPreset,
+    selected_color_group: ThemeColorGroup,
     selected_color: ThemeColorVariable,
+    color_overrides: HashMap<ThemeColorVariable, Color>,
     control_size: ControlSize,
     radius_scale: f32,
     text_scale: f32,
@@ -342,7 +466,9 @@ impl ThemeEditorState {
             inner: Rc::new(RefCell::new(ThemeEditorStateInner {
                 theme: DefaultTheme::sui(),
                 preset: ThemeEditorPreset::SuiLight,
+                selected_color_group: ThemeColorGroup::Source,
                 selected_color: ThemeColorVariable::Primary,
+                color_overrides: HashMap::new(),
                 control_size: ControlSize::Medium,
                 radius_scale: 1.0,
                 text_scale: 1.0,
@@ -397,6 +523,7 @@ impl ThemeEditorState {
         let mut inner = self.inner.borrow_mut();
         inner.theme = preset.theme();
         inner.preset = preset;
+        inner.color_overrides.clear();
         inner.control_size = ControlSize::Medium;
         inner.radius_scale = 1.0;
         inner.text_scale = 1.0;
@@ -409,7 +536,22 @@ impl ThemeEditorState {
     }
 
     fn select_color_variable(&self, variable: ThemeColorVariable) {
-        self.inner.borrow_mut().selected_color = variable;
+        let mut inner = self.inner.borrow_mut();
+        inner.selected_color_group = variable.group();
+        inner.selected_color = variable;
+    }
+
+    fn color_group_index(&self) -> usize {
+        self.inner.borrow().selected_color_group.index()
+    }
+
+    fn set_color_group(&self, index: usize) {
+        let group = ThemeColorGroup::from_index(index);
+        let mut inner = self.inner.borrow_mut();
+        inner.selected_color_group = group;
+        if inner.selected_color.group() != group {
+            inner.selected_color = group.first_variable();
+        }
     }
 
     fn is_selected_color(&self, variable: ThemeColorVariable) -> bool {
@@ -418,31 +560,37 @@ impl ThemeEditorState {
 
     fn color_variable(&self, variable: ThemeColorVariable) -> Color {
         let inner = self.inner.borrow();
-        variable.color(&inner.theme.colors)
+        variable.color(&inner.theme)
     }
 
     fn selected_color(&self) -> Color {
         let inner = self.inner.borrow();
-        inner.selected_color.color(&inner.theme.colors)
+        inner.selected_color.color(&inner.theme)
     }
 
     fn selected_color_summary(&self) -> String {
         let inner = self.inner.borrow();
-        let color = inner.selected_color.color(&inner.theme.colors).clamped();
+        let color = inner.selected_color.color(&inner.theme).clamped();
         format!(
-            "{}  #{:02X}{:02X}{:02X}",
+            "{} / {}  #{:02X}{:02X}{:02X}  A {:.0}%",
+            inner.selected_color_group.label(),
             inner.selected_color.label(),
             (color.red * 255.0).round() as u8,
             (color.green * 255.0).round() as u8,
             (color.blue * 255.0).round() as u8,
+            color.alpha * 100.0,
         )
     }
 
     fn set_selected_color(&self, color: Color) {
         let mut inner = self.inner.borrow_mut();
         let selected = inner.selected_color;
-        selected.set_color(&mut inner.theme.colors, color);
-        inner.theme.sync_derived_fields();
+        selected.set_color(&mut inner.theme, color);
+        if selected.group() == ThemeColorGroup::Source {
+            sync_editor_derived_fields(&mut inner);
+        } else {
+            inner.color_overrides.insert(selected, color.clamped());
+        }
     }
 
     fn control_size_index(&self) -> usize {
@@ -471,7 +619,7 @@ impl ThemeEditorState {
     fn set_spacing(&self, spacing: f32) {
         let mut inner = self.inner.borrow_mut();
         inner.theme.spacing = spacing.clamp(2.0, 12.0);
-        inner.theme.sync_derived_fields();
+        sync_editor_derived_fields(&mut inner);
     }
 
     fn radius_scale(&self) -> f64 {
@@ -483,7 +631,7 @@ impl ThemeEditorState {
         let mut inner = self.inner.borrow_mut();
         inner.radius_scale = scale;
         inner.theme.radius = scaled_radii(scale);
-        inner.theme.sync_derived_fields();
+        sync_editor_derived_fields(&mut inner);
     }
 
     fn text_scale(&self) -> f64 {
@@ -495,7 +643,7 @@ impl ThemeEditorState {
         let mut inner = self.inner.borrow_mut();
         inner.text_scale = scale;
         inner.theme.text = scaled_text_scale(scale);
-        inner.theme.sync_derived_fields();
+        sync_editor_derived_fields(&mut inner);
     }
 
     fn motion_scale(&self) -> f64 {
@@ -522,6 +670,18 @@ impl ThemeEditorState {
             inner.text_scale * 100.0,
             inner.motion_scale * 100.0,
         )
+    }
+}
+
+fn sync_editor_derived_fields(inner: &mut ThemeEditorStateInner) {
+    inner.theme.sync_derived_fields();
+    let overrides = inner
+        .color_overrides
+        .iter()
+        .map(|(variable, color)| (*variable, *color))
+        .collect::<Vec<_>>();
+    for (variable, color) in overrides {
+        variable.set_color(&mut inner.theme, color);
     }
 }
 
@@ -611,7 +771,7 @@ fn build_editor_controls(state: ThemeEditorState, shell_theme: DevThemeReader) -
                     .alignment(Alignment::Stretch)
                     .with_child(editor_title(
                         "Theme variables",
-                        "Edit source tokens; derived palettes and control metrics update automatically.",
+                        "Edit source, control, surface, canvas, and status colors independently; explicit role overrides are preserved.",
                         Rc::clone(&shell_theme),
                     ))
                     .with_child(build_preset_section(
@@ -713,6 +873,9 @@ fn build_preset_section(state: ThemeEditorState, shell_theme: DevThemeReader) ->
 }
 
 fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
+    let group_reader = state.clone();
+    let group_change = state.clone();
+    let group_target = state.controls_target();
     let summary_state = state.clone();
     let picker_reader = state.clone();
     let picker_change = state.clone();
@@ -723,6 +886,16 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
         Stack::vertical()
             .spacing(10.0)
             .alignment(Alignment::Stretch)
+            .with_child(
+                SegmentedControl::new(THEME_COLOR_LAYER_NAME)
+                    .segments(THEME_COLOR_LAYER_OPTIONS)
+                    .selected_when(move || Some(group_reader.color_group_index()))
+                    .theme_when(clone_dev_theme_reader(&shell_theme))
+                    .on_change_with_ctx(move |index, _, ctx| {
+                        group_change.set_color_group(index);
+                        request_theme_editor_controls_layout_refresh(ctx, &group_target);
+                    }),
+            )
             .with_child(
                 Label::dynamic("Primary  #000000", move || {
                     summary_state.selected_color_summary()
@@ -739,7 +912,7 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                     picker_reader.selected_color(),
                 )
                 .mode(SimpleColorPickerMode::Rgb)
-                .show_alpha(false)
+                .show_alpha(true)
                 .color_when(move || picker_reader.selected_color())
                 .theme_when(clone_dev_theme_reader(&shell_theme))
                 .on_change_with_ctx(move |ctx, color| {
@@ -747,18 +920,35 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                     request_theme_editor_refresh(ctx, &picker_targets, false);
                 }),
             )
-            .with_child(build_color_swatch_list(state, Rc::clone(&shell_theme))),
+            .with_child(build_color_swatch_layers(state, Rc::clone(&shell_theme))),
     )
     .theme_when(clone_dev_theme_reader(&shell_theme))
 }
 
-fn build_color_swatch_list(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
+fn build_color_swatch_layers(state: ThemeEditorState, shell_theme: DevThemeReader) -> SwitchView {
+    let selected_reader = state.clone();
+    let mut layers = SwitchView::new().selected_when(move || selected_reader.color_group_index());
+    for group in ThemeColorGroup::ALL {
+        layers = layers.with_child(build_color_swatch_list(
+            group,
+            state.clone(),
+            Rc::clone(&shell_theme),
+        ));
+    }
+    layers
+}
+
+fn build_color_swatch_list(
+    group: ThemeColorGroup,
+    state: ThemeEditorState,
+    shell_theme: DevThemeReader,
+) -> impl Widget {
     let mut swatches = Flex::horizontal()
         .gap(8.0)
         .wrap(FlexWrap::Wrap)
         .align_items(Alignment::Start);
 
-    for variable in ThemeColorVariable::ALL {
+    for variable in group.variables() {
         swatches = swatches.with_item(
             build_color_token_swatch(variable, state.clone(), Rc::clone(&shell_theme)),
             FlexItem::fixed(92.0),
@@ -809,7 +999,15 @@ fn build_color_token_swatch(
 }
 
 fn theme_color_swatch_name(variable: ThemeColorVariable) -> String {
-    format!("{} theme color", variable.label())
+    if variable.group() == ThemeColorGroup::Source {
+        format!("{} theme color", variable.label())
+    } else {
+        format!(
+            "{} {} theme color",
+            variable.group().label(),
+            variable.label()
+        )
+    }
 }
 
 fn build_scale_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> impl Widget {
@@ -1161,12 +1359,18 @@ mod tests {
 
     #[test]
     fn every_theme_color_component_is_independently_editable() {
-        let marker = Color::rgba(0.123, 0.456, 0.789, 1.0);
-        for (selected_index, selected) in ThemeColorVariable::ALL.into_iter().enumerate() {
-            let mut colors = ThemeColors::light();
-            let before = ThemeColorVariable::ALL.map(|variable| variable.color(&colors));
-            selected.set_color(&mut colors, marker);
-            let after = ThemeColorVariable::ALL.map(|variable| variable.color(&colors));
+        let marker = Color::rgba(0.123, 0.456, 0.789, 0.625);
+        for (selected_index, selected) in ThemeColorVariable::ALL.iter().copied().enumerate() {
+            let mut theme = DefaultTheme::light();
+            let before = ThemeColorVariable::ALL
+                .iter()
+                .map(|variable| variable.color(&theme))
+                .collect::<Vec<_>>();
+            selected.set_color(&mut theme, marker);
+            let after = ThemeColorVariable::ALL
+                .iter()
+                .map(|variable| variable.color(&theme))
+                .collect::<Vec<_>>();
 
             for (index, value) in after.into_iter().enumerate() {
                 if index == selected_index {
@@ -1182,6 +1386,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn color_variable_inventory_covers_every_current_theme_layer() {
+        assert_eq!(ThemeColorVariable::ALL.len(), 133);
+        assert_eq!(ThemeColorGroup::Source.variables().count(), 20);
+        assert_eq!(ThemeColorGroup::Controls.variables().count(), 47);
+        assert_eq!(ThemeColorGroup::Surfaces.variables().count(), 31);
+        assert_eq!(ThemeColorGroup::Canvas.variables().count(), 23);
+        assert_eq!(ThemeColorGroup::Status.variables().count(), 12);
+    }
+
+    #[test]
+    fn derived_color_overrides_survive_recomputation_and_reset_with_the_preset() {
+        let state = ThemeEditorState::new();
+        let hover = Color::rgba(0.88, 0.18, 0.52, 0.42);
+        let highlight = Color::rgba(0.12, 0.72, 0.94, 0.86);
+
+        state.select_color_variable(ThemeColorVariable::ControlHover);
+        state.set_selected_color(hover);
+        state.select_color_variable(ThemeColorVariable::ControlSelectionBorder);
+        state.set_selected_color(highlight);
+        state.set_spacing(7.0);
+        state.set_radius_scale(1.25);
+        state.set_text_scale(1.1);
+
+        let theme = state.theme();
+        assert_eq!(theme.palette.control_hover, hover);
+        assert_eq!(theme.palette.selection_border, highlight);
+
+        state.select_color_variable(ThemeColorVariable::Primary);
+        state.set_selected_color(Color::rgba(0.75, 0.20, 0.16, 1.0));
+        let theme = state.theme();
+        assert_eq!(theme.palette.control_hover, hover);
+        assert_eq!(theme.palette.selection_border, highlight);
+
+        state.reset_current_preset();
+        let theme = state.theme();
+        assert_ne!(theme.palette.control_hover, hover);
+        assert_ne!(theme.palette.selection_border, highlight);
     }
 
     #[test]
@@ -1204,28 +1448,43 @@ mod tests {
     }
 
     #[test]
-    fn color_editor_lists_all_editable_color_swatches() -> Result<()> {
-        let shell_theme: DevThemeReader = Rc::new(DefaultTheme::sui);
-        let mut runtime = Application::new()
-            .window(
-                WindowBuilder::new()
-                    .title("Theme editor")
-                    .root(build_theme_editor_demo_with_theme(shell_theme)),
-            )
-            .build()?;
-        let output = runtime.render(runtime.window_ids()[0])?;
+    fn color_editor_lists_every_editable_color_swatch_by_layer() -> Result<()> {
+        for group in ThemeColorGroup::ALL {
+            let shell_theme: DevThemeReader = Rc::new(DefaultTheme::sui);
+            let state = ThemeEditorState::new();
+            let mut runtime = Application::new()
+                .window(
+                    WindowBuilder::new()
+                        .title("Theme editor")
+                        .root(build_color_swatch_list(group, state, shell_theme)),
+                )
+                .build()?;
+            let output = runtime.render(runtime.window_ids()[0])?;
 
-        for variable in ThemeColorVariable::ALL {
-            let name = theme_color_swatch_name(variable);
-            assert!(
-                output.semantics.iter().any(|node| {
-                    node.role == sui::SemanticsRole::ColorSwatch
-                        && node.name.as_deref() == Some(name.as_str())
-                }),
-                "expected theme editor to expose {name:?}"
-            );
+            for variable in group.variables() {
+                let name = theme_color_swatch_name(variable);
+                assert!(
+                    output.semantics.iter().any(|node| {
+                        node.role == sui::SemanticsRole::ColorSwatch
+                            && node.name.as_deref() == Some(name.as_str())
+                    }),
+                    "expected {} layer to expose {name:?}",
+                    group.label()
+                );
+            }
         }
         Ok(())
+    }
+
+    #[test]
+    fn color_layer_selection_targets_a_variable_in_the_selected_group() {
+        let state = ThemeEditorState::new();
+        for group in ThemeColorGroup::ALL {
+            state.set_color_group(group.index());
+            let inner = state.inner.borrow();
+            assert_eq!(inner.selected_color_group, group);
+            assert_eq!(inner.selected_color.group(), group);
+        }
     }
 
     #[test]
