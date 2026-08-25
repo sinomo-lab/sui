@@ -69,6 +69,100 @@ pub enum CanvasRulerAxis {
     Vertical,
 }
 
+/// Widget-owned canvas color overrides. Unset fields resolve from common
+/// semantic theme roles on every paint, preserving live theme switching.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CanvasAppearance {
+    pub background: Option<Color>,
+    pub grid: Option<Color>,
+    pub axis_x: Option<Color>,
+    pub axis_y: Option<Color>,
+}
+
+impl CanvasAppearance {
+    fn resolve(self, theme: &DefaultTheme) -> [Color; 4] {
+        let dark = theme.surfaces.dark;
+        [
+            self.background.unwrap_or(theme.palette.surface),
+            self.grid.unwrap_or(
+                theme
+                    .palette
+                    .border
+                    .with_alpha(if dark { 0.30 } else { 0.18 }),
+            ),
+            self.axis_x.unwrap_or(
+                theme
+                    .colors
+                    .error
+                    .with_alpha(if dark { 0.72 } else { 0.55 }),
+            ),
+            self.axis_y.unwrap_or(
+                theme
+                    .colors
+                    .success
+                    .with_alpha(if dark { 0.72 } else { 0.55 }),
+            ),
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CanvasRulerAppearance {
+    pub background: Option<Color>,
+    pub border: Option<Color>,
+    pub tick: Option<Color>,
+    pub text: Option<Color>,
+}
+
+impl CanvasRulerAppearance {
+    fn resolve(self, theme: &DefaultTheme) -> [Color; 4] {
+        [
+            self.background.unwrap_or(theme.palette.surface_raised),
+            self.border.unwrap_or(theme.palette.border.with_alpha(0.78)),
+            self.tick
+                .unwrap_or(theme.palette.text_muted.with_alpha(0.72)),
+            self.text.unwrap_or(theme.palette.text.with_alpha(0.76)),
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PixelCanvasAppearance {
+    pub background: Option<Color>,
+    pub paper: Option<Color>,
+    pub document_edge: Option<Color>,
+    pub shadow_near: Option<Color>,
+    pub shadow_far: Option<Color>,
+    pub grid: Option<Color>,
+}
+
+impl PixelCanvasAppearance {
+    fn resolve(self, theme: &DefaultTheme) -> [Color; 6] {
+        let dark = theme.surfaces.dark;
+        [
+            self.background.unwrap_or(theme.palette.surface),
+            self.paper.unwrap_or(theme.palette.field),
+            self.document_edge
+                .unwrap_or(
+                    theme
+                        .palette
+                        .text
+                        .with_alpha(if dark { 0.82 } else { 0.72 }),
+                ),
+            self.shadow_near
+                .unwrap_or(Color::BLACK.with_alpha(if dark { 0.30 } else { 0.16 })),
+            self.shadow_far
+                .unwrap_or(Color::BLACK.with_alpha(if dark { 0.18 } else { 0.08 })),
+            self.grid.unwrap_or(
+                theme
+                    .palette
+                    .text
+                    .with_alpha(if dark { 0.32 } else { 0.28 }),
+            ),
+        ]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CanvasViewport {
     pub pan: Vector,
@@ -165,6 +259,7 @@ pub struct CanvasRuler {
     viewport_size: Size,
     viewport_reader: Option<Box<dyn Fn() -> (CanvasViewport, Size)>>,
     extent: Option<f32>,
+    appearance: CanvasRulerAppearance,
 }
 
 impl CanvasRuler {
@@ -179,6 +274,7 @@ impl CanvasRuler {
             viewport_size: Size::ZERO,
             viewport_reader: None,
             extent: None,
+            appearance: CanvasRulerAppearance::default(),
         }
     }
 
@@ -221,6 +317,11 @@ impl CanvasRuler {
 
     pub fn extent(mut self, extent: f32) -> Self {
         self.extent = Some(extent.max(0.0));
+        self
+    }
+
+    pub fn appearance(mut self, appearance: CanvasRulerAppearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -287,17 +388,18 @@ impl Widget for CanvasRuler {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
+        let [background, border, tick, text] = self.appearance.resolve(&theme);
         let bounds = ctx.bounds();
         let (viewport, viewport_size) = self.viewport_snapshot();
         let text_style = TextStyle {
             font_size: theme.text.xs.size,
             line_height: theme.text.xs.line_height,
-            color: theme.surfaces.canvas_ruler_text,
+            color: text,
             ..theme.body_text_style()
         };
 
-        ctx.fill_rect(bounds, theme.surfaces.canvas_ruler);
-        paint_canvas_ruler_divider(ctx, bounds, self.axis, theme.surfaces.canvas_ruler_border);
+        ctx.fill_rect(bounds, background);
+        paint_canvas_ruler_divider(ctx, bounds, self.axis, border);
         ctx.push_clip_rect(bounds);
         paint_canvas_ruler_ticks(
             ctx,
@@ -307,6 +409,7 @@ impl Widget for CanvasRuler {
             viewport,
             viewport_size,
             &theme,
+            tick,
             text_style,
         );
         ctx.pop_clip();
@@ -411,6 +514,7 @@ pub struct Canvas {
     draw_stroke: CanvasStroke,
     focus_animation: AnimatedScalar,
     desired_size: Size,
+    appearance: CanvasAppearance,
 }
 
 impl Canvas {
@@ -427,6 +531,7 @@ impl Canvas {
             draw_stroke: CanvasStroke::new(theme.palette.accent, 2.5),
             focus_animation: AnimatedScalar::new(0.0),
             desired_size: Size::new(520.0, 360.0),
+            appearance: CanvasAppearance::default(),
         }
     }
 
@@ -469,6 +574,11 @@ impl Canvas {
 
     pub fn draw_stroke(mut self, stroke: CanvasStroke) -> Self {
         self.draw_stroke = CanvasStroke::new(stroke.color, stroke.width.max(0.1));
+        self
+    }
+
+    pub fn appearance(mut self, appearance: CanvasAppearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -694,7 +804,8 @@ impl Widget for Canvas {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        ctx.fill_bounds(theme.surfaces.canvas);
+        let [background, grid, axis_x, axis_y] = self.appearance.resolve(&theme);
+        ctx.fill_bounds(background);
         ctx.stroke_bounds(
             theme.surfaces.border,
             StrokeStyle::new(theme.metrics.border_width),
@@ -706,6 +817,7 @@ impl Widget for Canvas {
             ctx.bounds(),
             self.document_origin(),
             &theme,
+            grid,
         );
         paint_canvas_axes(
             ctx,
@@ -713,6 +825,8 @@ impl Widget for Canvas {
             ctx.bounds(),
             self.document_origin(),
             &theme,
+            axis_x,
+            axis_y,
         );
         let transform = self
             .viewport
@@ -1549,6 +1663,7 @@ pub struct PixelCanvas {
     desired_size: Size,
     fit_on_first_layout: bool,
     initial_fit_applied: bool,
+    appearance: PixelCanvasAppearance,
 }
 
 impl PixelCanvas {
@@ -1576,6 +1691,7 @@ impl PixelCanvas {
             desired_size: Size::new(520.0, 360.0),
             fit_on_first_layout: false,
             initial_fit_applied: false,
+            appearance: PixelCanvasAppearance::default(),
         }
     }
 
@@ -1610,6 +1726,12 @@ impl PixelCanvas {
 
     pub fn paper_color(mut self, color: Color) -> Self {
         self.paper_color = Some(color);
+        self.paint_image_cache.borrow_mut().take();
+        self
+    }
+
+    pub fn appearance(mut self, appearance: PixelCanvasAppearance) -> Self {
+        self.appearance = appearance;
         self.paint_image_cache.borrow_mut().take();
         self
     }
@@ -2259,7 +2381,7 @@ impl PixelCanvas {
 
     fn resolved_paper_color(&self, theme: &DefaultTheme) -> Color {
         self.paper_color
-            .unwrap_or(theme.surfaces.pixel_canvas_paper)
+            .unwrap_or_else(|| self.appearance.resolve(theme)[1])
     }
 }
 
@@ -2560,7 +2682,9 @@ impl Widget for PixelCanvas {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        ctx.fill_bounds(theme.surfaces.canvas);
+        let [background, _, document_edge, shadow_near, shadow_far, grid] =
+            self.appearance.resolve(&theme);
+        ctx.fill_bounds(background);
         ctx.stroke_bounds(
             theme.surfaces.border,
             StrokeStyle::new(theme.metrics.border_width),
@@ -2570,7 +2694,7 @@ impl Widget for PixelCanvas {
             .viewport
             .transform(ctx.bounds(), self.document_origin());
         let image_bounds = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
-        paint_pixel_canvas_document_shadow(ctx, image_bounds, transform, &theme);
+        paint_pixel_canvas_document_shadow(ctx, image_bounds, transform, shadow_near, shadow_far);
         let paper_color = self.resolved_paper_color(&theme);
         let display = self.state.display();
         let paper = self.state.paper();
@@ -2612,11 +2736,11 @@ impl Widget for PixelCanvas {
                 self.height,
             )
         {
-            paint_pixel_grid(ctx, range, transform, theme.surfaces.pixel_canvas_grid);
+            paint_pixel_grid(ctx, range, transform, grid);
         }
         ctx.stroke(
             transformed_rect_path(image_bounds, transform),
-            theme.surfaces.pixel_canvas_document_edge,
+            document_edge,
             StrokeStyle::new(1.0),
         );
         ctx.pop_clip();
@@ -2691,19 +2815,20 @@ fn paint_pixel_canvas_document_shadow(
     ctx: &mut PaintCtx,
     rect: Rect,
     transform: Transform,
-    theme: &DefaultTheme,
+    shadow_near: Color,
+    shadow_far: Color,
 ) {
     fill_transformed_rect(
         ctx,
         rect,
         transform.then(Transform::translation(0.0, 7.0)),
-        theme.surfaces.pixel_canvas_shadow_far,
+        shadow_far,
     );
     fill_transformed_rect(
         ctx,
         rect,
         transform.then(Transform::translation(0.0, 3.0)),
-        theme.surfaces.pixel_canvas_shadow_near,
+        shadow_near,
     );
 }
 
@@ -2743,6 +2868,7 @@ fn paint_canvas_ruler_ticks(
     viewport: CanvasViewport,
     viewport_size: Size,
     theme: &DefaultTheme,
+    tick_color: Color,
     text_style: TextStyle,
 ) {
     let canvas_bounds = ruler_canvas_bounds(bounds, axis, viewport_size);
@@ -2776,7 +2902,7 @@ fn paint_canvas_ruler_ticks(
                     axis,
                     position,
                     major,
-                    theme.surfaces.canvas_ruler_tick,
+                    tick_color,
                     theme.metrics.canvas_ruler_major_tick,
                     theme.metrics.canvas_ruler_minor_tick,
                 );
@@ -3083,6 +3209,8 @@ fn paint_canvas_axes(
     bounds: Rect,
     document_origin: Point,
     theme: &DefaultTheme,
+    axis_x_color: Color,
+    axis_y_color: Color,
 ) {
     let overscan = theme.metrics.canvas_axis_overscan;
     let visible =
@@ -3092,21 +3220,13 @@ fn paint_canvas_axes(
     x_axis
         .move_to(transform.transform_point(Point::new(visible.x(), 0.0)))
         .line_to(transform.transform_point(Point::new(visible.max_x(), 0.0)));
-    ctx.stroke(
-        x_axis.build(),
-        theme.surfaces.canvas_axis_x,
-        StrokeStyle::new(1.0),
-    );
+    ctx.stroke(x_axis.build(), axis_x_color, StrokeStyle::new(1.0));
 
     let mut y_axis = PathBuilder::new();
     y_axis
         .move_to(transform.transform_point(Point::new(0.0, visible.y())))
         .line_to(transform.transform_point(Point::new(0.0, visible.max_y())));
-    ctx.stroke(
-        y_axis.build(),
-        theme.surfaces.canvas_axis_y,
-        StrokeStyle::new(1.0),
-    );
+    ctx.stroke(y_axis.build(), axis_y_color, StrokeStyle::new(1.0));
 }
 
 fn paint_canvas_grid(
@@ -3115,6 +3235,7 @@ fn paint_canvas_grid(
     bounds: Rect,
     document_origin: Point,
     theme: &DefaultTheme,
+    grid_color: Color,
 ) {
     let overscan = theme.metrics.canvas_axis_overscan;
     let visible =
@@ -3138,11 +3259,7 @@ fn paint_canvas_grid(
             .move_to(transform.transform_point(Point::new(visible.x(), y)))
             .line_to(transform.transform_point(Point::new(visible.max_x(), y)));
     }
-    ctx.stroke(
-        builder.build(),
-        theme.surfaces.canvas_grid,
-        StrokeStyle::new(1.0),
-    );
+    ctx.stroke(builder.build(), grid_color, StrokeStyle::new(1.0));
 }
 
 fn canvas_visible_world_rect(
@@ -3301,8 +3418,9 @@ fn channel_to_u8(channel: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Canvas, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
-        PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasState, PixelCanvasTool, PixelColor,
+        Canvas, CanvasAppearance, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport,
+        PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape,
+        PixelCanvasState, PixelCanvasTool, PixelColor,
     };
     use crate::{CanvasRulerAxis, DefaultTheme, ThemeTextToken};
     use sui_core::{
@@ -3967,21 +4085,21 @@ mod tests {
     }
 
     #[test]
-    fn canvas_surface_tokens_drive_default_canvas_paint() {
-        let mut theme = DefaultTheme::default();
-        theme.surfaces.canvas = Color::rgba(0.91, 0.83, 0.72, 1.0);
-        theme.surfaces.canvas_grid = Color::rgba(0.24, 0.33, 0.44, 0.40);
-        theme.surfaces.canvas_axis_x = Color::rgba(0.80, 0.20, 0.30, 0.70);
-        theme.surfaces.canvas_axis_y = Color::rgba(0.20, 0.60, 0.40, 0.70);
-
-        let output = render(Canvas::new("Vector").theme(theme));
+    fn canvas_appearance_overrides_semantic_theme_defaults() {
+        let appearance = CanvasAppearance {
+            background: Some(Color::rgba(0.91, 0.83, 0.72, 1.0)),
+            grid: Some(Color::rgba(0.24, 0.33, 0.44, 0.40)),
+            axis_x: Some(Color::rgba(0.80, 0.20, 0.30, 0.70)),
+            axis_y: Some(Color::rgba(0.20, 0.60, 0.40, 0.70)),
+        };
+        let output = render(Canvas::new("Vector").appearance(appearance));
         let fills = solid_fill_colors(&output);
         let strokes = solid_stroke_colors(&output);
 
-        assert!(fills.contains(&theme.surfaces.canvas));
-        assert!(strokes.contains(&theme.surfaces.canvas_grid));
-        assert!(strokes.contains(&theme.surfaces.canvas_axis_x));
-        assert!(strokes.contains(&theme.surfaces.canvas_axis_y));
+        assert!(fills.contains(&appearance.background.unwrap()));
+        assert!(strokes.contains(&appearance.grid.unwrap()));
+        assert!(strokes.contains(&appearance.axis_x.unwrap()));
+        assert!(strokes.contains(&appearance.axis_y.unwrap()));
     }
 
     #[test]
@@ -4562,18 +4680,21 @@ mod tests {
     }
 
     #[test]
-    fn pixel_canvas_uses_theme_paper_for_render_and_export() -> sui_core::Result<()> {
-        let mut theme = DefaultTheme::default();
-        theme.surfaces.pixel_canvas_paper = Color::rgba(0.80, 0.62, 0.36, 1.0);
+    fn pixel_canvas_appearance_controls_paper_for_render_and_export() -> sui_core::Result<()> {
+        let paper_color = Color::rgba(0.80, 0.62, 0.36, 1.0);
+        let appearance = PixelCanvasAppearance {
+            paper: Some(paper_color),
+            ..PixelCanvasAppearance::default()
+        };
         let state = PixelCanvasState::new();
         state.set_display_visible(false);
         let (mut runtime, window_id) = build_runtime(
             PixelCanvas::new("Paint", 1, 1)
-                .theme(theme)
+                .appearance(appearance)
                 .state(state.clone())
                 .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
         );
-        let paper = PixelColor::from_color(theme.surfaces.pixel_canvas_paper);
+        let paper = PixelColor::from_color(paper_color);
         let expected = [paper.red, paper.green, paper.blue, paper.alpha];
 
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
@@ -4594,14 +4715,16 @@ mod tests {
     #[test]
     fn pixel_canvas_explicit_paper_color_overrides_theme_for_render_and_export()
     -> sui_core::Result<()> {
-        let mut theme = DefaultTheme::default();
-        theme.surfaces.pixel_canvas_paper = Color::rgba(0.80, 0.62, 0.36, 1.0);
+        let appearance = PixelCanvasAppearance {
+            paper: Some(Color::rgba(0.80, 0.62, 0.36, 1.0)),
+            ..PixelCanvasAppearance::default()
+        };
         let paper_color = Color::WHITE;
         let state = PixelCanvasState::new();
         state.set_display_visible(false);
         let (mut runtime, window_id) = build_runtime(
             PixelCanvas::new("Paint", 1, 1)
-                .theme(theme)
+                .appearance(appearance)
                 .paper_color(paper_color)
                 .state(state.clone())
                 .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),

@@ -78,42 +78,27 @@ impl ThemeEditorPreset {
 }
 
 const THEME_COLOR_LAYER_NAME: &str = "Color layer";
-const THEME_COLOR_LAYER_OPTIONS: [&str; 5] = ["Source", "Control", "Surface", "Canvas", "Status"];
+const THEME_COLOR_LAYER_OPTIONS: [&str; 2] = ["Source", "Roles"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ThemeColorGroup {
     Source,
     Controls,
-    Surfaces,
-    Canvas,
-    Status,
 }
 
 impl ThemeColorGroup {
-    const ALL: [Self; 5] = [
-        Self::Source,
-        Self::Controls,
-        Self::Surfaces,
-        Self::Canvas,
-        Self::Status,
-    ];
+    const ALL: [Self; 2] = [Self::Source, Self::Controls];
 
     const fn index(self) -> usize {
         match self {
             Self::Source => 0,
             Self::Controls => 1,
-            Self::Surfaces => 2,
-            Self::Canvas => 3,
-            Self::Status => 4,
         }
     }
 
     const fn from_index(index: usize) -> Self {
         match index {
             1 => Self::Controls,
-            2 => Self::Surfaces,
-            3 => Self::Canvas,
-            4 => Self::Status,
             _ => Self::Source,
         }
     }
@@ -244,74 +229,6 @@ define_theme_color_variables! {
     ControlDangerSoftText => Controls, "Danger soft text", palette.danger_soft_text;
     ControlDangerHover => Controls, "Danger hover", palette.danger_hover;
 
-    SurfaceWindow => Surfaces, "Window", surfaces.window;
-    SurfaceWindowSubtle => Surfaces, "Window subtle", surfaces.window_subtle;
-    SurfaceSidebar => Surfaces, "Sidebar", surfaces.sidebar;
-    SurfacePanel => Surfaces, "Panel", surfaces.panel;
-    Surface2 => Surfaces, "Surface 2", surfaces.surface_2;
-    Surface3 => Surfaces, "Surface 3", surfaces.surface_3;
-    SurfaceOverlay => Surfaces, "Overlay", surfaces.overlay;
-    SurfaceTitlebar => Surfaces, "Titlebar", surfaces.titlebar;
-    SurfaceField => Surfaces, "Field", surfaces.field;
-    SurfaceBorder => Surfaces, "Border", surfaces.border;
-    SurfaceBorderStrong => Surfaces, "Border strong", surfaces.border_strong;
-    SurfaceBorderSubtle => Surfaces, "Border subtle", surfaces.border_subtle;
-    SurfaceText => Surfaces, "Text", surfaces.text;
-    SurfaceTextMuted => Surfaces, "Text muted", surfaces.text_muted;
-    SurfaceTextFaint => Surfaces, "Text faint", surfaces.text_faint;
-    SurfaceTextDisabled => Surfaces, "Text disabled", surfaces.text_disabled;
-    SurfaceTextInvert => Surfaces, "Text invert", surfaces.text_invert;
-    SurfaceAccent => Surfaces, "Accent", surfaces.accent;
-    SurfaceAccentHover => Surfaces, "Accent hover", surfaces.accent_hover;
-    SurfaceOnAccent => Surfaces, "On accent", surfaces.on_accent;
-    SurfaceAccentText => Surfaces, "Accent text", surfaces.accent_text;
-    SurfaceAccentSoft => Surfaces, "Accent soft", surfaces.accent_soft;
-    SurfaceAccentBorder => Surfaces, "Accent border", surfaces.accent_border;
-    SurfaceFocus => Surfaces, "Focus", surfaces.focus;
-    SurfaceHover => Surfaces, "Hover", surfaces.hover;
-    SurfaceSelected => Surfaces, "Selected", surfaces.selected;
-    SurfaceSelectedBorder => Surfaces, "Selected border", surfaces.selected_border;
-    SurfaceOverlayScrim => Surfaces, "Overlay scrim", surfaces.overlay_scrim;
-    SurfaceTooltip => Surfaces, "Tooltip", surfaces.tooltip;
-    SurfaceTooltipBorder => Surfaces, "Tooltip border", surfaces.tooltip_border;
-    SurfaceTooltipText => Surfaces, "Tooltip text", surfaces.tooltip_text;
-
-    CanvasSurface => Canvas, "Canvas", surfaces.canvas;
-    CanvasGrid => Canvas, "Canvas grid", surfaces.canvas_grid;
-    CanvasAxisX => Canvas, "Axis X", surfaces.canvas_axis_x;
-    CanvasAxisY => Canvas, "Axis Y", surfaces.canvas_axis_y;
-    PixelCanvasPaper => Canvas, "Pixel paper", surfaces.pixel_canvas_paper;
-    PixelCanvasDocumentEdge => Canvas, "Document edge", surfaces.pixel_canvas_document_edge;
-    PixelCanvasShadowNear => Canvas, "Shadow near", surfaces.pixel_canvas_shadow_near;
-    PixelCanvasShadowFar => Canvas, "Shadow far", surfaces.pixel_canvas_shadow_far;
-    PixelCanvasGrid => Canvas, "Pixel grid", surfaces.pixel_canvas_grid;
-    CanvasRuler => Canvas, "Ruler", surfaces.canvas_ruler;
-    CanvasRulerBorder => Canvas, "Ruler border", surfaces.canvas_ruler_border;
-    CanvasRulerTick => Canvas, "Ruler tick", surfaces.canvas_ruler_tick;
-    CanvasRulerText => Canvas, "Ruler text", surfaces.canvas_ruler_text;
-    CheckerboardLight => Canvas, "Checker light", surfaces.checkerboard_light;
-    CheckerboardDark => Canvas, "Checker dark", surfaces.checkerboard_dark;
-    ColorPickerChromeBorder => Canvas, "Picker chrome", surfaces.color_picker_chrome_border;
-    ColorPickerPlaneBorder => Canvas, "Picker plane", surfaces.color_picker_plane_border;
-    ColorPickerBarBorder => Canvas, "Picker bar", surfaces.color_picker_bar_border;
-    ColorPickerMarkerOuter => Canvas, "Marker outer", surfaces.color_picker_marker_outer;
-    ColorPickerMarkerDark => Canvas, "Marker dark", surfaces.color_picker_marker_dark;
-    ColorPickerMarkerLight => Canvas, "Marker light", surfaces.color_picker_marker_light;
-    ColorPickerSdrMarker => Canvas, "SDR marker", surfaces.color_picker_sdr_marker;
-    ColorPickerHdrDivider => Canvas, "HDR divider", surfaces.color_picker_hdr_divider;
-
-    StatusGood => Status, "Good", surfaces.good;
-    StatusGoodText => Status, "Good text", surfaces.good_text;
-    StatusGoodSoft => Status, "Good soft", surfaces.good_soft;
-    StatusWarn => Status, "Warn", surfaces.warn;
-    StatusWarnText => Status, "Warn text", surfaces.warn_text;
-    StatusWarnSoft => Status, "Warn soft", surfaces.warn_soft;
-    StatusBad => Status, "Bad", surfaces.bad;
-    StatusBadText => Status, "Bad text", surfaces.bad_text;
-    StatusBadSoft => Status, "Bad soft", surfaces.bad_soft;
-    StatusInfo => Status, "Info", surfaces.info;
-    StatusInfoText => Status, "Info text", surfaces.info_text;
-    StatusInfoSoft => Status, "Info soft", surfaces.info_soft;
 }
 
 #[derive(Clone, Default)]
@@ -771,7 +688,7 @@ fn build_editor_controls(state: ThemeEditorState, shell_theme: DevThemeReader) -
                     .alignment(Alignment::Stretch)
                     .with_child(editor_title(
                         "Theme variables",
-                        "Edit source, control, surface, canvas, and status colors independently; explicit role overrides are preserved.",
+                        "Edit source colors or common semantic roles; widgets derive their own appearance from these defaults.",
                         Rc::clone(&shell_theme),
                     ))
                     .with_child(build_preset_section(
@@ -1390,12 +1307,9 @@ mod tests {
 
     #[test]
     fn color_variable_inventory_covers_every_current_theme_layer() {
-        assert_eq!(ThemeColorVariable::ALL.len(), 133);
+        assert_eq!(ThemeColorVariable::ALL.len(), 67);
         assert_eq!(ThemeColorGroup::Source.variables().count(), 20);
         assert_eq!(ThemeColorGroup::Controls.variables().count(), 47);
-        assert_eq!(ThemeColorGroup::Surfaces.variables().count(), 31);
-        assert_eq!(ThemeColorGroup::Canvas.variables().count(), 23);
-        assert_eq!(ThemeColorGroup::Status.variables().count(), 12);
     }
 
     #[test]

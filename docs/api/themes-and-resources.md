@@ -72,12 +72,38 @@ background or routine interaction fills. Custom widgets should pair
 `border_focus`, and `focus_ring` for focus rather than mixing surfaces with
 `palette.accent`.
 
-The demo theme editor exposes the complete editable color inventory in five
-layers: source colors, control/interaction roles, general surfaces,
-canvas/color-tool roles, and surface status roles. Derived-role edits are
+The demo theme editor exposes two deliberate layers: source colors and the
+common semantic role palette used as widget defaults. It does not expose
+widget-specific paint details as global theme tokens. Semantic-role edits are
 stored as explicit overrides and reapplied after source, spacing, radius, or
 typography changes; selecting a preset clears them. Alpha is editable for
-translucent roles such as hover washes and overlay scrims.
+translucent roles such as hover and selection washes.
+
+## Widget-owned appearance
+
+Specialized look-and-feel belongs to the widget. Canvas and color-tool widgets
+therefore expose partial appearance objects whose unset fields resolve from
+the common semantic theme on every paint:
+
+```rust
+use sui::prelude::*;
+
+let canvas = Canvas::new("Editor canvas").appearance(CanvasAppearance {
+    background: Some(Color::rgba(0.08, 0.09, 0.11, 1.0)),
+    grid: Some(Color::rgba(1.0, 1.0, 1.0, 0.08)),
+    ..CanvasAppearance::default()
+});
+
+let picker = ColorPicker::new("Paint color").appearance(ColorPickerAppearance {
+    checkerboard_dark: Some(Color::rgba(0.35, 0.35, 0.35, 1.0)),
+    ..ColorPickerAppearance::default()
+});
+```
+
+The same pattern is available through `CanvasRulerAppearance` and
+`PixelCanvasAppearance`. Applications can wrap these constructors in their own
+widget factory, use a different theme system entirely, or set every appearance
+field directly. Theme values remain defaults, not a mandatory styling engine.
 
 ## Applying a Static Theme
 

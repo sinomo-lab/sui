@@ -40,9 +40,9 @@ pub use animation::{
     invalidation_for_animation_property,
 };
 pub use canvas::{
-    Canvas, CanvasRuler, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasViewport, PixelCanvas,
-    PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
-    PixelCanvasTool,
+    Canvas, CanvasAppearance, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis, CanvasShape,
+    CanvasStroke, CanvasViewport, PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode,
+    PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
 };
 pub use collection::{
     CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,
@@ -105,8 +105,8 @@ pub use layout_policy::{
 };
 pub use media::{
     BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette, ColorPaletteSwatch,
-    ColorPicker, ColorSwatch, Image, ImageFit, SignalMeter, SimpleColorPicker,
-    SimpleColorPickerMode,
+    ColorPicker, ColorPickerAppearance, ColorSwatch, Image, ImageFit, SignalMeter,
+    SimpleColorPicker, SimpleColorPickerMode,
 };
 pub use overlay::{
     NotificationCenter, NotificationHost, NotificationId, NotificationUrgency, OverlayAlignment,

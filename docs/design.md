@@ -115,6 +115,7 @@ That leads to the following baseline rules for first-party widgets:
 - Text inputs should prioritize legibility and editing clarity: visible caret, readable placeholder styling, and strong focus treatment.
 - Buttons should default to a neutral tonal style so ordinary actions compose without competing for attention. Primary accent and destructive actions should be explicit through `Button::primary(...)`, `Button::danger(...)`, or the corresponding builders.
 - Checkbox, radio, and switch rows should remain visually plain at rest while preserving a generous hit target. Framed choice rows are an explicit appearance for inspector and settings surfaces rather than the universal default.
+- Shared themes define a compact semantic color language, not per-widget paint recipes. Specialized widgets own partial appearance objects, resolve unset fields from semantic theme roles, and allow applications or widget factories to override every specialized color without adopting SUI's default theme system.
 
 These defaults are not meant to replace a future inherited theming system. They are the baseline that makes SUI usable before global theme propagation exists, and they should therefore live in first-party widgets rather than in example code alone.
 

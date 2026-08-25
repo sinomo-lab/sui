@@ -1885,6 +1885,74 @@ enum ColorPickerSemanticPart {
     Hex,
 }
 
+/// Widget-owned color-tool paint overrides. The default appearance is derived
+/// from common semantic theme roles rather than global picker-specific tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ColorPickerAppearance {
+    pub checkerboard_light: Option<Color>,
+    pub checkerboard_dark: Option<Color>,
+    pub chrome_border: Option<Color>,
+    pub plane_border: Option<Color>,
+    pub bar_border: Option<Color>,
+    pub marker_outer: Option<Color>,
+    pub marker_dark: Option<Color>,
+    pub marker_light: Option<Color>,
+    pub sdr_marker: Option<Color>,
+    pub hdr_divider: Option<Color>,
+}
+
+impl ColorPickerAppearance {
+    fn apply(self, mut theme: DefaultTheme) -> DefaultTheme {
+        let dark = theme.surfaces.dark;
+        theme.surfaces.checkerboard_light = self
+            .checkerboard_light
+            .unwrap_or(theme.palette.surface_raised);
+        theme.surfaces.checkerboard_dark = self
+            .checkerboard_dark
+            .unwrap_or(theme.palette.control_active);
+        theme.surfaces.color_picker_chrome_border =
+            self.chrome_border
+                .unwrap_or(
+                    theme
+                        .palette
+                        .text
+                        .with_alpha(if dark { 0.24 } else { 0.18 }),
+                );
+        theme.surfaces.color_picker_plane_border =
+            self.plane_border
+                .unwrap_or(
+                    theme
+                        .palette
+                        .text
+                        .with_alpha(if dark { 0.22 } else { 0.16 }),
+                );
+        theme.surfaces.color_picker_bar_border =
+            self.bar_border
+                .unwrap_or(
+                    theme
+                        .palette
+                        .text
+                        .with_alpha(if dark { 0.20 } else { 0.14 }),
+                );
+        theme.surfaces.color_picker_marker_outer = self.marker_outer.unwrap_or(if dark {
+            Color::BLACK.with_alpha(0.92)
+        } else {
+            Color::WHITE.with_alpha(0.96)
+        });
+        theme.surfaces.color_picker_marker_dark =
+            self.marker_dark.unwrap_or(Color::BLACK.with_alpha(0.88));
+        theme.surfaces.color_picker_marker_light =
+            self.marker_light.unwrap_or(Color::WHITE.with_alpha(0.92));
+        theme.surfaces.color_picker_sdr_marker = self
+            .sdr_marker
+            .unwrap_or(theme.palette.text.with_alpha(0.38));
+        theme.surfaces.color_picker_hdr_divider = self
+            .hdr_divider
+            .unwrap_or(theme.palette.warning.with_alpha(0.55));
+        theme
+    }
+}
+
 pub struct ColorPicker {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -1902,6 +1970,7 @@ pub struct ColorPicker {
     focus_animation: AnimatedScalar,
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
+    appearance: ColorPickerAppearance,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1938,6 +2007,7 @@ pub struct SimpleColorPicker {
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Color)>>,
+    appearance: ColorPickerAppearance,
 }
 
 impl ColorPicker {
@@ -1973,6 +2043,7 @@ impl ColorPicker {
             focus_animation: AnimatedScalar::new(0.0),
             color_reader: None,
             on_change: None,
+            appearance: ColorPickerAppearance::default(),
         }
     }
 
@@ -1997,6 +2068,11 @@ impl ColorPicker {
 
     pub fn compact(mut self, compact: bool) -> Self {
         self.compact = compact;
+        self
+    }
+
+    pub fn appearance(mut self, appearance: ColorPickerAppearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -2043,10 +2119,12 @@ impl ColorPicker {
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
-        self.theme_reader
+        let theme = self
+            .theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or(*self.theme);
+        self.appearance.apply(theme)
     }
 
     fn layout_metrics_for(&self, theme: &DefaultTheme) -> ControlMetrics {
@@ -2757,6 +2835,7 @@ impl SimpleColorPicker {
             color_reader: None,
             on_change: None,
             on_change_with_ctx: None,
+            appearance: ColorPickerAppearance::default(),
         }
     }
 
@@ -2795,6 +2874,11 @@ impl SimpleColorPicker {
 
     pub fn compact(mut self, compact: bool) -> Self {
         self.compact = compact;
+        self
+    }
+
+    pub fn appearance(mut self, appearance: ColorPickerAppearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -2866,10 +2950,12 @@ impl SimpleColorPicker {
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
-        self.theme_reader
+        let theme = self
+            .theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or(*self.theme);
+        self.appearance.apply(theme)
     }
 
     fn layout_metrics_for(&self, theme: &DefaultTheme) -> ControlMetrics {
@@ -4639,9 +4725,10 @@ mod tests {
 
     use super::{
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
-        ColorPaletteSwatch, ColorPicker, ColorPickerSemanticPart, ColorSwatch, Image, SignalMeter,
-        SimpleColorPicker, SimpleColorPickerMode, color_picker_child_semantics_id, format_color,
-        hsl_to_color, hsv_to_rgb, rgb_to_hsl, rgb_to_hsv, signal_meter_bar_layout,
+        ColorPaletteSwatch, ColorPicker, ColorPickerAppearance, ColorPickerSemanticPart,
+        ColorSwatch, Image, SignalMeter, SimpleColorPicker, SimpleColorPickerMode,
+        color_picker_child_semantics_id, format_color, hsl_to_color, hsv_to_rgb, rgb_to_hsl,
+        rgb_to_hsv, signal_meter_bar_layout,
     };
     use crate::{DefaultTheme, SemanticTone, ThemeTextToken};
     use sui_core::{
@@ -6045,33 +6132,36 @@ mod tests {
     }
 
     #[test]
-    fn color_picker_chrome_uses_theme_surface_tokens() -> Result<()> {
-        let mut theme = DefaultTheme::default();
-        theme.surfaces.checkerboard_light = Color::rgba(0.91, 0.86, 0.78, 1.0);
-        theme.surfaces.checkerboard_dark = Color::rgba(0.66, 0.58, 0.48, 1.0);
-        theme.surfaces.color_picker_chrome_border = Color::rgba(0.20, 0.30, 0.42, 0.61);
-        theme.surfaces.color_picker_plane_border = Color::rgba(0.30, 0.20, 0.46, 0.62);
-        theme.surfaces.color_picker_bar_border = Color::rgba(0.42, 0.25, 0.18, 0.63);
-        theme.surfaces.color_picker_marker_outer = Color::rgba(0.98, 0.96, 0.90, 0.94);
-        theme.surfaces.color_picker_marker_dark = Color::rgba(0.05, 0.07, 0.10, 0.88);
-        theme.surfaces.color_picker_sdr_marker = Color::rgba(0.95, 0.92, 0.84, 0.38);
+    fn color_picker_appearance_overrides_semantic_theme_defaults() -> Result<()> {
+        let appearance = ColorPickerAppearance {
+            checkerboard_light: Some(Color::rgba(0.91, 0.86, 0.78, 1.0)),
+            checkerboard_dark: Some(Color::rgba(0.66, 0.58, 0.48, 1.0)),
+            chrome_border: Some(Color::rgba(0.20, 0.30, 0.42, 0.61)),
+            plane_border: Some(Color::rgba(0.30, 0.20, 0.46, 0.62)),
+            bar_border: Some(Color::rgba(0.42, 0.25, 0.18, 0.63)),
+            marker_outer: Some(Color::rgba(0.98, 0.96, 0.90, 0.94)),
+            marker_dark: Some(Color::rgba(0.05, 0.07, 0.10, 0.88)),
+            marker_light: None,
+            sdr_marker: Some(Color::rgba(0.95, 0.92, 0.84, 0.38)),
+            hdr_divider: None,
+        };
 
         let (mut runtime, window_id) = build_runtime(
             ColorPicker::from_color("Accent picker", Color::rgba(0.84, 0.72, 0.18, 1.0))
-                .theme(theme),
+                .appearance(appearance),
         );
         let output = runtime.render(window_id)?;
         let fills = solid_fill_colors(&output);
         let strokes = solid_stroke_colors(&output);
 
-        assert!(fills.contains(&theme.surfaces.checkerboard_light));
-        assert!(fills.contains(&theme.surfaces.checkerboard_dark));
-        assert!(fills.contains(&theme.surfaces.color_picker_sdr_marker));
-        assert!(strokes.contains(&theme.surfaces.color_picker_chrome_border));
-        assert!(strokes.contains(&theme.surfaces.color_picker_plane_border));
-        assert!(strokes.contains(&theme.surfaces.color_picker_bar_border));
-        assert!(strokes.contains(&theme.surfaces.color_picker_marker_outer));
-        assert!(strokes.contains(&theme.surfaces.color_picker_marker_dark));
+        assert!(fills.contains(&appearance.checkerboard_light.unwrap()));
+        assert!(fills.contains(&appearance.checkerboard_dark.unwrap()));
+        assert!(fills.contains(&appearance.sdr_marker.unwrap()));
+        assert!(strokes.contains(&appearance.chrome_border.unwrap()));
+        assert!(strokes.contains(&appearance.plane_border.unwrap()));
+        assert!(strokes.contains(&appearance.bar_border.unwrap()));
+        assert!(strokes.contains(&appearance.marker_outer.unwrap()));
+        assert!(strokes.contains(&appearance.marker_dark.unwrap()));
         Ok(())
     }
 
