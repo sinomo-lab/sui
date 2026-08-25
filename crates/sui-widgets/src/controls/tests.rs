@@ -2156,15 +2156,15 @@ fn icon_button_paint_matches_widget_visual_states() {
             .icon_size(16.0),
     });
 
-    let selected_base = super::mix_color(
-        theme.palette.control,
-        theme.palette.accent,
-        theme.interaction.selected_blend,
-    );
-    let selected_hover = super::mix_color(selected_base, theme.palette.accent_hover, 0.18);
+    let selected_base = theme.palette.selection;
+    let selected_hover = super::mix_color(selected_base, theme.palette.control_hover, 0.35);
     assert_color_approx_eq(
         solid_fill_colors(&output)[0],
         super::mix_color(selected_base, selected_hover, theme.interaction.hover_blend),
+    );
+    assert!(
+        solid_stroke_colors(&output).contains(&theme.palette.selection_border),
+        "selected icon button should retain the accent selection border"
     );
     assert!(!lucide_strokes(&output).is_empty());
 }

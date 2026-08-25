@@ -2067,7 +2067,7 @@ impl Widget for ToolPalette {
             let press_amount = self.press_amount_for(index);
             let enabled = item.enabled;
             let base_background = if selected_item {
-                mix_color(palette.surface, palette.accent, interaction.selected_blend)
+                palette.selection
             } else {
                 palette.surface
             };
@@ -2106,10 +2106,8 @@ impl Widget for ToolPalette {
             };
             let border = if !enabled {
                 palette.border.with_alpha(0.55)
-            } else if ctx.is_focused() && selected_item {
-                palette.border_focus
             } else if selected_item {
-                palette.accent_border
+                palette.selection_border
             } else if hovered || hover_amount > 0.0 || press_amount > 0.0 {
                 palette.border_hover
             } else {
@@ -2144,7 +2142,7 @@ impl Widget for ToolPalette {
                 if !enabled {
                     palette.text.with_alpha(0.38)
                 } else if selected_item {
-                    palette.accent
+                    palette.text
                 } else {
                     palette.text
                 },
@@ -4915,9 +4913,9 @@ impl Widget for PanelSection {
             let hover_alpha = (theme.interaction.hover_blend * 0.07 * hover_amount).min(0.08);
             let press_alpha = (theme.interaction.selected_blend * 0.48 * press_amount).min(0.14);
             let header_fill = if press_alpha > 0.0 {
-                theme.palette.accent.with_alpha(press_alpha)
+                theme.palette.text.with_alpha(press_alpha)
             } else if hover_alpha > 0.0 {
-                theme.palette.accent.with_alpha(hover_alpha)
+                theme.palette.text.with_alpha(hover_alpha)
             } else {
                 theme.palette.surface.with_alpha(0.001)
             };
@@ -5055,7 +5053,7 @@ fn paint_panel_section_disclosure(
     let tip = disclosure_size * 0.22;
     let base_color = palette.text.with_alpha(0.68);
     let hover_color = mix_color(base_color, palette.text, hover_amount);
-    let color = mix_color(hover_color, palette.accent, press_amount);
+    let color = mix_color(hover_color, palette.text, press_amount);
     let mut builder = PathBuilder::new();
     if expanded {
         builder
@@ -6130,7 +6128,7 @@ impl Widget for PresetStrip {
             let hover_amount = self.hover_amount_for(index);
             let press_amount = self.press_amount_for(index);
             let base_background = if is_selected {
-                palette.accent
+                palette.selection
             } else {
                 palette.surface
             };
@@ -6153,14 +6151,14 @@ impl Widget for PresetStrip {
                 hover_background
             };
             let border = if is_selected {
-                palette.accent_border
+                palette.selection_border
             } else if is_hovered || hover_amount > 0.0 || press_amount > 0.0 {
                 palette.border_hover
             } else {
                 palette.border
             };
             let text_color = if is_selected {
-                palette.accent_text
+                palette.text
             } else {
                 palette.text
             };
@@ -10459,7 +10457,7 @@ impl Widget for SegmentedControl {
         let padding = metrics.tab_padding;
         let label_style = semibold_control_text_style(&theme, palette.text_muted);
         let selected_label_style = TextStyle {
-            color: palette.accent,
+            color: palette.text,
             ..label_style.clone()
         };
         let radius = metrics.corner_radius;
@@ -10483,7 +10481,7 @@ impl Widget for SegmentedControl {
                     (thumb.height() * 0.5).min(radius),
                     physical_pixels(ctx, metrics.border_width),
                     palette.selection,
-                    palette.accent.with_alpha(0.36),
+                    palette.selection_border,
                 );
             }
             thumb
@@ -11606,11 +11604,8 @@ impl Widget for Menu {
                 row.height(),
             );
             if highlighted || highlight_amount > 0.0 || press_amount > 0.0 {
-                let highlight_background = mix_color(
-                    palette.control,
-                    palette.accent,
-                    interaction.selected_blend * highlight_amount,
-                );
+                let highlight_background =
+                    mix_color(palette.control, palette.selection, highlight_amount);
                 let background = if press_amount > 0.0 {
                     mix_color(
                         highlight_background,
@@ -13014,11 +13009,8 @@ impl Widget for ContextMenuSurface {
                     row.height(),
                 );
                 if highlighted || highlight_amount > 0.0 || press_amount > 0.0 {
-                    let highlight_background = mix_color(
-                        palette.control,
-                        palette.accent,
-                        interaction.selected_blend * highlight_amount,
-                    );
+                    let highlight_background =
+                        mix_color(palette.control, palette.selection, highlight_amount);
                     let background = if press_amount > 0.0 {
                         mix_color(
                             highlight_background,
@@ -16550,14 +16542,7 @@ fn tab_state_visuals(
     let palette = theme.palette;
     let interaction = theme.interaction;
     if selected {
-        Some((
-            mix_color(
-                palette.surface_raised,
-                palette.accent,
-                interaction.tab_selected_blend,
-            ),
-            palette.border.with_alpha(0.72),
-        ))
+        Some((palette.selection, palette.selection_border))
     } else if pressed || press_amount > 0.0 {
         Some((
             mix_color(

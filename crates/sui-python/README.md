@@ -167,7 +167,9 @@ running.drain()
 Use `theme.color(...)`/`set_color(...)` for source semantic colors and
 `theme.number(...)`/`set_number(...)` for spacing, radii, breakpoints, and
 motion durations. Derived control palettes and metrics are synchronized by the
-binding.
+binding. Changing the primary/accent color affects explicit primary actions,
+links, thin indicators, selection borders, and decorative signals; selection
+fills, focus, fields, menus, and scroll chrome remain neutral.
 
 `App.run()` blocks until the desktop application exits. Use
 `App.run_with_handle(callback)` when startup code needs the thread-safe

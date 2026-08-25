@@ -2818,11 +2818,11 @@ impl Widget for ScrollBar {
             Path::rounded_rect(thumb, thumb_radius),
             mix_color(
                 mix_color(
-                    palette.border_hover,
-                    palette.accent_hover,
+                    palette.placeholder,
+                    palette.border_strong,
                     self.hover_animation.value.max(self.focus_animation.value),
                 ),
-                palette.accent_pressed,
+                palette.text_muted,
                 self.drag_animation.value,
             )
             .with_alpha(thumb_alpha),
@@ -7925,10 +7925,8 @@ mod tests {
             Size::new(80.0, 120.0),
         );
         let point = Point::new(theme.metrics.scroll_bar_thickness * 0.5, 8.0);
-        let expected_hover =
-            super::mix_color(theme.palette.border_hover, theme.palette.accent_hover, 1.0)
-                .with_alpha(0.95);
-        let expected_drag = theme.palette.accent_pressed.with_alpha(0.95);
+        let expected_hover = theme.palette.border_strong.with_alpha(0.95);
+        let expected_drag = theme.palette.text_muted.with_alpha(0.95);
         let (mut runtime, window_id) =
             build_runtime(ScrollBar::vertical(state).theme(theme).name("Scroll bar"));
 

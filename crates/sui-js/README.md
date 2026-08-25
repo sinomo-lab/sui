@@ -154,7 +154,9 @@ theme.setAccent(new sui.Color(0.2, 0.55, 1, 1));
 Use `theme.color(...)`/`setColor(...)` for source semantic colors and
 `theme.number(...)`/`setNumber(...)` for spacing, radii, breakpoints, and
 motion durations. Derived control palettes and metrics are synchronized by the
-binding.
+binding. Changing the primary/accent color affects explicit primary actions,
+links, thin indicators, selection borders, and decorative signals; selection
+fills, focus, fields, menus, and scroll chrome remain neutral.
 
 When running directly from this checkout, replace `require("@sui/ui")` with
 `require(".")` from `crates/sui-js`, or

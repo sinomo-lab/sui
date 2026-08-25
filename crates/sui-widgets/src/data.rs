@@ -6509,8 +6509,9 @@ fn data_row_state_fill(
     let palette = theme.palette;
     let interaction = theme.interaction;
     if selected {
-        // `selection` is already a translucent semantic accent token. Keeping
-        // it intact avoids turning selected rows into opaque accent slabs.
+        // `selection` is an authored neutral interaction surface. Keeping it
+        // intact gives dense data views stable contrast without brand-colored
+        // slabs; the slim leading mark carries optional decorative accent.
         palette.selection
     } else {
         let overlay = theme.surfaces.hover;

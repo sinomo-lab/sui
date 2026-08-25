@@ -105,12 +105,13 @@ The default style should balance three constraints:
 
 That leads to the following baseline rules for first-party widgets:
 
-- Use a restrained neutral light palette with a small number of high-contrast accent colors. The default should feel crisp and contemporary rather than heavy or overly stylized.
+- Use restrained neutral surfaces and interaction states with a small number of high-contrast accent colors. Selection, hover, pressed, focus, fields, menus, and scroll chrome stay neutral; brand color is reserved for explicit primary actions, links, thin indicators, and decorative or live-signal emphasis.
 - Use rounded geometry and subtle borders by default, but keep the radii restrained. Controls should read as intentionally designed surfaces, not raw rectangles or overly soft pills.
 - The default medium body token is `15px / 22px`; authored Small, Medium, and Large controls resolve to the shared `13px / 18px`, `15px / 22px`, and `17px / 25px` text-ramp tokens.
 - Interactive controls use `28px`, `32px`, and `40px` visible heights for Small, Medium, and Large, while preserving a separate `44px` touch target for direct input.
 - Small visual elements such as checkbox indicators or drag affordances must not become tiny click targets. The visible glyph may stay compact, but the interactive row or surrounding surface should provide the larger target.
 - Hover, pressed, and focused states should be distinct without relying on dramatic motion or heavy skeuomorphic shading. Focus visibility is mandatory and should survive both mouse and keyboard navigation.
+- Keyboard focus should use a distinct neutral ring rather than recoloring the whole control with the product accent. Selection should use a quiet neutral fill with an optional narrow accent border or indicator.
 - Text inputs should prioritize legibility and editing clarity: visible caret, readable placeholder styling, and strong focus treatment.
 - Buttons should default to a neutral tonal style so ordinary actions compose without competing for attention. Primary accent and destructive actions should be explicit through `Button::primary(...)`, `Button::danger(...)`, or the corresponding builders.
 - Checkbox, radio, and switch rows should remain visually plain at rest while preserving a generous hit target. Framed choice rows are an explicit appearance for inspector and settings surfaces rather than the universal default.

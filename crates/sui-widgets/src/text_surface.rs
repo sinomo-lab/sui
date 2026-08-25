@@ -1896,10 +1896,10 @@ impl Widget for TextSurface {
             );
             ctx.fill(
                 Path::rounded_rect(line_rect, 0.0),
-                palette.accent.with_alpha(match theme.colors.scheme {
-                    ThemeColorScheme::Light => 0.05,
-                    ThemeColorScheme::Dark => 0.12,
-                    ThemeColorScheme::HighContrast => 0.18,
+                palette.text.with_alpha(match theme.colors.scheme {
+                    ThemeColorScheme::Light => 0.035,
+                    ThemeColorScheme::Dark => 0.065,
+                    ThemeColorScheme::HighContrast => 0.10,
                 }),
             );
         } else {

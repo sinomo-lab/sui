@@ -17115,9 +17115,35 @@ mod tests {
         assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
         assert!(runtime.needs_render(window_id).unwrap());
 
+        let (interaction_tokens, selection_border) = {
+            let snapshot = theme.snapshot();
+            (
+                (
+                    snapshot.palette.selection,
+                    snapshot.palette.surface_focus,
+                    snapshot.palette.border_focus,
+                    snapshot.palette.focus_ring,
+                    snapshot.palette.caret,
+                ),
+                snapshot.palette.selection_border,
+            )
+        };
         theme.set_accent(Color::rgba(0.2, 0.5, 0.9, 1.0));
         assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
         assert!(theme.accent().blue > theme.accent().red);
+        let updated = theme.snapshot();
+        assert_ne!(updated.palette.selection_border, selection_border);
+        assert!(updated.palette.selection_border.blue > updated.palette.selection_border.red);
+        assert_eq!(
+            interaction_tokens,
+            (
+                updated.palette.selection,
+                updated.palette.surface_focus,
+                updated.palette.border_focus,
+                updated.palette.focus_ring,
+                updated.palette.caret,
+            )
+        );
         theme
             .set_color("success", Color::rgba(0.1, 0.8, 0.3, 1.0))
             .unwrap();

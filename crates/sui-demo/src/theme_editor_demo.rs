@@ -78,107 +78,126 @@ impl ThemeEditorPreset {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThemeColorVariable {
-    Surface,
-    SurfaceSubtle,
-    Border,
-    Text,
+    Base100,
+    Base200,
+    Base300,
+    BaseContent,
     Primary,
+    PrimaryContent,
     Secondary,
+    SecondaryContent,
+    Accent,
+    AccentContent,
+    Neutral,
+    NeutralContent,
     Info,
+    InfoContent,
     Success,
+    SuccessContent,
     Warning,
-    Danger,
+    WarningContent,
+    Error,
+    ErrorContent,
 }
 
 impl ThemeColorVariable {
-    const ALL: [Self; 10] = [
-        Self::Surface,
-        Self::SurfaceSubtle,
-        Self::Border,
-        Self::Text,
+    const ALL: [Self; 20] = [
+        Self::Base100,
+        Self::Base200,
+        Self::Base300,
+        Self::BaseContent,
         Self::Primary,
+        Self::PrimaryContent,
         Self::Secondary,
+        Self::SecondaryContent,
+        Self::Accent,
+        Self::AccentContent,
+        Self::Neutral,
+        Self::NeutralContent,
         Self::Info,
+        Self::InfoContent,
         Self::Success,
+        Self::SuccessContent,
         Self::Warning,
-        Self::Danger,
+        Self::WarningContent,
+        Self::Error,
+        Self::ErrorContent,
     ];
 
     const fn label(self) -> &'static str {
         match self {
-            Self::Surface => "Surface",
-            Self::SurfaceSubtle => "Surface subtle",
-            Self::Border => "Border",
-            Self::Text => "Text",
+            Self::Base100 => "Base 100",
+            Self::Base200 => "Base 200",
+            Self::Base300 => "Base 300",
+            Self::BaseContent => "Base content",
             Self::Primary => "Primary",
+            Self::PrimaryContent => "On primary",
             Self::Secondary => "Secondary",
+            Self::SecondaryContent => "On secondary",
+            Self::Accent => "Accent",
+            Self::AccentContent => "On accent",
+            Self::Neutral => "Neutral",
+            Self::NeutralContent => "On neutral",
             Self::Info => "Info",
+            Self::InfoContent => "On info",
             Self::Success => "Success",
+            Self::SuccessContent => "On success",
             Self::Warning => "Warning",
-            Self::Danger => "Danger",
+            Self::WarningContent => "On warning",
+            Self::Error => "Error",
+            Self::ErrorContent => "On error",
         }
     }
 
     const fn color(self, colors: &ThemeColors) -> Color {
         match self {
-            Self::Surface => colors.base_100,
-            Self::SurfaceSubtle => colors.base_200,
-            Self::Border => colors.base_300,
-            Self::Text => colors.base_content,
+            Self::Base100 => colors.base_100,
+            Self::Base200 => colors.base_200,
+            Self::Base300 => colors.base_300,
+            Self::BaseContent => colors.base_content,
             Self::Primary => colors.primary,
+            Self::PrimaryContent => colors.primary_content,
             Self::Secondary => colors.secondary,
+            Self::SecondaryContent => colors.secondary_content,
+            Self::Accent => colors.accent,
+            Self::AccentContent => colors.accent_content,
+            Self::Neutral => colors.neutral,
+            Self::NeutralContent => colors.neutral_content,
             Self::Info => colors.info,
+            Self::InfoContent => colors.info_content,
             Self::Success => colors.success,
+            Self::SuccessContent => colors.success_content,
             Self::Warning => colors.warning,
-            Self::Danger => colors.error,
+            Self::WarningContent => colors.warning_content,
+            Self::Error => colors.error,
+            Self::ErrorContent => colors.error_content,
         }
     }
 
     fn set_color(self, colors: &mut ThemeColors, color: Color) {
         let color = color.clamped().with_alpha(1.0);
         match self {
-            Self::Surface => colors.base_100 = color,
-            Self::SurfaceSubtle => colors.base_200 = color,
-            Self::Border => colors.base_300 = color,
-            Self::Text => colors.base_content = color,
-            Self::Primary => {
-                colors.primary = color;
-                colors.accent = color;
-                let content = readable_content_color(color);
-                colors.primary_content = content;
-                colors.accent_content = content;
-            }
-            Self::Secondary => {
-                colors.secondary = color;
-                colors.secondary_content = readable_content_color(color);
-            }
-            Self::Info => {
-                colors.info = color;
-                colors.info_content = readable_content_color(color);
-            }
-            Self::Success => {
-                colors.success = color;
-                colors.success_content = readable_content_color(color);
-            }
-            Self::Warning => {
-                colors.warning = color;
-                colors.warning_content = readable_content_color(color);
-            }
-            Self::Danger => {
-                colors.error = color;
-                colors.error_content = readable_content_color(color);
-            }
+            Self::Base100 => colors.base_100 = color,
+            Self::Base200 => colors.base_200 = color,
+            Self::Base300 => colors.base_300 = color,
+            Self::BaseContent => colors.base_content = color,
+            Self::Primary => colors.primary = color,
+            Self::PrimaryContent => colors.primary_content = color,
+            Self::Secondary => colors.secondary = color,
+            Self::SecondaryContent => colors.secondary_content = color,
+            Self::Accent => colors.accent = color,
+            Self::AccentContent => colors.accent_content = color,
+            Self::Neutral => colors.neutral = color,
+            Self::NeutralContent => colors.neutral_content = color,
+            Self::Info => colors.info = color,
+            Self::InfoContent => colors.info_content = color,
+            Self::Success => colors.success = color,
+            Self::SuccessContent => colors.success_content = color,
+            Self::Warning => colors.warning = color,
+            Self::WarningContent => colors.warning_content = color,
+            Self::Error => colors.error = color,
+            Self::ErrorContent => colors.error_content = color,
         }
-    }
-}
-
-fn readable_content_color(color: Color) -> Color {
-    let linear = color.to_linear_srgb();
-    let luminance = 0.2126 * linear.red + 0.7152 * linear.green + 0.0722 * linear.blue;
-    if luminance > 0.38 {
-        Color::BLACK
-    } else {
-        Color::WHITE
     }
 }
 
@@ -704,7 +723,6 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
         Stack::vertical()
             .spacing(10.0)
             .alignment(Alignment::Stretch)
-            .with_child(build_color_swatch_list(state, Rc::clone(&shell_theme)))
             .with_child(
                 Label::dynamic("Primary  #000000", move || {
                     summary_state.selected_color_summary()
@@ -728,7 +746,8 @@ fn build_color_section(state: ThemeEditorState, shell_theme: DevThemeReader) -> 
                     picker_change.set_selected_color(color);
                     request_theme_editor_refresh(ctx, &picker_targets, false);
                 }),
-            ),
+            )
+            .with_child(build_color_swatch_list(state, Rc::clone(&shell_theme))),
     )
     .theme_when(clone_dev_theme_reader(&shell_theme))
 }
@@ -742,7 +761,7 @@ fn build_color_swatch_list(state: ThemeEditorState, shell_theme: DevThemeReader)
     for variable in ThemeColorVariable::ALL {
         swatches = swatches.with_item(
             build_color_token_swatch(variable, state.clone(), Rc::clone(&shell_theme)),
-            FlexItem::fixed(118.0),
+            FlexItem::fixed(92.0),
         );
     }
 
@@ -768,7 +787,7 @@ fn build_color_token_swatch(
             )
             .theme_when(clone_dev_theme_reader(&shell_theme))
             .color_when(move || color_state.color_variable(variable))
-            .size(Size::new(54.0, 30.0))
+            .size(Size::new(46.0, 26.0))
             .on_press_with_ctx(move |ctx, _| {
                 select_state.select_color_variable(variable);
                 request_theme_editor_controls_refresh(ctx, &controls_target);
@@ -1111,15 +1130,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn color_edits_refresh_derived_palette_and_readable_content() {
+    fn color_edits_refresh_derived_palette_without_overwriting_content_pairs() {
         let state = ThemeEditorState::new();
+        let original_content = state.theme().colors.primary_content;
         state.select_color_variable(ThemeColorVariable::Primary);
         state.set_selected_color(Color::rgba(0.95, 0.85, 0.20, 1.0));
 
         let theme = state.theme();
         assert_eq!(theme.palette.accent, theme.colors.primary);
-        assert_eq!(theme.colors.primary_content, Color::BLACK);
-        assert_eq!(theme.palette.accent_text, Color::BLACK);
+        assert_eq!(theme.colors.primary_content, original_content);
+        assert_eq!(theme.palette.accent_text, original_content);
+        assert_eq!(
+            theme.palette.selection_border,
+            theme
+                .colors
+                .primary
+                .with_alpha(0.35)
+                .over(theme.palette.surface_raised)
+        );
+
+        state.select_color_variable(ThemeColorVariable::PrimaryContent);
+        state.set_selected_color(Color::rgba(0.12, 0.16, 0.22, 1.0));
+        let theme = state.theme();
+        assert_eq!(
+            theme.colors.primary_content,
+            Color::rgba(0.12, 0.16, 0.22, 1.0)
+        );
+        assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
+    }
+
+    #[test]
+    fn every_theme_color_component_is_independently_editable() {
+        let marker = Color::rgba(0.123, 0.456, 0.789, 1.0);
+        for (selected_index, selected) in ThemeColorVariable::ALL.into_iter().enumerate() {
+            let mut colors = ThemeColors::light();
+            let before = ThemeColorVariable::ALL.map(|variable| variable.color(&colors));
+            selected.set_color(&mut colors, marker);
+            let after = ThemeColorVariable::ALL.map(|variable| variable.color(&colors));
+
+            for (index, value) in after.into_iter().enumerate() {
+                if index == selected_index {
+                    assert_eq!(value, marker, "{} should be editable", selected.label());
+                } else {
+                    assert_eq!(
+                        value,
+                        before[index],
+                        "editing {} should not rewrite {}",
+                        selected.label(),
+                        ThemeColorVariable::ALL[index].label()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

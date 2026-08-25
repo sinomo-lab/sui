@@ -596,10 +596,7 @@ fn choice_frame_visuals(
         .palette
         .text
         .with_alpha(if theme.surfaces.dark { 0.10 } else { 0.07 });
-    let focus_wash = theme
-        .palette
-        .accent
-        .with_alpha(if theme.surfaces.dark { 0.12 } else { 0.08 });
+    let focus_wash = theme.palette.selection;
     let background = mix_color(
         mix_color(
             mix_color(
@@ -879,12 +876,12 @@ pub fn paint_icon_button(
         style.appearance == ButtonAppearance::Tonal && style.tone == SemanticTone::Neutral;
     let (background, border, icon_color) = if legacy_default {
         let base_background = if selected {
-            mix_color(palette.control, palette.accent, interaction.selected_blend)
+            palette.selection
         } else {
             palette.control
         };
         let hover_background = if selected {
-            mix_color(base_background, palette.accent_hover, 0.18)
+            mix_color(base_background, palette.control_hover, 0.35)
         } else {
             palette.control_hover
         };
@@ -901,11 +898,15 @@ pub fn paint_icon_button(
         let border_base = if !enabled {
             palette.border.with_alpha(0.55)
         } else if selected {
-            mix_color(palette.accent_border, palette.border_hover, hover_progress)
+            mix_color(
+                palette.selection_border,
+                palette.accent_border_hover,
+                hover_progress,
+            )
         } else {
             mix_color(palette.border, palette.border_hover, hover_progress)
         };
-        let border = if enabled {
+        let border = if enabled && !selected {
             mix_color(border_base, palette.border_focus, focus_progress)
         } else {
             border_base
@@ -920,7 +921,7 @@ pub fn paint_icon_button(
                 .text
                 .with_alpha(interaction.disabled_content_opacity)
         } else if selected {
-            palette.accent
+            palette.text
         } else {
             palette.text
         };
@@ -936,16 +937,23 @@ pub fn paint_icon_button(
         );
         if selected && enabled {
             let selection = if style.tone == SemanticTone::Neutral {
-                palette.accent
+                palette.text
             } else {
                 theme.semantic_tone_color(style.tone)
             };
-            visuals.background =
-                mix_color(visuals.background, selection, interaction.selected_blend);
-            visuals.border = mix_color(visuals.border, selection, 0.72);
+            visuals.background = if style.tone == SemanticTone::Neutral {
+                palette.selection
+            } else {
+                mix_color(visuals.background, selection, interaction.selected_blend)
+            };
+            visuals.border = if style.tone == SemanticTone::Neutral {
+                palette.selection_border
+            } else {
+                mix_color(visuals.border, selection, 0.72)
+            };
             visuals.content = selection;
         }
-        visuals.border = if enabled {
+        visuals.border = if enabled && !selected {
             mix_color(visuals.border, palette.border_focus, focus_progress)
         } else {
             visuals.border
@@ -2159,11 +2167,7 @@ fn paint_checkbox_indicator_visual(
         palette.border_focus,
         visual.focus_progress,
     );
-    let indicator_border = mix_color(
-        border,
-        palette.accent_border_focus,
-        visual.toggle_progress.max(visual.focus_progress),
-    );
+    let indicator_border = mix_color(border, palette.accent_border_focus, visual.toggle_progress);
 
     draw_control_shape(
         ctx,

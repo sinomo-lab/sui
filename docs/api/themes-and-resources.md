@@ -33,16 +33,44 @@ assert!(standard.metrics.min_height <= touch.metrics.min_height);
 ```
 
 `sui()` is the explicit name for the default branded light preset and is
-equivalent to `light()`. `neutral()` and `neutral_dark()` keep surfaces, text,
-primary actions, focus, selection, elevation, and live-signal glows achromatic
-while retaining conventional semantic colors for informational, success,
-warning, and danger feedback. They are the standard starting points when a
-professional interface has no product color preference.
+equivalent to `light()`. Every built-in preset keeps structural surfaces,
+hover, pressed, selection, field focus, keyboard focus, scroll chrome, and
+ordinary active controls neutral. `neutral()` and `neutral_dark()` additionally
+make primary actions and live-signal decoration achromatic while retaining
+conventional semantic colors for informational, success, warning, and danger
+feedback. They are the standard starting points when a professional interface
+has no product color preference.
 
 `void()` is the true-black/OLED alias for `high_contrast()`. The older
 `with_density(ThemeDensity)` API remains public, but new interfaces should
 prefer `with_size(ControlSize)`: it scopes control geometry and typography
 without changing the independent text-size ramp.
+
+## Color-usage hierarchy
+
+The built-in widgets follow a neutral-first hierarchy designed for dense
+professional software:
+
+1. Window chrome, panels, fields, rows, menus, selected tiles, current-line
+   fills, and scrollbars use only neutral surface and ink roles.
+2. Hover and press move between adjacent neutral tiers. Selection fill uses
+   the dedicated neutral `palette.selection`; a narrow
+   `palette.selection_border` may carry the primary color without tinting the
+   selected surface.
+3. Focus uses a neutral strong border plus a distinct, higher-contrast neutral
+   ring. Carets use normal text ink.
+4. `colors.primary` and `palette.accent*` are sparse emphasis roles: explicit
+   primary actions, links, thin tab or row indicators, live/busy signals, and
+   decorative canvas defaults.
+5. Informational, success, warning, and danger colors communicate their own
+   semantics and are not replaced by the primary color.
+
+Changing `colors.primary` therefore changes brand decoration, selection
+borders, and explicit accent components without recoloring the application
+background or routine interaction fills. Custom widgets should pair
+`palette.selection` with `selection_border`, and use `surface_focus`,
+`border_focus`, and `focus_ring` for focus rather than mixing surfaces with
+`palette.accent`.
 
 ## Applying a Static Theme
 

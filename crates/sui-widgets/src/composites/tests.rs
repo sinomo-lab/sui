@@ -4112,11 +4112,11 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
     let press_duration = theme.motion.press_duration();
     let expected_hover = theme
         .palette
-        .accent
+        .text
         .with_alpha((theme.interaction.hover_blend * 0.07).min(0.08));
     let expected_press = theme
         .palette
-        .accent
+        .text
         .with_alpha((theme.interaction.selected_blend * 0.48).min(0.14));
     let (mut runtime, window_id) = build_runtime(
         crate::SizedBox::new()
@@ -4940,11 +4940,7 @@ fn tab_bar_exposes_selected_value() {
 fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
     let mut theme = DefaultTheme::default();
     theme.interaction.tab_selected_blend = 0.31;
-    let selected_fill = super::mix_color(
-        theme.palette.surface_raised,
-        theme.palette.accent,
-        theme.interaction.tab_selected_blend,
-    );
+    let selected_fill = theme.palette.selection;
 
     let tab_bar = render_isolated(
         TabBar::new("Main tabs")
@@ -5759,11 +5755,7 @@ fn menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
     let theme = DefaultTheme::default();
     let hover_duration = theme.motion.hover_duration();
     let press_duration = theme.motion.press_duration();
-    let expected_hover = super::mix_color(
-        theme.palette.control,
-        theme.palette.accent,
-        theme.interaction.selected_blend,
-    );
+    let expected_hover = theme.palette.selection;
     let expected_press = super::mix_color(
         expected_hover,
         theme.palette.control_active,
@@ -7143,11 +7135,7 @@ fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
     let theme = DefaultTheme::default();
     let hover_duration = theme.motion.hover_duration();
     let press_duration = theme.motion.press_duration();
-    let expected_hover = super::mix_color(
-        theme.palette.control,
-        theme.palette.accent,
-        theme.interaction.selected_blend,
-    );
+    let expected_hover = theme.palette.selection;
     let expected_press = super::mix_color(
         expected_hover,
         theme.palette.control_active,

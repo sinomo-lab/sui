@@ -1260,7 +1260,7 @@ impl Widget for ColorPalette {
                 (rect.height() - pressed_offset).max(0.0),
             );
             let ring = if selected {
-                palette.accent_border
+                palette.selection_border
             } else if hovered || hover_amount > 0.0 || press_amount > 0.0 {
                 palette.border_hover
             } else {
@@ -1279,7 +1279,7 @@ impl Widget for ColorPalette {
             let fill_rect = inset_rect(body, Insets::all(fill_inset));
 
             let base_background = if selected {
-                mix_color(palette.control, palette.accent, interaction.selected_blend)
+                palette.selection
             } else {
                 palette.control
             };
@@ -4052,7 +4052,7 @@ fn paint_labeled_row_text(
     let paint_line_height = text.line_height.min(rect.height()).max(1.0);
     let label_width = (theme.metrics.icon_size + theme.spacing * 2.0).max(20.0);
     let value_width = (rect.width() * 0.36).clamp(56.0, 96.0);
-    let label_style = text_token_style(theme, text, theme.palette.accent_text);
+    let label_style = text_token_style(theme, text, theme.palette.text_muted);
     let value_style = numeric_text_style(text_token_style(theme, text, value_color));
     let label_slot = Rect::new(
         rect.x() + theme.spacing * 1.5,
@@ -4145,11 +4145,7 @@ fn paint_encoding_menu(
                     selected_rect,
                     (radius - metrics.menu_item_padding.top).max(0.0),
                 ),
-                mix_color(
-                    theme.palette.control,
-                    theme.palette.accent,
-                    theme.interaction.selected_blend,
-                ),
+                theme.palette.selection,
             );
             ctx.fill_rect(
                 Rect::new(
@@ -4158,7 +4154,7 @@ fn paint_encoding_menu(
                     theme.interaction.active_indicator_thickness,
                     (selected_rect.height() - theme.spacing * 2.0).max(0.0),
                 ),
-                theme.palette.border_focus,
+                theme.palette.selection_border,
             );
         }
         let label = editing_space_label(space);
@@ -4166,7 +4162,7 @@ fn paint_encoding_menu(
             theme,
             text,
             if space == selected {
-                theme.palette.accent_text
+                theme.palette.text
             } else {
                 theme.palette.text
             },

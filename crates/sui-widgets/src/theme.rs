@@ -1274,8 +1274,8 @@ fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
             surface_3: rgb8(234, 238, 243),
             overlay: rgb8(255, 255, 255),
             // A quiet inset well against the white card surface. Interactive
-            // fields lift back toward white on hover and use the soft accent
-            // surface while focused.
+            // fields move only through neutral surface tiers; focus is
+            // communicated by neutral contrast instead of a brand wash.
             field: rgb8(248, 250, 252),
             border: rgb8(227, 232, 239),
             border_strong: rgb8(205, 213, 224),
@@ -1297,8 +1297,8 @@ fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
             danger_hover: rgb8(180, 35, 24),
             info_text: rgb8(23, 92, 211),
             info_soft: rgba8(41, 112, 255, 0.09),
-            focus: rgb8(9, 148, 198),
-            selection: rgba8(8, 124, 164, 0.18),
+            focus: rgb8(73, 84, 107),
+            selection: rgba8(73, 84, 107, 0.12),
             scrim: rgba8(9, 12, 20, 0.45),
         }),
         ("neutral", ThemeColorScheme::Light) => Some(BuiltinColorRoles {
@@ -1390,8 +1390,8 @@ fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
             danger_hover: rgb8(246, 121, 125),
             info_text: rgb8(132, 169, 255),
             info_soft: rgba8(132, 169, 255, 0.12),
-            focus: rgb8(73, 199, 234),
-            selection: rgba8(53, 210, 238, 0.24),
+            focus: rgb8(166, 178, 200),
+            selection: rgba8(166, 178, 200, 0.14),
             scrim: rgba8(2, 4, 8, 0.6),
         }),
         ("void", ThemeColorScheme::HighContrast) => Some(BuiltinColorRoles {
@@ -1421,8 +1421,8 @@ fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
             danger_hover: rgb8(240, 104, 109),
             info_text: rgb8(123, 162, 252),
             info_soft: rgba8(123, 162, 252, 0.10),
-            focus: rgb8(63, 196, 228),
-            selection: rgba8(33, 199, 229, 0.22),
+            focus: rgb8(223, 229, 240),
+            selection: rgba8(223, 229, 240, 0.18),
             scrim: rgba8(0, 0, 0, 0.72),
         }),
         _ => None,
@@ -1456,6 +1456,10 @@ pub struct ControlPalette {
     pub focus_ring: Color,
     pub caret: Color,
     pub selection: Color,
+    /// Accent-colored outline for selected tiles, segmented thumbs, and
+    /// swatches. Selection fill remains neutral; this narrow border is the
+    /// decorative brand cue.
+    pub selection_border: Color,
     pub accent: Color,
     pub accent_hover: Color,
     pub accent_pressed: Color,
@@ -1463,8 +1467,9 @@ pub struct ControlPalette {
     pub accent_border_hover: Color,
     pub accent_border_focus: Color,
     pub accent_text: Color,
-    /// Translucent accent wash (`--sm-accent-soft`): selected rows, badges,
-    /// input focus halos. Pair with `accent_soft_text` for legible content.
+    /// Translucent accent wash (`--sm-accent-soft`): explicit accent badges,
+    /// callouts, and decorative live signals. Selection and focus use their
+    /// dedicated neutral roles instead.
     pub accent_soft: Color,
     /// Accent-hued text that stays legible on plain and soft surfaces
     /// (`--sm-accent-text` in Mesh terms; `accent_text` remains the
@@ -1540,16 +1545,35 @@ impl ControlPalette {
                 if is_dark { 0.18 } else { 0.10 },
             )
         });
-        // Hovered controls strengthen their border rather than tinting toward
-        // the accent (Mesh keeps accent reserved for live signals).
+        // Hovered controls strengthen their neutral border. Brand color never
+        // participates in structural interaction chrome.
         let border_hover = roles
             .map(|r| flatten(r.border_strong))
-            .unwrap_or_else(|| mix(border, colors.primary, if is_dark { 0.28 } else { 0.18 }));
-        let border_focus = colors.primary;
-        let focus = roles.map(|r| r.focus).unwrap_or(colors.primary);
-        let selection = roles
-            .map(|r| flatten(r.selection))
-            .unwrap_or_else(|| mix(surface, colors.primary, if is_dark { 0.30 } else { 0.14 }));
+            .unwrap_or(border_strong);
+        let focus = roles.map(|r| r.focus).unwrap_or_else(|| {
+            mix(
+                colors.base_content,
+                surface_raised,
+                if is_dark { 0.34 } else { 0.28 },
+            )
+        });
+        let border_focus = mix(border_strong, focus, if is_dark { 0.45 } else { 0.38 });
+        let selection = roles.map(|r| flatten(r.selection)).unwrap_or_else(|| {
+            mix(
+                surface_raised,
+                colors.base_content,
+                if is_dark { 0.14 } else { 0.08 },
+            )
+        });
+        let selection_border_alpha = match colors.name {
+            "neutral" | "neutral-dark" => 0.28,
+            "void" => 0.32,
+            _ => 0.35,
+        };
+        let selection_border = colors
+            .primary
+            .with_alpha(selection_border_alpha)
+            .over(surface_raised);
         // Fallback derivations for soft washes and on-surface status text used
         // by custom themes; built-ins take the exact Mesh values.
         let soft_alpha = if is_dark { 0.12 } else { 0.10 };
@@ -1574,17 +1598,16 @@ impl ControlPalette {
             field,
             surface_hover: control_hover,
             surface_pressed: control_active,
-            surface_focus: roles
-                .map(|r| flatten(r.accent_soft))
-                .unwrap_or_else(|| mix(control, colors.primary, if is_dark { 0.14 } else { 0.08 })),
+            surface_focus: mix(field, control_hover, if is_dark { 0.55 } else { 0.65 }),
             border,
             border_strong,
             border_hover,
             border_focus,
             focus,
             focus_ring: focus,
-            caret: colors.primary,
+            caret: colors.base_content,
             selection,
+            selection_border,
             accent: colors.primary,
             accent_hover: roles
                 .map(|r| r.accent_hover)
@@ -1681,16 +1704,20 @@ pub struct SurfacePalette {
     pub accent: Color,
     pub accent_hover: Color,
     pub on_accent: Color,
-    /// Accent-hued text legible on plain surfaces (`--sm-accent-text`).
+    /// Accent-hued text legible on plain surfaces (`--sm-accent-text`). Use
+    /// for links and sparse decorative emphasis, not selected content.
     pub accent_text: Color,
-    /// Translucent accent wash (`--sm-accent-soft`).
+    /// Translucent accent wash (`--sm-accent-soft`) for explicit decorative
+    /// emphasis and live signals.
     pub accent_soft: Color,
     /// Translucent accent border (`--sm-accent-border`).
     pub accent_border: Color,
-    /// The dedicated keyboard-focus ring color (`--sm-focus`).
+    /// The dedicated neutral keyboard-focus ring color (`--sm-focus`).
     pub focus: Color,
     pub hover: Color,
     pub selected: Color,
+    /// Thin decorative selection outline; pair with neutral `selected` fill.
+    pub selected_border: Color,
     pub overlay_scrim: Color,
     pub tooltip: Color,
     pub tooltip_border: Color,
@@ -1794,6 +1821,7 @@ impl SurfacePalette {
             focus: controls.focus,
             hover: controls.text.with_alpha(if dark { 0.06 } else { 0.045 }),
             selected: controls.selection,
+            selected_border: controls.selection_border,
             overlay_scrim: roles
                 .map(|r| r.scrim)
                 .unwrap_or_else(|| Color::rgba(0.06, 0.08, 0.12, if dark { 0.38 } else { 0.24 })),
@@ -3592,9 +3620,11 @@ impl DefaultTheme {
         self.semantic_tone_colors(tone).1
     }
 
-    /// The Mesh soft pair for a tone: a translucent wash to fill with and the
+    /// Professional soft pair for an explicitly semantic tone: a restrained
+    /// wash to fill with and semantic ink that stays legible on it.
     /// status-hued ink that stays legible on it (`--sm-*-soft` / `--sm-*-text`).
-    /// Use for badges, callouts and selected rows; the solid pair from
+    /// Use for badges and callouts; selected rows use the neutral `selection`
+    /// role. The solid pair from
     /// [`Self::semantic_tone_colors`] is for filled controls.
     pub fn semantic_tone_soft_colors(&self, tone: SemanticTone) -> (Color, Color) {
         match tone {
@@ -4020,6 +4050,46 @@ mod tests {
     }
 
     #[test]
+    fn professional_interaction_roles_are_neutral_and_independent_from_brand_color() {
+        for theme in [
+            DefaultTheme::light(),
+            DefaultTheme::dark(),
+            DefaultTheme::void(),
+        ] {
+            assert_ne!(theme.palette.border_focus, theme.palette.border_strong);
+            assert_ne!(theme.palette.border_focus, theme.palette.focus);
+            assert_eq!(theme.palette.caret, theme.palette.text);
+            assert_ne!(theme.palette.focus, theme.palette.accent);
+            assert_ne!(theme.palette.selection, theme.palette.accent_soft);
+            assert_eq!(theme.palette.selection_border, theme.palette.accent_border);
+            assert_ne!(theme.palette.surface_focus, theme.palette.accent_soft);
+            assert_eq!(theme.surfaces.selected, theme.palette.selection);
+            assert_eq!(
+                theme.surfaces.selected_border,
+                theme.palette.selection_border
+            );
+        }
+
+        let mut custom = ThemeColors::light();
+        custom.name = "custom-professional";
+        custom.primary = Color::rgba(0.92, 0.08, 0.56, 1.0);
+        custom.primary_content = Color::WHITE;
+        let theme = DefaultTheme::from_colors(custom);
+        assert_eq!(theme.palette.accent, custom.primary);
+        assert_eq!(theme.palette.caret, custom.base_content);
+        assert_ne!(theme.palette.selection, custom.primary);
+        assert_eq!(
+            theme.palette.selection_border,
+            custom
+                .primary
+                .with_alpha(0.35)
+                .over(theme.palette.surface_raised)
+        );
+        assert_ne!(theme.palette.focus, custom.primary);
+        assert_ne!(theme.palette.surface_focus, custom.primary);
+    }
+
+    #[test]
     fn neutral_themes_are_achromatic_professional_presets() {
         let light = DefaultTheme::neutral();
         let colors = light.colors;
@@ -4106,7 +4176,7 @@ mod tests {
     }
 
     #[test]
-    fn built_in_themes_use_exact_mesh_role_tokens() {
+    fn built_in_themes_use_professional_role_tokens() {
         // Translucent Mesh tokens are flattened onto the card surface with
         // CSS (gamma-space) compositing at theme build time, because the
         // renderer blends in linear space (which reads far heavier).
@@ -4120,10 +4190,10 @@ mod tests {
         assert_eq!(light.palette.control_hover, rgb8(234, 238, 243));
         assert_eq!(light.palette.field, rgb8(248, 250, 252));
         assert_ne!(light.palette.field, light.palette.surface);
-        assert_eq!(light.palette.focus, rgb8(9, 148, 198));
+        assert_eq!(light.palette.focus, rgb8(73, 84, 107));
         assert_eq!(
             light.palette.selection,
-            rgba8(8, 124, 164, 0.18).over(light_surface)
+            rgba8(73, 84, 107, 0.12).over(light_surface)
         );
         assert_eq!(
             light.palette.accent_soft,
@@ -4152,10 +4222,10 @@ mod tests {
         assert_eq!(dark.palette.control_hover, rgb8(29, 36, 49));
         assert_eq!(dark.palette.field, rgb8(15, 19, 27));
         assert_eq!(dark.palette.surface_raised, dark_surface);
-        assert_eq!(dark.palette.focus, rgb8(73, 199, 234));
+        assert_eq!(dark.palette.focus, rgb8(166, 178, 200));
         assert_eq!(
             dark.palette.selection,
-            rgba8(53, 210, 238, 0.24).over(dark_surface)
+            rgba8(166, 178, 200, 0.14).over(dark_surface)
         );
         assert_eq!(dark.palette.accent_hover, rgb8(95, 224, 246));
         assert_eq!(
@@ -4178,7 +4248,7 @@ mod tests {
             rgba8(158, 175, 205, 0.18).over(Color::BLACK)
         );
         assert_eq!(void.palette.field, rgb8(11, 14, 20));
-        assert_eq!(void.palette.focus, rgb8(63, 196, 228));
+        assert_eq!(void.palette.focus, rgb8(223, 229, 240));
         assert_eq!(void.surfaces.window_subtle, Color::BLACK);
         assert_eq!(void.surfaces.overlay, rgb8(10, 13, 19));
         // The scrim stays translucent: it is a true overlay above arbitrary
@@ -4303,7 +4373,7 @@ mod tests {
         theme.sync_derived_fields();
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
-        assert_eq!(theme.palette.caret, Color::rgba(0.2, 0.3, 0.4, 1.0));
+        assert_eq!(theme.palette.caret, theme.colors.base_content);
         assert_eq!(theme.surfaces.accent, theme.palette.accent);
         assert_eq!(theme.surfaces.window, theme.palette.surface);
         // Mesh tooltips are quiet floating surfaces: overlay fill, secondary ink.
@@ -4390,7 +4460,7 @@ mod tests {
         assert_ne!(theme.palette.surface_raised, Color::BLACK);
         assert_eq!(theme.palette.text, theme.colors.base_content);
         assert_ne!(theme.palette.text, Color::WHITE);
-        assert_eq!(theme.palette.caret, theme.colors.primary);
+        assert_eq!(theme.palette.caret, theme.colors.base_content);
         assert_eq!(theme.palette.accent, theme.colors.primary);
         assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
         assert_eq!(theme.surfaces.window, theme.palette.surface);
