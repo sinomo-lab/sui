@@ -40,9 +40,10 @@ pub use animation::{
     invalidation_for_animation_property,
 };
 pub use canvas::{
-    Canvas, CanvasAppearance, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis, CanvasShape,
-    CanvasStroke, CanvasViewport, PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode,
-    PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
+    Canvas, CanvasAppearance, CanvasGridStyle, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis,
+    CanvasShape, CanvasStroke, CanvasSurface, CanvasViewport, PixelCanvas, PixelCanvasAppearance,
+    PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
+    PixelCanvasTool, paint_canvas_grid,
 };
 pub use collection::{
     CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,

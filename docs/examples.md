@@ -85,6 +85,20 @@ Open the native demo:
 cargo run -p sinomo-ui-demo
 ```
 
+The default demo build includes the comprehensive node-graph workspace. Open
+the `Node graphs` card after running:
+
+```bash
+cargo run -p sinomo-ui-demo
+```
+
+The default-enabled `nodes` feature adds the `sinomo-ui-nodes` dependency and
+can still be disabled for a smaller demo build. The workspace demonstrates
+controlled and uncontrolled graphs, retained custom node widgets, dynamic
+measurement, subflows, resizing and reconnection, incremental spatial-index
+telemetry, per-element accessibility, every edge family, animated edges,
+minimap navigation, and advanced viewport controls.
+
 Generate review artifacts without navigating the desktop UI:
 
 ```bash

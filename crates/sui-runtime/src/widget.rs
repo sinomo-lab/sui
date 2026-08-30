@@ -869,11 +869,20 @@ impl WidgetPod {
     where
         W: Widget + 'static,
     {
+        Self::new_boxed(Box::new(widget))
+    }
+
+    /// Retain a type-erased widget without inserting an additional adapter
+    /// into the logical widget tree.
+    ///
+    /// Dynamic widget registries use this when the concrete widget type is
+    /// selected from application data at runtime.
+    pub fn new_boxed(widget: Box<dyn Widget>) -> Self {
         Self {
             id: WidgetId::new(NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)),
             layout_state: LayoutState::default(),
             force_paint_boundary: false,
-            widget: Box::new(widget),
+            widget,
         }
     }
 

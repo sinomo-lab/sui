@@ -6,6 +6,8 @@ mod command_demo;
 mod drag_drop_demo;
 mod layout_demo;
 mod markdown_demo;
+#[cfg(feature = "nodes")]
+mod nodes_demo;
 mod paint_demo;
 mod theme_editor_demo;
 mod vector_demo;

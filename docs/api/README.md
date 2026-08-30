@@ -35,10 +35,13 @@ that keeps application code on the narrowest and most stable surface.
    themes, control sizing, typed theme extensions, fonts, images, and icons.
 9. [Custom widgets](custom-widgets.md) walks through the `Widget` lifecycle,
    accessible interaction, painting, and child ownership.
-10. [Testing and accessibility](testing-and-accessibility.md) uses
+10. [Node graph editor](node-graphs.md) covers the separate `sui-nodes`
+   package, graph state, viewport interaction, controls, minimap, and custom
+   painting hooks.
+11. [Testing and accessibility](testing-and-accessibility.md) uses
    `sinomo-ui-testing` for semantics-first, deterministic interaction tests and
    explains the public accessibility contract.
-11. [Platforms and Cargo features](platforms-and-features.md) lists the
+12. [Platforms and Cargo features](platforms-and-features.md) lists the
    supported execution surfaces, feature gates, and current caveats.
 
 ## Which API Level Should I Use?
@@ -49,6 +52,7 @@ that keeps application code on the narrowest and most stable surface.
 | Register fonts and images | `App::resources` or `App::with_resources` | `Application` registration methods |
 | Test or embed without an event loop | `App::build` | `Runtime` and `HeadlessPlatform` |
 | Custom drawing or interaction | Implement `Widget` | Scene and text types re-exported by `sui` |
+| Node graph editor | `sinomo-ui-nodes` | Custom node/edge painters and graph state |
 | Custom platform integration | `Application`, `WindowBuilder` | `Runtime` and platform crates |
 | Live application inspection | `Runtime::inspector_snapshot` | `sinomo-ui-debug` live/snapshot views |
 | UI automation | `sinomo-ui-testing` | Direct normalized event dispatch |

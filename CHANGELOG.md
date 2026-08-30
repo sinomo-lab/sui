@@ -11,6 +11,16 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Added the `sinomo-ui-nodes` graph-editor library with typed nodes, edges,
+  handles, controlled and uncontrolled observable state, retained custom node
+  widgets, dynamic measurement, incremental spatial indexing, subflows,
+  resizing, edge reconnection, per-element semantics, lifecycle events,
+  animated viewport and edge behavior, controls, minimap, and graph-owned
+  appearance overrides.
+- Added a comprehensive `sui-demo` node-editor workspace behind the
+  default-enabled `nodes` feature, covering controlled and uncontrolled graphs,
+  retained node controls, every edge family, subflows, editing, indexing,
+  semantics, and viewport telemetry.
 - Added configurable clipboard ownership and a shared editable-text controller
   for consistent text editing, selection, and copy behavior.
 - Added recursive context-menu submenus with collision-aware cascade placement

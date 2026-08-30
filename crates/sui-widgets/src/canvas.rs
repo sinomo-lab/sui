@@ -16,6 +16,7 @@ use sui_text::{FontFeature, TextMeasurement, TextStyle};
 use crate::{DefaultTheme, animation::MotionScalar, text_align::paint_aligned_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
+const MIN_CANVAS_GRID_SCREEN_SPACING: f32 = 12.0;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
 const CANVAS_RULER_MAX_TICKS: usize = 400;
 
@@ -67,6 +68,15 @@ fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
 pub enum CanvasRulerAxis {
     Horizontal,
     Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CanvasGridStyle {
+    None,
+    Dots,
+    Cross,
+    #[default]
+    Lines,
 }
 
 /// Widget-owned canvas color overrides. Unset fields resolve from common
@@ -200,14 +210,14 @@ impl CanvasViewport {
         self
     }
 
-    fn center(bounds: Rect) -> Point {
+    pub fn center(bounds: Rect) -> Point {
         Point::new(
             bounds.x() + (bounds.width() * 0.5),
             bounds.y() + (bounds.height() * 0.5),
         )
     }
 
-    fn transform(self, bounds: Rect, document_origin: Point) -> Transform {
+    pub fn transform(self, bounds: Rect, document_origin: Point) -> Transform {
         let center = Self::center(bounds) + self.pan;
         Transform::translation(-document_origin.x, -document_origin.y)
             .then(Transform::scale(self.zoom, self.zoom))
@@ -215,7 +225,7 @@ impl CanvasViewport {
             .then(Transform::translation(center.x, center.y))
     }
 
-    fn screen_to_world(self, bounds: Rect, point: Point, document_origin: Point) -> Point {
+    pub fn screen_to_world(self, bounds: Rect, point: Point, document_origin: Point) -> Point {
         let center = Self::center(bounds) + self.pan;
         let relative = point - center;
         let (sin, cos) = (-self.rotation).sin_cos();
@@ -229,23 +239,108 @@ impl CanvasViewport {
         )
     }
 
-    fn world_to_screen(self, bounds: Rect, point: Point, document_origin: Point) -> Point {
+    pub fn world_to_screen(self, bounds: Rect, point: Point, document_origin: Point) -> Point {
         self.transform(bounds, document_origin)
             .transform_point(point)
     }
 
-    fn zoom_around(&mut self, bounds: Rect, anchor: Point, factor: f32, document_origin: Point) {
+    pub fn zoom_around(
+        &mut self,
+        bounds: Rect,
+        anchor: Point,
+        factor: f32,
+        document_origin: Point,
+    ) {
         let before = self.screen_to_world(bounds, anchor, document_origin);
         self.zoom = (self.zoom * factor.max(0.01)).max(0.01);
         let after = self.world_to_screen(bounds, before, document_origin);
         self.pan += anchor - after;
     }
 
-    fn rotate_around(&mut self, bounds: Rect, anchor: Point, radians: f32, document_origin: Point) {
+    pub fn rotate_around(
+        &mut self,
+        bounds: Rect,
+        anchor: Point,
+        radians: f32,
+        document_origin: Point,
+    ) {
         let before = self.screen_to_world(bounds, anchor, document_origin);
         self.rotation += radians;
         let after = self.world_to_screen(bounds, before, document_origin);
         self.pan += anchor - after;
+    }
+}
+
+/// Reusable paint-only canvas background and world-space transform.
+///
+/// Widgets such as graph editors can share Canvas viewport/grid behavior while
+/// arranging their own retained child widgets above the surface.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasSurface {
+    pub viewport: CanvasViewport,
+    pub document_origin: Point,
+    pub grid_spacing: f32,
+    pub grid_style: CanvasGridStyle,
+}
+
+impl CanvasSurface {
+    pub fn new(viewport: CanvasViewport) -> Self {
+        Self {
+            viewport,
+            document_origin: Point::ZERO,
+            grid_spacing: 24.0,
+            grid_style: CanvasGridStyle::Lines,
+        }
+    }
+
+    pub fn document_origin(mut self, origin: Point) -> Self {
+        self.document_origin = origin;
+        self
+    }
+
+    pub fn grid_spacing(mut self, spacing: f32) -> Self {
+        self.grid_spacing = spacing.max(1.0);
+        self
+    }
+
+    pub fn grid_style(mut self, style: CanvasGridStyle) -> Self {
+        self.grid_style = style;
+        self
+    }
+
+    pub fn transform(self, bounds: Rect) -> Transform {
+        self.viewport.transform(bounds, self.document_origin)
+    }
+
+    pub fn screen_to_world(self, bounds: Rect, point: Point) -> Point {
+        self.viewport
+            .screen_to_world(bounds, point, self.document_origin)
+    }
+
+    pub fn world_to_screen(self, bounds: Rect, point: Point) -> Point {
+        self.viewport
+            .world_to_screen(bounds, point, self.document_origin)
+    }
+
+    pub fn paint_background(
+        self,
+        ctx: &mut PaintCtx,
+        bounds: Rect,
+        background: Color,
+        grid: Color,
+    ) {
+        ctx.fill_rect(bounds, background);
+        ctx.push_clip_rect(bounds);
+        paint_canvas_grid(
+            ctx,
+            self.viewport,
+            bounds,
+            self.document_origin,
+            self.grid_spacing,
+            self.grid_style,
+            grid,
+        );
+        ctx.pop_clip();
     }
 }
 
@@ -805,20 +900,16 @@ impl Widget for Canvas {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let [background, grid, axis_x, axis_y] = self.appearance.resolve(&theme);
-        ctx.fill_bounds(background);
+        CanvasSurface::new(self.viewport)
+            .document_origin(self.document_origin())
+            .grid_spacing(theme.metrics.canvas_grid_step)
+            .grid_style(CanvasGridStyle::Lines)
+            .paint_background(ctx, ctx.bounds(), background, grid);
         ctx.stroke_bounds(
             theme.surfaces.border,
             StrokeStyle::new(theme.metrics.border_width),
         );
         ctx.push_clip_rect(ctx.bounds());
-        paint_canvas_grid(
-            ctx,
-            self.viewport,
-            ctx.bounds(),
-            self.document_origin(),
-            &theme,
-            grid,
-        );
         paint_canvas_axes(
             ctx,
             self.viewport,
@@ -3229,37 +3320,76 @@ fn paint_canvas_axes(
     ctx.stroke(y_axis.build(), axis_y_color, StrokeStyle::new(1.0));
 }
 
-fn paint_canvas_grid(
+pub fn paint_canvas_grid(
     ctx: &mut PaintCtx,
     viewport: CanvasViewport,
     bounds: Rect,
     document_origin: Point,
-    theme: &DefaultTheme,
+    base_spacing: f32,
+    style: CanvasGridStyle,
     grid_color: Color,
 ) {
-    let overscan = theme.metrics.canvas_axis_overscan;
-    let visible =
-        canvas_visible_world_rect(viewport, bounds, document_origin).inflate(overscan, overscan);
+    if style == CanvasGridStyle::None {
+        return;
+    }
+    let mut step = base_spacing.max(1.0);
+    while step * viewport.zoom < MIN_CANVAS_GRID_SCREEN_SPACING {
+        step *= 2.0;
+    }
+    let visible = canvas_visible_world_rect(viewport, bounds, document_origin).inflate(step, step);
     let transform = viewport.transform(bounds, document_origin);
-    let step = theme.metrics.canvas_grid_step.max(1.0);
     let min_x = (visible.x() / step).floor() as i32 - 1;
     let max_x = (visible.max_x() / step).ceil() as i32 + 1;
     let min_y = (visible.y() / step).floor() as i32 - 1;
     let max_y = (visible.max_y() / step).ceil() as i32 + 1;
-    let mut builder = PathBuilder::new();
-    for x in min_x..=max_x {
-        let x = x as f32 * step;
-        builder
-            .move_to(transform.transform_point(Point::new(x, visible.y())))
-            .line_to(transform.transform_point(Point::new(x, visible.max_y())));
+    if style == CanvasGridStyle::Lines {
+        let mut builder = PathBuilder::new();
+        for x in min_x..=max_x {
+            let x = x as f32 * step;
+            builder
+                .move_to(transform.transform_point(Point::new(x, visible.y())))
+                .line_to(transform.transform_point(Point::new(x, visible.max_y())));
+        }
+        for y in min_y..=max_y {
+            let y = y as f32 * step;
+            builder
+                .move_to(transform.transform_point(Point::new(visible.x(), y)))
+                .line_to(transform.transform_point(Point::new(visible.max_x(), y)));
+        }
+        ctx.stroke(builder.build(), grid_color, StrokeStyle::new(1.0));
+        return;
     }
+
+    let mark_size = if style == CanvasGridStyle::Dots {
+        1.25
+    } else {
+        2.5
+    };
+    let mut marks = 0usize;
     for y in min_y..=max_y {
-        let y = y as f32 * step;
-        builder
-            .move_to(transform.transform_point(Point::new(visible.x(), y)))
-            .line_to(transform.transform_point(Point::new(visible.max_x(), y)));
+        for x in min_x..=max_x {
+            if marks >= 4096 {
+                return;
+            }
+            let position = transform.transform_point(Point::new(x as f32 * step, y as f32 * step));
+            match style {
+                CanvasGridStyle::Dots => {
+                    ctx.fill(Path::circle(position, mark_size), grid_color);
+                }
+                CanvasGridStyle::Cross => {
+                    let mut cross = PathBuilder::new();
+                    cross
+                        .move_to(Point::new(position.x - mark_size, position.y))
+                        .line_to(Point::new(position.x + mark_size, position.y))
+                        .move_to(Point::new(position.x, position.y - mark_size))
+                        .line_to(Point::new(position.x, position.y + mark_size));
+                    ctx.stroke(cross.build(), grid_color, StrokeStyle::new(1.0));
+                }
+                CanvasGridStyle::None | CanvasGridStyle::Lines => unreachable!(),
+            }
+            marks += 1;
+        }
     }
-    ctx.stroke(builder.build(), grid_color, StrokeStyle::new(1.0));
 }
 
 fn canvas_visible_world_rect(

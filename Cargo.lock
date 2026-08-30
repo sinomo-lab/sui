@@ -3638,6 +3638,7 @@ dependencies = [
  "ratatui",
  "sinomo-ui",
  "sinomo-ui-debug",
+ "sinomo-ui-nodes",
  "sinomo-ui-platform",
  "sinomo-ui-render-wgpu",
  "sinomo-ui-runtime",
@@ -3681,6 +3682,19 @@ dependencies = [
  "sinomo-ui-runtime",
  "sinomo-ui-scene",
  "svgtypes",
+]
+
+[[package]]
+name = "sinomo-ui-nodes"
+version = "0.2.1"
+dependencies = [
+ "sinomo-ui-core",
+ "sinomo-ui-layout",
+ "sinomo-ui-reactive",
+ "sinomo-ui-runtime",
+ "sinomo-ui-scene",
+ "sinomo-ui-text",
+ "sinomo-ui-widgets",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ crates/
   sui-debug/
   sui-demo/
   sui-layout/
+  sui-nodes/
   sui-platform/
   sui-render-wgpu/
   sui-runtime/
@@ -47,6 +48,7 @@ The codebase is easiest to understand as three stacked layers plus tooling.
 ### Product-facing widget libraries
 
 - `sinomo-ui-widgets`
+- `sinomo-ui-nodes`
 - `sinomo-ui-debug`
 
 ### Development and test tooling
@@ -184,6 +186,18 @@ This crate owns common controls and containers plus theme types. It is the
 reference implementation for how widgets use runtime contexts, semantics, and
 scene painting, but custom widgets may use different internal models.
 
+### `sinomo-ui-nodes`
+
+The interactive node-graph editor library.
+
+This crate owns typed node, edge, connection-handle, and viewport models;
+observable graph-editor state; node and edge hit testing; selection, dragging,
+connection creation, retained custom node widgets, revisioned spatial indexing,
+subflow geometry, resizing, reconnection, and keyboard editing; graph-specific
+appearance roles; and the graph controls and minimap companion widgets. It
+builds on the common runtime, scene, text, reactive, and widget crates without
+adding node-editor policy to `sinomo-ui-runtime` or the global theme palette.
+
 ### `sinomo-ui-debug`
 
 Reusable debug UI.
@@ -241,6 +255,8 @@ performance overlays, and visual artifact generation.
 - Change `WindowId` target semantics: update `sinomo-ui-core`, `sinomo-ui-runtime`, `sinomo-ui-platform`, and docs together.
 - Change widget participation in layout, paint, semantics, routing, or child enumeration: `sinomo-ui-runtime` and `sinomo-ui-widgets`.
 - Change layout primitives: `sinomo-ui-layout`.
+- Change node graph editing, rendering, controls, or minimap behavior:
+  `sinomo-ui-nodes`.
 - Add a new draw command or layer behavior: `sinomo-ui-scene`, then `sinomo-ui-render-wgpu`.
 - Change text shaping or measurement: `sinomo-ui-text`, then validate runtime and renderer callers.
 - Change platform event handling or IME behavior: `sinomo-ui-platform`, preserving `WindowId + Event` delivery.

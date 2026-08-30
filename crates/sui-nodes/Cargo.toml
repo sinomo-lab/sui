@@ -1,0 +1,25 @@
+[package]
+name = "sinomo-ui-nodes"
+version.workspace = true
+description = "Interactive node graph editor widgets for SUI."
+edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license-file.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "sui_nodes"
+
+[dependencies]
+sui-core = { workspace = true }
+sui-layout = { workspace = true }
+sui-reactive = { workspace = true }
+sui-runtime = { workspace = true }
+sui-scene = { workspace = true }
+sui-text = { workspace = true }
+sui-widgets = { workspace = true }

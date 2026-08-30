@@ -54,6 +54,13 @@ use crate::markdown_demo::{
     MARKDOWN_RENDER_COOLDOWN_SECONDS, MARKDOWN_RENDER_DEMO_NAME, MARKDOWN_RENDER_SCROLL_NAME,
     MARKDOWN_SOURCE_EDITOR_NAME,
 };
+#[cfg(all(feature = "nodes", test))]
+use crate::nodes_demo::{
+    NODES_ADD_NODE_BUTTON, NODES_DEMO_NAME, NODES_MAIN_GRAPH_NAME, NODES_MINIMAP_NAME,
+    NODES_SCRATCH_GRAPH_NAME, NODES_SIDEBAR_SCROLL_NAME, NODES_STATS_NAME, NODES_STATUS_NAME,
+};
+#[cfg(feature = "nodes")]
+use crate::nodes_demo::{NODES_TAB_LABEL, build_nodes_demo_with_theme};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 #[cfg(test)]
 use crate::theme_editor_demo::{
@@ -139,7 +146,7 @@ const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
 ];
 const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
 const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
-const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_0000_0001);
+pub(crate) const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_0000_0001);
 const DEV_SHELL_LOGO_IMAGE_SIZE: u32 = 128;
 const DEV_SHELL_TAB_HEIGHT: f32 = 32.0;
 const DEV_SHELL_TAB_GAP: f32 = 6.0;
@@ -2005,6 +2012,14 @@ fn build_dev_demo_entries(
             Color::rgba(0.12, 0.56, 0.76, 1.0),
             |theme| build_vector_editor_demo_with_theme(theme)
         ),
+        #[cfg(feature = "nodes")]
+        themed_demo!(
+            NODES_TAB_LABEL,
+            "Controlled and uncontrolled node editors with retained custom nodes, subflows, spatial indexing, resizing, reconnection, semantics, and advanced viewport behavior.",
+            IconGlyph::ScreenShare,
+            Color::rgba(0.18, 0.58, 0.78, 1.0),
+            |theme| build_nodes_demo_with_theme(theme)
+        ),
         {
             let theme = Rc::clone(&theme_reader);
             DevDemo::lazy(
@@ -2036,6 +2051,8 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "drag-drop" | "drag-and-drop" | "dnd" => Some(DRAG_DROP_TAB_LABEL),
         "paint" | "sui-paint" => Some(PAINT_TAB_LABEL),
         "vector-editor" | "vector" => Some(VECTOR_EDITOR_TAB_LABEL),
+        #[cfg(feature = "nodes")]
+        "nodes" | "node-graph" | "node-editor" | "sui-nodes" => Some(NODES_TAB_LABEL),
         _ => None,
     }
 }
@@ -3360,6 +3377,7 @@ mod tests {
     };
 
     use std::{
+        fs,
         path::PathBuf,
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -7950,6 +7968,146 @@ final_max_luminance={final_max_luminance}
             .expect()
             .to_be_visible()?;
         Ok(())
+    }
+
+    #[cfg(feature = "nodes")]
+    #[test]
+    fn dev_workspace_registers_comprehensive_nodes_demo() -> Result<()> {
+        let mut runtime = build_dev_application_with_initial_demo_and_render_options(
+            Some(NODES_TAB_LABEL),
+            WindowRenderOptions::new(true, 1.0),
+        )
+        .build()?;
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id)?;
+        let find = |role, name: &str| {
+            output
+                .semantics
+                .iter()
+                .find(|node| node.role == role && node.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing {role:?} semantic node {name:?}"))
+        };
+        let shell = find(SemanticsRole::Tabs, "SUI demo browser");
+        assert_eq!(
+            shell.value,
+            Some(SemanticsValue::Text(NODES_TAB_LABEL.to_string()))
+        );
+        for (role, name) in [
+            (SemanticsRole::GenericContainer, NODES_DEMO_NAME),
+            (SemanticsRole::Canvas, NODES_MAIN_GRAPH_NAME),
+            (SemanticsRole::Canvas, NODES_MINIMAP_NAME),
+            (SemanticsRole::Canvas, NODES_SCRATCH_GRAPH_NAME),
+            (SemanticsRole::ScrollView, NODES_SIDEBAR_SCROLL_NAME),
+            (SemanticsRole::Button, NODES_ADD_NODE_BUTTON),
+            (SemanticsRole::Button, "Run node"),
+            (SemanticsRole::Text, NODES_STATS_NAME),
+            (SemanticsRole::Text, NODES_STATUS_NAME),
+        ] {
+            assert!(
+                !find(role, name).bounds.is_empty(),
+                "expected {name:?} to have visible bounds"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "nodes")]
+    #[test]
+    fn nodes_demo_slug_routes_to_feature_gated_workspace() {
+        assert_eq!(dev_demo_label_for_slug("nodes"), Some(NODES_TAB_LABEL));
+        assert_eq!(
+            dev_demo_label_for_slug("node-editor"),
+            Some(NODES_TAB_LABEL)
+        );
+    }
+
+    #[cfg(feature = "nodes")]
+    #[test]
+    #[ignore = "writes headless nodes-demo visual diagnostics under output/nodes-demo-layout"]
+    fn capture_nodes_demo_layout_diagnostics() {
+        let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("output")
+            .join("nodes-demo-layout");
+        fs::create_dir_all(&output).expect("create nodes demo output directory");
+
+        for (slug, size) in [
+            ("desktop-1280x720", Size::new(1280.0, 720.0)),
+            ("compact-1024x720", Size::new(1024.0, 720.0)),
+            ("narrow-800x600", Size::new(800.0, 600.0)),
+            ("tall-1280x900", Size::new(1280.0, 900.0)),
+        ] {
+            let runtime = build_dev_application_with_initial_demo_and_render_options(
+                Some(NODES_TAB_LABEL),
+                WindowRenderOptions::new(true, 1.0),
+            )
+            .build()
+            .expect("nodes demo runtime");
+            let app = TestApp::from_runtime_with_frame_budget(runtime, 3)
+                .expect("headless frame-budget harness");
+            let window = app.main_window().expect("nodes demo window");
+            window
+                .dispatch_event_now(Event::Window(WindowEvent::Resized(size)))
+                .expect("resize headless nodes demo");
+            window.pump_frames(3).expect("pump nodes demo frames");
+            window
+                .capture_screenshot_now()
+                .expect("capture nodes demo screenshot")
+                .write_png(output.join(format!("{slug}.png")))
+                .expect("write nodes demo screenshot");
+            let snapshot = window.snapshot_now().expect("capture nodes demo snapshot");
+            fs::write(output.join(format!("{slug}.txt")), format!("{snapshot:#?}"))
+                .expect("write nodes demo snapshot");
+            if slug == "desktop-1280x720" {
+                let group = snapshot
+                    .accessibility
+                    .nodes
+                    .iter()
+                    .find(|node| node.name.as_deref() == Some("Resizable pipeline group"))
+                    .expect("pipeline group semantics");
+                let select = Point::new(group.bounds.x() + 20.0, group.bounds.max_y() - 20.0);
+                let mut down = PointerEvent::new(PointerEventKind::Down, select);
+                down.pointer_id = 91;
+                down.button = Some(PointerButton::Primary);
+                down.buttons = PointerButtons::new(1);
+                down.modifiers.control = true;
+                window
+                    .dispatch_event_now(Event::Pointer(down))
+                    .expect("select pipeline group");
+                let mut up = PointerEvent::new(PointerEventKind::Up, select);
+                up.pointer_id = 91;
+                up.button = Some(PointerButton::Primary);
+                up.modifiers.control = true;
+                window
+                    .dispatch_event_now(Event::Pointer(up))
+                    .expect("finish pipeline group selection");
+                window
+                    .pump_frames(3)
+                    .expect("paint selected pipeline group");
+                window
+                    .capture_screenshot_now()
+                    .expect("capture selected pipeline group")
+                    .write_png(output.join("desktop-1280x720-group-and-child-selected.png"))
+                    .expect("write selected pipeline group screenshot");
+                let selected = window
+                    .snapshot_now()
+                    .expect("capture selected pipeline group snapshot");
+                for name in ["Resizable pipeline group", "Normalize"] {
+                    assert!(
+                        selected.accessibility.nodes.iter().any(|node| {
+                            node.name.as_deref() == Some(name) && node.state.selected
+                        }),
+                        "expected {name} to remain selected"
+                    );
+                }
+                fs::write(
+                    output.join("desktop-1280x720-group-and-child-selected.txt"),
+                    format!("{selected:#?}"),
+                )
+                .expect("write selected pipeline group snapshot");
+            }
+        }
     }
 
     #[test]

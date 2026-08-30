@@ -89,6 +89,7 @@ for the current boundaries.
 
 - [Start here](https://github.com/sinomo-lab/sui/blob/main/docs/README.md)
 - [API guide](https://github.com/sinomo-lab/sui/blob/main/docs/api/README.md)
+- [Node graph editor](https://github.com/sinomo-lab/sui/blob/main/docs/api/node-graphs.md)
 - [Examples](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md)
 - [Testing](https://github.com/sinomo-lab/sui/blob/main/docs/testing.md)
 - [Architecture](https://github.com/sinomo-lab/sui/blob/main/docs/architecture.md)

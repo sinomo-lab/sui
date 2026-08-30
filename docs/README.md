@@ -49,6 +49,7 @@ The hand-written API guide complements generated Rust documentation:
 - [State, events, and async work](./api/state-events-and-async.md)
 - [Themes and resources](./api/themes-and-resources.md)
 - [Custom widgets](./api/custom-widgets.md)
+- [Node graph editor](./api/node-graphs.md)
 - [Testing and accessibility](./api/testing-and-accessibility.md)
 - [Platforms and feature flags](./api/platforms-and-features.md)
 
