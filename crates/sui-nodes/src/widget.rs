@@ -2818,20 +2818,40 @@ fn hit_reconnect_handle<N, E>(
 }
 
 fn sort_node_indices<N, E>(snapshot: &GraphSnapshot<N, E>, indices: &mut [usize]) {
-    indices.sort_by_key(|index| {
-        snapshot
-            .graph
-            .nodes
-            .get(*index)
-            .map_or((i32::MIN, 0, false, *index), |node| {
-                (
-                    node.z_index,
-                    snapshot.graph.node_depth(&node.id),
-                    node.selected,
-                    *index,
-                )
-            })
-    });
+    let mut keys = vec![(i32::MIN, 0, false, 0); snapshot.graph.nodes.len()];
+    for index in indices.iter().copied() {
+        if let Some(node) = snapshot.graph.nodes.get(index) {
+            keys[index] = (
+                node.z_index,
+                node_depth_from_node(&snapshot.graph, node),
+                node.selected,
+                index,
+            );
+        }
+    }
+    indices.sort_by_key(|index| keys.get(*index).copied().unwrap_or_default());
+}
+
+fn node_depth_from_node<N, E>(graph: &GraphModel<N, E>, node: &Node<N>) -> usize {
+    let Some(mut current) = node.parent_id.as_ref() else {
+        return 0;
+    };
+    let mut depth = 0;
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            break;
+        }
+        depth += 1;
+        let Some(parent) = graph.node(current) else {
+            break;
+        };
+        let Some(next) = parent.parent_id.as_ref() else {
+            break;
+        };
+        current = next;
+    }
+    depth
 }
 
 fn sort_edge_indices<N, E>(snapshot: &GraphSnapshot<N, E>, indices: &mut [usize]) {

@@ -455,12 +455,17 @@ keeps widget measurement cached. Consecutive uniformly zoomed Canvas children
 share one transformed paint context; screen-space and custom policies split the
 sequence into separate transform runs without changing child identity or event
 mapping. Transform-only invalidations also preserve clean child arrangement and
-apply the resulting presentation deltas directly to the runtime hit-test graph.
+refresh the runtime hit-test graph from the updated presentation state.
 Custom canvas-like containers can use `PaintCtx::with_transform` for shared
 painting and `EventCtx::request_transform` when layout bounds and child
 structure remain stable. Use the ignored runtime transform benchmark listed in
 the node-graph performance diagnostics when changing transformed subtree
 traversal or scene composition.
+
+Runtime hit-test graph rebuilds retain their backing allocations and recycle
+child buffers. Identical presentation transforms share one inverse calculation
+per rebuild, which is especially useful for Canvas children under a uniform
+viewport transform.
 
 ## Layout Contract for Custom Widgets
 

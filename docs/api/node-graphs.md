@@ -266,3 +266,7 @@ instance plus a static unit quad. Text instances retain full-precision position
 and HDR color while packing normalized atlas UVs and discrete coverage flags.
 `vertex_upload_avg_bytes` and `text_vertex_avg_bytes` in the GPU diagnostic
 track the resulting bandwidth.
+
+Visible-node ordering precomputes hierarchy depth and z/selection keys once per
+node before sorting. Root nodes bypass ID lookup entirely, keeping flat graphs
+from turning ordering comparisons into repeated model scans.

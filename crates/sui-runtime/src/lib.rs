@@ -4249,7 +4249,7 @@ impl WindowState {
     }
 
     fn refresh_graph(&mut self) {
-        self.graph = WidgetGraph::rebuild(
+        self.graph.rebuild_in_place(
             &self.root,
             self.focus.focused_widget,
             &self.last_paint_bounds_by_widget,
@@ -4585,6 +4585,7 @@ struct WidgetGraph {
     overlay_options: HashMap<WidgetId, OverlayOptions>,
     overlay_parents: HashMap<WidgetId, Option<WidgetId>>,
     overlay_surfaces: HashMap<WidgetId, Vec<WidgetId>>,
+    child_buffers: Vec<Vec<WidgetId>>,
 }
 
 #[derive(Clone, Copy)]
@@ -4605,16 +4606,29 @@ impl WidgetGraph {
             overlay_options: HashMap::new(),
             overlay_parents: HashMap::new(),
             overlay_surfaces: HashMap::new(),
+            child_buffers: Vec::new(),
         }
     }
 
-    fn rebuild(
+    fn rebuild_in_place(
+        &mut self,
         root: &WidgetPod,
         focused_widget: Option<WidgetId>,
         paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
-    ) -> Self {
-        let mut graph = Self::empty(root.id());
-        graph.collect(
+    ) {
+        self.root = root.id();
+        for (_, mut node) in self.nodes.drain() {
+            node.children.clear();
+            self.child_buffers.push(node.children);
+        }
+        self.order.clear();
+        self.host_surface_order.clear();
+        self.host_order_policy.clear();
+        self.overlay_options.clear();
+        self.overlay_parents.clear();
+        self.overlay_surfaces.clear();
+        let mut inverse_cache = HashMap::new();
+        self.collect(
             root,
             None,
             focused_widget,
@@ -4624,9 +4638,9 @@ impl WidgetGraph {
                 stack_surface: root.id(),
                 overlay_owner: None,
             },
+            &mut inverse_cache,
         );
-        graph.recompute_stack_surface_order();
-        graph
+        self.recompute_stack_surface_order();
     }
 
     fn recompute_stack_surface_order(&mut self) {
@@ -4898,6 +4912,7 @@ impl WidgetGraph {
         focused_widget: Option<WidgetId>,
         paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
         context: GraphCollectContext,
+        inverse_cache: &mut HashMap<[u32; 6], Option<Transform>>,
     ) {
         let id = pod.id();
         self.order.push(id);
@@ -4975,6 +4990,8 @@ impl WidgetGraph {
             .unwrap_or(0);
 
         let children = {
+            let mut children = self.child_buffers.pop().unwrap_or_default();
+            children.clear();
             let mut visitor = CollectChildrenVisitor {
                 graph: self,
                 parent: id,
@@ -4985,7 +5002,8 @@ impl WidgetGraph {
                     stack_surface: resolved_surface,
                     overlay_owner,
                 },
-                children: Vec::new(),
+                children,
+                inverse_cache,
             };
             pod.visit_children(&mut visitor);
             visitor.children
@@ -4993,7 +5011,9 @@ impl WidgetGraph {
 
         let local_bounds = pod.bounds();
         let presentation_transform = pod.presentation_transform();
-        let inverse_presentation_transform = presentation_transform.inverse();
+        let inverse_presentation_transform = *inverse_cache
+            .entry(transform_bits(presentation_transform))
+            .or_insert_with(|| presentation_transform.inverse());
         let layout_bounds = presentation_transform.transform_rect_bbox(local_bounds);
         let input_bounds = layout_bounds;
         let paint_bounds = paint_bounds_by_widget
@@ -5086,6 +5106,7 @@ struct CollectChildrenVisitor<'a> {
     paint_bounds_by_widget: &'a HashMap<WidgetId, Rect>,
     context: GraphCollectContext,
     children: Vec<WidgetId>,
+    inverse_cache: &'a mut HashMap<[u32; 6], Option<Transform>>,
 }
 
 impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
@@ -5097,8 +5118,20 @@ impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
             self.focused_widget,
             self.paint_bounds_by_widget,
             self.context,
+            self.inverse_cache,
         );
     }
+}
+
+fn transform_bits(transform: Transform) -> [u32; 6] {
+    [
+        transform.xx.to_bits(),
+        transform.yx.to_bits(),
+        transform.xy.to_bits(),
+        transform.yy.to_bits(),
+        transform.dx.to_bits(),
+        transform.dy.to_bits(),
+    ]
 }
 
 struct EventRouteResult {
