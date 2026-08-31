@@ -308,6 +308,7 @@ pub struct NodeGraphAppearance {
     pub background: Option<Color>,
     pub grid: Option<Color>,
     pub node: Option<Color>,
+    /// Optional hover fill. Unset nodes keep their normal fill on hover.
     pub node_hovered: Option<Color>,
     pub node_border: Option<Color>,
     pub node_text: Option<Color>,
@@ -340,11 +341,12 @@ struct ResolvedAppearance {
 impl NodeGraphAppearance {
     fn resolve(self, theme: &DefaultTheme) -> ResolvedAppearance {
         let selection = self.selection.unwrap_or(theme.palette.accent);
+        let node = self.node.unwrap_or(theme.palette.surface_raised);
         ResolvedAppearance {
             background: self.background.unwrap_or(theme.palette.surface),
             grid: self.grid.unwrap_or(theme.palette.border.with_alpha(0.28)),
-            node: self.node.unwrap_or(theme.palette.surface_raised),
-            node_hovered: self.node_hovered.unwrap_or(theme.palette.surface_hover),
+            node,
+            node_hovered: self.node_hovered.unwrap_or(node),
             node_border: self.node_border.unwrap_or(theme.palette.border),
             node_text: self.node_text.unwrap_or(theme.palette.text),
             selection,
@@ -368,7 +370,9 @@ enum Interaction {
     },
     DragNodes {
         pointer_id: u64,
-        start: Point,
+        start_flow: Point,
+        original_flow_bounds: Rect,
+        last_pointer: Point,
         origins: Vec<(NodeId, Point)>,
     },
     ResizeNode {
@@ -975,11 +979,15 @@ where
                 }
                 retained_edges.insert(edge.id.clone());
             }
-            cache.bounds = snapshot
+            let fallback_bounds = snapshot
                 .graph
                 .bounds()
                 .unwrap_or(Rect::ZERO)
                 .inflate(16.0, 16.0);
+            cache.bounds = scene
+                .paint_bounds()
+                .unwrap_or(fallback_bounds)
+                .inflate(2.0, 2.0);
             cache.scene = Arc::new(scene);
             cache.retained_edges = Arc::new(retained_edges);
             cache.key = Some(key);
@@ -1180,6 +1188,68 @@ struct EdgeGeometry {
     source_side: HandlePosition,
     target_side: HandlePosition,
     kind: EdgeKind,
+    polyline: Option<EdgePolyline>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EdgePolyline {
+    points: [Point; 6],
+    len: usize,
+}
+
+impl EdgePolyline {
+    fn new(input: &[Point]) -> Self {
+        debug_assert!(input.len() <= 6);
+        let mut points = [Point::ZERO; 6];
+        let mut len = 0;
+        for point in input.iter().copied() {
+            if len > 0 && vector_length(point - points[len - 1]) <= 0.001 {
+                continue;
+            }
+            if len >= 2 {
+                let incoming = points[len - 1] - points[len - 2];
+                let outgoing = point - points[len - 1];
+                if cross(incoming, outgoing).abs() <= 0.001 && dot(incoming, outgoing) >= 0.0 {
+                    points[len - 1] = point;
+                    continue;
+                }
+            }
+            points[len] = point;
+            len += 1;
+        }
+        Self { points, len }
+    }
+
+    fn as_slice(&self) -> &[Point] {
+        &self.points[..self.len]
+    }
+
+    fn midpoint(&self) -> Point {
+        self.point_at(0.5)
+    }
+
+    fn point_at(&self, t: f32) -> Point {
+        let points = self.as_slice();
+        if points.len() < 2 {
+            return points.first().copied().unwrap_or(Point::ZERO);
+        }
+        let total = points
+            .windows(2)
+            .map(|segment| vector_length(segment[1] - segment[0]))
+            .sum::<f32>();
+        if total <= f32::EPSILON {
+            return points[0];
+        }
+        let mut remaining = total * t.clamp(0.0, 1.0);
+        for segment in points.windows(2) {
+            let length = vector_length(segment[1] - segment[0]);
+            if remaining <= length {
+                return lerp_point(segment[0], segment[1], remaining / length.max(f32::EPSILON));
+            }
+            remaining -= length;
+        }
+        *points.last().expect("edge polyline has points")
+    }
 }
 
 impl<N, E> Widget for NodeGraph<N, E>
@@ -1420,12 +1490,26 @@ where
                             .map(|candidate| (candidate.id.clone(), candidate.position))
                             .collect::<Vec<_>>();
                         if !origins.is_empty() {
+                            let original_flow_bounds =
+                                dragged_subtree_bounds(&current.graph, &origins).unwrap_or_else(
+                                    || {
+                                        current
+                                            .graph
+                                            .node(&origins[0].0)
+                                            .and_then(|node| current.graph.node_bounds(node))
+                                            .unwrap_or(Rect::ZERO)
+                                    },
+                                );
                             self.emit(NodeGraphEvent::NodeDragStarted(
                                 origins.iter().map(|(id, _)| id.clone()).collect(),
                             ));
                             self.interaction = Some(Interaction::DragNodes {
                                 pointer_id: pointer.pointer_id,
-                                start: pointer.position,
+                                start_flow: current
+                                    .viewport
+                                    .screen_to_flow(bounds, pointer.position),
+                                original_flow_bounds,
+                                last_pointer: pointer.position,
                                 origins,
                             });
                         }
@@ -1534,6 +1618,7 @@ where
                     Interaction::Marquee { .. } => config.auto_pan_on_selection,
                     Interaction::Pan { .. } => false,
                 };
+                let mut auto_pan_axes = [true, true];
                 match interaction {
                     Interaction::Pan {
                         pointer_id,
@@ -1551,21 +1636,40 @@ where
                     }
                     Interaction::DragNodes {
                         pointer_id,
-                        start,
+                        start_flow,
+                        original_flow_bounds,
+                        last_pointer,
                         origins,
                     } => {
-                        let delta = pointer.position - start;
-                        let flow_delta = Vector::new(
-                            delta.x / snapshot.viewport.zoom.max(0.001),
-                            delta.y / snapshot.viewport.zoom.max(0.001),
+                        auto_pan_axes = drag_auto_pan_axes(bounds, last_pointer, pointer.position);
+                        let mut post_pan_viewport = snapshot.viewport;
+                        if auto_pan_enabled
+                            && let Some(delta) = masked_auto_pan_delta(
+                                bounds,
+                                pointer.position,
+                                config.auto_pan_margin,
+                                config.auto_pan_speed,
+                                auto_pan_axes,
+                            )
+                        {
+                            post_pan_viewport.pan_by(delta);
+                        }
+                        let mut flow_delta =
+                            snapshot.viewport.screen_to_flow(bounds, pointer.position) - start_flow;
+                        if let Some(grid) = config.snap_to_grid
+                            && let Some((_, origin)) = origins.first()
+                        {
+                            flow_delta = snap_point(*origin + flow_delta, grid) - *origin;
+                        }
+                        flow_delta = clamp_drag_delta_to_visible(
+                            flow_delta,
+                            original_flow_bounds,
+                            post_pan_viewport.visible_flow_rect(bounds),
                         );
                         let mut changes = Vec::new();
                         self.state.update(|snapshot| {
                             for (id, origin) in &origins {
-                                let mut position = *origin + flow_delta;
-                                if let Some(grid) = config.snap_to_grid {
-                                    position = snap_point(position, grid);
-                                }
+                                let position = *origin + flow_delta;
                                 let graph = snapshot.graph_mut();
                                 if graph.node(id).is_some_and(|node| node.position != position)
                                     && let Some(position) = graph.move_node(id, position)
@@ -1583,7 +1687,9 @@ where
                         }
                         self.interaction = Some(Interaction::DragNodes {
                             pointer_id,
-                            start,
+                            start_flow,
+                            original_flow_bounds,
+                            last_pointer: pointer.position,
                             origins,
                         });
                     }
@@ -1690,11 +1796,12 @@ where
                     }
                 }
                 if auto_pan_enabled
-                    && let Some(delta) = auto_pan_delta(
+                    && let Some(delta) = masked_auto_pan_delta(
                         bounds,
                         pointer.position,
                         config.auto_pan_margin,
                         config.auto_pan_speed,
+                        auto_pan_axes,
                     )
                 {
                     let mut viewport = self.state.viewport();
@@ -2864,23 +2971,12 @@ fn edge_intersects_rect<N, E>(
             EdgeKind::Straight => {
                 segment_intersects_rect(geometry.source, geometry.target, selection)
             }
-            EdgeKind::Step | EdgeKind::SmoothStep => {
-                let horizontal = geometry.target_tangent.x.abs() > 0.0;
-                let (first, second) = if horizontal {
-                    (
-                        Point::new(geometry.midpoint.x, geometry.source.y),
-                        Point::new(geometry.midpoint.x, geometry.target.y),
-                    )
-                } else {
-                    (
-                        Point::new(geometry.source.x, geometry.midpoint.y),
-                        Point::new(geometry.target.x, geometry.midpoint.y),
-                    )
-                };
-                segment_intersects_rect(geometry.source, first, selection)
-                    || segment_intersects_rect(first, second, selection)
-                    || segment_intersects_rect(second, geometry.target, selection)
-            }
+            EdgeKind::Step | EdgeKind::SmoothStep => geometry.polyline.is_some_and(|polyline| {
+                polyline
+                    .as_slice()
+                    .windows(2)
+                    .any(|segment| segment_intersects_rect(segment[0], segment[1], selection))
+            }),
             EdgeKind::Bezier | EdgeKind::SimpleBezier => (0..=EDGE_HIT_STEPS).any(|step| {
                 selection.contains(cubic_point(
                     geometry.source,
@@ -3391,6 +3487,8 @@ fn edge_geometry<N, E>(
     if source_node.hidden || target_node.hidden {
         return None;
     }
+    let source_bounds = graph_node_bounds(graph, source_node);
+    let target_bounds = graph_node_bounds(graph, target_node);
     let (source, source_side) = endpoint(
         graph,
         source_node,
@@ -3403,13 +3501,17 @@ fn edge_geometry<N, E>(
         edge.target_handle.as_ref(),
         HandleKind::Target,
     );
-    Some(make_edge_geometry(
+    Some(make_edge_geometry_with_obstacles(
         viewport.flow_to_screen(bounds, source),
         source_side,
         viewport.flow_to_screen(bounds, target),
         target_side,
         edge.kind,
         edge.path_options,
+        Some((
+            viewport.flow_rect_to_screen(bounds, source_bounds),
+            viewport.flow_rect_to_screen(bounds, target_bounds),
+        )),
     ))
 }
 
@@ -3434,13 +3536,14 @@ fn edge_geometry_from_lookup<N, E>(
         edge.target_handle.as_ref(),
         HandleKind::Target,
     );
-    Some(make_edge_geometry(
+    Some(make_edge_geometry_with_obstacles(
         source,
         source_side,
         target,
         target_side,
         edge.kind,
         edge.path_options,
+        Some((source_bounds, target_bounds)),
     ))
 }
 
@@ -3451,6 +3554,27 @@ fn make_edge_geometry(
     target_side: HandlePosition,
     kind: EdgeKind,
     options: EdgePathOptions,
+) -> EdgeGeometry {
+    make_edge_geometry_with_obstacles(
+        source,
+        source_side,
+        target,
+        target_side,
+        kind,
+        options,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_edge_geometry_with_obstacles(
+    source: Point,
+    source_side: HandlePosition,
+    target: Point,
+    target_side: HandlePosition,
+    kind: EdgeKind,
+    options: EdgePathOptions,
+    obstacles: Option<(Rect, Rect)>,
 ) -> EdgeGeometry {
     let source_direction = side_direction(source_side);
     let target_direction = side_direction(target_side);
@@ -3465,61 +3589,39 @@ fn make_edge_geometry(
     let control_2 = target + scale_vector(target_direction, bend);
     let mut builder = Path::builder();
     builder.move_to(source);
-    let (midpoint, source_tangent, target_tangent) = match kind {
+    let (midpoint, source_tangent, target_tangent, polyline) = match kind {
         EdgeKind::Straight => {
             builder.line_to(target);
             (
                 lerp_point(source, target, 0.5),
                 target - source,
                 target - source,
+                None,
             )
         }
         EdgeKind::Step | EdgeKind::SmoothStep => {
-            let horizontal_source =
-                matches!(source_side, HandlePosition::Left | HandlePosition::Right);
-            if horizontal_source {
-                let mid_x = ((source.x + target.x) * 0.5)
-                    + (source_direction.x * options.step_offset.max(0.0) * 0.25);
-                let points = [
-                    source,
-                    Point::new(mid_x, source.y),
-                    Point::new(mid_x, target.y),
-                    target,
-                ];
-                if kind == EdgeKind::SmoothStep {
-                    append_rounded_polyline(&mut builder, &points, options.border_radius);
-                } else {
-                    for point in points.into_iter().skip(1) {
-                        builder.line_to(point);
-                    }
-                }
-                (
-                    Point::new(mid_x, (source.y + target.y) * 0.5),
-                    Point::new(mid_x, source.y) - source,
-                    target - Point::new(mid_x, target.y),
-                )
+            let polyline =
+                step_edge_polyline(source, source_side, target, target_side, options, obstacles);
+            let points = polyline.as_slice();
+            if kind == EdgeKind::SmoothStep {
+                append_rounded_polyline(&mut builder, points, options.border_radius);
             } else {
-                let mid_y = ((source.y + target.y) * 0.5)
-                    + (source_direction.y * options.step_offset.max(0.0) * 0.25);
-                let points = [
-                    source,
-                    Point::new(source.x, mid_y),
-                    Point::new(target.x, mid_y),
-                    target,
-                ];
-                if kind == EdgeKind::SmoothStep {
-                    append_rounded_polyline(&mut builder, &points, options.border_radius);
-                } else {
-                    for point in points.into_iter().skip(1) {
-                        builder.line_to(point);
-                    }
+                for point in points.iter().copied().skip(1) {
+                    builder.line_to(point);
                 }
-                (
-                    Point::new((source.x + target.x) * 0.5, mid_y),
-                    Point::new(source.x, mid_y) - source,
-                    target - Point::new(target.x, mid_y),
-                )
             }
+            let source_tangent = points.get(1).copied().unwrap_or(target) - source;
+            let target_tangent = target
+                - points
+                    .get(points.len().saturating_sub(2))
+                    .copied()
+                    .unwrap_or(source);
+            (
+                polyline.midpoint(),
+                source_tangent,
+                target_tangent,
+                Some(polyline),
+            )
         }
         EdgeKind::Bezier | EdgeKind::SimpleBezier => {
             builder.cubic_to(control_1, control_2, target);
@@ -3527,6 +3629,7 @@ fn make_edge_geometry(
                 cubic_point(source, control_1, control_2, target, 0.5),
                 control_1 - source,
                 target - control_2,
+                None,
             )
         }
     };
@@ -3542,6 +3645,204 @@ fn make_edge_geometry(
         source_side,
         target_side,
         kind,
+        polyline,
+    }
+}
+
+fn step_edge_polyline(
+    source: Point,
+    source_side: HandlePosition,
+    target: Point,
+    target_side: HandlePosition,
+    options: EdgePathOptions,
+    obstacles: Option<(Rect, Rect)>,
+) -> EdgePolyline {
+    let source_direction = side_direction(source_side);
+    let target_direction = side_direction(target_side);
+    let target_is_behind_source = dot(target - source, source_direction) < 0.0;
+    let source_is_behind_target = dot(source - target, target_direction) < 0.0;
+    if (target_is_behind_source || source_is_behind_target)
+        && let Some((source_bounds, target_bounds)) = obstacles
+        && let Some(route) = obstacle_avoiding_step_polyline(
+            source,
+            source_direction,
+            source_bounds,
+            target,
+            target_direction,
+            target_bounds,
+            options,
+        )
+    {
+        return route;
+    }
+
+    let horizontal_source = matches!(source_side, HandlePosition::Left | HandlePosition::Right);
+    if horizontal_source {
+        let mid_x = ((source.x + target.x) * 0.5)
+            + (source_direction.x * options.step_offset.max(0.0) * 0.25);
+        EdgePolyline::new(&[
+            source,
+            Point::new(mid_x, source.y),
+            Point::new(mid_x, target.y),
+            target,
+        ])
+    } else {
+        let mid_y = ((source.y + target.y) * 0.5)
+            + (source_direction.y * options.step_offset.max(0.0) * 0.25);
+        EdgePolyline::new(&[
+            source,
+            Point::new(source.x, mid_y),
+            Point::new(target.x, mid_y),
+            target,
+        ])
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn obstacle_avoiding_step_polyline(
+    source: Point,
+    source_direction: Vector,
+    source_bounds: Rect,
+    target: Point,
+    target_direction: Vector,
+    target_bounds: Rect,
+    options: EdgePathOptions,
+) -> Option<EdgePolyline> {
+    let clearance = options
+        .step_offset
+        .max(options.border_radius + 8.0)
+        .max(20.0);
+    let source_exit = source + scale_vector(source_direction, clearance);
+    let target_exit = target + scale_vector(target_direction, clearance);
+    let union = source_bounds.union(target_bounds);
+    let left = union.x() - clearance;
+    let right = union.max_x() + clearance;
+    let top = union.y() - clearance;
+    let bottom = union.max_y() + clearance;
+    let candidates = [
+        [
+            source,
+            source_exit,
+            Point::new(source_exit.x, top),
+            Point::new(target_exit.x, top),
+            target_exit,
+            target,
+        ],
+        [
+            source,
+            source_exit,
+            Point::new(source_exit.x, bottom),
+            Point::new(target_exit.x, bottom),
+            target_exit,
+            target,
+        ],
+        [
+            source,
+            source_exit,
+            Point::new(left, source_exit.y),
+            Point::new(left, target_exit.y),
+            target_exit,
+            target,
+        ],
+        [
+            source,
+            source_exit,
+            Point::new(right, source_exit.y),
+            Point::new(right, target_exit.y),
+            target_exit,
+            target,
+        ],
+    ];
+    let route_is_clear = |points: &[Point; 6]| {
+        points[1..5].windows(2).all(|segment| {
+            !segment_crosses_rect_interior(segment[0], segment[1], source_bounds)
+                && !segment_crosses_rect_interior(segment[0], segment[1], target_bounds)
+        })
+    };
+    if let Some(points) = between_node_step_candidate(
+        source,
+        source_exit,
+        source_direction,
+        source_bounds,
+        target,
+        target_exit,
+        target_bounds,
+    ) && route_is_clear(&points)
+    {
+        return Some(EdgePolyline::new(&points));
+    }
+
+    let preference = if source_direction.x.abs() > source_direction.y.abs() {
+        [0, 1, 2, 3]
+    } else {
+        [2, 3, 0, 1]
+    };
+    preference
+        .into_iter()
+        .map(|index| candidates[index])
+        .find(route_is_clear)
+        .map(|points| EdgePolyline::new(&points))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn between_node_step_candidate(
+    source: Point,
+    source_exit: Point,
+    source_direction: Vector,
+    source_bounds: Rect,
+    target: Point,
+    target_exit: Point,
+    target_bounds: Rect,
+) -> Option<[Point; 6]> {
+    if source_direction.x.abs() > source_direction.y.abs() {
+        let corridor = if source_bounds.max_y() <= target_bounds.y() {
+            Some((source_bounds.max_y() + target_bounds.y()) * 0.5)
+        } else if target_bounds.max_y() <= source_bounds.y() {
+            Some((target_bounds.max_y() + source_bounds.y()) * 0.5)
+        } else {
+            None
+        }?;
+        Some([
+            source,
+            source_exit,
+            Point::new(source_exit.x, corridor),
+            Point::new(target_exit.x, corridor),
+            target_exit,
+            target,
+        ])
+    } else {
+        let corridor = if source_bounds.max_x() <= target_bounds.x() {
+            Some((source_bounds.max_x() + target_bounds.x()) * 0.5)
+        } else if target_bounds.max_x() <= source_bounds.x() {
+            Some((target_bounds.max_x() + source_bounds.x()) * 0.5)
+        } else {
+            None
+        }?;
+        Some([
+            source,
+            source_exit,
+            Point::new(corridor, source_exit.y),
+            Point::new(corridor, target_exit.y),
+            target_exit,
+            target,
+        ])
+    }
+}
+
+fn segment_crosses_rect_interior(start: Point, end: Point, rect: Rect) -> bool {
+    const EPSILON: f32 = 0.001;
+    if (start.y - end.y).abs() <= EPSILON {
+        start.y > rect.y() + EPSILON
+            && start.y < rect.max_y() - EPSILON
+            && start.x.min(end.x) < rect.max_x() - EPSILON
+            && start.x.max(end.x) > rect.x() + EPSILON
+    } else if (start.x - end.x).abs() <= EPSILON {
+        start.x > rect.x() + EPSILON
+            && start.x < rect.max_x() - EPSILON
+            && start.y.min(end.y) < rect.max_y() - EPSILON
+            && start.y.max(end.y) > rect.y() + EPSILON
+    } else {
+        true
     }
 }
 
@@ -3581,34 +3882,13 @@ fn edge_distance(geometry: &EdgeGeometry, point: Point) -> f32 {
     match geometry.kind {
         EdgeKind::Straight => point_segment_distance(point, geometry.source, geometry.target),
         EdgeKind::Step | EdgeKind::SmoothStep => {
-            let horizontal = (geometry.target_tangent.x).abs() > 0.0;
-            if horizontal {
-                let mid_x = geometry.midpoint.x;
-                point_segment_distance(point, geometry.source, Point::new(mid_x, geometry.source.y))
-                    .min(point_segment_distance(
-                        point,
-                        Point::new(mid_x, geometry.source.y),
-                        Point::new(mid_x, geometry.target.y),
-                    ))
-                    .min(point_segment_distance(
-                        point,
-                        Point::new(mid_x, geometry.target.y),
-                        geometry.target,
-                    ))
-            } else {
-                let mid_y = geometry.midpoint.y;
-                point_segment_distance(point, geometry.source, Point::new(geometry.source.x, mid_y))
-                    .min(point_segment_distance(
-                        point,
-                        Point::new(geometry.source.x, mid_y),
-                        Point::new(geometry.target.x, mid_y),
-                    ))
-                    .min(point_segment_distance(
-                        point,
-                        Point::new(geometry.target.x, mid_y),
-                        geometry.target,
-                    ))
-            }
+            geometry.polyline.map_or(f32::INFINITY, |polyline| {
+                polyline
+                    .as_slice()
+                    .windows(2)
+                    .map(|segment| point_segment_distance(point, segment[0], segment[1]))
+                    .fold(f32::INFINITY, f32::min)
+            })
         }
         EdgeKind::Bezier | EdgeKind::SimpleBezier => {
             let mut distance = f32::INFINITY;
@@ -3640,27 +3920,10 @@ fn edge_point_at(geometry: &EdgeGeometry, t: f32) -> Point {
             geometry.target,
             t,
         ),
-        EdgeKind::Step | EdgeKind::SmoothStep => {
-            let horizontal = geometry.target_tangent.x.abs() > 0.0;
-            let (first, second) = if horizontal {
-                (
-                    Point::new(geometry.midpoint.x, geometry.source.y),
-                    Point::new(geometry.midpoint.x, geometry.target.y),
-                )
-            } else {
-                (
-                    Point::new(geometry.source.x, geometry.midpoint.y),
-                    Point::new(geometry.target.x, geometry.midpoint.y),
-                )
-            };
-            if t < 1.0 / 3.0 {
-                lerp_point(geometry.source, first, t * 3.0)
-            } else if t < 2.0 / 3.0 {
-                lerp_point(first, second, (t - 1.0 / 3.0) * 3.0)
-            } else {
-                lerp_point(second, geometry.target, (t - 2.0 / 3.0) * 3.0)
-            }
-        }
+        EdgeKind::Step | EdgeKind::SmoothStep => geometry.polyline.map_or_else(
+            || lerp_point(geometry.source, geometry.target, t),
+            |polyline| polyline.point_at(t),
+        ),
     }
 }
 
@@ -3912,12 +4175,14 @@ fn paint_nodes<N, E>(
     let shared_transform = canvas_viewport.transform(bounds, Point::ZERO);
     let mut cursor = 0;
     while cursor < indices.len() {
-        let uniform_custom = indices
-            .get(cursor)
-            .and_then(|index| snapshot.graph.nodes.get(*index))
-            .is_some_and(|node| {
-                custom_nodes.contains(&node.id) && registry.zoom_behavior(&node.kind).is_uniform()
-            });
+        let uniform_custom = retained_layer_owner.is_some()
+            && indices
+                .get(cursor)
+                .and_then(|index| snapshot.graph.nodes.get(*index))
+                .is_some_and(|node| {
+                    custom_nodes.contains(&node.id)
+                        && registry.zoom_behavior(&node.kind).is_uniform()
+                });
         if uniform_custom {
             let start = cursor;
             while indices
@@ -4300,6 +4565,92 @@ fn auto_pan_delta(bounds: Rect, position: Point, margin: f32, speed: f32) -> Opt
     (delta != Vector::ZERO).then_some(delta)
 }
 
+fn drag_auto_pan_axes(bounds: Rect, last: Point, current: Point) -> [bool; 2] {
+    let axis = |last: f32, current: f32, min: f32, max: f32| {
+        if last > max || current > max {
+            current > last
+        } else if last < min || current < min {
+            current < last
+        } else {
+            true
+        }
+    };
+    [
+        axis(last.x, current.x, bounds.x(), bounds.max_x()),
+        axis(last.y, current.y, bounds.y(), bounds.max_y()),
+    ]
+}
+
+fn masked_auto_pan_delta(
+    bounds: Rect,
+    position: Point,
+    margin: f32,
+    speed: f32,
+    axes: [bool; 2],
+) -> Option<Vector> {
+    let mut delta = auto_pan_delta(bounds, position, margin, speed)?;
+    if !axes[0] {
+        delta.x = 0.0;
+    }
+    if !axes[1] {
+        delta.y = 0.0;
+    }
+    (delta != Vector::ZERO).then_some(delta)
+}
+
+fn dragged_subtree_bounds<N, E>(
+    graph: &GraphModel<N, E>,
+    origins: &[(NodeId, Point)],
+) -> Option<Rect> {
+    let roots = origins
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect::<HashSet<_>>();
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            let mut current = Some(&node.id);
+            while let Some(id) = current {
+                if roots.contains(id) {
+                    return true;
+                }
+                current = graph.node(id).and_then(|node| node.parent_id.as_ref());
+            }
+            false
+        })
+        .filter_map(|node| graph.node_bounds(node))
+        .reduce(Rect::union)
+}
+
+fn clamp_drag_delta_to_visible(delta: Vector, original: Rect, visible: Rect) -> Vector {
+    let clamp_axis = |delta: f32, original_min: f32, original_max: f32, min: f32, max: f32| {
+        let minimum = min - original_min;
+        let maximum = max - original_max;
+        if minimum <= maximum {
+            delta.clamp(minimum, maximum)
+        } else {
+            ((min + max) - (original_min + original_max)) * 0.5
+        }
+    };
+    Vector::new(
+        clamp_axis(
+            delta.x,
+            original.x(),
+            original.max_x(),
+            visible.x(),
+            visible.max_x(),
+        ),
+        clamp_axis(
+            delta.y,
+            original.y(),
+            original.max_y(),
+            visible.y(),
+            visible.max_y(),
+        ),
+    )
+}
+
 fn rect_contains_rect(outer: Rect, inner: Rect) -> bool {
     outer.contains(inner.origin) && outer.contains(Point::new(inner.max_x(), inner.max_y()))
 }
@@ -4333,6 +4684,10 @@ fn segments_intersect(a: Point, b: Point, c: Point, d: Point) -> bool {
 
 fn cross(first: Vector, second: Vector) -> f32 {
     (first.x * second.y) - (first.y * second.x)
+}
+
+fn dot(first: Vector, second: Vector) -> f32 {
+    (first.x * second.x) + (first.y * second.y)
 }
 
 fn snap_point(point: Point, grid: Size) -> Point {
@@ -4422,6 +4777,30 @@ mod tests {
         arranges: Rc<Cell<u32>>,
         paints: Rc<Cell<u32>>,
         semantics: Rc<Cell<u32>>,
+    }
+
+    #[test]
+    fn node_hover_fill_is_opt_in() {
+        let theme = DefaultTheme::default();
+        let resolved = NodeGraphAppearance::default().resolve(&theme);
+        assert_eq!(resolved.node_hovered, resolved.node);
+
+        let node = Color::rgba(0.1, 0.2, 0.3, 1.0);
+        let resolved = NodeGraphAppearance {
+            node: Some(node),
+            ..NodeGraphAppearance::default()
+        }
+        .resolve(&theme);
+        assert_eq!(resolved.node_hovered, node);
+
+        let hovered = Color::rgba(0.4, 0.5, 0.6, 1.0);
+        let resolved = NodeGraphAppearance {
+            node: Some(node),
+            node_hovered: Some(hovered),
+            ..NodeGraphAppearance::default()
+        }
+        .resolve(&theme);
+        assert_eq!(resolved.node_hovered, hovered);
     }
 
     impl Widget for InteractiveTestNode {
@@ -4833,6 +5212,87 @@ mod tests {
     }
 
     #[test]
+    fn backward_smooth_step_routes_between_separated_nodes() {
+        let source_bounds = Rect::new(220.0, 20.0, 100.0, 80.0);
+        let target_bounds = Rect::new(20.0, 180.0, 100.0, 80.0);
+        let source = Point::new(source_bounds.max_x(), 60.0);
+        let target = Point::new(target_bounds.x(), 220.0);
+        let geometry = make_edge_geometry_with_obstacles(
+            source,
+            HandlePosition::Right,
+            target,
+            HandlePosition::Left,
+            EdgeKind::SmoothStep,
+            EdgePathOptions {
+                border_radius: 12.0,
+                step_offset: 24.0,
+                ..EdgePathOptions::default()
+            },
+            Some((source_bounds, target_bounds)),
+        );
+        let polyline = geometry.polyline.expect("smooth step polyline");
+        let points = polyline.as_slice();
+
+        assert!(points[1].x > source.x, "edge must leave the source outward");
+        assert!(
+            points[points.len() - 2].x < target.x,
+            "edge must approach the target from outside"
+        );
+        let corridor = (source_bounds.max_y() + target_bounds.y()) * 0.5;
+        assert!(
+            points
+                .iter()
+                .any(|point| (point.y - corridor).abs() <= 0.001),
+            "the route should use the free corridor between the nodes"
+        );
+        assert!(points.iter().all(|point| {
+            point.y >= source_bounds.y().min(target_bounds.y())
+                && point.y <= source_bounds.max_y().max(target_bounds.max_y())
+        }));
+        assert!(points[1..points.len() - 1].windows(2).all(|segment| {
+            !segment_crosses_rect_interior(segment[0], segment[1], source_bounds)
+                && !segment_crosses_rect_interior(segment[0], segment[1], target_bounds)
+        }));
+        assert!(edge_distance(&geometry, geometry.midpoint) < 0.01);
+    }
+
+    #[test]
+    fn backward_smooth_step_keeps_a_stable_exterior_side_across_zoom() {
+        for zoom in [0.5_f32, 0.8, 1.0, 1.5, 2.0] {
+            let source_bounds = Rect::new(220.0 * zoom, 80.0 * zoom, 100.0 * zoom, 80.0 * zoom);
+            let target_bounds = Rect::new(20.0 * zoom, 100.0 * zoom, 100.0 * zoom, 80.0 * zoom);
+            let source = Point::new(source_bounds.max_x(), 120.0 * zoom);
+            let target = Point::new(target_bounds.x(), 140.0 * zoom);
+            let geometry = make_edge_geometry_with_obstacles(
+                source,
+                HandlePosition::Right,
+                target,
+                HandlePosition::Left,
+                EdgeKind::SmoothStep,
+                EdgePathOptions::default(),
+                Some((source_bounds, target_bounds)),
+            );
+            let points = geometry
+                .polyline
+                .expect("smooth step polyline")
+                .as_slice()
+                .to_vec();
+            assert!(
+                points
+                    .iter()
+                    .any(|point| point.y < source_bounds.y().min(target_bounds.y())),
+                "overlapping nodes should consistently use the upper exterior route at zoom {zoom}"
+            );
+            assert!(
+                points
+                    .iter()
+                    .all(|point| point.y <= source_bounds.max_y().max(target_bounds.max_y())),
+                "the route must not flick to the lower side at zoom {zoom}"
+            );
+        }
+    }
+
+    #[test]
     fn auto_pan_points_back_toward_visible_content() {
         let bounds = Rect::new(0.0, 0.0, 400.0, 300.0);
         assert_eq!(
@@ -4887,6 +5347,100 @@ mod tests {
                 .position,
             Point::new(65.0, 70.0)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn captured_node_drag_stays_inside_and_reentry_cursor_lands_on_node() -> sui_core::Result<()> {
+        let state = NodeGraphState::from_model(graph());
+        let graph = NodeGraph::new("Captured drag graph", state.clone()).config(NodeGraphConfig {
+            auto_pan_on_node_drag: true,
+            auto_pan_margin: 32.0,
+            auto_pan_speed: 12.0,
+            ..NodeGraphConfig::default()
+        });
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+        let output = runtime.render(window_id)?;
+        let bounds = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("graph semantics")
+            .bounds;
+        let start_flow = Point::new(80.0, 70.0);
+        let start = state.viewport().flow_to_screen(bounds, start_flow);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, start, true),
+        )?;
+        let outside = Point::new(bounds.max_x() + 80.0, start.y);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, outside, true),
+        )?;
+        let outward_snapshot = state.snapshot();
+        let outward_node = outward_snapshot
+            .graph
+            .node(&NodeId::from("source"))
+            .expect("dragged source");
+        let outward_bounds = outward_snapshot.viewport.flow_rect_to_screen(
+            bounds,
+            outward_snapshot
+                .graph
+                .node_bounds(outward_node)
+                .expect("dragged source bounds"),
+        );
+        assert!(
+            rect_contains_rect(bounds, outward_bounds),
+            "auto-pan and drag clamping must keep the complete node inside the canvas"
+        );
+
+        let outward_position = outward_node.position;
+        let outward_viewport = outward_snapshot.viewport;
+        let reversing_outside = outside + Vector::new(-24.0, 0.0);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, reversing_outside, true),
+        )?;
+        assert_eq!(
+            state
+                .node(&NodeId::from("source"))
+                .expect("source while reversing outside")
+                .position,
+            outward_position,
+            "inward cursor motion outside the canvas must not move the node outward"
+        );
+        assert_eq!(
+            state.viewport(),
+            outward_viewport,
+            "auto-pan must pause on the reversing axis while the cursor is outside"
+        );
+
+        let returning = Point::new(bounds.max_x() - 1.0, start.y);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, returning, true),
+        )?;
+        let returning_snapshot = state.snapshot();
+        let returning_node = returning_snapshot
+            .graph
+            .node(&NodeId::from("source"))
+            .expect("returning source");
+        let returning_bounds = returning_snapshot.viewport.flow_rect_to_screen(
+            bounds,
+            returning_snapshot
+                .graph
+                .node_bounds(returning_node)
+                .expect("returning source bounds"),
+        );
+        assert!(
+            returning_bounds.contains(returning),
+            "the cursor must re-enter the canvas inside the clamped node"
+        );
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, returning, false),
+        )?;
         Ok(())
     }
 

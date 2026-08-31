@@ -497,14 +497,6 @@ fn build_header(
                 .gap(8.0)
                 .wrap(FlexWrap::Wrap)
                 .align_items(Alignment::Center)
-                .with_item(
-                    Label::new("sui-nodes feature lab").style_when(demo_text_style_when(
-                        &theme_reader,
-                        DemoTextRole::CardTitle,
-                        |theme| theme.palette.text,
-                    )),
-                    FlexItem::new(),
-                )
                 .with_item(add, FlexItem::new())
                 .with_item(reset, FlexItem::new())
                 .with_item(document, FlexItem::new())

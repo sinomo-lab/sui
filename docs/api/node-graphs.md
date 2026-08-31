@@ -191,6 +191,9 @@ The default editor supports:
   anchored beneath the gesture centroid;
 - primary-button pane panning and middle/secondary-button panning;
 - node selection and dragging, including optional grid snapping;
+- auto-pan offsets captured node drags outside the canvas and clamps the full
+  dragged group to the visible flow rectangle, so the cursor re-enters over it;
+  reversing toward the canvas pauses auto-pan on that axis;
 - Control/Command click multi-selection;
 - Shift-drag marquee selection, with full or partial containment modes;
 - source-to-target handle dragging with connection validation;
@@ -199,7 +202,9 @@ The default editor supports:
 - straight, step, and cubic Bézier edges with optional labels and end markers;
 - smooth-step and simple-Bézier paths, configurable curvature and corner
   radius, start/end marker shapes, animated edge particles, explicit z-order,
-  and draggable endpoint reconnection;
+  and draggable endpoint reconnection. Backward step and smooth-step edges
+  prefer a free corridor between their source and target node bounds, then use
+  a deterministic exterior side when the bounds overlap;
 - pan-on-scroll, double-click zoom, edge-proximity auto-pan, and animated
   viewport transitions;
 - shared fit-view, zoom, and interaction-lock controls;
@@ -222,7 +227,9 @@ data when a user completes a connection.
 
 `NodeGraphAppearance`, `NodeControlsAppearance`, and `NodeMiniMapAppearance`
 own optional color overrides. Unset fields resolve from semantic `DefaultTheme`
-roles on every paint. For data-dependent visuals, `node_painter` and
+roles on every paint. Nodes keep their normal fill on hover by default; set
+`NodeGraphAppearance::node_hovered` to opt into a highlight. For data-dependent
+visuals, `node_painter` and
 `edge_painter` receive the typed model value plus screen-space geometry while
 the editor retains hit testing and interaction behavior.
 

@@ -550,7 +550,19 @@ fn edge_flow_bounds_from_nodes<N, E>(
     );
     let mut bounds =
         Rect::new(source.x, source.y, 0.01, 0.01).union(Rect::new(target.x, target.y, 0.01, 0.01));
-    if matches!(edge.kind, EdgeKind::Bezier | EdgeKind::SimpleBezier) {
+    if matches!(edge.kind, EdgeKind::Step | EdgeKind::SmoothStep)
+        && (dot(target - source, side_direction(source_side)) < 0.0
+            || dot(source - target, side_direction(target_side)) < 0.0)
+    {
+        let clearance = edge
+            .path_options
+            .step_offset
+            .max(edge.path_options.border_radius + 8.0)
+            .max(20.0);
+        bounds = source_bounds
+            .union(target_bounds)
+            .inflate(clearance + 12.0, clearance + 12.0);
+    } else if matches!(edge.kind, EdgeKind::Bezier | EdgeKind::SimpleBezier) {
         let distance = vector_length(target - source);
         let bend = (distance * 0.5).clamp(36.0, 180.0);
         let control_1 = source + scale(side_direction(source_side), bend);
@@ -614,6 +626,10 @@ fn scale(vector: Vector, factor: f32) -> Vector {
     Vector::new(vector.x * factor, vector.y * factor)
 }
 
+fn dot(first: Vector, second: Vector) -> f32 {
+    (first.x * second.x) + (first.y * second.y)
+}
+
 fn vector_length(vector: Vector) -> f32 {
     ((vector.x * vector.x) + (vector.y * vector.y)).sqrt()
 }
@@ -622,6 +638,7 @@ fn vector_length(vector: Vector) -> f32 {
 mod tests {
     use super::*;
     use crate::{Edge, Node};
+    use sui_core::Size;
 
     #[test]
     fn incremental_update_moves_only_changed_node_and_incident_edge() {
@@ -654,6 +671,26 @@ mod tests {
             index
                 .query_edge_indices(Rect::new(500.0, -100.0, 600.0, 700.0))
                 .contains(&0)
+        );
+    }
+
+    #[test]
+    fn backward_step_edge_bounds_include_the_outside_detour() {
+        let graph = GraphModel::new(
+            vec![
+                Node::new("source", Point::new(220.0, 20.0), ()).size(Size::new(100.0, 80.0)),
+                Node::new("target", Point::new(20.0, 180.0), ()).size(Size::new(100.0, 80.0)),
+            ],
+            vec![Edge::new("backward", "source", "target", ()).kind(EdgeKind::SmoothStep)],
+        )
+        .unwrap();
+        let index = GraphSpatialIndex::new(&graph, 1);
+
+        assert!(
+            index
+                .query_edge_indices(Rect::new(140.0, -20.0, 40.0, 24.0))
+                .contains(&0),
+            "the spatial index must include the detour above the two nodes"
         );
     }
 
