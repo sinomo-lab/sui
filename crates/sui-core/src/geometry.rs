@@ -580,6 +580,25 @@ impl Transform {
         )
     }
 
+    pub fn inverse(self) -> Option<Self> {
+        let determinant = (self.xx * self.yy) - (self.xy * self.yx);
+        if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+            return None;
+        }
+        let inverse = 1.0 / determinant;
+        let xx = self.yy * inverse;
+        let yx = -self.yx * inverse;
+        let xy = -self.xy * inverse;
+        let yy = self.xx * inverse;
+        let dx = -((xx * self.dx) + (xy * self.dy));
+        let dy = -((yx * self.dx) + (yy * self.dy));
+        let transform = Self::new(xx, yx, xy, yy, dx, dy);
+        [xx, yx, xy, yy, dx, dy]
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(transform)
+    }
+
     pub fn transform_rect_bbox(self, rect: Rect) -> Rect {
         if rect.is_empty() {
             return rect;
@@ -739,5 +758,23 @@ mod tests {
         assert!(bbox.y().abs() < 0.001);
         assert!((bbox.width() - 4.0).abs() < 0.001);
         assert!((bbox.height() - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn affine_transform_inverse_round_trips_points_and_vectors() {
+        let transform = Transform::translation(42.0, -18.0)
+            .then(Transform::rotation(0.37))
+            .then(Transform::scale(1.75, 0.8));
+        let inverse = transform.inverse().expect("invertible transform");
+        let point = Point::new(19.0, -7.0);
+        let vector = Vector::new(4.0, 11.0);
+        let point_round_trip = inverse.transform_point(transform.transform_point(point));
+        let vector_round_trip = inverse.transform_vector(transform.transform_vector(vector));
+
+        assert!((point_round_trip.x - point.x).abs() < 0.001);
+        assert!((point_round_trip.y - point.y).abs() < 0.001);
+        assert!((vector_round_trip.x - vector.x).abs() < 0.001);
+        assert!((vector_round_trip.y - vector.y).abs() < 0.001);
+        assert!(Transform::scale(0.0, 1.0).inverse().is_none());
     }
 }

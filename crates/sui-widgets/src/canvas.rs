@@ -1,15 +1,20 @@
 use std::{
     cell::RefCell,
+    collections::BTreeMap,
+    rc::Rc,
     sync::{Arc, Mutex, MutexGuard},
 };
 
 use sui_core::{
-    Color, Event, KeyState, Path, PathBuilder, PathElement, Point, PointerButton, PointerEventKind,
-    Rect, ScrollDelta, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    Transform, Vector, WakeEvent,
+    Color, Event, KeyState, Path, PathBuilder, PathElement, Point, PointerButton, PointerEvent,
+    PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
+    SemanticsRole, SemanticsValue, Size, Transform, Vector, WakeEvent,
 };
 use sui_layout::Constraints;
-use sui_runtime::{ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{
+    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
+    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+};
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
 use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
@@ -281,6 +286,72 @@ pub struct CanvasSurface {
     pub document_origin: Point,
     pub grid_spacing: f32,
     pub grid_style: CanvasGridStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasZoomContext {
+    pub viewport: CanvasViewport,
+    pub canvas_bounds: Rect,
+    pub document_origin: Point,
+    pub content_bounds: Rect,
+}
+
+#[derive(Clone)]
+pub enum CanvasZoomBehavior {
+    Uniform,
+    ScreenSpace,
+    Custom(Rc<dyn Fn(CanvasZoomContext) -> Transform>),
+}
+
+impl CanvasZoomBehavior {
+    pub fn custom<F>(resolver: F) -> Self
+    where
+        F: Fn(CanvasZoomContext) -> Transform + 'static,
+    {
+        Self::Custom(Rc::new(resolver))
+    }
+
+    pub fn transform(&self, context: CanvasZoomContext) -> Transform {
+        match self {
+            Self::Uniform => context
+                .viewport
+                .transform(context.canvas_bounds, context.document_origin),
+            Self::ScreenSpace => {
+                let anchor = context.viewport.world_to_screen(
+                    context.canvas_bounds,
+                    context.content_bounds.origin,
+                    context.document_origin,
+                );
+                Transform::translation(
+                    anchor.x - context.content_bounds.x(),
+                    anchor.y - context.content_bounds.y(),
+                )
+            }
+            Self::Custom(resolver) => resolver(context),
+        }
+    }
+}
+
+impl Default for CanvasZoomBehavior {
+    fn default() -> Self {
+        Self::Uniform
+    }
+}
+
+impl std::fmt::Debug for CanvasZoomBehavior {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Uniform => formatter.write_str("Uniform"),
+            Self::ScreenSpace => formatter.write_str("ScreenSpace"),
+            Self::Custom(_) => formatter.write_str("Custom(..)"),
+        }
+    }
+}
+
+struct CanvasWidgetEntry {
+    child: WidgetPod,
+    bounds: Rect,
+    zoom: CanvasZoomBehavior,
 }
 
 impl CanvasSurface {
@@ -598,6 +669,13 @@ enum CanvasDrag {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CanvasPinch {
+    pointers: [u64; 2],
+    last_center: Point,
+    last_distance: f32,
+}
+
 pub struct Canvas {
     theme: DefaultTheme,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -610,6 +688,12 @@ pub struct Canvas {
     focus_animation: AnimatedScalar,
     desired_size: Size,
     appearance: CanvasAppearance,
+    content: Option<SingleChild>,
+    content_bounds: Rect,
+    content_zoom: CanvasZoomBehavior,
+    widgets: Vec<CanvasWidgetEntry>,
+    active_touches: BTreeMap<u64, Point>,
+    pinch: Option<CanvasPinch>,
 }
 
 impl Canvas {
@@ -627,6 +711,12 @@ impl Canvas {
             focus_animation: AnimatedScalar::new(0.0),
             desired_size: Size::new(520.0, 360.0),
             appearance: CanvasAppearance::default(),
+            content: None,
+            content_bounds: Rect::new(0.0, 0.0, 520.0, 360.0),
+            content_zoom: CanvasZoomBehavior::Uniform,
+            widgets: Vec::new(),
+            active_touches: BTreeMap::new(),
+            pinch: None,
         }
     }
 
@@ -677,6 +767,53 @@ impl Canvas {
         self
     }
 
+    pub fn content<W>(mut self, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.content = Some(SingleChild::new(content));
+        self
+    }
+
+    pub fn content_bounds(mut self, bounds: Rect) -> Self {
+        self.content_bounds = Rect::new(
+            bounds.x(),
+            bounds.y(),
+            bounds.width().max(1.0),
+            bounds.height().max(1.0),
+        );
+        self
+    }
+
+    pub fn content_zoom(mut self, behavior: CanvasZoomBehavior) -> Self {
+        self.content_zoom = behavior;
+        self
+    }
+
+    pub fn widget<W>(self, bounds: Rect, widget: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.widget_with_zoom(bounds, CanvasZoomBehavior::Uniform, widget)
+    }
+
+    pub fn widget_with_zoom<W>(mut self, bounds: Rect, zoom: CanvasZoomBehavior, widget: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.widgets.push(CanvasWidgetEntry {
+            child: WidgetPod::new(widget),
+            bounds: Rect::new(
+                bounds.x(),
+                bounds.y(),
+                bounds.width().max(1.0),
+                bounds.height().max(1.0),
+            ),
+            zoom,
+        });
+        self
+    }
+
     pub fn viewport_state(&self) -> CanvasViewport {
         self.viewport
     }
@@ -722,7 +859,117 @@ impl Canvas {
         }
     }
 
+    fn handle_touch_gesture(&mut self, ctx: &mut EventCtx, pointer: &PointerEvent) -> bool {
+        match pointer.kind {
+            PointerEventKind::Down if ctx.bounds().contains(pointer.position) => {
+                self.active_touches
+                    .insert(pointer.pointer_id, pointer.position);
+                if self.pinch.is_some() {
+                    ctx.request_pointer_capture(pointer.pointer_id);
+                    return true;
+                }
+                if self.active_touches.len() < 2 {
+                    return false;
+                }
+                let mut touches = self.active_touches.iter();
+                let Some((&first_id, &first)) = touches.next() else {
+                    return false;
+                };
+                let Some((&second_id, &second)) = touches.next() else {
+                    return false;
+                };
+                let center = Point::new(
+                    first.x + ((second.x - first.x) * 0.5),
+                    first.y + ((second.y - first.y) * 0.5),
+                );
+                self.active_stroke = None;
+                self.drag = None;
+                self.pinch = Some(CanvasPinch {
+                    pointers: [first_id, second_id],
+                    last_center: center,
+                    last_distance: vector_length(second - first).max(1.0),
+                });
+                ctx.request_pointer_capture(first_id);
+                ctx.request_pointer_capture(second_id);
+                Self::request_interaction_update(ctx);
+                true
+            }
+            PointerEventKind::Move => {
+                let Some(position) = self.active_touches.get_mut(&pointer.pointer_id) else {
+                    return false;
+                };
+                *position = pointer.position;
+                let Some(pinch) = self.pinch else {
+                    return false;
+                };
+                let Some(&first) = self.active_touches.get(&pinch.pointers[0]) else {
+                    return false;
+                };
+                let Some(&second) = self.active_touches.get(&pinch.pointers[1]) else {
+                    return false;
+                };
+                let center = Point::new(
+                    first.x + ((second.x - first.x) * 0.5),
+                    first.y + ((second.y - first.y) * 0.5),
+                );
+                let distance = vector_length(second - first).max(1.0);
+                self.viewport.pan += center - pinch.last_center;
+                self.viewport.zoom_around(
+                    ctx.bounds(),
+                    center,
+                    distance / pinch.last_distance,
+                    self.document_origin(),
+                );
+                if let Some(pinch) = &mut self.pinch {
+                    pinch.last_center = center;
+                    pinch.last_distance = distance;
+                }
+                Self::request_interaction_update(ctx);
+                true
+            }
+            PointerEventKind::Up | PointerEventKind::Cancel => {
+                if self.active_touches.remove(&pointer.pointer_id).is_none() {
+                    return false;
+                }
+                let Some(pinch) = self.pinch else {
+                    return false;
+                };
+                ctx.release_pointer_capture(pointer.pointer_id);
+                if !pinch.pointers.contains(&pointer.pointer_id) {
+                    return true;
+                }
+                self.pinch = None;
+                if pointer.kind == PointerEventKind::Cancel {
+                    for pointer_id in self.active_touches.keys().copied().collect::<Vec<_>>() {
+                        ctx.release_pointer_capture(pointer_id);
+                    }
+                    self.active_touches.clear();
+                } else if let Some((&pointer_id, &position)) = self.active_touches.iter().next() {
+                    for extra in self
+                        .active_touches
+                        .keys()
+                        .copied()
+                        .filter(|id| *id != pointer_id)
+                        .collect::<Vec<_>>()
+                    {
+                        ctx.release_pointer_capture(extra);
+                    }
+                    self.active_touches.retain(|id, _| *id == pointer_id);
+                    self.drag = Some(CanvasDrag::Pan {
+                        pointer_id,
+                        last_position: position,
+                    });
+                    ctx.request_pointer_capture(pointer_id);
+                }
+                Self::request_interaction_update(ctx);
+                true
+            }
+            _ => self.pinch.is_some(),
+        }
+    }
+
     fn request_interaction_update(ctx: &mut EventCtx) {
+        ctx.request_arrange();
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -737,6 +984,22 @@ impl Canvas {
 
 impl Widget for Canvas {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if ctx.phase() == EventPhase::Capture {
+            if let Event::Pointer(pointer) = event
+                && pointer.pointer_kind == PointerKind::Touch
+                && self.handle_touch_gesture(ctx, pointer)
+            {
+                ctx.set_handled();
+            }
+            return;
+        }
+        if let Event::Pointer(pointer) = event
+            && pointer.pointer_kind == PointerKind::Touch
+            && self.handle_touch_gesture(ctx, pointer)
+        {
+            ctx.set_handled();
+            return;
+        }
         match event {
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Scroll
@@ -882,7 +1145,15 @@ impl Widget for Canvas {
         }
     }
 
-    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(content) = &mut self.content {
+            content.measure(ctx, Constraints::tight(self.content_bounds.size));
+        }
+        for entry in &mut self.widgets {
+            entry
+                .child
+                .measure(ctx, Constraints::tight(entry.bounds.size));
+        }
         constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
@@ -895,6 +1166,30 @@ impl Widget for Canvas {
                 self.desired_size.height
             },
         ))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let document_origin = self.document_origin();
+        if let Some(content) = &mut self.content {
+            let transform = self.content_zoom.transform(CanvasZoomContext {
+                viewport: self.viewport,
+                canvas_bounds: bounds,
+                document_origin,
+                content_bounds: self.content_bounds,
+            });
+            content.arrange_transformed(ctx, self.content_bounds, transform);
+        }
+        for entry in &mut self.widgets {
+            let transform = entry.zoom.transform(CanvasZoomContext {
+                viewport: self.viewport,
+                canvas_bounds: bounds,
+                document_origin,
+                content_bounds: entry.bounds,
+            });
+            entry
+                .child
+                .arrange_transformed(ctx, entry.bounds, transform);
+        }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -930,6 +1225,12 @@ impl Widget for Canvas {
         {
             paint_canvas_shape(ctx, &shape, transform, self.viewport.zoom);
         }
+        if let Some(content) = &self.content {
+            content.paint(ctx);
+        }
+        for entry in &self.widgets {
+            entry.child.paint(ctx);
+        }
         ctx.pop_clip();
         draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
     }
@@ -948,6 +1249,12 @@ impl Widget for Canvas {
             SemanticsAction::Custom("Pan".into()),
         ];
         ctx.push(node);
+        if let Some(content) = &self.content {
+            content.semantics(ctx);
+        }
+        for entry in &self.widgets {
+            entry.child.semantics(ctx);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -958,6 +1265,24 @@ impl Widget for Canvas {
         let theme = self.resolved_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         Self::request_interaction_update(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if let Some(content) = &self.content {
+            content.visit_children(visitor);
+        }
+        for entry in &self.widgets {
+            visitor.visit(&entry.child);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if let Some(content) = &mut self.content {
+            content.visit_children_mut(visitor);
+        }
+        for entry in &mut self.widgets {
+            visitor.visit(&mut entry.child);
+        }
     }
 }
 
@@ -3547,22 +3872,57 @@ fn channel_to_u8(channel: f32) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
     use super::{
         Canvas, CanvasAppearance, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport,
-        PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape,
-        PixelCanvasState, PixelCanvasTool, PixelColor,
+        CanvasZoomBehavior, PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode,
+        PixelCanvasBrushShape, PixelCanvasState, PixelCanvasTool, PixelColor,
     };
     use crate::{CanvasRulerAxis, DefaultTheme, ThemeTextToken};
     use sui_core::{
         Color, Event, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-        PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsRole,
-        SemanticsValue, Size, Vector, WindowEvent,
+        PointerEvent, PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction,
+        SemanticsNode, SemanticsRole, SemanticsValue, Size, Transform, Vector, WindowEvent,
     };
-    use sui_runtime::{Application, RenderOutput, Runtime, Widget, WindowBuilder};
+    use sui_layout::Constraints;
+    use sui_runtime::{
+        Application, EventCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx, Widget,
+        WindowBuilder,
+    };
     use sui_scene::{Brush, ImageSampling, RegisteredImage, SceneCommand};
     use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     const RGBA_CHANNEL_TOLERANCE: u8 = 1;
+
+    struct CanvasContentProbe {
+        name: &'static str,
+        pointer_positions: Rc<RefCell<Vec<Point>>>,
+    }
+
+    impl Widget for CanvasContentProbe {
+        fn event(&mut self, _ctx: &mut EventCtx, event: &Event) {
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Down
+            {
+                self.pointer_positions.borrow_mut().push(pointer.position);
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(100.0, 60.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.8, 0.2, 0.1, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+            node.name = Some(self.name.to_string());
+            ctx.push(node);
+        }
+    }
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
     where
@@ -3604,6 +3964,21 @@ mod tests {
         pointer.pointer_id = 1;
         pointer.button = Some(PointerButton::Primary);
         pointer.buttons = buttons;
+        Event::Pointer(pointer)
+    }
+
+    fn touch_pointer(
+        pointer_id: u64,
+        kind: PointerEventKind,
+        position: Point,
+        pressed: bool,
+    ) -> Event {
+        let mut pointer = match primary_pointer(kind, position, pressed) {
+            Event::Pointer(pointer) => pointer,
+            _ => unreachable!(),
+        };
+        pointer.pointer_id = pointer_id;
+        pointer.pointer_kind = PointerKind::Touch;
         Event::Pointer(pointer)
     }
 
@@ -4230,6 +4605,250 @@ mod tests {
         assert!(strokes.contains(&appearance.grid.unwrap()));
         assert!(strokes.contains(&appearance.axis_x.unwrap()));
         assert!(strokes.contains(&appearance.axis_y.unwrap()));
+    }
+
+    #[test]
+    fn canvas_uniformly_scales_normal_widget_content_and_inverse_maps_input() {
+        let pointer_positions = Rc::new(RefCell::new(Vec::new()));
+        let canvas = Canvas::new("Widget canvas")
+            .content(CanvasContentProbe {
+                name: "canvas content probe",
+                pointer_positions: Rc::clone(&pointer_positions),
+            })
+            .content_bounds(Rect::new(-50.0, -30.0, 100.0, 60.0));
+        let (mut runtime, window_id) = build_runtime(canvas);
+        let first = runtime.render(window_id).expect("initial canvas render");
+        let canvas_bounds = first
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("canvas semantics")
+            .bounds;
+        let first_content = first
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("canvas content probe"))
+            .expect("content semantics");
+        let center = CanvasViewport::center(canvas_bounds);
+        assert_eq!(
+            first_content.bounds,
+            Rect::new(center.x - 50.0, center.y - 30.0, 100.0, 60.0)
+        );
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, center);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("dispatch transformed pointer");
+        assert_eq!(&*pointer_positions.borrow(), &[Point::ZERO]);
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, center);
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, 100.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .expect("zoom canvas");
+        let zoomed = runtime.render(window_id).expect("zoomed canvas render");
+        let zoomed_content = zoomed
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("canvas content probe"))
+            .expect("zoomed content semantics");
+        let factor = (100.0_f32 * 0.002).exp();
+        assert!((zoomed_content.bounds.width() - (100.0 * factor)).abs() < 0.01);
+        assert!((zoomed_content.bounds.height() - (60.0 * factor)).abs() < 0.01);
+        assert!(
+            (zoomed_content.bounds.x() + (zoomed_content.bounds.width() * 0.5) - center.x).abs()
+                < 0.01
+        );
+    }
+
+    #[test]
+    fn canvas_touch_pinch_uniformly_scales_widget_content() {
+        let canvas = Canvas::new("Pinch canvas")
+            .content(CanvasContentProbe {
+                name: "pinch content",
+                pointer_positions: Rc::new(RefCell::new(Vec::new())),
+            })
+            .content_bounds(Rect::new(-50.0, -30.0, 100.0, 60.0));
+        let (mut runtime, window_id) = build_runtime(canvas);
+        let first = runtime.render(window_id).expect("initial canvas render");
+        let canvas_bounds = first
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("canvas semantics")
+            .bounds;
+        let center = CanvasViewport::center(canvas_bounds);
+        let first_touch = Point::new(center.x - 50.0, center.y);
+        let second_touch = Point::new(center.x + 50.0, center.y);
+        for event in [
+            touch_pointer(31, PointerEventKind::Down, first_touch, true),
+            touch_pointer(47, PointerEventKind::Down, second_touch, true),
+            touch_pointer(
+                31,
+                PointerEventKind::Move,
+                Point::new(center.x - 100.0, center.y),
+                true,
+            ),
+            touch_pointer(
+                47,
+                PointerEventKind::Move,
+                Point::new(center.x + 100.0, center.y),
+                true,
+            ),
+        ] {
+            runtime
+                .handle_event(window_id, event)
+                .expect("dispatch pinch gesture");
+        }
+        let zoomed = runtime.render(window_id).expect("pinched canvas render");
+        let content = zoomed
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("pinch content"))
+            .expect("pinched content semantics");
+
+        assert!((content.bounds.width() - 200.0).abs() < 0.01);
+        assert!((content.bounds.height() - 120.0).abs() < 0.01);
+        assert!((content.bounds.x() + 100.0 - center.x).abs() < 0.01);
+    }
+
+    #[test]
+    fn canvas_rotation_transforms_widget_semantics_and_hit_testing() {
+        let pointer_positions = Rc::new(RefCell::new(Vec::new()));
+        let canvas = Canvas::new("Rotated canvas")
+            .viewport(CanvasViewport::new().rotation(std::f32::consts::FRAC_PI_2))
+            .content(CanvasContentProbe {
+                name: "rotated content",
+                pointer_positions: Rc::clone(&pointer_positions),
+            })
+            .content_bounds(Rect::new(-50.0, -20.0, 100.0, 40.0));
+        let (mut runtime, window_id) = build_runtime(canvas);
+        let output = runtime.render(window_id).expect("rotated canvas render");
+        let canvas_bounds = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("canvas semantics")
+            .bounds;
+        let content = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("rotated content"))
+            .expect("rotated semantics");
+        let center = CanvasViewport::center(canvas_bounds);
+        assert!((content.bounds.width() - 40.0).abs() < 0.01);
+        assert!((content.bounds.height() - 100.0).abs() < 0.01);
+
+        let mut down = PointerEvent::new(PointerEventKind::Down, center);
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .expect("dispatch rotated pointer");
+        assert!(pointer_positions.borrow()[0].x.abs() < 0.001);
+        assert!(pointer_positions.borrow()[0].y.abs() < 0.001);
+    }
+
+    #[test]
+    fn canvas_screen_space_content_keeps_visual_size_while_zooming() {
+        let canvas = Canvas::new("Screen-space canvas")
+            .content(CanvasContentProbe {
+                name: "canvas content probe",
+                pointer_positions: Rc::new(RefCell::new(Vec::new())),
+            })
+            .content_bounds(Rect::new(-50.0, -30.0, 100.0, 60.0))
+            .content_zoom(CanvasZoomBehavior::ScreenSpace);
+        let (mut runtime, window_id) = build_runtime(canvas);
+        let first = runtime.render(window_id).expect("initial canvas render");
+        let first_content = first
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("canvas content probe"))
+            .expect("content semantics")
+            .bounds;
+        let canvas_bounds = first
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("canvas semantics")
+            .bounds;
+        let mut scroll = PointerEvent::new(
+            PointerEventKind::Scroll,
+            CanvasViewport::center(canvas_bounds),
+        );
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, 100.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .expect("zoom canvas");
+        let zoomed = runtime.render(window_id).expect("zoomed canvas render");
+        let zoomed_content = zoomed
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("canvas content probe"))
+            .expect("zoomed content semantics")
+            .bounds;
+
+        assert_eq!(zoomed_content.size, first_content.size);
+    }
+
+    #[test]
+    fn canvas_mixes_uniform_and_custom_widget_zoom_policies() {
+        let canvas = Canvas::new("Mixed widget canvas")
+            .widget(
+                Rect::new(-140.0, -30.0, 100.0, 60.0),
+                CanvasContentProbe {
+                    name: "uniform item",
+                    pointer_positions: Rc::new(RefCell::new(Vec::new())),
+                },
+            )
+            .widget_with_zoom(
+                Rect::new(40.0, -30.0, 100.0, 60.0),
+                CanvasZoomBehavior::custom(|context| {
+                    let anchor = context.viewport.world_to_screen(
+                        context.canvas_bounds,
+                        context.content_bounds.origin,
+                        context.document_origin,
+                    );
+                    Transform::translation(
+                        anchor.x - context.content_bounds.x(),
+                        anchor.y - context.content_bounds.y(),
+                    )
+                }),
+                CanvasContentProbe {
+                    name: "custom item",
+                    pointer_positions: Rc::new(RefCell::new(Vec::new())),
+                },
+            );
+        let (mut runtime, window_id) = build_runtime(canvas);
+        let first = runtime.render(window_id).expect("initial canvas render");
+        let canvas_bounds = first
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("canvas semantics")
+            .bounds;
+        let mut scroll = PointerEvent::new(
+            PointerEventKind::Scroll,
+            CanvasViewport::center(canvas_bounds),
+        );
+        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, 100.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .expect("zoom canvas");
+        let zoomed = runtime.render(window_id).expect("zoomed canvas render");
+        let bounds = |name: &str| {
+            zoomed
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .expect("canvas widget semantics")
+                .bounds
+        };
+
+        assert!(bounds("uniform item").width() > 100.0);
+        assert_eq!(bounds("custom item").size, Size::new(100.0, 60.0));
     }
 
     #[test]

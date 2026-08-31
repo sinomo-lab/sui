@@ -201,6 +201,14 @@ Do not paint a child at a location that differs from its arranged bounds. Use
 retained transforms for presentation-only movement when that distinction is
 intentional.
 
+For affine-transformed content, call `WidgetPod::arrange_transformed` (or the
+equivalent `SingleChild` helper) with stable local/world bounds and a transform
+into the parent's coordinate space. SUI applies the composed transform to the
+complete retained subtree: paint commands and clips, hit testing, pointer and
+drag coordinates, semantics bounds, paint damage, and IME rectangles. Normal
+`arrange` inherits an ancestor transform, so nested widgets need no special
+handling.
+
 `MeasureCtx::layout()` exposes text, DPI, font, and image measurement services.
 Cache shaped or persistent text layout during measurement when paint will
 reuse it; avoid reshaping unchanged text every frame.

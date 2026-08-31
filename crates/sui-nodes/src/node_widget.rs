@@ -4,6 +4,7 @@ use sui_reactive::Signal;
 use sui_runtime::{
     PaintCtx, SemanticsCtx, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
+use sui_widgets::CanvasZoomBehavior;
 
 use crate::{Node, NodeId};
 
@@ -15,12 +16,14 @@ type NodeWidgetFactory<N> = dyn FnMut(&NodeId, NodeSignal<N>) -> Box<dyn Widget>
 /// Registry of retained widget factories keyed by [`Node::kind`].
 pub struct NodeWidgetRegistry<N> {
     factories: HashMap<String, Box<NodeWidgetFactory<N>>>,
+    zoom_behaviors: HashMap<String, CanvasZoomBehavior>,
 }
 
 impl<N> NodeWidgetRegistry<N> {
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
+            zoom_behaviors: HashMap::new(),
         }
     }
 
@@ -51,11 +54,33 @@ impl<N> NodeWidgetRegistry<N> {
     }
 
     pub fn remove(&mut self, kind: &str) -> bool {
+        self.zoom_behaviors.remove(kind);
         self.factories.remove(kind).is_some()
     }
 
     pub fn kinds(&self) -> impl Iterator<Item = &str> {
         self.factories.keys().map(String::as_str)
+    }
+
+    pub fn set_zoom_behavior(
+        &mut self,
+        kind: impl Into<String>,
+        behavior: CanvasZoomBehavior,
+    ) -> Option<CanvasZoomBehavior> {
+        self.zoom_behaviors.insert(kind.into(), behavior)
+    }
+
+    pub fn with_zoom_behavior(
+        mut self,
+        kind: impl Into<String>,
+        behavior: CanvasZoomBehavior,
+    ) -> Self {
+        self.set_zoom_behavior(kind, behavior);
+        self
+    }
+
+    pub(crate) fn zoom_behavior(&self, kind: &str) -> CanvasZoomBehavior {
+        self.zoom_behaviors.get(kind).cloned().unwrap_or_default()
     }
 
     fn build(&mut self, node: &Node<N>, signal: NodeSignal<N>) -> Option<WidgetPod> {
@@ -82,6 +107,7 @@ impl<N> fmt::Debug for NodeWidgetRegistry<N> {
         formatter
             .debug_struct("NodeWidgetRegistry")
             .field("kinds", &kinds)
+            .field("zoom_behaviors", &self.zoom_behaviors)
             .finish()
     }
 }

@@ -186,7 +186,9 @@ impl Widget for ResponsiveNodesWorkspace {
         {
             self.graph_state.fit_view(
                 graph_size,
-                FitViewOptions::default().padding(12.0).zoom_range(1.0, 2.2),
+                FitViewOptions::default()
+                    .padding(12.0)
+                    .zoom_range(0.35, 2.2),
             );
         }
         self.last_primary_size = Some(graph_size);
@@ -282,8 +284,10 @@ pub(crate) fn build_nodes_demo_with_theme(theme_reader: DevThemeReader) -> impl 
         })
         .config(NodeGraphConfig {
             fit_view_on_init: true,
-            fit_view: FitViewOptions::default().padding(24.0).zoom_range(1.0, 2.2),
-            min_zoom: 1.0,
+            fit_view: FitViewOptions::default()
+                .padding(24.0)
+                .zoom_range(0.35, 2.2),
+            min_zoom: 0.35,
             max_zoom: 2.2,
             background_variant: BackgroundVariant::Dots,
             selection_mode: SelectionMode::Partial,
@@ -340,7 +344,7 @@ pub(crate) fn build_nodes_demo_with_theme(theme_reader: DevThemeReader) -> impl 
             active: Some(Color::rgba(0.18, 0.64, 0.88, 1.0)),
             ..NodeControlsAppearance::default()
         })
-        .zoom_range(1.0, 2.2)
+        .zoom_range(0.35, 2.2)
         .transition_duration(0.28);
     let controls_surface = Background::new(
         theme_reader().palette.surface_raised,
@@ -528,7 +532,7 @@ fn build_sidebar(
         .desired_size(Size::new(300.0, 160.0))
         .pannable(true)
         .zoomable(true)
-        .zoom_range(1.0, 2.2);
+        .zoom_range(0.35, 2.2);
 
     let stats = state.observable().select_named(
         "Node graph demo statistics",
@@ -669,8 +673,8 @@ fn build_uncontrolled_scratch(theme_reader: DevThemeReader) -> impl Widget {
         })
         .config(NodeGraphConfig {
             fit_view_on_init: true,
-            fit_view: FitViewOptions::default().padding(12.0).zoom_range(1.0, 2.0),
-            min_zoom: 1.0,
+            fit_view: FitViewOptions::default().padding(12.0).zoom_range(0.5, 2.0),
+            min_zoom: 0.5,
             max_zoom: 2.0,
             background_variant: BackgroundVariant::Cross,
             grid_spacing: 20.0,

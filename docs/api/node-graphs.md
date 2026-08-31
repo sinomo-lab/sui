@@ -89,7 +89,14 @@ handles with optional size limits.
 The graph background and world transform use SUI's paint-only `CanvasSurface`.
 `Viewport::to_canvas` and `Viewport::from_canvas` preserve coordinates between
 the xyflow-style graph transform and an unrotated `CanvasViewport`. Rotation is
-intentionally rejected because retained node widgets stay axis-aligned.
+intentionally rejected by the graph model, while Canvas itself supports affine
+widget transforms.
+
+Retained node widgets use true Canvas-style uniform scaling by default. Their
+layout is measured once in stable flow units; zoom transforms the complete
+subtree, including text, images, icons, controls, hit testing, and semantics.
+`NodeGraph::node_zoom_behavior` and `NodeWidgetRegistry::with_zoom_behavior`
+allow a node kind to remain screen-space or supply a custom Canvas transform.
 
 `NodeGraph` combines this surface with SUI's built-in graph interaction model.
 Use `NodeGraphSurface` when rendering should be independent of those events.

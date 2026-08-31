@@ -24,8 +24,8 @@ use sui_core::{
     DragScopeId, DragSessionId, DropEffect, Event, FontHandle, ImageHandle, InvalidationKind,
     KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons, PointerEvent,
     PointerEventKind, PointerKind, RawMouseMotionEvent, Rect, SemanticsAction,
-    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken, Vector,
-    WakeEvent, WidgetId, WindowEvent,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken,
+    Transform, Vector, WakeEvent, WidgetId, WindowEvent,
 };
 use sui_layout::Constraints;
 use sui_reactive::Signal;
@@ -4740,6 +4740,127 @@ fn text_layout_retention_follows_retained_scene_handles() {
     let registry = system.text_layout_registry();
     assert!(registry.contains(first.handle()));
     assert!(!registry.contains(second.handle()));
+}
+
+struct TransformedProbe {
+    pointer_positions: Rc<RefCell<Vec<Point>>>,
+}
+
+impl Widget for TransformedProbe {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+        {
+            self.pointer_positions.borrow_mut().push(pointer.position);
+            ctx.set_handled();
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(100.0, 60.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::rgba(0.85, 0.2, 0.1, 1.0));
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some("transformed probe".to_string());
+        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+}
+
+struct TransformedHost {
+    child: SingleChild,
+    transform: Transform,
+}
+
+impl Widget for TransformedHost {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child
+            .measure(ctx, Constraints::tight(Size::new(100.0, 60.0)));
+        constraints.clamp(Size::new(480.0, 320.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, _bounds: Rect) {
+        self.child
+            .arrange_transformed(ctx, Rect::new(10.0, 20.0, 100.0, 60.0), self.transform);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+#[test]
+fn transformed_widget_subtree_aligns_paint_input_and_semantics() {
+    let pointer_positions = Rc::new(RefCell::new(Vec::new()));
+    let transform = Transform::scale(2.0, 2.0).then(Transform::translation(100.0, 50.0));
+    let app = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("transformed")
+                .root(TransformedHost {
+                    child: SingleChild::new(TransformedProbe {
+                        pointer_positions: Rc::clone(&pointer_positions),
+                    }),
+                    transform,
+                }),
+        )
+        .build()
+        .unwrap();
+    let mut runtime = app;
+    let window_id = runtime.window_ids()[0];
+    let output = runtime.render(window_id).unwrap();
+    let semantics = output
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some("transformed probe"))
+        .expect("transformed semantics");
+    assert_eq!(semantics.bounds, Rect::new(120.0, 90.0, 200.0, 120.0));
+
+    let graph = runtime.widget_graph(window_id).unwrap();
+    let node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == semantics.id)
+        .expect("transformed widget graph node");
+    assert_eq!(node.local_bounds, Rect::new(10.0, 20.0, 100.0, 60.0));
+    assert_eq!(node.geometry.input_bounds, semantics.bounds);
+    assert_eq!(node.presentation_transform, transform);
+
+    let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(140.0, 110.0));
+    down.button = Some(PointerButton::Primary);
+    down.buttons = PointerButtons::new(1);
+    assert!(
+        runtime
+            .dispatch_event(window_id, Event::Pointer(down))
+            .unwrap()
+    );
+    assert_eq!(&*pointer_positions.borrow(), &[Point::new(20.0, 30.0)]);
+
+    let has_transform = output.frame.scene.commands().iter().any(|command| {
+        matches!(command, SceneCommand::PushTransform { transform: actual } if *actual == transform)
+    });
+    assert!(has_transform);
 }
 
 #[test]

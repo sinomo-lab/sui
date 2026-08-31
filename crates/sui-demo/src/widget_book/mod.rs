@@ -5382,7 +5382,7 @@ fn build_canvas_and_media_gallery_with_theme(theme_reader: WidgetBookThemeReader
                 control_story_with_theme(
                     Rc::clone(&theme_reader),
                     "Vector and pixel canvas",
-                    "Canvas, CanvasRuler, CanvasViewport, CanvasShape, CanvasStroke, PixelCanvas, and PixelCanvasState.",
+                    "Canvas hosts uniformly transformed SUI widgets alongside CanvasShape drawing, rulers, and PixelCanvas state.",
                     Stack::vertical()
                         .spacing(12.0)
                         .alignment(Alignment::Stretch)
@@ -5415,6 +5415,23 @@ fn build_canvas_and_media_gallery_with_theme(theme_reader: WidgetBookThemeReader
                                             2.0,
                                         )),
                                     ))
+                                    .widget(
+                                        Rect::new(100.0, 92.0, 148.0, 40.0),
+                                        Button::new("Retained widget").theme_when(
+                                            clone_widget_book_theme_reader(&theme_reader),
+                                        ),
+                                    )
+                                    .widget_with_zoom(
+                                        Rect::new(292.0, 88.0, 96.0, 28.0),
+                                        CanvasZoomBehavior::ScreenSpace,
+                                        Label::new("Screen-space")
+                                            .semantic_name("Screen-space Canvas widget")
+                                            .style_when(demo_text_style_when(
+                                                &theme_reader,
+                                                DemoTextRole::Supporting,
+                                                |theme| theme.palette.text_muted,
+                                            )),
+                                    )
                                     .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                             ),
                         )

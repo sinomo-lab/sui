@@ -8106,6 +8106,30 @@ final_max_luminance={final_max_luminance}
                     format!("{selected:#?}"),
                 )
                 .expect("write selected pipeline group snapshot");
+
+                let graph = selected
+                    .accessibility
+                    .nodes
+                    .iter()
+                    .find(|node| node.name.as_deref() == Some(NODES_MAIN_GRAPH_NAME))
+                    .expect("main graph semantics");
+                let zoom_anchor = Point::new(
+                    graph.bounds.x() + (graph.bounds.width() * 0.5),
+                    graph.bounds.y() + (graph.bounds.height() * 0.5),
+                );
+                let mut scroll = PointerEvent::new(PointerEventKind::Scroll, zoom_anchor);
+                scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -300.0)));
+                window
+                    .dispatch_event_now(Event::Pointer(scroll))
+                    .expect("zoom retained node widgets below 100 percent");
+                window
+                    .pump_frames(3)
+                    .expect("paint uniformly zoomed node widgets");
+                window
+                    .capture_screenshot_now()
+                    .expect("capture uniformly zoomed node widgets")
+                    .write_png(output.join("desktop-1280x720-uniform-zoom-out.png"))
+                    .expect("write uniformly zoomed node screenshot");
             }
         }
     }

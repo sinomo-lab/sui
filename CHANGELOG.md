@@ -11,6 +11,10 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Added affine transformed widget subtrees and Canvas-hosted normal widgets.
+  Canvas now uniformly scales paint, input, semantics, text, images, and nested
+  layout by default, with screen-space/custom zoom policies and touch pinch;
+  retained node widgets use the same path.
 - Added the `sinomo-ui-nodes` graph-editor library with typed nodes, edges,
   handles, controlled and uncontrolled observable state, retained custom node
   widgets, dynamic measurement, incremental spatial indexing, subflows,

@@ -41,9 +41,10 @@ pub use animation::{
 };
 pub use canvas::{
     Canvas, CanvasAppearance, CanvasGridStyle, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis,
-    CanvasShape, CanvasStroke, CanvasSurface, CanvasViewport, PixelCanvas, PixelCanvasAppearance,
-    PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState,
-    PixelCanvasTool, paint_canvas_grid,
+    CanvasShape, CanvasStroke, CanvasSurface, CanvasViewport, CanvasZoomBehavior,
+    CanvasZoomContext, PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode,
+    PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
+    paint_canvas_grid,
 };
 pub use collection::{
     CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,

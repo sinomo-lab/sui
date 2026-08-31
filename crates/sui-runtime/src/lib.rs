@@ -22,7 +22,7 @@ use sui_core::{
     Error, Event, FontHandle, ImageHandle, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Point, PointerButton, PointerButtons, PointerEvent,
     PointerEventKind, Rect, Result, SemanticsActionRequest, SemanticsEvent, SemanticsNode, Size,
-    TimerToken, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
+    TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -1024,6 +1024,9 @@ pub struct WidgetNodeSnapshot {
     pub children: Vec<WidgetId>,
     pub measured_size: Size,
     pub geometry: WidgetGeometrySnapshot,
+    pub local_bounds: Rect,
+    pub presentation_transform: Transform,
+    pub inverse_presentation_transform: Option<Transform>,
     // Backward-compatible alias of geometry.layout_bounds.
     pub bounds: Rect,
     pub paint_boundary: PaintBoundaryMode,
@@ -4945,7 +4948,10 @@ impl WidgetGraph {
             visitor.children
         };
 
-        let layout_bounds = pod.bounds();
+        let local_bounds = pod.bounds();
+        let presentation_transform = pod.presentation_transform();
+        let inverse_presentation_transform = presentation_transform.inverse();
+        let layout_bounds = presentation_transform.transform_rect_bbox(local_bounds);
         let input_bounds = layout_bounds;
         let paint_bounds = paint_bounds_by_widget
             .get(&id)
@@ -4961,6 +4967,9 @@ impl WidgetGraph {
                 children,
                 measured_size: pod.measured_size(),
                 geometry: WidgetGeometrySnapshot::new(layout_bounds, input_bounds, paint_bounds),
+                local_bounds,
+                presentation_transform,
+                inverse_presentation_transform,
                 bounds: layout_bounds,
                 paint_boundary: pod.current_paint_boundary_mode(),
                 stack_host: resolved_host,
@@ -4982,6 +4991,10 @@ impl WidgetGraph {
     fn hit_test_node(&self, widget_id: WidgetId, point: Point) -> Option<WidgetId> {
         let node = self.node(widget_id)?;
         if !node.hit_test || !node.geometry.input_bounds.contains(point) {
+            return None;
+        }
+        let local_point = node.inverse_presentation_transform?.transform_point(point);
+        if !node.local_bounds.contains(local_point) {
             return None;
         }
 

@@ -136,6 +136,8 @@ This crate owns:
 - timers, animation-frame wakes, and async wakeups
 - invalidation scheduling
 - default widget-tree measure and arrange execution
+- affine transformed subtrees with coordinated paint, hit testing, event
+  coordinates, semantics, IME, and damage bounds
 - scene and semantics generation
 - runtime-side diagnostics and snapshots
 
@@ -185,6 +187,9 @@ The built-in widget library.
 This crate owns common controls and containers plus theme types. It is the
 reference implementation for how widgets use runtime contexts, semantics, and
 scene painting, but custom widgets may use different internal models.
+Its `Canvas` hosts normal retained widget content on the runtime transform
+protocol, with uniform zoom by default and per-placement screen-space/custom
+policies.
 
 ### `sinomo-ui-nodes`
 

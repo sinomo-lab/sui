@@ -12,7 +12,9 @@ use sui_runtime::{
 };
 use sui_scene::StrokeStyle;
 use sui_text::TextStyle;
-use sui_widgets::{CanvasGridStyle, CanvasSurface, DefaultTheme};
+use sui_widgets::{
+    CanvasGridStyle, CanvasSurface, CanvasZoomBehavior, CanvasZoomContext, DefaultTheme,
+};
 
 use crate::node_widget::RetainedNodeWidgets;
 use crate::{
@@ -564,6 +566,17 @@ where
         self
     }
 
+    /// Override how retained widgets of `kind` respond to Canvas zoom.
+    /// Uniform subtree scaling is the default.
+    pub fn node_zoom_behavior(
+        mut self,
+        kind: impl Into<String>,
+        behavior: CanvasZoomBehavior,
+    ) -> Self {
+        self.node_widget_registry.set_zoom_behavior(kind, behavior);
+        self
+    }
+
     pub fn state_handle(&self) -> NodeGraphState<N, E> {
         self.state.clone()
     }
@@ -880,6 +893,15 @@ where
 
     pub fn node_types(mut self, registry: NodeWidgetRegistry<N>) -> Self {
         self.graph = self.graph.node_types(registry);
+        self
+    }
+
+    pub fn node_zoom_behavior(
+        mut self,
+        kind: impl Into<String>,
+        behavior: CanvasZoomBehavior,
+    ) -> Self {
+        self.graph = self.graph.node_zoom_behavior(kind, behavior);
         self
     }
 
@@ -1982,6 +2004,7 @@ where
             ctx.request_semantics();
         }
         let snapshot = ctx.observe(&self.state.signal);
+        let canvas_viewport = snapshot.viewport.to_canvas(bounds.size);
         for node in &snapshot.graph.nodes {
             let Some(entry) = self.node_widgets.get_mut(&node.id) else {
                 continue;
@@ -1989,11 +2012,18 @@ where
             let child_bounds = if node.hidden {
                 Rect::ZERO
             } else {
-                snapshot
-                    .viewport
-                    .flow_rect_to_screen(bounds, graph_node_bounds(&snapshot.graph, node))
+                graph_node_bounds(&snapshot.graph, node)
             };
-            entry.pod.arrange(ctx, child_bounds);
+            let transform = self
+                .node_widget_registry
+                .zoom_behavior(&node.kind)
+                .transform(CanvasZoomContext {
+                    viewport: canvas_viewport,
+                    canvas_bounds: bounds,
+                    document_origin: Point::ZERO,
+                    content_bounds: child_bounds,
+                });
+            entry.pod.arrange_transformed(ctx, child_bounds, transform);
         }
         if snapshot
             .graph
@@ -4363,6 +4393,61 @@ mod tests {
             second_semantics.bounds.origin,
             first_semantics.bounds.origin
         );
+        Ok(())
+    }
+
+    #[test]
+    fn retained_node_widgets_uniformly_scale_with_canvas_zoom() -> sui_core::Result<()> {
+        let make_state = || {
+            NodeGraphState::from_snapshot(
+                GraphSnapshot::new(
+                    GraphModel::new(
+                        vec![
+                            Node::new("custom", Point::new(30.0, 40.0), ())
+                                .kind("retained")
+                                .label("Retained custom node")
+                                .content_sized(Size::new(80.0, 40.0), Size::new(400.0, 200.0)),
+                        ],
+                        Vec::new(),
+                    )
+                    .expect("valid graph"),
+                )
+                .viewport(Viewport::new(0.0, 0.0, 2.0)),
+            )
+        };
+
+        let uniform_state = make_state();
+        let uniform = NodeGraph::new("Uniform graph", uniform_state.clone())
+            .node_type("retained", |_id, node| RetainedTestNode { node });
+        let (mut runtime, window_id) = build_runtime_with_graph(uniform);
+        let output = runtime.render(window_id)?;
+        let uniform_bounds = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Retained custom node")
+            })
+            .expect("uniform retained semantics")
+            .bounds;
+        assert_eq!(uniform_bounds.size, Size::new(416.0, 168.0));
+
+        let screen_state = make_state();
+        let screen_space = NodeGraph::new("Screen-space graph", screen_state)
+            .node_type("retained", |_id, node| RetainedTestNode { node })
+            .node_zoom_behavior("retained", CanvasZoomBehavior::ScreenSpace);
+        let (mut runtime, window_id) = build_runtime_with_graph(screen_space);
+        let output = runtime.render(window_id)?;
+        let screen_bounds = output
+            .semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button
+                    && node.name.as_deref() == Some("Retained custom node")
+            })
+            .expect("screen-space retained semantics")
+            .bounds;
+        assert_eq!(screen_bounds.size, Size::new(208.0, 84.0));
         Ok(())
     }
 

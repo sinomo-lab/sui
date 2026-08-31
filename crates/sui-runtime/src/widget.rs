@@ -42,6 +42,40 @@ static NEXT_ASYNC_WAKE_TOKEN: AtomicU64 = AtomicU64::new(1);
 static NEXT_DRAG_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const WIDGET_IMAGE_HANDLE_NAMESPACE: u64 = 1 << 63;
 
+fn relative_transform(child: Transform, parent: Transform) -> Transform {
+    parent
+        .inverse()
+        .map(|inverse| child.then(inverse))
+        .unwrap_or(child)
+}
+
+fn event_for_transform(event: &Event, inverse: Transform) -> Event {
+    if inverse.is_identity() {
+        return event.clone();
+    }
+    match event {
+        Event::Pointer(pointer) => {
+            let mut pointer = pointer.clone();
+            pointer.position = inverse.transform_point(pointer.position);
+            pointer.delta = inverse.transform_vector(pointer.delta);
+            pointer.scroll_delta = pointer.scroll_delta.map(|delta| match delta {
+                sui_core::ScrollDelta::Pixels(delta) => {
+                    sui_core::ScrollDelta::Pixels(inverse.transform_vector(delta))
+                }
+                sui_core::ScrollDelta::Lines(delta) => sui_core::ScrollDelta::Lines(delta),
+            });
+            Event::Pointer(pointer)
+        }
+        Event::Drag(drag) => {
+            let mut drag = drag.clone();
+            drag.position = inverse.transform_point(drag.position);
+            drag.start_position = inverse.transform_point(drag.start_position);
+            Event::Drag(drag)
+        }
+        _ => event.clone(),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventPhase {
     Capture,
@@ -311,6 +345,15 @@ impl SingleChild {
 
     pub fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.child.arrange(ctx, bounds);
+    }
+
+    pub fn arrange_transformed(
+        &mut self,
+        ctx: &mut ArrangeCtx,
+        bounds: Rect,
+        transform: Transform,
+    ) {
+        self.child.arrange_transformed(ctx, bounds, transform);
     }
 
     pub fn set_bounds(&mut self, bounds: Rect) {
@@ -847,6 +890,7 @@ impl Drop for WidgetPod {
 struct LayoutState {
     measured_size: Size,
     arranged_bounds: Rect,
+    presentation_transform: Transform,
     last_constraints: Constraints,
     measure_valid: bool,
     arrange_valid: bool,
@@ -857,6 +901,7 @@ impl Default for LayoutState {
         Self {
             measured_size: Size::ZERO,
             arranged_bounds: Rect::ZERO,
+            presentation_transform: Transform::IDENTITY,
             last_constraints: Constraints::default(),
             measure_valid: false,
             arrange_valid: false,
@@ -919,6 +964,10 @@ impl WidgetPod {
 
     pub const fn measured_size(&self) -> Size {
         self.layout_state.measured_size
+    }
+
+    pub const fn presentation_transform(&self) -> Transform {
+        self.layout_state.presentation_transform
     }
 
     pub fn set_bounds(&mut self, bounds: Rect) {
@@ -992,16 +1041,39 @@ impl WidgetPod {
     }
 
     pub fn arrange(&mut self, parent_ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.arrange_with_transform(parent_ctx, bounds, Transform::IDENTITY);
+    }
+
+    /// Arrange this widget in parent coordinates and apply an affine transform
+    /// to its complete retained subtree for paint, input, and semantics.
+    pub fn arrange_transformed(
+        &mut self,
+        parent_ctx: &mut ArrangeCtx,
+        bounds: Rect,
+        transform: Transform,
+    ) {
+        self.arrange_with_transform(parent_ctx, bounds, transform);
+    }
+
+    fn arrange_with_transform(
+        &mut self,
+        parent_ctx: &mut ArrangeCtx,
+        bounds: Rect,
+        transform: Transform,
+    ) {
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
         self.layout_state.arranged_bounds = bounds;
+        self.layout_state.presentation_transform =
+            transform.then(parent_ctx.presentation_transform());
         self.layout_state.arrange_valid = true;
         self.translate_descendants(delta);
 
-        let mut child_ctx = ArrangeCtx::new_at(
+        let mut child_ctx = ArrangeCtx::new_at_with_transform(
             parent_ctx.window_id(),
             self.id,
             parent_ctx.dpi(),
             parent_ctx.current_time(),
+            self.layout_state.presentation_transform,
         );
         let started = Instant::now();
         self.widget.arrange(&mut child_ctx, bounds);
@@ -1016,7 +1088,14 @@ impl WidgetPod {
     }
 
     pub fn paint(&self, parent_ctx: &mut PaintCtx) {
-        let mut child_ctx = PaintCtx::new(
+        self.paint_into(parent_ctx, true);
+    }
+
+    fn paint_into(&self, parent_ctx: &mut PaintCtx, emit_layer: bool) {
+        let presentation_transform = self.layout_state.presentation_transform;
+        let relative_transform =
+            relative_transform(presentation_transform, parent_ctx.presentation_transform());
+        let mut child_ctx = PaintCtx::new_with_transform(
             parent_ctx.window_id(),
             self.id,
             self.layout_state.arranged_bounds,
@@ -1025,6 +1104,7 @@ impl WidgetPod {
             Arc::clone(&parent_ctx.text_system),
             Arc::clone(&parent_ctx.font_registry),
             Arc::clone(&parent_ctx.image_registry),
+            presentation_transform,
         );
         let started = Instant::now();
         self.widget.paint(&mut child_ctx);
@@ -1035,13 +1115,30 @@ impl WidgetPod {
             started.elapsed(),
         );
 
-        let (scene, images, widget_paint_bounds, invalidations, ime_composition_rect) =
+        let (mut scene, images, mut widget_paint_bounds, invalidations, mut ime_composition_rect) =
             child_ctx.into_parts();
-        let paint_bounds = scene
-            .paint_bounds()
-            .unwrap_or(self.layout_state.arranged_bounds);
+        if !relative_transform.is_identity() {
+            let mut transformed = Scene::new();
+            transformed.push(SceneCommand::PushTransform {
+                transform: relative_transform,
+            });
+            transformed.append(scene);
+            transformed.push(SceneCommand::PopTransform);
+            scene = transformed;
+            for bounds in widget_paint_bounds.values_mut() {
+                *bounds = relative_transform.transform_rect_bbox(*bounds);
+            }
+            ime_composition_rect =
+                ime_composition_rect.map(|bounds| relative_transform.transform_rect_bbox(bounds));
+        }
+        let paint_bounds = scene.paint_bounds().unwrap_or_else(|| {
+            relative_transform.transform_rect_bbox(self.layout_state.arranged_bounds)
+        });
         parent_ctx.record_widget_paint_bounds(self.id, paint_bounds);
-        if self.current_layer_options().emits_layer() {
+        if emit_layer
+            && presentation_transform.is_identity()
+            && self.current_layer_options().emits_layer()
+        {
             parent_ctx.push_layer(self.build_layer_descriptor(&scene), scene);
         } else {
             parent_ctx.append_scene(scene);
@@ -1058,19 +1155,7 @@ impl WidgetPod {
         parent_ctx: &mut PaintCtx,
     ) -> bool {
         self.find_mut(target, &mut |pod| {
-            let started = Instant::now();
-            pod.widget.paint(parent_ctx);
-            record_widget_timing(
-                pod.id,
-                pod.widget.debug_name(),
-                WidgetTimingPhase::Paint,
-                started.elapsed(),
-            );
-            let paint_bounds = parent_ctx
-                .scene()
-                .paint_bounds()
-                .unwrap_or(pod.layout_state.arranged_bounds);
-            parent_ctx.record_widget_paint_bounds(pod.id, paint_bounds);
+            pod.paint_into(parent_ctx, false);
         })
         .is_some()
     }
@@ -1084,12 +1169,16 @@ impl WidgetPod {
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
-        let mut child_ctx = SemanticsCtx::new(
+        let presentation_transform = self.layout_state.presentation_transform;
+        let relative_transform =
+            relative_transform(presentation_transform, parent_ctx.presentation_transform());
+        let mut child_ctx = SemanticsCtx::new_with_transform(
             parent_ctx.window_id(),
             self.id,
             parent_ctx.root_widget_id(),
             self.layout_state.arranged_bounds,
             parent_ctx.focused_widget_id(),
+            presentation_transform,
         );
         let started = Instant::now();
         self.widget.semantics(&mut child_ctx);
@@ -1099,7 +1188,13 @@ impl WidgetPod {
             WidgetTimingPhase::Semantics,
             started.elapsed(),
         );
-        parent_ctx.extend_nodes(child_ctx.into_nodes());
+        let mut nodes = child_ctx.into_nodes();
+        if !relative_transform.is_identity() {
+            for node in &mut nodes {
+                node.bounds = relative_transform.transform_rect_bbox(node.bounds);
+            }
+        }
+        parent_ctx.extend_nodes(nodes);
     }
 
     /// Return whether this retained widget is a focus target.
@@ -1289,6 +1384,13 @@ impl WidgetPod {
         command_sender: &CommandSender,
         event: &Event,
     ) -> EventDispatch {
+        let local_event = event_for_transform(
+            event,
+            self.layout_state
+                .presentation_transform
+                .inverse()
+                .unwrap_or(Transform::IDENTITY),
+        );
         let mut ctx = EventCtx::new(
             window_id,
             self.id,
@@ -1300,7 +1402,18 @@ impl WidgetPod {
             clipboard.clone(),
             command_sender.clone(),
         );
-        self.widget.event(&mut ctx, event);
+        self.widget.event(&mut ctx, &local_event);
+        let mut drag_requests = ctx.take_drag_requests();
+        for request in &mut drag_requests {
+            match request {
+                DragRequest::Begin(request) => {
+                    request.position = self
+                        .layout_state
+                        .presentation_transform
+                        .transform_point(request.position);
+                }
+            }
+        }
         EventDispatch {
             handled: ctx.is_handled(),
             invalidations: ctx.take_invalidations(),
@@ -1308,7 +1421,7 @@ impl WidgetPod {
             wake_requests: ctx.take_wake_requests(),
             pointer_capture_requests: ctx.take_pointer_capture_requests(),
             cursor_requests: ctx.take_cursor_requests(),
-            drag_requests: ctx.take_drag_requests(),
+            drag_requests,
             drop_acceptances: ctx.take_drop_acceptances(),
             posted_events: ctx.take_posted_events(),
             posted_commands: ctx.take_posted_commands(),
@@ -1465,6 +1578,10 @@ impl WidgetPod {
         let mut options = self.widget.layer_options();
         if self.force_paint_boundary {
             options.paint_boundary = PaintBoundaryMode::Explicit;
+        }
+        if !self.layout_state.presentation_transform.is_identity() {
+            options.paint_boundary = PaintBoundaryMode::Flat;
+            options.composition_mode = LayerCompositionMode::Normal;
         }
         options
     }
@@ -2350,6 +2467,7 @@ pub struct ArrangeCtx {
     widget_id: WidgetId,
     dpi_info: DpiInfo,
     current_time: f64,
+    presentation_transform: Transform,
     invalidations: Vec<InvalidationRequest>,
     wake_requests: Vec<WakeRequest>,
 }
@@ -2366,11 +2484,28 @@ impl ArrangeCtx {
         dpi_info: DpiInfo,
         current_time: f64,
     ) -> Self {
+        Self::new_at_with_transform(
+            window_id,
+            widget_id,
+            dpi_info,
+            current_time,
+            Transform::IDENTITY,
+        )
+    }
+
+    pub(crate) fn new_at_with_transform(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+        presentation_transform: Transform,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
             dpi_info,
             current_time,
+            presentation_transform,
             invalidations: Vec::new(),
             wake_requests: Vec::new(),
         }
@@ -2382,6 +2517,10 @@ impl ArrangeCtx {
 
     pub const fn widget_id(&self) -> WidgetId {
         self.widget_id
+    }
+
+    pub const fn presentation_transform(&self) -> Transform {
+        self.presentation_transform
     }
 
     /// Read an observable whose changes affect arrangement.
@@ -2476,6 +2615,7 @@ pub struct PaintCtx {
     widget_id: WidgetId,
     focused_widget_id: Option<WidgetId>,
     bounds: Rect,
+    presentation_transform: Transform,
     dpi_info: DpiInfo,
     text_system: Arc<TextSystem>,
     font_registry: Arc<FontRegistry>,
@@ -2504,11 +2644,37 @@ impl PaintCtx {
         font_registry: Arc<FontRegistry>,
         image_registry: Arc<ImageRegistry>,
     ) -> Self {
+        Self::new_with_transform(
+            window_id,
+            widget_id,
+            bounds,
+            focused_widget_id,
+            dpi_info,
+            text_system,
+            font_registry,
+            image_registry,
+            Transform::IDENTITY,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_transform(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        bounds: Rect,
+        focused_widget_id: Option<WidgetId>,
+        dpi_info: DpiInfo,
+        text_system: Arc<TextSystem>,
+        font_registry: Arc<FontRegistry>,
+        image_registry: Arc<ImageRegistry>,
+        presentation_transform: Transform,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
             focused_widget_id,
             bounds,
+            presentation_transform,
             dpi_info,
             text_system,
             font_registry,
@@ -2527,6 +2693,10 @@ impl PaintCtx {
 
     pub const fn widget_id(&self) -> WidgetId {
         self.widget_id
+    }
+
+    pub const fn presentation_transform(&self) -> Transform {
+        self.presentation_transform
     }
 
     /// Read an observable whose changes affect painting.
@@ -2989,6 +3159,7 @@ pub struct SemanticsCtx {
     root_widget_id: WidgetId,
     focused_widget_id: Option<WidgetId>,
     bounds: Rect,
+    presentation_transform: Transform,
     nodes: Vec<SemanticsNode>,
 }
 
@@ -3000,12 +3171,31 @@ impl SemanticsCtx {
         bounds: Rect,
         focused_widget_id: Option<WidgetId>,
     ) -> Self {
+        Self::new_with_transform(
+            window_id,
+            widget_id,
+            root_widget_id,
+            bounds,
+            focused_widget_id,
+            Transform::IDENTITY,
+        )
+    }
+
+    pub(crate) fn new_with_transform(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        root_widget_id: WidgetId,
+        bounds: Rect,
+        focused_widget_id: Option<WidgetId>,
+        presentation_transform: Transform,
+    ) -> Self {
         Self {
             window_id,
             widget_id,
             root_widget_id,
             focused_widget_id,
             bounds,
+            presentation_transform,
             nodes: Vec::new(),
         }
     }
@@ -3048,6 +3238,10 @@ impl SemanticsCtx {
 
     pub const fn bounds(&self) -> Rect {
         self.bounds
+    }
+
+    pub const fn presentation_transform(&self) -> Transform {
+        self.presentation_transform
     }
 
     pub fn push(&mut self, node: SemanticsNode) {

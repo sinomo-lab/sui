@@ -425,6 +425,31 @@ tear-off windows are not part of `DockWorkspace`. `FloatingWorkspace` remains
 available for simpler independent overlays that do not need dock/reparent
 behavior.
 
+## Zoomable Canvas Widgets
+
+`Canvas` can retain an ordinary SUI widget subtree in world coordinates. The
+default behavior uniformly scales the entire subtree—including text, images,
+icons, nested layouts, input geometry, and semantics—without remeasuring it:
+
+```rust
+use sui::prelude::*;
+
+let canvas = Canvas::new("Editor")
+    .content(
+        Stack::vertical()
+            .with_child(Label::new("World-space title"))
+            .with_child(Image::new(preview_image)),
+    )
+    .content_bounds(Rect::new(-160.0, -90.0, 320.0, 180.0));
+```
+
+Use `Canvas::widget` to mix independently positioned widgets. Uniform zoom is
+the default; `widget_with_zoom` and `content_zoom` accept
+`CanvasZoomBehavior::ScreenSpace` or a custom transform resolver. Screen-space
+content follows its world anchor while keeping a constant visual size. Canvas
+wheel and two-touch pinch gestures update the same viewport transform, and
+hosted widgets receive inverse-mapped pointer coordinates.
+
 ## Layout Contract for Custom Widgets
 
 The runtime uses two explicit phases:
