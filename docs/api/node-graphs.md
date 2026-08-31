@@ -153,11 +153,18 @@ Large static edge sets use a shared retained world layer by default. Eligible
 unselected, unhovered, non-animated, unlabeled edges cache their paths and
 markers in flow coordinates, then reuse the renderer packet while the viewport
 changes. `retain_edge_world`, `retained_edge_world_min`, and
-`retained_edge_world_max` control the policy; the default range is 1,024 through
+`retained_edge_world_max` control the policy; the default range is 256 through
 4,096 edges. Smaller graphs avoid the fixed layer boundary, while larger graphs
 fall back to viewport culling instead of retaining one oversized packet. Custom
 edge painters always use the direct path. Retained markers scale uniformly with
 the Canvas viewport.
+
+Uniform custom-node groups are also emitted as shared flow-space layers once at
+least 128 visible nodes participate. `retain_node_world` and
+`retained_node_world_min` control that threshold. The widgets still paint through
+the normal SUI lifecycle on every requested repaint, so external reactive state
+remains correct; identical layer scenes reuse renderer packets across zoom and
+pan. Screen-space and custom zoom behaviors stay on the direct path.
 
 ## Hierarchy and editing
 

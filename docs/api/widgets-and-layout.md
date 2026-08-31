@@ -473,6 +473,12 @@ widget and therefore participates in runtime ordering and diagnostics, while
 its scene is shared across frames. The WGPU compositor normalizes layer packets
 into local coordinates and applies the full inherited affine transform during
 composition, so zoom and pan do not rebuild unchanged layer content.
+`PaintCtx::with_retained_scene_layer` provides the callback form for normal
+widget painting: child resources, invalidations, paint bounds, and IME geometry
+are merged back while identical scene output retains the packet. Widget pods
+store their local presentation transform and recompute absolute transforms from
+the current parent, avoiding cumulative floating-point drift during long zoom
+animations.
 
 ## Layout Contract for Custom Widgets
 

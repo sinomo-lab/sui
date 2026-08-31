@@ -224,6 +224,10 @@ pub struct NodeGraphConfig {
     pub retained_edge_world_min: usize,
     /// Maximum edge count retained in one layer before falling back to culling.
     pub retained_edge_world_max: usize,
+    /// Retain sufficiently large uniform custom-node groups in flow space.
+    pub retain_node_world: bool,
+    /// Minimum visible uniform custom-node count needed to create a layer.
+    pub retained_node_world_min: usize,
 }
 
 impl Default for NodeGraphConfig {
@@ -262,8 +266,10 @@ impl Default for NodeGraphConfig {
             cull_offscreen: true,
             culling_margin: 64.0,
             retain_edge_world: true,
-            retained_edge_world_min: 1_024,
+            retained_edge_world_min: 256,
             retained_edge_world_max: 4_096,
+            retain_node_world: true,
+            retained_node_world_min: 128,
         }
     }
 }
@@ -284,6 +290,7 @@ impl NodeGraphConfig {
             retained_edge_world_max: self
                 .retained_edge_world_max
                 .max(self.retained_edge_world_min),
+            retained_node_world_min: self.retained_node_world_min.max(1),
             snap_to_grid: self
                 .snap_to_grid
                 .map(|size| Size::new(size.width.max(1.0), size.height.max(1.0))),
@@ -500,6 +507,8 @@ pub struct NodeGraph<N = (), E = ()> {
     node_widgets: RetainedNodeWidgets<N>,
     world_layer: WidgetPod,
     world_layer_active: bool,
+    node_world_layers: [WidgetPod; 2],
+    node_world_layer_active: [bool; 2],
     edge_world_cache: RefCell<EdgeWorldCache>,
     active_node_widgets: HashSet<NodeId>,
     visible_node_indices: Vec<usize>,
@@ -544,6 +553,11 @@ where
             node_widgets: RetainedNodeWidgets::default(),
             world_layer: WidgetPod::new(GraphWorldLayerMarker),
             world_layer_active: false,
+            node_world_layers: [
+                WidgetPod::new(GraphWorldLayerMarker),
+                WidgetPod::new(GraphWorldLayerMarker),
+            ],
+            node_world_layer_active: [false; 2],
             edge_world_cache: RefCell::new(EdgeWorldCache::default()),
             active_node_widgets: HashSet::new(),
             visible_node_indices: Vec::new(),
@@ -2128,6 +2142,11 @@ where
             self.world_layer
                 .measure(ctx, Constraints::tight(Size::ZERO));
         }
+        if self.config.retain_node_world {
+            for layer in &mut self.node_world_layers {
+                layer.measure(ctx, Constraints::tight(Size::ZERO));
+            }
+        }
         self.last_measured_nodes_revision = snapshot.revisions.nodes;
         let structure_changed = self
             .node_widgets
@@ -2211,6 +2230,37 @@ where
         sort_node_indices(&snapshot, &mut self.visible_node_indices);
         sort_edge_indices(&snapshot, &mut self.visible_edge_indices);
 
+        let foreground_start = node_foreground_start(&snapshot, &self.visible_node_indices);
+        let (background_node_indices, foreground_node_indices) =
+            self.visible_node_indices.split_at(foreground_start);
+        self.node_world_layer_active = [
+            self.config.retain_node_world
+                && uniform_custom_node_layer_candidate(
+                    &snapshot,
+                    background_node_indices,
+                    &self.node_widgets,
+                    &self.node_widget_registry,
+                    self.config.retained_node_world_min,
+                ),
+            self.config.retain_node_world
+                && uniform_custom_node_layer_candidate(
+                    &snapshot,
+                    foreground_node_indices,
+                    &self.node_widgets,
+                    &self.node_widget_registry,
+                    self.config.retained_node_world_min,
+                ),
+        ];
+        for (active, layer) in self
+            .node_world_layer_active
+            .iter()
+            .zip(&mut self.node_world_layers)
+        {
+            if *active {
+                layer.arrange(ctx, bounds);
+            }
+        }
+
         let next_active_node_widgets = self
             .visible_node_indices
             .iter()
@@ -2287,17 +2337,7 @@ where
             })
             .paint_background(ctx, bounds, appearance.background, appearance.grid);
         ctx.push_clip_rect(bounds);
-        let foreground_start = self
-            .visible_node_indices
-            .iter()
-            .position(|index| {
-                snapshot
-                    .graph
-                    .nodes
-                    .get(*index)
-                    .is_none_or(|node| node.z_index >= 0)
-            })
-            .unwrap_or(self.visible_node_indices.len());
+        let foreground_start = node_foreground_start(&snapshot, &self.visible_node_indices);
         let (background_node_indices, foreground_node_indices) =
             self.visible_node_indices.split_at(foreground_start);
         paint_nodes(
@@ -2312,6 +2352,8 @@ where
                 painter: self.node_painter.as_deref(),
                 custom_nodes: &self.node_widgets,
                 registry: &self.node_widget_registry,
+                retained_layer_owner: self.node_world_layer_active[0]
+                    .then(|| self.node_world_layers[0].id()),
             },
         );
         let retained_edges =
@@ -2350,6 +2392,8 @@ where
                 painter: self.node_painter.as_deref(),
                 custom_nodes: &self.node_widgets,
                 registry: &self.node_widget_registry,
+                retained_layer_owner: self.node_world_layer_active[1]
+                    .then(|| self.node_world_layers[1].id()),
             },
         );
         paint_node_overlays(
@@ -2506,15 +2550,27 @@ where
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if self.node_world_layer_active[0] {
+            visitor.visit(&self.node_world_layers[0]);
+        }
         if self.world_layer_active {
             visitor.visit(&self.world_layer);
+        }
+        if self.node_world_layer_active[1] {
+            visitor.visit(&self.node_world_layers[1]);
         }
         self.node_widgets.visit_children(visitor);
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if self.node_world_layer_active[0] {
+            visitor.visit(&mut self.node_world_layers[0]);
+        }
         if self.world_layer_active {
             visitor.visit(&mut self.world_layer);
+        }
+        if self.node_world_layer_active[1] {
+            visitor.visit(&mut self.node_world_layers[1]);
         }
         self.node_widgets.visit_children_mut(visitor);
     }
@@ -3009,6 +3065,39 @@ fn sort_node_indices<N, E>(snapshot: &GraphSnapshot<N, E>, indices: &mut [usize]
         }
     }
     indices.sort_by_key(|index| keys.get(*index).copied().unwrap_or_default());
+}
+
+fn node_foreground_start<N, E>(snapshot: &GraphSnapshot<N, E>, indices: &[usize]) -> usize {
+    indices
+        .iter()
+        .position(|index| {
+            snapshot
+                .graph
+                .nodes
+                .get(*index)
+                .is_none_or(|node| node.z_index >= 0)
+        })
+        .unwrap_or(indices.len())
+}
+
+fn uniform_custom_node_layer_candidate<N, E>(
+    snapshot: &GraphSnapshot<N, E>,
+    indices: &[usize],
+    custom_nodes: &RetainedNodeWidgets<N>,
+    registry: &NodeWidgetRegistry<N>,
+    minimum: usize,
+) -> bool
+where
+    N: Clone + PartialEq + 'static,
+{
+    indices.len() >= minimum
+        && indices.iter().all(|index| {
+            snapshot.graph.nodes.get(*index).is_some_and(|node| {
+                !node.hidden
+                    && custom_nodes.contains(&node.id)
+                    && registry.zoom_behavior(&node.kind).is_uniform()
+            })
+        })
 }
 
 fn node_depth_from_node<N, E>(graph: &GraphModel<N, E>, node: &Node<N>) -> usize {
@@ -3792,6 +3881,7 @@ struct NodePaintOptions<'a, N> {
     painter: Option<&'a NodePaintFn<N>>,
     custom_nodes: &'a RetainedNodeWidgets<N>,
     registry: &'a NodeWidgetRegistry<N>,
+    retained_layer_owner: Option<WidgetId>,
 }
 
 fn paint_nodes<N, E>(
@@ -3810,6 +3900,7 @@ fn paint_nodes<N, E>(
         painter,
         custom_nodes,
         registry,
+        retained_layer_owner,
     } = options;
     let label_style = TextStyle {
         font_size: theme.text.sm.size,
@@ -3840,24 +3931,32 @@ fn paint_nodes<N, E>(
                 cursor += 1;
             }
             ctx.with_transform(shared_transform, |ctx| {
-                for index in &indices[start..cursor] {
-                    let Some(node) = snapshot.graph.nodes.get(*index) else {
-                        continue;
-                    };
-                    let rect = graph_node_bounds(&snapshot.graph, node);
-                    paint_default_node_body(
-                        ctx,
-                        node,
-                        rect,
-                        snapshot.viewport,
-                        snapshot.viewport.zoom,
-                        appearance,
-                        theme,
-                        hovered_node == Some(&node.id),
-                        false,
-                        &label_style,
-                    );
-                    custom_nodes.paint_node(ctx, &node.id);
+                let layer_bounds = snapshot.graph.bounds().unwrap_or(Rect::ZERO);
+                let paint_group = |ctx: &mut PaintCtx| {
+                    for index in &indices[start..cursor] {
+                        let Some(node) = snapshot.graph.nodes.get(*index) else {
+                            continue;
+                        };
+                        let rect = graph_node_bounds(&snapshot.graph, node);
+                        paint_default_node_body(
+                            ctx,
+                            node,
+                            rect,
+                            Viewport::new(snapshot.viewport.x, snapshot.viewport.y, 1.0),
+                            1.0,
+                            appearance,
+                            theme,
+                            hovered_node == Some(&node.id),
+                            false,
+                            &label_style,
+                        );
+                        custom_nodes.paint_node(ctx, &node.id);
+                    }
+                };
+                if let Some(owner) = retained_layer_owner {
+                    ctx.with_retained_scene_layer(owner, layer_bounds, paint_group);
+                } else {
+                    paint_group(ctx);
                 }
             });
             continue;
@@ -5097,6 +5196,80 @@ mod tests {
             .expect("retained edge world should survive viewport changes");
 
         assert!(Arc::ptr_eq(&first_world, &second_world));
+        Ok(())
+    }
+
+    #[test]
+    fn uniform_custom_node_layer_is_stable_across_zoom() -> sui_core::Result<()> {
+        let nodes = vec![
+            Node::new("retained-a", Point::new(20.0, 30.0), ())
+                .kind("retained")
+                .size(Size::new(100.0, 48.0)),
+            Node::new("retained-b", Point::new(180.0, 90.0), ())
+                .kind("retained")
+                .size(Size::new(100.0, 48.0)),
+        ];
+        let state = NodeGraphState::<(), ()>::new(nodes, Vec::new()).expect("valid node world");
+        let graph = NodeGraph::new("Retained node world", state.clone())
+            .config(NodeGraphConfig {
+                cull_offscreen: false,
+                retain_edge_world: false,
+                retained_node_world_min: 1,
+                ..NodeGraphConfig::default()
+            })
+            .node_type("retained", |_id, _node| InteractiveTestNode {
+                presses: Rc::new(Cell::new(0)),
+            });
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+
+        let first = runtime.render(window_id)?;
+        let mut first_layers = Vec::new();
+        first
+            .frame
+            .scene
+            .visit_layers(&mut |layer| first_layers.push(Arc::clone(&layer.scene)));
+        let first_world = first_layers
+            .into_iter()
+            .find(|scene| {
+                scene
+                    .commands()
+                    .iter()
+                    .any(|command| matches!(command, SceneCommand::FillRoundedRect { .. }))
+            })
+            .expect("uniform custom nodes should occupy a retained layer");
+
+        assert!(
+            first_world
+                .commands()
+                .iter()
+                .all(|command| !matches!(command, SceneCommand::PushTransform { .. }))
+        );
+        for frame in 0..160 {
+            let zoom = 0.62 + ((frame % 17) as f32 * 0.013);
+            state.set_viewport(Viewport::new(-40.0, 24.0, zoom));
+            let output = runtime.render(window_id)?;
+            let mut layers = Vec::new();
+            output
+                .frame
+                .scene
+                .visit_layers(&mut |layer| layers.push(Arc::clone(&layer.scene)));
+            let world = layers
+                .into_iter()
+                .find(|scene| {
+                    scene
+                        .commands()
+                        .iter()
+                        .any(|command| matches!(command, SceneCommand::FillRoundedRect { .. }))
+                })
+                .expect("retained custom-node layer should survive zoom");
+            assert_eq!(first_world, world, "node layer drifted at frame {frame}");
+            assert!(
+                world
+                    .commands()
+                    .iter()
+                    .all(|command| !matches!(command, SceneCommand::PushTransform { .. }))
+            );
+        }
         Ok(())
     }
 

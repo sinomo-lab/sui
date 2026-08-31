@@ -17,15 +17,17 @@ use super::{
     Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
     WidgetChildren, WidgetDiagnosticsCtx, WidgetGraphSnapshot, WidgetNodeSnapshot,
     WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
-    set_window_render_options, set_window_scene_statistics_detail_mode, window_render_options,
+    root_repaint_covers_graph_changes, set_window_render_options,
+    set_window_scene_statistics_detail_mode, window_render_options,
 };
 use sui_core::{
     AsyncWakeToken, Color, CursorGrabMode, CustomEvent, DragEventKind, DragOutcome, DragPayload,
     DragScopeId, DragSessionId, DropEffect, Event, FontHandle, ImageHandle, InvalidationKind,
-    KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons, PointerEvent,
-    PointerEventKind, PointerKind, RawMouseMotionEvent, Rect, SemanticsAction,
-    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, TimerToken,
-    Transform, Vector, WakeEvent, WidgetId, WindowEvent,
+    InvalidationRequest, InvalidationTarget, KeyState, KeyboardEvent, Modifiers, Point,
+    PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
+    RawMouseMotionEvent, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode,
+    SemanticsRole, SemanticsValue, Size, TimerToken, Transform, Vector, WakeEvent, WidgetId,
+    WindowEvent,
 };
 use sui_layout::Constraints;
 use sui_reactive::Signal;
@@ -64,6 +66,39 @@ impl Widget for WindowEventRecorder {
 }
 
 const SYNTHETIC_ACTION_ID: WidgetId = WidgetId::new(u64::MAX - 1);
+
+#[test]
+fn root_transform_diff_is_skipped_only_when_root_content_also_repaints() {
+    let root = WidgetId::new(10);
+    let child = WidgetId::new(11);
+    assert!(!root_repaint_covers_graph_changes(
+        root,
+        &[InvalidationRequest::new(
+            InvalidationTarget::Widget(root),
+            InvalidationKind::Transform,
+        )],
+    ));
+    assert!(root_repaint_covers_graph_changes(
+        root,
+        &[
+            InvalidationRequest::new(
+                InvalidationTarget::Widget(root),
+                InvalidationKind::Transform,
+            ),
+            InvalidationRequest::new(InvalidationTarget::Widget(root), InvalidationKind::Paint,),
+        ],
+    ));
+    assert!(!root_repaint_covers_graph_changes(
+        root,
+        &[
+            InvalidationRequest::new(
+                InvalidationTarget::Widget(child),
+                InvalidationKind::Transform,
+            ),
+            InvalidationRequest::new(InvalidationTarget::Widget(root), InvalidationKind::Paint,),
+        ],
+    ));
+}
 
 #[derive(Debug, Default)]
 struct SemanticActionState {

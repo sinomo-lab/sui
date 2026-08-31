@@ -41,15 +41,29 @@ static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ASYNC_WAKE_TOKEN: AtomicU64 = AtomicU64::new(1);
 static NEXT_DRAG_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const WIDGET_IMAGE_HANDLE_NAMESPACE: u64 = 1 << 63;
+const TRANSFORM_EQ_ULPS: f32 = 16.0;
 
 fn relative_transform(child: Transform, parent: Transform) -> Transform {
-    if child == parent {
+    if transforms_nearly_equal(child, parent) {
         return Transform::IDENTITY;
     }
     parent
         .inverse()
         .map(|inverse| child.then(inverse))
         .unwrap_or(child)
+}
+
+fn transforms_nearly_equal(left: Transform, right: Transform) -> bool {
+    let nearly_equal = |left: f32, right: f32| {
+        let scale = left.abs().max(right.abs()).max(1.0);
+        (left - right).abs() <= f32::EPSILON * TRANSFORM_EQ_ULPS * scale
+    };
+    nearly_equal(left.xx, right.xx)
+        && nearly_equal(left.yx, right.yx)
+        && nearly_equal(left.xy, right.xy)
+        && nearly_equal(left.yy, right.yy)
+        && nearly_equal(left.dx, right.dx)
+        && nearly_equal(left.dy, right.dy)
 }
 
 fn event_for_transform(event: &Event, inverse: Transform) -> Event {
@@ -893,6 +907,7 @@ impl Drop for WidgetPod {
 struct LayoutState {
     measured_size: Size,
     arranged_bounds: Rect,
+    relative_presentation_transform: Transform,
     presentation_transform: Transform,
     last_constraints: Constraints,
     measure_valid: bool,
@@ -904,6 +919,7 @@ impl Default for LayoutState {
         Self {
             measured_size: Size::ZERO,
             arranged_bounds: Rect::ZERO,
+            relative_presentation_transform: Transform::IDENTITY,
             presentation_transform: Transform::IDENTITY,
             last_constraints: Constraints::default(),
             measure_valid: false,
@@ -1069,18 +1085,19 @@ impl WidgetPod {
             && !parent_ctx.scope().must_rearrange(self.id)
             && self.layout_state.arranged_bounds == bounds
         {
-            if self.layout_state.presentation_transform != presentation_transform
-                && let Some(inverse) = self.layout_state.presentation_transform.inverse()
-            {
-                let suffix = inverse.then(presentation_transform);
-                let mut visitor = ReprojectPresentationVisitor { suffix };
-                self.visit_children_mut(&mut visitor);
+            self.layout_state.relative_presentation_transform = transform;
+            if self.layout_state.presentation_transform != presentation_transform {
                 self.layout_state.presentation_transform = presentation_transform;
+                let mut visitor = ReprojectPresentationVisitor {
+                    parent_transform: presentation_transform,
+                };
+                self.visit_children_mut(&mut visitor);
             }
             return;
         }
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
         self.layout_state.arranged_bounds = bounds;
+        self.layout_state.relative_presentation_transform = transform;
         self.layout_state.presentation_transform = presentation_transform;
         self.layout_state.arrange_valid = true;
         self.translate_descendants(delta);
@@ -1567,10 +1584,14 @@ impl WidgetPod {
         self.translate_descendants(delta);
     }
 
-    fn reproject_presentation_subtree(&mut self, suffix: Transform) {
-        self.layout_state.presentation_transform =
-            self.layout_state.presentation_transform.then(suffix);
-        let mut visitor = ReprojectPresentationVisitor { suffix };
+    fn reproject_presentation_subtree(&mut self, parent_transform: Transform) {
+        self.layout_state.presentation_transform = self
+            .layout_state
+            .relative_presentation_transform
+            .then(parent_transform);
+        let mut visitor = ReprojectPresentationVisitor {
+            parent_transform: self.layout_state.presentation_transform,
+        };
         self.visit_children_mut(&mut visitor);
     }
 
@@ -1642,12 +1663,12 @@ impl WidgetPod {
 }
 
 struct ReprojectPresentationVisitor {
-    suffix: Transform,
+    parent_transform: Transform,
 }
 
 impl WidgetPodMutVisitor for ReprojectPresentationVisitor {
     fn visit(&mut self, pod: &mut WidgetPod) {
-        pod.reproject_presentation_subtree(self.suffix);
+        pod.reproject_presentation_subtree(self.parent_transform);
     }
 }
 
@@ -3198,6 +3219,45 @@ impl PaintCtx {
         self.record_widget_paint_bounds(owner, paint_bounds);
     }
 
+    /// Paint a logical widget subtree into one retained scene layer.
+    ///
+    /// The callback uses the current presentation space, so this composes with
+    /// [`Self::with_transform`] without repeating the transform in every child.
+    /// A stable `owner` lets the renderer reuse the layer packet when the
+    /// callback produces identical scene content on a later frame. Child paint
+    /// bounds, resource registrations, invalidations, and IME geometry are
+    /// merged back into this context.
+    pub fn with_retained_scene_layer<R>(
+        &mut self,
+        owner: WidgetId,
+        bounds: Rect,
+        paint: impl FnOnce(&mut PaintCtx) -> R,
+    ) -> R {
+        let mut child_ctx = PaintCtx::new_with_transform(
+            self.window_id,
+            owner,
+            bounds,
+            self.focused_widget_id,
+            self.dpi_info,
+            Arc::clone(&self.text_system),
+            Arc::clone(&self.font_registry),
+            Arc::clone(&self.image_registry),
+            self.presentation_transform,
+        );
+        let output = paint(&mut child_ctx);
+        let (scene, images, widget_paint_bounds, invalidations, ime_composition_rect) =
+            child_ctx.into_parts();
+
+        if !scene.commands().is_empty() {
+            self.push_retained_scene_layer(owner, bounds, Arc::new(scene));
+        }
+        self.extend_widget_paint_bounds(widget_paint_bounds);
+        self.extend_images(images);
+        self.extend_invalidations(invalidations);
+        self.extend_ime_composition_rect(ime_composition_rect);
+        output
+    }
+
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
@@ -3435,15 +3495,25 @@ mod tests {
     use super::{
         ArrangeCtx, EventCtx, EventPhase, KeyedChildren, MeasureCtx, MeasureScope, PaintCtx,
         SemanticsCtx, SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod,
-        WidgetPodMutVisitor, WidgetPodVisitor,
+        WidgetPodMutVisitor, WidgetPodVisitor, relative_transform,
     };
     use std::cell::Cell;
     use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
     use sui_core::{
         Clipboard, Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode,
-        SemanticsRole, Size, Vector, WidgetId, WindowId,
+        SemanticsRole, Size, Transform, Vector, WidgetId, WindowId,
     };
+
+    #[test]
+    fn relative_transform_canonicalizes_shared_transform_roundoff() {
+        let parent = Transform::new(0.32, 0.0, 0.0, 0.32, 1430.0, 510.0);
+        let roundoff = Transform::new(0.32000002, 0.0, 0.0, 0.31999996, 1430.0001, 509.99994);
+        assert_eq!(relative_transform(roundoff, parent), Transform::IDENTITY);
+
+        let translated = Transform::new(0.32, 0.0, 0.0, 0.32, 1430.01, 510.0);
+        assert!(!relative_transform(translated, parent).is_identity());
+    }
     use sui_layout::{Constraints, LayoutContext};
     use sui_scene::{ImageRegistry, RegisteredImage, SceneCommand, StrokeStyle};
     use sui_text::{FontRegistry, FontWeight, TextRun, TextStyle, TextSystem};

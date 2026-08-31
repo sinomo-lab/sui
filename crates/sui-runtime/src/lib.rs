@@ -3199,12 +3199,16 @@ impl WindowState {
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
         let mut layer_updates = Vec::new();
-        let previous_graph =
-            if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
-                Some(self.graph.snapshot())
-            } else {
-                None
-            };
+        let root_repaint_covers_graph_changes =
+            root_repaint_covers_graph_changes(self.root.id(), &invalidations);
+        let previous_graph = if (self.schedule.measure || self.schedule.arrange)
+            && !self.graph.is_empty()
+            && !root_repaint_covers_graph_changes
+        {
+            Some(self.graph.snapshot())
+        } else {
+            None
+        };
         let mut graph_changes = GraphChangeSet::default();
 
         if self.last_frame.is_none() {
@@ -3221,7 +3225,11 @@ impl WindowState {
             );
             self.schedule.extend(&pass_invalidations);
             invalidations.extend(pass_invalidations);
-            graph_changes = self.collect_graph_changes(previous_graph.as_ref());
+            graph_changes = if root_repaint_covers_graph_changes {
+                GraphChangeSet::default()
+            } else {
+                self.collect_graph_changes(previous_graph.as_ref())
+            };
             if diagnostics_enabled {
                 diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
             }
@@ -5434,6 +5442,28 @@ fn next_hit_test_phase(
         }
         _ => HitTestCompositionPhase::Normal,
     }
+}
+
+fn root_repaint_covers_graph_changes(
+    root: WidgetId,
+    invalidations: &[InvalidationRequest],
+) -> bool {
+    let root_transform = invalidations.iter().any(|request| {
+        request.kind == InvalidationKind::Transform
+            && request.target == InvalidationTarget::Widget(root)
+    });
+    let root_content = invalidations.iter().any(|request| {
+        matches!(
+            request.kind,
+            InvalidationKind::Measure
+                | InvalidationKind::Clip
+                | InvalidationKind::Visibility
+                | InvalidationKind::Paint
+                | InvalidationKind::Text
+                | InvalidationKind::Resources
+        ) && request.target == InvalidationTarget::Widget(root)
+    });
+    root_transform && root_content
 }
 
 fn invalidation_to_layer_update_kind(kind: InvalidationKind) -> Option<SceneLayerUpdateKind> {
