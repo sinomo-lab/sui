@@ -1184,6 +1184,8 @@ mod tests {
         let mut encode_us = 0u64;
         let mut queue_submit_us = 0u64;
         let mut vertex_upload_bytes = 0u64;
+        let mut text_vertex_bytes = 0u64;
+        let mut text_glyph_instances = 0usize;
         let mut measure_arrange_ms = 0.0_f64;
         let mut hit_test_ms = 0.0_f64;
         let mut paint_ms = 0.0_f64;
@@ -1243,10 +1245,12 @@ mod tests {
             encode_us += stats.pass_encode_time_us;
             queue_submit_us += stats.queue_submit_time_us;
             vertex_upload_bytes += stats.uploaded_vertex_bytes;
+            text_vertex_bytes += stats.text_vertex_bytes;
+            text_glyph_instances += stats.text_glyph_instance_count;
         }
 
         println!(
-            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} detailed={detailed_profile} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1} scene_traversal_avg_us={:.1} packet_build_avg_us={:.1} packet_scene_build_avg_us={:.1} packet_text_avg_us={:.1} packet_path_avg_us={:.1} packet_rect_avg_us={:.1} resource_collection_avg_us={:.1} bind_group_avg_us={:.1} batch_prepare_avg_us={:.1} gpu_upload_avg_us={:.1} encode_avg_us={:.1} queue_submit_avg_us={:.1} vertex_upload_avg_bytes={:.1} measure_arrange_avg_ms={:.3} hit_test_avg_ms={:.3} paint_avg_ms={:.3} semantics_avg_ms={:.3} widget_arrange_avg_ms={:.3} widget_paint_avg_ms={:.3} widget_semantics_avg_ms={:.3}",
+            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} detailed={detailed_profile} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1} scene_traversal_avg_us={:.1} packet_build_avg_us={:.1} packet_scene_build_avg_us={:.1} packet_text_avg_us={:.1} packet_path_avg_us={:.1} packet_rect_avg_us={:.1} resource_collection_avg_us={:.1} bind_group_avg_us={:.1} batch_prepare_avg_us={:.1} gpu_upload_avg_us={:.1} encode_avg_us={:.1} queue_submit_avg_us={:.1} vertex_upload_avg_bytes={:.1} text_vertex_avg_bytes={:.1} text_glyph_avg={:.1} measure_arrange_avg_ms={:.3} hit_test_avg_ms={:.3} paint_avg_ms={:.3} semantics_avg_ms={:.3} widget_arrange_avg_ms={:.3} widget_paint_avg_ms={:.3} widget_semantics_avg_ms={:.3}",
             runtime_time.as_secs_f64() * 1000.0 / FRAMES as f64,
             renderer_time.as_secs_f64() * 1000.0 / FRAMES as f64,
             (runtime_time + renderer_time).as_secs_f64() * 1000.0 / FRAMES as f64,
@@ -1266,6 +1270,8 @@ mod tests {
             encode_us as f64 / FRAMES as f64,
             queue_submit_us as f64 / FRAMES as f64,
             vertex_upload_bytes as f64 / FRAMES as f64,
+            text_vertex_bytes as f64 / FRAMES as f64,
+            text_glyph_instances as f64 / FRAMES as f64,
             measure_arrange_ms / FRAMES as f64,
             hit_test_ms / FRAMES as f64,
             paint_ms / FRAMES as f64,

@@ -941,8 +941,11 @@ impl RendererFrameStats {
                 .iter()
                 .map(|pass| pass.clip_paths.len() + pass.draws.len())
                 .sum(),
-            (prepared.scene_vertices.len() as u64 + prepared.clip_vertices.len() as u64)
-                * VERTEX_SIZE
+            (prepared.solid_vertices.len() as u64 + prepared.clip_vertices.len() as u64)
+                * SOLID_VERTEX_SIZE
+                + prepared.scene_vertices.len() as u64 * COMPACT_VERTEX_SIZE
+                + prepared.analytic_vertices.len() as u64 * ANALYTIC_QUAD_INSTANCE_SIZE
+                + prepared.extended_vertices.len() as u64 * EXTENDED_QUAD_INSTANCE_SIZE
                 + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE,
         )
     }
@@ -3075,9 +3078,12 @@ impl WgpuRenderer {
             if diagnostics_enabled {
                 let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
                 draw_count += fragment_draw_count;
-                uploaded_vertex_bytes += (prepared.scene_vertices.len() as u64
+                uploaded_vertex_bytes += (prepared.solid_vertices.len() as u64
                     + prepared.clip_vertices.len() as u64)
-                    * VERTEX_SIZE
+                    * SOLID_VERTEX_SIZE
+                    + prepared.scene_vertices.len() as u64 * COMPACT_VERTEX_SIZE
+                    + prepared.analytic_vertices.len() as u64 * ANALYTIC_QUAD_INSTANCE_SIZE
+                    + prepared.extended_vertices.len() as u64 * EXTENDED_QUAD_INSTANCE_SIZE
                     + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE;
             }
 
@@ -3096,10 +3102,25 @@ impl WgpuRenderer {
             let gpu_upload_started = diagnostics_enabled.then(Instant::now);
             prepared_fragments.push(PreparedFragmentSubmission {
                 passes: prepared.passes,
+                solid_buffer: create_static_vertex_buffer(
+                    &shared.device,
+                    "SUI transient fragment solid vertices",
+                    &prepared.solid_vertices,
+                ),
                 scene_buffer: create_static_vertex_buffer(
                     &shared.device,
                     "SUI transient fragment scene",
                     &prepared.scene_vertices,
+                ),
+                analytic_buffer: create_static_vertex_buffer(
+                    &shared.device,
+                    "SUI transient fragment analytic instances",
+                    &prepared.analytic_vertices,
+                ),
+                extended_buffer: create_static_vertex_buffer(
+                    &shared.device,
+                    "SUI transient fragment extended vertices",
+                    &prepared.extended_vertices,
                 ),
                 clip_buffer: create_static_vertex_buffer(
                     &shared.device,
@@ -4216,44 +4237,21 @@ const SHADER_SOURCE: &str = r#"
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) local_position: vec2<f32>,
-    @location(2) rect_params: vec4<f32>,
 };
 
 @vertex
 fn vs_main(
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
-    @location(2) tex_coords: vec2<f32>,
-    @location(3) shader_params: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.color = color;
-    out.local_position = tex_coords;
-    out.rect_params = shader_params;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let feather_width = in.rect_params.z;
-    let p = in.local_position;
-    let derivative_width = length(vec2<f32>(fwidth(p.x), fwidth(p.y)));
-    if feather_width > 0.0 {
-        let size = max(in.rect_params.xy, vec2<f32>(0.0));
-        let outside_distance = max(
-            max(-p.x, p.x - size.x),
-            max(-p.y, p.y - size.y),
-        );
-        let feather = max(feather_width, derivative_width);
-        let coverage = select(
-            clamp(1.0 - (outside_distance / max(feather, 1e-4)), 0.0, 1.0),
-            1.0,
-            outside_distance <= 0.0,
-        );
-        return vec4<f32>(in.color.rgb, in.color.a * coverage);
-    }
     return in.color;
 }
 "#;
@@ -4469,11 +4467,14 @@ struct VsOut {
     @location(4) p2: vec4<f32>, @location(5) border_color: vec4<f32>,
 };
 @vertex
-fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec4<f32>,
-    @location(2) local: vec2<f32>, @location(3) p0: vec4<f32>, @location(4) radii: vec4<f32>,
-    @location(5) p2: vec4<f32>, @location(6) border_color: vec4<f32>) -> VsOut {
-    var out: VsOut; out.position = vec4<f32>(position, 0.0, 1.0);
-    out.color = color; out.local = local; out.p0 = p0; out.radii = radii; out.p2 = p2; out.border_color = border_color;
+fn vs_main(@location(0) corner: vec2<f32>, @location(1) ndc_min: vec2<f32>,
+    @location(2) ndc_max: vec2<f32>, @location(3) local_min: vec2<f32>,
+    @location(4) local_max: vec2<f32>, @location(5) color: vec4<f32>,
+    @location(6) p0: vec4<f32>, @location(7) radii: vec4<f32>,
+    @location(8) p2: vec4<f32>, @location(9) border_color: vec4<f32>) -> VsOut {
+    var out: VsOut; out.position = vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0);
+    out.color = color; out.local = mix(local_min, local_max, corner); out.p0 = p0;
+    out.radii = radii; out.p2 = p2; out.border_color = border_color;
     return out;
 }
 fn sd_round_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
@@ -4532,11 +4533,14 @@ struct VsOut {
     @location(4) axis: vec4<f32>, @location(5) stop1: vec4<f32>,
 };
 @vertex
-fn vs_main(@location(0) position: vec2<f32>, @location(1) stop0: vec4<f32>,
-    @location(2) local: vec2<f32>, @location(3) p0: vec4<f32>, @location(4) radii: vec4<f32>,
-    @location(5) axis: vec4<f32>, @location(6) stop1: vec4<f32>) -> VsOut {
-    var out: VsOut; out.position = vec4<f32>(position, 0.0, 1.0);
-    out.stop0 = stop0; out.local = local; out.p0 = p0; out.radii = radii; out.axis = axis; out.stop1 = stop1;
+fn vs_main(@location(0) corner: vec2<f32>, @location(1) ndc_min: vec2<f32>,
+    @location(2) ndc_max: vec2<f32>, @location(3) local_min: vec2<f32>,
+    @location(4) local_max: vec2<f32>, @location(5) stop0: vec4<f32>,
+    @location(6) p0: vec4<f32>, @location(7) radii: vec4<f32>,
+    @location(8) axis: vec4<f32>, @location(9) stop1: vec4<f32>) -> VsOut {
+    var out: VsOut; out.position = vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0);
+    out.stop0 = stop0; out.local = mix(local_min, local_max, corner); out.p0 = p0;
+    out.radii = radii; out.axis = axis; out.stop1 = stop1;
     return out;
 }
 fn sd_round_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
@@ -4588,14 +4592,20 @@ fn vs_main(
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
-    @location(7) metadata: vec4<f32>,
-    @location(8) layer: u32,
+    @location(7) coverage_flags: vec4<u32>,
+    @location(8) coverage_parameter: f32,
+    @location(9) layer: u32,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
     out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
-    out.metadata = metadata;
+    out.metadata = vec4<f32>(
+        f32(coverage_flags.x),
+        f32(coverage_flags.y),
+        f32(coverage_flags.z),
+        coverage_parameter,
+    );
     out.layer = layer;
     out.uv_min = uv_min;
     out.uv_max = uv_max;
@@ -4700,14 +4710,20 @@ fn vs_main(
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
     @location(6) color: vec4<f32>,
-    @location(7) metadata: vec4<f32>,
-    @location(8) layer: u32,
+    @location(7) coverage_flags: vec4<u32>,
+    @location(8) coverage_parameter: f32,
+    @location(9) layer: u32,
 ) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
     out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
-    out.metadata = metadata;
+    out.metadata = vec4<f32>(
+        f32(coverage_flags.x),
+        f32(coverage_flags.y),
+        f32(coverage_flags.z),
+        coverage_parameter,
+    );
     out.layer = layer;
     out.uv_min = uv_min;
     out.uv_max = uv_max;
@@ -4828,16 +4844,19 @@ var<storage, read> points: array<AnalyticPoint>;
 
 @vertex
 fn vs_main(
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) scene_position: vec2<f32>,
-    @location(3) shader_params: vec4<f32>,
+    @location(0) corner: vec2<f32>,
+    @location(1) ndc_min: vec2<f32>,
+    @location(2) ndc_max: vec2<f32>,
+    @location(3) scene_min: vec2<f32>,
+    @location(4) scene_max: vec2<f32>,
+    @location(5) color: vec4<f32>,
+    @location(6) path_index: u32,
 ) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.position = vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0);
     out.color = color;
-    out.scene_position = scene_position;
-    out.path_index = u32(shader_params.x + 0.5);
+    out.scene_position = mix(scene_min, scene_max, corner);
+    out.path_index = path_index;
     return out;
 }
 
@@ -5011,23 +5030,23 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ANALYTIC_PATH_SHADER_SOURCE, CachedGlyphAtlas, CachedGlyphMesh, ClipState,
-        ColorManagementMode, CompositionContainerId, DEFAULT_FEATHER_WIDTH, DebugCaptureArtifact,
-        DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage, DebugSdrVisualization,
-        DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction, DrawOp, DrawOpArena,
-        DrawOpKind, DynamicRangeMode, GlyphCacheKey, GlyphFaceCacheKey, GlyphSubpixelOffsetKey,
-        HdrRgbaImage, OutputStrategy, PacketRebuildReason, PreparedClipPath, PreparedDrawBatch,
-        PreparedDrawKind, PreparedFrameBatches, PreparedPassBatch, PreparedVertices,
-        RendererFrameStats, RequestedColorManagementMode, RequestedDynamicRangeMode,
-        RequestedOutputColorPrimaries, RequestedToneMappingMode, RetainedCompositorFrameStats,
-        RetainedCompositorState, RetainedPacketId, RetainedPacketRebuildStats, RgbaImage,
-        ScissorRect, StemDarkening, SwashImageContent, SwashSource, SwashStrikeWith,
-        TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE, TEXT_ATLAS_SHADER_SOURCE, TextAtlasColorMode,
-        TextAtlasPages, TextCoveragePolicy, TextEngine, TextHinting, TextRenderMode,
-        TextSubpixelOrder, VERTEX_SIZE, Vertex, WgpuExternalTextureRegistry, WgpuRenderer,
-        append_cached_path_mesh, batch_draw_ops, build_vertices, decode_rgba16f_pixels,
-        encode_hdr_debug_artifact, hdr_image_to_sdr_rgba, image_mip_chain, image_mip_level_count,
-        prepare_frame_batches,
+        ANALYTIC_PATH_SHADER_SOURCE, COMPACT_VERTEX_SIZE, CachedGlyphAtlas, CachedGlyphMesh,
+        ClipState, ColorManagementMode, CompositionContainerId, DEFAULT_FEATHER_WIDTH,
+        DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+        DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, DisplayTransferFunction,
+        DrawOp, DrawOpArena, DrawOpKind, DynamicRangeMode, GlyphCacheKey, GlyphFaceCacheKey,
+        GlyphSubpixelOffsetKey, HdrRgbaImage, OutputStrategy, PacketRebuildReason,
+        PreparedClipPath, PreparedDrawBatch, PreparedDrawKind, PreparedFrameBatches,
+        PreparedPassBatch, PreparedVertices, RendererFrameStats, RequestedColorManagementMode,
+        RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
+        RetainedCompositorFrameStats, RetainedCompositorState, RetainedPacketId,
+        RetainedPacketRebuildStats, RgbaImage, SOLID_VERTEX_SIZE, ScissorRect, StemDarkening,
+        SwashImageContent, SwashSource, SwashStrikeWith, TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE,
+        TEXT_ATLAS_SHADER_SOURCE, TextAtlasColorMode, TextAtlasPages, TextCoveragePolicy,
+        TextEngine, TextHinting, TextRenderMode, TextSubpixelOrder, Vertex,
+        WgpuExternalTextureRegistry, WgpuRenderer, append_cached_path_mesh, batch_draw_ops,
+        build_vertices, decode_rgba16f_pixels, encode_hdr_debug_artifact, hdr_image_to_sdr_rgba,
+        image_mip_chain, image_mip_level_count, prepare_frame_batches,
         scene::{
             CachedDrawBatch, CachedPassBatch, allows_lcd_text, append_cached_glyph_atlas,
             apply_output_transform_for_testing, apply_stem_darkening_to_coverage,
@@ -7804,8 +7823,11 @@ mod tests {
     fn renderer_frame_stats_count_passes_draws_and_uploaded_vertices() {
         let vertex = Vertex::basic([0.0, 0.0], [1.0, 1.0, 1.0, 1.0], [0.0, 0.0], [0.0; 4]);
         let prepared = PreparedFrameBatches {
-            scene_vertices: vec![vertex; 9],
-            clip_vertices: vec![vertex; 6],
+            solid_vertices: Vec::new(),
+            scene_vertices: vec![vertex.into(); 9],
+            analytic_vertices: Vec::new(),
+            extended_vertices: Vec::new(),
+            clip_vertices: vec![vertex.into(); 6],
             text_instances: Vec::new(),
             passes: vec![
                 PreparedPassBatch {
@@ -7852,7 +7874,10 @@ mod tests {
 
         assert_eq!(stats.pass_count, 2);
         assert_eq!(stats.draw_count, 4);
-        assert_eq!(stats.uploaded_vertex_bytes, 15 * VERTEX_SIZE);
+        assert_eq!(
+            stats.uploaded_vertex_bytes,
+            9 * COMPACT_VERTEX_SIZE + 6 * SOLID_VERTEX_SIZE
+        );
         assert_eq!(stats.visible_layer_count, 0);
         assert_eq!(stats.retained_state_update_time_us, 0);
     }

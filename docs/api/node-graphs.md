@@ -258,3 +258,11 @@ and `SUI_PROFILE_WIDGET_TIMINGS=1` to include detailed runtime phase and widget
 timings. Analytic geometry is cached on both CPU and GPU using
 translation-normalized identity, so repeated edges and zoom levels avoid
 re-flattening and buffer uploads.
+
+The WGPU submission stage compacts transient geometry by pipeline before
+upload: solid meshes use position/color vertices, images and custom shaders use
+the shared compact format, and analytic or rounded/gradient quads use one
+instance plus a static unit quad. Text instances retain full-precision position
+and HDR color while packing normalized atlas UVs and discrete coverage flags.
+`vertex_upload_avg_bytes` and `text_vertex_avg_bytes` in the GPU diagnostic
+track the resulting bandwidth.

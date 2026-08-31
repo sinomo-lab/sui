@@ -211,8 +211,11 @@ pub(crate) struct ClipState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedFrameBatches {
-    pub(crate) scene_vertices: Vec<Vertex>,
-    pub(crate) clip_vertices: Vec<Vertex>,
+    pub(crate) solid_vertices: Vec<SolidVertex>,
+    pub(crate) scene_vertices: Vec<CompactVertex>,
+    pub(crate) analytic_vertices: Vec<AnalyticQuadInstance>,
+    pub(crate) extended_vertices: Vec<ExtendedQuadInstance>,
+    pub(crate) clip_vertices: Vec<SolidVertex>,
     pub(crate) text_instances: Vec<TextAtlasInstance>,
     pub(crate) passes: Vec<PreparedPassBatch>,
 }
@@ -268,6 +271,10 @@ impl PreparedDrawKind {
             Self::GradientRect => PreparedDrawPipelineKind::GradientRect,
         }
     }
+
+    const fn uses_extended_vertices(self) -> bool {
+        matches!(self, Self::RoundedRect | Self::GradientRect)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -292,7 +299,10 @@ pub(crate) struct PreparedDrawBatch {
 
 pub(crate) struct PreparedFragmentSubmission {
     pub(crate) passes: Vec<PreparedPassBatch>,
+    pub(crate) solid_buffer: Option<wgpu::Buffer>,
     pub(crate) scene_buffer: Option<wgpu::Buffer>,
+    pub(crate) analytic_buffer: Option<wgpu::Buffer>,
+    pub(crate) extended_buffer: Option<wgpu::Buffer>,
     pub(crate) clip_buffer: Option<wgpu::Buffer>,
     pub(crate) text_instance_buffer: Option<wgpu::Buffer>,
     pub(crate) translation: Vector,
@@ -315,7 +325,10 @@ pub(crate) struct PreparedAnalyticPathResources {
 
 pub(crate) struct EncodablePassBatch {
     pub(crate) pass: PreparedPassBatch,
+    pub(crate) solid_buffer: Option<wgpu::Buffer>,
     pub(crate) scene_buffer: Option<wgpu::Buffer>,
+    pub(crate) analytic_buffer: Option<wgpu::Buffer>,
+    pub(crate) extended_buffer: Option<wgpu::Buffer>,
     pub(crate) clip_buffer: Option<wgpu::Buffer>,
     pub(crate) text_instance_buffer: Option<wgpu::Buffer>,
     pub(crate) translation: Vector,
@@ -364,7 +377,7 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
         stamp_draw_op_analytic_path_slots(&mut draw_ops, slots);
     }
     let cached_passes = cache_draw_ops_internal(&draw_ops, batch_analytic_paths);
-    let passes = prepare_cached_passes(
+    let mut passes = prepare_cached_passes(
         &cached_passes,
         viewport,
         framebuffer_size,
@@ -374,9 +387,71 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
         0,
         0,
     );
+    let mut solid_vertices = Vec::new();
+    let mut scene_vertices = Vec::new();
+    let mut analytic_vertices = Vec::new();
+    let mut extended_vertices = Vec::new();
+    for pass in &mut passes {
+        for draw in &mut pass.draws {
+            if draw.kind == PreparedDrawKind::TextAtlas {
+                continue;
+            }
+            let source = &draw_ops.scene_vertices
+                [draw.vertices.start as usize..(draw.vertices.start + draw.vertices.len) as usize];
+            if draw.kind == PreparedDrawKind::Solid {
+                draw.vertices.start = solid_vertices.len() as u32;
+                solid_vertices.extend(source.iter().copied().map(SolidVertex::from));
+            } else if matches!(draw.kind, PreparedDrawKind::AnalyticPath { .. }) {
+                draw.vertices.start = analytic_vertices.len() as u32;
+                let mut chunks = source.chunks_exact(6);
+                analytic_vertices.extend(chunks.by_ref().map(|vertices| AnalyticQuadInstance {
+                    ndc_min: vertices[0].position,
+                    ndc_max: vertices[5].position,
+                    scene_min: vertices[0].tex_coords,
+                    scene_max: vertices[5].tex_coords,
+                    color: vertices[0].color,
+                    path_index: vertices[0].shader_params[0].round().max(0.0) as u32,
+                }));
+                assert!(
+                    chunks.remainder().is_empty(),
+                    "analytic batches must contain complete six-vertex quads"
+                );
+                draw.vertices.len /= 6;
+            } else if draw.kind.uses_extended_vertices() {
+                draw.vertices.start = extended_vertices.len() as u32;
+                let mut chunks = source.chunks_exact(6);
+                extended_vertices.extend(chunks.by_ref().map(|vertices| ExtendedQuadInstance {
+                    ndc_min: vertices[0].position,
+                    ndc_max: vertices[5].position,
+                    local_min: vertices[0].tex_coords,
+                    local_max: vertices[5].tex_coords,
+                    color: vertices[0].color,
+                    shader_params: vertices[0].shader_params,
+                    shader_params2: vertices[0].shader_params2,
+                    shader_params3: vertices[0].shader_params3,
+                    shader_params4: vertices[0].shader_params4,
+                }));
+                assert!(
+                    chunks.remainder().is_empty(),
+                    "extended rectangle batches must contain complete six-vertex quads"
+                );
+                draw.vertices.len /= 6;
+            } else {
+                draw.vertices.start = scene_vertices.len() as u32;
+                scene_vertices.extend(source.iter().copied().map(CompactVertex::from));
+            }
+        }
+    }
     PreparedFrameBatches {
-        scene_vertices: draw_ops.scene_vertices,
-        clip_vertices: draw_ops.clip_vertices,
+        solid_vertices,
+        scene_vertices,
+        analytic_vertices,
+        extended_vertices,
+        clip_vertices: draw_ops
+            .clip_vertices
+            .into_iter()
+            .map(SolidVertex::from)
+            .collect(),
         text_instances: draw_ops.text_instances,
         passes,
     }
@@ -609,10 +684,10 @@ fn stamp_draw_op_analytic_path_slots(
     }
 }
 
-pub(crate) fn create_static_vertex_buffer(
+pub(crate) fn create_static_vertex_buffer<T: Pod>(
     device: &wgpu::Device,
     label: &str,
-    vertices: &[Vertex],
+    vertices: &[T],
 ) -> Option<wgpu::Buffer> {
     if vertices.is_empty() {
         return None;
@@ -653,7 +728,10 @@ pub(crate) fn flatten_fragment_passes(
         for pass in &fragment.passes {
             flattened.push(EncodablePassBatch {
                 pass: pass.clone(),
+                solid_buffer: fragment.solid_buffer.clone(),
                 scene_buffer: fragment.scene_buffer.clone(),
+                analytic_buffer: fragment.analytic_buffer.clone(),
+                extended_buffer: fragment.extended_buffer.clone(),
                 clip_buffer: fragment.clip_buffer.clone(),
                 text_instance_buffer: fragment.text_instance_buffer.clone(),
                 translation: fragment.translation,
@@ -762,7 +840,10 @@ fn encode_unclipped_pass_run(
             viewport,
             framebuffer_size,
             &batch.pass,
+            batch.solid_buffer.as_ref(),
             batch.scene_buffer.as_ref(),
+            batch.analytic_buffer.as_ref(),
+            batch.extended_buffer.as_ref(),
             batch.text_instance_buffer.as_ref(),
             batch.translation,
             false,
@@ -834,7 +915,10 @@ fn encode_clipped_pass(
         .expect("clip buffer available for path-clipped pass");
     for (clip_index, clip_path) in batch.pass.clip_paths.iter().enumerate() {
         render_pass.set_stencil_reference(clip_index as u32);
-        render_pass.set_vertex_buffer(0, vertex_buffer_slice(clip_buffer, clip_path.vertices));
+        render_pass.set_vertex_buffer(
+            0,
+            solid_vertex_buffer_slice(clip_buffer, clip_path.vertices),
+        );
         render_pass.draw(0..clip_path.vertices.len, 0..1);
     }
 
@@ -846,7 +930,10 @@ fn encode_clipped_pass(
         viewport,
         framebuffer_size,
         &batch.pass,
+        batch.solid_buffer.as_ref(),
         batch.scene_buffer.as_ref(),
+        batch.analytic_buffer.as_ref(),
+        batch.extended_buffer.as_ref(),
         batch.text_instance_buffer.as_ref(),
         batch.translation,
         true,
@@ -880,7 +967,10 @@ fn encode_draws_for_pass(
     viewport: Size,
     framebuffer_size: (u32, u32),
     pass: &PreparedPassBatch,
+    solid_buffer: Option<&wgpu::Buffer>,
     scene_buffer: Option<&wgpu::Buffer>,
+    analytic_buffer: Option<&wgpu::Buffer>,
+    extended_buffer: Option<&wgpu::Buffer>,
     text_instance_buffer: Option<&wgpu::Buffer>,
     translation: Vector,
     clipped: bool,
@@ -1002,24 +1092,41 @@ fn encode_draws_for_pass(
                 (0..6, 0..draw.vertices.len)
             }
             PreparedDrawKind::AnalyticPath { .. } => {
-                let scene_buffer = scene_buffer.ok_or_else(|| {
-                    Error::new("prepared render batch is missing a scene vertex buffer")
+                let analytic_buffer = analytic_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing an analytic instance buffer")
                 })?;
-                render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
+                render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
+                render_pass.set_vertex_buffer(
+                    1,
+                    analytic_vertex_buffer_slice(analytic_buffer, draw.vertices),
+                );
+                (0..6, 0..draw.vertices.len)
+            }
+            PreparedDrawKind::Solid => {
+                let solid_buffer = solid_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing a solid vertex buffer")
+                })?;
+                render_pass
+                    .set_vertex_buffer(0, solid_vertex_buffer_slice(solid_buffer, draw.vertices));
                 (0..draw.vertices.len, 0..1)
             }
-            PreparedDrawKind::WidgetShader => {
-                let scene_buffer = scene_buffer.ok_or_else(|| {
-                    Error::new("prepared render batch is missing a scene vertex buffer")
+            PreparedDrawKind::RoundedRect | PreparedDrawKind::GradientRect => {
+                let extended_buffer = extended_buffer.ok_or_else(|| {
+                    Error::new("prepared render batch is missing an extended vertex buffer")
                 })?;
-                render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
-                (0..draw.vertices.len, 0..1)
+                render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
+                render_pass.set_vertex_buffer(
+                    1,
+                    extended_vertex_buffer_slice(extended_buffer, draw.vertices),
+                );
+                (0..6, 0..draw.vertices.len)
             }
             _ => {
                 let scene_buffer = scene_buffer.ok_or_else(|| {
                     Error::new("prepared render batch is missing a scene vertex buffer")
                 })?;
-                render_pass.set_vertex_buffer(0, vertex_buffer_slice(scene_buffer, draw.vertices));
+                render_pass
+                    .set_vertex_buffer(0, compact_vertex_buffer_slice(scene_buffer, draw.vertices));
                 (0..draw.vertices.len, 0..1)
             }
         };
@@ -3079,17 +3186,27 @@ fn build_text_atlas_instance(
         top_left,
         x_axis: [top_right[0] - top_left[0], top_right[1] - top_left[1]],
         y_axis: [bottom_left[0] - top_left[0], bottom_left[1] - top_left[1]],
-        uv_min: atlas.uv_min,
-        uv_max: atlas.uv_max,
+        uv_min: atlas.uv_min.map(pack_unorm16),
+        uv_max: atlas.uv_max.map(pack_unorm16),
         color: rgba,
-        metadata: [
-            (atlas_contains_lcd_subpixels && allows_lcd_text(transform)) as u8 as f32,
-            atlas_contains_lcd_subpixels as u8 as f32,
-            coverage_policy_kind,
-            coverage_policy_parameter,
+        coverage_flags: [
+            (atlas_contains_lcd_subpixels && allows_lcd_text(transform)) as u8,
+            atlas_contains_lcd_subpixels as u8,
+            coverage_policy_kind.round().clamp(0.0, u8::MAX as f32) as u8,
+            0,
         ],
+        coverage_parameter: coverage_policy_parameter,
         layer: atlas.page_index as u32,
     })
+}
+
+fn pack_unorm16(value: f32) -> u16 {
+    (value.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16
+}
+
+#[cfg(test)]
+fn unpack_unorm16(value: u16) -> f32 {
+    value as f32 / u16::MAX as f32
 }
 
 fn coverage_policy_shader_metadata(policy: TextCoveragePolicy) -> (f32, f32) {
@@ -3151,6 +3268,8 @@ fn physical_pixel_phase(physical_position: f32, variants: u8) -> PhysicalPixelPh
 #[cfg(test)]
 fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAtlasInstance]) {
     for instance in instances {
+        let uv_min = instance.uv_min.map(unpack_unorm16);
+        let uv_max = instance.uv_max.map(unpack_unorm16);
         let top_left = instance.top_left;
         let top_right = [
             instance.top_left[0] + instance.x_axis[0],
@@ -3165,32 +3284,22 @@ fn append_text_instance_vertices(vertices: &mut Vec<Vertex>, instances: &[TextAt
             top_right[1] + instance.y_axis[1],
         ];
         vertices.extend_from_slice(&[
-            Vertex::basic(top_left, instance.color, instance.uv_min, [0.0; 4]),
+            Vertex::basic(top_left, instance.color, uv_min, [0.0; 4]),
+            Vertex::basic(top_right, instance.color, [uv_max[0], uv_min[1]], [0.0; 4]),
             Vertex::basic(
-                top_right,
+                bottom_left,
                 instance.color,
-                [instance.uv_max[0], instance.uv_min[1]],
+                [uv_min[0], uv_max[1]],
                 [0.0; 4],
             ),
             Vertex::basic(
                 bottom_left,
                 instance.color,
-                [instance.uv_min[0], instance.uv_max[1]],
+                [uv_min[0], uv_max[1]],
                 [0.0; 4],
             ),
-            Vertex::basic(
-                bottom_left,
-                instance.color,
-                [instance.uv_min[0], instance.uv_max[1]],
-                [0.0; 4],
-            ),
-            Vertex::basic(
-                top_right,
-                instance.color,
-                [instance.uv_max[0], instance.uv_min[1]],
-                [0.0; 4],
-            ),
-            Vertex::basic(bottom_right, instance.color, instance.uv_max, [0.0; 4]),
+            Vertex::basic(top_right, instance.color, [uv_max[0], uv_min[1]], [0.0; 4]),
+            Vertex::basic(bottom_right, instance.color, uv_max, [0.0; 4]),
         ]);
     }
 }
@@ -4724,12 +4833,47 @@ fn resolve_fragment_clip_rect(current: Option<Rect>, next: Option<Rect>) -> Opti
     }
 }
 
-pub(crate) const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
+pub(crate) const COMPACT_VERTEX_SIZE: u64 = std::mem::size_of::<CompactVertex>() as u64;
+pub(crate) const SOLID_VERTEX_SIZE: u64 = std::mem::size_of::<SolidVertex>() as u64;
+pub(crate) const ANALYTIC_QUAD_INSTANCE_SIZE: u64 =
+    std::mem::size_of::<AnalyticQuadInstance>() as u64;
+pub(crate) const EXTENDED_QUAD_INSTANCE_SIZE: u64 =
+    std::mem::size_of::<ExtendedQuadInstance>() as u64;
 pub(crate) const TEXT_ATLAS_INSTANCE_SIZE: u64 = std::mem::size_of::<TextAtlasInstance>() as u64;
 
-fn vertex_buffer_slice(buffer: &wgpu::Buffer, vertices: PreparedVertices) -> wgpu::BufferSlice<'_> {
-    let start = vertices.start as u64 * VERTEX_SIZE;
-    let end = start + vertices.len as u64 * VERTEX_SIZE;
+fn extended_vertex_buffer_slice(
+    buffer: &wgpu::Buffer,
+    vertices: PreparedVertices,
+) -> wgpu::BufferSlice<'_> {
+    let start = vertices.start as u64 * EXTENDED_QUAD_INSTANCE_SIZE;
+    let end = start + vertices.len as u64 * EXTENDED_QUAD_INSTANCE_SIZE;
+    buffer.slice(start..end)
+}
+
+fn analytic_vertex_buffer_slice(
+    buffer: &wgpu::Buffer,
+    vertices: PreparedVertices,
+) -> wgpu::BufferSlice<'_> {
+    let start = vertices.start as u64 * ANALYTIC_QUAD_INSTANCE_SIZE;
+    let end = start + vertices.len as u64 * ANALYTIC_QUAD_INSTANCE_SIZE;
+    buffer.slice(start..end)
+}
+
+fn compact_vertex_buffer_slice(
+    buffer: &wgpu::Buffer,
+    vertices: PreparedVertices,
+) -> wgpu::BufferSlice<'_> {
+    let start = vertices.start as u64 * COMPACT_VERTEX_SIZE;
+    let end = start + vertices.len as u64 * COMPACT_VERTEX_SIZE;
+    buffer.slice(start..end)
+}
+
+fn solid_vertex_buffer_slice(
+    buffer: &wgpu::Buffer,
+    vertices: PreparedVertices,
+) -> wgpu::BufferSlice<'_> {
+    let start = vertices.start as u64 * SOLID_VERTEX_SIZE;
+    let end = start + vertices.len as u64 * SOLID_VERTEX_SIZE;
     buffer.slice(start..end)
 }
 
@@ -5271,5 +5415,68 @@ mod analytic_path_cache_tests {
 
         assert_eq!(builds.get(), 1);
         assert!(Arc::ptr_eq(&first, &translated));
+    }
+}
+
+#[cfg(test)]
+mod transient_vertex_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_batches_compact_basic_vertices_and_instance_rectangle_quads() {
+        let vertex = Vertex::basic([0.0; 2], [1.0; 4], [0.0; 2], [0.0; 4]);
+        let draw_ops = DrawOpArena {
+            scene_vertices: vec![vertex; 18],
+            clip_states: vec![ClipState {
+                clip_paths: Vec::new(),
+            }],
+            draw_ops: vec![
+                DrawOp {
+                    kind: DrawOpKind::Solid,
+                    vertices: PreparedVertices { start: 0, len: 6 },
+                    clip_rect: None,
+                    clip_state_index: 0,
+                    image: None,
+                },
+                DrawOp {
+                    kind: DrawOpKind::RoundedRect,
+                    vertices: PreparedVertices { start: 6, len: 6 },
+                    clip_rect: None,
+                    clip_state_index: 0,
+                    image: None,
+                },
+                DrawOp {
+                    kind: DrawOpKind::GradientRect,
+                    vertices: PreparedVertices { start: 12, len: 6 },
+                    clip_rect: None,
+                    clip_state_index: 0,
+                    image: None,
+                },
+            ],
+            ..DrawOpArena::default()
+        };
+
+        let prepared = prepare_frame_batches(draw_ops, Size::new(100.0, 100.0), (100, 100));
+
+        assert_eq!(std::mem::size_of::<CompactVertex>(), 48);
+        assert_eq!(std::mem::size_of::<SolidVertex>(), 24);
+        assert_eq!(std::mem::size_of::<AnalyticQuadInstance>(), 52);
+        assert_eq!(std::mem::size_of::<ExtendedQuadInstance>(), 112);
+        assert_eq!(std::mem::size_of::<TextAtlasInstance>(), 60);
+        assert_eq!(prepared.solid_vertices.len(), 6);
+        assert_eq!(prepared.scene_vertices.len(), 0);
+        assert_eq!(prepared.analytic_vertices.len(), 0);
+        assert_eq!(prepared.extended_vertices.len(), 2);
+        assert_eq!(prepared.passes[0].draws[0].vertices.len, 6);
+        assert_eq!(prepared.passes[0].draws[1].vertices.len, 1);
+        assert_eq!(prepared.passes[0].draws[2].vertices.len, 1);
+    }
+
+    #[test]
+    fn packed_text_uvs_preserve_normalized_coordinates() {
+        for value in [0.0_f32, 0.125, 0.5, 0.875, 1.0] {
+            let unpacked = unpack_unorm16(pack_unorm16(value));
+            assert!((unpacked - value).abs() <= (1.0 / u16::MAX as f32));
+        }
     }
 }
