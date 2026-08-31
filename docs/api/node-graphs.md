@@ -149,6 +149,16 @@ skip arrangement, painting, and semantics until they enter that range. Set
 `cull_offscreen` to `false` only when an application deliberately needs every
 element mounted into those phases.
 
+Large static edge sets use a shared retained world layer by default. Eligible
+unselected, unhovered, non-animated, unlabeled edges cache their paths and
+markers in flow coordinates, then reuse the renderer packet while the viewport
+changes. `retain_edge_world`, `retained_edge_world_min`, and
+`retained_edge_world_max` control the policy; the default range is 1,024 through
+4,096 edges. Smaller graphs avoid the fixed layer boundary, while larger graphs
+fall back to viewport culling instead of retaining one oversized packet. Custom
+edge painters always use the direct path. Retained markers scale uniformly with
+the Canvas viewport.
+
 ## Hierarchy and editing
 
 `parent_id` makes a node position relative to a parent. Parent chains are
@@ -244,6 +254,7 @@ publication-comparable results. Run them serially on an otherwise idle system:
 cargo test -p sinomo-ui-runtime transformed_widget_subtree_current_status_benchmark -- --ignored --nocapture
 cargo test -p sinomo-ui-nodes node_graph_current_status_benchmark -- --ignored --nocapture
 cargo test -p sinomo-ui-demo retained_node_graph_gpu_zoom_current_status_benchmark -- --ignored --nocapture
+cargo test -p sinomo-ui-demo retained_edge_world_gpu_zoom_benchmark -- --ignored --nocapture
 ```
 
 They cover 384 flat, independently transformed, and shared-transform widgets;
@@ -251,6 +262,9 @@ a 10,000-node/19,800-edge model with budgeted spatial-index construction;
 384-node retained and painted zoom frames; and the complete runtime plus WGPU
 renderer path. Each zoom workload asserts that viewport-only changes do not
 remeasure retained widgets.
+
+The edge-world diagnostic compares direct and retained rendering for 1,024
+edges and reports runtime, renderer, packet-build, and path-command costs.
 
 The GPU diagnostic also reports retained packet construction, analytic-path,
 batching, upload, encoding, and queue timings. Set `SUI_NODE_BENCH_PROFILE=1`

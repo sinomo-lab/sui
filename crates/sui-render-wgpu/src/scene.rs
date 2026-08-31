@@ -4499,30 +4499,50 @@ impl DrawOpArena {
         id_map
     }
 
-    pub(crate) fn translate_in_place(&mut self, translation: Vector, viewport: Size) {
-        if translation == Vector::ZERO || viewport.is_empty() {
+    pub(crate) fn transform_in_place(&mut self, transform: Transform, viewport: Size) {
+        if transform.is_identity() || viewport.is_empty() {
             return;
         }
 
-        let delta_x = (translation.x / viewport.width) * 2.0;
-        let delta_y = -((translation.y / viewport.height) * 2.0);
-
+        let transform_position = |position: [f32; 2]| {
+            let logical = Point::new(
+                ((position[0] + 1.0) * 0.5) * viewport.width,
+                ((1.0 - position[1]) * 0.5) * viewport.height,
+            );
+            let transformed = transform.transform_point(logical);
+            to_ndc(transformed.x, transformed.y, viewport)
+        };
         for vertex in &mut self.scene_vertices {
-            vertex.position[0] += delta_x;
-            vertex.position[1] += delta_y;
+            vertex.position = transform_position(vertex.position);
         }
         for vertex in &mut self.clip_vertices {
-            vertex.position[0] += delta_x;
-            vertex.position[1] += delta_y;
+            vertex.position = transform_position(vertex.position);
         }
         for instance in &mut self.text_instances {
-            instance.top_left[0] += delta_x;
-            instance.top_left[1] += delta_y;
+            instance.top_left = transform_position(instance.top_left);
+            let x_axis = transform.transform_vector(Vector::new(
+                instance.x_axis[0] * viewport.width * 0.5,
+                -instance.x_axis[1] * viewport.height * 0.5,
+            ));
+            let y_axis = transform.transform_vector(Vector::new(
+                instance.y_axis[0] * viewport.width * 0.5,
+                -instance.y_axis[1] * viewport.height * 0.5,
+            ));
+            instance.x_axis = [
+                (x_axis.x / viewport.width) * 2.0,
+                -((x_axis.y / viewport.height) * 2.0),
+            ];
+            instance.y_axis = [
+                (y_axis.x / viewport.width) * 2.0,
+                -((y_axis.y / viewport.height) * 2.0),
+            ];
         }
         for draw_op in &mut self.draw_ops {
-            draw_op.clip_rect = draw_op.clip_rect.map(|rect| rect.translate(translation));
+            draw_op.clip_rect = draw_op
+                .clip_rect
+                .map(|rect| transform.transform_rect_bbox(rect));
             if let Some(image) = &mut draw_op.image {
-                image.bounds = image.bounds.translate(translation);
+                image.bounds = transform.transform_rect_bbox(image.bounds);
             }
         }
     }
@@ -4596,21 +4616,21 @@ impl DrawOpArena {
         }
     }
 
-    pub(crate) fn append_composed_fragment(
+    pub(crate) fn append_transformed_fragment(
         &mut self,
         fragment: &DrawOpArena,
-        translation: Vector,
+        transform: Transform,
         opacity: f32,
         external_clips: &[ResolvedClipPrimitive],
         viewport: Size,
     ) -> Result<()> {
-        if translation == Vector::ZERO && external_clips.is_empty() && opacity == 1.0 {
+        if transform.is_identity() && external_clips.is_empty() && opacity == 1.0 {
             self.append_fragment(fragment);
             return Ok(());
         }
 
         let mut transformed = fragment.clone();
-        transformed.translate_in_place(translation, viewport);
+        transformed.transform_in_place(transform, viewport);
         transformed.apply_opacity(opacity);
 
         let scene_delta = self.scene_vertices.len() as u32;

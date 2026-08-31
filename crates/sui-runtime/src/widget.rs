@@ -3177,6 +3177,27 @@ impl PaintCtx {
         self.scene.push(command);
     }
 
+    /// Insert a stable retained scene layer owned by another logical widget.
+    ///
+    /// Canvas-style containers use this to keep world-space drawing cached
+    /// beneath a changing outer transform. Reusing `owner` preserves renderer
+    /// packet identity; changing `scene` still invalidates the packet by its
+    /// content signature. The owner must be exposed through normal widget
+    /// visitation so runtime ordering and diagnostics can resolve it.
+    pub fn push_retained_scene_layer(&mut self, owner: WidgetId, bounds: Rect, scene: Arc<Scene>) {
+        let content_bounds = scene.content_bounds().unwrap_or(bounds);
+        let paint_bounds = scene.paint_bounds().unwrap_or(bounds);
+        let descriptor = SceneLayerDescriptor::new(SceneLayerId::from_widget(owner), owner, bounds)
+            .with_content_bounds(content_bounds)
+            .with_paint_bounds(paint_bounds)
+            .with_hit_test(false);
+        self.scene
+            .push(SceneCommand::Layer(SceneLayer::from_shared_descriptor(
+                descriptor, scene,
+            )));
+        self.record_widget_paint_bounds(owner, paint_bounds);
+    }
+
     pub fn scene(&self) -> &Scene {
         &self.scene
     }

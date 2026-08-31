@@ -921,8 +921,17 @@ impl RetainedCompositorState {
                 global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
             let coordinate_space = PacketCoordinateSpace::LayerLocal;
             let normalization_origin = layer_snapshot.descriptor.bounds.origin.to_vector();
-            let pixel_snap_origin = layer_snapshot.descriptor.bounds.origin.to_vector()
+            let local_origin = layer_snapshot.descriptor.bounds.origin
                 + layer_snapshot.composed_properties.translation;
+            let layer_world_transform = self
+                .transforms
+                .get(&layer_snapshot.transform_node)
+                .map_or(Transform::IDENTITY, |transform| transform.world);
+            let pixel_snap_origin = if layer_world_transform.is_identity() {
+                local_origin.to_vector()
+            } else {
+                Vector::ZERO
+            };
             for packet in layer_snapshot.packets {
                 self.upsert_packet(
                     frame,
@@ -1133,15 +1142,22 @@ impl RetainedCompositorState {
                                 draw_ops.append_fragment(&packet.draw_ops);
                             }
                             PacketCoordinateSpace::LayerLocal => {
-                                let (origin, clip_stack, opacity) = match packet.id.container {
-                                    CompositionContainerId::Root => (Vector::ZERO, Vec::new(), 1.0),
+                                let (transform, clip_stack, opacity) = match packet.id.container {
+                                    CompositionContainerId::Root => {
+                                        (Transform::IDENTITY, Vec::new(), 1.0)
+                                    }
                                     CompositionContainerId::Layer(layer_id) => self
                                         .layers
                                         .get(&layer_id)
                                         .map(|layer| {
+                                            let origin = layer.descriptor.bounds.origin.to_vector()
+                                                + layer.composed_properties.translation;
+                                            let world = self
+                                                .transforms
+                                                .get(&layer.transform_node)
+                                                .map_or(Transform::IDENTITY, |node| node.world);
                                             (
-                                                layer.descriptor.bounds.origin.to_vector()
-                                                    + layer.composed_properties.translation,
+                                                Transform::translation_vector(origin).then(world),
                                                 resolved_clip_primitives(
                                                     layer.clip_node,
                                                     &self.clips,
@@ -1149,11 +1165,11 @@ impl RetainedCompositorState {
                                                 layer.composed_properties.opacity,
                                             )
                                         })
-                                        .unwrap_or((Vector::ZERO, Vec::new(), 1.0)),
+                                        .unwrap_or((Transform::IDENTITY, Vec::new(), 1.0)),
                                 };
-                                draw_ops.append_composed_fragment(
+                                draw_ops.append_transformed_fragment(
                                     &packet.draw_ops,
-                                    origin,
+                                    transform,
                                     opacity,
                                     &clip_stack,
                                     viewport,
@@ -1205,15 +1221,22 @@ impl RetainedCompositorState {
                                 current.append_fragment(&packet.draw_ops);
                             }
                             PacketCoordinateSpace::LayerLocal => {
-                                let (origin, clip_stack, opacity) = match packet.id.container {
-                                    CompositionContainerId::Root => (Vector::ZERO, Vec::new(), 1.0),
+                                let (transform, clip_stack, opacity) = match packet.id.container {
+                                    CompositionContainerId::Root => {
+                                        (Transform::IDENTITY, Vec::new(), 1.0)
+                                    }
                                     CompositionContainerId::Layer(layer_id) => self
                                         .layers
                                         .get(&layer_id)
                                         .map(|layer| {
+                                            let origin = layer.descriptor.bounds.origin.to_vector()
+                                                + layer.composed_properties.translation;
+                                            let world = self
+                                                .transforms
+                                                .get(&layer.transform_node)
+                                                .map_or(Transform::IDENTITY, |node| node.world);
                                             (
-                                                layer.descriptor.bounds.origin.to_vector()
-                                                    + layer.composed_properties.translation,
+                                                Transform::translation_vector(origin).then(world),
                                                 resolved_clip_primitives(
                                                     layer.clip_node,
                                                     &self.clips,
@@ -1221,11 +1244,11 @@ impl RetainedCompositorState {
                                                 layer.composed_properties.opacity,
                                             )
                                         })
-                                        .unwrap_or((Vector::ZERO, Vec::new(), 1.0)),
+                                        .unwrap_or((Transform::IDENTITY, Vec::new(), 1.0)),
                                 };
-                                current.append_composed_fragment(
+                                current.append_transformed_fragment(
                                     &packet.draw_ops,
-                                    origin,
+                                    transform,
                                     opacity,
                                     &clip_stack,
                                     viewport,
@@ -1508,6 +1531,8 @@ fn normalize_packet_snapshot(
             .min(snapshot.initial_state.clip_stack.len());
         snapshot.initial_state.clip_stack.drain(0..strip_count);
         snapshot.initial_state.clip_node = ClipNodeId::ROOT;
+        snapshot.initial_state.current_transform = Transform::IDENTITY;
+        snapshot.initial_state.transform_node = TransformNodeId::ROOT;
         snapshot.initial_state.pixel_snap_offset =
             physical_pixel_phase(pixel_snap_origin, raster_scale_factor);
     }
@@ -2336,6 +2361,40 @@ mod tests {
         );
     }
 
+    fn build_affine_layer_frame(
+        descriptor: sui_scene::SceneLayerDescriptor,
+        transform: Transform,
+        update_kind: SceneLayerUpdateKind,
+    ) -> SceneFrame {
+        let bounds = descriptor.bounds;
+        let mut layer_scene = Scene::new();
+        layer_scene.push(SceneCommand::FillPath {
+            path: ScenePath::rounded_rect(bounds, 6.0),
+            brush: Color::rgba(0.82, 0.36, 0.18, 1.0).into(),
+        });
+
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::PushTransform { transform });
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            descriptor.clone(),
+            layer_scene,
+        )));
+        scene.push(SceneCommand::PopTransform);
+
+        SceneFrame {
+            window_id: WindowId::new(25),
+            viewport: Size::new(320.0, 180.0),
+            surface_size: Size::new(320.0, 180.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![SceneLayerUpdate::from_descriptor(update_kind, descriptor)],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        }
+    }
+
     #[test]
     fn nested_overlay_is_locally_above_later_effect_content() {
         let first_dialog_id = WidgetId::new(65);
@@ -2504,6 +2563,44 @@ mod tests {
                 .translation,
             Vector::new(36.0, 0.0)
         );
+    }
+
+    #[test]
+    fn affine_parent_transform_reuses_layer_local_packet() {
+        let layer_id = WidgetId::new(153);
+        let descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(8.0, 10.0, 80.0, 36.0),
+        )
+        .with_content_bounds(Rect::new(8.0, 10.0, 80.0, 36.0))
+        .with_paint_bounds(Rect::new(8.0, 10.0, 80.0, 36.0));
+        let mut frame = build_affine_layer_frame(
+            descriptor.clone(),
+            Transform::scale(0.5, 0.5).then(Transform::translation(20.0, 14.0)),
+            SceneLayerUpdateKind::Content,
+        );
+
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let first_signature = layer_packet_signature(&compositor, layer_id);
+
+        frame = build_affine_layer_frame(
+            descriptor,
+            Transform::scale(0.85, 0.85).then(Transform::translation(44.0, 28.0)),
+            SceneLayerUpdateKind::Transform,
+        );
+        let second = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let second_signature = layer_packet_signature(&compositor, layer_id);
+
+        assert_eq!(first_signature, second_signature);
+        assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
+        assert_ne!(first.scene_vertices, second.scene_vertices);
     }
 
     #[test]

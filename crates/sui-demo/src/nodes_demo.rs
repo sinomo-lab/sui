@@ -1186,6 +1186,12 @@ mod tests {
         let mut vertex_upload_bytes = 0u64;
         let mut text_vertex_bytes = 0u64;
         let mut text_glyph_instances = 0usize;
+        let mut visible_layers = 0usize;
+        let mut packet_builds = 0usize;
+        let mut packet_new = 0usize;
+        let mut packet_signature = 0usize;
+        let mut packet_scene = 0usize;
+        let mut packet_state = 0usize;
         let mut measure_arrange_ms = 0.0_f64;
         let mut hit_test_ms = 0.0_f64;
         let mut paint_ms = 0.0_f64;
@@ -1247,10 +1253,16 @@ mod tests {
             vertex_upload_bytes += stats.uploaded_vertex_bytes;
             text_vertex_bytes += stats.text_vertex_bytes;
             text_glyph_instances += stats.text_glyph_instance_count;
+            visible_layers += stats.visible_layer_count;
+            packet_builds += stats.retained_packet_build_count;
+            packet_new += stats.retained_packet_rebuilds.new_count;
+            packet_signature += stats.retained_packet_rebuilds.signature_count;
+            packet_scene += stats.retained_packet_rebuilds.scene_count;
+            packet_state += stats.retained_packet_rebuilds.state_count;
         }
 
         println!(
-            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} detailed={detailed_profile} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1} scene_traversal_avg_us={:.1} packet_build_avg_us={:.1} packet_scene_build_avg_us={:.1} packet_text_avg_us={:.1} packet_path_avg_us={:.1} packet_rect_avg_us={:.1} resource_collection_avg_us={:.1} bind_group_avg_us={:.1} batch_prepare_avg_us={:.1} gpu_upload_avg_us={:.1} encode_avg_us={:.1} queue_submit_avg_us={:.1} vertex_upload_avg_bytes={:.1} text_vertex_avg_bytes={:.1} text_glyph_avg={:.1} measure_arrange_avg_ms={:.3} hit_test_avg_ms={:.3} paint_avg_ms={:.3} semantics_avg_ms={:.3} widget_arrange_avg_ms={:.3} widget_paint_avg_ms={:.3} widget_semantics_avg_ms={:.3}",
+            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} detailed={detailed_profile} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1} scene_traversal_avg_us={:.1} packet_build_avg_us={:.1} packet_scene_build_avg_us={:.1} packet_text_avg_us={:.1} packet_path_avg_us={:.1} packet_rect_avg_us={:.1} resource_collection_avg_us={:.1} bind_group_avg_us={:.1} batch_prepare_avg_us={:.1} gpu_upload_avg_us={:.1} encode_avg_us={:.1} queue_submit_avg_us={:.1} vertex_upload_avg_bytes={:.1} text_vertex_avg_bytes={:.1} text_glyph_avg={:.1} visible_layer_avg={:.1} packet_build_avg={:.1} packet_new={packet_new} packet_signature={packet_signature} packet_scene={packet_scene} packet_state={packet_state} measure_arrange_avg_ms={:.3} hit_test_avg_ms={:.3} paint_avg_ms={:.3} semantics_avg_ms={:.3} widget_arrange_avg_ms={:.3} widget_paint_avg_ms={:.3} widget_semantics_avg_ms={:.3}",
             runtime_time.as_secs_f64() * 1000.0 / FRAMES as f64,
             renderer_time.as_secs_f64() * 1000.0 / FRAMES as f64,
             (runtime_time + renderer_time).as_secs_f64() * 1000.0 / FRAMES as f64,
@@ -1272,6 +1284,8 @@ mod tests {
             vertex_upload_bytes as f64 / FRAMES as f64,
             text_vertex_bytes as f64 / FRAMES as f64,
             text_glyph_instances as f64 / FRAMES as f64,
+            visible_layers as f64 / FRAMES as f64,
+            packet_builds as f64 / FRAMES as f64,
             measure_arrange_ms / FRAMES as f64,
             hit_test_ms / FRAMES as f64,
             paint_ms / FRAMES as f64,
@@ -1281,5 +1295,108 @@ mod tests {
             widget_semantics_ms / FRAMES as f64,
         );
         Ok(())
+    }
+
+    fn run_edge_world_benchmark(retained: bool) -> (f64, f64, f64, f64) {
+        const EDGE_COUNT: usize = 1_024;
+        const FRAMES: usize = 60;
+        let mut nodes = Vec::with_capacity(EDGE_COUNT + 1);
+        let mut edges = Vec::with_capacity(EDGE_COUNT);
+        for index in 0..=EDGE_COUNT {
+            let mut node = Node::new(
+                format!("edge-world-node-{index}"),
+                Point::new((index % 64) as f32 * 32.0, (index / 64) as f32 * 32.0),
+                DemoNodeData::new("edge world"),
+            )
+            .size(Size::new(24.0, 20.0));
+            node.handles.clear();
+            nodes.push(node);
+            if index > 0 {
+                edges.push(Edge::new(
+                    format!("edge-world-{index}"),
+                    format!("edge-world-node-{}", index - 1),
+                    format!("edge-world-node-{index}"),
+                    DemoEdgeData::new("retained edge world"),
+                ));
+            }
+        }
+        let state = NodeGraphState::new(nodes, edges).expect("valid edge-world benchmark graph");
+        let graph = NodeGraph::new("Edge world benchmark", state.clone())
+            .config(NodeGraphConfig {
+                min_zoom: 0.05,
+                max_zoom: 2.0,
+                retain_edge_world: retained,
+                retained_edge_world_min: 0,
+                ..NodeGraphConfig::default()
+            })
+            .node_painter(|_ctx, _node, _paint| {});
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Edge world benchmark")
+                    .root(graph),
+            )
+            .build()
+            .expect("edge-world runtime");
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime.render(window_id).expect("initial edge-world frame");
+        let mut renderer = WgpuRenderer::new();
+        renderer
+            .render(&initial.frame)
+            .expect("initial edge-world GPU frame");
+        let viewport_size = state.viewport_size();
+        let center = Point::new(1_008.0, 256.0);
+        let mut runtime_time = std::time::Duration::ZERO;
+        let mut renderer_time = std::time::Duration::ZERO;
+        let mut packet_builds = 0usize;
+        let mut path_time_us = 0u64;
+        for frame in 0..FRAMES {
+            let zoom = 0.42 + ((frame % 13) as f32 * 0.008);
+            state.set_viewport(Viewport::centered_on(
+                center,
+                viewport_size,
+                zoom,
+                0.05,
+                2.0,
+            ));
+            let runtime_started = std::time::Instant::now();
+            let output = runtime.render(window_id).expect("edge-world runtime frame");
+            runtime_time += runtime_started.elapsed();
+            let renderer_started = std::time::Instant::now();
+            renderer
+                .render(&output.frame)
+                .expect("edge-world GPU frame");
+            renderer_time += renderer_started.elapsed();
+            let stats = renderer
+                .last_frame_stats(window_id)
+                .expect("edge-world renderer stats");
+            packet_builds += stats.retained_packet_build_count;
+            path_time_us += stats.retained_packet_path_command_time_us;
+        }
+        (
+            runtime_time.as_secs_f64() * 1000.0 / FRAMES as f64,
+            renderer_time.as_secs_f64() * 1000.0 / FRAMES as f64,
+            packet_builds as f64 / FRAMES as f64,
+            path_time_us as f64 / FRAMES as f64,
+        )
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for retained flow-space edge layers"]
+    fn retained_edge_world_gpu_zoom_benchmark() {
+        let direct = run_edge_world_benchmark(false);
+        let retained = run_edge_world_benchmark(true);
+        println!(
+            "EDGE_WORLD_BENCHMARK edges=1024 frames=60 direct_runtime_ms={:.3} direct_renderer_ms={:.3} direct_packet_build_avg={:.2} direct_path_us={:.1} retained_runtime_ms={:.3} retained_renderer_ms={:.3} retained_packet_build_avg={:.2} retained_path_us={:.1} total_ratio={:.3}",
+            direct.0,
+            direct.1,
+            direct.2,
+            direct.3,
+            retained.0,
+            retained.1,
+            retained.2,
+            retained.3,
+            (retained.0 + retained.1) / (direct.0 + direct.1).max(0.001),
+        );
     }
 }

@@ -515,7 +515,7 @@ pub enum LayerCompositionMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneLayer {
     pub descriptor: SceneLayerDescriptor,
-    pub scene: Box<Scene>,
+    pub scene: Arc<Scene>,
 }
 
 impl SceneLayer {
@@ -530,15 +530,19 @@ impl SceneLayer {
             )
             .with_content_bounds(content_bounds)
             .with_paint_bounds(paint_bounds),
-            scene: Box::new(scene),
+            scene: Arc::new(scene),
         }
     }
 
     pub fn from_descriptor(descriptor: SceneLayerDescriptor, scene: Scene) -> Self {
         Self {
             descriptor,
-            scene: Box::new(scene),
+            scene: Arc::new(scene),
         }
+    }
+
+    pub fn from_shared_descriptor(descriptor: SceneLayerDescriptor, scene: Arc<Scene>) -> Self {
+        Self { descriptor, scene }
     }
 
     pub const fn layer_id(&self) -> SceneLayerId {
@@ -744,7 +748,14 @@ impl Scene {
         for command in &mut self.commands {
             if let SceneCommand::Layer(layer) = command {
                 visitor(layer);
-                layer.scene.visit_layers_mut(visitor);
+                if layer
+                    .scene
+                    .commands()
+                    .iter()
+                    .any(|command| matches!(command, SceneCommand::Layer(_)))
+                {
+                    Arc::make_mut(&mut layer.scene).visit_layers_mut(visitor);
+                }
             }
         }
         self.rebuild_bounds();
@@ -768,7 +779,8 @@ impl Scene {
                     break;
                 }
                 SceneCommand::Layer(layer) => {
-                    if layer.scene.replace_layer(widget_id, replacement.clone()) {
+                    if Arc::make_mut(&mut layer.scene).replace_layer(widget_id, replacement.clone())
+                    {
                         replaced = true;
                         break;
                     }
@@ -803,7 +815,7 @@ impl Scene {
                     break;
                 }
                 SceneCommand::Layer(layer) => {
-                    if layer.scene.translate_layer(widget_id, delta) {
+                    if Arc::make_mut(&mut layer.scene).translate_layer(widget_id, delta) {
                         translated = true;
                         break;
                     }
@@ -832,8 +844,7 @@ impl Scene {
                     break;
                 }
                 SceneCommand::Layer(layer) => {
-                    if layer
-                        .scene
+                    if Arc::make_mut(&mut layer.scene)
                         .replace_layer_descriptor(widget_id, descriptor.clone())
                     {
                         replaced = true;
@@ -886,7 +897,14 @@ impl Scene {
         let mut sorted_layers = stack_layers.into_iter().map(|(_, layer)| layer);
         for command in &mut self.commands {
             if let SceneCommand::Layer(layer) = command {
-                layer.scene.reorder_stack_surfaces();
+                if layer
+                    .scene
+                    .commands()
+                    .iter()
+                    .any(|command| matches!(command, SceneCommand::Layer(_)))
+                {
+                    Arc::make_mut(&mut layer.scene).reorder_stack_surfaces();
+                }
                 if layer.descriptor.is_stack_surface
                     && let Some(replacement) = sorted_layers.next()
                 {
@@ -1062,7 +1080,7 @@ impl SceneBoundsState {
 impl SceneLayer {
     fn translate(&mut self, delta: Vector) {
         self.descriptor = self.descriptor.clone().translate(delta);
-        self.scene.translate(delta);
+        Arc::make_mut(&mut self.scene).translate(delta);
     }
 }
 
@@ -1867,7 +1885,7 @@ mod tests {
 
         scene.visit_layers_mut(&mut |layer| {
             layer.descriptor.paint_bounds = layer.descriptor.paint_bounds.inflate(1.0, 2.0);
-            layer.scene.push(SceneCommand::Label {
+            Arc::make_mut(&mut layer.scene).push(SceneCommand::Label {
                 rect: Rect::new(1.0, 2.0, 3.0, 4.0),
                 text: "cache mutation".to_string(),
                 color: Color::WHITE,

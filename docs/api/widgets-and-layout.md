@@ -467,6 +467,13 @@ child buffers. Identical presentation transforms share one inverse calculation
 per rebuild, which is especially useful for Canvas children under a uniform
 viewport transform.
 
+Canvas-like containers can retain stable world drawing with
+`PaintCtx::push_retained_scene_layer`. The layer owner remains a normal visited
+widget and therefore participates in runtime ordering and diagnostics, while
+its scene is shared across frames. The WGPU compositor normalizes layer packets
+into local coordinates and applies the full inherited affine transform during
+composition, so zoom and pan do not rebuild unchanged layer content.
+
 ## Layout Contract for Custom Widgets
 
 The runtime uses two explicit phases:

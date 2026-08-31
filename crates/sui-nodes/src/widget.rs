@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::Arc,
+};
 
 use sui_core::{
     Color, Event, InvalidationKind, KeyState, Path, Point, PointerButton, PointerEvent,
@@ -7,10 +11,10 @@ use sui_core::{
 };
 use sui_layout::Constraints;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
+    SemanticsCtx, StackSurfaceOptions, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{Border, StrokeStyle};
+use sui_scene::{Border, Brush, Scene, SceneCommand, StrokeStyle};
 use sui_text::TextStyle;
 use sui_widgets::{
     CanvasGridStyle, CanvasSurface, CanvasZoomBehavior, CanvasZoomContext, DefaultTheme,
@@ -214,6 +218,12 @@ pub struct NodeGraphConfig {
     pub cull_offscreen: bool,
     /// Screen-space overscan retained around the viewport when culling.
     pub culling_margin: f32,
+    /// Cache eligible edges in one flow-space retained layer.
+    pub retain_edge_world: bool,
+    /// Minimum edge count at which the retained layer amortizes its boundary.
+    pub retained_edge_world_min: usize,
+    /// Maximum edge count retained in one layer before falling back to culling.
+    pub retained_edge_world_max: usize,
 }
 
 impl Default for NodeGraphConfig {
@@ -251,6 +261,9 @@ impl Default for NodeGraphConfig {
             selection_mode: SelectionMode::Full,
             cull_offscreen: true,
             culling_margin: 64.0,
+            retain_edge_world: true,
+            retained_edge_world_min: 1_024,
+            retained_edge_world_max: 4_096,
         }
     }
 }
@@ -268,6 +281,9 @@ impl NodeGraphConfig {
             auto_pan_speed: self.auto_pan_speed.max(0.1),
             grid_spacing: self.grid_spacing.max(1.0),
             culling_margin: self.culling_margin.max(0.0),
+            retained_edge_world_max: self
+                .retained_edge_world_max
+                .max(self.retained_edge_world_min),
             snap_to_grid: self
                 .snap_to_grid
                 .map(|size| Size::new(size.width.max(1.0), size.height.max(1.0))),
@@ -393,6 +409,45 @@ struct PinchGesture {
     last_distance: f32,
 }
 
+struct GraphWorldLayerMarker;
+
+impl Widget for GraphWorldLayerMarker {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::ZERO)
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            ..LayerOptions::default()
+        }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        Some(StackSurfaceOptions {
+            hit_test: false,
+            ..StackSurfaceOptions::default()
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct EdgeWorldCacheKey {
+    nodes_revision: u64,
+    edges_revision: u64,
+    color: Color,
+    hovered: Option<EdgeId>,
+    focused: Option<EdgeId>,
+}
+
+#[derive(Default)]
+struct EdgeWorldCache {
+    key: Option<EdgeWorldCacheKey>,
+    scene: Arc<Scene>,
+    bounds: Rect,
+    retained_edges: Arc<HashSet<EdgeId>>,
+}
+
 impl Interaction {
     fn pointer_id(&self) -> u64 {
         match self {
@@ -443,6 +498,9 @@ pub struct NodeGraph<N = (), E = ()> {
     edge_painter: Option<EdgePainter<E>>,
     node_widget_registry: NodeWidgetRegistry<N>,
     node_widgets: RetainedNodeWidgets<N>,
+    world_layer: WidgetPod,
+    world_layer_active: bool,
+    edge_world_cache: RefCell<EdgeWorldCache>,
     active_node_widgets: HashSet<NodeId>,
     visible_node_indices: Vec<usize>,
     visible_edge_indices: Vec<usize>,
@@ -484,6 +542,9 @@ where
             edge_painter: None,
             node_widget_registry: NodeWidgetRegistry::new(),
             node_widgets: RetainedNodeWidgets::default(),
+            world_layer: WidgetPod::new(GraphWorldLayerMarker),
+            world_layer_active: false,
+            edge_world_cache: RefCell::new(EdgeWorldCache::default()),
             active_node_widgets: HashSet::new(),
             visible_node_indices: Vec::new(),
             visible_edge_indices: Vec::new(),
@@ -831,6 +892,100 @@ where
                 return edge;
             }
         }
+    }
+
+    fn paint_retained_edge_world(
+        &self,
+        ctx: &mut PaintCtx,
+        snapshot: &GraphSnapshot<N, E>,
+        bounds: Rect,
+        color: Color,
+        focused_edge: Option<&EdgeId>,
+    ) -> Option<Arc<HashSet<EdgeId>>> {
+        if !self.world_layer_active {
+            return None;
+        }
+
+        let key = EdgeWorldCacheKey {
+            nodes_revision: snapshot.revisions.nodes,
+            edges_revision: snapshot.revisions.edges,
+            color,
+            hovered: self.hovered_edge.clone(),
+            focused: focused_edge.cloned(),
+        };
+        let mut cache = self.edge_world_cache.borrow_mut();
+        if cache.key.as_ref() != Some(&key) {
+            let mut scene = Scene::new();
+            let mut retained_edges = HashSet::new();
+            let node_lookup = snapshot
+                .graph
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    snapshot
+                        .spatial
+                        .node_bounds(&node.id)
+                        .map(|bounds| (&node.id, (node, bounds)))
+                })
+                .collect::<HashMap<_, _>>();
+            for edge in &snapshot.graph.edges {
+                if !edge_is_retained_world_candidate(edge, self.hovered_edge.as_ref(), focused_edge)
+                {
+                    continue;
+                }
+                let Some(geometry) = edge_geometry_from_lookup(&node_lookup, edge) else {
+                    continue;
+                };
+                scene.push(SceneCommand::StrokePath {
+                    path: geometry.path.clone(),
+                    brush: Brush::Solid(color),
+                    stroke: StrokeStyle::new(1.5),
+                });
+                if let Some(marker) = edge.marker_start {
+                    append_marker_scene(
+                        &mut scene,
+                        geometry.source,
+                        scale_vector(geometry.source_tangent, -1.0),
+                        marker,
+                        color,
+                    );
+                }
+                if let Some(marker) = edge.marker_end {
+                    append_marker_scene(
+                        &mut scene,
+                        geometry.target,
+                        geometry.target_tangent,
+                        marker,
+                        color,
+                    );
+                }
+                retained_edges.insert(edge.id.clone());
+            }
+            cache.bounds = snapshot
+                .graph
+                .bounds()
+                .unwrap_or(Rect::ZERO)
+                .inflate(16.0, 16.0);
+            cache.scene = Arc::new(scene);
+            cache.retained_edges = Arc::new(retained_edges);
+            cache.key = Some(key);
+        }
+
+        let retained = Arc::clone(&cache.retained_edges);
+        if !cache.scene.commands().is_empty() {
+            let scene = cache.scene.clone();
+            let layer_bounds = cache.bounds;
+            let transform = snapshot
+                .viewport
+                .to_canvas(bounds.size)
+                .transform(bounds, Point::ZERO);
+            let owner = self.world_layer.id();
+            drop(cache);
+            ctx.with_transform(transform, |ctx| {
+                ctx.push_retained_scene_layer(owner, layer_bounds, scene);
+            });
+        }
+        Some(retained)
     }
 }
 
@@ -1965,6 +2120,14 @@ where
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let snapshot = self.state.snapshot();
+        self.world_layer_active = self.edge_painter.is_none()
+            && self.config.retain_edge_world
+            && (self.config.retained_edge_world_min..=self.config.retained_edge_world_max)
+                .contains(&snapshot.graph.edges.len());
+        if self.world_layer_active {
+            self.world_layer
+                .measure(ctx, Constraints::tight(Size::ZERO));
+        }
         self.last_measured_nodes_revision = snapshot.revisions.nodes;
         let structure_changed = self
             .node_widgets
@@ -2021,6 +2184,13 @@ where
             ctx.request_semantics();
         }
         let snapshot = ctx.observe_with(&self.state.signal, InvalidationKind::Transform);
+        self.world_layer_active = self.edge_painter.is_none()
+            && self.config.retain_edge_world
+            && (self.config.retained_edge_world_min..=self.config.retained_edge_world_max)
+                .contains(&snapshot.graph.edges.len());
+        if self.world_layer_active {
+            self.world_layer.arrange(ctx, bounds);
+        }
         if snapshot.revisions.nodes != self.last_measured_nodes_revision {
             ctx.request_measure();
         }
@@ -2144,11 +2314,14 @@ where
                 registry: &self.node_widget_registry,
             },
         );
+        let retained_edges =
+            self.paint_retained_edge_world(ctx, &snapshot, bounds, appearance.edge, focused_edge);
         paint_edges(
             ctx,
             &snapshot,
             bounds,
             &self.visible_edge_indices,
+            retained_edges.as_deref(),
             EdgePaintOptions {
                 appearance,
                 hovered_edge: self.hovered_edge.as_ref(),
@@ -2333,10 +2506,16 @@ where
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if self.world_layer_active {
+            visitor.visit(&self.world_layer);
+        }
         self.node_widgets.visit_children(visitor);
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if self.world_layer_active {
+            visitor.visit(&mut self.world_layer);
+        }
         self.node_widgets.visit_children_mut(visitor);
     }
 }
@@ -2959,6 +3138,10 @@ fn hit_edge<N, E>(
 
 fn handle_position<N, E>(graph: &GraphModel<N, E>, node: &Node<N>, handle: &Handle) -> Point {
     let bounds = graph_node_bounds(graph, node);
+    handle_position_in_bounds(bounds, handle)
+}
+
+fn handle_position_in_bounds(bounds: Rect, handle: &Handle) -> Point {
     match handle.position {
         HandlePosition::Left => {
             Point::new(bounds.x(), bounds.y() + bounds.height() * handle.offset)
@@ -3081,24 +3264,30 @@ fn endpoint<N, E>(
     requested: Option<&HandleId>,
     kind: HandleKind,
 ) -> (Point, HandlePosition) {
+    endpoint_in_bounds(node, graph_node_bounds(graph, node), requested, kind)
+}
+
+fn endpoint_in_bounds<N>(
+    node: &Node<N>,
+    bounds: Rect,
+    requested: Option<&HandleId>,
+    kind: HandleKind,
+) -> (Point, HandlePosition) {
     let handle = requested
         .and_then(|id| node.handle_by_id(id, kind))
         .or_else(|| node.first_handle(kind));
     handle.map_or_else(
-        || {
-            let bounds = graph_node_bounds(graph, node);
-            match kind {
-                HandleKind::Source => (
-                    Point::new(bounds.max_x(), bounds.y() + bounds.height() * 0.5),
-                    HandlePosition::Right,
-                ),
-                HandleKind::Target => (
-                    Point::new(bounds.x(), bounds.y() + bounds.height() * 0.5),
-                    HandlePosition::Left,
-                ),
-            }
+        || match kind {
+            HandleKind::Source => (
+                Point::new(bounds.max_x(), bounds.y() + bounds.height() * 0.5),
+                HandlePosition::Right,
+            ),
+            HandleKind::Target => (
+                Point::new(bounds.x(), bounds.y() + bounds.height() * 0.5),
+                HandlePosition::Left,
+            ),
         },
-        |handle| (handle_position(graph, node, handle), handle.position),
+        |handle| (handle_position_in_bounds(bounds, handle), handle.position),
     )
 }
 
@@ -3129,6 +3318,37 @@ fn edge_geometry<N, E>(
         viewport.flow_to_screen(bounds, source),
         source_side,
         viewport.flow_to_screen(bounds, target),
+        target_side,
+        edge.kind,
+        edge.path_options,
+    ))
+}
+
+fn edge_geometry_from_lookup<N, E>(
+    nodes: &HashMap<&NodeId, (&Node<N>, Rect)>,
+    edge: &Edge<E>,
+) -> Option<EdgeGeometry> {
+    let (source_node, source_bounds) = *nodes.get(&edge.source)?;
+    let (target_node, target_bounds) = *nodes.get(&edge.target)?;
+    if source_node.hidden || target_node.hidden {
+        return None;
+    }
+    let (source, source_side) = endpoint_in_bounds(
+        source_node,
+        source_bounds,
+        edge.source_handle.as_ref(),
+        HandleKind::Source,
+    );
+    let (target, target_side) = endpoint_in_bounds(
+        target_node,
+        target_bounds,
+        edge.target_handle.as_ref(),
+        HandleKind::Target,
+    );
+    Some(make_edge_geometry(
+        source,
+        source_side,
+        target,
         target_side,
         edge.kind,
         edge.path_options,
@@ -3365,11 +3585,25 @@ struct EdgePaintOptions<'a, E> {
     animation_time: f32,
 }
 
+fn edge_is_retained_world_candidate<E>(
+    edge: &Edge<E>,
+    hovered_edge: Option<&EdgeId>,
+    focused_edge: Option<&EdgeId>,
+) -> bool {
+    !edge.hidden
+        && !edge.selected
+        && !edge.animated
+        && edge.label.is_none()
+        && hovered_edge != Some(&edge.id)
+        && focused_edge != Some(&edge.id)
+}
+
 fn paint_edges<N, E>(
     ctx: &mut PaintCtx,
     snapshot: &GraphSnapshot<N, E>,
     bounds: Rect,
     indices: &[usize],
+    retained_edges: Option<&HashSet<EdgeId>>,
     options: EdgePaintOptions<'_, E>,
 ) {
     let EdgePaintOptions {
@@ -3386,6 +3620,9 @@ fn paint_edges<N, E>(
             continue;
         };
         if edge.hidden {
+            continue;
+        }
+        if retained_edges.is_some_and(|retained| retained.contains(&edge.id)) {
             continue;
         }
         let Some(geometry) = edge_geometry(&snapshot.graph, edge, snapshot.viewport, bounds) else {
@@ -3857,6 +4094,48 @@ fn paint_marker(
                 ctx.fill(builder.build(), color);
             } else {
                 ctx.stroke(builder.build(), color, StrokeStyle::new(1.5));
+            }
+        }
+    }
+}
+
+fn append_marker_scene(
+    scene: &mut Scene,
+    target: Point,
+    tangent: Vector,
+    marker: EdgeMarker,
+    color: Color,
+) {
+    let length = vector_length(tangent);
+    if length <= 0.001 {
+        return;
+    }
+    let direction = Vector::new(tangent.x / length, tangent.y / length);
+    let perpendicular = Vector::new(-direction.y, direction.x);
+    let base = target + scale_vector(direction, -9.0);
+    match marker {
+        EdgeMarker::Circle => scene.push(SceneCommand::FillPath {
+            path: Path::circle(target, 4.5),
+            brush: Brush::Solid(color),
+        }),
+        EdgeMarker::Arrow | EdgeMarker::ArrowClosed => {
+            let mut builder = Path::builder();
+            builder
+                .move_to(base + scale_vector(perpendicular, 4.5))
+                .line_to(target)
+                .line_to(base + scale_vector(perpendicular, -4.5));
+            if marker == EdgeMarker::ArrowClosed {
+                builder.close();
+                scene.push(SceneCommand::FillPath {
+                    path: builder.build(),
+                    brush: Brush::Solid(color),
+                });
+            } else {
+                scene.push(SceneCommand::StrokePath {
+                    path: builder.build(),
+                    brush: Brush::Solid(color),
+                    stroke: StrokeStyle::new(1.5),
+                });
             }
         }
     }
@@ -4765,6 +5044,59 @@ mod tests {
         assert_eq!(arranges.get(), 3, "one node leaves and one enters");
         assert_eq!(paints.get(), 3);
         assert_eq!(semantics.get(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn large_static_edge_world_reuses_flow_space_scene_across_zoom() -> sui_core::Result<()> {
+        let edge_count = NodeGraphConfig::default().retained_edge_world_min;
+        let nodes = (0..=edge_count)
+            .map(|index| {
+                Node::new(
+                    format!("world-node-{index}"),
+                    Point::new(index as f32 * 32.0, (index % 7) as f32 * 48.0),
+                    (),
+                )
+                .size(Size::new(24.0, 20.0))
+            })
+            .collect::<Vec<_>>();
+        let edges = (0..edge_count)
+            .map(|index| {
+                Edge::new(
+                    format!("world-edge-{index}"),
+                    format!("world-node-{index}"),
+                    format!("world-node-{}", index + 1),
+                    (),
+                )
+            })
+            .collect::<Vec<_>>();
+        let state = NodeGraphState::new(nodes, edges).expect("valid retained edge world");
+        let (mut runtime, window_id) = build_runtime(state.clone());
+
+        let first = runtime.render(window_id)?;
+        let mut first_layers = Vec::new();
+        first
+            .frame
+            .scene
+            .visit_layers(&mut |layer| first_layers.push(Arc::clone(&layer.scene)));
+        let first_world = first_layers
+            .into_iter()
+            .find(|scene| scene.commands().len() == edge_count * 2)
+            .expect("static strokes and markers should occupy one retained world layer");
+
+        state.set_viewport(Viewport::new(-120.0, 48.0, 0.72));
+        let second = runtime.render(window_id)?;
+        let mut second_layers = Vec::new();
+        second
+            .frame
+            .scene
+            .visit_layers(&mut |layer| second_layers.push(Arc::clone(&layer.scene)));
+        let second_world = second_layers
+            .into_iter()
+            .find(|scene| scene.commands().len() == edge_count * 2)
+            .expect("retained edge world should survive viewport changes");
+
+        assert!(Arc::ptr_eq(&first_world, &second_world));
         Ok(())
     }
 
