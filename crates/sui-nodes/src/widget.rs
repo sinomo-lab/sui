@@ -809,7 +809,7 @@ where
 
     fn request_update(&self, ctx: &mut EventCtx) {
         if !self.node_widgets.is_empty() {
-            ctx.request_arrange();
+            ctx.request_transform();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -2020,7 +2020,7 @@ where
             ctx.request_paint();
             ctx.request_semantics();
         }
-        let snapshot = ctx.observe(&self.state.signal);
+        let snapshot = ctx.observe_with(&self.state.signal, InvalidationKind::Transform);
         if snapshot.revisions.nodes != self.last_measured_nodes_revision {
             ctx.request_measure();
         }
@@ -4083,11 +4083,13 @@ mod tests {
 
         fn semantics(&self, ctx: &mut SemanticsCtx) {
             self.semantics.set(self.semantics.get().saturating_add(1));
-            ctx.push(SemanticsNode::new(
+            let mut node = SemanticsNode::new(
                 ctx.widget_id(),
                 SemanticsRole::GenericContainer,
                 ctx.bounds(),
-            ));
+            );
+            node.name = Some("lifecycle widget".to_string());
+            ctx.push(node);
         }
     }
 
@@ -4705,16 +4707,44 @@ mod tests {
         );
         let (mut runtime, window_id) = build_runtime_with_graph(graph);
 
-        runtime.render(window_id)?;
+        let initial = runtime.render(window_id)?;
         assert_eq!(arranges.get(), 1);
         assert_eq!(paints.get(), 1);
         assert_eq!(semantics.get(), 1);
+        let initial_widget_bounds = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("lifecycle widget"))
+            .expect("visible retained widget semantics")
+            .bounds;
+
+        state.set_viewport(Viewport::new(0.0, 0.0, 0.9));
+        let zoomed = runtime.render(window_id)?;
+        assert_eq!(
+            arranges.get(),
+            1,
+            "viewport-only projection should reuse retained child arrangement"
+        );
+        assert_eq!(paints.get(), 2);
+        assert_eq!(semantics.get(), 2);
+        let zoomed_widget_bounds = zoomed
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("lifecycle widget"))
+            .expect("reprojected retained widget semantics")
+            .bounds;
+        assert!(
+            (zoomed_widget_bounds.width() - (initial_widget_bounds.width() * 0.9)).abs() < 0.01
+        );
+        assert!(
+            (zoomed_widget_bounds.height() - (initial_widget_bounds.height() * 0.9)).abs() < 0.01
+        );
 
         state.set_viewport(Viewport::new(-9_950.0, 0.0, 1.0));
         runtime.render(window_id)?;
         assert_eq!(arranges.get(), 3, "one node leaves and one enters");
-        assert_eq!(paints.get(), 2);
-        assert_eq!(semantics.get(), 2);
+        assert_eq!(paints.get(), 3);
+        assert_eq!(semantics.get(), 3);
         Ok(())
     }
 

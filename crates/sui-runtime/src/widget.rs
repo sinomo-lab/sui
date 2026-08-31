@@ -1064,10 +1064,24 @@ impl WidgetPod {
         bounds: Rect,
         transform: Transform,
     ) {
+        let presentation_transform = transform.then(parent_ctx.presentation_transform());
+        if self.layout_state.arrange_valid
+            && !parent_ctx.scope().must_rearrange(self.id)
+            && self.layout_state.arranged_bounds == bounds
+        {
+            if self.layout_state.presentation_transform != presentation_transform
+                && let Some(inverse) = self.layout_state.presentation_transform.inverse()
+            {
+                let suffix = inverse.then(presentation_transform);
+                let mut visitor = ReprojectPresentationVisitor { suffix };
+                self.visit_children_mut(&mut visitor);
+                self.layout_state.presentation_transform = presentation_transform;
+            }
+            return;
+        }
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
         self.layout_state.arranged_bounds = bounds;
-        self.layout_state.presentation_transform =
-            transform.then(parent_ctx.presentation_transform());
+        self.layout_state.presentation_transform = presentation_transform;
         self.layout_state.arrange_valid = true;
         self.translate_descendants(delta);
 
@@ -1077,6 +1091,7 @@ impl WidgetPod {
             parent_ctx.dpi(),
             parent_ctx.current_time(),
             self.layout_state.presentation_transform,
+            Rc::clone(parent_ctx.scope_rc()),
         );
         let started = Instant::now();
         self.widget.arrange(&mut child_ctx, bounds);
@@ -1552,6 +1567,13 @@ impl WidgetPod {
         self.translate_descendants(delta);
     }
 
+    fn reproject_presentation_subtree(&mut self, suffix: Transform) {
+        self.layout_state.presentation_transform =
+            self.layout_state.presentation_transform.then(suffix);
+        let mut visitor = ReprojectPresentationVisitor { suffix };
+        self.visit_children_mut(&mut visitor);
+    }
+
     pub(crate) fn build_layer_descriptor(&self, scene: &Scene) -> SceneLayerDescriptor {
         let options = self.current_layer_options();
         SceneLayerDescriptor::new(
@@ -1616,6 +1638,16 @@ impl WidgetPod {
         self.find_mut(target, &mut |pod| {
             pod.current_layer_options().composition_mode
         })
+    }
+}
+
+struct ReprojectPresentationVisitor {
+    suffix: Transform,
+}
+
+impl WidgetPodMutVisitor for ReprojectPresentationVisitor {
+    fn visit(&mut self, pod: &mut WidgetPod) {
+        pod.reproject_presentation_subtree(self.suffix);
     }
 }
 
@@ -2210,6 +2242,33 @@ pub(crate) struct MeasureScope {
     subtree_roots: HashSet<WidgetId>,
 }
 
+/// Per-arrange-pass invalidation scope used to skip clean retained subtrees.
+#[derive(Debug, Default)]
+pub(crate) struct ArrangeScope {
+    force_all: bool,
+    dirty: HashSet<WidgetId>,
+}
+
+impl ArrangeScope {
+    pub(crate) fn force_all() -> Self {
+        Self {
+            force_all: true,
+            dirty: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn scoped(dirty: HashSet<WidgetId>) -> Self {
+        Self {
+            force_all: false,
+            dirty,
+        }
+    }
+
+    fn must_rearrange(&self, widget_id: WidgetId) -> bool {
+        self.force_all || self.dirty.contains(&widget_id)
+    }
+}
+
 impl MeasureScope {
     pub(crate) fn force_all() -> Self {
         Self {
@@ -2471,6 +2530,7 @@ pub struct ArrangeCtx {
     dpi_info: DpiInfo,
     current_time: f64,
     presentation_transform: Transform,
+    scope: Rc<ArrangeScope>,
     invalidations: Vec<InvalidationRequest>,
     wake_requests: Vec<WakeRequest>,
 }
@@ -2481,6 +2541,7 @@ impl ArrangeCtx {
         Self::new_at(window_id, widget_id, dpi_info, 0.0)
     }
 
+    #[cfg(test)]
     pub(crate) fn new_at(
         window_id: WindowId,
         widget_id: WidgetId,
@@ -2493,6 +2554,24 @@ impl ArrangeCtx {
             dpi_info,
             current_time,
             Transform::IDENTITY,
+            Rc::new(ArrangeScope::force_all()),
+        )
+    }
+
+    pub(crate) fn new_scoped_at(
+        window_id: WindowId,
+        widget_id: WidgetId,
+        dpi_info: DpiInfo,
+        current_time: f64,
+        scope: Rc<ArrangeScope>,
+    ) -> Self {
+        Self::new_at_with_transform(
+            window_id,
+            widget_id,
+            dpi_info,
+            current_time,
+            Transform::IDENTITY,
+            scope,
         )
     }
 
@@ -2502,6 +2581,7 @@ impl ArrangeCtx {
         dpi_info: DpiInfo,
         current_time: f64,
         presentation_transform: Transform,
+        scope: Rc<ArrangeScope>,
     ) -> Self {
         Self {
             window_id,
@@ -2509,6 +2589,7 @@ impl ArrangeCtx {
             dpi_info,
             current_time,
             presentation_transform,
+            scope,
             invalidations: Vec::new(),
             wake_requests: Vec::new(),
         }
@@ -2524,6 +2605,14 @@ impl ArrangeCtx {
 
     pub const fn presentation_transform(&self) -> Transform {
         self.presentation_transform
+    }
+
+    pub(crate) fn scope(&self) -> &ArrangeScope {
+        self.scope.as_ref()
+    }
+
+    pub(crate) fn scope_rc(&self) -> &Rc<ArrangeScope> {
+        &self.scope
     }
 
     /// Read an observable whose changes affect arrangement.

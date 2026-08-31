@@ -4814,7 +4814,11 @@ impl Widget for TransformBenchmarkRoot {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, _bounds: Rect) {
-        let zoom = ctx.observe(&self.zoom);
+        let zoom = if self.transformed {
+            ctx.observe_with(&self.zoom, InvalidationKind::Transform)
+        } else {
+            ctx.observe(&self.zoom)
+        };
         let transform = Transform::scale(zoom, zoom).then(Transform::translation(32.0, 24.0));
         self.transform = transform;
         for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {

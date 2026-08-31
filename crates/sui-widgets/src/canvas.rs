@@ -974,7 +974,7 @@ impl Canvas {
     }
 
     fn request_interaction_update(ctx: &mut EventCtx) {
-        ctx.request_arrange();
+        ctx.request_transform();
         ctx.request_paint();
         ctx.request_semantics();
     }

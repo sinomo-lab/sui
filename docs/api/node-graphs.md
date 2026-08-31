@@ -251,3 +251,10 @@ a 10,000-node/19,800-edge model with budgeted spatial-index construction;
 384-node retained and painted zoom frames; and the complete runtime plus WGPU
 renderer path. Each zoom workload asserts that viewport-only changes do not
 remeasure retained widgets.
+
+The GPU diagnostic also reports retained packet construction, analytic-path,
+batching, upload, encoding, and queue timings. Set `SUI_NODE_BENCH_PROFILE=1`
+and `SUI_PROFILE_WIDGET_TIMINGS=1` to include detailed runtime phase and widget
+timings. Analytic geometry is cached on both CPU and GPU using
+translation-normalized identity, so repeated edges and zoom levels avoid
+re-flattening and buffer uploads.

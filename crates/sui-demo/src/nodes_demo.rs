@@ -1154,6 +1154,13 @@ mod tests {
             .window(WindowBuilder::new().title("GPU node benchmark").root(graph))
             .build()?;
         let window_id = runtime.window_ids()[0];
+        let detailed_profile = std::env::var_os("SUI_NODE_BENCH_PROFILE").is_some();
+        if detailed_profile {
+            sui::set_window_scene_statistics_detail_mode(
+                window_id,
+                sui::SceneStatisticsDetailMode::Detailed,
+            );
+        }
         let initial = runtime.render(window_id)?;
         let mut renderer = WgpuRenderer::new();
         renderer.render(&initial.frame)?;
@@ -1164,13 +1171,56 @@ mod tests {
         let mut draw_count = 0usize;
         let mut path_misses = 0usize;
         let mut path_upload_bytes = 0u64;
+        let mut scene_traversal_us = 0u64;
+        let mut packet_build_us = 0u64;
+        let mut packet_scene_build_us = 0u64;
+        let mut packet_text_us = 0u64;
+        let mut packet_path_us = 0u64;
+        let mut packet_rect_us = 0u64;
+        let mut resource_collection_us = 0u64;
+        let mut bind_group_us = 0u64;
+        let mut batch_prepare_us = 0u64;
+        let mut gpu_upload_us = 0u64;
+        let mut encode_us = 0u64;
+        let mut queue_submit_us = 0u64;
+        let mut vertex_upload_bytes = 0u64;
+        let mut measure_arrange_ms = 0.0_f64;
+        let mut hit_test_ms = 0.0_f64;
+        let mut paint_ms = 0.0_f64;
+        let mut semantics_ms = 0.0_f64;
+        let mut widget_arrange_ms = 0.0_f64;
+        let mut widget_paint_ms = 0.0_f64;
+        let mut widget_semantics_ms = 0.0_f64;
 
         for frame in 0..FRAMES {
             let zoom = 0.32 + ((frame % 17) as f32 * 0.006);
+            if detailed_profile {
+                runtime
+                    .handle_event(window_id, Event::Window(sui::WindowEvent::RedrawRequested))?;
+            }
             state.set_viewport(Viewport::centered_on(center, viewport_size, zoom, 0.1, 2.0));
             let runtime_started = std::time::Instant::now();
             let output = runtime.render(window_id)?;
             runtime_time += runtime_started.elapsed();
+            for phase in &output.diagnostics.phase_timings {
+                match phase.phase {
+                    sui::FramePhase::MeasureArrange => measure_arrange_ms += phase.duration_ms,
+                    sui::FramePhase::HitTest => hit_test_ms += phase.duration_ms,
+                    sui::FramePhase::Paint => paint_ms += phase.duration_ms,
+                    sui::FramePhase::Semantics => semantics_ms += phase.duration_ms,
+                    _ => {}
+                }
+            }
+            for timing in &output.diagnostics.widget_timings {
+                match timing.phase.label() {
+                    "Arrange" => widget_arrange_ms += timing.duration_ms,
+                    "Paint" => widget_paint_ms += timing.duration_ms,
+                    "Semantics" => {
+                        widget_semantics_ms += timing.duration_ms;
+                    }
+                    _ => {}
+                }
+            }
             let renderer_started = std::time::Instant::now();
             renderer.render(&output.frame)?;
             renderer_time += renderer_started.elapsed();
@@ -1180,16 +1230,49 @@ mod tests {
             draw_count += stats.draw_count;
             path_misses += stats.analytic_path_bind_group_miss_count;
             path_upload_bytes += stats.analytic_path_bind_group_upload_bytes;
+            scene_traversal_us += stats.retained_scene_traversal_time_us;
+            packet_build_us += stats.retained_packet_build_time_us;
+            packet_scene_build_us += stats.retained_packet_scene_build_time_us;
+            packet_text_us += stats.retained_packet_text_command_time_us;
+            packet_path_us += stats.retained_packet_path_command_time_us;
+            packet_rect_us += stats.retained_packet_rect_command_time_us;
+            resource_collection_us += stats.resource_collection_time_us;
+            bind_group_us += stats.bind_group_prepare_time_us;
+            batch_prepare_us += stats.batch_prepare_time_us;
+            gpu_upload_us += stats.gpu_upload_time_us;
+            encode_us += stats.pass_encode_time_us;
+            queue_submit_us += stats.queue_submit_time_us;
+            vertex_upload_bytes += stats.uploaded_vertex_bytes;
         }
 
         println!(
-            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1}",
+            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} detailed={detailed_profile} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1} scene_traversal_avg_us={:.1} packet_build_avg_us={:.1} packet_scene_build_avg_us={:.1} packet_text_avg_us={:.1} packet_path_avg_us={:.1} packet_rect_avg_us={:.1} resource_collection_avg_us={:.1} bind_group_avg_us={:.1} batch_prepare_avg_us={:.1} gpu_upload_avg_us={:.1} encode_avg_us={:.1} queue_submit_avg_us={:.1} vertex_upload_avg_bytes={:.1} measure_arrange_avg_ms={:.3} hit_test_avg_ms={:.3} paint_avg_ms={:.3} semantics_avg_ms={:.3} widget_arrange_avg_ms={:.3} widget_paint_avg_ms={:.3} widget_semantics_avg_ms={:.3}",
             runtime_time.as_secs_f64() * 1000.0 / FRAMES as f64,
             renderer_time.as_secs_f64() * 1000.0 / FRAMES as f64,
             (runtime_time + renderer_time).as_secs_f64() * 1000.0 / FRAMES as f64,
             draw_count as f64 / FRAMES as f64,
             path_misses as f64 / FRAMES as f64,
             path_upload_bytes as f64 / FRAMES as f64,
+            scene_traversal_us as f64 / FRAMES as f64,
+            packet_build_us as f64 / FRAMES as f64,
+            packet_scene_build_us as f64 / FRAMES as f64,
+            packet_text_us as f64 / FRAMES as f64,
+            packet_path_us as f64 / FRAMES as f64,
+            packet_rect_us as f64 / FRAMES as f64,
+            resource_collection_us as f64 / FRAMES as f64,
+            bind_group_us as f64 / FRAMES as f64,
+            batch_prepare_us as f64 / FRAMES as f64,
+            gpu_upload_us as f64 / FRAMES as f64,
+            encode_us as f64 / FRAMES as f64,
+            queue_submit_us as f64 / FRAMES as f64,
+            vertex_upload_bytes as f64 / FRAMES as f64,
+            measure_arrange_ms / FRAMES as f64,
+            hit_test_ms / FRAMES as f64,
+            paint_ms / FRAMES as f64,
+            semantics_ms / FRAMES as f64,
+            widget_arrange_ms / FRAMES as f64,
+            widget_paint_ms / FRAMES as f64,
+            widget_semantics_ms / FRAMES as f64,
         );
         Ok(())
     }

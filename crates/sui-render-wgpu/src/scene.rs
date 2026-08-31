@@ -1863,6 +1863,38 @@ pub(crate) fn hash_path(path: &ScenePath, transform: Transform) -> u64 {
     hasher.finish()
 }
 
+pub(crate) fn hash_normalized_analytic_path(path: &ScenePath, transform: Transform) -> u64 {
+    let (normalized, _) = normalized_analytic_path_transform(path, transform);
+    let mut hasher = DefaultHasher::new();
+    for element in path.elements() {
+        match element {
+            PathElement::MoveTo(point) => {
+                0u8.hash(&mut hasher);
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*point));
+            }
+            PathElement::LineTo(point) => {
+                1u8.hash(&mut hasher);
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*point));
+            }
+            PathElement::QuadTo { ctrl, to } => {
+                2u8.hash(&mut hasher);
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*ctrl));
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*to));
+            }
+            PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                3u8.hash(&mut hasher);
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*ctrl1));
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*ctrl2));
+                hash_quantized_analytic_point(&mut hasher, normalized.transform_point(*to));
+            }
+            PathElement::Close => {
+                4u8.hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
+
 pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
@@ -3264,8 +3296,12 @@ fn append_painted_path(
     let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
     let (analytic_transform, path_origin) =
         normalized_analytic_path_transform(path, state.current_transform);
-    let lyon_path = build_lyon_path(path, analytic_transform);
-    if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
+    if let Some(data) =
+        path_cache.cached_analytic_fill(path, state.current_transform, feather_width, || {
+            let lyon_path = build_lyon_path(path, analytic_transform);
+            build_analytic_fill_path_data(&lyon_path, feather_width)
+        })
+    {
         append_analytic_path_quad(
             overlay_vertices,
             transformed_bounds.inflate(coverage_outset, coverage_outset),
@@ -3273,7 +3309,7 @@ fn append_painted_path(
             viewport,
             path_origin,
         );
-        let id = draw_ops.insert_analytic_path(data);
+        let id = draw_ops.insert_analytic_path_arc(data);
         return Ok(FillPathRenderMode::SolidPlusAnalytic { id });
     }
 
@@ -3321,8 +3357,16 @@ fn append_stroked_path(
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let (analytic_transform, path_origin) =
             normalized_analytic_path_transform(path, state.current_transform);
-        let lyon_path = build_lyon_path(path, analytic_transform);
-        if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
+        if let Some(data) = path_cache.cached_analytic_stroke(
+            path,
+            state.current_transform,
+            stroke,
+            feather_width,
+            || {
+                let lyon_path = build_lyon_path(path, analytic_transform);
+                build_analytic_stroke_path_data(&lyon_path, line_width, feather_width)
+            },
+        ) {
             append_analytic_path_quad(
                 overlay_vertices,
                 transformed_bounds.inflate(stroke_outset, stroke_outset),
@@ -3330,7 +3374,7 @@ fn append_stroked_path(
                 viewport,
                 path_origin,
             );
-            let id = draw_ops.insert_analytic_path(data);
+            let id = draw_ops.insert_analytic_path_arc(data);
             return Ok(Some(id));
         }
     }
@@ -3357,6 +3401,15 @@ fn analytic_path_transform_without_translation(transform: Transform) -> (Transfo
 
 fn quantize_analytic_path_coordinate(value: f32) -> f32 {
     (value * ANALYTIC_PATH_COORDINATE_PRECISION).round() / ANALYTIC_PATH_COORDINATE_PRECISION
+}
+
+fn hash_quantized_analytic_point(hasher: &mut DefaultHasher, point: Point) {
+    quantize_analytic_path_coordinate(point.x)
+        .to_bits()
+        .hash(hasher);
+    quantize_analytic_path_coordinate(point.y)
+        .to_bits()
+        .hash(hasher);
 }
 
 fn normalized_analytic_path_transform(
@@ -4314,10 +4367,15 @@ fn push_text_draw_op(
 }
 
 impl DrawOpArena {
+    #[cfg(test)]
     pub(crate) fn insert_analytic_path(&mut self, data: AnalyticPathCpuData) -> u64 {
+        self.insert_analytic_path_arc(Arc::new(data))
+    }
+
+    pub(crate) fn insert_analytic_path_arc(&mut self, data: Arc<AnalyticPathCpuData>) -> u64 {
         let id = self.next_analytic_path_id;
         self.next_analytic_path_id = self.next_analytic_path_id.wrapping_add(1);
-        self.analytic_paths.insert(id, Arc::new(data));
+        self.analytic_paths.insert(id, data);
         id
     }
 
@@ -5077,6 +5135,8 @@ pub(crate) fn configure_surface(
 
 #[cfg(test)]
 mod analytic_path_cache_tests {
+    use std::cell::Cell;
+
     use super::*;
 
     #[test]
@@ -5183,5 +5243,33 @@ mod analytic_path_cache_tests {
         assert_eq!(passes[0].draws[0].vertices.len, 12);
         assert_eq!(draw_ops.scene_vertices[0].shader_params[0], 3.0);
         assert_eq!(draw_ops.scene_vertices[6].shader_params[0], 7.0);
+    }
+
+    #[test]
+    fn cpu_analytic_path_cache_reuses_translated_geometry() {
+        let first_path = ScenePath::circle(Point::new(18.0, 18.0), 18.0);
+        let translated_path = ScenePath::circle(Point::new(298.0, 166.0), 18.0);
+        let stroke = StrokeStyle::new(2.0);
+        let builds = Cell::new(0_u32);
+        let mut cache = PathMeshCache::default();
+        let build = |path: &ScenePath| {
+            builds.set(builds.get() + 1);
+            let (transform, _) = normalized_analytic_path_transform(path, Transform::IDENTITY);
+            build_analytic_stroke_path_data(&build_lyon_path(path, transform), 2.0, 1.0)
+        };
+
+        let first = cache
+            .cached_analytic_stroke(&first_path, Transform::IDENTITY, stroke, 1.0, || {
+                build(&first_path)
+            })
+            .expect("first circle should populate the CPU cache");
+        let translated = cache
+            .cached_analytic_stroke(&translated_path, Transform::IDENTITY, stroke, 1.0, || {
+                build(&translated_path)
+            })
+            .expect("translated circle should reuse the CPU cache");
+
+        assert_eq!(builds.get(), 1);
+        assert!(Arc::ptr_eq(&first, &translated));
     }
 }

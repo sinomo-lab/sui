@@ -638,6 +638,40 @@ struct PathCacheKey {
     feather_width_bits: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AnalyticPathCacheKey {
+    signature: u64,
+    kind: PathCacheKind,
+    feather_width_bits: u32,
+}
+
+impl AnalyticPathCacheKey {
+    fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
+        Self {
+            signature: hash_normalized_analytic_path(path, transform),
+            kind: PathCacheKind::Fill,
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
+
+    fn stroke(
+        path: &ScenePath,
+        transform: Transform,
+        stroke: StrokeStyle,
+        feather_width: f32,
+    ) -> Self {
+        Self {
+            signature: hash_normalized_analytic_path(path, transform),
+            kind: PathCacheKind::Stroke {
+                line_width_bits: stroke.width.to_bits(),
+                cap: stroke.cap,
+                join: stroke.join,
+            },
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
+}
+
 impl PathCacheKey {
     fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
         Self {
@@ -668,6 +702,7 @@ impl PathCacheKey {
 #[derive(Debug)]
 pub(crate) struct PathMeshCache {
     meshes: HashMap<PathCacheKey, CachedGlyphMesh>,
+    analytic_paths: HashMap<AnalyticPathCacheKey, Arc<AnalyticPathCpuData>>,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) hits: usize,
     pub(crate) misses: usize,
@@ -677,6 +712,7 @@ impl Default for PathMeshCache {
     fn default() -> Self {
         Self {
             meshes: HashMap::new(),
+            analytic_paths: HashMap::new(),
             diagnostics_enabled: true,
             hits: 0,
             misses: 0,
@@ -710,6 +746,43 @@ impl PathMeshCache {
                 let lyon_path = build_lyon_path(path, transform);
                 let mesh = feathering::build_local_fill_mesh(&lyon_path, feather_width)?;
                 Ok(entry.insert(mesh))
+            }
+        }
+    }
+
+    pub(crate) fn cached_analytic_fill(
+        &mut self,
+        path: &ScenePath,
+        transform: Transform,
+        feather_width: f32,
+        build: impl FnOnce() -> Option<AnalyticPathCpuData>,
+    ) -> Option<Arc<AnalyticPathCpuData>> {
+        let key = AnalyticPathCacheKey::fill(path, transform, feather_width);
+        match self.analytic_paths.entry(key) {
+            Entry::Occupied(entry) => Some(Arc::clone(entry.get())),
+            Entry::Vacant(entry) => {
+                let data = Arc::new(build()?);
+                entry.insert(Arc::clone(&data));
+                Some(data)
+            }
+        }
+    }
+
+    pub(crate) fn cached_analytic_stroke(
+        &mut self,
+        path: &ScenePath,
+        transform: Transform,
+        stroke: StrokeStyle,
+        feather_width: f32,
+        build: impl FnOnce() -> Option<AnalyticPathCpuData>,
+    ) -> Option<Arc<AnalyticPathCpuData>> {
+        let key = AnalyticPathCacheKey::stroke(path, transform, stroke, feather_width);
+        match self.analytic_paths.entry(key) {
+            Entry::Occupied(entry) => Some(Arc::clone(entry.get())),
+            Entry::Vacant(entry) => {
+                let data = Arc::new(build()?);
+                entry.insert(Arc::clone(&data));
+                Some(data)
             }
         }
     }

@@ -63,7 +63,6 @@ pub use overlay::{
 use std::rc::Rc;
 pub use sui_core::{DpiInfo, SafeAreaInsets};
 pub use sui_layout::LayoutContext;
-use widget::MeasureScope;
 pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, FocusRestorePolicy, FocusScope, FocusScopeState,
     KeyedChildren, KeyedReconcile, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
@@ -71,6 +70,7 @@ pub use widget::{
     WidgetChildren, WidgetDiagnostic, WidgetDiagnosticsCtx, WidgetDiagnosticsSnapshot, WidgetPod,
     WidgetPodMutVisitor, WidgetPodVisitor,
 };
+use widget::{ArrangeScope, MeasureScope};
 use widget::{
     BeginDragRequest, CursorRequest, DragRequest, DropAcceptanceRequest, FocusRequest,
     PaintImageResource, PointerCaptureRequest, WakeRequest,
@@ -4155,6 +4155,44 @@ impl WindowState {
         Rc::new(MeasureScope::scoped(dirty, subtree_roots))
     }
 
+    fn build_arrange_scope(&self, invalidations: &[InvalidationRequest]) -> Rc<ArrangeScope> {
+        let mut subtree_roots: HashSet<WidgetId> = HashSet::new();
+        let mut force_all = false;
+        for request in invalidations {
+            if !matches!(
+                request.kind,
+                InvalidationKind::Measure
+                    | InvalidationKind::Arrange
+                    | InvalidationKind::Transform
+                    | InvalidationKind::Clip
+                    | InvalidationKind::Visibility
+                    | InvalidationKind::Text
+            ) {
+                continue;
+            }
+            match request.target {
+                InvalidationTarget::Widget(widget_id) => {
+                    subtree_roots.insert(widget_id);
+                }
+                InvalidationTarget::Window(_) | InvalidationTarget::Surface(_) => {
+                    force_all = true;
+                }
+            }
+        }
+
+        if force_all || subtree_roots.is_empty() {
+            return Rc::new(ArrangeScope::force_all());
+        }
+
+        let mut dirty: HashSet<WidgetId> = HashSet::new();
+        for widget_id in subtree_roots {
+            if !self.graph.extend_ancestors(widget_id, &mut dirty) {
+                return Rc::new(ArrangeScope::force_all());
+            }
+        }
+        Rc::new(ArrangeScope::scoped(dirty))
+    }
+
     fn run_measure_arrange_pass(
         &mut self,
         invalidations: &[InvalidationRequest],
@@ -4182,11 +4220,16 @@ impl WindowState {
         };
         let viewport = constraints.clamp(measured_root);
 
-        let mut arrange_ctx = ArrangeCtx::new_at(
+        let mut pass_invalidations = measure_ctx.take_invalidations();
+        let mut arrange_invalidations = invalidations.to_vec();
+        arrange_invalidations.extend(pass_invalidations.iter().cloned());
+        let arrange_scope = self.build_arrange_scope(&arrange_invalidations);
+        let mut arrange_ctx = ArrangeCtx::new_scoped_at(
             self.id,
             self.root.id(),
             self.current_dpi_info(),
             self.last_tick_time,
+            arrange_scope,
         );
         self.root.arrange(
             &mut arrange_ctx,
@@ -4198,7 +4241,7 @@ impl WindowState {
         self.schedule.hit_test = false;
         self.refresh_graph();
 
-        let mut invalidations = measure_ctx.take_invalidations();
+        let mut invalidations = std::mem::take(&mut pass_invalidations);
         self.apply_wake_requests(measure_ctx.take_wake_requests());
         invalidations.extend(arrange_ctx.take_invalidations());
         self.apply_wake_requests(arrange_ctx.take_wake_requests());
