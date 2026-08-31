@@ -330,6 +330,11 @@ impl CanvasZoomBehavior {
             Self::Custom(resolver) => resolver(context),
         }
     }
+
+    /// Whether this behavior uses the canvas' shared world transform.
+    pub const fn is_uniform(&self) -> bool {
+        matches!(self, Self::Uniform)
+    }
 }
 
 impl Default for CanvasZoomBehavior {
@@ -1225,11 +1230,42 @@ impl Widget for Canvas {
         {
             paint_canvas_shape(ctx, &shape, transform, self.viewport.zoom);
         }
-        if let Some(content) = &self.content {
+        let mut widget_index = 0;
+        if self.content_zoom.is_uniform() {
+            ctx.with_transform(transform, |ctx| {
+                if let Some(content) = &self.content {
+                    content.paint(ctx);
+                }
+                while let Some(entry) = self.widgets.get(widget_index) {
+                    if !entry.zoom.is_uniform() {
+                        break;
+                    }
+                    entry.child.paint(ctx);
+                    widget_index += 1;
+                }
+            });
+        } else if let Some(content) = &self.content {
             content.paint(ctx);
         }
-        for entry in &self.widgets {
-            entry.child.paint(ctx);
+        while widget_index < self.widgets.len() {
+            if self.widgets[widget_index].zoom.is_uniform() {
+                let start = widget_index;
+                while self
+                    .widgets
+                    .get(widget_index)
+                    .is_some_and(|entry| entry.zoom.is_uniform())
+                {
+                    widget_index += 1;
+                }
+                ctx.with_transform(transform, |ctx| {
+                    for entry in &self.widgets[start..widget_index] {
+                        entry.child.paint(ctx);
+                    }
+                });
+            } else {
+                self.widgets[widget_index].child.paint(ctx);
+                widget_index += 1;
+            }
         }
         ctx.pop_clip();
         draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
@@ -4849,6 +4885,39 @@ mod tests {
 
         assert!(bounds("uniform item").width() > 100.0);
         assert_eq!(bounds("custom item").size, Size::new(100.0, 60.0));
+    }
+
+    #[test]
+    fn canvas_batches_consecutive_uniform_widget_transforms() {
+        let mut canvas = Canvas::new("Batched widget canvas");
+        for index in 0..3 {
+            canvas = canvas.widget(
+                Rect::new(index as f32 * 120.0, 20.0, 100.0, 60.0),
+                CanvasContentProbe {
+                    name: "batched item",
+                    pointer_positions: Rc::new(RefCell::new(Vec::new())),
+                },
+            );
+        }
+
+        let output = render(canvas);
+        let pushes = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .filter(|command| matches!(command, SceneCommand::PushTransform { .. }))
+            .count();
+        let pops = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .filter(|command| matches!(command, SceneCommand::PopTransform))
+            .count();
+
+        assert_eq!(pushes, 1);
+        assert_eq!(pops, 1);
     }
 
     #[test]

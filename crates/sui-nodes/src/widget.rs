@@ -10,7 +10,7 @@ use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
     WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::StrokeStyle;
+use sui_scene::{Border, StrokeStyle};
 use sui_text::TextStyle;
 use sui_widgets::{
     CanvasGridStyle, CanvasSurface, CanvasZoomBehavior, CanvasZoomContext, DefaultTheme,
@@ -210,6 +210,10 @@ pub struct NodeGraphConfig {
     pub grid_spacing: f32,
     pub background_variant: BackgroundVariant,
     pub selection_mode: SelectionMode,
+    /// Skip retained widget layout, painting, and semantics outside the viewport.
+    pub cull_offscreen: bool,
+    /// Screen-space overscan retained around the viewport when culling.
+    pub culling_margin: f32,
 }
 
 impl Default for NodeGraphConfig {
@@ -245,6 +249,8 @@ impl Default for NodeGraphConfig {
             grid_spacing: 24.0,
             background_variant: BackgroundVariant::Lines,
             selection_mode: SelectionMode::Full,
+            cull_offscreen: true,
+            culling_margin: 64.0,
         }
     }
 }
@@ -261,6 +267,7 @@ impl NodeGraphConfig {
             auto_pan_margin: self.auto_pan_margin.max(4.0),
             auto_pan_speed: self.auto_pan_speed.max(0.1),
             grid_spacing: self.grid_spacing.max(1.0),
+            culling_margin: self.culling_margin.max(0.0),
             snap_to_grid: self
                 .snap_to_grid
                 .map(|size| Size::new(size.width.max(1.0), size.height.max(1.0))),
@@ -410,6 +417,7 @@ type EdgePainter<E> = Box<EdgePaintFn<E>>;
 pub struct NodeGraph<N = (), E = ()> {
     name: String,
     state: NodeGraphState<N, E>,
+    last_measured_nodes_revision: u64,
     theme: DefaultTheme,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     appearance: NodeGraphAppearance,
@@ -435,6 +443,9 @@ pub struct NodeGraph<N = (), E = ()> {
     edge_painter: Option<EdgePainter<E>>,
     node_widget_registry: NodeWidgetRegistry<N>,
     node_widgets: RetainedNodeWidgets<N>,
+    active_node_widgets: HashSet<NodeId>,
+    visible_node_indices: Vec<usize>,
+    visible_edge_indices: Vec<usize>,
 }
 
 impl<N, E> NodeGraph<N, E>
@@ -443,9 +454,11 @@ where
     E: Clone + PartialEq + Default + 'static,
 {
     pub fn new(name: impl Into<String>, state: NodeGraphState<N, E>) -> Self {
+        let name = name.into();
         Self {
-            name: name.into(),
+            name,
             state,
+            last_measured_nodes_revision: u64::MAX,
             theme: DefaultTheme::default(),
             theme_reader: None,
             appearance: NodeGraphAppearance::default(),
@@ -471,6 +484,9 @@ where
             edge_painter: None,
             node_widget_registry: NodeWidgetRegistry::new(),
             node_widgets: RetainedNodeWidgets::default(),
+            active_node_widgets: HashSet::new(),
+            visible_node_indices: Vec::new(),
+            visible_edge_indices: Vec::new(),
         }
     }
 
@@ -1948,7 +1964,8 @@ where
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let snapshot = ctx.observe(&self.state.signal);
+        let snapshot = self.state.snapshot();
+        self.last_measured_nodes_revision = snapshot.revisions.nodes;
         let structure_changed = self
             .node_widgets
             .reconcile(&snapshot.graph.nodes, &mut self.node_widget_registry);
@@ -2004,16 +2021,53 @@ where
             ctx.request_semantics();
         }
         let snapshot = ctx.observe(&self.state.signal);
+        if snapshot.revisions.nodes != self.last_measured_nodes_revision {
+            ctx.request_measure();
+        }
+        let visible = snapshot.viewport.visible_flow_rect(bounds).inflate(
+            self.config.culling_margin / snapshot.viewport.zoom.max(0.001),
+            self.config.culling_margin / snapshot.viewport.zoom.max(0.001),
+        );
+        self.visible_node_indices = if self.config.cull_offscreen {
+            snapshot.spatial.query_node_indices(visible)
+        } else {
+            (0..snapshot.graph.nodes.len()).collect()
+        };
+        self.visible_edge_indices = if self.config.cull_offscreen {
+            snapshot.spatial.query_edge_indices(visible)
+        } else {
+            (0..snapshot.graph.edges.len()).collect()
+        };
+        sort_node_indices(&snapshot, &mut self.visible_node_indices);
+        sort_edge_indices(&snapshot, &mut self.visible_edge_indices);
+
+        let next_active_node_widgets = self
+            .visible_node_indices
+            .iter()
+            .filter_map(|index| snapshot.graph.nodes.get(*index))
+            .filter(|node| !node.hidden && self.node_widgets.contains(&node.id))
+            .map(|node| node.id.clone())
+            .collect::<HashSet<_>>();
+        let leaving_node_widgets = self
+            .active_node_widgets
+            .difference(&next_active_node_widgets)
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in leaving_node_widgets {
+            if let Some(entry) = self.node_widgets.get_mut(&id) {
+                entry.pod.arrange(ctx, Rect::ZERO);
+            }
+        }
+
         let canvas_viewport = snapshot.viewport.to_canvas(bounds.size);
-        for node in &snapshot.graph.nodes {
+        for index in &self.visible_node_indices {
+            let Some(node) = snapshot.graph.nodes.get(*index) else {
+                continue;
+            };
             let Some(entry) = self.node_widgets.get_mut(&node.id) else {
                 continue;
             };
-            let child_bounds = if node.hidden {
-                Rect::ZERO
-            } else {
-                graph_node_bounds(&snapshot.graph, node)
-            };
+            let child_bounds = graph_node_bounds(&snapshot.graph, node);
             let transform = self
                 .node_widget_registry
                 .zoom_behavior(&node.kind)
@@ -2025,6 +2079,7 @@ where
                 });
             entry.pod.arrange_transformed(ctx, child_bounds, transform);
         }
+        self.active_node_widgets = next_active_node_widgets;
         if snapshot
             .graph
             .edges
@@ -2062,11 +2117,8 @@ where
             })
             .paint_background(ctx, bounds, appearance.background, appearance.grid);
         ctx.push_clip_rect(bounds);
-        let mut visible_node_indices = snapshot
-            .spatial
-            .query_node_indices(snapshot.viewport.visible_flow_rect(bounds));
-        sort_node_indices(&snapshot, &mut visible_node_indices);
-        let foreground_start = visible_node_indices
+        let foreground_start = self
+            .visible_node_indices
             .iter()
             .position(|index| {
                 snapshot
@@ -2075,9 +2127,9 @@ where
                     .get(*index)
                     .is_none_or(|node| node.z_index >= 0)
             })
-            .unwrap_or(visible_node_indices.len());
+            .unwrap_or(self.visible_node_indices.len());
         let (background_node_indices, foreground_node_indices) =
-            visible_node_indices.split_at(foreground_start);
+            self.visible_node_indices.split_at(foreground_start);
         paint_nodes(
             ctx,
             &snapshot,
@@ -2089,12 +2141,14 @@ where
                 theme: &theme,
                 painter: self.node_painter.as_deref(),
                 custom_nodes: &self.node_widgets,
+                registry: &self.node_widget_registry,
             },
         );
         paint_edges(
             ctx,
             &snapshot,
             bounds,
+            &self.visible_edge_indices,
             EdgePaintOptions {
                 appearance,
                 hovered_edge: self.hovered_edge.as_ref(),
@@ -2122,16 +2176,20 @@ where
                 theme: &theme,
                 painter: self.node_painter.as_deref(),
                 custom_nodes: &self.node_widgets,
+                registry: &self.node_widget_registry,
             },
         );
         paint_node_overlays(
             ctx,
             &snapshot,
             bounds,
-            appearance,
-            self.hovered_handle.as_ref(),
-            self.config.nodes_resizable,
-            focused_node,
+            NodeOverlayOptions {
+                appearance,
+                hovered_handle: self.hovered_handle.as_ref(),
+                nodes_resizable: self.config.nodes_resizable,
+                focused_node,
+                indices: &self.visible_node_indices,
+            },
         );
         if let Some(Interaction::Marquee { start, current, .. }) = self.interaction {
             let rect = screen_rect_from_points(start, current);
@@ -2174,7 +2232,13 @@ where
         }
         ctx.push(node);
 
-        for graph_node in snapshot.graph.nodes.iter().filter(|node| !node.hidden) {
+        for index in &self.visible_node_indices {
+            let Some(graph_node) = snapshot.graph.nodes.get(*index) else {
+                continue;
+            };
+            if graph_node.hidden {
+                continue;
+            }
             let element = FocusedElement::Node(graph_node.id.clone());
             let Some(flow_bounds) = snapshot.graph.node_bounds(graph_node) else {
                 continue;
@@ -2213,7 +2277,13 @@ where
             ctx.push(node);
         }
 
-        for edge in snapshot.graph.edges.iter().filter(|edge| !edge.hidden) {
+        for index in &self.visible_edge_indices {
+            let Some(edge) = snapshot.graph.edges.get(*index) else {
+                continue;
+            };
+            if edge.hidden {
+                continue;
+            }
             let element = FocusedElement::Edge(edge.id.clone());
             let Some(flow_bounds) = snapshot.spatial.edge_bounds(&edge.id) else {
                 continue;
@@ -2246,7 +2316,12 @@ where
             }
             ctx.push(node);
         }
-        self.node_widgets.semantics(ctx);
+        for index in &self.visible_node_indices {
+            let Some(graph_node) = snapshot.graph.nodes.get(*index) else {
+                continue;
+            };
+            self.node_widgets.semantics_node(ctx, &graph_node.id);
+        }
     }
 
     fn accepts_focus(&self) -> bool {
@@ -3274,6 +3349,7 @@ fn paint_edges<N, E>(
     ctx: &mut PaintCtx,
     snapshot: &GraphSnapshot<N, E>,
     bounds: Rect,
+    indices: &[usize],
     options: EdgePaintOptions<'_, E>,
 ) {
     let EdgePaintOptions {
@@ -3285,14 +3361,8 @@ fn paint_edges<N, E>(
         focused_edge,
         animation_time,
     } = options;
-    let visible = snapshot.viewport.visible_flow_rect(bounds).inflate(
-        EDGE_HIT_RADIUS / snapshot.viewport.zoom.max(0.001),
-        EDGE_HIT_RADIUS / snapshot.viewport.zoom.max(0.001),
-    );
-    let mut indices = snapshot.spatial.query_edge_indices(visible);
-    sort_edge_indices(snapshot, &mut indices);
     for index in indices {
-        let Some(edge) = snapshot.graph.edges.get(index) else {
+        let Some(edge) = snapshot.graph.edges.get(*index) else {
             continue;
         };
         if edge.hidden {
@@ -3464,6 +3534,7 @@ struct NodePaintOptions<'a, N> {
     theme: &'a DefaultTheme,
     painter: Option<&'a NodePaintFn<N>>,
     custom_nodes: &'a RetainedNodeWidgets<N>,
+    registry: &'a NodeWidgetRegistry<N>,
 }
 
 fn paint_nodes<N, E>(
@@ -3481,6 +3552,7 @@ fn paint_nodes<N, E>(
         theme,
         painter,
         custom_nodes,
+        registry,
     } = options;
     let label_style = TextStyle {
         font_size: theme.text.sm.size,
@@ -3488,7 +3560,56 @@ fn paint_nodes<N, E>(
         color: appearance.node_text,
         ..theme.body_text_style()
     };
-    for index in indices {
+    let canvas_viewport = snapshot.viewport.to_canvas(bounds.size);
+    let shared_transform = canvas_viewport.transform(bounds, Point::ZERO);
+    let mut cursor = 0;
+    while cursor < indices.len() {
+        let uniform_custom = indices
+            .get(cursor)
+            .and_then(|index| snapshot.graph.nodes.get(*index))
+            .is_some_and(|node| {
+                custom_nodes.contains(&node.id) && registry.zoom_behavior(&node.kind).is_uniform()
+            });
+        if uniform_custom {
+            let start = cursor;
+            while indices
+                .get(cursor)
+                .and_then(|index| snapshot.graph.nodes.get(*index))
+                .is_some_and(|node| {
+                    custom_nodes.contains(&node.id)
+                        && registry.zoom_behavior(&node.kind).is_uniform()
+                })
+            {
+                cursor += 1;
+            }
+            ctx.with_transform(shared_transform, |ctx| {
+                for index in &indices[start..cursor] {
+                    let Some(node) = snapshot.graph.nodes.get(*index) else {
+                        continue;
+                    };
+                    let rect = graph_node_bounds(&snapshot.graph, node);
+                    paint_default_node_body(
+                        ctx,
+                        node,
+                        rect,
+                        snapshot.viewport,
+                        snapshot.viewport.zoom,
+                        appearance,
+                        theme,
+                        hovered_node == Some(&node.id),
+                        false,
+                        &label_style,
+                    );
+                    custom_nodes.paint_node(ctx, &node.id);
+                }
+            });
+            continue;
+        }
+
+        let Some(index) = indices.get(cursor) else {
+            break;
+        };
+        cursor += 1;
         let Some(node) = snapshot.graph.nodes.get(*index) else {
             continue;
         };
@@ -3508,6 +3629,7 @@ fn paint_nodes<N, E>(
                 node,
                 rect,
                 snapshot.viewport,
+                1.0,
                 appearance,
                 theme,
                 hovered,
@@ -3531,6 +3653,7 @@ fn paint_nodes<N, E>(
                 node,
                 rect,
                 snapshot.viewport,
+                1.0,
                 appearance,
                 theme,
                 hovered,
@@ -3547,6 +3670,7 @@ fn paint_default_node_body<N>(
     node: &Node<N>,
     rect: Rect,
     viewport: Viewport,
+    command_scale: f32,
     appearance: ResolvedAppearance,
     theme: &DefaultTheme,
     hovered: bool,
@@ -3558,19 +3682,23 @@ fn paint_default_node_body<N>(
     } else {
         appearance.node
     };
-    let corner_radius =
-        (theme.metrics.corner_radius * viewport.zoom).clamp(3.0, theme.metrics.corner_radius * 1.5);
-    let path = Path::rounded_rect(rect, corner_radius);
-    ctx.fill(path.clone(), fill);
+    let command_scale = command_scale.max(0.001);
+    let corner_radius = (theme.metrics.corner_radius * viewport.zoom)
+        .clamp(3.0, theme.metrics.corner_radius * 1.5)
+        / command_scale;
     let border = if node.selected {
         appearance.selection
     } else {
         appearance.node_border
     };
-    ctx.stroke(
-        path,
-        border,
-        StrokeStyle::new(if node.selected { 2.25 } else { 1.0 }),
+    ctx.fill_rrect_bordered(
+        rect,
+        [corner_radius; 4],
+        fill,
+        Border {
+            width: (if node.selected { 2.25 } else { 1.0 }) / command_scale,
+            color: border,
+        },
     );
 
     if paint_label && rect.width() >= 28.0 && rect.height() >= 18.0 {
@@ -3590,20 +3718,29 @@ fn paint_default_node_body<N>(
     }
 }
 
+struct NodeOverlayOptions<'a> {
+    appearance: ResolvedAppearance,
+    hovered_handle: Option<&'a (NodeId, HandleId, HandleKind)>,
+    nodes_resizable: bool,
+    focused_node: Option<&'a NodeId>,
+    indices: &'a [usize],
+}
+
 fn paint_node_overlays<N, E>(
     ctx: &mut PaintCtx,
     snapshot: &GraphSnapshot<N, E>,
     bounds: Rect,
-    appearance: ResolvedAppearance,
-    hovered_handle: Option<&(NodeId, HandleId, HandleKind)>,
-    nodes_resizable: bool,
-    focused_node: Option<&NodeId>,
+    options: NodeOverlayOptions<'_>,
 ) {
-    let visible = snapshot.viewport.visible_flow_rect(bounds);
-    let mut indices = snapshot.spatial.query_node_indices(visible);
-    sort_node_indices(snapshot, &mut indices);
+    let NodeOverlayOptions {
+        appearance,
+        hovered_handle,
+        nodes_resizable,
+        focused_node,
+        indices,
+    } = options;
     for index in indices {
-        let Some(node) = snapshot.graph.nodes.get(index) else {
+        let Some(node) = snapshot.graph.nodes.get(*index) else {
             continue;
         };
         let rect = snapshot
@@ -3621,8 +3758,15 @@ fn paint_node_overlays<N, E>(
             if nodes_resizable && node.resizable {
                 for (_, point) in resize_handle_points(rect) {
                     let handle = Rect::new(point.x - 3.5, point.y - 3.5, 7.0, 7.0);
-                    ctx.fill_rect(handle, appearance.background);
-                    ctx.stroke_rect(handle, appearance.selection, StrokeStyle::new(1.5));
+                    ctx.fill_rrect_bordered(
+                        handle,
+                        [0.0; 4],
+                        appearance.background,
+                        Border {
+                            width: 1.5,
+                            color: appearance.selection,
+                        },
+                    );
                 }
             }
         }
@@ -3644,18 +3788,23 @@ fn paint_node_overlays<N, E>(
                     appearance.selection.with_alpha(0.22),
                 );
             }
-            ctx.fill(
-                Path::circle(position, radius),
+            ctx.fill_rrect_bordered(
+                Rect::new(
+                    position.x - radius,
+                    position.y - radius,
+                    radius * 2.0,
+                    radius * 2.0,
+                ),
+                [radius; 4],
                 if handle.connectable {
                     color
                 } else {
                     color.with_alpha(0.38)
                 },
-            );
-            ctx.stroke(
-                Path::circle(position, radius),
-                appearance.background,
-                StrokeStyle::new(1.25),
+                Border {
+                    width: 1.25,
+                    color: appearance.background,
+                },
             );
         }
     }
@@ -3867,6 +4016,16 @@ mod tests {
         order: Rc<RefCell<Vec<&'static str>>>,
     }
 
+    struct MeasureCountingNode {
+        measures: Rc<Cell<u32>>,
+    }
+
+    struct LifecycleCountingNode {
+        arranges: Rc<Cell<u32>>,
+        paints: Rc<Cell<u32>>,
+        semantics: Rc<Cell<u32>>,
+    }
+
     impl Widget for InteractiveTestNode {
         fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
             if let Event::Pointer(pointer) = event
@@ -3894,6 +4053,41 @@ mod tests {
 
         fn paint(&self, _ctx: &mut PaintCtx) {
             self.order.borrow_mut().push(self.name);
+        }
+    }
+
+    impl Widget for MeasureCountingNode {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.measures.set(self.measures.get().saturating_add(1));
+            constraints.clamp(Size::new(120.0, 64.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::rgba(0.2, 0.3, 0.4, 1.0));
+        }
+    }
+
+    impl Widget for LifecycleCountingNode {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(120.0, 64.0))
+        }
+
+        fn arrange(&mut self, _ctx: &mut ArrangeCtx, _bounds: Rect) {
+            self.arranges.set(self.arranges.get().saturating_add(1));
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.paints.set(self.paints.get().saturating_add(1));
+            ctx.fill_bounds(Color::rgba(0.2, 0.3, 0.4, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            self.semantics.set(self.semantics.get().saturating_add(1));
+            ctx.push(SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            ));
         }
     }
 
@@ -4452,6 +4646,79 @@ mod tests {
     }
 
     #[test]
+    fn viewport_only_zoom_does_not_remeasure_retained_nodes() -> sui_core::Result<()> {
+        let measures = Rc::new(Cell::new(0));
+        let state = NodeGraphState::<(), ()>::new(
+            vec![
+                Node::new("measured", Point::new(30.0, 40.0), ())
+                    .kind("measured")
+                    .size(Size::new(120.0, 64.0)),
+            ],
+            Vec::new(),
+        )
+        .expect("valid graph");
+        let counter = Rc::clone(&measures);
+        let graph = NodeGraph::new("Measured graph", state.clone()).node_type(
+            "measured",
+            move |_id, _node| MeasureCountingNode {
+                measures: Rc::clone(&counter),
+            },
+        );
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+        runtime.render(window_id)?;
+        let initial_measures = measures.get();
+
+        state.set_viewport(Viewport::new(40.0, 30.0, 1.75));
+        runtime.render(window_id)?;
+
+        assert_eq!(measures.get(), initial_measures);
+        Ok(())
+    }
+
+    #[test]
+    fn offscreen_retained_nodes_skip_arrange_paint_and_semantics() -> sui_core::Result<()> {
+        let arranges = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        let semantics = Rc::new(Cell::new(0));
+        let state = NodeGraphState::<(), ()>::new(
+            vec![
+                Node::new("near", Point::new(30.0, 40.0), ())
+                    .kind("counted")
+                    .size(Size::new(120.0, 64.0)),
+                Node::new("far", Point::new(10_000.0, 40.0), ())
+                    .kind("counted")
+                    .size(Size::new(120.0, 64.0)),
+            ],
+            Vec::new(),
+        )
+        .expect("valid graph");
+        let arrange_counter = Rc::clone(&arranges);
+        let paint_counter = Rc::clone(&paints);
+        let semantics_counter = Rc::clone(&semantics);
+        let graph = NodeGraph::new("Culled graph", state.clone()).node_type(
+            "counted",
+            move |_id, _node| LifecycleCountingNode {
+                arranges: Rc::clone(&arrange_counter),
+                paints: Rc::clone(&paint_counter),
+                semantics: Rc::clone(&semantics_counter),
+            },
+        );
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+
+        runtime.render(window_id)?;
+        assert_eq!(arranges.get(), 1);
+        assert_eq!(paints.get(), 1);
+        assert_eq!(semantics.get(), 1);
+
+        state.set_viewport(Viewport::new(-9_950.0, 0.0, 1.0));
+        runtime.render(window_id)?;
+        assert_eq!(arranges.get(), 3, "one node leaves and one enters");
+        assert_eq!(paints.get(), 2);
+        assert_eq!(semantics.get(), 2);
+        Ok(())
+    }
+
+    #[test]
     fn selected_background_node_paints_below_edges_and_descendants() -> sui_core::Result<()> {
         let mut group = Node::new("group", Point::new(20.0, 20.0), ())
             .kind("background")
@@ -4845,6 +5112,175 @@ mod tests {
                 .any(|(_, event)| matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })))
         );
         Ok(())
+    }
+
+    fn node_benchmark_document() -> (Vec<Node<()>>, Vec<Edge<()>>) {
+        const COLUMNS: usize = 24;
+        const ROWS: usize = 16;
+        let mut nodes = Vec::with_capacity(COLUMNS * ROWS);
+        let mut edges = Vec::new();
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let index = row * COLUMNS + column;
+                nodes.push(
+                    Node::new(
+                        format!("node-{index}"),
+                        Point::new(column as f32 * 50.0, row as f32 * 34.0),
+                        (),
+                    )
+                    .kind("benchmark")
+                    .size(Size::new(44.0, 28.0)),
+                );
+                if column > 0 {
+                    edges.push(Edge::new(
+                        format!("edge-{index}"),
+                        format!("node-{}", index - 1),
+                        format!("node-{index}"),
+                        (),
+                    ));
+                }
+            }
+        }
+        (nodes, edges)
+    }
+
+    fn node_benchmark_percentile(samples: &mut [f64], quantile: f64) -> f64 {
+        samples.sort_by(f64::total_cmp);
+        let index = ((samples.len().saturating_sub(1)) as f64 * quantile).round() as usize;
+        samples.get(index).copied().unwrap_or(0.0)
+    }
+
+    fn run_node_render_benchmark(retained: bool) -> (f64, f64, f64, u32, usize) {
+        const WARMUP: usize = 20;
+        const FRAMES: usize = 180;
+        let (nodes, edges) = node_benchmark_document();
+        let state = NodeGraphState::new(nodes, edges).expect("valid benchmark graph");
+        let measures = Rc::new(Cell::new(0_u32));
+        let graph = NodeGraph::new("Node benchmark", state.clone()).config(NodeGraphConfig {
+            min_zoom: 0.1,
+            max_zoom: 2.0,
+            background_variant: BackgroundVariant::Dots,
+            ..NodeGraphConfig::default()
+        });
+        let graph = if retained {
+            let counter = Rc::clone(&measures);
+            graph.node_type("benchmark", move |_id, _node| MeasureCountingNode {
+                measures: Rc::clone(&counter),
+            })
+        } else {
+            graph
+        };
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+        runtime.render(window_id).expect("initial benchmark render");
+        let initial_measures = measures.get();
+        let viewport_size = state.viewport_size();
+        let center = Point::new(597.0, 269.0);
+
+        for frame in 0..WARMUP {
+            let zoom = 0.55 + ((frame % 11) as f32 * 0.035);
+            state.set_viewport(Viewport::centered_on(center, viewport_size, zoom, 0.1, 2.0));
+            runtime.render(window_id).expect("warm benchmark frame");
+        }
+
+        let mut samples = Vec::with_capacity(FRAMES);
+        let mut command_count = 0usize;
+        for frame in 0..FRAMES {
+            let zoom = 0.50 + ((frame % 29) as f32 * 0.015);
+            state.set_viewport(Viewport::centered_on(center, viewport_size, zoom, 0.1, 2.0));
+            let started = std::time::Instant::now();
+            let output = runtime.render(window_id).expect("node benchmark frame");
+            samples.push(started.elapsed().as_secs_f64() * 1_000_000.0);
+            command_count = output.frame.scene.commands().len();
+            std::hint::black_box(command_count);
+        }
+        assert_eq!(
+            measures.get(),
+            initial_measures,
+            "viewport-only benchmark frames must not remeasure retained nodes"
+        );
+        let average = samples.iter().sum::<f64>() / samples.len() as f64;
+        let mut ordered = samples.clone();
+        let p50 = node_benchmark_percentile(&mut ordered, 0.50);
+        let p95 = node_benchmark_percentile(&mut samples, 0.95);
+        (average, p50, p95, initial_measures, command_count)
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for node graph indexing and retained zoom frames"]
+    fn node_graph_current_status_benchmark() {
+        const COLUMNS: usize = 100;
+        const ROWS: usize = 100;
+        const QUERIES: usize = 2_000;
+        let mut nodes = Vec::with_capacity(COLUMNS * ROWS);
+        let mut edges = Vec::with_capacity((COLUMNS - 1) * ROWS + (ROWS - 1) * COLUMNS);
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let index = row * COLUMNS + column;
+                nodes.push(
+                    Node::new(
+                        format!("large-{index}"),
+                        Point::new(column as f32 * 24.0, row as f32 * 18.0),
+                        (),
+                    )
+                    .size(Size::new(20.0, 14.0)),
+                );
+                if column > 0 {
+                    edges.push(Edge::new(
+                        format!("large-h-{index}"),
+                        format!("large-{}", index - 1),
+                        format!("large-{index}"),
+                        (),
+                    ));
+                }
+                if row > 0 {
+                    edges.push(Edge::new(
+                        format!("large-v-{index}"),
+                        format!("large-{}", index - COLUMNS),
+                        format!("large-{index}"),
+                        (),
+                    ));
+                }
+            }
+        }
+        let model_started = std::time::Instant::now();
+        let graph = GraphModel::new(nodes, edges).expect("valid large benchmark graph");
+        let model_us = model_started.elapsed().as_secs_f64() * 1_000_000.0;
+        let index_started = std::time::Instant::now();
+        let mut builder = crate::GraphSpatialIndex::builder(&graph, 1);
+        let index_prepare_us = index_started.elapsed().as_secs_f64() * 1_000_000.0;
+        let mut index_steps = 0usize;
+        let mut index_max_step_us = 0.0_f64;
+        while !builder.progress().is_complete() {
+            let step_started = std::time::Instant::now();
+            builder.advance(512);
+            index_max_step_us =
+                index_max_step_us.max(step_started.elapsed().as_secs_f64() * 1_000_000.0);
+            index_steps += 1;
+        }
+        let spatial = builder.finish();
+        let index_us = index_started.elapsed().as_secs_f64() * 1_000_000.0;
+        let query_started = std::time::Instant::now();
+        let mut candidates = 0usize;
+        for query in 0..QUERIES {
+            let x = (query % 97) as f32 * 23.0;
+            let y = (query % 89) as f32 * 17.0;
+            let area = Rect::new(x, y, 240.0, 180.0);
+            candidates += spatial.query_node_indices(area).len();
+            candidates += spatial.query_edge_indices(area).len();
+        }
+        let query_us = query_started.elapsed().as_secs_f64() * 1_000_000.0;
+        std::hint::black_box(candidates);
+
+        let (painted_avg, painted_p50, painted_p95, _, painted_commands) =
+            run_node_render_benchmark(false);
+        let (retained_avg, retained_p50, retained_p95, retained_measures, retained_commands) =
+            run_node_render_benchmark(true);
+        println!(
+            "NODE_GRAPH_BENCHMARK model_nodes=10000 model_edges={} model_build_us={model_us:.2} spatial_build_us={index_us:.2} spatial_prepare_us={index_prepare_us:.2} spatial_steps={index_steps} spatial_max_step_us={index_max_step_us:.2} queries={QUERIES} query_total_us={query_us:.2} query_avg_us={:.3} query_candidates={candidates} render_nodes=384 render_edges=368 frames=180 painted_avg_us={painted_avg:.2} painted_p50_us={painted_p50:.2} painted_p95_us={painted_p95:.2} retained_avg_us={retained_avg:.2} retained_p50_us={retained_p50:.2} retained_p95_us={retained_p95:.2} retained_ratio={:.3} retained_measures={retained_measures} painted_commands={painted_commands} retained_commands={retained_commands}",
+            graph.edges.len(),
+            query_us / QUERIES as f64,
+            retained_avg / painted_avg.max(0.001),
+        );
     }
 
     #[test]

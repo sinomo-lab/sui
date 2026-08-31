@@ -100,10 +100,16 @@ pub struct GraphSnapshot<N = (), E = ()> {
 
 impl<N, E> GraphSnapshot<N, E> {
     pub fn new(graph: GraphModel<N, E>) -> Self {
-        let spatial = Arc::new(GraphSpatialIndex::new(&graph, 0));
+        let spatial = GraphSpatialIndex::new(&graph, 0);
+        Self::with_spatial_index(graph, spatial)
+    }
+
+    /// Create a snapshot from a graph and a previously completed spatial
+    /// index, including one produced by [`GraphSpatialIndex::builder`].
+    pub fn with_spatial_index(graph: GraphModel<N, E>, spatial: GraphSpatialIndex) -> Self {
         Self {
             graph: Arc::new(graph),
-            spatial,
+            spatial: Arc::new(spatial),
             revisions: SnapshotRevisions::default(),
             viewport: Viewport::default(),
             viewport_transition: None,

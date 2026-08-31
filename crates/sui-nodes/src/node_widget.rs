@@ -121,12 +121,14 @@ pub(crate) struct RetainedNodeWidget<N> {
 
 pub(crate) struct RetainedNodeWidgets<N> {
     entries: Vec<RetainedNodeWidget<N>>,
+    indices: HashMap<NodeId, usize>,
 }
 
 impl<N> Default for RetainedNodeWidgets<N> {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
+            indices: HashMap::new(),
         }
     }
 }
@@ -171,6 +173,13 @@ where
         }
 
         self.entries = next;
+        self.indices.clear();
+        self.indices.extend(
+            self.entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (entry.id.clone(), index)),
+        );
         let next_ids = self
             .entries
             .iter()
@@ -180,11 +189,14 @@ where
     }
 
     pub fn get(&self, id: &NodeId) -> Option<&RetainedNodeWidget<N>> {
-        self.entries.iter().find(|entry| entry.id == *id)
+        self.indices
+            .get(id)
+            .and_then(|index| self.entries.get(*index))
     }
 
     pub fn get_mut(&mut self, id: &NodeId) -> Option<&mut RetainedNodeWidget<N>> {
-        self.entries.iter_mut().find(|entry| entry.id == *id)
+        let index = self.indices.get(id).copied()?;
+        self.entries.get_mut(index)
     }
 
     pub fn contains(&self, id: &NodeId) -> bool {
@@ -201,8 +213,8 @@ where
         }
     }
 
-    pub fn semantics(&self, ctx: &mut SemanticsCtx) {
-        for entry in &self.entries {
+    pub fn semantics_node(&self, ctx: &mut SemanticsCtx, id: &NodeId) {
+        if let Some(entry) = self.get(id) {
             entry.pod.semantics(ctx);
         }
     }

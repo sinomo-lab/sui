@@ -43,6 +43,9 @@ static NEXT_DRAG_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const WIDGET_IMAGE_HANDLE_NAMESPACE: u64 = 1 << 63;
 
 fn relative_transform(child: Transform, parent: Transform) -> Transform {
+    if child == parent {
+        return Transform::IDENTITY;
+    }
     parent
         .inverse()
         .map(|inverse| child.then(inverse))
@@ -2551,6 +2554,10 @@ impl ArrangeCtx {
         self.invalidations.push(request);
     }
 
+    pub fn request_measure(&mut self) {
+        self.request_widget(InvalidationKind::Measure);
+    }
+
     pub fn request_arrange(&mut self) {
         self.request_widget(InvalidationKind::Arrange);
     }
@@ -3019,6 +3026,54 @@ impl PaintCtx {
 
     pub fn push_transform(&mut self, transform: Transform) {
         self.scene.push(SceneCommand::PushTransform { transform });
+    }
+
+    /// Paint several retained children or drawing operations under one shared
+    /// affine transform.
+    ///
+    /// Unlike a raw [`Self::push_transform`] call, the nested context also
+    /// advertises the transformed presentation space to retained child pods.
+    /// Children arranged with the same presentation transform can therefore
+    /// append their scenes directly instead of emitting an identical
+    /// `PushTransform`/`PopTransform` pair for every child. Paint bounds and IME
+    /// geometry produced inside the callback are mapped back into this
+    /// context's coordinate space when the group is appended.
+    pub fn with_transform<R>(
+        &mut self,
+        transform: Transform,
+        paint: impl FnOnce(&mut PaintCtx) -> R,
+    ) -> R {
+        let presentation_transform = transform.then(self.presentation_transform);
+        let mut child_ctx = PaintCtx::new_with_transform(
+            self.window_id,
+            self.widget_id,
+            self.bounds,
+            self.focused_widget_id,
+            self.dpi_info,
+            Arc::clone(&self.text_system),
+            Arc::clone(&self.font_registry),
+            Arc::clone(&self.image_registry),
+            presentation_transform,
+        );
+        let output = paint(&mut child_ctx);
+        let (scene, images, mut widget_paint_bounds, invalidations, ime_composition_rect) =
+            child_ctx.into_parts();
+
+        if !scene.commands().is_empty() {
+            self.scene.push(SceneCommand::PushTransform { transform });
+            self.scene.append(scene);
+            self.scene.push(SceneCommand::PopTransform);
+        }
+        for bounds in widget_paint_bounds.values_mut() {
+            *bounds = transform.transform_rect_bbox(*bounds);
+        }
+        self.extend_widget_paint_bounds(widget_paint_bounds);
+        self.extend_images(images);
+        self.extend_invalidations(invalidations);
+        self.extend_ime_composition_rect(
+            ime_composition_rect.map(|bounds| transform.transform_rect_bbox(bounds)),
+        );
+        output
     }
 
     pub fn translate(&mut self, delta: Vector) {

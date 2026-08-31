@@ -23,6 +23,39 @@ struct SpatialEntry {
     cells: Option<Vec<CellKey>>,
 }
 
+#[derive(Debug, Clone)]
+struct PendingSpatialEntry<I> {
+    id: I,
+    bounds: Rect,
+    index: usize,
+}
+
+/// Progress returned by a budgeted spatial-index build step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphSpatialIndexBuildProgress {
+    pub completed: usize,
+    pub total: usize,
+}
+
+impl GraphSpatialIndexBuildProgress {
+    pub const fn is_complete(self) -> bool {
+        self.completed >= self.total
+    }
+}
+
+/// UI-thread-friendly incremental builder for a graph spatial index.
+///
+/// Geometry is resolved once when the builder is created; grid insertion can
+/// then be limited to a caller-selected number of nodes or edges per turn.
+#[derive(Debug)]
+pub struct GraphSpatialIndexBuilder {
+    index: GraphSpatialIndex,
+    nodes: std::vec::IntoIter<PendingSpatialEntry<NodeId>>,
+    edges: std::vec::IntoIter<PendingSpatialEntry<EdgeId>>,
+    completed: usize,
+    total: usize,
+}
+
 /// Revisioned uniform-grid index used for graph culling and hit testing.
 #[derive(Debug, Clone)]
 pub struct GraphSpatialIndex {
@@ -37,7 +70,15 @@ pub struct GraphSpatialIndex {
 
 impl GraphSpatialIndex {
     pub fn new<N, E>(graph: &GraphModel<N, E>, revision: u64) -> Self {
-        let mut index = Self {
+        Self::builder(graph, revision).finish()
+    }
+
+    pub fn builder<N, E>(graph: &GraphModel<N, E>, revision: u64) -> GraphSpatialIndexBuilder {
+        GraphSpatialIndexBuilder::new(graph, revision)
+    }
+
+    fn empty(revision: u64) -> Self {
+        Self {
             cell_size: DEFAULT_CELL_SIZE,
             revision,
             cells: HashMap::new(),
@@ -45,9 +86,7 @@ impl GraphSpatialIndex {
             edges: HashMap::new(),
             overflow_nodes: HashSet::new(),
             overflow_edges: HashSet::new(),
-        };
-        index.rebuild(graph, revision);
-        index
+        }
     }
 
     pub const fn revision(&self) -> u64 {
@@ -76,15 +115,14 @@ impl GraphSpatialIndex {
 
     pub fn query_node_indices_at(&self, point: Point) -> Vec<usize> {
         let key = self.cell_for(point);
-        let mut ids = self
-            .cells
-            .get(&key)
-            .map(|cell| cell.nodes.clone())
-            .unwrap_or_default();
-        ids.extend(self.overflow_nodes.iter().cloned());
+        let mut ids = HashSet::new();
+        if let Some(cell) = self.cells.get(&key) {
+            ids.extend(&cell.nodes);
+        }
+        ids.extend(&self.overflow_nodes);
         let mut indices = ids
             .into_iter()
-            .filter_map(|id| self.nodes.get(&id))
+            .filter_map(|id| self.nodes.get(id))
             .filter(|entry| entry.bounds.contains(point))
             .map(|entry| entry.index)
             .collect::<Vec<_>>();
@@ -107,31 +145,35 @@ impl GraphSpatialIndex {
             .iter()
             .map(|node| (&node.id, node))
             .collect::<HashMap<_, _>>();
-        let after_node_ids = after
+        let absolute_bounds = absolute_node_bounds(after);
+        let after_nodes = after
             .nodes
             .iter()
-            .map(|node| node.id.clone())
-            .collect::<HashSet<_>>();
+            .enumerate()
+            .filter_map(|(index, node)| {
+                absolute_bounds[index].map(|bounds| (&node.id, (node, bounds)))
+            })
+            .collect::<HashMap<_, _>>();
         let mut changed_nodes = HashSet::new();
 
         for id in self.nodes.keys().cloned().collect::<Vec<_>>() {
-            if !after_node_ids.contains(&id) {
+            if !after_nodes.contains_key(&id) {
                 self.remove_node(&id);
                 changed_nodes.insert(id);
             }
         }
         for (index, node) in after.nodes.iter().enumerate() {
-            let absolute_bounds = after.node_bounds(node);
+            let node_bounds = absolute_bounds[index];
             let changed = before_nodes
                 .get(&node.id)
                 .is_none_or(|before| *before != node)
-                || self.nodes.get(&node.id).map(|entry| entry.bounds) != absolute_bounds;
+                || self.nodes.get(&node.id).map(|entry| entry.bounds) != node_bounds;
             let index_changed = self
                 .nodes
                 .get(&node.id)
                 .is_none_or(|entry| entry.index != index);
             if changed {
-                self.upsert_node(after, node, index);
+                self.upsert_node_bounds(node, index, node_bounds);
                 changed_nodes.insert(node.id.clone());
             } else if index_changed && let Some(entry) = self.nodes.get_mut(&node.id) {
                 entry.index = index;
@@ -164,7 +206,8 @@ impl GraphSpatialIndex {
                 .get(&edge.id)
                 .is_none_or(|entry| entry.index != index);
             if edge_changed || endpoint_changed {
-                self.upsert_edge(after, edge, index);
+                let bounds = edge_flow_bounds_from_nodes(&after_nodes, edge);
+                self.upsert_edge_bounds(edge, index, bounds);
             } else if index_changed && let Some(entry) = self.edges.get_mut(&edge.id) {
                 entry.index = index;
             }
@@ -172,43 +215,28 @@ impl GraphSpatialIndex {
         self.revision = revision;
     }
 
-    fn rebuild<N, E>(&mut self, graph: &GraphModel<N, E>, revision: u64) {
-        self.cells.clear();
-        self.nodes.clear();
-        self.edges.clear();
-        self.overflow_nodes.clear();
-        self.overflow_edges.clear();
-        for (index, node) in graph.nodes.iter().enumerate() {
-            self.upsert_node(graph, node, index);
-        }
-        for (index, edge) in graph.edges.iter().enumerate() {
-            self.upsert_edge(graph, edge, index);
-        }
-        self.revision = revision;
-    }
-
-    fn upsert_node<N, E>(&mut self, graph: &GraphModel<N, E>, node: &Node<N>, index: usize) {
+    fn upsert_node_bounds<N>(&mut self, node: &Node<N>, index: usize, bounds: Option<Rect>) {
         self.remove_node(&node.id);
         if node.hidden {
             return;
         }
-        let Some(bounds) = graph.node_bounds(node) else {
+        let Some(bounds) = bounds else {
             return;
         };
+        self.insert_node_entry(node.id.clone(), bounds, index);
+    }
+
+    fn insert_node_entry(&mut self, id: NodeId, bounds: Rect, index: usize) {
         let cells = self.cells_for_rect(bounds);
         if let Some(cells) = &cells {
             for key in cells {
-                self.cells
-                    .entry(*key)
-                    .or_default()
-                    .nodes
-                    .push(node.id.clone());
+                self.cells.entry(*key).or_default().nodes.push(id.clone());
             }
         } else {
-            self.overflow_nodes.insert(node.id.clone());
+            self.overflow_nodes.insert(id.clone());
         }
         self.nodes.insert(
-            node.id.clone(),
+            id,
             SpatialEntry {
                 bounds,
                 index,
@@ -217,28 +245,28 @@ impl GraphSpatialIndex {
         );
     }
 
-    fn upsert_edge<N, E>(&mut self, graph: &GraphModel<N, E>, edge: &Edge<E>, index: usize) {
+    fn upsert_edge_bounds<E>(&mut self, edge: &Edge<E>, index: usize, bounds: Option<Rect>) {
         self.remove_edge(&edge.id);
         if edge.hidden {
             return;
         }
-        let Some(bounds) = edge_flow_bounds(graph, edge) else {
+        let Some(bounds) = bounds else {
             return;
         };
+        self.insert_edge_entry(edge.id.clone(), bounds, index);
+    }
+
+    fn insert_edge_entry(&mut self, id: EdgeId, bounds: Rect, index: usize) {
         let cells = self.cells_for_rect(bounds);
         if let Some(cells) = &cells {
             for key in cells {
-                self.cells
-                    .entry(*key)
-                    .or_default()
-                    .edges
-                    .push(edge.id.clone());
+                self.cells.entry(*key).or_default().edges.push(id.clone());
             }
         } else {
-            self.overflow_edges.insert(edge.id.clone());
+            self.overflow_edges.insert(id.clone());
         }
         self.edges.insert(
-            edge.id.clone(),
+            id,
             SpatialEntry {
                 bounds,
                 index,
@@ -294,16 +322,16 @@ impl GraphSpatialIndex {
             if let Some(keys) = keys {
                 for key in keys {
                     if let Some(cell) = self.cells.get(&key) {
-                        ids.extend(cell.nodes.iter().cloned());
+                        ids.extend(&cell.nodes);
                     }
                 }
             } else {
-                ids.extend(self.nodes.keys().cloned());
+                ids.extend(self.nodes.keys());
             }
-            ids.extend(self.overflow_nodes.iter().cloned());
+            ids.extend(&self.overflow_nodes);
             let mut indices = ids
                 .into_iter()
-                .filter_map(|id| self.nodes.get(&id))
+                .filter_map(|id| self.nodes.get(id))
                 .filter(|entry| entry.bounds.intersection(area).is_some())
                 .map(|entry| entry.index)
                 .collect::<Vec<_>>();
@@ -315,16 +343,16 @@ impl GraphSpatialIndex {
             if let Some(keys) = keys {
                 for key in keys {
                     if let Some(cell) = self.cells.get(&key) {
-                        ids.extend(cell.edges.iter().cloned());
+                        ids.extend(&cell.edges);
                     }
                 }
             } else {
-                ids.extend(self.edges.keys().cloned());
+                ids.extend(self.edges.keys());
             }
-            ids.extend(self.overflow_edges.iter().cloned());
+            ids.extend(&self.overflow_edges);
             let mut indices = ids
                 .into_iter()
-                .filter_map(|id| self.edges.get(&id))
+                .filter_map(|id| self.edges.get(id))
                 .filter(|entry| entry.bounds.intersection(area).is_some())
                 .map(|entry| entry.index)
                 .collect::<Vec<_>>();
@@ -367,14 +395,147 @@ impl GraphSpatialIndex {
     }
 }
 
-fn edge_flow_bounds<N, E>(graph: &GraphModel<N, E>, edge: &Edge<E>) -> Option<Rect> {
-    let source_node = graph.node(&edge.source)?;
-    let target_node = graph.node(&edge.target)?;
+impl GraphSpatialIndexBuilder {
+    fn new<N, E>(graph: &GraphModel<N, E>, revision: u64) -> Self {
+        let absolute_bounds = absolute_node_bounds(graph);
+        let nodes_by_id = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| {
+                absolute_bounds[index].map(|bounds| (&node.id, (node, bounds)))
+            })
+            .collect::<HashMap<_, _>>();
+        let nodes = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| !node.hidden)
+            .filter_map(|(index, node)| {
+                absolute_bounds[index].map(|bounds| PendingSpatialEntry {
+                    id: node.id.clone(),
+                    bounds,
+                    index,
+                })
+            })
+            .collect::<Vec<_>>();
+        let edges = graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| !edge.hidden)
+            .filter_map(|(index, edge)| {
+                edge_flow_bounds_from_nodes(&nodes_by_id, edge).map(|bounds| PendingSpatialEntry {
+                    id: edge.id.clone(),
+                    bounds,
+                    index,
+                })
+            })
+            .collect::<Vec<_>>();
+        let total = nodes.len() + edges.len();
+        Self {
+            index: GraphSpatialIndex::empty(revision),
+            nodes: nodes.into_iter(),
+            edges: edges.into_iter(),
+            completed: 0,
+            total,
+        }
+    }
+
+    pub const fn progress(&self) -> GraphSpatialIndexBuildProgress {
+        GraphSpatialIndexBuildProgress {
+            completed: self.completed,
+            total: self.total,
+        }
+    }
+
+    pub const fn index(&self) -> &GraphSpatialIndex {
+        &self.index
+    }
+
+    /// Insert at most `max_items` nodes or edges and return current progress.
+    pub fn advance(&mut self, max_items: usize) -> GraphSpatialIndexBuildProgress {
+        let mut remaining = max_items;
+        while remaining > 0 {
+            if let Some(entry) = self.nodes.next() {
+                self.index
+                    .insert_node_entry(entry.id, entry.bounds, entry.index);
+            } else if let Some(entry) = self.edges.next() {
+                self.index
+                    .insert_edge_entry(entry.id, entry.bounds, entry.index);
+            } else {
+                break;
+            }
+            self.completed += 1;
+            remaining -= 1;
+        }
+        self.progress()
+    }
+
+    pub fn finish(mut self) -> GraphSpatialIndex {
+        while !self.progress().is_complete() {
+            self.advance(usize::MAX);
+        }
+        self.index
+    }
+}
+
+fn absolute_node_bounds<N, E>(graph: &GraphModel<N, E>) -> Vec<Option<Rect>> {
+    let node_indices = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (&node.id, index))
+        .collect::<HashMap<_, _>>();
+    let mut resolved: Vec<Option<Rect>> = vec![None; graph.nodes.len()];
+
+    for start in 0..graph.nodes.len() {
+        if resolved[start].is_some() {
+            continue;
+        }
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        let mut current = Some(start);
+        let base = loop {
+            let Some(index) = current else {
+                break Some(Point::ZERO);
+            };
+            if let Some(bounds) = resolved[index] {
+                break Some(bounds.origin);
+            }
+            if !seen.insert(index) {
+                break None;
+            }
+            chain.push(index);
+            current = match graph.nodes[index].parent_id.as_ref() {
+                Some(parent) => node_indices.get(parent).copied(),
+                None => None,
+            };
+            if graph.nodes[index].parent_id.is_some() && current.is_none() {
+                break None;
+            }
+        };
+        let Some(mut origin) = base else {
+            continue;
+        };
+        while let Some(index) = chain.pop() {
+            let local = graph.nodes[index].bounds().origin;
+            origin = Point::new(origin.x + local.x, origin.y + local.y);
+            resolved[index] = Some(Rect::from_origin_size(origin, graph.nodes[index].size));
+        }
+    }
+    resolved
+}
+
+fn edge_flow_bounds_from_nodes<N, E>(
+    nodes: &HashMap<&NodeId, (&Node<N>, Rect)>,
+    edge: &Edge<E>,
+) -> Option<Rect> {
+    let (source_node, source_bounds) = *nodes.get(&edge.source)?;
+    let (target_node, target_bounds) = *nodes.get(&edge.target)?;
     if source_node.hidden || target_node.hidden {
         return None;
     }
-    let source_bounds = graph.node_bounds(source_node)?;
-    let target_bounds = graph.node_bounds(target_node)?;
     let (source, source_side) = endpoint(
         source_node,
         source_bounds,
@@ -493,6 +654,46 @@ mod tests {
             index
                 .query_edge_indices(Rect::new(500.0, -100.0, 600.0, 700.0))
                 .contains(&0)
+        );
+    }
+
+    #[test]
+    fn budgeted_builder_exposes_monotonic_partial_progress() {
+        let graph = GraphModel::new(
+            vec![
+                Node::new("a", Point::new(0.0, 0.0), ()),
+                Node::new("b", Point::new(600.0, 0.0), ()),
+            ],
+            vec![Edge::new("a-b", "a", "b", ())],
+        )
+        .unwrap();
+        let mut builder = GraphSpatialIndex::builder(&graph, 7);
+
+        assert_eq!(
+            builder.progress(),
+            GraphSpatialIndexBuildProgress {
+                completed: 0,
+                total: 3,
+            }
+        );
+        assert_eq!(builder.advance(1).completed, 1);
+        assert_eq!(
+            builder
+                .index()
+                .query_node_indices(Rect::new(-20.0, -20.0, 300.0, 200.0)),
+            vec![0]
+        );
+        assert!(!builder.progress().is_complete());
+
+        let index = builder.finish();
+        assert_eq!(index.revision(), 7);
+        assert_eq!(
+            index.query_node_indices(Rect::new(-20.0, -20.0, 900.0, 200.0)),
+            vec![0, 1]
+        );
+        assert_eq!(
+            index.query_edge_indices(Rect::new(-20.0, -20.0, 900.0, 200.0)),
+            vec![0]
         );
     }
 }

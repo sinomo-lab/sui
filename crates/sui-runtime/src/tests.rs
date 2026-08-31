@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     path::PathBuf,
     rc::Rc,
@@ -4781,6 +4781,72 @@ struct TransformedHost {
     transform: Transform,
 }
 
+struct TransformBenchmarkLeaf {
+    measures: Rc<Cell<u64>>,
+}
+
+impl Widget for TransformBenchmarkLeaf {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measures.set(self.measures.get().saturating_add(1));
+        constraints.clamp(Size::new(44.0, 28.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::rgba(0.16, 0.42, 0.68, 0.84));
+    }
+}
+
+struct TransformBenchmarkRoot {
+    children: WidgetChildren,
+    zoom: Signal<f32>,
+    transformed: bool,
+    shared: bool,
+    transform: Transform,
+}
+
+impl Widget for TransformBenchmarkRoot {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        for index in 0..self.children.len() {
+            self.children
+                .measure_child(index, ctx, Constraints::tight(Size::new(44.0, 28.0)));
+        }
+        constraints.clamp(Size::new(1280.0, 720.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, _bounds: Rect) {
+        let zoom = ctx.observe(&self.zoom);
+        let transform = Transform::scale(zoom, zoom).then(Transform::translation(32.0, 24.0));
+        self.transform = transform;
+        for (index, child) in self.children.as_mut_slice().iter_mut().enumerate() {
+            let column = index % 24;
+            let row = index / 24;
+            let bounds = Rect::new(column as f32 * 50.0, row as f32 * 34.0, 44.0, 28.0);
+            if self.transformed {
+                child.arrange_transformed(ctx, bounds, transform);
+            } else {
+                child.arrange(ctx, bounds);
+            }
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::rgba(0.04, 0.06, 0.08, 1.0));
+        if self.transformed && self.shared {
+            ctx.with_transform(self.transform, |ctx| self.children.paint(ctx));
+        } else {
+            self.children.paint(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
 impl Widget for TransformedHost {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.child
@@ -4861,6 +4927,86 @@ fn transformed_widget_subtree_aligns_paint_input_and_semantics() {
         matches!(command, SceneCommand::PushTransform { transform: actual } if *actual == transform)
     });
     assert!(has_transform);
+}
+
+fn diagnostic_percentile(samples: &mut [f64], quantile: f64) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    let index = ((samples.len().saturating_sub(1)) as f64 * quantile).round() as usize;
+    samples.get(index).copied().unwrap_or(0.0)
+}
+
+fn run_transform_widget_benchmark(transformed: bool, shared: bool) -> (f64, f64, f64, u64, usize) {
+    const CHILDREN: usize = 384;
+    const WARMUP: usize = 20;
+    const FRAMES: usize = 180;
+
+    let zoom = Signal::new(1.0_f32);
+    let measures = Rc::new(Cell::new(0_u64));
+    let mut children = WidgetChildren::with_capacity(CHILDREN);
+    for _ in 0..CHILDREN {
+        children.push(TransformBenchmarkLeaf {
+            measures: Rc::clone(&measures),
+        });
+    }
+    let mut runtime =
+        Application::new()
+            .window(WindowBuilder::new().title("transform benchmark").root(
+                TransformBenchmarkRoot {
+                    children,
+                    zoom: zoom.clone(),
+                    transformed,
+                    shared,
+                    transform: Transform::IDENTITY,
+                },
+            ))
+            .build()
+            .unwrap();
+    let window_id = runtime.window_ids()[0];
+    runtime.render(window_id).unwrap();
+    let initial_measures = measures.get();
+
+    for frame in 0..WARMUP {
+        zoom.set(0.65 + ((frame % 11) as f32 * 0.07));
+        runtime.render(window_id).unwrap();
+    }
+
+    let mut samples = Vec::with_capacity(FRAMES);
+    let mut command_count = 0;
+    for frame in 0..FRAMES {
+        zoom.set(0.55 + ((frame % 23) as f32 * 0.055));
+        let started = std::time::Instant::now();
+        let output = runtime.render(window_id).unwrap();
+        samples.push(started.elapsed().as_secs_f64() * 1_000_000.0);
+        command_count = output.frame.scene.commands().len();
+        std::hint::black_box(command_count);
+    }
+    assert_eq!(
+        measures.get(),
+        initial_measures,
+        "transform-only frames must not remeasure children"
+    );
+    let average = samples.iter().sum::<f64>() / samples.len() as f64;
+    let mut ordered = samples.clone();
+    let p50 = diagnostic_percentile(&mut ordered, 0.50);
+    let p95 = diagnostic_percentile(&mut samples, 0.95);
+    (average, p50, p95, initial_measures, command_count)
+}
+
+#[test]
+#[ignore = "diagnostic benchmark for affine retained widget subtrees"]
+fn transformed_widget_subtree_current_status_benchmark() {
+    let (flat_average, flat_p50, flat_p95, flat_measures, flat_commands) =
+        run_transform_widget_benchmark(false, false);
+    let (transform_average, transform_p50, transform_p95, transform_measures, transform_commands) =
+        run_transform_widget_benchmark(true, false);
+    let (shared_average, shared_p50, shared_p95, shared_measures, shared_commands) =
+        run_transform_widget_benchmark(true, true);
+    println!(
+        "TRANSFORM_BENCHMARK children=384 frames=180 flat_avg_us={flat_average:.2} flat_p50_us={flat_p50:.2} flat_p95_us={flat_p95:.2} transformed_avg_us={transform_average:.2} transformed_p50_us={transform_p50:.2} transformed_p95_us={transform_p95:.2} transformed_ratio={:.3} shared_avg_us={shared_average:.2} shared_p50_us={shared_p50:.2} shared_p95_us={shared_p95:.2} shared_ratio={:.3} shared_vs_independent={:.3} flat_measures={flat_measures} transformed_measures={transform_measures} shared_measures={shared_measures} flat_commands={flat_commands} transformed_commands={transform_commands} shared_commands={shared_commands}",
+        transform_average / flat_average.max(0.001),
+        shared_average / flat_average.max(0.001),
+        shared_average / transform_average.max(0.001),
+    );
 }
 
 #[test]

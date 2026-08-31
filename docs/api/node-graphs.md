@@ -127,6 +127,28 @@ viewport, and document revisions. A uniform-grid `GraphSpatialIndex` updates
 only changed nodes and their affected edges. Painting and pointer hit testing
 query this index instead of scanning the full document.
 
+Large imports can build the grid incrementally on the UI thread. Creation
+resolves graph geometry once, and each `advance` call limits grid insertion to
+the supplied item budget:
+
+```rust,no_run
+# use sui_nodes::prelude::*;
+# let graph = GraphModel::<(), ()>::empty();
+let mut builder = GraphSpatialIndex::builder(&graph, 0);
+while !builder.advance(2_048).is_complete() {
+    // Yield to the host event loop and continue on a later turn.
+}
+let snapshot = GraphSnapshot::with_spatial_index(graph, builder.finish());
+let state = NodeGraphState::from_snapshot(snapshot);
+# let _ = state;
+```
+
+Viewport culling is enabled by default. `NodeGraphConfig::culling_margin`
+retains a screen-space overscan around the viewport; offscreen retained widgets
+skip arrangement, painting, and semantics until they enter that range. Set
+`cull_offscreen` to `false` only when an application deliberately needs every
+element mounted into those phases.
+
 ## Hierarchy and editing
 
 `parent_id` makes a node position relative to a parent. Parent chains are
@@ -212,3 +234,20 @@ events. It also includes a pannable minimap and a second uncontrolled graph
 using a canvas-backed paint-only surface with retained node widgets. The demo
 keeps `nodes` as a distinct feature even though it is enabled by default, so
 specialized builds can disable the dependency.
+
+## Performance diagnostics
+
+The ignored benchmarks are optimized diagnostic workloads, not
+publication-comparable results. Run them serially on an otherwise idle system:
+
+```bash
+cargo test -p sinomo-ui-runtime transformed_widget_subtree_current_status_benchmark -- --ignored --nocapture
+cargo test -p sinomo-ui-nodes node_graph_current_status_benchmark -- --ignored --nocapture
+cargo test -p sinomo-ui-demo retained_node_graph_gpu_zoom_current_status_benchmark -- --ignored --nocapture
+```
+
+They cover 384 flat, independently transformed, and shared-transform widgets;
+a 10,000-node/19,800-edge model with budgeted spatial-index construction;
+384-node retained and painted zoom frames; and the complete runtime plus WGPU
+renderer path. Each zoom workload asserts that viewport-only changes do not
+remeasure retained widgets.

@@ -1080,6 +1080,7 @@ fn describe_event(event: &NodeGraphEvent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui::WgpuRenderer;
 
     #[test]
     fn comprehensive_document_covers_every_edge_kind_and_subflows() {
@@ -1103,5 +1104,93 @@ mod tests {
         assert!(document.nodes.iter().any(|node| node.resizable));
         assert!(document.edges.iter().any(|edge| edge.animated));
         assert!(document.edges.iter().any(|edge| edge.selected));
+    }
+
+    #[test]
+    #[ignore = "diagnostic benchmark for retained node graph runtime and GPU zoom frames"]
+    fn retained_node_graph_gpu_zoom_current_status_benchmark() -> Result<()> {
+        const COLUMNS: usize = 24;
+        const ROWS: usize = 16;
+        const FRAMES: usize = 120;
+        let mut nodes = Vec::with_capacity(COLUMNS * ROWS);
+        let mut edges = Vec::new();
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let index = row * COLUMNS + column;
+                nodes.push(
+                    Node::new(
+                        format!("gpu-node-{index}"),
+                        Point::new(column as f32 * 120.0, row as f32 * 64.0),
+                        DemoNodeData::new(format!("item {index}")),
+                    )
+                    .kind("gpu-benchmark")
+                    .label(format!("Node {index}"))
+                    .size(Size::new(100.0, 48.0)),
+                );
+                if column > 0 {
+                    edges.push(Edge::new(
+                        format!("gpu-edge-{index}"),
+                        format!("gpu-node-{}", index - 1),
+                        format!("gpu-node-{index}"),
+                        DemoEdgeData::new("benchmark"),
+                    ));
+                }
+            }
+        }
+        let state = NodeGraphState::new(nodes, edges).expect("valid GPU benchmark graph");
+        let graph = NodeGraph::new("GPU node benchmark", state.clone())
+            .config(NodeGraphConfig {
+                min_zoom: 0.1,
+                max_zoom: 2.0,
+                background_variant: BackgroundVariant::Dots,
+                ..NodeGraphConfig::default()
+            })
+            .node_type("gpu-benchmark", |_id, node| {
+                let title =
+                    node.select_named("GPU benchmark node title", |node| node.label.clone());
+                Padding::all(6.0, Label::new("").text_from(title)).fill_child()
+            });
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("GPU node benchmark").root(graph))
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        let initial = runtime.render(window_id)?;
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&initial.frame)?;
+        let viewport_size = state.viewport_size();
+        let center = Point::new(1_430.0, 510.0);
+        let mut runtime_time = std::time::Duration::ZERO;
+        let mut renderer_time = std::time::Duration::ZERO;
+        let mut draw_count = 0usize;
+        let mut path_misses = 0usize;
+        let mut path_upload_bytes = 0u64;
+
+        for frame in 0..FRAMES {
+            let zoom = 0.32 + ((frame % 17) as f32 * 0.006);
+            state.set_viewport(Viewport::centered_on(center, viewport_size, zoom, 0.1, 2.0));
+            let runtime_started = std::time::Instant::now();
+            let output = runtime.render(window_id)?;
+            runtime_time += runtime_started.elapsed();
+            let renderer_started = std::time::Instant::now();
+            renderer.render(&output.frame)?;
+            renderer_time += renderer_started.elapsed();
+            let stats = renderer
+                .last_frame_stats(window_id)
+                .expect("renderer frame stats");
+            draw_count += stats.draw_count;
+            path_misses += stats.analytic_path_bind_group_miss_count;
+            path_upload_bytes += stats.analytic_path_bind_group_upload_bytes;
+        }
+
+        println!(
+            "NODE_GRAPH_GPU_ZOOM_BENCHMARK nodes=384 edges=368 frames={FRAMES} runtime_avg_ms={:.3} renderer_avg_ms={:.3} total_avg_ms={:.3} draw_avg={:.1} path_miss_avg={:.1} path_upload_avg_bytes={:.1}",
+            runtime_time.as_secs_f64() * 1000.0 / FRAMES as f64,
+            renderer_time.as_secs_f64() * 1000.0 / FRAMES as f64,
+            (runtime_time + renderer_time).as_secs_f64() * 1000.0 / FRAMES as f64,
+            draw_count as f64 / FRAMES as f64,
+            path_misses as f64 / FRAMES as f64,
+            path_upload_bytes as f64 / FRAMES as f64,
+        );
+        Ok(())
     }
 }

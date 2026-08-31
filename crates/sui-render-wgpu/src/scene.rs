@@ -344,12 +344,36 @@ pub(crate) struct ScissorRect {
     pub(crate) height: u32,
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_frame_batches(
     draw_ops: DrawOpArena,
     viewport: Size,
     framebuffer_size: (u32, u32),
 ) -> PreparedFrameBatches {
-    let passes = batch_draw_ops(&draw_ops, viewport, framebuffer_size);
+    prepare_frame_batches_with_analytic_slots(draw_ops, viewport, framebuffer_size, None)
+}
+
+pub(crate) fn prepare_frame_batches_with_analytic_slots(
+    mut draw_ops: DrawOpArena,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+    analytic_path_slots: Option<&HashMap<u64, u32>>,
+) -> PreparedFrameBatches {
+    let batch_analytic_paths = analytic_path_slots.is_some();
+    if let Some(slots) = analytic_path_slots {
+        stamp_draw_op_analytic_path_slots(&mut draw_ops, slots);
+    }
+    let cached_passes = cache_draw_ops_internal(&draw_ops, batch_analytic_paths);
+    let passes = prepare_cached_passes(
+        &cached_passes,
+        viewport,
+        framebuffer_size,
+        Vector::ZERO,
+        None,
+        0,
+        0,
+        0,
+    );
     PreparedFrameBatches {
         scene_vertices: draw_ops.scene_vertices,
         clip_vertices: draw_ops.clip_vertices,
@@ -358,6 +382,7 @@ pub(crate) fn prepare_frame_batches(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn batch_draw_ops(
     draw_ops: &DrawOpArena,
     viewport: Size,
@@ -376,7 +401,15 @@ pub(crate) fn batch_draw_ops(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
+    cache_draw_ops_internal(draw_ops, false)
+}
+
+fn cache_draw_ops_internal(
+    draw_ops: &DrawOpArena,
+    batch_analytic_paths: bool,
+) -> Vec<CachedPassBatch> {
     let mut passes = Vec::new();
 
     for op in &draw_ops.draw_ops {
@@ -405,7 +438,12 @@ pub(crate) fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
         let pass = passes
             .last_mut()
             .expect("cached pass created before draw insertion");
-        let kind = prepared_draw_kind(draw_ops, op);
+        let mut kind = prepared_draw_kind(draw_ops, op);
+        if batch_analytic_paths && matches!(kind, PreparedDrawKind::AnalyticPath { .. }) {
+            kind = PreparedDrawKind::AnalyticPath {
+                resource_signature: 0,
+            };
+        }
         let clip_rect = op.clip_rect;
         if let Some(previous) = pass.draws.last_mut() {
             let previous_end = previous.vertices.start + previous.vertices.len;
@@ -551,28 +589,22 @@ pub(crate) fn prepared_batch_counts(passes: &[PreparedPassBatch]) -> (usize, usi
     )
 }
 
-pub(crate) fn stamp_analytic_path_slots(
-    vertices: &mut [Vertex],
-    passes: &[PreparedPassBatch],
-    analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+fn stamp_draw_op_analytic_path_slots(
+    draw_ops: &mut DrawOpArena,
+    analytic_path_slots: &HashMap<u64, u32>,
 ) {
-    let Some(resources) = analytic_path_resources else {
-        return;
-    };
-
-    for pass in passes {
-        for draw in &pass.draws {
-            let PreparedDrawKind::AnalyticPath { resource_signature } = draw.kind else {
-                continue;
-            };
-            let Some(slot) = resources.slots.get(&resource_signature).copied() else {
-                continue;
-            };
-            let start = draw.vertices.start as usize;
-            let end = start + draw.vertices.len as usize;
-            for vertex in &mut vertices[start..end] {
-                vertex.shader_params[0] = slot as f32;
-            }
+    for draw in &draw_ops.draw_ops {
+        let DrawOpKind::AnalyticPath { id } = draw.kind else {
+            continue;
+        };
+        let signature = draw_ops.analytic_paths[&id].resource_signature;
+        let Some(slot) = analytic_path_slots.get(&signature).copied() else {
+            continue;
+        };
+        let start = draw.vertices.start as usize;
+        let end = start + draw.vertices.len as usize;
+        for vertex in &mut draw_ops.scene_vertices[start..end] {
+            vertex.shader_params[0] = slot as f32;
         }
     }
 }
@@ -1074,6 +1106,7 @@ enum FillPathRenderMode {
 }
 
 const ANALYTIC_AA_OUTSET: f32 = 1.0;
+const ANALYTIC_PATH_COORDINATE_PRECISION: f32 = 1024.0;
 
 fn analytic_coverage_outset(soft_width: f32) -> f32 {
     (soft_width.max(0.0) * 0.5).max(ANALYTIC_AA_OUTSET)
@@ -3230,7 +3263,7 @@ fn append_painted_path(
 
     let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
     let (analytic_transform, path_origin) =
-        analytic_path_transform_without_translation(state.current_transform);
+        normalized_analytic_path_transform(path, state.current_transform);
     let lyon_path = build_lyon_path(path, analytic_transform);
     if let Some(data) = build_analytic_fill_path_data(&lyon_path, feather_width) {
         append_analytic_path_quad(
@@ -3287,7 +3320,7 @@ fn append_stroked_path(
     if analytic_stroke_supported {
         let transformed_bounds = state.current_transform.transform_rect_bbox(path.bounds());
         let (analytic_transform, path_origin) =
-            analytic_path_transform_without_translation(state.current_transform);
+            normalized_analytic_path_transform(path, state.current_transform);
         let lyon_path = build_lyon_path(path, analytic_transform);
         if let Some(data) = build_analytic_stroke_path_data(&lyon_path, line_width, feather_width) {
             append_analytic_path_quad(
@@ -3322,6 +3355,22 @@ fn analytic_path_transform_without_translation(transform: Transform) -> (Transfo
     )
 }
 
+fn quantize_analytic_path_coordinate(value: f32) -> f32 {
+    (value * ANALYTIC_PATH_COORDINATE_PRECISION).round() / ANALYTIC_PATH_COORDINATE_PRECISION
+}
+
+fn normalized_analytic_path_transform(
+    path: &ScenePath,
+    transform: Transform,
+) -> (Transform, Vector) {
+    let (linear, translation) = analytic_path_transform_without_translation(transform);
+    let local_origin = linear.transform_point(path.bounds().origin).to_vector();
+    (
+        linear.then(Transform::translation(-local_origin.x, -local_origin.y)),
+        translation + local_origin,
+    )
+}
+
 fn build_analytic_fill_path_data(
     path: &LyonPath,
     feather_width: f32,
@@ -3342,7 +3391,10 @@ fn build_analytic_fill_path_data(
         let start = point_data.len() as u32;
         for point in contour.points {
             point_data.push(AnalyticPointGpu {
-                position: [point.x, point.y],
+                position: [
+                    quantize_analytic_path_coordinate(point.x),
+                    quantize_analytic_path_coordinate(point.y),
+                ],
                 _pad: [0.0, 0.0],
             });
             if point_data.len() > MAX_ANALYTIC_PATH_POINTS {
@@ -3392,7 +3444,10 @@ fn build_analytic_stroke_path_data(
         let start = point_data.len() as u32;
         for point in contour.points {
             point_data.push(AnalyticPointGpu {
-                position: [point.x, point.y],
+                position: [
+                    quantize_analytic_path_coordinate(point.x),
+                    quantize_analytic_path_coordinate(point.y),
+                ],
                 _pad: [0.0, 0.0],
             });
             if point_data.len() > MAX_ANALYTIC_PATH_POINTS {
@@ -5045,5 +5100,88 @@ mod analytic_path_cache_tests {
         assert_eq!(first.points, translated.points);
         assert_eq!(first.resource_signature, translated.resource_signature);
         assert_eq!(translated_origin - first_origin, Vector::new(280.0, 148.0));
+    }
+
+    #[test]
+    fn analytic_path_resource_identity_ignores_path_coordinate_translation() {
+        let first_path = ScenePath::circle(Point::new(18.0, 18.0), 18.0);
+        let translated_path = ScenePath::circle(Point::new(298.0, 166.0), 18.0);
+        let (first_transform, first_origin) =
+            normalized_analytic_path_transform(&first_path, Transform::IDENTITY);
+        let (translated_transform, translated_origin) =
+            normalized_analytic_path_transform(&translated_path, Transform::IDENTITY);
+        let first = build_analytic_stroke_path_data(
+            &build_lyon_path(&first_path, first_transform),
+            2.0,
+            1.0,
+        )
+        .expect("circle should use analytic path rendering");
+        let translated = build_analytic_stroke_path_data(
+            &build_lyon_path(&translated_path, translated_transform),
+            2.0,
+            1.0,
+        )
+        .expect("translated circle should use analytic path rendering");
+
+        assert_eq!(first.resource_signature, translated.resource_signature);
+        assert_eq!(translated_origin - first_origin, Vector::new(280.0, 148.0));
+    }
+
+    #[test]
+    fn stamped_analytic_paths_with_distinct_resources_share_one_draw() {
+        let first = build_analytic_stroke_path_data(
+            &build_lyon_path(
+                &ScenePath::circle(Point::new(18.0, 18.0), 18.0),
+                Transform::IDENTITY,
+            ),
+            2.0,
+            1.0,
+        )
+        .expect("circle should use analytic path rendering");
+        let second = build_analytic_stroke_path_data(
+            &build_lyon_path(
+                &ScenePath::rounded_rect(Rect::new(0.0, 0.0, 80.0, 40.0), 8.0),
+                Transform::IDENTITY,
+            ),
+            2.0,
+            1.0,
+        )
+        .expect("rounded rect should use analytic path rendering");
+        let first_signature = first.resource_signature;
+        let second_signature = second.resource_signature;
+        let mut draw_ops = DrawOpArena::default();
+        draw_ops.clip_states.push(ClipState {
+            clip_paths: Vec::new(),
+        });
+        let first_id = draw_ops.insert_analytic_path(first);
+        let second_id = draw_ops.insert_analytic_path(second);
+        draw_ops.scene_vertices =
+            vec![Vertex::basic([0.0, 0.0], [1.0; 4], [0.0; 2], [0.0; 4],); 12];
+        draw_ops.draw_ops = vec![
+            DrawOp {
+                kind: DrawOpKind::AnalyticPath { id: first_id },
+                vertices: PreparedVertices { start: 0, len: 6 },
+                clip_rect: None,
+                clip_state_index: 0,
+                image: None,
+            },
+            DrawOp {
+                kind: DrawOpKind::AnalyticPath { id: second_id },
+                vertices: PreparedVertices { start: 6, len: 6 },
+                clip_rect: None,
+                clip_state_index: 0,
+                image: None,
+            },
+        ];
+        let slots = HashMap::from([(first_signature, 3), (second_signature, 7)]);
+
+        stamp_draw_op_analytic_path_slots(&mut draw_ops, &slots);
+        let passes = cache_draw_ops_internal(&draw_ops, true);
+
+        assert_eq!(passes.len(), 1);
+        assert_eq!(passes[0].draws.len(), 1);
+        assert_eq!(passes[0].draws[0].vertices.len, 12);
+        assert_eq!(draw_ops.scene_vertices[0].shader_params[0], 3.0);
+        assert_eq!(draw_ops.scene_vertices[6].shader_params[0], 7.0);
     }
 }

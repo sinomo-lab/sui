@@ -1,4 +1,8 @@
-use std::{collections::HashSet, error::Error, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt,
+};
 
 use sui_core::{Point, Rect, Size};
 
@@ -687,15 +691,14 @@ impl<N, E> GraphModel<N, E> {
     }
 
     pub fn validate(&self) -> Result<(), GraphError> {
+        let mut node_indices = HashMap::with_capacity(self.nodes.len());
         for (index, node) in self.nodes.iter().enumerate() {
-            if self.nodes[..index].iter().any(|other| other.id == node.id) {
+            if node_indices.insert(&node.id, index).is_some() {
                 return Err(GraphError::DuplicateNode(node.id.clone()));
             }
-            for (handle_index, handle) in node.handles.iter().enumerate() {
-                if node.handles[..handle_index]
-                    .iter()
-                    .any(|other| other.id == handle.id && other.kind == handle.kind)
-                {
+            let mut handles = HashSet::with_capacity(node.handles.len());
+            for handle in &node.handles {
+                if !handles.insert((&handle.id, handle.kind)) {
                     return Err(GraphError::DuplicateHandle {
                         node: node.id.clone(),
                         handle: handle.id.clone(),
@@ -707,30 +710,56 @@ impl<N, E> GraphModel<N, E> {
 
         for node in &self.nodes {
             if let Some(parent) = &node.parent_id
-                && self.node(parent).is_none()
+                && !node_indices.contains_key(parent)
             {
                 return Err(GraphError::MissingParent {
                     node: node.id.clone(),
                     parent: parent.clone(),
                 });
             }
-            let mut seen = HashSet::new();
-            let mut current = Some(&node.id);
-            while let Some(id) = current {
-                if !seen.insert(id) {
-                    return Err(GraphError::ParentCycle(node.id.clone()));
+        }
+
+        let mut parent_states = vec![0_u8; self.nodes.len()];
+        for start in 0..self.nodes.len() {
+            if parent_states[start] != 0 {
+                continue;
+            }
+            let mut path = Vec::new();
+            let mut current = Some(start);
+            while let Some(index) = current {
+                match parent_states[index] {
+                    0 => {
+                        parent_states[index] = 1;
+                        path.push(index);
+                        current = self.nodes[index]
+                            .parent_id
+                            .as_ref()
+                            .and_then(|parent| node_indices.get(parent).copied());
+                    }
+                    1 => return Err(GraphError::ParentCycle(self.nodes[index].id.clone())),
+                    _ => break,
                 }
-                current = self
-                    .node(id)
-                    .and_then(|candidate| candidate.parent_id.as_ref());
+            }
+            for index in path {
+                parent_states[index] = 2;
             }
         }
 
-        for (index, edge) in self.edges.iter().enumerate() {
-            if self.edges[..index].iter().any(|other| other.id == edge.id) {
+        let mut edge_ids = HashSet::with_capacity(self.edges.len());
+        for edge in &self.edges {
+            if !edge_ids.insert(&edge.id) {
                 return Err(GraphError::DuplicateEdge(edge.id.clone()));
             }
-            self.validate_connection(&edge.connection())?;
+            let source = node_indices
+                .get(&edge.source)
+                .map(|index| &self.nodes[*index])
+                .ok_or_else(|| ConnectError::MissingSource(edge.source.clone()))?;
+            let target = node_indices
+                .get(&edge.target)
+                .map(|index| &self.nodes[*index])
+                .ok_or_else(|| ConnectError::MissingTarget(edge.target.clone()))?;
+            validate_handle(source, edge.source_handle.as_ref(), HandleKind::Source)?;
+            validate_handle(target, edge.target_handle.as_ref(), HandleKind::Target)?;
         }
         Ok(())
     }

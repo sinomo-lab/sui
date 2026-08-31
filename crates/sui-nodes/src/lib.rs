@@ -24,7 +24,7 @@ pub use model::{
     NodeExtent, NodeId, NodeSizeMode, RemovedNode,
 };
 pub use node_widget::{NodeSignal, NodeWidgetRegistry};
-pub use spatial::GraphSpatialIndex;
+pub use spatial::{GraphSpatialIndex, GraphSpatialIndexBuildProgress, GraphSpatialIndexBuilder};
 pub use state::{
     DeletedElements, GraphDocument, GraphSnapshot, NodeGraphMode, NodeGraphState,
     SnapshotRevisions, ViewportTransition,
@@ -40,7 +40,8 @@ pub mod prelude {
     pub use crate::{
         BackgroundVariant, Connection, DeletedElements, Edge, EdgeChange, EdgeId, EdgeKind,
         EdgeMarker, EdgePaintContext, EdgePathOptions, EdgeReconnectMode, FitViewOptions,
-        GraphDocument, GraphModel, GraphSnapshot, GraphSpatialIndex, Handle, HandleId, HandleKind,
+        GraphDocument, GraphModel, GraphSnapshot, GraphSpatialIndex,
+        GraphSpatialIndexBuildProgress, GraphSpatialIndexBuilder, Handle, HandleId, HandleKind,
         HandlePosition, Node, NodeChange, NodeControls, NodeControlsAppearance, NodeExtent,
         NodeGraph, NodeGraphAppearance, NodeGraphConfig, NodeGraphEvent, NodeGraphHit,
         NodeGraphMode, NodeGraphState, NodeGraphSurface, NodeId, NodeMiniMap,

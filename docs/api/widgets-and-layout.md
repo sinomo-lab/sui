@@ -450,6 +450,15 @@ content follows its world anchor while keeping a constant visual size. Canvas
 wheel and two-touch pinch gestures update the same viewport transform, and
 hosted widgets receive inverse-mapped pointer coordinates.
 
+Uniform zoom invalidates arrangement, paint, hit testing, and semantics but
+keeps widget measurement cached. Consecutive uniformly zoomed Canvas children
+share one transformed paint context; screen-space and custom policies split the
+sequence into separate transform runs without changing child identity or event
+mapping. Custom canvas-like containers can use `PaintCtx::with_transform` for
+the same batching behavior. Use the ignored runtime transform benchmark listed
+in the node-graph performance diagnostics when changing transformed subtree
+traversal or scene composition.
+
 ## Layout Contract for Custom Widgets
 
 The runtime uses two explicit phases:

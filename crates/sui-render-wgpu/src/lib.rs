@@ -3061,11 +3061,13 @@ impl WgpuRenderer {
         for fragment in submission.fragments {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
             let batch_prepare_started = diagnostics_enabled.then(Instant::now);
-            let mut prepared = prepare_frame_batches(draw_ops, frame.viewport, framebuffer_size);
-            stamp_analytic_path_slots(
-                &mut prepared.scene_vertices,
-                &prepared.passes,
-                analytic_path_resources.as_ref(),
+            let prepared = prepare_frame_batches_with_analytic_slots(
+                draw_ops,
+                frame.viewport,
+                framebuffer_size,
+                analytic_path_resources
+                    .as_ref()
+                    .map(|resources| &resources.slots),
             );
             if let Some(started) = batch_prepare_started {
                 batch_prepare_time_us += started.elapsed().as_micros() as u64;
