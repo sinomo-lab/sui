@@ -13,10 +13,10 @@ use super::{
     PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
     PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelPaint, SegmentedControl,
     SegmentedControlItem, SheetState, SideSheet, SideSheetPlacement, Spinner, StatusBadge,
-    StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, TabBar, ToolPalette,
-    ToolPaletteItem, Toolbar, paint_action_tile, paint_border, paint_callout, paint_code_lines,
-    paint_code_panel, paint_command_button, paint_disclosure_button, paint_hairline,
-    paint_placement_badge_with, paint_rounded_panel, paint_section_label,
+    StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, TabBar, TabBarItem,
+    ToolPalette, ToolPaletteItem, Toolbar, paint_action_tile, paint_border, paint_callout,
+    paint_code_lines, paint_code_panel, paint_command_button, paint_disclosure_button,
+    paint_hairline, paint_placement_badge_with, paint_rounded_panel, paint_section_label,
     paint_section_label_detail, paint_section_panel, text_token_style,
 };
 use crate::FloatingStack;
@@ -5004,6 +5004,74 @@ fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
     assert!(
         !solid_stroke_colors(&tabs).contains(&theme.palette.focus_ring),
         "unfocused selected tabs chrome should not paint a focus ring"
+    );
+}
+
+#[test]
+fn icon_tab_indicator_tracks_the_centered_icon_and_label_as_one_active_item() {
+    let mut theme = DefaultTheme::default();
+    theme.metrics.tab_min_width = 0.0;
+    let output = render_isolated(
+        TabBar::new("Main tabs")
+            .theme(theme)
+            .item(TabBarItem::new("Chat").icon(crate::IconGlyph::MessagesSquare)),
+    );
+
+    let label = text_run_for(&output, "Chat");
+    let mut underline = None;
+    let mut icon = None;
+    output
+        .frame
+        .scene
+        .visit_commands(&mut |command| match command {
+            SceneCommand::FillPath {
+                path,
+                brush: Brush::Solid(color),
+            } if *color == theme.palette.accent => underline = Some(path.bounds()),
+            SceneCommand::StrokePath { path, stroke, .. }
+                if stroke.cap == sui_scene::StrokeCap::Round
+                    && stroke.join == sui_scene::StrokeJoin::Round =>
+            {
+                let ink = path.bounds();
+                let side = stroke.width * 12.0;
+                icon = Some(Rect::new(
+                    ink.x() + (ink.width() - side) * 0.5,
+                    ink.y() + (ink.height() - side) * 0.5,
+                    side,
+                    side,
+                ));
+            }
+            _ => {}
+        });
+    let underline = underline.expect("icon tab should paint one active underline");
+    let icon = icon.expect("icon tab should paint its Lucide mark");
+    let combined_x = icon.x();
+    let combined_max_x = label.rect.max_x();
+    let combined_center = (combined_x + combined_max_x) * 0.5;
+    let underline_center = underline.x() + underline.width() * 0.5;
+
+    assert!(
+        (underline.x() - combined_x).abs() < 1.5,
+        "active underline should begin under the icon: underline={underline:?}, icon={icon:?}"
+    );
+    assert!(
+        (underline.max_x() - combined_max_x).abs() < 1.5,
+        "active underline should end under the label: underline={underline:?}, label={:?}",
+        label.rect
+    );
+    assert!(
+        (underline_center - combined_center).abs() < 1.5,
+        "icon + label and their active underline must share one center"
+    );
+    let tabs = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::TabBar)
+        .expect("tab bar semantics");
+    assert_eq!(
+        tabs.value,
+        Some(SemanticsValue::Text("Chat".to_string())),
+        "icons must not alter the tab's accessible label"
     );
 }
 

@@ -8757,11 +8757,56 @@ impl Widget for PlacementBadge {
     }
 }
 
+/// One navigation tab, measured and painted as a single optional-icon + label item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabBarItem {
+    label: String,
+    icon: Option<IconGlyph>,
+}
+
+impl TabBarItem {
+    /// Create a text-only tab item.
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            icon: None,
+        }
+    }
+
+    /// Add a leading icon. The icon and label share one centered content box and active indicator.
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    /// Visible and accessible label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Optional leading glyph.
+    pub fn icon_glyph(&self) -> Option<IconGlyph> {
+        self.icon
+    }
+}
+
+impl From<String> for TabBarItem {
+    fn from(label: String) -> Self {
+        Self::new(label)
+    }
+}
+
+impl From<&str> for TabBarItem {
+    fn from(label: &str) -> Self {
+        Self::new(label)
+    }
+}
+
 pub struct TabBar {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
-    tabs: Vec<String>,
+    tabs: Vec<TabBarItem>,
     selected: usize,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     selected_source: Option<Arc<dyn Observable<Option<usize>>>>,
@@ -8776,6 +8821,7 @@ pub struct TabBar {
     focus_animation: AnimatedScalar,
     gap: Option<f32>,
     label_measurements: Vec<TextMeasurement>,
+    content_widths: Vec<f32>,
     widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
 }
@@ -8801,6 +8847,7 @@ impl TabBar {
             focus_animation: AnimatedScalar::new(0.0),
             gap: None,
             label_measurements: Vec::new(),
+            content_widths: Vec::new(),
             widths: Vec::new(),
             on_change: None,
         }
@@ -8821,7 +8868,7 @@ impl TabBar {
     }
 
     pub fn tab(mut self, label: impl Into<String>) -> Self {
-        self.tabs.push(label.into());
+        self.tabs.push(TabBarItem::new(label));
         self
     }
 
@@ -8830,7 +8877,23 @@ impl TabBar {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.tabs.extend(labels.into_iter().map(Into::into));
+        self.tabs.extend(labels.into_iter().map(TabBarItem::new));
+        self
+    }
+
+    /// Append one icon-capable tab item.
+    pub fn item(mut self, item: impl Into<TabBarItem>) -> Self {
+        self.tabs.push(item.into());
+        self
+    }
+
+    /// Append icon-capable tab items.
+    pub fn items<I, T>(mut self, items: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<TabBarItem>,
+    {
+        self.tabs.extend(items.into_iter().map(Into::into));
         self
     }
 
@@ -8891,7 +8954,7 @@ impl TabBar {
     pub fn current_tab(&self) -> Option<&str> {
         self.tabs
             .get(self.normalized_selected())
-            .map(String::as_str)
+            .map(TabBarItem::label)
     }
 
     fn normalized_selected(&self) -> usize {
@@ -8918,7 +8981,7 @@ impl TabBar {
         if selected != index {
             self.selected = index;
             if let Some(on_change) = &mut self.on_change {
-                on_change(index, self.tabs[index].clone());
+                on_change(index, self.tabs[index].label.clone());
             }
             let target = self.normalized_selected();
             self.selected = target;
@@ -9007,6 +9070,40 @@ impl TabBar {
         }
 
         None
+    }
+
+    fn tab_content_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        let tab = self.tab_rect(bounds, index)?;
+        let width = *self.content_widths.get(index)?;
+        let slot = inset_rect(tab, self.resolved_theme().metrics.tab_padding);
+        let width = width.min(slot.width()).max(0.0);
+        Some(Rect::new(
+            slot.x() + ((slot.width() - width) * 0.5).max(0.0),
+            slot.y(),
+            width,
+            slot.height(),
+        ))
+    }
+
+    fn tab_indicator_anchor_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
+        let tab = self.tab_rect(bounds, index)?;
+        if self.tabs.get(index)?.icon.is_some() {
+            let content = self.tab_content_rect(bounds, index)?;
+            Some(Rect::new(
+                content.x(),
+                tab.y(),
+                content.width(),
+                tab.height(),
+            ))
+        } else {
+            let padding = self.resolved_theme().metrics.tab_padding;
+            Some(Rect::new(
+                tab.x() + padding.left,
+                tab.y(),
+                (tab.width() - padding.left - padding.right).max(0.0),
+                tab.height(),
+            ))
+        }
     }
 
     fn tab_at(&self, bounds: Rect, position: Point) -> Option<usize> {
@@ -9197,13 +9294,29 @@ impl Widget for TabBar {
         self.label_measurements = self
             .tabs
             .iter()
-            .map(|tab| measure_text(ctx, tab, &style))
+            .map(|tab| measure_text(ctx, &tab.label, &style))
+            .collect();
+        let icon_size = theme
+            .metrics
+            .icon_size
+            .min((self.tab_height() - padding.top - padding.bottom).max(0.0));
+        self.content_widths = self
+            .tabs
+            .iter()
+            .zip(self.label_measurements.iter())
+            .map(|(tab, measurement)| {
+                measurement.width
+                    + tab
+                        .icon
+                        .map(|_| icon_size + theme.metrics.icon_label_gap)
+                        .unwrap_or_default()
+            })
             .collect();
         self.widths = self
-            .label_measurements
+            .content_widths
             .iter()
-            .map(|measurement| {
-                (measurement.width + padding.left + padding.right).max(theme.metrics.tab_min_width)
+            .map(|content_width| {
+                (content_width + padding.left + padding.right).max(theme.metrics.tab_min_width)
             })
             .collect();
 
@@ -9285,24 +9398,46 @@ impl Widget for TabBar {
             };
             let text_slot = inset_rect(rect, tab_padding);
             let pressed_offset = press_amount * interaction.pressed_offset;
+            let Some(content) = self.tab_content_rect(ctx.bounds(), index) else {
+                continue;
+            };
+            let content = content.translate(Vector::new(0.0, pressed_offset));
             ctx.push_clip_rect(text_slot);
+            let label_slot = if let Some(icon) = tab.icon {
+                let icon_size = metrics.icon_size.min(content.height());
+                let icon_rect = Rect::new(
+                    content.x(),
+                    content.y() + (content.height() - icon_size) * 0.5,
+                    icon_size,
+                    icon_size,
+                );
+                draw_icon_glyph(ctx, icon, icon_rect, text_style.color);
+                Rect::new(
+                    icon_rect.max_x() + metrics.icon_label_gap,
+                    content.y(),
+                    (content.max_x() - icon_rect.max_x() - metrics.icon_label_gap).max(0.0),
+                    content.height(),
+                )
+            } else {
+                content
+            };
             paint_aligned_text(
                 ctx,
-                text_slot.translate(Vector::new(0.0, pressed_offset)),
-                tab,
+                label_slot,
+                &tab.label,
                 &text_style,
                 text_style.line_height,
-                0.5,
+                0.0,
             );
             ctx.pop_clip();
         }
 
         if let Some(accent) = tab_indicator_rect(
-            |index| self.tab_rect(ctx.bounds(), index),
+            |index| self.tab_indicator_anchor_rect(ctx.bounds(), index),
             self.selection_from,
             self.normalized_selected(),
             self.selection_animation.value,
-            tab_padding,
+            Insets::ZERO,
             interaction.active_indicator_thickness,
         ) {
             ctx.fill(

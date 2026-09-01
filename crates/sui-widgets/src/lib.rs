@@ -63,7 +63,7 @@ pub use composites::{
     SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, SheetState,
     SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost,
     StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole,
-    TabBar, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
+    TabBar, TabBarItem, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
     TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
     paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
     paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
