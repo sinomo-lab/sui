@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use sui_core::{
-    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path,
-    PathBuilder, Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode,
-    SemanticsPopupKind, SemanticsRole, SemanticsState, SemanticsValue, Size, TimerToken, Transform,
-    Vector, WakeEvent, WidgetId,
+    Color, Event, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
+    Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect, SemanticsAction,
+    SemanticsNode, SemanticsPopupKind, SemanticsRole, SemanticsState, SemanticsValue, Size,
+    TimerToken, Transform, Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexLayout, FlexStyle,
@@ -17,7 +17,7 @@ use sui_runtime::{
     PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
+use sui_scene::{ImageSource, LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
     FontFeature, FontWeight, TextAlign, TextDocument, TextLayoutRequest, TextMeasurement,
     TextStyle, TextWrap,
@@ -8761,7 +8761,7 @@ impl Widget for PlacementBadge {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabBarItem {
     label: String,
-    icon: Option<IconGlyph>,
+    icon: Option<ImageHandle>,
 }
 
 impl TabBarItem {
@@ -8773,8 +8773,9 @@ impl TabBarItem {
         }
     }
 
-    /// Add a leading icon. The icon and label share one centered content box and active indicator.
-    pub fn icon(mut self, icon: IconGlyph) -> Self {
+    /// Add a leading registered image. The image is tinted like the label, and both share one
+    /// centered content box and active indicator.
+    pub fn icon(mut self, icon: ImageHandle) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -8785,7 +8786,7 @@ impl TabBarItem {
     }
 
     /// Optional leading glyph.
-    pub fn icon_glyph(&self) -> Option<IconGlyph> {
+    pub fn icon_handle(&self) -> Option<ImageHandle> {
         self.icon
     }
 }
@@ -9411,7 +9412,10 @@ impl Widget for TabBar {
                     icon_size,
                     icon_size,
                 );
-                draw_icon_glyph(ctx, icon, icon_rect, text_style.color);
+                ctx.draw_image_source(
+                    icon_rect,
+                    ImageSource::new(icon).with_tint(text_style.color),
+                );
                 Rect::new(
                     icon_rect.max_x() + metrics.icon_label_gap,
                     content.y(),

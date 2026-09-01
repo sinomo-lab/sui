@@ -25,9 +25,9 @@ use crate::{
     SemanticTone, SizedBox, Stack, TEXT_COMMAND, TextArea, TextCommand, ThemeTextToken,
 };
 use sui_core::{
-    Color, Event, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-    PointerEventKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+    Color, Event, ImageHandle, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
+    PointerEvent, PointerEventKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode,
+    SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
 };
 use sui_layout::{Alignment, Constraints};
 use sui_reactive::Signal;
@@ -36,7 +36,8 @@ use sui_runtime::{
     WindowBuilder,
 };
 use sui_scene::{
-    Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor, SceneLayerUpdateKind,
+    Brush, LayerCompositionMode, RegisteredImage, SceneCommand, SceneLayerDescriptor,
+    SceneLayerUpdateKind,
 };
 use sui_text::{FontFeature, FontRegistry, FontWeight, TextSystem};
 
@@ -65,6 +66,30 @@ where
     W: Widget + 'static,
 {
     let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Unused")
+                .root(crate::Label::new("Unused")),
+        )
+        .window(WindowBuilder::new().title("Composites").root(root))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[1];
+    runtime.render(window_id).unwrap()
+}
+
+fn render_isolated_with_image<W>(root: W, handle: ImageHandle) -> RenderOutput
+where
+    W: Widget + 'static,
+{
+    let mut application = Application::new();
+    application
+        .register_image(
+            handle,
+            RegisteredImage::from_rgba8(16, 16, vec![255; 16 * 16 * 4]).unwrap(),
+        )
+        .unwrap();
+    let mut runtime = application
         .window(
             WindowBuilder::new()
                 .title("Unused")
@@ -5008,13 +5033,15 @@ fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
 }
 
 #[test]
-fn icon_tab_indicator_tracks_the_centered_icon_and_label_as_one_active_item() {
+fn registered_icon_tab_indicator_tracks_the_centered_icon_and_label_as_one_active_item() {
     let mut theme = DefaultTheme::default();
     theme.metrics.tab_min_width = 0.0;
-    let output = render_isolated(
+    let icon_handle = ImageHandle::new(0x5441_4249_434f_4e);
+    let output = render_isolated_with_image(
         TabBar::new("Main tabs")
             .theme(theme)
-            .item(TabBarItem::new("Chat").icon(crate::IconGlyph::MessagesSquare)),
+            .item(TabBarItem::new("Chat").icon(icon_handle)),
+        icon_handle,
     );
 
     let label = text_run_for(&output, "Chat");
@@ -5028,23 +5055,14 @@ fn icon_tab_indicator_tracks_the_centered_icon_and_label_as_one_active_item() {
                 path,
                 brush: Brush::Solid(color),
             } if *color == theme.palette.accent => underline = Some(path.bounds()),
-            SceneCommand::StrokePath { path, stroke, .. }
-                if stroke.cap == sui_scene::StrokeCap::Round
-                    && stroke.join == sui_scene::StrokeJoin::Round =>
-            {
-                let ink = path.bounds();
-                let side = stroke.width * 12.0;
-                icon = Some(Rect::new(
-                    ink.x() + (ink.width() - side) * 0.5,
-                    ink.y() + (ink.height() - side) * 0.5,
-                    side,
-                    side,
-                ));
+            SceneCommand::DrawImage { rect, source } if source.image == icon_handle => {
+                assert_eq!(source.tint, Some(theme.palette.text));
+                icon = Some(*rect);
             }
             _ => {}
         });
     let underline = underline.expect("icon tab should paint one active underline");
-    let icon = icon.expect("icon tab should paint its Lucide mark");
+    let icon = icon.expect("icon tab should paint its user-registered image");
     let combined_x = icon.x();
     let combined_max_x = label.rect.max_x();
     let combined_center = (combined_x + combined_max_x) * 0.5;
