@@ -47,6 +47,13 @@ dependency; test dialogs in the actual desktop session and packaging format.
 See [Overlays and desktop interaction](overlays-and-desktop.md) for the portable
 request, file-handle, and `DragDropHost` APIs.
 
+Native embedded web content is available as the separate
+`sinomo-ui-webview` package. It uses WRY child views so the retained runtime and
+WGPU renderer do not acquire a browser dependency. Windows uses WebView2,
+macOS uses WKWebView, and the current Linux child-window path requires X11 and
+WebKitGTK. See [Embedded webviews](webviews.md) for setup, lifecycle, event,
+composition, and application-owned security-policy boundaries.
+
 ## Runtime-only or Custom Embedding
 
 Disable defaults to construct widgets and a runtime without selecting the

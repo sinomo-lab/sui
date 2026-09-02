@@ -73,6 +73,7 @@ series.
 | Surface | Status | Notes |
 | --- | --- | --- |
 | Rust desktop | Available | Linux, macOS, and Windows through `winit` and `wgpu` |
+| Embedded webviews | Optional | Native child views through `sinomo-ui-webview` and WRY; Linux uses X11 |
 | Headless/testing | Available | Deterministic runtime, semantic interaction, rendering, and screenshots |
 | Web | Alpha | Rust/Wasm and WebGPU; used by the live widget book |
 | Android | Experimental | Native-activity host with lifecycle-aware surface management |
@@ -90,6 +91,7 @@ for the current boundaries.
 - [Start here](https://github.com/sinomo-lab/sui/blob/main/docs/README.md)
 - [API guide](https://github.com/sinomo-lab/sui/blob/main/docs/api/README.md)
 - [Node graph editor](https://github.com/sinomo-lab/sui/blob/main/docs/api/node-graphs.md)
+- [Embedded webviews](https://github.com/sinomo-lab/sui/blob/main/docs/api/webviews.md)
 - [Examples](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md)
 - [Testing](https://github.com/sinomo-lab/sui/blob/main/docs/testing.md)
 - [Architecture](https://github.com/sinomo-lab/sui/blob/main/docs/architecture.md)

@@ -38,10 +38,12 @@ that keeps application code on the narrowest and most stable surface.
 10. [Node graph editor](node-graphs.md) covers the separate `sui-nodes`
    package, graph state, viewport interaction, controls, minimap, and custom
    painting hooks.
-11. [Testing and accessibility](testing-and-accessibility.md) uses
+11. [Embedded webviews](webviews.md) covers the optional `sui-webview` package,
+    native child lifecycle, control/event integration, and platform boundaries.
+12. [Testing and accessibility](testing-and-accessibility.md) uses
    `sinomo-ui-testing` for semantics-first, deterministic interaction tests and
    explains the public accessibility contract.
-12. [Platforms and Cargo features](platforms-and-features.md) lists the
+13. [Platforms and Cargo features](platforms-and-features.md) lists the
    supported execution surfaces, feature gates, and current caveats.
 
 ## Which API Level Should I Use?
@@ -53,6 +55,7 @@ that keeps application code on the narrowest and most stable surface.
 | Test or embed without an event loop | `App::build` | `Runtime` and `HeadlessPlatform` |
 | Custom drawing or interaction | Implement `Widget` | Scene and text types re-exported by `sui` |
 | Node graph editor | `sinomo-ui-nodes` | Custom node/edge painters and graph state |
+| Embedded native web content | `sinomo-ui-webview` | Raw WRY builder configuration |
 | Custom platform integration | `Application`, `WindowBuilder` | `Runtime` and platform crates |
 | Live application inspection | `Runtime::inspector_snapshot` | `sinomo-ui-debug` live/snapshot views |
 | UI automation | `sinomo-ui-testing` | Direct normalized event dispatch |

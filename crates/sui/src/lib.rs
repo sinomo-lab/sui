@@ -87,11 +87,11 @@ pub use sui_platform::AndroidApp;
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
     AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget,
-    AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform,
-    FileDialogFilter, FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection,
-    FileDialogService, HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker,
-    WindowOutputDiagnostics, show_file_dialog, validate_accessibility_snapshot,
-    window_output_diagnostics,
+    AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopExtension,
+    DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter, FileDialogFuture,
+    FileDialogMode, FileDialogRequest, FileDialogSelection, FileDialogService, HeadlessPlatform,
+    NativeFileDialogs, PlatformFile, PlatformWindow, Waker, WindowOutputDiagnostics,
+    show_file_dialog, validate_accessibility_snapshot, window_output_diagnostics,
 };
 pub use sui_reactive::{
     Change as ObservableChange, Observable, Observer, Selector, Signal, SourceId, Subscription,
@@ -577,38 +577,34 @@ impl Application {
     #[cfg(any(feature = "desktop", feature = "web"))]
     /// Build and run the application on the default desktop or web platform.
     pub fn run(self) -> Result<()> {
-        let feathering_enabled = self.feathering_enabled;
-        let feather_width = self.feather_width;
-        let external_texture_registry = self.external_texture_registry.clone();
-        let initial_window_render_options = self.initial_window_render_options;
-        let runtime = self.build()?;
-        let mut platform = DesktopPlatform::new()
-            .with_feathering_enabled(feathering_enabled)
-            .with_feather_width(feather_width);
-        if let Some(registry) = external_texture_registry {
-            platform.set_external_texture_registry(registry);
-        }
-        if let Some(options) = initial_window_render_options {
-            for window_id in runtime.window_ids() {
-                set_window_render_options(window_id, options);
-            }
-        }
-        let _ = platform.run(runtime)?;
-        Ok(())
+        self.run_with_platform(DesktopPlatform::new())
     }
 
-    /// Like [`run`](Self::run) but invokes `on_ready` with a typed,
-    /// thread-safe [`CommandSender`] once the event loop is created.
     #[cfg(any(feature = "desktop", feature = "web"))]
-    pub fn run_with(self, on_ready: impl FnOnce(CommandSender)) -> Result<()> {
+    /// Build and run the application with a configured desktop platform host.
+    ///
+    /// This is the integration point for optional native-surface libraries.
+    /// Renderer settings already configured on the application are applied to
+    /// the supplied platform before the event loop starts.
+    pub fn run_with_platform(self, platform: DesktopPlatform) -> Result<()> {
+        self.run_with_platform_and_handle(platform, |_| {})
+    }
+
+    /// Like [`run_with_platform`](Self::run_with_platform) but invokes
+    /// `on_ready` with the application's typed command sender.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    pub fn run_with_platform_and_handle(
+        self,
+        mut platform: DesktopPlatform,
+        on_ready: impl FnOnce(CommandSender),
+    ) -> Result<()> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
         let external_texture_registry = self.external_texture_registry.clone();
         let initial_window_render_options = self.initial_window_render_options;
         let runtime = self.build()?;
-        let mut platform = DesktopPlatform::new()
-            .with_feathering_enabled(feathering_enabled)
-            .with_feather_width(feather_width);
+        platform.set_feathering_enabled(feathering_enabled);
+        platform.set_feather_width(feather_width);
         if let Some(registry) = external_texture_registry {
             platform.set_external_texture_registry(registry);
         }
@@ -619,6 +615,13 @@ impl Application {
         }
         let _ = platform.run_with(runtime, on_ready)?;
         Ok(())
+    }
+
+    /// Like [`run`](Self::run) but invokes `on_ready` with a typed,
+    /// thread-safe [`CommandSender`] once the event loop is created.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    pub fn run_with(self, on_ready: impl FnOnce(CommandSender)) -> Result<()> {
+        self.run_with_platform_and_handle(DesktopPlatform::new(), on_ready)
     }
 
     #[cfg(all(target_os = "android", feature = "mobile"))]

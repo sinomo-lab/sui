@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -29,11 +30,13 @@ use winit::{
     },
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey, PhysicalKey},
-    monitor::MonitorHandle,
     window::{
         CursorGrabMode as WinitCursorGrabMode, Window, WindowAttributes, WindowId as HostWindowId,
     },
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use winit::monitor::MonitorHandle;
 
 #[cfg(target_os = "windows")]
 use accesskit_winit::{
@@ -92,6 +95,99 @@ enum HostLifecycle {
     Suspended,
 }
 
+/// Optional integration driven alongside SUI's desktop event loop.
+///
+/// Extensions are updated on the UI thread after runtime work and window
+/// synchronization. They are intended for native child surfaces and other
+/// platform-owned objects that must follow SUI window and widget lifecycles
+/// without becoming dependencies of the renderer-neutral runtime.
+pub trait DesktopExtension: fmt::Debug {
+    /// Synchronize extension state with the current runtime and native windows.
+    fn update(&mut self, _context: DesktopExtensionContext<'_>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Release or suspend native resources before the host surfaces suspend.
+    fn suspended(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Request a maximum idle interval while the extension has work that must
+    /// be pumped even when SUI itself has no scheduled wakeup.
+    fn poll_interval(&self) -> Option<Duration> {
+        None
+    }
+}
+
+/// Read-only state supplied to a [`DesktopExtension`] update.
+pub struct DesktopExtensionContext<'a> {
+    runtime: &'a Runtime,
+    windows: &'a HashMap<WindowId, WindowState>,
+    commands: &'a CommandSender,
+}
+
+impl<'a> DesktopExtensionContext<'a> {
+    /// Borrow the retained runtime for widget graph and lifecycle snapshots.
+    pub const fn runtime(&self) -> &'a Runtime {
+        self.runtime
+    }
+
+    /// Borrow the command sender associated with the running application.
+    pub const fn command_sender(&self) -> &'a CommandSender {
+        self.commands
+    }
+
+    /// Look up one live native window by its SUI identifier.
+    pub fn window(&self, window_id: WindowId) -> Option<DesktopWindow<'a>> {
+        self.windows.get(&window_id).map(DesktopWindow::from_state)
+    }
+}
+
+impl fmt::Debug for DesktopExtensionContext<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DesktopExtensionContext")
+            .field("window_count", &self.windows.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A live `winit` window exposed to a desktop extension.
+#[derive(Clone, Copy)]
+pub struct DesktopWindow<'a> {
+    id: WindowId,
+    window: &'a Window,
+}
+
+impl<'a> DesktopWindow<'a> {
+    fn from_state(state: &'a WindowState) -> Self {
+        Self {
+            id: state.id,
+            window: state.window.as_ref(),
+        }
+    }
+
+    /// Return the SUI window identifier.
+    pub const fn id(self) -> WindowId {
+        self.id
+    }
+
+    /// Borrow the native `winit` window.
+    pub const fn host_window(self) -> &'a Window {
+        self.window
+    }
+}
+
+impl fmt::Debug for DesktopWindow<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DesktopWindow")
+            .field("id", &self.id)
+            .field("host_id", &self.window.id())
+            .finish()
+    }
+}
+
 impl HostLifecycle {
     fn is_resumed(self) -> bool {
         self == Self::Resumed
@@ -125,6 +221,7 @@ impl From<AccessKitEvent> for DesktopUserEvent {
 pub struct DesktopPlatform {
     renderer: WgpuRenderer,
     automation: Option<DesktopAutomationConfig>,
+    extensions: Vec<Box<dyn DesktopExtension>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,6 +322,12 @@ impl DesktopPlatform {
         self
     }
 
+    /// Attach an optional UI-thread desktop integration.
+    pub fn with_extension(mut self, extension: impl DesktopExtension + 'static) -> Self {
+        self.extensions.push(Box::new(extension));
+        self
+    }
+
     pub fn renderer(&self) -> &WgpuRenderer {
         &self.renderer
     }
@@ -309,6 +412,7 @@ impl DesktopPlatform {
                 runtime,
                 self.renderer,
                 self.automation,
+                self.extensions,
                 event_loop_proxy,
                 external_wake_pending,
                 reactive_wake_pending,
@@ -329,6 +433,7 @@ impl DesktopPlatform {
                 runtime,
                 self.renderer,
                 self.automation,
+                self.extensions,
                 event_loop_proxy,
                 external_wake_pending,
                 reactive_wake_pending,
@@ -379,6 +484,7 @@ impl DesktopPlatform {
             runtime,
             self.renderer,
             self.automation,
+            self.extensions,
             event_loop_proxy,
             external_wake_pending,
             reactive_wake_pending,
@@ -396,6 +502,9 @@ impl DesktopPlatform {
 struct DesktopApp {
     runtime: Runtime,
     renderer: WgpuRenderer,
+    // Native children owned by extensions must drop before their parent
+    // windows, so this field intentionally precedes `windows`.
+    extensions: Vec<Box<dyn DesktopExtension>>,
     #[cfg(target_os = "windows")]
     accesskit_event_proxy: EventLoopProxy<DesktopUserEvent>,
     automation: Option<DesktopAutomationState>,
@@ -556,6 +665,7 @@ impl DesktopApp {
         runtime: Runtime,
         renderer: WgpuRenderer,
         automation: Option<DesktopAutomationConfig>,
+        extensions: Vec<Box<dyn DesktopExtension>>,
         event_loop_proxy: EventLoopProxy<DesktopUserEvent>,
         external_wake_pending: Arc<AtomicBool>,
         reactive_wake_pending: Arc<AtomicBool>,
@@ -572,6 +682,7 @@ impl DesktopApp {
         Self {
             runtime,
             renderer,
+            extensions,
             #[cfg(target_os = "windows")]
             accesskit_event_proxy: event_loop_proxy,
             automation: automation.map(DesktopAutomationState::new),
@@ -651,9 +762,13 @@ impl DesktopApp {
         Ok(())
     }
 
-    fn suspend_window_surfaces(&mut self) {
+    fn suspend_window_surfaces(&mut self) -> Result<()> {
         if !self.host_lifecycle.suspend() {
-            return;
+            return Ok(());
+        }
+
+        for extension in &mut self.extensions {
+            extension.suspended()?;
         }
 
         let window_ids = self.windows.keys().copied().collect::<Vec<_>>();
@@ -681,6 +796,22 @@ impl DesktopApp {
                 window.ime_allowed = false;
             }
         }
+
+        Ok(())
+    }
+
+    fn sync_extensions(&mut self) -> Result<()> {
+        let commands = self.runtime.command_sender();
+        let runtime = &self.runtime;
+        let windows = &self.windows;
+        for extension in &mut self.extensions {
+            extension.update(DesktopExtensionContext {
+                runtime,
+                windows,
+                commands: &commands,
+            })?;
+        }
+        Ok(())
     }
 
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -876,6 +1007,8 @@ impl DesktopApp {
 
         self.sync_windows(event_loop)?;
 
+        self.sync_extensions()?;
+
         #[cfg(target_arch = "wasm32")]
         self.process_web_interop_commands(event_loop)?;
 
@@ -955,6 +1088,19 @@ impl DesktopApp {
             .and_then(DesktopAutomationState::next_deadline)
         {
             let candidate = (automation_deadline - self.started_at).as_secs_f64();
+            next_deadline = match next_deadline {
+                Some(current) => Some(current.min(candidate)),
+                None => Some(candidate),
+            };
+        }
+
+        if let Some(interval) = self
+            .extensions
+            .iter()
+            .filter_map(|extension| extension.poll_interval())
+            .min()
+        {
+            let candidate = self.frame_clock + interval.as_secs_f64();
             next_deadline = match next_deadline {
                 Some(current) => Some(current.min(candidate)),
                 None => Some(candidate),
@@ -1048,6 +1194,7 @@ impl DesktopApp {
             self.runtime.remove_window(window_id)?;
             crate::clear_window_performance(window_id);
             self.sync_windows(event_loop)?;
+            self.sync_extensions()?;
         }
 
         if self.windows.is_empty() {
@@ -2277,7 +2424,10 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        self.suspend_window_surfaces();
+        if let Err(error) = self.suspend_window_surfaces() {
+            self.handle_error(event_loop, error);
+            return;
+        }
         event_loop.set_control_flow(ControlFlow::Wait);
     }
 

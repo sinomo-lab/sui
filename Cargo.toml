@@ -72,6 +72,7 @@ sui-scene = { package = "sinomo-ui-scene", version = "0.2.1", path = "crates/sui
 sui-testing = { package = "sinomo-ui-testing", version = "0.2.1", path = "crates/sui-testing" }
 sui-text = { package = "sinomo-ui-text", version = "0.2.1", path = "crates/sui-text" }
 sui-tui = { package = "sinomo-ui-tui", version = "0.2.1", path = "crates/sui-tui" }
+sui-webview = { package = "sinomo-ui-webview", version = "0.2.1", path = "crates/sui-webview" }
 sui-widgets = { package = "sinomo-ui-widgets", version = "0.2.1", path = "crates/sui-widgets" }
 tiny-skia = "0.12.0"
 unicode-segmentation = "1.13.3"
@@ -82,3 +83,4 @@ web-time = "1.1.0"
 ttf-parser = "0.25.1"
 wgpu = "30.0.0"
 winit = { version = "0.30.13", features = ["android-native-activity"] }
+wry = { version = "0.56.1", default-features = false }

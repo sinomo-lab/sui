@@ -1,0 +1,31 @@
+[package]
+name = "sinomo-ui-webview"
+version.workspace = true
+description = "Minimal native embedded webview support for SUI."
+edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license-file.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+include = ["**/*.rs", "Cargo.toml", "README.md"]
+
+[lib]
+name = "sui_webview"
+
+[features]
+default = []
+devtools = ["wry/devtools"]
+
+[dependencies]
+sui = { workspace = true, features = ["desktop"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+wry = { workspace = true, features = ["os-webview"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+wry = { workspace = true, features = ["os-webview", "x11"] }

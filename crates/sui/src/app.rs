@@ -135,6 +135,16 @@ impl App {
         self.application.run()
     }
 
+    /// Run the app with a configured desktop platform host.
+    ///
+    /// Optional native-surface libraries use this to attach platform
+    /// extensions while preserving the renderer configuration stored in this
+    /// application builder.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    pub fn run_with_platform(self, platform: crate::DesktopPlatform) -> Result<()> {
+        self.application.run_with_platform(platform)
+    }
+
     /// Run the app and receive a cloneable, thread-safe command handle once the
     /// event loop is ready.
     ///
@@ -145,6 +155,20 @@ impl App {
     pub fn run_with_handle(self, on_ready: impl FnOnce(UiHandle)) -> Result<()> {
         self.application
             .run_with(|commands| on_ready(UiHandle::new(commands)))
+    }
+
+    /// Run with a configured platform host and receive a UI command handle
+    /// once its event loop is ready.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    pub fn run_with_platform_and_handle(
+        self,
+        platform: crate::DesktopPlatform,
+        on_ready: impl FnOnce(UiHandle),
+    ) -> Result<()> {
+        self.application
+            .run_with_platform_and_handle(platform, |commands| {
+                on_ready(UiHandle::new(commands));
+            })
     }
 
     #[cfg(all(target_os = "android", feature = "mobile"))]

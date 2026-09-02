@@ -19,6 +19,7 @@ crates/
   sui-scene/
   sui-testing/
   sui-text/
+  sui-webview/
   sui-widgets/
 ```
 
@@ -49,6 +50,7 @@ The codebase is easiest to understand as three stacked layers plus tooling.
 
 - `sinomo-ui-widgets`
 - `sinomo-ui-nodes`
+- `sinomo-ui-webview`
 - `sinomo-ui-debug`
 
 ### Development and test tooling
@@ -203,6 +205,16 @@ appearance roles; and the graph controls and minimap companion widgets. It
 builds on the common runtime, scene, text, reactive, and widget crates without
 adding node-editor policy to `sinomo-ui-runtime` or the global theme palette.
 
+### `sinomo-ui-webview`
+
+The optional native embedded-web-content library.
+
+It owns the WRY dependency, native child creation and bounds synchronization,
+webview control handles, and typed widget event delivery. It plugs into the
+generic desktop extension callback in `sinomo-ui-platform`; the retained
+runtime and renderer do not depend on browser APIs. Applications own content,
+navigation, permission, protocol, storage, and security policy.
+
 ### `sinomo-ui-debug`
 
 Reusable debug UI.
@@ -262,6 +274,8 @@ performance overlays, and visual artifact generation.
 - Change layout primitives: `sinomo-ui-layout`.
 - Change node graph editing, rendering, controls, or minimap behavior:
   `sinomo-ui-nodes`.
+- Change native webview construction, control operations, or web callbacks:
+  `sinomo-ui-webview`; keep generic event-loop hooks in `sinomo-ui-platform`.
 - Add a new draw command or layer behavior: `sinomo-ui-scene`, then `sinomo-ui-render-wgpu`.
 - Change text shaping or measurement: `sinomo-ui-text`, then validate runtime and renderer callers.
 - Change platform event handling or IME behavior: `sinomo-ui-platform`, preserving `WindowId + Event` delivery.

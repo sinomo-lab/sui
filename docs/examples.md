@@ -70,6 +70,19 @@ Check every Rust facade example without opening a window:
 cargo check -p sinomo-ui --examples
 ```
 
+### Embedded webview
+
+[`embedded.rs`](../crates/sui-webview/examples/embedded.rs) uses the optional
+`sinomo-ui-webview` package to host native web content, send control operations,
+and receive opt-in IPC through the SUI widget event API.
+
+```bash
+cargo run -p sinomo-ui-webview --example embedded
+```
+
+See the [embedded webview guide](api/webviews.md) for native-child composition,
+security ownership, runtime prerequisites, and Linux X11 limitations.
+
 ## Demo and widget book
 
 The `sinomo-ui-demo` application is the workspace's interactive development
