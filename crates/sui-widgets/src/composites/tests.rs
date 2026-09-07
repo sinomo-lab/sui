@@ -2928,6 +2928,27 @@ fn coverage_dots_publish_replica_like_coverage_semantics_and_token_text() {
 }
 
 #[test]
+fn compact_coverage_keeps_the_exact_count_on_one_line() {
+    for width in [36.0, 50.0, 80.0] {
+        for count in [3, 4, 12] {
+            let output = render(
+                SizedBox::new()
+                    .width(width)
+                    .height(28.0)
+                    .with_child(CoverageDots::new("Replicas", count, count)),
+            );
+            let text = format!("{count}/{count}");
+            let layout = text_layout_for(&output, &text);
+            assert_eq!(layout.lines().len(), 1);
+            assert!(
+                layout.measurement().width <= width,
+                "count must fit at {width}px"
+            );
+        }
+    }
+}
+
+#[test]
 fn status_bar_sizes_segments_from_measured_text() {
     let theme = DefaultTheme::default();
     let text = "Layer Paint / Normal / 100% / Unlocked";

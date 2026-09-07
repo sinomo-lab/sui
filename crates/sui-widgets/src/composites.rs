@@ -8298,51 +8298,48 @@ pub fn paint_coverage_dots_with_config(
     }
 
     let (dot, gap, label_gap) = coverage_dot_metrics(theme);
-    let shown = target.min(config.normalized_max_dots());
-    let dots_width = shown as f32 * dot + shown.saturating_sub(1) as f32 * gap;
     let label = config.label();
+    let text_style = numeric_text_style(text_token_style(
+        theme,
+        theme.text.xs,
+        theme.palette.text_muted,
+    ));
     let label_width = if config.show_label {
-        (label.len() as f32 * theme.text.xs.size * 0.56).min(34.0)
+        ctx.measure_text(label.clone(), text_style.clone())
+            .map(|measurement| measurement.width)
+            .unwrap_or(0.0)
     } else {
         0.0
     };
-    let total_width = dots_width
-        + if config.show_label {
-            label_gap + label_width
-        } else {
-            0.0
-        };
-    let mut x = rect.x() + ((rect.width() - total_width) * 0.5).max(0.0);
-    let y = rect.y() + (rect.height() - dot) * 0.5;
-    let (tone_color, _) = theme.semantic_tone_colors(config.tone);
-    for index in 0..shown {
-        let dot_rect = Rect::new(x, y, dot, dot);
-        if index < config.current.min(shown) {
-            ctx.fill(rounded_rect_path(dot_rect, dot * 0.5), tone_color);
-        } else {
-            ctx.stroke(
-                rounded_rect_path(dot_rect, dot * 0.5),
-                theme.palette.border,
-                StrokeStyle::new(theme.metrics.border_width.max(1.0)),
-            );
+    // Keep the exact count readable first. Dots are redundant decoration and
+    // disappear as a group when their complete representation does not fit.
+    let shown = target.min(config.normalized_max_dots());
+    let dots_width = shown as f32 * dot + shown.saturating_sub(1) as f32 * gap;
+    let separation = if config.show_label { label_gap } else { 0.0 };
+    let show_dots = dots_width + separation + label_width <= rect.width();
+    let mut x = rect.x();
+    ctx.push_clip_rect(rect);
+    if show_dots {
+        let y = rect.y() + (rect.height() - dot) * 0.5;
+        let (tone_color, _) = theme.semantic_tone_colors(config.tone);
+        for index in 0..shown {
+            let dot_rect = Rect::new(x, y, dot, dot);
+            if index < config.current.min(shown) {
+                ctx.fill(rounded_rect_path(dot_rect, dot * 0.5), tone_color);
+            } else {
+                ctx.stroke(
+                    rounded_rect_path(dot_rect, dot * 0.5),
+                    theme.palette.border,
+                    StrokeStyle::new(theme.metrics.border_width.max(1.0)),
+                );
+            }
+            x += dot + gap;
         }
-        x += dot + gap;
+        x += separation - gap;
     }
-
     if config.show_label {
-        let label_rect = Rect::new(
-            x + (label_gap - gap).max(0.0),
-            rect.y(),
-            (rect.max_x() - x).max(0.0),
-            rect.height(),
-        );
-        let text_style = numeric_text_style(text_token_style(
-            theme,
-            theme.text.xs,
-            theme.palette.text_muted,
-        ));
-        ctx.push_clip_rect(label_rect);
-        paint_aligned_text(
+        let label_rect = Rect::new(x, rect.y(), (rect.max_x() - x).max(0.0), rect.height());
+        paint_single_line_aligned_text(
             ctx,
             label_rect,
             &label,
@@ -8350,8 +8347,8 @@ pub fn paint_coverage_dots_with_config(
             text_style.line_height,
             0.0,
         );
-        ctx.pop_clip();
     }
+    ctx.pop_clip();
 }
 
 fn coverage_dot_metrics(theme: &DefaultTheme) -> (f32, f32, f32) {
@@ -8687,6 +8684,17 @@ pub fn paint_placement_badge_with(
         (rect.width() - coverage_slot - slot_gap).clamp(48.0, 86.0),
         rect.height(),
     );
+    let label_width = ctx
+        .measure_text(
+            label.to_string(),
+            semibold_control_text_style(theme, theme.palette.text),
+        )
+        .map(|measurement| measurement.width)
+        .unwrap_or(0.0);
+    let icon_width =
+        (rect.height() - 13.0).clamp(11.0, 15.0) + theme.metrics.icon_label_gap.max(4.0);
+    let padding = theme.metrics.button_padding.left.max(6.0) * 1.5;
+    let icon = icon.filter(|_| label_width + icon_width + padding <= badge_rect.width());
     paint_status_badge(ctx, badge_rect, theme, label, icon, tone);
 
     if show_coverage && let Some((current, target)) = coverage {

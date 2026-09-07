@@ -5062,3 +5062,156 @@ fn removing_a_window_tears_down_runtime_state() {
     assert!(runtime.focus_state(window_id).is_err());
     assert!(runtime.render(window_id).is_err());
 }
+
+#[test]
+fn trial_measurements_do_not_repaint_unchanged_siblings() {
+    struct Leaf {
+        paints: Rc<Cell<usize>>,
+        arranges: Rc<Cell<usize>>,
+        boundary: bool,
+    }
+    impl Widget for Leaf {
+        fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(20.0, 20.0))
+        }
+        fn arrange(&mut self, _: &mut ArrangeCtx, _: Rect) {
+            self.arranges.set(self.arranges.get() + 1);
+        }
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.paints.set(self.paints.get() + 1);
+            ctx.fill_bounds(Color::rgba(0.2, 0.3, 0.4, 1.0));
+        }
+        fn layer_options(&self) -> LayerOptions {
+            if self.boundary {
+                LayerOptions {
+                    paint_boundary: PaintBoundaryMode::Explicit,
+                    composition_mode: LayerCompositionMode::Scroll,
+                }
+            } else {
+                LayerOptions::default()
+            }
+        }
+    }
+    struct TwoPassRow {
+        children: [super::WidgetPod; 2],
+        split: Rc<Cell<f32>>,
+    }
+    impl Widget for TwoPassRow {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            // Flex-style intrinsic probes followed by final allocated sizes.
+            for (index, child) in self.children.iter_mut().enumerate() {
+                let width = if index == 0 {
+                    self.split.get()
+                } else {
+                    200.0 - self.split.get()
+                };
+                child.measure(ctx, Constraints::new(Size::ZERO, Size::new(200.0, 100.0)));
+                child.measure(ctx, Constraints::tight(Size::new(width, 100.0)));
+            }
+            constraints.clamp(Size::new(200.0, 100.0))
+        }
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            for (index, child) in self.children.iter_mut().enumerate() {
+                child.arrange(
+                    ctx,
+                    Rect::new(
+                        bounds.x() + if index == 0 { 0.0 } else { self.split.get() },
+                        bounds.y(),
+                        if index == 0 {
+                            self.split.get()
+                        } else {
+                            200.0 - self.split.get()
+                        },
+                        100.0,
+                    ),
+                );
+            }
+        }
+        fn paint(&self, ctx: &mut PaintCtx) {
+            for child in &self.children {
+                child.paint(ctx);
+            }
+        }
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            for child in &self.children {
+                visitor.visit(child);
+            }
+        }
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            for child in &mut self.children {
+                visitor.visit(child);
+            }
+        }
+    }
+    let clean_arranges = Rc::new(Cell::new(0));
+    let dirty_paints = Rc::new(Cell::new(0));
+    let clean_paints = Rc::new(Cell::new(0));
+    let dirty = super::WidgetPod::new(Leaf {
+        paints: dirty_paints.clone(),
+        arranges: Rc::new(Cell::new(0)),
+        boundary: true,
+    });
+    let dirty_id = dirty.id();
+    let split = Rc::new(Cell::new(100.0));
+    let root = TwoPassRow {
+        split: split.clone(),
+        children: [
+            dirty,
+            super::WidgetPod::new(Leaf {
+                paints: clean_paints.clone(),
+                arranges: clean_arranges.clone(),
+                boundary: false,
+            }),
+        ],
+    };
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(root))
+        .build()
+        .unwrap();
+    let id = runtime.window_ids()[0];
+    runtime.render(id).unwrap();
+    for _ in 0..120 {
+        let window = runtime.window_mut(id).unwrap();
+        window.schedule.mark(InvalidationKind::Measure);
+        window.pending_invalidations.push(InvalidationRequest::new(
+            InvalidationTarget::Widget(dirty_id),
+            InvalidationKind::Measure,
+        ));
+        runtime.render(id).unwrap();
+    }
+    eprintln!(
+        "120 scoped updates: changed paints={}, unchanged sibling paints={}",
+        dirty_paints.get() - 1,
+        clean_paints.get() - 1
+    );
+    assert_eq!(
+        clean_arranges.get(),
+        1,
+        "trial measurements must retain the clean sibling arrangement"
+    );
+    assert_eq!(dirty_paints.get(), 121);
+    assert_eq!(
+        clean_paints.get(),
+        1,
+        "trial sizes must not promote a scoped update into a full repaint"
+    );
+    // Native redraw dispatch can consume layout before render snapshots the
+    // graph. A genuinely resized sibling must still repaint in that frame.
+    split.set(120.0);
+    let window = runtime.window_mut(id).unwrap();
+    window.schedule.mark(InvalidationKind::Measure);
+    window.pending_invalidations.push(InvalidationRequest::new(
+        InvalidationTarget::Widget(dirty_id),
+        InvalidationKind::Measure,
+    ));
+    runtime
+        .handle_event(id, Event::Window(WindowEvent::RedrawRequested))
+        .unwrap();
+    runtime.render(id).unwrap();
+    assert_eq!(clean_arranges.get(), 2);
+    assert_eq!(
+        clean_paints.get(),
+        2,
+        "actual resize must repaint even when event dispatch arranged it first"
+    );
+}

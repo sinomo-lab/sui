@@ -1107,6 +1107,38 @@ fn label_measures_wrapped_height_when_width_is_constrained() {
 }
 
 #[test]
+fn single_line_label_keeps_long_titles_and_line_breaks_within_one_row() {
+    let text = "Validate and finish the Todo app\nalready present in this workspace.";
+    let output = render(
+        SizedBox::new()
+            .width(96.0)
+            .with_child(Label::new(text).single_line()),
+    );
+    let layout = shaped_text_layout_for(&output, &text.replace('\n', " "));
+    assert_eq!(layout.lines().len(), 1);
+    let label = output
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some(text))
+        .unwrap();
+    assert_eq!(
+        label.bounds.height(),
+        DefaultTheme::default().typography.body_line_height
+    );
+    assert_eq!(label.bounds.width(), 96.0);
+    let mut clipped = false;
+    output.frame.scene.visit_commands(&mut |command| {
+        if matches!(command, SceneCommand::PushClip { rect } if *rect == label.bounds) {
+            clipped = true;
+        }
+    });
+    assert!(
+        clipped,
+        "long titles must not paint over neighboring controls"
+    );
+}
+
+#[test]
 fn label_measures_explicit_multiline_text_height() {
     let text = "First line\nSecond line";
     let output = render(Label::new(text));

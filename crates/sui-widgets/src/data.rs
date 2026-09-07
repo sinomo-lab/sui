@@ -4648,6 +4648,14 @@ impl VirtualTable {
 }
 
 impl Widget for VirtualTable {
+    fn layer_options(&self) -> sui_runtime::LayerOptions {
+        // Pointer updates must not invalidate the surrounding application chrome.
+        sui_runtime::LayerOptions {
+            paint_boundary: sui_runtime::PaintBoundaryMode::Explicit,
+            ..sui_runtime::LayerOptions::default()
+        }
+    }
+
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         let bounds = ctx.bounds();
         let body = self.body_rect(bounds);

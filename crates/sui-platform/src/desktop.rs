@@ -1047,6 +1047,10 @@ impl DesktopApp {
             return Ok(());
         };
 
+        let size = window.window.inner_size();
+        if window.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0 {
+            return Ok(());
+        }
         if window.redraw_requested {
             return Ok(());
         }
@@ -1227,6 +1231,14 @@ impl DesktopApp {
     }
 
     fn render_window_if_needed(&mut self, window_id: WindowId, event_time_ms: f64) -> Result<()> {
+        // Windows can still deliver redraws and async wakes while minimized.
+        // Preserve pending runtime work until there is a drawable native surface.
+        if self.windows.get(&window_id).is_none_or(|host| {
+            let size = host.window.inner_size();
+            host.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0
+        }) {
+            return Ok(());
+        }
         if !self.runtime.needs_render(window_id)? {
             return Ok(());
         }
@@ -1459,6 +1471,9 @@ impl DesktopApp {
                 window_id,
                 Event::Window(WindowEvent::CloseRequested),
             ),
+            // A minimized Windows surface reports zero dimensions. Keep the
+            // last valid layout and process the restoring nonzero resize.
+            WinitWindowEvent::Resized(size) if size.width == 0 || size.height == 0 => Ok(()),
             WinitWindowEvent::Resized(size) => self.process_event(
                 event_loop,
                 window_id,

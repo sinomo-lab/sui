@@ -1017,7 +1017,6 @@ impl WidgetPod {
             return self.layout_state.measured_size;
         }
 
-        let origin = self.layout_state.arranged_bounds.origin;
         let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
         let started = Instant::now();
         let size = self.widget.measure(&mut child_ctx, constraints);
@@ -1030,7 +1029,14 @@ impl WidgetPod {
         self.layout_state.measured_size = size;
         self.layout_state.last_constraints = constraints;
         self.layout_state.measure_valid = true;
-        self.layout_state.arranged_bounds = Rect::from_origin_size(origin, size);
+        // Keep measurement probes separate from the last arranged geometry.
+        // Parents can measure a clean sibling more than once before giving it
+        // the same final bounds; those probes must not invalidate its paint or
+        // arrangement cache. Explicitly invalidated subtrees still arrange even
+        // if their outer bounds are unchanged (their internal layout may differ).
+        if must_remeasure {
+            self.layout_state.arrange_valid = false;
+        }
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
         parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
         size
@@ -1095,6 +1101,7 @@ impl WidgetPod {
             }
             return;
         }
+        let size_changed = self.layout_state.arranged_bounds.size != bounds.size;
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
         self.layout_state.arranged_bounds = bounds;
         self.layout_state.relative_presentation_transform = transform;
@@ -1110,6 +1117,11 @@ impl WidgetPod {
             self.layout_state.presentation_transform,
             Rc::clone(parent_ctx.scope_rc()),
         );
+        // Event dispatch may eagerly arrange before render compares the graph.
+        // Record damage only for a committed size change, never a measure probe.
+        if size_changed {
+            child_ctx.request_paint();
+        }
         let started = Instant::now();
         self.widget.arrange(&mut child_ctx, bounds);
         record_widget_timing(
@@ -3900,6 +3912,54 @@ mod tests {
             SceneCommand::FillRect { .. }
         ));
         assert_eq!(semantics.nodes().len(), 1);
+    }
+
+    #[test]
+    fn remeasured_subtree_arranges_children_outside_the_dirty_scope() {
+        let window_id = WindowId::new(1);
+        let parent_id = WidgetId::new(2);
+        struct ArrangedBounds(Rc<std::cell::Cell<Rect>>);
+        impl Widget for ArrangedBounds {
+            fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+                constraints.max
+            }
+            fn arrange(&mut self, _: &mut ArrangeCtx, bounds: Rect) {
+                self.0.set(bounds);
+            }
+        }
+        let actual = Rc::new(std::cell::Cell::new(Rect::new(0.0, 0.0, 0.0, 0.0)));
+        let mut pod = WidgetPod::new(BoundsWrapper::new(
+            ArrangedBounds(actual.clone()),
+            None,
+            Vector::ZERO,
+        ));
+        let mut measure = measure_ctx(window_id, parent_id);
+        pod.measure(&mut measure, Constraints::tight(Size::new(100.0, 80.0)));
+        let mut arrange = ArrangeCtx::new(window_id, parent_id, DpiInfo::default());
+        pod.arrange(&mut arrange, Rect::new(0.0, 0.0, 100.0, 80.0));
+        // A splitter measures this clean sibling with new constraints. Its own
+        // ID is deliberately absent from the scoped arrangement invalidation.
+        pod.measure(&mut measure, Constraints::tight(Size::new(180.0, 80.0)));
+        let mut arrange = ArrangeCtx::new_scoped_at(
+            window_id,
+            parent_id,
+            DpiInfo::default(),
+            0.0,
+            Rc::new(super::ArrangeScope::scoped(
+                [parent_id].into_iter().collect(),
+            )),
+        );
+        pod.arrange(&mut arrange, Rect::new(0.0, 0.0, 180.0, 80.0));
+        struct BoundsVisitor(Vec<Rect>);
+        impl WidgetPodVisitor for BoundsVisitor {
+            fn visit(&mut self, child: &WidgetPod) {
+                self.0.push(child.bounds());
+            }
+        }
+        let mut visitor = BoundsVisitor(Vec::new());
+        pod.visit_children(&mut visitor);
+        assert_eq!(visitor.0, vec![Rect::new(0.0, 0.0, 180.0, 80.0)]);
+        assert_eq!(actual.get(), Rect::new(0.0, 0.0, 180.0, 80.0));
     }
 
     #[test]

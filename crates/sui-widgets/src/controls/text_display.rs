@@ -2,6 +2,7 @@ use super::*;
 
 pub struct Label {
     text: String,
+    single_line: bool,
     text_reader: Option<Box<dyn Fn() -> String>>,
     text_source: Option<Arc<dyn Observable<String>>>,
     semantic_name: Option<String>,
@@ -23,6 +24,7 @@ impl Label {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            single_line: false,
             text_reader: None,
             text_source: None,
             semantic_name: None,
@@ -39,6 +41,12 @@ impl Label {
             selection: TextSelection::new(TextCursor::new(0), TextCursor::new(0)),
             dragging_selection: None,
         }
+    }
+
+    /// Keep the label on one line, clipping overflow while retaining its full semantics.
+    pub fn single_line(mut self) -> Self {
+        self.single_line = true;
+        self
     }
 
     pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
@@ -473,6 +481,11 @@ impl Widget for Label {
         let text = self.observed_text(ctx);
         let style = self.resolved_style();
         let natural_measurement = measure_text(ctx, &text, &style);
+        if self.single_line {
+            self.layout = None;
+            self.measurement = Some(natural_measurement);
+            return constraints.clamp(Size::new(natural_measurement.width, style.line_height));
+        }
         let max_width = constraints.max.width;
         let wraps_to_constraint = max_width.is_finite() && natural_measurement.width > max_width;
         let needs_layout = self.selection_scope.is_some()
@@ -532,6 +545,20 @@ impl Widget for Label {
     fn paint(&self, ctx: &mut PaintCtx) {
         let text = self.current_text();
         let style = self.resolved_style();
+        if self.single_line {
+            let text = text.replace(['\r', '\n'], " ");
+            ctx.push_clip_rect(ctx.bounds());
+            paint_single_line_aligned_text(
+                ctx,
+                ctx.bounds(),
+                &text,
+                &style,
+                style.line_height,
+                0.0,
+            );
+            ctx.pop_clip();
+            return;
+        }
         if let Some(layout) = &self.layout {
             let layout_bounds = layout.measurement().bounds;
             let mut layout_rect = aligned_text_rect_for_layout_with_mode(
