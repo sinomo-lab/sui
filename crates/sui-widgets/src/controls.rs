@@ -942,8 +942,6 @@ pub fn paint_icon_button(
             palette
                 .text
                 .with_alpha(interaction.disabled_content_opacity)
-        } else if selected {
-            palette.text
         } else {
             palette.text
         };
@@ -5336,10 +5334,8 @@ impl TextArea {
         if result.text_changed || result.selection_changed || result.composition_changed {
             ctx.request_semantics();
         }
-        if handled {
-            if self.focused {
-                self.reset_caret_blink(ctx);
-            }
+        if handled && self.focused {
+            self.reset_caret_blink(ctx);
         }
     }
 
@@ -7208,10 +7204,8 @@ impl TextInput {
         if result.text_changed || result.selection_changed || result.composition_changed {
             ctx.request_semantics();
         }
-        if handled {
-            if self.focused {
-                self.reset_caret_blink(ctx);
-            }
+        if handled && self.focused {
+            self.reset_caret_blink(ctx);
         }
     }
 

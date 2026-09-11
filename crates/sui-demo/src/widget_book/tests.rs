@@ -1129,11 +1129,11 @@ fn collect_headless_text_editing_benchmark_samples(
     const EDIT_COMMITS: [&str; 10] = [
         " // typed atlas reuse",
         "\nlet pending_frame = cache_hits + 1;",
-        "\n// bidi check: abc ××‘×’ 123 Ù…Ø±Ø­Ø¨Ø§",
+        "\n// bidi check: abc ××‘×’ 123 Ù…Ø±Ø\u{ad}Ø¨Ø§",
         "\nlet emoji = \"ðŸ™‚âœ…ðŸŽ¨\";",
         "\nlet ime_probe = \"å€™è£œ\";",
         "\nlet syntax_band = highlight_rows.len();",
-        "\n// fallback sample: Ð– ä¸­ à¤¨à¤®à¤¸à¥à¤¤à¥‡",
+        "\n// fallback sample: Ð– ä¸\u{ad} à¤¨à¤®à¤¸à¥à¤¤à¥‡",
         "\nrecord_selection_delta(cursor, viewport);",
         "\nlet scroll_budget_ms = 16.67;",
         "\ncommit_overlay_sample(frame_index);",

@@ -296,8 +296,9 @@ pub struct CanvasZoomContext {
     pub content_bounds: Rect,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum CanvasZoomBehavior {
+    #[default]
     Uniform,
     ScreenSpace,
     Custom(Rc<dyn Fn(CanvasZoomContext) -> Transform>),
@@ -334,12 +335,6 @@ impl CanvasZoomBehavior {
     /// Whether this behavior uses the canvas' shared world transform.
     pub const fn is_uniform(&self) -> bool {
         matches!(self, Self::Uniform)
-    }
-}
-
-impl Default for CanvasZoomBehavior {
-    fn default() -> Self {
-        Self::Uniform
     }
 }
 

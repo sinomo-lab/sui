@@ -2141,8 +2141,6 @@ impl Widget for ToolPalette {
                 icon_rect,
                 if !enabled {
                     palette.text.with_alpha(0.38)
-                } else if selected_item {
-                    palette.text
                 } else {
                     palette.text
                 },
@@ -6157,11 +6155,7 @@ impl Widget for PresetStrip {
             } else {
                 palette.border
             };
-            let text_color = if is_selected {
-                palette.text
-            } else {
-                palette.text
-            };
+            let text_color = palette.text;
 
             draw_control_shape(
                 ctx,

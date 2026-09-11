@@ -651,10 +651,10 @@ impl TextSurface {
         } else if result.overlay_changed() {
             self.request_after_overlay_change(ctx);
         }
-        if result.text_changed || result.selection_changed || result.composition_changed {
-            if !result.layout_changed() {
-                ctx.request_semantics();
-            }
+        if (result.text_changed || result.selection_changed || result.composition_changed)
+            && !result.layout_changed()
+        {
+            ctx.request_semantics();
         }
     }
 

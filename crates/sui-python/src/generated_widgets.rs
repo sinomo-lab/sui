@@ -566,7 +566,7 @@ impl PyFloatingViewSnapshot {
 }
 
 #[pyclass(name = "FloatingWorkspaceState", module = "sui", from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyFloatingWorkspaceState {
     inner: BindingFloatingWorkspaceState,
 }
@@ -955,7 +955,7 @@ impl PyMasterDetailState {
 }
 
 #[pyclass(name = "NotificationCenter", module = "sui", from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyNotificationCenter {
     inner: BindingNotificationCenter,
 }
@@ -1252,7 +1252,7 @@ impl PyPixelCanvasExport {
 }
 
 #[pyclass(name = "PixelCanvasState", module = "sui", from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyPixelCanvasState {
     inner: BindingPixelCanvasState,
 }
@@ -1395,7 +1395,7 @@ impl PyPixelCanvasState {
 }
 
 #[pyclass(name = "DragScope", module = "sui", from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyDragScope {
     inner: BindingDragScope,
 }

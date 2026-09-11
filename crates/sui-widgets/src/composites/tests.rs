@@ -5057,7 +5057,7 @@ fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
 fn registered_icon_tab_indicator_tracks_the_centered_icon_and_label_as_one_active_item() {
     let mut theme = DefaultTheme::default();
     theme.metrics.tab_min_width = 0.0;
-    let icon_handle = ImageHandle::new(0x5441_4249_434f_4e);
+    let icon_handle = ImageHandle::new(0x0054_4142_4943_4f4e);
     let output = render_isolated_with_image(
         TabBar::new("Main tabs")
             .theme(theme)

@@ -6622,7 +6622,7 @@ fn text_validation_editor_seed() -> String {
         "- Caret: moving across bidi boundaries should preserve stable layout handles and visible overlays.",
         "",
         "Fallback probes to paste, edit, or compare:",
-        "Arabic: Ù…Ø±Ø­Ø¨Ø§ | Hebrew: ×©×œ×•× | Hindi: à¤¨à¤®à¤¸à¥à¤¤à¥‡ | Han: ä¸­æ–‡ | Emoji: ðŸ™‚",
+        "Arabic: Ù…Ø±Ø\u{ad}Ø¨Ø§ | Hebrew: ×©×œ×•× | Hindi: à¤¨à¤®à¤¸à¥à¤¤à¥‡ | Han: ä¸\u{ad}æ–‡ | Emoji: ðŸ™‚",
         "",
         "Type here to confirm the runtime still exposes semantics-first text input for automated tests.",
     ]
@@ -6646,9 +6646,9 @@ fn text_editing_benchmark_document() -> String {
         ][(index * 3) % 6];
         let comment = [
             "// atlas reuse should stay warm ðŸ™‚",
-            "// bidi note: abc ××‘×’ 123 Ù…Ø±Ø­Ø¨Ø§",
+            "// bidi note: abc ××‘×’ 123 Ù…Ø±Ø\u{ad}Ø¨Ø§",
             "// syntax colors keep changing across the preview pane",
-            "// fallback sample includes Ð–, ä¸­, and à¤¨à¤®à¤¸à¥à¤¤à¥‡ in comments",
+            "// fallback sample includes Ð–, ä¸\u{ad}, and à¤¨à¤®à¤¸à¥à¤¤à¥‡ in comments",
             "// selection overlays should repaint locally",
             "// retained packets should not rebuild unrelated code blocks",
         ][(index * 5) % 6];

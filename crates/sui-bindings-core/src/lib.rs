@@ -2888,7 +2888,7 @@ impl BindingDockNode {
         if panel_ids.is_empty() {
             return Err("dock tabs require at least one panel id".to_string());
         }
-        if panel_ids.iter().any(|id| *id == 0) {
+        if panel_ids.contains(&0) {
             return Err("dock panel ids must be non-zero".to_string());
         }
         let active = active.unwrap_or(panel_ids[0]);
@@ -3456,6 +3456,10 @@ impl BindingVirtualListModel {
 
     pub fn len(&self) -> usize {
         self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     pub fn append(&self, item: BindingVirtualListItem) -> Result<bool, String> {

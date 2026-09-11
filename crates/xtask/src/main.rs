@@ -1507,25 +1507,24 @@ fn python_stub_class_is_manual(name: &str) -> bool {
 }
 
 fn python_stub_parameter_type(parameter: &TsFactoryParameter) -> String {
-    if parameter.ty.trim() == "number"
-        && matches!(
-            to_snake_case(&parameter.name).as_str(),
-            "index"
-                | "current"
-                | "target"
-                | "bars"
-                | "precision"
-                | "columns"
-                | "max_dots"
-                | "max_value_lines"
-                | "weight"
-                | "item"
-                | "from_index"
-                | "to_index"
-        )
+    if parameter.name == "blockId"
+        || (parameter.ty.trim() == "number"
+            && matches!(
+                to_snake_case(&parameter.name).as_str(),
+                "index"
+                    | "current"
+                    | "target"
+                    | "bars"
+                    | "precision"
+                    | "columns"
+                    | "max_dots"
+                    | "max_value_lines"
+                    | "weight"
+                    | "item"
+                    | "from_index"
+                    | "to_index"
+            ))
     {
-        "int".to_string()
-    } else if parameter.name == "blockId" {
         "int".to_string()
     } else {
         ts_type_to_python(&parameter.ty)

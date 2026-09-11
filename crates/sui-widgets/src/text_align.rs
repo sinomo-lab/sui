@@ -266,9 +266,7 @@ fn containment_offset(inner: Rect, outer: Rect) -> sui_core::Vector {
     fn axis_offset(inner_min: f32, inner_max: f32, outer_min: f32, outer_max: f32) -> f32 {
         let inner_size = inner_max - inner_min;
         let outer_size = outer_max - outer_min;
-        if inner_size > outer_size {
-            outer_min - inner_min
-        } else if inner_min < outer_min {
+        if inner_size > outer_size || inner_min < outer_min {
             outer_min - inner_min
         } else if inner_max > outer_max {
             outer_max - inner_max

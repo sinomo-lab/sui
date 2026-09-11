@@ -4244,15 +4244,7 @@ fn paint_encoding_menu(
             );
         }
         let label = editing_space_label(space);
-        let style = text_token_style(
-            theme,
-            text,
-            if space == selected {
-                theme.palette.text
-            } else {
-                theme.palette.text
-            },
-        );
+        let style = text_token_style(theme, text, theme.palette.text);
         let text_slot = Rect::new(
             row.x() + metrics.menu_item_padding.left + theme.spacing * 1.5,
             row.y(),

@@ -24,18 +24,10 @@ type DropCallback = Box<dyn FnMut(&mut EventCtx, &DragEvent)>;
 type HoverCallback = Box<dyn FnMut(bool)>;
 type ThemeReader = Rc<dyn Fn() -> DefaultTheme>;
 
+#[derive(Default)]
 struct DragPreviewThemeSource {
     theme: DefaultTheme,
     reader: Option<ThemeReader>,
-}
-
-impl Default for DragPreviewThemeSource {
-    fn default() -> Self {
-        Self {
-            theme: DefaultTheme::default(),
-            reader: None,
-        }
-    }
 }
 
 impl DragPreviewThemeSource {

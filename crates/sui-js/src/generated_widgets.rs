@@ -624,7 +624,7 @@ impl JsFloatingViewSnapshot {
 }
 
 #[napi(js_name = "FloatingWorkspaceState")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct JsFloatingWorkspaceState {
     inner: BindingFloatingWorkspaceState,
 }
@@ -1099,7 +1099,7 @@ pub struct JsNotificationOptions {
 }
 
 #[napi(js_name = "NotificationCenter")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct JsNotificationCenter {
     inner: BindingNotificationCenter,
 }
@@ -1428,7 +1428,7 @@ impl JsPixelCanvasExport {
 }
 
 #[napi(js_name = "PixelCanvasState")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct JsPixelCanvasState {
     inner: BindingPixelCanvasState,
 }
@@ -1576,7 +1576,7 @@ impl JsPixelCanvasState {
 }
 
 #[napi(js_name = "DragScope")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct JsDragScope {
     inner: BindingDragScope,
 }

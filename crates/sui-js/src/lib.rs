@@ -64,6 +64,12 @@ use sui_crate::{
     Transform, Vector, WidgetId, WindowBuilder,
 };
 
+type JsStateSelector<'env> =
+    Function<'env, FnArgs<(Either3<String, f64, bool>,)>, Either3<String, f64, bool>>;
+type JsValueCallback<'env> = Function<'env, FnArgs<(Either3<String, f64, bool>,)>, ()>;
+type JsArrangeCallback<'env> =
+    Function<'env, FnArgs<(JsRect, Vec<JsSize>)>, Vec<ClassInstance<'env, JsRect>>>;
+
 #[napi(js_name = "Point")]
 #[derive(Debug, Clone, Copy)]
 pub struct JsPoint {
@@ -2515,11 +2521,7 @@ impl JsState {
     }
 
     #[napi]
-    pub fn select(
-        &self,
-        env: Env,
-        selector: Function<'_, FnArgs<(Either3<String, f64, bool>,)>, Either3<String, f64, bool>>,
-    ) -> Result<Self> {
+    pub fn select(&self, env: Env, selector: JsStateSelector<'_>) -> Result<Self> {
         let initial = selector.call(FnArgs::from((self.get(),)))?;
         let derived = BindingState::new(binding_value_from_js(initial));
         let derived_for_observer = derived.clone();
@@ -2538,11 +2540,7 @@ impl JsState {
     }
 
     #[napi]
-    pub fn watch(
-        &self,
-        env: Env,
-        callback: Function<'_, FnArgs<(Either3<String, f64, bool>,)>, ()>,
-    ) -> Result<JsStateSubscription> {
+    pub fn watch(&self, env: Env, callback: JsValueCallback<'_>) -> Result<JsStateSubscription> {
         let env = JsEnvHandle::from_env(env);
         let callback = callback.create_ref()?;
         Ok(JsStateSubscription {
@@ -2816,12 +2814,7 @@ impl JsApp {
     }
 
     #[napi]
-    pub fn on(
-        &self,
-        env: Env,
-        name: String,
-        callback: Function<'_, FnArgs<(Either3<String, f64, bool>,)>, ()>,
-    ) -> Result<()> {
+    pub fn on(&self, env: Env, name: String, callback: JsValueCallback<'_>) -> Result<()> {
         let env = JsEnvHandle::from_env(env);
         let callback = callback.create_ref()?;
         recover_lock(&self.inner).on_message(
@@ -4026,8 +4019,7 @@ impl JsObjectCallbacks {
         if !object.has_named_property("arrange")? {
             return Ok(None);
         }
-        let arrange: Function<'_, FnArgs<(JsRect, Vec<JsSize>)>, Vec<ClassInstance<'_, JsRect>>> =
-            object.get_named_property("arrange")?;
+        let arrange: JsArrangeCallback<'_> = object.get_named_property("arrange")?;
         arrange
             .apply(
                 object,
