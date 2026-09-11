@@ -36,7 +36,11 @@ mod tests {
         fs,
         path::PathBuf,
         rc::Rc,
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use crate::TestApp;
@@ -709,6 +713,62 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct SlowAnimationState {
+        active: AtomicBool,
+        frames: AtomicUsize,
+    }
+
+    struct SlowAnimatingButton {
+        state: Arc<SlowAnimationState>,
+    }
+
+    impl Widget for SlowAnimatingButton {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
+                    let active = !self.state.active.load(Ordering::Acquire);
+                    self.state.active.store(active, Ordering::Release);
+                    ctx.request_paint();
+                    if active {
+                        ctx.request_animation_frame();
+                    }
+                    ctx.set_handled();
+                }
+                Event::Wake(WakeEvent::AnimationFrame { .. })
+                    if self.state.active.load(Ordering::Acquire) =>
+                {
+                    self.state.frames.fetch_add(1, Ordering::AcqRel);
+                    ctx.request_paint();
+                    ctx.request_animation_frame();
+                    ctx.set_handled();
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(240.0, 120.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            if self.state.active.load(Ordering::Acquire) {
+                // Deliberately cross the runtime's animation-frame interval.
+                // A synchronous live flush must not treat render wall time as
+                // permission to advance another logical animation frame.
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            ctx.fill_rect(ctx.bounds(), Color::rgba(0.18, 0.32, 0.68, 1.0));
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+            node.name = Some("Toggle slow animation".to_string());
+            node.actions = vec![SemanticsAction::Activate];
+            ctx.push(node);
+        }
+    }
+
     fn build_scroll_app() -> Result<TestApp> {
         TestApp::new(|| {
             Application::new().window(
@@ -837,6 +897,31 @@ mod tests {
             "{error}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn synchronous_live_dispatch_does_not_chase_slow_perpetual_animation() -> Result<()> {
+        let state = Arc::new(SlowAnimationState::default());
+        let widget_state = Arc::clone(&state);
+        let app = TestApp::new(move || {
+            Application::new().window(WindowBuilder::new().title("Slow Animation Harness").root(
+                SlowAnimatingButton {
+                    state: widget_state,
+                },
+            ))
+        })?;
+        let window = app.main_window()?;
+        let toggle = window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("Toggle slow animation");
+
+        toggle.click()?;
+        assert!(state.frames.load(Ordering::Acquire) > 0);
+
+        // Stop the repeating animation before releasing the shared live
+        // harness service to another test.
+        toggle.click()?;
         Ok(())
     }
 

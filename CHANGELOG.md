@@ -14,6 +14,8 @@ widgets, overlays, demos, and accessibility surfaces.
 - Added the optional `sinomo-ui-webview` crate for WRY-backed native child
   webviews with retained layout, lifecycle synchronization, thread-safe
   controls, typed page/title/IPC events, and application-owned browser policy.
+- Prevented synchronous live-test flushes from advancing future animation
+  frames based only on render wall time, avoiding timeouts in repeating demos.
 - Added affine transformed widget subtrees and Canvas-hosted normal widgets.
   Canvas now uniformly scales paint, input, semantics, text, images, and nested
   layout by default, with screen-space/custom zoom policies and touch pinch;

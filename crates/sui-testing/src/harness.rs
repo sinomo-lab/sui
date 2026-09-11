@@ -212,6 +212,10 @@ struct LiveHarnessApp {
     window_visible: bool,
     started_at: Instant,
     frame_clock: f64,
+    // A synchronous command flush is one logical instant. Without this
+    // override, a slow/vsynced render can cross the next animation deadline,
+    // causing the flush to chase a repeating animation instead of replying.
+    synchronous_flush_time: Option<f64>,
     windows: HashMap<WindowId, LiveWindowState>,
     host_to_runtime: HashMap<HostWindowId, WindowId>,
     last_error: Option<Error>,
@@ -718,6 +722,7 @@ impl LiveHarnessApp {
             window_visible: false,
             started_at: Instant::now(),
             frame_clock: 0.0,
+            synchronous_flush_time: None,
             windows: HashMap::new(),
             host_to_runtime: HashMap::new(),
             last_error: None,
@@ -739,6 +744,7 @@ impl LiveHarnessApp {
         self.renderer = WgpuRenderer::default().with_vsync_enabled(self.vsync_enabled);
         self.started_at = Instant::now();
         self.frame_clock = 0.0;
+        self.synchronous_flush_time = None;
         clear_window_performance_snapshots();
     }
 
@@ -846,7 +852,9 @@ impl LiveHarnessApp {
     }
 
     fn update_clock(&mut self) {
-        self.frame_clock = self.started_at.elapsed().as_secs_f64();
+        self.frame_clock = self
+            .synchronous_flush_time
+            .unwrap_or_else(|| self.started_at.elapsed().as_secs_f64());
     }
 
     fn current_time_ms(&self) -> f64 {
@@ -940,6 +948,19 @@ impl LiveHarnessApp {
     }
 
     fn flush_pending_frames(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        // Drain every invalidation and zero-delay wake caused by the command,
+        // but leave future animation/timer deadlines to the event loop. A new
+        // about-to-wait turn captures a new time and advances them normally.
+        let previous_flush_time = self.synchronous_flush_time;
+        let flush_time =
+            previous_flush_time.unwrap_or_else(|| self.started_at.elapsed().as_secs_f64());
+        self.synchronous_flush_time = Some(flush_time);
+        let result = self.flush_pending_frames_at_fixed_time(event_loop);
+        self.synchronous_flush_time = previous_flush_time;
+        result
+    }
+
+    fn flush_pending_frames_at_fixed_time(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         for _ in 0..REDRAW_FLUSH_LIMIT {
             self.drive_runtime(event_loop)?;
 
