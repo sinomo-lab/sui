@@ -8069,13 +8069,13 @@ impl Widget for LivePerformancePanel {
             let fps = if display.idle {
                 "0 fps".to_string()
             } else {
-                format_fps(snapshot.total_time_ms)
+                format_fps(snapshot.frame_interval_ms)
             };
             let frame = if display.idle {
                 "idle".to_string()
             } else {
                 format!(
-                    "frame {} | {}",
+                    "frame {} | work {}",
                     snapshot.frame_index,
                     format_duration_ms(snapshot.total_time_ms)
                 )
@@ -8167,7 +8167,7 @@ impl Widget for LivePerformancePanel {
                     if display.idle {
                         "0 fps".to_string()
                     } else {
-                        format_fps(snapshot.total_time_ms)
+                        format_fps(snapshot.frame_interval_ms)
                     },
                     format_duration_ms(snapshot.total_time_ms),
                     display.samples.len()
@@ -8181,7 +8181,7 @@ impl Widget for LivePerformancePanel {
         );
         node.name = Some("Live performance overlay".to_string());
         node.description =
-            Some("Transparent FPS overlay with rolling stacked frame phase costs.".to_string());
+            Some("Host frame cadence with rolling stacked frame-work costs.".to_string());
         node.value = Some(SemanticsValue::Text(value));
         ctx.push(node);
     }
@@ -8191,11 +8191,10 @@ fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
     Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
 }
 
-fn format_fps(total_time_ms: f64) -> String {
-    if total_time_ms <= 0.0 {
-        "idle".to_string()
-    } else {
-        format!("{:.0} fps", 1000.0 / total_time_ms)
+fn format_fps(frame_interval_ms: Option<f64>) -> String {
+    match frame_interval_ms.filter(|interval| interval.is_finite() && *interval > 0.0) {
+        Some(interval) => format!("{:.0} fps", 1000.0 / interval),
+        None => "-- fps".to_string(),
     }
 }
 

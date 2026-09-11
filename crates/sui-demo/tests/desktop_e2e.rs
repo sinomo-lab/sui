@@ -572,13 +572,13 @@ impl DesktopHarnessApp {
         self.runtime.handle_event(window_id, event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
 
-        if let Some(window) = self.windows.get_mut(&window_id) {
-            if !is_redraw {
-                window.pending_event_time_ms += event_time_ms;
-            }
-            if !is_redraw && !is_close {
-                window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
-            }
+        if !is_redraw
+            && !is_close
+            && self.runtime.needs_render(window_id)?
+            && let Some(window) = self.windows.get_mut(&window_id)
+        {
+            window.pending_event_time_ms += event_time_ms;
+            window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
         }
 
         if !is_redraw && !is_close {

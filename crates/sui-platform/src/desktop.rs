@@ -307,6 +307,8 @@ impl DesktopPlatform {
         self
     }
 
+    /// Enable synchronized presentation. Focused, drawable windows continue
+    /// presenting retained content so variable-refresh displays stay responsive.
     pub fn with_vsync_enabled(mut self, enabled: bool) -> Self {
         self.set_vsync_enabled(enabled);
         self
@@ -928,6 +930,7 @@ impl DesktopApp {
                     frame_index: 0,
                     pending_event_time_ms: 0.0,
                     last_non_redraw_event_at_ms: None,
+                    occluded: false,
                     accessibility: AccessibilityBridge::default(),
                     #[cfg(target_os = "windows")]
                     accesskit_adapter,
@@ -1037,7 +1040,15 @@ impl DesktopApp {
     }
 
     fn request_redraw_if_needed(&mut self, window_id: WindowId) -> Result<()> {
-        if !self.runtime.needs_render(window_id)? {
+        // A focused VSync window must keep presenting even when its retained UI
+        // is unchanged. Otherwise windowed VRR can lower the whole monitor's
+        // refresh rate while the user is interacting with an idle view.
+        let keep_presenting = self.renderer.vsync_enabled()
+            && self
+                .windows
+                .get(&window_id)
+                .is_some_and(|window| window.focused);
+        if !self.runtime.needs_render(window_id)? && !keep_presenting {
             return Ok(());
         }
 
@@ -1048,7 +1059,11 @@ impl DesktopApp {
         };
 
         let size = window.window.inner_size();
-        if window.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0 {
+        if window.occluded
+            || window.window.is_minimized() == Some(true)
+            || size.width == 0
+            || size.height == 0
+        {
             return Ok(());
         }
         if window.redraw_requested {
@@ -1162,13 +1177,16 @@ impl DesktopApp {
 
         self.sync_window_cursor(window_id)?;
 
-        if let Some(window) = self.windows.get_mut(&window_id) {
-            if !is_redraw {
-                window.pending_event_time_ms += event_time_ms;
-            }
-            if !is_redraw && !is_close {
-                window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
-            }
+        // Idle pointer motion can run for seconds without requesting a frame.
+        // Charge input work only while a frame is pending, otherwise the next
+        // redraw inherits an arbitrarily large, unrelated "frame time".
+        if !is_redraw
+            && !is_close
+            && self.runtime.needs_render(window_id)?
+            && let Some(window) = self.windows.get_mut(&window_id)
+        {
+            window.pending_event_time_ms += event_time_ms;
+            window.last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
         }
 
         if !is_redraw && !is_close {
@@ -1235,7 +1253,10 @@ impl DesktopApp {
         // Preserve pending runtime work until there is a drawable native surface.
         if self.windows.get(&window_id).is_none_or(|host| {
             let size = host.window.inner_size();
-            host.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0
+            host.occluded
+                || host.window.is_minimized() == Some(true)
+                || size.width == 0
+                || size.height == 0
         }) {
             return Ok(());
         }
@@ -1522,11 +1543,16 @@ impl DesktopApp {
                     Event::Window(WindowEvent::Focused(focused)),
                 )
             }
-            WinitWindowEvent::Occluded(occluded) => self.process_event(
-                event_loop,
-                window_id,
-                Event::Window(WindowEvent::Occluded(occluded)),
-            ),
+            WinitWindowEvent::Occluded(occluded) => {
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.occluded = occluded;
+                }
+                self.process_event(
+                    event_loop,
+                    window_id,
+                    Event::Window(WindowEvent::Occluded(occluded)),
+                )
+            }
             WinitWindowEvent::RedrawRequested => self.process_event(
                 event_loop,
                 window_id,
@@ -2526,6 +2552,7 @@ struct WindowState {
     accesskit_snapshot: AccessKitSnapshot,
     pointer: PointerState,
     focused: bool,
+    occluded: bool,
     applied_cursor_grab: CursorGrabMode,
     applied_cursor_revision: u64,
     touch_points: HashMap<u64, Point>,

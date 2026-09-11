@@ -40,7 +40,6 @@ use crate::text_engine::pack_unorm16;
 #[cfg(test)]
 #[cfg(test)]
 use crate::text_engine::unpack_unorm16;
-use bytemuck::Pod;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -51,13 +50,20 @@ use sui_core::Size;
 use sui_core::Vector;
 use sui_scene::SceneFrame;
 use web_time::Instant;
-use wgpu::util::DeviceExt;
 
 impl WgpuRenderer {
     pub(crate) fn prepare_scene_submission(
         &mut self,
         frame: &SceneFrame,
     ) -> Result<PreparedSceneSubmission> {
+        // Drive completed staging-buffer map callbacks without waiting for GPU
+        // work, so the upload belt can reuse its storage on this frame.
+        self.shared
+            .as_ref()
+            .expect("renderer shared state initialized")
+            .device
+            .poll(wgpu::PollType::Poll)
+            .map_err(|error| Error::new(format!("failed to poll frame uploads: {error}")))?;
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
         let text_render_mode = self.text_render_mode();
@@ -165,7 +171,15 @@ impl WgpuRenderer {
         let mut batch_prepare_time_us = 0u64;
         let mut gpu_upload_time_us = 0u64;
 
-        for fragment in submission.fragments {
+        let buffers = self
+            .frame_resources
+            .fragments
+            .entry(frame.window_id)
+            .or_default();
+        if buffers.len() < submission.fragments.len() {
+            buffers.resize_with(submission.fragments.len(), Default::default);
+        }
+        for (fragment_index, fragment) in submission.fragments.into_iter().enumerate() {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
             let batch_prepare_started = diagnostics_enabled.then(Instant::now);
             let prepared = prepare_frame_batches_with_analytic_slots(
@@ -204,35 +218,47 @@ impl WgpuRenderer {
                 .iter()
                 .any(|pass| !pass.clip_paths.is_empty());
             let gpu_upload_started = diagnostics_enabled.then(Instant::now);
+            let buffers = &mut self
+                .frame_resources
+                .fragments
+                .get_mut(&frame.window_id)
+                .expect("frame buffers allocated")[fragment_index];
+            let uploads = &mut self.frame_resources.uploads;
             prepared_fragments.push(PreparedFragmentSubmission {
                 passes: prepared.passes,
-                solid_buffer: create_static_vertex_buffer(
+                solid_buffer: buffers.solid.upload(
                     &shared.device,
+                    uploads,
                     "SUI transient fragment solid vertices",
                     &prepared.solid_vertices,
                 ),
-                scene_buffer: create_static_vertex_buffer(
+                scene_buffer: buffers.scene.upload(
                     &shared.device,
+                    uploads,
                     "SUI transient fragment scene",
                     &prepared.scene_vertices,
                 ),
-                analytic_buffer: create_static_vertex_buffer(
+                analytic_buffer: buffers.analytic.upload(
                     &shared.device,
+                    uploads,
                     "SUI transient fragment analytic instances",
                     &prepared.analytic_vertices,
                 ),
-                extended_buffer: create_static_vertex_buffer(
+                extended_buffer: buffers.extended.upload(
                     &shared.device,
+                    uploads,
                     "SUI transient fragment extended vertices",
                     &prepared.extended_vertices,
                 ),
-                clip_buffer: create_static_vertex_buffer(
+                clip_buffer: buffers.clip.upload(
                     &shared.device,
+                    uploads,
                     "SUI transient fragment clip",
                     &prepared.clip_vertices,
                 ),
-                text_instance_buffer: create_static_text_instance_buffer(
+                text_instance_buffer: buffers.text.upload(
                     &shared.device,
+                    uploads,
                     "SUI transient fragment text instances",
                     &prepared.text_instances,
                 ),
@@ -361,11 +387,12 @@ impl WgpuRenderer {
             .unwrap_or(0);
 
         let queue_submit_started = self.runtime_diagnostics_enabled.then(Instant::now);
+        let uploads = self.frame_resources.uploads.finish();
         self.shared
             .as_ref()
             .expect("renderer shared state initialized")
             .queue
-            .submit([encoder.finish()]);
+            .submit(uploads.into_iter().chain(std::iter::once(encoder.finish())));
         let queue_submit_time_us = queue_submit_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
@@ -703,42 +730,6 @@ pub(crate) fn stamp_draw_op_analytic_path_slots(
             vertex.shader_params[0] = slot as f32;
         }
     }
-}
-
-pub(crate) fn create_static_vertex_buffer<T: Pod>(
-    device: &wgpu::Device,
-    label: &str,
-    vertices: &[T],
-) -> Option<wgpu::Buffer> {
-    if vertices.is_empty() {
-        return None;
-    }
-
-    Some(
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }),
-    )
-}
-
-pub(crate) fn create_static_text_instance_buffer(
-    device: &wgpu::Device,
-    label: &str,
-    instances: &[TextAtlasInstance],
-) -> Option<wgpu::Buffer> {
-    if instances.is_empty() {
-        return None;
-    }
-
-    Some(
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(instances),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }),
-    )
 }
 
 pub(crate) fn flatten_fragment_passes(

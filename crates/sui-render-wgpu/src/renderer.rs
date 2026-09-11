@@ -326,6 +326,8 @@ impl WgpuRenderer {
     }
 
     pub fn remove_window(&mut self, window_id: WindowId) {
+        self.frame_resources.fragments.remove(&window_id);
+        self.frame_resources.output_transforms.remove(&window_id);
         self.surfaces.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
         self.intermediate_targets.remove(&window_id);

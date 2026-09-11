@@ -3503,6 +3503,42 @@ fn live_performance_panel_uses_theme_text_tokens_and_font_stack() {
 }
 
 #[test]
+fn live_performance_panel_reports_frame_cadence_separately_from_work() {
+    let mut snapshot = sample_window_performance_snapshot_record(WindowId::new(11));
+    snapshot.frame_interval_ms = Some(50.0);
+    let display = Rc::new(RefCell::new(LivePerformanceDisplay {
+        snapshot: Some(snapshot.clone()),
+        idle: false,
+        samples: vec![LivePerformanceFrameSample::from_snapshot(&snapshot)],
+    }));
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Overlay")
+                .root(LivePerformancePanel::with_display(display)),
+        )
+        .build()
+        .unwrap();
+    let output = runtime.render(runtime.window_ids()[0]).unwrap();
+    let overlay = output
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some("Live performance overlay"))
+        .unwrap();
+    assert_eq!(
+        overlay.value,
+        Some(SemanticsValue::Text(
+            "20 fps | 1.5 ms | 1 samples".to_string()
+        ))
+    );
+    assert_eq!(
+        super::format_fps(None),
+        "-- fps",
+        "the first frame has no measured cadence"
+    );
+}
+
+#[test]
 fn live_performance_panel_reports_zero_fps_when_idle() {
     let snapshot = sample_window_performance_snapshot_record(WindowId::new(11));
     let display = Rc::new(RefCell::new(LivePerformanceDisplay {

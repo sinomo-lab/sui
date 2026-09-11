@@ -299,10 +299,10 @@ impl HeadlessPlatform {
         let event_started = Instant::now();
         runtime.handle_event(window_id, queued_event.event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
-        if !is_redraw {
+        // Match the desktop host: input with no pending redraw belongs to idle
+        // processing, not to the timing or latency of a future frame.
+        if !is_redraw && !is_close && runtime.needs_render(window_id)? {
             self.windows[window_index].pending_event_time_ms += event_time_ms;
-        }
-        if !is_redraw && !is_close {
             self.windows[window_index].last_non_redraw_event_at_ms = Some(event_arrived_at_ms);
         }
 
@@ -600,6 +600,69 @@ mod tests {
             .unwrap();
         let window_id = runtime.window_ids()[0];
         (runtime, window_id)
+    }
+
+    #[test]
+    fn input_without_a_redraw_does_not_accumulate_in_the_next_frames_timing() -> Result<()> {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let (mut runtime, window_id) = build_runtime(counters);
+        set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+        let mut platform = HeadlessPlatform::new();
+        platform.run(&mut runtime)?;
+        let original_frame = platform.renderer().frames_rendered();
+
+        for _ in 0..1000 {
+            platform.dispatch_event(
+                &runtime,
+                window_id,
+                Event::Custom(CustomEvent::new("idle-input")),
+            )?;
+        }
+        platform.run(&mut runtime)?;
+        assert_eq!(platform.renderer().frames_rendered(), original_frame);
+        assert_eq!(
+            platform.windows[0].pending_event_time_ms, 0.0,
+            "input processed while no frame is pending must not be charged to a later frame"
+        );
+        assert_eq!(platform.windows[0].last_non_redraw_event_at_ms, None);
+
+        // A real repaint still includes the event that requested it, plus any
+        // other events processed before that frame is rendered.
+        platform.advance_time(1.0);
+        platform.process_event(
+            &mut runtime,
+            super::QueuedEvent {
+                window_id,
+                event: Event::Custom(CustomEvent::new("repaint")),
+            },
+        )?;
+        let repaint_cost = platform.windows[0].pending_event_time_ms;
+        assert!(repaint_cost > 0.0);
+        assert_eq!(
+            platform.windows[0].last_non_redraw_event_at_ms,
+            Some(1000.0)
+        );
+        platform.process_event(
+            &mut runtime,
+            super::QueuedEvent {
+                window_id,
+                event: Event::Custom(CustomEvent::new("more-input")),
+            },
+        )?;
+        assert!(platform.windows[0].pending_event_time_ms >= repaint_cost);
+        let expected_event_cost = platform.windows[0].pending_event_time_ms;
+        platform.run(&mut runtime)?;
+        let snapshot = window_performance_snapshot(window_id).expect("repaint timing");
+        let reported_event_cost = snapshot
+            .phase_timings
+            .iter()
+            .find(|sample| sample.phase == sui_runtime::FramePhase::Event)
+            .expect("events that contribute to a frame must still be reported")
+            .duration_ms;
+        assert_eq!(reported_event_cost, expected_event_cost);
+        assert_eq!(platform.windows[0].pending_event_time_ms, 0.0);
+        assert_eq!(platform.windows[0].last_non_redraw_event_at_ms, None);
+        Ok(())
     }
 
     #[test]

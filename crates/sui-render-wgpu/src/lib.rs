@@ -25,6 +25,7 @@ mod tests;
 mod text;
 mod text_engine;
 mod text_policy;
+mod uploads;
 
 pub use sui_scene::TextSubpixelOrder;
 

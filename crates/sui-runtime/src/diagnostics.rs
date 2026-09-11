@@ -11,6 +11,7 @@ use sui_core::{DirtyRegion, InvalidationKind, InvalidationTarget, Rect, Size, Wi
 use sui_reactive::SourceId;
 use sui_scene::{LayerCompositionMode, SceneCommand, SceneFrame, SceneLayerUpdateKind};
 use sui_text::RuntimeTextTimingDiagnostics;
+use web_time::Instant;
 
 use crate::{CommandDelivery, CommandTarget};
 
@@ -899,6 +900,7 @@ pub struct WindowPerformanceSummary {
     pub window_id: WindowId,
     pub frame_index: u64,
     pub total_time_ms: f64,
+    pub frame_interval_ms: Option<f64>,
     pub slowest_phase: Option<FramePhaseSample>,
     pub presentation_latency: PresentationLatencyDiagnostics,
     pub renderer_submission: RendererSubmissionDiagnostics,
@@ -1149,6 +1151,10 @@ pub struct WindowPerformanceSnapshot {
     pub window_id: WindowId,
     pub frame_index: u64,
     pub total_time_ms: f64,
+    /// Wall time between completed host frames, including pacing and idle time.
+    /// This measures host frame cadence, not GPU execution or physical scanout.
+    /// Unavailable for the first frame or after the frame counter restarts.
+    pub frame_interval_ms: Option<f64>,
     pub phase_timings: Vec<FramePhaseSample>,
     pub presentation_latency: PresentationLatencyDiagnostics,
     pub renderer_submission: RendererSubmissionDiagnostics,
@@ -1200,6 +1206,7 @@ impl WindowPerformanceSnapshot {
             window_id,
             frame_index,
             total_time_ms,
+            frame_interval_ms: None,
             phase_timings,
             presentation_latency: PresentationLatencyDiagnostics::default(),
             renderer_submission,
@@ -1265,6 +1272,7 @@ impl WindowPerformanceSnapshot {
             window_id: self.window_id,
             frame_index: self.frame_index,
             total_time_ms: self.total_time_ms,
+            frame_interval_ms: self.frame_interval_ms,
             slowest_phase: self.slowest_phase(),
             presentation_latency: self.presentation_latency,
             renderer_submission: self.renderer_submission,
@@ -1287,9 +1295,39 @@ impl WindowPerformanceSnapshot {
     }
 }
 
-static WINDOW_PERFORMANCE_SNAPSHOTS: OnceLock<
-    RwLock<HashMap<WindowId, WindowPerformanceSnapshot>>,
-> = OnceLock::new();
+struct WindowPerformanceRecord {
+    snapshot: WindowPerformanceSnapshot,
+    completed_at: Instant,
+}
+
+impl WindowPerformanceRecord {
+    fn new(mut snapshot: WindowPerformanceSnapshot, completed_at: Instant) -> Self {
+        snapshot.frame_interval_ms = None;
+        Self {
+            snapshot,
+            completed_at,
+        }
+    }
+
+    fn update(&mut self, mut snapshot: WindowPerformanceSnapshot, completed_at: Instant) {
+        if snapshot.frame_index == self.snapshot.frame_index {
+            // Refreshing diagnostics for one frame must not advance the clock.
+            snapshot.frame_interval_ms = self.snapshot.frame_interval_ms;
+        } else {
+            snapshot.frame_interval_ms = (snapshot.frame_index > self.snapshot.frame_index)
+                .then(|| {
+                    completed_at.duration_since(self.completed_at).as_secs_f64() * 1000.0
+                        / (snapshot.frame_index - self.snapshot.frame_index) as f64
+                })
+                .filter(|interval| *interval > 0.0);
+            self.completed_at = completed_at;
+        }
+        self.snapshot = snapshot;
+    }
+}
+
+static WINDOW_PERFORMANCE_SNAPSHOTS: OnceLock<RwLock<HashMap<WindowId, WindowPerformanceRecord>>> =
+    OnceLock::new();
 static WINDOW_SCENE_STATISTICS_DETAIL_MODES: OnceLock<
     RwLock<HashMap<WindowId, SceneStatisticsDetailMode>>,
 > = OnceLock::new();
@@ -1297,17 +1335,25 @@ static WINDOW_RENDER_OPTIONS: OnceLock<RwLock<HashMap<WindowId, WindowRenderOpti
     OnceLock::new();
 
 pub fn publish_window_performance_snapshot(snapshot: WindowPerformanceSnapshot) {
+    let completed_at = Instant::now();
     let mut store = window_performance_store()
         .write()
         .expect("window performance snapshot store lock should not be poisoned");
-    store.insert(snapshot.window_id, snapshot);
+    match store.entry(snapshot.window_id) {
+        std::collections::hash_map::Entry::Occupied(mut entry) => {
+            entry.get_mut().update(snapshot, completed_at);
+        }
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(WindowPerformanceRecord::new(snapshot, completed_at));
+        }
+    }
 }
 
 pub fn window_performance_snapshot(window_id: WindowId) -> Option<WindowPerformanceSnapshot> {
     let store = window_performance_store()
         .read()
         .expect("window performance snapshot store lock should not be poisoned");
-    store.get(&window_id).cloned()
+    store.get(&window_id).map(|record| record.snapshot.clone())
 }
 
 pub fn window_performance_summary(window_id: WindowId) -> Option<WindowPerformanceSummary> {
@@ -1316,14 +1362,16 @@ pub fn window_performance_summary(window_id: WindowId) -> Option<WindowPerforman
         .expect("window performance snapshot store lock should not be poisoned");
     store
         .get(&window_id)
-        .map(WindowPerformanceSnapshot::summary)
+        .map(|record| record.snapshot.summary())
 }
 
 pub fn window_performance_text_caches(window_id: WindowId) -> Option<TextCacheDiagnostics> {
     let store = window_performance_store()
         .read()
         .expect("window performance snapshot store lock should not be poisoned");
-    store.get(&window_id).map(|snapshot| snapshot.text_caches)
+    store
+        .get(&window_id)
+        .map(|record| record.snapshot.text_caches)
 }
 
 pub fn set_window_scene_statistics_detail_mode(
@@ -1399,7 +1447,7 @@ pub fn clear_window_performance_snapshots() {
     render_options.clear();
 }
 
-fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerformanceSnapshot>> {
+fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerformanceRecord>> {
     WINDOW_PERFORMANCE_SNAPSHOTS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -1466,6 +1514,51 @@ mod tests {
     use sui_scene::{
         LayerCompositionMode, Scene, SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor,
     };
+
+    #[test]
+    fn frame_cadence_includes_pacing_and_ignores_duplicate_publications() {
+        let window_id = WindowId::new(12);
+        let snapshot = |frame_index| {
+            WindowPerformanceSnapshot::new(
+                window_id,
+                frame_index,
+                vec![FramePhaseSample::new(FramePhase::Renderer, 2.0)],
+                RendererSubmissionDiagnostics::default(),
+                TextCacheDiagnostics::default(),
+                TextCacheDeltaDiagnostics::default(),
+                SceneStatistics::minimal(
+                    &SceneFrame::new(window_id, Size::new(320.0, 180.0)),
+                    1,
+                    SceneStatisticsDetailMode::Lightweight,
+                ),
+            )
+        };
+        let start = web_time::Instant::now();
+        let at = |milliseconds| start + std::time::Duration::from_millis(milliseconds);
+        let mut record = super::WindowPerformanceRecord::new(snapshot(1), start);
+        assert_eq!(record.snapshot.frame_interval_ms, None);
+        record.update(snapshot(2), at(50));
+        assert_eq!(record.snapshot.frame_interval_ms, Some(50.0));
+        assert_eq!(
+            record.snapshot.total_time_ms, 2.0,
+            "render work remains separate from cadence"
+        );
+        assert_eq!(record.snapshot.summary().frame_interval_ms, Some(50.0));
+        record.update(snapshot(2), at(60));
+        record.update(snapshot(3), at(100));
+        assert_eq!(record.snapshot.frame_interval_ms, Some(50.0));
+        record.update(snapshot(1), at(150));
+        assert_eq!(
+            record.snapshot.frame_interval_ms, None,
+            "a restarted window needs a fresh baseline"
+        );
+        record.update(snapshot(4), at(300));
+        assert_eq!(
+            record.snapshot.frame_interval_ms,
+            Some(50.0),
+            "skipped publications use the frame-count delta"
+        );
+    }
 
     #[test]
     fn text_cache_deltas_are_derived_from_prior_counters() {

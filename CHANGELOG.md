@@ -11,6 +11,16 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Kept focused, visible VSync windows presenting cached content so an idle UI
+  does not lower a variable-refresh monitor's refresh rate.
+- Reused GPU vertex buffers, upload staging storage, and output-transform
+  resources to avoid repeated allocations and interaction-time frame stalls.
+- Fixed inflated frame-time/FPS readings after idle mouse motion by attributing
+  input costs and latency only to a pending redraw across native and test hosts.
+- Made the demo FPS counter measure host frame cadence, including VSync and
+  idle intervals, while reporting render work separately.
+- Retained action cards independently so hover, press, and focus transitions
+  repaint only the affected cards instead of rebuilding an entire picker grid.
 - Centralized builder/runtime resource registration so rejected duplicate handles
   preserve the original resource, and shared native/web GPU resource setup.
 - Shared button press, text-change, and caret lifecycle logic across controls;

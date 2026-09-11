@@ -349,6 +349,12 @@ fn serialize_performance(json: &mut String, performance: &WindowPerformanceSnaps
     json.push(',');
     push_json_number_field(json, "totalTimeMs", performance.total_time_ms);
     json.push(',');
+    if let Some(interval) = performance.frame_interval_ms {
+        push_json_number_field(json, "frameIntervalMs", interval);
+    } else {
+        json.push_str("\"frameIntervalMs\":null");
+    }
+    json.push(',');
     push_json_number_field(
         json,
         "drawCount",

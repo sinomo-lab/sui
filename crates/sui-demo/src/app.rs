@@ -3358,6 +3358,12 @@ pub fn build_dev_application_with_automation(
 }
 
 #[cfg(test)]
+mod hover_performance;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod frame_pacing;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

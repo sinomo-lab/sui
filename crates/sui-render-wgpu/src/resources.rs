@@ -11,6 +11,7 @@ use crate::gpu::analytic_path_buffer_size;
 use crate::gpu::grow_analytic_path_capacity;
 use crate::text::TEXT_ATLAS_MAX_PAGES;
 use crate::text_engine::TextEngine;
+use crate::uploads::{FragmentBuffers, GpuUploads};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -27,6 +28,9 @@ use web_time::Instant;
 pub(crate) struct FrameResources {
     pub(crate) stencil: Option<StencilTarget>,
     pub(crate) analytic_path_arena: AnalyticPathArena,
+    pub(crate) uploads: GpuUploads,
+    pub(crate) fragments: HashMap<sui_core::WindowId, Vec<FragmentBuffers>>,
+    pub(crate) output_transforms: HashMap<sui_core::WindowId, crate::output::CachedOutputTransform>,
 }
 
 #[derive(Default)]
@@ -782,19 +786,28 @@ impl WgpuRenderer {
                 .as_ref()
                 .expect("analytic path arena point buffer initialized");
             if !meta_data.is_empty() {
-                shared
-                    .queue
-                    .write_buffer(meta_buffer, 0, bytemuck::cast_slice(&meta_data));
+                self.frame_resources.uploads.write_buffer(
+                    &shared.device,
+                    meta_buffer,
+                    0,
+                    bytemuck::cast_slice(&meta_data),
+                );
             }
             if !contour_data.is_empty() {
-                shared
-                    .queue
-                    .write_buffer(contour_buffer, 0, bytemuck::cast_slice(&contour_data));
+                self.frame_resources.uploads.write_buffer(
+                    &shared.device,
+                    contour_buffer,
+                    0,
+                    bytemuck::cast_slice(&contour_data),
+                );
             }
             if !point_data.is_empty() {
-                shared
-                    .queue
-                    .write_buffer(point_buffer, 0, bytemuck::cast_slice(&point_data));
+                self.frame_resources.uploads.write_buffer(
+                    &shared.device,
+                    point_buffer,
+                    0,
+                    bytemuck::cast_slice(&point_data),
+                );
             }
 
             if collect_stats {
@@ -875,7 +888,8 @@ impl WgpuRenderer {
             if !meta_data.is_empty() {
                 let meta_offset =
                     base_slot as u64 * std::mem::size_of::<AnalyticPathMetaGpu>() as u64;
-                shared.queue.write_buffer(
+                self.frame_resources.uploads.write_buffer(
+                    &shared.device,
                     meta_buffer,
                     meta_offset,
                     bytemuck::cast_slice(&meta_data),
@@ -884,7 +898,8 @@ impl WgpuRenderer {
             if !contour_data.is_empty() {
                 let contour_offset =
                     base_contour as u64 * std::mem::size_of::<AnalyticContourGpu>() as u64;
-                shared.queue.write_buffer(
+                self.frame_resources.uploads.write_buffer(
+                    &shared.device,
                     contour_buffer,
                     contour_offset,
                     bytemuck::cast_slice(&contour_data),
@@ -893,7 +908,8 @@ impl WgpuRenderer {
             if !point_data.is_empty() {
                 let point_offset =
                     base_point as u64 * std::mem::size_of::<AnalyticPointGpu>() as u64;
-                shared.queue.write_buffer(
+                self.frame_resources.uploads.write_buffer(
+                    &shared.device,
                     point_buffer,
                     point_offset,
                     bytemuck::cast_slice(&point_data),
@@ -1085,6 +1101,7 @@ pub(crate) struct CachedAnalyticPathGpu {
 
 pub(crate) struct OffscreenTarget {
     pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) size: (u32, u32),
 }

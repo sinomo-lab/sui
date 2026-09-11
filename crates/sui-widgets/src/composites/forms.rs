@@ -31,7 +31,9 @@ use sui_layout::Constraints;
 use sui_layout::Padding as Insets;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::EventCtx;
+use sui_runtime::LayerOptions;
 use sui_runtime::MeasureCtx;
+use sui_runtime::PaintBoundaryMode;
 use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
 use sui_runtime::SingleChild;
@@ -661,6 +663,16 @@ impl Widget for ActionCard {
                 palette.placeholder.with_alpha(0.32)
             },
         );
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        // Card motion changes only this card. Retain it separately so hover,
+        // press, and focus animation do not repaint a containing grid or rebuild
+        // its other cards' text and geometry in the renderer.
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            ..LayerOptions::default()
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {

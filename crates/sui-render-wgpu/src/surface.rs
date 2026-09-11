@@ -76,6 +76,7 @@ impl WgpuRenderer {
             let mut frame_stats =
                 self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
             self.submit_output_transform_pass(
+                frame.window_id,
                 &intermediate_view,
                 &view,
                 format,

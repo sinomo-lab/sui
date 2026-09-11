@@ -1218,11 +1218,11 @@ mod tests {
 
 pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Widget {
     if !snapshot.scene.detail_mode.is_detailed() {
-        let fps = if snapshot.total_time_ms > 0.0 {
-            format!("{:.0} fps", 1000.0 / snapshot.total_time_ms)
-        } else {
-            "0 fps".to_string()
-        };
+        let fps = snapshot
+            .frame_interval_ms
+            .filter(|interval| interval.is_finite() && *interval > 0.0)
+            .map(|interval| format!("{:.0} fps", 1000.0 / interval))
+            .unwrap_or_else(|| "-- fps".to_string());
 
         return Stack::vertical()
             .spacing(10.0)
@@ -1232,7 +1232,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
                     .detail("Wall time across event handling, runtime, and renderer")
                     .tone(duration_tone(snapshot.total_time_ms)),
                 DebugMetric::new("FPS", fps)
-                    .detail("Live overlay detail is off; detailed analytics are disabled")
+                    .detail("Completed host frames per second, including pacing and idle time")
                     .tone(DebugTone::Neutral),
                 DebugMetric::new(
                     "Event -> present",

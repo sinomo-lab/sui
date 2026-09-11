@@ -8,7 +8,7 @@ use sui_core::Error;
 use sui_core::Result;
 use sui_core::WindowId;
 use sui_scene::SceneFrame;
-use wgpu::util::DeviceExt;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RendererCapabilities {
@@ -221,6 +221,13 @@ pub(crate) struct OutputTransformUniform {
     pub(crate) _padding1: [u32; 3],
 }
 
+pub(crate) struct CachedOutputTransform {
+    pub(crate) source_view: wgpu::TextureView,
+    pub(crate) uniform: OutputTransformUniform,
+    pub(crate) buffer: wgpu::Buffer,
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
 impl OutputTransformUniform {
     pub(crate) const fn new(
         tone_mapping_mode: u32,
@@ -289,6 +296,7 @@ impl WgpuRenderer {
             let mut frame_stats =
                 self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
             self.submit_output_transform_pass(
+                frame.window_id,
                 &intermediate_view,
                 &final_view,
                 final_format,
@@ -323,6 +331,7 @@ impl WgpuRenderer {
         let mut frame_stats =
             self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
         self.submit_output_transform_pass(
+            frame.window_id,
             &intermediate_view,
             &final_view,
             final_format,
@@ -369,6 +378,7 @@ impl WgpuRenderer {
             self.offscreen_targets.insert(
                 window_id,
                 OffscreenTarget {
+                    view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     texture,
                     format,
                     size,
@@ -377,11 +387,7 @@ impl WgpuRenderer {
         }
         self.offscreen_targets
             .get(&window_id)
-            .map(|target| {
-                target
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default())
-            })
+            .map(|target| target.view.clone())
             .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
     }
 
@@ -419,6 +425,7 @@ impl WgpuRenderer {
             self.intermediate_targets.insert(
                 window_id,
                 OffscreenTarget {
+                    view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
                     texture,
                     format,
                     size,
@@ -427,16 +434,13 @@ impl WgpuRenderer {
         }
         self.intermediate_targets
             .get(&window_id)
-            .map(|target| {
-                target
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default())
-            })
+            .map(|target| target.view.clone())
             .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
     }
 
     pub(crate) fn submit_output_transform_pass(
         &mut self,
+        window_id: WindowId,
         source_view: &wgpu::TextureView,
         destination_view: &wgpu::TextureView,
         destination_format: wgpu::TextureFormat,
@@ -446,6 +450,7 @@ impl WgpuRenderer {
         display_sdr_white_nits: Option<f32>,
         frame_stats: &mut RendererFrameStats,
     ) -> Result<()> {
+        let prepare_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let resolved_tone_mapping = match strategy {
             OutputStrategy::HdrNativeSurface { .. } => 0,
             _ => match requested_tone_mapping {
@@ -479,32 +484,63 @@ impl WgpuRenderer {
             crate::output::output_primaries(strategy),
             sdr_content_scale,
         );
-        let uniform_buffer = shared
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let cache = &mut self.frame_resources.output_transforms;
+        let recreate = cache
+            .get(&window_id)
+            .is_none_or(|cached| cached.source_view != *source_view);
+        if recreate {
+            let uniform_buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("SUI output transform uniform"),
-                contents: bytemuck::bytes_of(&uniform),
-                usage: wgpu::BufferUsages::UNIFORM,
+                size: std::mem::size_of::<OutputTransformUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
-        let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("SUI output transform bind group"),
-            layout: &shared.output_transform_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(source_view),
+            let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SUI output transform bind group"),
+                layout: &shared.output_transform_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(source_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+            cache.insert(
+                window_id,
+                CachedOutputTransform {
+                    source_view: source_view.clone(),
+                    uniform,
+                    buffer: uniform_buffer,
+                    bind_group,
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
+            );
+        }
+        let cached = cache
+            .get_mut(&window_id)
+            .expect("output transform resources allocated");
+        if recreate || cached.uniform != uniform {
+            self.frame_resources.uploads.write_buffer(
+                &shared.device,
+                &cached.buffer,
+                0,
+                bytemuck::bytes_of(&uniform),
+            );
+            cached.uniform = uniform;
+        }
+        let bind_group = cached.bind_group.clone();
         let mut encoder = shared
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("SUI output transform encoder"),
             });
+        if let Some(started) = prepare_started {
+            frame_stats.gpu_upload_time_us += started.elapsed().as_micros() as u64;
+        }
+        let encode_started = self.runtime_diagnostics_enabled.then(Instant::now);
         {
             let pipeline = shared.output_transform_pipeline(destination_format);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -527,7 +563,17 @@ impl WgpuRenderer {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        shared.queue.submit([encoder.finish()]);
+        if let Some(started) = encode_started {
+            frame_stats.pass_encode_time_us += started.elapsed().as_micros() as u64;
+        }
+        let submit_started = self.runtime_diagnostics_enabled.then(Instant::now);
+        let uploads = self.frame_resources.uploads.finish();
+        shared
+            .queue
+            .submit(uploads.into_iter().chain(std::iter::once(encoder.finish())));
+        if let Some(started) = submit_started {
+            frame_stats.queue_submit_time_us += started.elapsed().as_micros() as u64;
+        }
         frame_stats.pass_count += 1;
         Ok(())
     }
