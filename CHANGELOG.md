@@ -11,6 +11,10 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Continued VSync presentation and animation/timer delivery inside native
+  window move/resize loops, including while the title bar is held still.
+- Preferred compatible Direct3D12 hardware on Windows to improve native window
+  drag pacing, retaining explicit backend selection and automatic fallback.
 - Kept focused, visible VSync windows presenting cached content so an idle UI
   does not lower a variable-refresh monitor's refresh rate.
 - Reused GPU vertex buffers, upload staging storage, and output-transform

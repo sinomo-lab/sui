@@ -995,18 +995,7 @@ impl DesktopApp {
         self.update_clock();
         self.runtime.tick(self.frame_clock);
 
-        loop {
-            let ready_events = self.runtime.drain_ready_events();
-            if ready_events.is_empty() {
-                break;
-            }
-
-            for (window_id, event) in ready_events {
-                if self.windows.contains_key(&window_id) {
-                    self.process_event(event_loop, window_id, event)?;
-                }
-            }
-        }
+        while self.dispatch_ready_events(event_loop)? {}
 
         self.sync_windows(event_loop)?;
 
@@ -1037,6 +1026,17 @@ impl DesktopApp {
 
         self.update_control_flow(event_loop)?;
         Ok(())
+    }
+
+    fn dispatch_ready_events(&mut self, event_loop: &ActiveEventLoop) -> Result<bool> {
+        let events = self.runtime.drain_ready_events();
+        let had_events = !events.is_empty();
+        for (window_id, event) in events {
+            if self.windows.contains_key(&window_id) {
+                self.process_event(event_loop, window_id, event)?;
+            }
+        }
+        Ok(had_events)
     }
 
     fn request_redraw_if_needed(&mut self, window_id: WindowId) -> Result<()> {
@@ -1171,6 +1171,14 @@ impl DesktopApp {
         self.update_clock();
         self.runtime.tick(self.frame_clock);
 
+        if is_redraw {
+            // Windows can deliver WM_PAINT inside its modal move/resize loop
+            // without AboutToWait. Advance one batch of due wakes so animation
+            // and timers do not freeze while the title bar or border is held.
+            // Do not chase newly scheduled future deadlines in this callback.
+            self.dispatch_ready_events(event_loop)?;
+        }
+
         let event_started = Instant::now();
         let handled = self.runtime.dispatch_event(window_id, event)?;
         let event_time_ms = event_started.elapsed().as_secs_f64() * 1000.0;
@@ -1207,6 +1215,9 @@ impl DesktopApp {
             }
 
             self.render_window_if_needed(window_id, event_time_ms)?;
+            // Chain continuous presentation from WM_PAINT/RedrawRequested;
+            // AboutToWait alone cannot sustain it during an OS modal loop.
+            self.request_redraw_if_needed(window_id)?;
         }
 
         if is_close {

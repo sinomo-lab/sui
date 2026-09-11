@@ -174,14 +174,22 @@ impl WgpuRenderer {
             return Ok(());
         }
 
-        let adapter =
-            pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface,
-                apply_limit_buckets: false,
-            }))
-            .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?;
+        #[cfg(target_os = "windows")]
+        let preferred = self.preferred_windows_adapter(compatible_surface);
+        #[cfg(not(target_os = "windows"))]
+        let preferred = None;
+        let adapter = match preferred {
+            Some(adapter) => adapter,
+            None => {
+                pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    force_fallback_adapter: false,
+                    compatible_surface,
+                    apply_limit_buckets: false,
+                }))
+                .map_err(|error| Error::new(format!("failed to acquire wgpu adapter: {error}")))?
+            }
+        };
 
         let required_features = optional_renderer_features(&adapter);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -195,6 +203,30 @@ impl WgpuRenderer {
         self.install_shared(SharedRenderer::new(adapter, device, queue));
 
         Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn preferred_windows_adapter(
+        &self,
+        surface: Option<&wgpu::Surface<'_>>,
+    ) -> Option<wgpu::Adapter> {
+        // Prefer the native presentation backend. NVIDIA's Vulkan FIFO path can
+        // spend multiple refresh intervals acquiring images during window moves;
+        // DX12 also supports our native scRGB swapchain configuration directly.
+        // Explicit backend selection and machines without a compatible DX12 GPU
+        // continue through wgpu's normal adapter selection/fallback path.
+        if std::env::var_os("WGPU_BACKEND").is_some() {
+            return None;
+        }
+        pollster::block_on(self.instance.enumerate_adapters(wgpu::Backends::DX12))
+            .into_iter()
+            .filter(|adapter| surface.is_none_or(|surface| adapter.is_surface_supported(surface)))
+            .filter_map(|adapter| {
+                let info = adapter.get_info();
+                windows_adapter_rank(info.backend, info.device_type).map(|rank| (rank, adapter))
+            })
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, adapter)| adapter)
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -234,6 +266,19 @@ impl WgpuRenderer {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_adapter_rank(backend: wgpu::Backend, device_type: wgpu::DeviceType) -> Option<u8> {
+    if backend != wgpu::Backend::Dx12 {
+        return None;
+    }
+    match device_type {
+        wgpu::DeviceType::DiscreteGpu => Some(0),
+        wgpu::DeviceType::IntegratedGpu => Some(1),
+        wgpu::DeviceType::VirtualGpu => Some(2),
+        wgpu::DeviceType::Cpu | wgpu::DeviceType::Other => None,
+    }
+}
+
 /// Build the renderer's wgpu instance with the GL backend left out unless the
 /// environment explicitly asks for it (`WGPU_BACKEND=gl`).
 ///
@@ -250,4 +295,22 @@ pub(crate) fn default_wgpu_instance() -> wgpu::Instance {
         descriptor.backends -= wgpu::Backends::GL;
     }
     wgpu::Instance::new(descriptor)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn windows_preference_selects_hardware_dx12_without_forcing_software_rendering() {
+        use wgpu::{
+            Backend::Dx12,
+            DeviceType::{Cpu, DiscreteGpu, IntegratedGpu},
+        };
+        let discrete = super::windows_adapter_rank(Dx12, DiscreteGpu).unwrap();
+        assert!(super::windows_adapter_rank(Dx12, IntegratedGpu).unwrap() > discrete);
+        assert_eq!(super::windows_adapter_rank(Dx12, Cpu), None);
+        assert_eq!(
+            super::windows_adapter_rank(wgpu::Backend::Vulkan, DiscreteGpu),
+            None
+        );
+    }
 }
