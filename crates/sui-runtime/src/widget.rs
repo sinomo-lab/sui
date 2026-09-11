@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     rc::Rc,
@@ -15,6 +16,7 @@ use crate::{
     command::{QueuedCommand, queued_command},
     diagnostics::{WidgetTimingPhase, record_widget_timing},
     overlay::OverlayOptions,
+    reactive::{ObservationPhase, ObservationScope},
 };
 
 use sui_core::{
@@ -894,6 +896,7 @@ pub struct WidgetPod {
     id: WidgetId,
     layout_state: LayoutState,
     force_paint_boundary: bool,
+    observed_phases: Cell<u8>,
     widget: Box<dyn Widget>,
 }
 
@@ -946,6 +949,7 @@ impl WidgetPod {
             id: WidgetId::new(NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)),
             layout_state: LayoutState::default(),
             force_paint_boundary: false,
+            observed_phases: Cell::new(0),
             widget,
         }
     }
@@ -1019,7 +1023,14 @@ impl WidgetPod {
 
         let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
         let started = Instant::now();
+        let observations = ObservationScope::new(
+            parent_ctx.window_id(),
+            self.id,
+            ObservationPhase::Measure,
+            &self.observed_phases,
+        );
         let size = self.widget.measure(&mut child_ctx, constraints);
+        drop(observations);
         record_widget_timing(
             self.id,
             self.widget.debug_name(),
@@ -1051,9 +1062,20 @@ impl WidgetPod {
         let force = parent_ctx.child_force();
         let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
         let started = Instant::now();
+        let phase = match axis {
+            Axis::Horizontal => ObservationPhase::IntrinsicHorizontal,
+            Axis::Vertical => ObservationPhase::IntrinsicVertical,
+        };
+        let observations = ObservationScope::new(
+            parent_ctx.window_id(),
+            self.id,
+            phase,
+            &self.observed_phases,
+        );
         let intrinsic = self
             .widget
             .intrinsic_size(&mut child_ctx, axis, available_cross);
+        drop(observations);
         record_widget_timing(
             self.id,
             self.widget.debug_name(),
@@ -1123,7 +1145,14 @@ impl WidgetPod {
             child_ctx.request_paint();
         }
         let started = Instant::now();
+        let observations = ObservationScope::new(
+            parent_ctx.window_id(),
+            self.id,
+            ObservationPhase::Arrange,
+            &self.observed_phases,
+        );
         self.widget.arrange(&mut child_ctx, bounds);
+        drop(observations);
         record_widget_timing(
             self.id,
             self.widget.debug_name(),
@@ -1154,7 +1183,14 @@ impl WidgetPod {
             presentation_transform,
         );
         let started = Instant::now();
+        let observations = ObservationScope::new(
+            parent_ctx.window_id(),
+            self.id,
+            ObservationPhase::Paint,
+            &self.observed_phases,
+        );
         self.widget.paint(&mut child_ctx);
+        drop(observations);
         record_widget_timing(
             self.id,
             self.widget.debug_name(),
@@ -1228,7 +1264,14 @@ impl WidgetPod {
             presentation_transform,
         );
         let started = Instant::now();
+        let observations = ObservationScope::new(
+            parent_ctx.window_id(),
+            self.id,
+            ObservationPhase::Semantics,
+            &self.observed_phases,
+        );
         self.widget.semantics(&mut child_ctx);
+        drop(observations);
         record_widget_timing(
             self.id,
             self.widget.debug_name(),

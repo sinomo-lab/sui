@@ -487,3 +487,83 @@ impl TextSystem {
         self.font_context_build_count.load(Ordering::Relaxed)
     }
 }
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn layout_cache_evicts_lru_entries_without_invalidating_pinned_layouts() {
+        let system = TextSystem {
+            layout_cache: Mutex::new(TextLayoutCache::with_limits(2, usize::MAX)),
+            ..TextSystem::default()
+        };
+        let fonts = FontRegistry::new();
+        let shape = |text| {
+            system
+                .shape_text(text, Size::new(200.0, 40.0), TextStyle::default(), &fonts)
+                .unwrap()
+        };
+        let pinned = system.adopt_layout(shape("pinned"));
+        shape("hot");
+        shape("hot");
+        shape("new");
+        assert_eq!(system.layout_cache_snapshot().entries, 2);
+        let before = system.layout_cache_snapshot();
+        shape("hot");
+        assert_eq!(system.layout_cache_snapshot().hits, before.hits + 1);
+        shape("pinned");
+        assert_eq!(system.layout_cache_snapshot().misses, before.misses + 1);
+        assert_eq!(
+            system.text_layout_registry().get(pinned.handle()),
+            Some(pinned.layout())
+        );
+        assert_eq!(pinned.layout().text(), "pinned");
+    }
+
+    #[test]
+    fn oversized_layouts_do_not_evict_small_reusable_layouts() {
+        let system = TextSystem {
+            layout_cache: Mutex::new(TextLayoutCache::with_limits(10, 16 * 1024)),
+            ..TextSystem::default()
+        };
+        let fonts = FontRegistry::new();
+        system
+            .measure_text("hot", TextStyle::default(), &fonts)
+            .unwrap();
+        assert_eq!(system.layout_cache_snapshot().entries, 1);
+        system
+            .measure_text(
+                "large document ".repeat(1_000),
+                TextStyle::default(),
+                &fonts,
+            )
+            .unwrap();
+        assert_eq!(system.layout_cache_snapshot().entries, 1);
+        system
+            .measure_text("hot", TextStyle::default(), &fonts)
+            .unwrap();
+        assert_eq!(system.layout_cache_snapshot().hits, 1);
+    }
+
+    #[test]
+    fn layout_byte_budget_bounds_changing_text_before_the_entry_limit() {
+        let system = TextSystem {
+            layout_cache: Mutex::new(TextLayoutCache::with_limits(100, 16 * 1024)),
+            ..TextSystem::default()
+        };
+        let fonts = FontRegistry::new();
+        for index in 0..100 {
+            system
+                .measure_text(
+                    format!("temporary status {index}"),
+                    TextStyle::default(),
+                    &fonts,
+                )
+                .unwrap();
+        }
+        let snapshot = system.layout_cache_snapshot();
+        assert!(snapshot.entries > 0 && snapshot.entries < 100);
+        assert_eq!(snapshot.misses, 100);
+    }
+}

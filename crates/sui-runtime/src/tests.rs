@@ -4313,6 +4313,160 @@ fn inspector_snapshot_unifies_structure_routes_and_widget_diagnostics() {
     assert!(snapshot.scene.is_some());
 }
 
+struct ConditionalObservationLeaf {
+    phase: usize,
+    selected: Signal<u32>,
+    values: [Signal<u32>; 2],
+    width: Signal<u32>,
+    measures: Arc<AtomicUsize>,
+    share_first_in_measure: bool,
+}
+
+impl ConditionalObservationLeaf {
+    fn read(&self, mut observe: impl FnMut(&Signal<u32>) -> u32) {
+        if let Some(value) = self.values.get(observe(&self.selected) as usize) {
+            observe(value);
+        }
+    }
+}
+
+impl Widget for ConditionalObservationLeaf {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measures.fetch_add(1, Ordering::Relaxed);
+        let width = ctx.observe(&self.width);
+        if self.share_first_in_measure {
+            ctx.observe_with(&self.values[0], InvalidationKind::Paint);
+        }
+        if self.phase == 0 {
+            self.read(|source| ctx.observe(source));
+        }
+        constraints.clamp(Size::new(width as f32, 40.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, _: Rect) {
+        if self.phase == 1 {
+            self.read(|source| ctx.observe(source));
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        if self.phase == 2 {
+            self.read(|source| ctx.observe(source));
+        }
+        ctx.fill_bounds(Color::WHITE);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        if self.phase == 3 {
+            self.read(|source| ctx.observe(source));
+        }
+    }
+}
+
+#[test]
+fn completed_phases_release_obsolete_observable_dependencies() {
+    for phase in 0..4 {
+        let selected = Signal::new(0_u32);
+        let values = [Signal::new(10_u32), Signal::new(20_u32)];
+        let width = Signal::new(100_u32);
+        let mut runtime = Runtime::new();
+        let id = runtime
+            .add_window(WindowBuilder::new().root(ConditionalObservationLeaf {
+                phase,
+                selected: selected.clone(),
+                values: values.clone(),
+                width: width.clone(),
+                measures: Arc::new(AtomicUsize::new(0)),
+                share_first_in_measure: false,
+            }))
+            .unwrap();
+        runtime.render(id).unwrap();
+        let root = runtime.widget_graph(id).unwrap().root;
+        assert_eq!(super::reactive::subscription_count(root), 3);
+        selected.set(1);
+        runtime.render(id).unwrap();
+        assert_eq!(super::reactive::subscription_count(root), 3);
+        assert!(!runtime.needs_render(id).unwrap());
+        values[0].set(11);
+        assert!(
+            !runtime.needs_render(id).unwrap(),
+            "obsolete source, phase {phase}"
+        );
+        values[1].set(21);
+        assert!(
+            runtime.needs_render(id).unwrap(),
+            "active source, phase {phase}"
+        );
+        runtime.render(id).unwrap();
+        selected.set(2); // The completed phase stops reading either value.
+        runtime.render(id).unwrap();
+        assert_eq!(super::reactive::subscription_count(root), 2);
+        values[1].set(22);
+        assert!(!runtime.needs_render(id).unwrap());
+        width.set(110);
+        assert!(
+            runtime.needs_render(id).unwrap(),
+            "cached measure dependency, phase {phase}"
+        );
+        runtime.remove_window(id).unwrap();
+        assert_eq!(super::reactive::subscription_count(root), 0);
+    }
+}
+
+#[test]
+fn repaint_preserves_shared_dependencies_from_cached_measurement() {
+    let selected = Signal::new(0_u32);
+    let values = [Signal::new(10_u32), Signal::new(20_u32)];
+    let measures = Arc::new(AtomicUsize::new(0));
+    let mut runtime = Runtime::new();
+    let id = runtime
+        .add_window(WindowBuilder::new().root(ConditionalObservationLeaf {
+            phase: 2,
+            selected: selected.clone(),
+            values: values.clone(),
+            width: Signal::new(100),
+            measures: measures.clone(),
+            share_first_in_measure: true,
+        }))
+        .unwrap();
+    runtime.render(id).unwrap();
+    selected.set(1);
+    runtime.render(id).unwrap();
+    assert_eq!(measures.load(Ordering::Relaxed), 1);
+    values[0].set(11);
+    // Paint no longer reads this source, but cached measure still depends on it
+    // with the same Paint invalidation kind.
+    assert!(runtime.needs_render(id).unwrap());
+    runtime.render(id).unwrap();
+    assert_eq!(measures.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn transient_selectors_do_not_accumulate_widget_subscriptions() {
+    struct SelectorLeaf(Signal<usize>);
+    impl Widget for SelectorLeaf {
+        fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(80.0, 40.0))
+        }
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.observe(&self.0.select(|value| value * 2));
+        }
+    }
+    let value = Signal::new(0_usize);
+    let mut runtime = Runtime::new();
+    let id = runtime
+        .add_window(WindowBuilder::new().root(SelectorLeaf(value.clone())))
+        .unwrap();
+    runtime.render(id).unwrap();
+    let root = runtime.widget_graph(id).unwrap().root;
+    for next in 1..100 {
+        value.set(next);
+        assert!(runtime.needs_render(id).unwrap());
+        runtime.render(id).unwrap();
+        assert_eq!(super::reactive::subscription_count(root), 1);
+    }
+}
+
 struct ReactiveTextLeaf {
     text: Signal<String>,
     measures: Arc<AtomicUsize>,

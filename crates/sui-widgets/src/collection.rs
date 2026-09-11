@@ -330,7 +330,9 @@ where
                     }
                     let keys = items.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>();
                     inner.entries.splice(index..index, items);
-                    Self::reindex(&mut inner);
+                    // Appends leave all existing indices intact. Middle inserts
+                    // only shift the suffix; never rebuild the unchanged prefix.
+                    Self::reindex_from(&mut inner, index);
                     CollectionJournalEntry {
                         revision: 0,
                         delta: Some(CollectionDelta::Inserted { index, keys }),
@@ -429,11 +431,16 @@ where
 
     fn reindex(inner: &mut CollectionModelInner<K, T>) {
         inner.index_by_key.clear();
+        Self::reindex_from(inner, 0);
+    }
+
+    fn reindex_from(inner: &mut CollectionModelInner<K, T>, start: usize) {
         inner.index_by_key.extend(
             inner
                 .entries
                 .iter()
                 .enumerate()
+                .skip(start)
                 .map(|(index, (key, _))| (key.clone(), index)),
         );
     }
@@ -2905,6 +2912,62 @@ mod tests {
                 .is_err()
         );
         assert!(model.is_empty());
+    }
+
+    #[test]
+    fn appending_rows_does_not_rehash_the_existing_collection() {
+        use std::hash::{Hash, Hasher};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static HASHES: AtomicUsize = AtomicUsize::new(0);
+        #[derive(Clone, PartialEq, Eq)]
+        struct Key(usize);
+        impl Hash for Key {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                HASHES.fetch_add(1, Ordering::Relaxed);
+                self.0.hash(state);
+            }
+        }
+
+        for count in [1_024, 8_192] {
+            let model = VirtualCollectionModel::from_items(
+                "rows",
+                (0..count).map(|index| (Key(index), index)),
+            )
+            .unwrap();
+            HASHES.store(0, Ordering::Relaxed);
+            model.append(Key(count), count).unwrap();
+            assert!(HASHES.load(Ordering::Relaxed) < 32);
+            assert_eq!(model.item(&Key(0)), Some(0));
+            assert_eq!(model.item(&Key(count - 1)), Some(count - 1));
+            assert_eq!(model.item(&Key(count)), Some(count));
+        }
+    }
+
+    #[test]
+    fn middle_insert_preserves_key_lookups_and_reports_the_inserted_range() {
+        let model = VirtualCollectionModel::from_items("rows", [(1, "one"), (4, "four")]).unwrap();
+        let revision = model.revision();
+        model
+            .apply(CollectionChange::Insert {
+                index: 1,
+                items: vec![(2, "two"), (3, "three")],
+            })
+            .unwrap();
+        assert_eq!(model.keys(), vec![1, 2, 3, 4]);
+        for (key, value) in [(1, "one"), (2, "two"), (3, "three"), (4, "four")] {
+            assert_eq!(model.item(&key), Some(value));
+        }
+        assert_eq!(
+            model.changes_since(revision),
+            CollectionSync::Incremental {
+                revision: model.revision(),
+                changes: vec![CollectionDelta::Inserted {
+                    index: 1,
+                    keys: vec![2, 3]
+                }],
+            }
+        );
     }
 
     #[test]

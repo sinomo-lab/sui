@@ -3423,7 +3423,7 @@ fn append_painted_path(
     }
 
     let mesh = path_cache.cached_fill_mesh(path, state.current_transform, feather_width)?;
-    append_cached_path_mesh(vertices, mesh, color, viewport);
+    append_cached_path_mesh(vertices, &mesh, color, viewport);
     Ok(FillPathRenderMode::SolidOnly)
 }
 
@@ -3490,7 +3490,7 @@ fn append_stroked_path(
 
     let mesh =
         path_cache.cached_stroke_mesh(path, state.current_transform, stroke, feather_width)?;
-    append_cached_path_mesh(vertices, mesh, color, viewport);
+    append_cached_path_mesh(vertices, &mesh, color, viewport);
     Ok(None)
 }
 
@@ -5435,6 +5435,35 @@ mod analytic_path_cache_tests {
 
         assert_eq!(builds.get(), 1);
         assert!(Arc::ptr_eq(&first, &translated));
+    }
+
+    #[test]
+    fn retired_mesh_and_analytic_geometry_are_evicted_without_invalidating_draws() {
+        let path = ScenePath::circle(Point::new(18.0, 18.0), 18.0);
+        let mut cache = PathMeshCache::default();
+        cache.begin_frame(1);
+        let mesh = cache
+            .cached_stroke_mesh(&path, Transform::IDENTITY, StrokeStyle::new(2.0), 1.0)
+            .unwrap();
+        let analytic = cache
+            .cached_analytic_fill(&path, Transform::IDENTITY, 1.0, || {
+                build_analytic_fill_path_data(&build_lyon_path(&path, Transform::IDENTITY), 1.0)
+            })
+            .unwrap();
+        assert_eq!(cache.snapshot().entries, 2);
+        assert_eq!(cache.snapshot().misses, 2);
+        cache.begin_frame(121);
+        assert_eq!(cache.snapshot().entries, 2);
+        cache.begin_frame(122);
+        assert_eq!(cache.snapshot().entries, 0);
+        // Retained draws own their geometry independently of cache ownership.
+        assert!(!mesh.vertices.is_empty());
+        assert!(!analytic.points.is_empty());
+        let rebuilt = cache
+            .cached_stroke_mesh(&path, Transform::IDENTITY, StrokeStyle::new(2.0), 1.0)
+            .unwrap();
+        assert_eq!(rebuilt.vertices.len(), mesh.vertices.len());
+        assert!(!Arc::ptr_eq(&rebuilt, &mesh));
     }
 }
 

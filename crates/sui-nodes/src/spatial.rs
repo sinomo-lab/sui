@@ -563,10 +563,14 @@ fn edge_flow_bounds_from_nodes<N, E>(
             .union(target_bounds)
             .inflate(clearance + 12.0, clearance + 12.0);
     } else if matches!(edge.kind, EdgeKind::Bezier | EdgeKind::SimpleBezier) {
-        let distance = vector_length(target - source);
-        let bend = (distance * 0.5).clamp(36.0, 180.0);
-        let control_1 = source + scale(side_direction(source_side), bend);
-        let control_2 = target + scale(side_direction(target_side), bend);
+        let (control_1, control_2) = crate::geometry::bezier_control_points(
+            source,
+            source_side,
+            target,
+            target_side,
+            edge.kind,
+            edge.path_options,
+        );
         bounds = bounds
             .union(Rect::new(control_1.x, control_1.y, 0.01, 0.01))
             .union(Rect::new(control_2.x, control_2.y, 0.01, 0.01));
@@ -622,16 +626,8 @@ fn side_direction(side: HandlePosition) -> Vector {
     }
 }
 
-fn scale(vector: Vector, factor: f32) -> Vector {
-    Vector::new(vector.x * factor, vector.y * factor)
-}
-
 fn dot(first: Vector, second: Vector) -> f32 {
     (first.x * second.x) + (first.y * second.y)
-}
-
-fn vector_length(vector: Vector) -> f32 {
-    ((vector.x * vector.x) + (vector.y * vector.y)).sqrt()
 }
 
 #[cfg(test)]

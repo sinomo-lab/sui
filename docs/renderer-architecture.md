@@ -118,6 +118,16 @@ There are two important caches today:
 - `TextSystem` caches shaped layouts by text and layout inputs.
 - the renderer caches glyph-related data for repeated draws.
 
+The shaped-layout cache uses LRU eviction with limits of 4,096 entries and
+32 MiB of estimated layout-owned allocations. Shared font data is excluded
+from this estimate. Oversized layouts bypass the cache; persistent handles
+and immutable frames keep their own references.
+
+Each window's CPU path caches have separate limits for tessellated meshes and
+analytic geometry: 8,192 entries and 32 MiB per cache, with eviction after 120
+rendered frames without a lookup. Retained packets remain valid after eviction.
+Path-cache diagnostics include both mesh and analytic entries.
+
 The renderer also owns a grayscale text coverage policy for glyph alpha generation. It defaults to perceptual coverage, and `WindowRenderOptions` can override it for an active window. The resolved policy is applied when sampling atlas glyphs, which makes text-edge tuning a renderer/runtime concern rather than a widget or layout concern.
 
 This split keeps text measurement and shaping out of renderer internals while still letting widgets and the runtime share those utilities and letting the renderer optimize repeated output.

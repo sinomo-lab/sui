@@ -498,6 +498,7 @@ impl RetainedCompositorState {
         let surface_size_changed = self.surface_size != frame.surface_size;
         let feather_changed = self.feather_width_bits != feather_width.to_bits();
         self.frame_index = self.frame_index.wrapping_add(1);
+        self.path_cache.begin_frame(self.frame_index);
         let mut frame_stats = RetainedCompositorFrameStats::default();
         let scene_traversal_started = self.diagnostics_enabled.then(Instant::now);
         let snapshot = self.build_snapshot(&frame.scene)?;

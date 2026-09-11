@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    collections::hash_map::DefaultHasher,
+    collections::hash_map::{DefaultHasher, RandomState},
     hash::{BuildHasher, Hash, Hasher},
 };
 
@@ -200,10 +199,19 @@ impl TextLayoutCacheKey {
     }
 }
 
-#[derive(Debug, Default)]
+// Cache-owned references are bounded independently of layouts pinned by widgets
+// or immutable scene frames. Large one-off documents bypass this cache.
+const MAX_LAYOUT_ENTRIES: usize = 4_096;
+const MAX_LAYOUT_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Debug)]
 pub(crate) struct TextLayoutCache {
-    entries: HashMap<u64, Vec<TextLayoutCacheEntry>>,
+    entries: lru::LruCache<u64, Vec<TextLayoutCacheEntry>>,
+    hash_builder: RandomState,
     entry_count: usize,
+    retained_bytes: usize,
+    max_entries: usize,
+    max_bytes: usize,
     hits: usize,
     misses: usize,
 }
@@ -212,6 +220,67 @@ pub(crate) struct TextLayoutCache {
 struct TextLayoutCacheEntry {
     key: TextLayoutCacheKey,
     layout: TextLayout,
+    retained_bytes: usize,
+}
+
+impl Default for TextLayoutCache {
+    fn default() -> Self {
+        Self::with_limits(MAX_LAYOUT_ENTRIES, MAX_LAYOUT_BYTES)
+    }
+}
+
+fn allocation_bytes<T>(values: &Vec<T>) -> usize {
+    values.capacity().saturating_mul(size_of::<T>())
+}
+
+fn layout_entry_bytes(key: &TextLayoutCacheKey, layout: &TextLayout) -> usize {
+    // Shared font bytes belong to the font registry; count layout-owned arrays
+    // and strings, conservatively charging shared layout data to each entry.
+    let data = &layout.data;
+    size_of::<TextLayoutCacheEntry>()
+        + size_of::<crate::model::TextLayoutData>()
+        + allocation_bytes(&key.paragraphs)
+        + key
+            .paragraphs
+            .iter()
+            .map(|paragraph| {
+                allocation_bytes(&paragraph.spans)
+                    + paragraph
+                        .spans
+                        .iter()
+                        .map(|span| span.text.capacity())
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
+        + data.text.capacity()
+        + allocation_bytes(&data.faces)
+        + allocation_bytes(&data.paragraphs)
+        + allocation_bytes(&data.lines)
+        + data
+            .lines
+            .iter()
+            .map(|line| allocation_bytes(&line.clusters))
+            .sum::<usize>()
+        + allocation_bytes(&data.runs)
+        + allocation_bytes(&data.clusters)
+        + allocation_bytes(&data.glyphs)
+        + allocation_bytes(&layout.document.paragraphs)
+        + layout
+            .document
+            .paragraphs
+            .iter()
+            .map(|paragraph| {
+                allocation_bytes(&paragraph.spans)
+                    + paragraph
+                        .spans
+                        .iter()
+                        .map(|span| {
+                            span.text.capacity()
+                                + span.style.features.len() * size_of::<crate::style::FontFeature>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -237,6 +306,19 @@ impl TextLayoutCacheSnapshot {
 }
 
 impl TextLayoutCache {
+    pub(crate) fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: lru::LruCache::unbounded(),
+            hash_builder: RandomState::new(),
+            entry_count: 0,
+            retained_bytes: 0,
+            max_entries,
+            max_bytes,
+            hits: 0,
+            misses: 0,
+        }
+    }
+
     pub(crate) fn snapshot(&self) -> TextLayoutCacheSnapshot {
         TextLayoutCacheSnapshot {
             entries: self.entry_count,
@@ -252,7 +334,7 @@ impl TextLayoutCache {
         box_size: Option<Size>,
     ) -> Option<TextLayout> {
         let hash = TextLayoutCacheKey::hash_document(
-            self.entries.hasher(),
+            &self.hash_builder,
             document,
             span_face_keys,
             box_size,
@@ -284,19 +366,43 @@ impl TextLayoutCache {
         layout: TextLayout,
     ) {
         let hash = TextLayoutCacheKey::hash_document(
-            self.entries.hasher(),
+            &self.hash_builder,
             document,
             span_face_keys,
             box_size,
         );
         let key = TextLayoutCacheKey::new(document, span_face_keys, box_size);
-        let bucket = self.entries.entry(hash).or_default();
-        if let Some(existing) = bucket.iter_mut().find(|entry| entry.key == key) {
-            existing.layout = layout;
+        let retained_bytes = layout_entry_bytes(&key, &layout);
+        if retained_bytes > self.max_bytes || self.max_entries == 0 {
             return;
         }
-
-        bucket.push(TextLayoutCacheEntry { key, layout });
-        self.entry_count += 1;
+        if let Some(existing) = self
+            .entries
+            .get_mut(&hash)
+            .and_then(|bucket| bucket.iter_mut().find(|entry| entry.key == key))
+        {
+            self.retained_bytes -= existing.retained_bytes;
+            existing.layout = layout;
+            existing.retained_bytes = retained_bytes;
+        } else {
+            let bucket = self.entries.get_or_insert_mut(hash, Vec::new);
+            bucket.push(TextLayoutCacheEntry {
+                key,
+                layout,
+                retained_bytes,
+            });
+            self.entry_count += 1;
+        }
+        self.retained_bytes += retained_bytes;
+        while self.entry_count > self.max_entries || self.retained_bytes > self.max_bytes {
+            let Some((_, bucket)) = self.entries.pop_lru() else {
+                break;
+            };
+            self.entry_count -= bucket.len();
+            self.retained_bytes -= bucket
+                .iter()
+                .map(|entry| entry.retained_bytes)
+                .sum::<usize>();
+        }
     }
 }

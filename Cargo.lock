@@ -4610,6 +4610,7 @@ dependencies = [
  "bytemuck",
  "fontdb",
  "half",
+ "lru",
  "lyon_path",
  "lyon_tessellation",
  "naga",
@@ -4671,6 +4672,7 @@ version = "0.2.1"
 dependencies = [
  "cosmic-text",
  "fontdb",
+ "lru",
  "rustybuzz",
  "sinomo-ui-core",
  "ttf-parser",

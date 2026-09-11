@@ -412,14 +412,18 @@ where
         let selector = Arc::clone(&self.inner);
         let source_observer = Observer::new(move |_change| {
             let next = select(&source.get());
-            let mut previous = last
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if *previous == next {
-                return;
-            }
-            *previous = next;
-            let version = selector.version.fetch_add(1, Ordering::AcqRel) + 1;
+            let version = {
+                let mut previous = last
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if *previous == next {
+                    return;
+                }
+                *previous = next;
+                selector.version.fetch_add(1, Ordering::AcqRel) + 1
+            };
+            // Observers may synchronously write back to the source and reenter
+            // this subscription. Never call application code with `last` locked.
             observer.notify(Change {
                 source_id: selector.id,
                 source_name: Arc::clone(&selector.name),
@@ -474,5 +478,35 @@ mod tests {
         state.update(|state| state.selected = 1);
         assert_eq!(notifications.load(Ordering::Relaxed), 1);
         assert_eq!(selected.get(), 1);
+    }
+
+    #[test]
+    fn selector_observer_can_write_back_to_its_source() {
+        let (done, completed) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let source = Signal::new(0_u32);
+            let selected = source.select(|value| *value);
+            let writer = source.clone();
+            let observed = Arc::new(Mutex::new(Vec::new()));
+            let values = Arc::clone(&observed);
+            let _subscription = selected.subscribe(Observer::new(move |_| {
+                let value = writer.get();
+                values.lock().unwrap().push(value);
+                if value == 1 {
+                    writer.set(2);
+                }
+            }));
+            source.set(1);
+            // An equal write must still be deduplicated after reentrant delivery.
+            assert!(!source.set(2));
+            done.send((source.get(), observed.lock().unwrap().clone()))
+                .unwrap();
+        });
+        let (value, observed) = completed
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("selector source write-back deadlocked");
+        worker.join().unwrap();
+        assert_eq!(value, 2);
+        assert_eq!(observed, vec![1, 2]);
     }
 }

@@ -11,6 +11,13 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Fixed selector observer write-back deadlocks and removed obsolete reactive
+  dependencies after completed widget phases while preserving cached phases.
+- Bounded text-layout and renderer path caches, preserving layouts and geometry
+  still owned by live widgets or frames, and avoided full reindexing on collection
+  appends.
+- Matched node-graph spatial bounds to configured Bézier curvature so visible
+  curves remain available for hit testing and culling.
 - Added the optional `sinomo-ui-webview` crate for WRY-backed native child
   webviews with retained layout, lifecycle synchronization, thread-safe
   controls, typed page/title/IPC events, and application-owned browser policy.

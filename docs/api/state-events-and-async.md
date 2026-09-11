@@ -91,6 +91,13 @@ fn paint(&self, ctx: &mut PaintCtx) {
 always accepts an explicit invalidation kind because event handling alone does
 not reveal which cached output depends on the value.
 
+Dependencies are reconciled after each completed widget phase. If a conditional
+reader switches from one observable to another, the old source stops scheduling
+that phase. Dependencies from cached or skipped phases remain active, including
+sources shared by multiple phases. Read every dependency used by the current
+phase even when the widget reuses its own internal cached work. Observations
+registered explicitly from event or command handlers remain until widget teardown.
+
 Subscriptions belong to the retained `WidgetPod` identity and are released
 when that pod is dropped.
 

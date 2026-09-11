@@ -3501,6 +3501,16 @@ fn edge_geometry<N, E>(
         edge.target_handle.as_ref(),
         HandleKind::Target,
     );
+    // Bend limits are graph-space lengths, just like the retained edge world.
+    // Project the same controls for direct drawing and precise hit testing.
+    let (control_1, control_2) = crate::geometry::bezier_control_points(
+        source,
+        source_side,
+        target,
+        target_side,
+        edge.kind,
+        edge.path_options,
+    );
     Some(make_edge_geometry_with_obstacles(
         viewport.flow_to_screen(bounds, source),
         source_side,
@@ -3511,6 +3521,10 @@ fn edge_geometry<N, E>(
         Some((
             viewport.flow_rect_to_screen(bounds, source_bounds),
             viewport.flow_rect_to_screen(bounds, target_bounds),
+        )),
+        Some((
+            viewport.flow_to_screen(bounds, control_1),
+            viewport.flow_to_screen(bounds, control_2),
         )),
     ))
 }
@@ -3544,6 +3558,7 @@ fn edge_geometry_from_lookup<N, E>(
         edge.kind,
         edge.path_options,
         Some((source_bounds, target_bounds)),
+        None,
     ))
 }
 
@@ -3563,6 +3578,7 @@ fn make_edge_geometry(
         kind,
         options,
         None,
+        None,
     )
 }
 
@@ -3575,18 +3591,18 @@ fn make_edge_geometry_with_obstacles(
     kind: EdgeKind,
     options: EdgePathOptions,
     obstacles: Option<(Rect, Rect)>,
+    bezier_controls: Option<(Point, Point)>,
 ) -> EdgeGeometry {
-    let source_direction = side_direction(source_side);
-    let target_direction = side_direction(target_side);
-    let distance = vector_length(target - source);
-    let curvature = if kind == EdgeKind::SimpleBezier {
-        options.curvature * 0.6
-    } else {
-        options.curvature
-    };
-    let bend = (distance * curvature.clamp(0.0, 1.5)).clamp(24.0, 240.0);
-    let control_1 = source + scale_vector(source_direction, bend);
-    let control_2 = target + scale_vector(target_direction, bend);
+    let (control_1, control_2) = bezier_controls.unwrap_or_else(|| {
+        crate::geometry::bezier_control_points(
+            source,
+            source_side,
+            target,
+            target_side,
+            kind,
+            options,
+        )
+    });
     let mut builder = Path::builder();
     builder.move_to(source);
     let (midpoint, source_tangent, target_tangent, polyline) = match kind {
@@ -5189,6 +5205,82 @@ mod tests {
     }
 
     #[test]
+    fn spatial_index_includes_configured_bezier_curves() {
+        for kind in [EdgeKind::Bezier, EdgeKind::SimpleBezier] {
+            for curvature in [0.0, 0.5, 1.5] {
+                let mut source =
+                    Node::new("source", Point::new(100.0, 100.0), ()).size(Size::new(100.0, 80.0));
+                source.handles = vec![Handle::source("out", HandlePosition::Right)];
+                let mut target =
+                    Node::new("target", Point::new(100.0, 200.0), ()).size(Size::new(100.0, 80.0));
+                target.handles = vec![Handle::target("in", HandlePosition::Right)];
+                let edge = Edge::new("edge", "source", "target", ())
+                    .handles("out", "in")
+                    .kind(kind)
+                    .path_options(EdgePathOptions {
+                        curvature,
+                        ..Default::default()
+                    });
+                let snapshot =
+                    GraphSnapshot::new(GraphModel::new(vec![source, target], vec![edge]).unwrap());
+                let bounds = Rect::new(0.0, 0.0, 600.0, 400.0);
+                let geometry = edge_geometry(
+                    &snapshot.graph,
+                    &snapshot.graph.edges[0],
+                    snapshot.viewport,
+                    bounds,
+                )
+                .unwrap();
+                let indexed = snapshot.spatial.edge_bounds(&EdgeId::from("edge")).unwrap();
+                for step in 0..=24 {
+                    let point = cubic_point(
+                        geometry.source,
+                        geometry.control_1,
+                        geometry.control_2,
+                        geometry.target,
+                        step as f32 / 24.0,
+                    );
+                    assert!(
+                        indexed.contains(point),
+                        "{kind:?}, curvature={curvature}, point={point:?}"
+                    );
+                    assert_eq!(
+                        snapshot.spatial.query_edge_indices(Rect::new(
+                            point.x - 1.0,
+                            point.y - 1.0,
+                            2.0,
+                            2.0
+                        )),
+                        vec![0]
+                    );
+                }
+                assert_eq!(
+                    node_graph_hit_test(&snapshot, bounds, geometry.midpoint),
+                    NodeGraphHit::Edge(EdgeId::from("edge"))
+                );
+                for zoom in [0.1, 0.5, 1.0, 2.0, 4.0] {
+                    let mut zoomed = snapshot.clone();
+                    zoomed.viewport = Viewport::new(12.0, 8.0, zoom);
+                    let midpoint = zoomed.viewport.flow_to_screen(bounds, geometry.midpoint);
+                    let drawn = edge_geometry(
+                        &zoomed.graph,
+                        &zoomed.graph.edges[0],
+                        zoomed.viewport,
+                        bounds,
+                    )
+                    .unwrap();
+                    assert!((drawn.midpoint.x - midpoint.x).abs() < 0.001);
+                    assert!((drawn.midpoint.y - midpoint.y).abs() < 0.001);
+                    assert_eq!(
+                        hit_edge(&zoomed, bounds, midpoint).map(|edge| &edge.id),
+                        Some(&EdgeId::from("edge"))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn smooth_step_uses_rounded_path_corners() {
         let geometry = make_edge_geometry(
             Point::new(20.0, 40.0),
@@ -5229,6 +5321,7 @@ mod tests {
                 ..EdgePathOptions::default()
             },
             Some((source_bounds, target_bounds)),
+            None,
         );
         let polyline = geometry.polyline.expect("smooth step polyline");
         let points = polyline.as_slice();
@@ -5271,6 +5364,7 @@ mod tests {
                 EdgeKind::SmoothStep,
                 EdgePathOptions::default(),
                 Some((source_bounds, target_bounds)),
+                None,
             );
             let points = geometry
                 .polyline

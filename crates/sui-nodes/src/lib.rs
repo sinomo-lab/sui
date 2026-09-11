@@ -8,6 +8,7 @@
 //! [`NodeGraphSurface`] with an application-owned event model.
 
 mod controls;
+mod geometry;
 mod minimap;
 mod model;
 mod node_widget;

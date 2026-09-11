@@ -8,7 +8,7 @@ mod scene;
 mod text;
 
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     sync::{

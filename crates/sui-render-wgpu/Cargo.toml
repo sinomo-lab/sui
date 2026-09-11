@@ -19,6 +19,7 @@ name = "sui_render_wgpu"
 bytemuck = { workspace = true }
 half = "2.7.1"
 fontdb = { workspace = true }
+lru = { workspace = true }
 lyon_path = { workspace = true }
 lyon_tessellation = { workspace = true }
 pollster = { workspace = true }
