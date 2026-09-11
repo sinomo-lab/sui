@@ -4,6 +4,9 @@
     clippy::wrong_self_convention
 )]
 
+#[cfg(test)]
+mod compatibility_tests;
+
 use std::{
     collections::HashMap,
     fs,

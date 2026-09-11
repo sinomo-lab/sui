@@ -1,4 +1,61 @@
-use super::*;
+use crate::geometry::hash_normalized_analytic_path;
+use crate::geometry::hash_path;
+use crate::text_policy::StemDarkening;
+use crate::text_policy::TextHinting;
+use crate::text_policy::TextRenderMode;
+use std::hash::Hash;
+use sui_core::Path as ScenePath;
+use sui_core::Size;
+use sui_core::Transform;
+use sui_core::Vector;
+use sui_scene::StrokeStyle;
+pub use sui_scene::TextSubpixelOrder;
+use sui_text::ResolvedTextFace;
+use sui_text::TextLayoutCacheSnapshot;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GlyphCacheSnapshot {
+    pub entries: usize,
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl GlyphCacheSnapshot {
+    pub const fn requests(self) -> usize {
+        self.hits + self.misses
+    }
+
+    pub fn hit_rate(self) -> f64 {
+        let requests = self.requests();
+        if requests == 0 {
+            0.0
+        } else {
+            self.hits as f64 / requests as f64
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RendererTextCacheSnapshot {
+    pub layout: TextLayoutCacheSnapshot,
+    pub glyph: GlyphCacheSnapshot,
+    pub path: GlyphCacheSnapshot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct TextFrameStats {
+    pub(crate) glyph_instances: usize,
+    pub(crate) glyph_upload_bytes: u64,
+    pub(crate) atlas_miss_count: usize,
+    pub(crate) atlas_miss_time_us: u64,
+}
+
+pub(crate) const TEXT_ATLAS_WIDTH: usize = 2048;
+pub(crate) const TEXT_ATLAS_HEIGHT: usize = 2048;
+pub(crate) const TEXT_ATLAS_PADDING: usize = 2;
+/// Maximum number of atlas pages (texture-array layers) before whole-page LRU eviction kicks in.
+/// Each page is TEXT_ATLAS_WIDTH x TEXT_ATLAS_HEIGHT x 4 bytes (~16 MB); 4 pages -> ~64 MB.
+pub(crate) const TEXT_ATLAS_MAX_PAGES: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GlyphFaceCacheKey {
@@ -167,12 +224,6 @@ pub(crate) fn glyph_scale_from_bucket(bucket: u32) -> f32 {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct CachedGlyphVertex {
-    pub(crate) position: Point,
-    pub(crate) coverage: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub(crate) struct CachedGlyphAtlas {
     pub(crate) scale: f32,
     pub(crate) offset: Vector,
@@ -185,31 +236,12 @@ pub(crate) struct CachedGlyphAtlas {
     pub(crate) page_index: usize,
 }
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct CachedGlyphMesh {
-    pub(crate) vertices: Vec<CachedGlyphVertex>,
-    pub(crate) indices: Vec<u32>,
-}
-
-impl CachedGlyphMesh {
-    pub(crate) fn push_vertex(&mut self, position: Point, coverage: f32) -> u32 {
-        let index = self.vertices.len() as u32;
-        self.vertices.push(CachedGlyphVertex { position, coverage });
-        index
-    }
-
-    #[cfg(test)]
-    pub(crate) fn add_triangle(&mut self, a: u32, b: u32, c: u32) {
-        self.indices.extend_from_slice(&[a, b, c]);
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AtlasRectU {
-    min_x: usize,
-    min_y: usize,
-    max_x: usize,
-    max_y: usize,
+pub(crate) struct AtlasRectU {
+    pub(crate) min_x: usize,
+    pub(crate) min_y: usize,
+    pub(crate) max_x: usize,
+    pub(crate) max_y: usize,
 }
 
 impl AtlasRectU {
@@ -227,7 +259,7 @@ impl AtlasRectU {
         max_y: usize::MAX,
     };
 
-    fn include_rect(&mut self, x: usize, y: usize, width: usize, height: usize) {
+    pub(crate) fn include_rect(&mut self, x: usize, y: usize, width: usize, height: usize) {
         self.min_x = self.min_x.min(x);
         self.min_y = self.min_y.min(y);
         self.max_x = self.max_x.max(x + width);
@@ -264,7 +296,7 @@ pub(crate) struct TextAtlas {
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) pixels: Vec<u8>,
-    dirty: AtlasRectU,
+    pub(crate) dirty: AtlasRectU,
     pub(crate) full_upload: bool,
     pub(crate) cursor: (usize, usize),
     pub(crate) row_height: usize,
@@ -307,7 +339,7 @@ impl TextAtlas {
         (self.width as u32, self.height as u32)
     }
 
-    fn allocate(
+    pub(crate) fn allocate(
         &mut self,
         width: usize,
         height: usize,
@@ -335,7 +367,7 @@ impl TextAtlas {
         Ok(placement)
     }
 
-    fn write_rgba(
+    pub(crate) fn write_rgba(
         &mut self,
         placement: TextAtlasPlacement,
         width: usize,
@@ -409,7 +441,7 @@ pub(crate) struct TextAtlasInsertion {
 }
 
 impl TextAtlasInsertion {
-    fn placed(page_index: usize, placement: TextAtlasPlacement) -> Self {
+    pub(crate) fn placed(page_index: usize, placement: TextAtlasPlacement) -> Self {
         Self {
             page_index,
             placement,
@@ -417,7 +449,7 @@ impl TextAtlasInsertion {
         }
     }
 
-    fn evicted(page_index: usize, placement: TextAtlasPlacement) -> Self {
+    pub(crate) fn evicted(page_index: usize, placement: TextAtlasPlacement) -> Self {
         Self {
             page_index,
             placement,
@@ -431,10 +463,10 @@ impl TextAtlasInsertion {
 /// layer of the GPU texture array.
 #[derive(Debug, Clone)]
 pub(crate) struct TextAtlasPages {
-    pages: Vec<TextAtlas>,
-    page_width: usize,
-    page_height: usize,
-    max_pages: usize,
+    pub(crate) pages: Vec<TextAtlas>,
+    pub(crate) page_width: usize,
+    pub(crate) page_height: usize,
+    pub(crate) max_pages: usize,
 }
 
 impl TextAtlasPages {
@@ -537,7 +569,7 @@ impl TextAtlasPages {
 }
 
 #[cfg(test)]
-mod page_tests {
+pub(crate) mod page_tests {
     use super::*;
 
     fn opaque(width: usize, height: usize) -> Vec<u8> {
@@ -622,7 +654,7 @@ mod page_tests {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum PathCacheKind {
+pub(crate) enum PathCacheKind {
     Fill,
     Stroke {
         line_width_bits: u32,
@@ -632,21 +664,21 @@ enum PathCacheKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct PathCacheKey {
-    signature: u64,
-    kind: PathCacheKind,
-    feather_width_bits: u32,
+pub(crate) struct PathCacheKey {
+    pub(crate) signature: u64,
+    pub(crate) kind: PathCacheKind,
+    pub(crate) feather_width_bits: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct AnalyticPathCacheKey {
-    signature: u64,
-    kind: PathCacheKind,
-    feather_width_bits: u32,
+pub(crate) struct AnalyticPathCacheKey {
+    pub(crate) signature: u64,
+    pub(crate) kind: PathCacheKind,
+    pub(crate) feather_width_bits: u32,
 }
 
 impl AnalyticPathCacheKey {
-    fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
+    pub(crate) fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
         Self {
             signature: hash_normalized_analytic_path(path, transform),
             kind: PathCacheKind::Fill,
@@ -654,7 +686,7 @@ impl AnalyticPathCacheKey {
         }
     }
 
-    fn stroke(
+    pub(crate) fn stroke(
         path: &ScenePath,
         transform: Transform,
         stroke: StrokeStyle,
@@ -673,7 +705,7 @@ impl AnalyticPathCacheKey {
 }
 
 impl PathCacheKey {
-    fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
+    pub(crate) fn fill(path: &ScenePath, transform: Transform, feather_width: f32) -> Self {
         Self {
             signature: hash_path(path, transform),
             kind: PathCacheKind::Fill,
@@ -681,7 +713,7 @@ impl PathCacheKey {
         }
     }
 
-    fn stroke(
+    pub(crate) fn stroke(
         path: &ScenePath,
         transform: Transform,
         stroke: StrokeStyle,
@@ -696,276 +728,5 @@ impl PathCacheKey {
             },
             feather_width_bits: feather_width.to_bits(),
         }
-    }
-}
-
-const MAX_PATH_CACHE_ENTRIES: usize = 8_192;
-const MAX_PATH_CACHE_BYTES: usize = 32 * 1024 * 1024;
-const PATH_CACHE_IDLE_FRAMES: u64 = 120;
-
-#[derive(Debug)]
-struct CachedGeometry<V> {
-    value: Arc<V>,
-    bytes: usize,
-    last_used_frame: u64,
-}
-
-#[derive(Debug)]
-struct GeometryCache<K: Hash + Eq, V> {
-    entries: lru::LruCache<K, CachedGeometry<V>>,
-    bytes: usize,
-    max_entries: usize,
-    max_bytes: usize,
-    frame: u64,
-}
-
-impl<K: Hash + Eq, V> GeometryCache<K, V> {
-    fn new(max_entries: usize, max_bytes: usize) -> Self {
-        Self {
-            entries: lru::LruCache::unbounded(),
-            bytes: 0,
-            max_entries,
-            max_bytes,
-            frame: 0,
-        }
-    }
-
-    fn get(&mut self, key: &K) -> Option<Arc<V>> {
-        self.entries.get_mut(key).map(|entry| {
-            entry.last_used_frame = self.frame;
-            Arc::clone(&entry.value)
-        })
-    }
-
-    fn insert(&mut self, key: K, value: Arc<V>, bytes: usize) {
-        // A caller may use oversized geometry without making the cache retain
-        // it or evicting the entire reusable working set for a one-off draw.
-        if bytes > self.max_bytes || self.max_entries == 0 {
-            return;
-        }
-        if let Some(previous) = self.entries.put(
-            key,
-            CachedGeometry {
-                value,
-                bytes,
-                last_used_frame: self.frame,
-            },
-        ) {
-            self.bytes -= previous.bytes;
-        }
-        self.bytes += bytes;
-        while self.entries.len() > self.max_entries || self.bytes > self.max_bytes {
-            self.evict_oldest();
-        }
-    }
-
-    fn begin_frame(&mut self, frame: u64) {
-        self.frame = frame;
-        while self.entries.peek_lru().is_some_and(|(_, entry)| {
-            frame.saturating_sub(entry.last_used_frame) > PATH_CACHE_IDLE_FRAMES
-        }) {
-            self.evict_oldest();
-        }
-    }
-
-    fn evict_oldest(&mut self) {
-        if let Some((_, entry)) = self.entries.pop_lru() {
-            self.bytes -= entry.bytes;
-        }
-    }
-}
-
-fn geometry_allocation_bytes<T>(values: &Vec<T>) -> usize {
-    values.capacity() * size_of::<T>()
-}
-
-#[derive(Debug)]
-pub(crate) struct PathMeshCache {
-    meshes: GeometryCache<PathCacheKey, CachedGlyphMesh>,
-    analytic_paths: GeometryCache<AnalyticPathCacheKey, AnalyticPathCpuData>,
-    pub(crate) diagnostics_enabled: bool,
-    pub(crate) hits: usize,
-    pub(crate) misses: usize,
-    analytic_hits: usize,
-    analytic_misses: usize,
-}
-
-impl Default for PathMeshCache {
-    fn default() -> Self {
-        Self {
-            meshes: GeometryCache::new(MAX_PATH_CACHE_ENTRIES, MAX_PATH_CACHE_BYTES),
-            analytic_paths: GeometryCache::new(MAX_PATH_CACHE_ENTRIES, MAX_PATH_CACHE_BYTES),
-            diagnostics_enabled: true,
-            hits: 0,
-            misses: 0,
-            analytic_hits: 0,
-            analytic_misses: 0,
-        }
-    }
-}
-
-impl PathMeshCache {
-    pub(crate) fn begin_frame(&mut self, frame: u64) {
-        self.meshes.begin_frame(frame);
-        self.analytic_paths.begin_frame(frame);
-    }
-
-    pub(crate) fn set_diagnostics_enabled(&mut self, enabled: bool) {
-        self.diagnostics_enabled = enabled;
-    }
-
-    pub(crate) fn cached_fill_mesh(
-        &mut self,
-        path: &ScenePath,
-        transform: Transform,
-        feather_width: f32,
-    ) -> Result<Arc<CachedGlyphMesh>> {
-        let key = PathCacheKey::fill(path, transform, feather_width);
-        if let Some(mesh) = self.meshes.get(&key) {
-            if self.diagnostics_enabled {
-                self.hits += 1;
-            }
-            return Ok(mesh);
-        }
-        if self.diagnostics_enabled {
-            self.misses += 1;
-        }
-        let lyon_path = build_lyon_path(path, transform);
-        let mesh = Arc::new(feathering::build_local_fill_mesh(
-            &lyon_path,
-            feather_width,
-        )?);
-        self.cache_mesh(key, Arc::clone(&mesh));
-        Ok(mesh)
-    }
-
-    pub(crate) fn cached_analytic_fill(
-        &mut self,
-        path: &ScenePath,
-        transform: Transform,
-        feather_width: f32,
-        build: impl FnOnce() -> Option<AnalyticPathCpuData>,
-    ) -> Option<Arc<AnalyticPathCpuData>> {
-        let key = AnalyticPathCacheKey::fill(path, transform, feather_width);
-        self.cached_analytic(key, build)
-    }
-
-    pub(crate) fn cached_analytic_stroke(
-        &mut self,
-        path: &ScenePath,
-        transform: Transform,
-        stroke: StrokeStyle,
-        feather_width: f32,
-        build: impl FnOnce() -> Option<AnalyticPathCpuData>,
-    ) -> Option<Arc<AnalyticPathCpuData>> {
-        let key = AnalyticPathCacheKey::stroke(path, transform, stroke, feather_width);
-        self.cached_analytic(key, build)
-    }
-
-    pub(crate) fn cached_stroke_mesh(
-        &mut self,
-        path: &ScenePath,
-        transform: Transform,
-        stroke: StrokeStyle,
-        feather_width: f32,
-    ) -> Result<Arc<CachedGlyphMesh>> {
-        let key = PathCacheKey::stroke(path, transform, stroke, feather_width);
-        if let Some(mesh) = self.meshes.get(&key) {
-            if self.diagnostics_enabled {
-                self.hits += 1;
-            }
-            return Ok(mesh);
-        }
-        if self.diagnostics_enabled {
-            self.misses += 1;
-        }
-        let lyon_path = build_lyon_path(path, transform);
-        let mesh = Arc::new(feathering::build_local_stroke_mesh(
-            &lyon_path,
-            stroke,
-            feather_width,
-        )?);
-        self.cache_mesh(key, Arc::clone(&mesh));
-        Ok(mesh)
-    }
-
-    fn cache_mesh(&mut self, key: PathCacheKey, mesh: Arc<CachedGlyphMesh>) {
-        let bytes = size_of::<CachedGlyphMesh>()
-            + geometry_allocation_bytes(&mesh.vertices)
-            + geometry_allocation_bytes(&mesh.indices);
-        self.meshes.insert(key, mesh, bytes);
-    }
-
-    fn cached_analytic(
-        &mut self,
-        key: AnalyticPathCacheKey,
-        build: impl FnOnce() -> Option<AnalyticPathCpuData>,
-    ) -> Option<Arc<AnalyticPathCpuData>> {
-        if let Some(data) = self.analytic_paths.get(&key) {
-            if self.diagnostics_enabled {
-                self.analytic_hits += 1;
-            }
-            return Some(data);
-        }
-        let data = Arc::new(build()?);
-        if self.diagnostics_enabled {
-            self.analytic_misses += 1;
-        }
-        let bytes = size_of::<AnalyticPathCpuData>()
-            + geometry_allocation_bytes(&data.contours)
-            + geometry_allocation_bytes(&data.points);
-        self.analytic_paths.insert(key, Arc::clone(&data), bytes);
-        Some(data)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stats(&self) -> (usize, usize, usize) {
-        (self.meshes.entries.len(), self.hits, self.misses)
-    }
-
-    pub(crate) fn snapshot(&self) -> GlyphCacheSnapshot {
-        GlyphCacheSnapshot {
-            entries: self.meshes.entries.len() + self.analytic_paths.entries.len(),
-            hits: self.hits + self.analytic_hits,
-            misses: self.misses + self.analytic_misses,
-        }
-    }
-}
-
-#[cfg(test)]
-mod geometry_cache_tests {
-    use super::*;
-
-    #[test]
-    fn cache_budgets_evict_lru_geometry_and_bypass_oversized_draws() {
-        let mut cache = GeometryCache::new(2, 12);
-        cache.insert(1, Arc::new(vec![1_u8; 4]), 4);
-        cache.insert(2, Arc::new(vec![2_u8; 4]), 4);
-        let retained = cache.get(&1).unwrap();
-        cache.insert(3, Arc::new(vec![3_u8; 4]), 4);
-        assert!(cache.get(&2).is_none());
-        assert!(cache.get(&1).is_some());
-        cache.insert(4, Arc::new(vec![4_u8; 13]), 13);
-        assert!(cache.get(&4).is_none());
-        assert_eq!(cache.entries.len(), 2);
-        // Fit the entry count but exceed the byte budget.
-        cache.insert(5, Arc::new(vec![5_u8; 9]), 9);
-        assert_eq!(cache.entries.len(), 1);
-        assert_eq!(cache.bytes, 9);
-        assert_eq!(*retained, vec![1; 4]);
-    }
-
-    #[test]
-    fn reused_geometry_survives_idle_eviction() {
-        let mut cache = GeometryCache::new(2, 16);
-        cache.begin_frame(1);
-        cache.insert(1, Arc::new(1_u32), 4);
-        cache.insert(2, Arc::new(2_u32), 4);
-        cache.begin_frame(120);
-        cache.get(&1).unwrap();
-        cache.begin_frame(122);
-        assert!(cache.get(&1).is_some());
-        assert!(cache.get(&2).is_none());
-        assert_eq!(cache.bytes, 4);
     }
 }

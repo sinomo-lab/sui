@@ -7,10 +7,78 @@ use sui_core::{
 use sui_runtime::EventCtx;
 
 use crate::{
+    Blink,
     editor::{EditorCommand, EditorCommandResult, EditorState},
     selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
     text_command::TextCommand,
 };
+
+#[derive(Default)]
+pub(crate) struct TextChangeCallbacks {
+    pub(crate) value: Option<Box<dyn FnMut(String)>>,
+    pub(crate) with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
+}
+
+pub(crate) struct CaretBlink {
+    blink: Blink,
+    timer: Option<sui_core::TimerToken>,
+    pub(crate) visible: bool,
+}
+
+impl CaretBlink {
+    pub(crate) fn new(period: f64) -> Self {
+        Self {
+            blink: Blink::new(period),
+            timer: None,
+            visible: true,
+        }
+    }
+
+    pub(crate) fn matches(&self, token: sui_core::TimerToken) -> bool {
+        self.timer == Some(token)
+    }
+
+    fn arm(&mut self, ctx: &mut EventCtx, focused: bool) {
+        if let Some(token) = self.timer.take() {
+            ctx.cancel_timer(token);
+        }
+        if focused {
+            let fraction = if self.visible {
+                self.blink.duty_cycle as f64
+            } else {
+                1.0 - self.blink.duty_cycle as f64
+            };
+            self.timer =
+                Some(ctx.schedule_timer_after((self.blink.period * fraction).max(f64::EPSILON)));
+        }
+    }
+
+    pub(crate) fn stop(&mut self, ctx: &mut EventCtx) {
+        if let Some(token) = self.timer.take() {
+            ctx.cancel_timer(token);
+        }
+        self.visible = false;
+    }
+
+    pub(crate) fn reset(&mut self, ctx: &mut EventCtx, focused: bool, read_only: bool) {
+        if read_only {
+            self.stop(ctx);
+        } else {
+            self.visible = focused;
+            self.arm(ctx, focused);
+        }
+    }
+
+    pub(crate) fn tick(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.timer = None;
+        if focused {
+            self.visible = !self.visible;
+            self.arm(ctx, focused);
+            ctx.request_paint();
+            ctx.set_handled();
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditableTextLineMode {
@@ -38,6 +106,38 @@ pub(crate) struct EditableTextController {
 }
 
 impl EditableTextController {
+    pub(crate) fn apply_field_result(
+        &mut self,
+        ctx: &mut EventCtx,
+        mut result: EditorCommandResult,
+        callbacks: &mut TextChangeCallbacks,
+        caret: &mut CaretBlink,
+        focused: bool,
+        read_only: bool,
+    ) {
+        self.apply_result_common(ctx, &mut result);
+        if result.text_changed {
+            let value = self.editor.document().text().to_string();
+            if let Some(callback) = &mut callbacks.value {
+                callback(value.clone());
+            }
+            if let Some(callback) = &mut callbacks.with_ctx {
+                callback(ctx, value);
+            }
+        }
+        if result.layout_changed() {
+            ctx.request_measure();
+            ctx.request_paint();
+        } else if result.overlay_changed() {
+            ctx.request_paint();
+        }
+        if result.text_changed || result.selection_changed || result.composition_changed {
+            ctx.request_semantics();
+        }
+        if result.handled && focused {
+            caret.reset(ctx, focused, read_only);
+        }
+    }
     pub(crate) fn new() -> Self {
         Self {
             editor: EditorState::new(),

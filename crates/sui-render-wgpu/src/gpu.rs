@@ -1,4 +1,21 @@
-use super::*;
+use crate::resources::STENCIL_FORMAT;
+use crate::shaders::ANALYTIC_PATH_SHADER_SOURCE;
+use crate::shaders::GRADIENT_RECT_SHADER_SOURCE;
+use crate::shaders::OUTPUT_TRANSFORM_SHADER_SOURCE;
+use crate::shaders::ROUNDED_RECT_SHADER_SOURCE;
+use crate::shaders::SHADER_SOURCE;
+use crate::shaders::TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE;
+use crate::shaders::TEXT_ATLAS_SHADER_SOURCE;
+use crate::shaders::TEXTURED_SHADER_SOURCE;
+use crate::shaders::WIDGET_SHADER_SOURCE;
+use bytemuck::Pod;
+use bytemuck::Zeroable;
+use lyon_tessellation::FillVertex;
+use lyon_tessellation::FillVertexConstructor;
+use lyon_tessellation::StrokeVertex;
+use lyon_tessellation::StrokeVertexConstructor;
+use std::collections::HashMap;
+use std::hash::Hash;
 
 pub(crate) fn grow_analytic_path_capacity(current: usize, required: usize) -> usize {
     if required == 0 {
@@ -137,7 +154,7 @@ impl SharedRenderer {
         self.pipeline_for(format, PipelineKind::OutputTransform)
     }
 
-    fn pipeline_for(
+    pub(crate) fn pipeline_for(
         &mut self,
         format: wgpu::TextureFormat,
         kind: PipelineKind,
@@ -476,74 +493,6 @@ pub(crate) enum PipelineKind {
     GradientRectClipped,
     ClipMask,
     OutputTransform,
-}
-
-pub(crate) struct CachedImageTexture {
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) _view: wgpu::TextureView,
-    pub(crate) linear_bind_group: wgpu::BindGroup,
-    pub(crate) nearest_bind_group: wgpu::BindGroup,
-    pub(crate) image: sui_scene::RegisteredImage,
-    pub(crate) last_used_frame: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ImageTextureCacheKey {
-    pub(crate) handle: sui_core::ImageHandle,
-    pub(crate) raster_size: Option<ImageRasterSize>,
-    pub(crate) mipmapped: bool,
-}
-
-pub(crate) struct CachedExternalTextureBindGroup {
-    pub(crate) binding_revision: u64,
-    pub(crate) linear_bind_group: wgpu::BindGroup,
-    pub(crate) nearest_bind_group: wgpu::BindGroup,
-}
-
-pub(crate) struct CachedTextAtlasTexture {
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) _view: wgpu::TextureView,
-    pub(crate) bind_group: wgpu::BindGroup,
-    pub(crate) size: (u32, u32),
-    /// Number of array layers currently allocated (grows on demand up to the page budget).
-    pub(crate) layers: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct TextAtlasBindGroupStats {
-    pub(crate) total_time_us: u64,
-    pub(crate) upload_copy_time_us: u64,
-    pub(crate) upload_write_time_us: u64,
-    pub(crate) upload_bytes: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct AnalyticPathBindGroupStats {
-    pub(crate) total_time_us: u64,
-    pub(crate) upload_bytes: u64,
-    pub(crate) miss_count: usize,
-}
-
-pub(crate) struct CachedAnalyticPathGpu {
-    pub(crate) data: Arc<AnalyticPathCpuData>,
-    pub(crate) slot: u32,
-    pub(crate) last_used_frame: usize,
-}
-
-pub(crate) struct SurfaceState {
-    pub(crate) window: Arc<Window>,
-    pub(crate) surface: wgpu::Surface<'static>,
-    pub(crate) config: wgpu::SurfaceConfiguration,
-    pub(crate) display_capabilities: DisplayCapabilities,
-    pub(crate) color_management: ColorManagementMode,
-    pub(crate) output_strategy: OutputStrategy,
-    pub(crate) available_surface_formats: Vec<wgpu::TextureFormat>,
-}
-
-pub(crate) struct OffscreenTarget {
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) format: wgpu::TextureFormat,
-    pub(crate) size: (u32, u32),
 }
 
 #[repr(C)]

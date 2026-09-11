@@ -5,6 +5,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
+mod api;
+mod source;
+#[cfg(test)]
+use api::ApiType;
+use api::{ApiDecl, ApiFunction, ApiMember};
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("error: {error}");
@@ -86,7 +92,7 @@ fn bindings_generate(check: bool) -> Result<(), String> {
     update_generated_file(&ts_path, &next_ts, check)?;
 
     let js_api_path = root.join("crates/sui-js/api.js");
-    let js_api = render_generated_js_api(items)?;
+    let js_api = render_generated_js_api(items);
     update_generated_file(&js_api_path, &js_api, check)?;
 
     let python_stub_template_path = root.join("bindings/templates/python_api.pyi.in");
@@ -97,7 +103,7 @@ fn bindings_generate(check: bool) -> Result<(), String> {
         )
     })?;
     let python_stub_path = root.join("crates/sui-python/sui.pyi");
-    let python_stub = render_generated_python_stub(&python_stub_template, items)?;
+    let python_stub = render_generated_python_stub(&python_stub_template, items);
     update_generated_file(&python_stub_path, &python_stub, check)?;
 
     if check {
@@ -125,22 +131,10 @@ fn bindings_coverage() -> Result<(), String> {
     let manifest = parse_manifest(&manifest)?;
 
     let sources = Sources {
-        core: read_source(&root, "crates/sui-bindings-core/src/lib.rs")?,
-        python: read_sources(
-            &root,
-            &[
-                "crates/sui-python/src/lib.rs",
-                "crates/sui-python/src/generated_widgets.rs",
-            ],
-        )?,
-        js: read_sources(
-            &root,
-            &[
-                "crates/sui-js/src/lib.rs",
-                "crates/sui-js/src/generated_widgets.rs",
-            ],
-        )?,
-        ts: read_source(&root, "crates/sui-js/index.d.ts")?,
+        core: source::RustSource::read(&root.join("crates/sui-bindings-core/src/lib.rs"))?,
+        python: source::RustSource::read(&root.join("crates/sui-python/src/lib.rs"))?,
+        js: source::RustSource::read(&root.join("crates/sui-js/src/lib.rs"))?,
+        ts: source::typescript_exports(&read_source(&root, "crates/sui-js/index.d.ts")?),
         docs: read_sources(
             &root,
             &[
@@ -225,10 +219,11 @@ struct Item {
     core_descriptor: Option<String>,
     python_kind: Option<String>,
     python_rust: Option<String>,
+    python_stub_manual: bool,
     js_kind: Option<String>,
     js_rust: Option<String>,
     ts_kind: Option<String>,
-    ts_decl: Option<TsDecl>,
+    api_decl: Option<ApiDecl>,
     docs: Vec<String>,
     compat: bool,
 }
@@ -294,12 +289,6 @@ struct PublicWidget {
     name: String,
     source: String,
     line: usize,
-}
-
-#[derive(Clone, Debug)]
-enum TsDecl {
-    Class(Vec<String>),
-    Function(String),
 }
 
 fn parse_manifest(input: &str) -> Result<BindingManifest, String> {
@@ -459,10 +448,11 @@ fn item_from_table(mut table: BTreeMap<String, Value>, line_number: usize) -> Re
         core_descriptor: take_optional_string(&mut table, "core_descriptor", line_number)?,
         python_kind: take_optional_string(&mut table, "python_kind", line_number)?,
         python_rust: take_optional_string(&mut table, "python_rust", line_number)?,
+        python_stub_manual: false,
         js_kind: take_optional_string(&mut table, "js_kind", line_number)?,
         js_rust: take_optional_string(&mut table, "js_rust", line_number)?,
         ts_kind: take_optional_string(&mut table, "ts_kind", line_number)?,
-        ts_decl: None,
+        api_decl: None,
         docs: take_optional_strings(&mut table, "docs", line_number)?,
         compat: take_optional_bool(&mut table, "compat", line_number)?.unwrap_or(false),
     };
@@ -555,7 +545,7 @@ fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
     let mut items = Vec::new();
     let mut rust_widgets = Vec::new();
     let mut current: Option<Item> = None;
-    let mut ts_class_lines: Option<Vec<String>> = None;
+    let mut api_class_lines: Option<Vec<String>> = None;
 
     for (line_index, raw_line) in input.lines().enumerate() {
         let line_number = line_index + 1;
@@ -564,14 +554,19 @@ fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
             continue;
         }
 
-        if let Some(lines) = ts_class_lines.as_mut() {
-            if line == "endts" {
-                let lines = ts_class_lines.take().expect("ts class lines exist");
+        if let Some(lines) = api_class_lines.as_mut() {
+            if line == "endapi" {
+                let lines = api_class_lines.take().expect("API class lines exist");
                 let item = current.as_mut().ok_or_else(|| {
-                    format!("line {line_number}: ts class block found outside a binding item")
+                    format!("line {line_number}: API class block found outside a binding item")
                 })?;
                 item.ts_kind = Some("class".to_string());
-                item.ts_decl = Some(TsDecl::Class(lines));
+                item.api_decl = Some(ApiDecl::Class(
+                    lines
+                        .iter()
+                        .map(|line| ApiMember::parse(line))
+                        .collect::<Result<_, _>>()?,
+                ));
             } else {
                 lines.push(line.to_string());
             }
@@ -607,10 +602,11 @@ fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
                 core_descriptor: None,
                 python_kind: None,
                 python_rust: None,
+                python_stub_manual: false,
                 js_kind: None,
                 js_rust: None,
                 ts_kind: None,
-                ts_decl: None,
+                api_decl: None,
                 docs: Vec::new(),
                 compat: false,
             });
@@ -627,6 +623,8 @@ fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
         let item = current.as_mut().expect("current item exists");
         if line == "compat" {
             item.compat = true;
+        } else if line == "python_stub manual" {
+            item.python_stub_manual = true;
         } else if let Some(value) = line.strip_prefix("core_kind ") {
             item.core_kind = Some(parse_word(value, "core_kind", line_number)?);
         } else if let Some(value) = line.strip_prefix("core_constructor ") {
@@ -649,22 +647,22 @@ fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
                 &mut item.js_kind,
                 &mut item.js_rust,
             )?;
-        } else if line == "ts class" {
-            ts_class_lines = Some(Vec::new());
-        } else if let Some(value) = line.strip_prefix("ts function ") {
+        } else if line == "api class" {
+            api_class_lines = Some(Vec::new());
+        } else if let Some(value) = line.strip_prefix("api function ") {
             if !value.starts_with(&format!("{}(", item.name)) {
                 return Err(format!(
-                    "line {line_number}: TypeScript function signature for `{}` must start with `{}(`",
+                    "line {line_number}: API function signature for `{}` must start with `{}(`",
                     item.name, item.name
                 ));
             }
             if !value.ends_with(';') {
                 return Err(format!(
-                    "line {line_number}: TypeScript function signature must end with `;`"
+                    "line {line_number}: API function signature must end with `;`"
                 ));
             }
             item.ts_kind = Some("function".to_string());
-            item.ts_decl = Some(TsDecl::Function(value.to_string()));
+            item.api_decl = Some(ApiDecl::Function(ApiFunction::parse(&item.name, value)?));
         } else if let Some(value) = line.strip_prefix("docs ") {
             item.docs = value
                 .split_whitespace()
@@ -677,8 +675,8 @@ fn parse_binding_spec(input: &str) -> Result<BindingSpec, String> {
         }
     }
 
-    if ts_class_lines.is_some() {
-        return Err("unterminated TypeScript class block".to_string());
+    if api_class_lines.is_some() {
+        return Err("unterminated API class block".to_string());
     }
     if let Some(item) = current {
         return Err(format!("binding item `{}` is missing `end`", item.name));
@@ -827,9 +825,9 @@ fn validate_spec_item(item: &Item, line_number: usize) -> Result<(), String> {
             "line {line_number}: binding item has an empty name"
         ));
     }
-    if item.ts_kind.is_some() != item.ts_decl.is_some() {
+    if item.ts_kind.is_some() != item.api_decl.is_some() {
         return Err(format!(
-            "line {line_number}: item `{}` has incomplete TypeScript metadata",
+            "line {line_number}: item `{}` has incomplete API metadata",
             item.name
         ));
     }
@@ -943,25 +941,23 @@ fn render_generated_ts(items: &[Item]) -> String {
     output.push_str("// Do not edit this section by hand.\n\n");
 
     for item in items {
-        match &item.ts_decl {
-            Some(TsDecl::Class(lines)) => {
+        match &item.api_decl {
+            Some(ApiDecl::Class(lines)) => {
                 output.push_str("export class ");
                 output.push_str(&item.name);
                 output.push_str(" {\n");
                 for line in lines {
                     output.push_str("  ");
-                    output.push_str(line);
+                    output.push_str(&line.typescript());
                     output.push('\n');
                 }
                 output.push_str("}\n\n");
             }
-            Some(TsDecl::Function(signature)) => {
+            Some(ApiDecl::Function(signature)) => {
                 output.push_str("export function ");
-                output.push_str(signature);
+                output.push_str(&signature.typescript());
                 output.push_str("\n\n");
-                if let Ok(factory) = parse_ts_factory_signature(&item.name, signature) {
-                    render_idiomatic_ts_factory(&mut output, &factory);
-                }
+                render_idiomatic_ts_factory(&mut output, signature);
             }
             None => {}
         }
@@ -973,110 +969,41 @@ fn render_generated_ts(items: &[Item]) -> String {
 }
 
 fn validate_rust_template(language: &str, items: &[Item], template: &str) -> Result<(), String> {
+    let source = source::RustSource::parse(template)?;
     for item in items {
-        match language {
-            "python" => match item.python_kind.as_deref() {
-                Some("class") => {
-                    require_template_contains(
-                        language,
-                        &item.name,
-                        template,
-                        &format!("#[pyclass(name = \"{}\"", item.name),
-                    )?;
-                    require_template_contains(
-                        language,
-                        &item.name,
-                        template,
-                        &format!("pub struct Py{}", item.name),
-                    )?;
-                }
-                Some("function") => {
-                    require_template_contains(
-                        language,
-                        &item.name,
-                        template,
-                        &format!("#[pyfunction(name = \"{}\")]", item.name),
-                    )?;
-                    if let Some(function) = &item.python_rust {
-                        require_template_contains(
-                            language,
-                            &item.name,
-                            template,
-                            &format!("pub fn {function}"),
-                        )?;
-                    }
-                }
-                Some(other) => {
-                    return Err(format!(
-                        "unsupported python binding kind `{other}` for `{}`",
-                        item.name
-                    ));
-                }
-                None => {}
-            },
-            "js" => match item.js_kind.as_deref() {
-                Some("class") => {
-                    require_template_contains(
-                        language,
-                        &item.name,
-                        template,
-                        &format!("#[napi(js_name = \"{}\")]", item.name),
-                    )?;
-                    require_template_contains(
-                        language,
-                        &item.name,
-                        template,
-                        &format!("pub struct Js{}", item.name),
-                    )?;
-                }
-                Some("function") => {
-                    require_template_contains(
-                        language,
-                        &item.name,
-                        template,
-                        &format!("#[napi(js_name = \"{}\")]", item.name),
-                    )?;
-                    if let Some(function) = &item.js_rust {
-                        require_template_contains(
-                            language,
-                            &item.name,
-                            template,
-                            &format!("pub fn {function}"),
-                        )?;
-                    }
-                }
-                Some(other) => {
-                    return Err(format!(
-                        "unsupported js binding kind `{other}` for `{}`",
-                        item.name
-                    ));
-                }
-                None => {}
-            },
-            _ => {
-                return Err(format!(
-                    "unsupported generated Rust template language `{language}`"
-                ));
-            }
+        let (kind, rust_name) = match language {
+            "python" => (item.python_kind.as_deref(), item.python_rust.as_ref()),
+            "js" => (item.js_kind.as_deref(), item.js_rust.as_ref()),
+            _ => return Err(format!("unsupported binding language `{language}`")),
+        };
+        let present = match (language, kind) {
+            (_, None) => true,
+            ("python", Some("class")) => source
+                .python_classes
+                .contains(&(item.name.clone(), format!("Py{}", item.name))),
+            ("js", Some("class")) => source
+                .js_classes
+                .contains(&(item.name.clone(), format!("Js{}", item.name))),
+            ("python", Some("function")) => rust_name.is_some_and(|name| {
+                source
+                    .python_functions
+                    .contains(&(item.name.clone(), name.clone()))
+            }),
+            ("js", Some("function")) => rust_name.is_some_and(|name| {
+                source
+                    .js_functions
+                    .contains(&(item.name.clone(), name.clone()))
+            }),
+            _ => false,
+        };
+        if !present {
+            return Err(format!(
+                "{language} template is missing the exported declaration for `{}`",
+                item.name
+            ));
         }
     }
-
     Ok(())
-}
-
-fn require_template_contains(
-    language: &str,
-    item: &str,
-    template: &str,
-    needle: &str,
-) -> Result<(), String> {
-    if template.contains(needle) {
-        Ok(())
-    } else {
-        Err(format!(
-            "{language} widget template is missing `{needle}` for `{item}`"
-        ))
-    }
 }
 
 fn render_generated_rust_template(
@@ -1138,91 +1065,7 @@ fn render_generated_rust_template(
     output
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TsFactoryParameter {
-    name: String,
-    ty: String,
-    optional: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TsFactorySignature {
-    legacy_name: String,
-    factory_name: String,
-    required: Vec<TsFactoryParameter>,
-    optional: Vec<TsFactoryParameter>,
-    return_type: String,
-}
-
-fn parse_ts_factory_signature(
-    item_name: &str,
-    signature: &str,
-) -> Result<TsFactorySignature, String> {
-    let open = signature
-        .find('(')
-        .ok_or_else(|| format!("TypeScript function `{item_name}` has no parameter list"))?;
-    let close = find_matching_delimiter(signature, open, '(', ')').ok_or_else(|| {
-        format!("TypeScript function `{item_name}` has an unterminated parameter list")
-    })?;
-    let declared_name = signature[..open].trim();
-    if declared_name != item_name {
-        return Err(format!(
-            "TypeScript function `{item_name}` declares the name `{declared_name}`"
-        ));
-    }
-    let suffix = signature[close + 1..].trim();
-    let return_type = suffix
-        .strip_prefix(':')
-        .and_then(|value| value.strip_suffix(';'))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("TypeScript function `{item_name}` has no return type"))?;
-
-    let mut required = Vec::new();
-    let mut optional = Vec::new();
-    for parameter in split_top_level(&signature[open + 1..close], ',') {
-        let parameter = parameter.trim();
-        if parameter.is_empty() {
-            continue;
-        }
-        let colon = find_top_level_char(parameter, ':').ok_or_else(|| {
-            format!("TypeScript function `{item_name}` has malformed parameter `{parameter}`")
-        })?;
-        let raw_name = parameter[..colon].trim();
-        let optional_parameter = raw_name.ends_with('?');
-        let name = raw_name.trim_end_matches('?').trim();
-        let ty = parameter[colon + 1..].trim();
-        if name.is_empty() || ty.is_empty() {
-            return Err(format!(
-                "TypeScript function `{item_name}` has malformed parameter `{parameter}`"
-            ));
-        }
-        let parameter = TsFactoryParameter {
-            name: name.to_string(),
-            ty: ty.to_string(),
-            optional: optional_parameter,
-        };
-        if optional_parameter {
-            optional.push(parameter);
-        } else if optional.is_empty() {
-            required.push(parameter);
-        } else {
-            return Err(format!(
-                "TypeScript function `{item_name}` has required parameters after optional parameters"
-            ));
-        }
-    }
-
-    Ok(TsFactorySignature {
-        legacy_name: item_name.to_string(),
-        factory_name: to_lower_camel_case(item_name),
-        required,
-        optional,
-        return_type: return_type.to_string(),
-    })
-}
-
-fn render_idiomatic_ts_factory(output: &mut String, factory: &TsFactorySignature) {
+fn render_idiomatic_ts_factory(output: &mut String, factory: &ApiFunction) {
     if !factory.optional.is_empty() {
         output.push_str("export interface ");
         output.push_str(&factory.legacy_name);
@@ -1231,7 +1074,7 @@ fn render_idiomatic_ts_factory(output: &mut String, factory: &TsFactorySignature
             output.push_str("  ");
             output.push_str(&parameter.name);
             output.push_str("?: ");
-            output.push_str(&parameter.ty);
+            output.push_str(&parameter.ty.typescript());
             output.push_str(";\n");
         }
         output.push_str("}\n\n");
@@ -1245,7 +1088,7 @@ fn render_idiomatic_ts_factory(output: &mut String, factory: &TsFactorySignature
         }
         output.push_str(&parameter.name);
         output.push_str(": ");
-        output.push_str(&parameter.ty);
+        output.push_str(&parameter.ty.typescript());
     }
     if !factory.optional.is_empty() {
         if !factory.required.is_empty() {
@@ -1257,20 +1100,18 @@ fn render_idiomatic_ts_factory(output: &mut String, factory: &TsFactorySignature
         output.push_str("Options");
     }
     output.push_str("): ");
-    output.push_str(&factory.return_type);
+    output.push_str(&factory.return_type.typescript());
     output.push_str(";\n\n");
 }
 
-fn render_generated_js_api(items: &[Item]) -> Result<String, String> {
+fn render_generated_js_api(items: &[Item]) -> String {
     let factories = items
         .iter()
-        .filter_map(|item| match &item.ts_decl {
-            Some(TsDecl::Function(signature)) => {
-                Some(parse_ts_factory_signature(&item.name, signature))
-            }
+        .filter_map(|item| match &item.api_decl {
+            Some(ApiDecl::Function(signature)) => Some(signature),
             _ => None,
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     let mut output = String::new();
     output.push_str("\"use strict\";\n\n");
     output.push_str("// Generated by `cargo xtask bindings generate` from bindings/widgets.sui.\n");
@@ -1321,10 +1162,10 @@ fn render_generated_js_api(items: &[Item]) -> Result<String, String> {
     output.push_str("  return Object.assign(native, factories);\n");
     output.push_str("}\n\n");
     output.push_str("module.exports = { decorateApi };\n");
-    Ok(output)
+    output
 }
 
-fn render_generated_python_stub(template: &str, items: &[Item]) -> Result<String, String> {
+fn render_generated_python_stub(template: &str, items: &[Item]) -> String {
     let mut output = String::new();
     output.push_str("# Generated by `cargo xtask bindings generate` from bindings/widgets.sui.\n");
     output.push_str("# Do not edit by hand.\n\n");
@@ -1332,9 +1173,9 @@ fn render_generated_python_stub(template: &str, items: &[Item]) -> Result<String
     output.push_str("\n\n# BEGIN GENERATED SUI DESCRIPTORS AND WIDGET FACTORIES\n\n");
 
     for item in items {
-        match &item.ts_decl {
-            Some(TsDecl::Class(lines)) => {
-                if python_stub_class_is_manual(&item.name) {
+        match &item.api_decl {
+            Some(ApiDecl::Class(lines)) => {
+                if item.python_stub_manual {
                     continue;
                 }
                 output.push_str("class ");
@@ -1344,15 +1185,15 @@ fn render_generated_python_stub(template: &str, items: &[Item]) -> Result<String
                     output.push_str("    ...\n");
                 } else {
                     for line in lines {
-                        render_python_stub_class_line(&mut output, line)?;
+                        output.push_str(&line.python());
                     }
                 }
                 output.push('\n');
             }
-            Some(TsDecl::Function(signature)) => {
-                let factory = parse_ts_factory_signature(&item.name, signature)?;
-                render_python_stub_function(&mut output, &item.name, &factory);
-                render_python_stub_function(&mut output, &to_snake_case(&item.name), &factory);
+            Some(ApiDecl::Function(signature)) => {
+                let factory = signature;
+                render_python_stub_function(&mut output, &item.name, factory);
+                render_python_stub_function(&mut output, &to_snake_case(&item.name), factory);
                 output.push('\n');
             }
             None => {}
@@ -1360,248 +1201,14 @@ fn render_generated_python_stub(template: &str, items: &[Item]) -> Result<String
     }
 
     output.push_str("# END GENERATED SUI DESCRIPTORS AND WIDGET FACTORIES\n");
-    Ok(output)
+    output
 }
 
-fn render_python_stub_class_line(output: &mut String, line: &str) -> Result<(), String> {
-    let line = line.trim().trim_end_matches(';');
-    if let Some(rest) = line.strip_prefix("constructor") {
-        let (parameters, _) = parse_ts_callable_suffix(rest)?;
-        output.push_str("    def __init__(self");
-        render_python_stub_parameters(output, &parameters, true);
-        output.push_str(") -> None: ...\n");
-        return Ok(());
-    }
-    if let Some(rest) = line.strip_prefix("readonly ") {
-        let colon = find_top_level_char(rest, ':')
-            .ok_or_else(|| format!("malformed readonly TypeScript declaration `{line}`"))?;
-        let name = rest[..colon].trim();
-        let ty = rest[colon + 1..].trim();
-        output.push_str("    @property\n    def ");
-        output.push_str(&to_snake_case(name));
-        output.push_str("(self) -> ");
-        output.push_str(&ts_type_to_python(ty));
-        output.push_str(": ...\n");
-        return Ok(());
-    }
-
-    let (is_static, declaration) = line
-        .strip_prefix("static ")
-        .map_or((false, line), |rest| (true, rest));
-    let open = declaration
-        .find('(')
-        .ok_or_else(|| format!("malformed TypeScript class declaration `{line}`"))?;
-    let name = declaration[..open].trim();
-    let (parameters, return_type) = parse_ts_callable_suffix(&declaration[open..])?;
-    if is_static {
-        output.push_str("    @staticmethod\n");
-    }
-    output.push_str("    def ");
-    output.push_str(&to_snake_case(name));
-    output.push('(');
-    if !is_static {
-        output.push_str("self");
-    }
-    render_python_stub_parameters(output, &parameters, !is_static);
-    output.push_str(") -> ");
-    output.push_str(&ts_type_to_python(&return_type));
-    output.push_str(": ...\n");
-    Ok(())
+fn render_python_stub_function(output: &mut String, name: &str, factory: &ApiFunction) {
+    output.push_str(&factory.python(name));
 }
 
-fn parse_ts_callable_suffix(value: &str) -> Result<(Vec<TsFactoryParameter>, String), String> {
-    let open = value
-        .find('(')
-        .ok_or_else(|| format!("TypeScript callable `{value}` has no parameter list"))?;
-    let close = find_matching_delimiter(value, open, '(', ')').ok_or_else(|| {
-        format!("TypeScript callable `{value}` has an unterminated parameter list")
-    })?;
-    let mut parameters = Vec::new();
-    for parameter in split_top_level(&value[open + 1..close], ',') {
-        let parameter = parameter.trim();
-        if parameter.is_empty() {
-            continue;
-        }
-        let colon = find_top_level_char(parameter, ':')
-            .ok_or_else(|| format!("malformed TypeScript parameter `{parameter}`"))?;
-        let raw_name = parameter[..colon].trim();
-        parameters.push(TsFactoryParameter {
-            name: raw_name.trim_end_matches('?').to_string(),
-            ty: parameter[colon + 1..].trim().to_string(),
-            optional: raw_name.ends_with('?'),
-        });
-    }
-    let return_type = value[close + 1..]
-        .trim()
-        .strip_prefix(':')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("void");
-    Ok((parameters, return_type.to_string()))
-}
-
-fn render_python_stub_function(output: &mut String, name: &str, factory: &TsFactorySignature) {
-    output.push_str("def ");
-    output.push_str(name);
-    output.push('(');
-    let parameters = factory
-        .required
-        .iter()
-        .chain(factory.optional.iter())
-        .cloned()
-        .collect::<Vec<_>>();
-    render_python_stub_parameters(output, &parameters, false);
-    output.push_str(") -> ");
-    output.push_str(&ts_type_to_python(&factory.return_type));
-    output.push_str(": ...\n");
-}
-
-fn render_python_stub_parameters(
-    output: &mut String,
-    parameters: &[TsFactoryParameter],
-    has_existing: bool,
-) {
-    for (index, parameter) in parameters.iter().enumerate() {
-        if has_existing || index > 0 {
-            output.push_str(", ");
-        }
-        let mut name = to_snake_case(&parameter.name);
-        if name == "min" || name == "max" {
-            name.push_str("_value");
-        }
-        output.push_str(&name);
-        output.push_str(": ");
-        let ty = python_stub_parameter_type(parameter);
-        output.push_str(&ty);
-        if parameter.optional {
-            if !split_top_level(&ty, '|')
-                .iter()
-                .any(|part| part.trim() == "None")
-            {
-                output.push_str(" | None");
-            }
-            output.push_str(" = ...");
-        }
-    }
-}
-
-fn python_stub_class_is_manual(name: &str) -> bool {
-    matches!(
-        name,
-        "RichDocument"
-            | "RichDocumentUpdate"
-            | "DockNode"
-            | "DockFloatingGroup"
-            | "DockLayout"
-            | "DockState"
-            | "DockPanelSpec"
-            | "NotificationCenter"
-            | "VirtualListItem"
-            | "VirtualListModel"
-            | "FloatingView"
-            | "FloatingViewSnapshot"
-            | "FloatingWorkspaceState"
-            | "PixelCanvasExport"
-            | "PixelCanvasState"
-    )
-}
-
-fn python_stub_parameter_type(parameter: &TsFactoryParameter) -> String {
-    if parameter.name == "blockId"
-        || (parameter.ty.trim() == "number"
-            && matches!(
-                to_snake_case(&parameter.name).as_str(),
-                "index"
-                    | "current"
-                    | "target"
-                    | "bars"
-                    | "precision"
-                    | "columns"
-                    | "max_dots"
-                    | "max_value_lines"
-                    | "weight"
-                    | "item"
-                    | "from_index"
-                    | "to_index"
-            ))
-    {
-        "int".to_string()
-    } else {
-        ts_type_to_python(&parameter.ty)
-    }
-}
-
-fn ts_type_to_python(value: &str) -> String {
-    let value = value.trim();
-    if let Some(element) = value.strip_suffix("[]") {
-        return format!("Sequence[{}]", ts_type_to_python(element));
-    }
-    if let Some((arguments, return_type)) = split_ts_callback(value) {
-        let arguments = if arguments.trim().is_empty() {
-            String::new()
-        } else {
-            split_top_level(arguments, ',')
-                .into_iter()
-                .map(|argument| {
-                    find_top_level_char(argument, ':')
-                        .map(|colon| {
-                            python_stub_parameter_type(&TsFactoryParameter {
-                                name: argument[..colon].trim().to_string(),
-                                ty: argument[colon + 1..].trim().to_string(),
-                                optional: false,
-                            })
-                        })
-                        .unwrap_or_else(|| "Any".to_string())
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        return format!(
-            "Callable[[{arguments}], {}]",
-            ts_type_to_python(return_type)
-        );
-    }
-
-    let union = split_top_level(value, '|');
-    if union.len() > 1 {
-        let literal_only = union.iter().all(|part| part.trim().starts_with('"'));
-        if literal_only {
-            return format!(
-                "Literal[{}]",
-                union
-                    .iter()
-                    .map(|part| part.trim())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
-        return union
-            .iter()
-            .map(|part| ts_type_to_python(part))
-            .collect::<Vec<_>>()
-            .join(" | ");
-    }
-
-    match value {
-        "string" => "str".to_string(),
-        "number" => "float".to_string(),
-        "boolean" => "bool".to_string(),
-        "void" => "None".to_string(),
-        "BindingValue" => "BindingValue".to_string(),
-        other if other.starts_with('"') => format!("Literal[{other}]"),
-        other => other.to_string(),
-    }
-}
-
-fn split_ts_callback(value: &str) -> Option<(&str, &str)> {
-    let close = value.rfind(')')?;
-    let suffix = value[close + 1..].trim();
-    let return_type = suffix.strip_prefix("=>")?.trim();
-    let arguments = value.strip_prefix('(')?[..close - 1].trim();
-    Some((arguments, return_type))
-}
-
-fn factory_options_parameter_name(factory: &TsFactorySignature) -> &'static str {
+fn factory_options_parameter_name(factory: &ApiFunction) -> &'static str {
     if factory
         .required
         .iter()
@@ -1611,68 +1218,6 @@ fn factory_options_parameter_name(factory: &TsFactorySignature) -> &'static str 
     } else {
         "options"
     }
-}
-
-fn find_matching_delimiter(
-    value: &str,
-    open_index: usize,
-    open: char,
-    close: char,
-) -> Option<usize> {
-    let mut depth = 0_usize;
-    for (offset, character) in value[open_index..].char_indices() {
-        if character == open {
-            depth += 1;
-        } else if character == close {
-            depth = depth.checked_sub(1)?;
-            if depth == 0 {
-                return Some(open_index + offset);
-            }
-        }
-    }
-    None
-}
-
-fn split_top_level(value: &str, separator: char) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut stack = Vec::new();
-    for (index, character) in value.char_indices() {
-        match character {
-            '(' => stack.push(')'),
-            '[' => stack.push(']'),
-            '{' => stack.push('}'),
-            '<' => stack.push('>'),
-            ')' | ']' | '}' | '>' if stack.last() == Some(&character) => {
-                stack.pop();
-            }
-            _ if character == separator && stack.is_empty() => {
-                parts.push(&value[start..index]);
-                start = index + character.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    parts.push(&value[start..]);
-    parts
-}
-
-fn find_top_level_char(value: &str, needle: char) -> Option<usize> {
-    let mut stack = Vec::new();
-    for (index, character) in value.char_indices() {
-        match character {
-            '(' => stack.push(')'),
-            '[' => stack.push(']'),
-            '{' => stack.push('}'),
-            '<' => stack.push('>'),
-            ')' | ']' | '}' | '>' if stack.last() == Some(&character) => {
-                stack.pop();
-            }
-            _ if character == needle && stack.is_empty() => return Some(index),
-            _ => {}
-        }
-    }
-    None
 }
 
 fn to_snake_case(value: &str) -> String {
@@ -1712,10 +1257,10 @@ fn update_ts_index(current: &str, generated: &str, items: &[Item]) -> Result<Str
 
     let generated_names = items
         .iter()
-        .filter(|item| item.ts_decl.is_some())
+        .filter(|item| item.api_decl.is_some())
         .map(|item| item.name.as_str())
         .collect::<Vec<_>>();
-    let without_generated = remove_ts_declarations(current, &generated_names)?;
+    let without_generated = remove_api_declarations(current, &generated_names)?;
 
     let mut output = without_generated.trim_end_matches(['\r', '\n']).to_string();
     output.push_str("\n\n");
@@ -1741,7 +1286,7 @@ fn replace_generated_ts_section(current: &str, generated: &str) -> Result<String
     Ok(output)
 }
 
-fn remove_ts_declarations(current: &str, names: &[&str]) -> Result<String, String> {
+fn remove_api_declarations(current: &str, names: &[&str]) -> Result<String, String> {
     let lines = current.lines().collect::<Vec<_>>();
     let mut output = Vec::new();
     let mut index = 0;
@@ -1840,7 +1385,7 @@ fn inventory_public_widgets(root: &Path) -> Result<Vec<PublicWidget>, String> {
         let source = fs::read_to_string(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         let relative = relative_display(root, &path);
-        let (structs, impls) = public_widgets_in_source(&source);
+        let (structs, impls) = source::public_widgets(&source)?;
         for (name, line) in structs {
             public_structs
                 .entry(name)
@@ -1893,63 +1438,6 @@ fn collect_rust_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(),
         }
     }
     Ok(())
-}
-
-fn public_widgets_in_source(source: &str) -> (BTreeMap<String, usize>, BTreeSet<String>) {
-    let mut public_structs = BTreeMap::new();
-    let mut widget_impls = BTreeSet::new();
-    let mut impl_header: Option<String> = None;
-
-    for (line_index, raw_line) in source.lines().enumerate() {
-        let line_number = line_index + 1;
-        let line = raw_line.trim();
-
-        if let Some(rest) = line.strip_prefix("pub struct ")
-            && let Some(name) = rust_identifier(rest)
-        {
-            public_structs.insert(name.to_string(), line_number);
-        }
-
-        if let Some(header) = impl_header.as_mut() {
-            header.push(' ');
-            header.push_str(line);
-            if line.contains('{') {
-                if let Some(name) = widget_impl_name(header) {
-                    widget_impls.insert(name.to_string());
-                }
-                impl_header = None;
-            }
-        } else if line.starts_with("impl") {
-            if line.contains('{') {
-                if let Some(name) = widget_impl_name(line) {
-                    widget_impls.insert(name.to_string());
-                }
-            } else {
-                impl_header = Some(line.to_string());
-            }
-        }
-    }
-
-    (public_structs, widget_impls)
-}
-
-fn widget_impl_name(header: &str) -> Option<&str> {
-    let (_, rest) = header.split_once(" Widget for ")?;
-    rust_identifier(rest.trim_start())
-}
-
-fn rust_identifier(input: &str) -> Option<&str> {
-    let end = input
-        .char_indices()
-        .take_while(|(_, character)| character.is_ascii_alphanumeric() || *character == '_')
-        .last()
-        .map(|(index, character)| index + character.len_utf8())?;
-    let identifier = &input[..end];
-    identifier
-        .chars()
-        .next()
-        .filter(|character| character.is_ascii_alphabetic() || *character == '_')?;
-    Some(identifier)
 }
 
 fn validate_widget_classifications(
@@ -2071,10 +1559,10 @@ fn print_widget_classification_report(
 }
 
 struct Sources {
-    core: String,
-    python: String,
-    js: String,
-    ts: String,
+    core: source::RustSource,
+    python: source::RustSource,
+    js: source::RustSource,
+    ts: BTreeSet<(String, String)>,
     docs: String,
 }
 
@@ -2132,70 +1620,78 @@ impl fmt::Display for Check {
     }
 }
 
-fn check_core(item: &Item, core: &str) -> Check {
-    let mut requirements = Vec::new();
+fn declaration_check(requirements: &[bool]) -> Check {
+    if requirements.is_empty() {
+        Check::NotApplicable
+    } else if requirements.iter().all(|present| *present) {
+        Check::Covered
+    } else {
+        Check::Missing
+    }
+}
 
+fn check_core(item: &Item, core: &source::RustSource) -> Check {
+    let mut requirements = Vec::new();
     if let Some(descriptor) = &item.core_descriptor {
-        requirements.push(format!("pub struct {descriptor}"));
+        requirements.push(core.structs.contains(descriptor));
     }
     if let Some(kind) = &item.core_kind {
-        requirements.push(format!("BindingWidgetKind::{kind}"));
+        requirements.push(
+            core.variants
+                .contains(&("BindingWidgetKind".into(), kind.clone())),
+        );
     }
     if let Some(constructor) = &item.core_constructor {
-        requirements.push(format!("pub fn {constructor}("));
+        requirements.push(
+            core.methods
+                .contains(&("BindingWidget".into(), constructor.clone())),
+        );
     }
-
-    check_requirements(&requirements, core)
+    declaration_check(&requirements)
 }
 
-fn check_python(item: &Item, python: &str) -> Check {
-    let Some(kind) = item.python_kind.as_deref() else {
-        return Check::NotApplicable;
-    };
-
-    let mut requirements = Vec::new();
-    match kind {
-        "function" => {
-            requirements.push(format!("#[pyfunction(name = \"{}\")]", item.name));
-            if let Some(function) = &item.python_rust {
-                requirements.push(format!("wrap_pyfunction!({function}, m)"));
-            }
+fn check_python(item: &Item, python: &source::RustSource) -> Check {
+    match item.python_kind.as_deref() {
+        Some("function") => item.python_rust.as_ref().map_or(Check::Missing, |name| {
+            declaration_check(&[
+                python
+                    .python_functions
+                    .contains(&(item.name.clone(), name.clone())),
+                python.registered_functions.contains(name),
+            ])
+        }),
+        Some("class") => {
+            let name = format!("Py{}", item.name);
+            declaration_check(&[
+                python
+                    .python_classes
+                    .contains(&(item.name.clone(), name.clone())),
+                python.registered_classes.contains(&name),
+            ])
         }
-        "class" => {
-            requirements.push(format!("#[pyclass(name = \"{}\"", item.name));
-            requirements.push(format!("m.add_class::<Py{}>()", item.name));
-        }
-        _ => return Check::Missing,
+        Some(_) => Check::Missing,
+        None => Check::NotApplicable,
     }
-
-    check_requirements(&requirements, python)
 }
 
-fn check_js(item: &Item, js: &str) -> Check {
-    let Some(kind) = item.js_kind.as_deref() else {
-        return Check::NotApplicable;
-    };
-
-    let mut requirements = vec![format!("#[napi(js_name = \"{}\")]", item.name)];
-    match kind {
-        "function" => {
-            if let Some(function) = &item.js_rust {
-                requirements.push(format!("pub fn {function}"));
-            }
-        }
-        "class" => {
-            requirements.push(format!("struct Js{}", item.name));
-        }
-        _ => return Check::Missing,
+fn check_js(item: &Item, js: &source::RustSource) -> Check {
+    match item.js_kind.as_deref() {
+        Some("function") => item.js_rust.as_ref().map_or(Check::Missing, |name| {
+            declaration_check(&[js.js_functions.contains(&(item.name.clone(), name.clone()))])
+        }),
+        Some("class") => declaration_check(&[js
+            .js_classes
+            .contains(&(item.name.clone(), format!("Js{}", item.name)))]),
+        Some(_) => Check::Missing,
+        None => Check::NotApplicable,
     }
-
-    check_requirements(&requirements, js)
 }
 
-fn check_ts(item: &Item, ts: &str) -> Check {
+fn check_ts(item: &Item, ts: &BTreeSet<(String, String)>) -> Check {
     match item.ts_kind.as_deref() {
-        Some("function") => check_requirements(&[format!("export function {}(", item.name)], ts),
-        Some("class") => check_requirements(&[format!("export class {}", item.name)], ts),
+        Some(kind @ ("function" | "class")) => {
+            declaration_check(&[ts.contains(&(kind.to_string(), item.name.clone()))])
+        }
         Some(_) => Check::Missing,
         None => Check::NotApplicable,
     }
@@ -2210,23 +1706,40 @@ fn check_compat(item: &Item, sources: &Sources) -> Check {
         return Check::NotApplicable;
     }
 
-    let js_compat = section_after(
-        &sources.js,
-        "fn high_level_app_renders_cross_language_compatibility_signature()",
-    )
-    .unwrap_or(&sources.js);
-    let python_compat = section_after(
-        &sources.python,
-        "fn python_renders_cross_language_compatibility_signature()",
-    )
-    .unwrap_or(&sources.python);
+    let compact = |value: Option<&String>| {
+        value
+            .map(|text| {
+                text.chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    };
+    let mut js_compat = compact(
+        sources
+            .js
+            .fixtures
+            .get("high_level_app_renders_cross_language_compatibility_signature"),
+    );
+    js_compat.push_str(&compact(
+        sources
+            .js
+            .fixtures
+            .get("high_level_app_renders_extended_compatibility_signature"),
+    ));
+    let python_compat = compact(
+        sources
+            .python
+            .fixtures
+            .get("python_renders_cross_language_compatibility_signature"),
+    );
 
     let mut requirements = Vec::new();
     if let Some(constructor) = &item.core_constructor {
-        requirements.push((format!("BindingWidget::{constructor}("), js_compat));
+        requirements.push((format!("BindingWidget::{constructor}("), &js_compat));
     }
     if item.python_kind.as_deref() == Some("function") {
-        requirements.push((format!("sui.{}(", item.name), python_compat));
+        requirements.push((format!("sui.{}(", item.name), &python_compat));
     }
 
     if requirements.is_empty() {
@@ -2241,10 +1754,6 @@ fn check_compat(item: &Item, sources: &Sources) -> Check {
     } else {
         Check::Missing
     }
-}
-
-fn section_after<'a>(source: &'a str, marker: &str) -> Option<&'a str> {
-    source.find(marker).map(|index| &source[index..])
 }
 
 fn check_requirements<S: AsRef<str>>(requirements: &[S], source: &str) -> Check {
@@ -2383,7 +1892,7 @@ rust-widget Direct bound Alpha
 
     #[test]
     fn source_inventory_intersects_public_structs_and_widget_impls() {
-        let (structs, impls) = public_widgets_in_source(
+        let (structs, impls) = source::public_widgets(
             r#"
 pub struct Plain;
 impl Widget for Plain {}
@@ -2396,7 +1905,8 @@ impl Widget for Private {}
 
 pub struct NotAWidget;
 "#,
-        );
+        )
+        .unwrap();
 
         let public_names = structs.keys().cloned().collect::<BTreeSet<_>>();
         let public_widgets = impls
@@ -2449,7 +1959,7 @@ pub struct NotAWidget;
 
     #[test]
     fn typescript_factory_parser_keeps_callbacks_and_arrays_intact() {
-        let parsed = parse_ts_factory_signature(
+        let parsed = ApiFunction::parse(
             "RadioGroup",
             "RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;",
         )
@@ -2458,10 +1968,10 @@ pub struct NotAWidget;
         assert_eq!(parsed.factory_name, "radioGroup");
         assert_eq!(parsed.required.len(), 2);
         assert_eq!(parsed.required[1].name, "options");
-        assert_eq!(parsed.required[1].ty, "string[]");
+        assert_eq!(parsed.required[1].ty.typescript(), "string[]");
         assert_eq!(parsed.optional.len(), 2);
         assert_eq!(
-            parsed.optional[1].ty,
+            parsed.optional[1].ty.typescript(),
             "(index: number, value: string) => void"
         );
         assert_eq!(factory_options_parameter_name(&parsed), "config");
@@ -2471,13 +1981,17 @@ pub struct NotAWidget;
     fn generated_javascript_factories_use_an_options_object() {
         let item = Item {
             name: "Button".to_string(),
-            ts_decl: Some(TsDecl::Function(
-                "Button(label: string, onPress?: () => void): Widget;".to_string(),
+            api_decl: Some(ApiDecl::Function(
+                ApiFunction::parse(
+                    "Button",
+                    "Button(label: string, onPress?: () => void): Widget;",
+                )
+                .unwrap(),
             )),
             ..Item::default()
         };
 
-        let generated = render_generated_js_api(&[item]).expect("API should render");
+        let generated = render_generated_js_api(&[item]);
         assert!(generated.contains("button(label, options = {})"));
         assert!(generated.contains("native.Button(label, options.onPress)"));
     }
@@ -2496,13 +2010,16 @@ pub struct NotAWidget;
     fn python_stub_generation_uses_snake_case_and_callable_types() {
         let item = Item {
             name: "Button".to_string(),
-            ts_decl: Some(TsDecl::Function(
-                "Button(label: string, onPress?: () => void): Widget;".to_string(),
+            api_decl: Some(ApiDecl::Function(
+                ApiFunction::parse(
+                    "Button",
+                    "Button(label: string, onPress?: () => void): Widget;",
+                )
+                .unwrap(),
             )),
             ..Item::default()
         };
-        let stub = render_generated_python_stub("class Widget: ...", &[item])
-            .expect("Python stub should render");
+        let stub = render_generated_python_stub("class Widget: ...", &[item]);
         assert!(stub.contains("def Button(label: str, on_press: Callable[[], None] | None = ...)"));
         assert!(stub.contains("def button(label: str, on_press: Callable[[], None] | None = ...)"));
     }
@@ -2510,7 +2027,9 @@ pub struct NotAWidget;
     #[test]
     fn python_stub_callback_indices_are_integers() {
         assert_eq!(
-            ts_type_to_python("(index: number, value: string) => void"),
+            ApiType::parse("(index: int, value: string) => void")
+                .unwrap()
+                .python(),
             "Callable[[int, str], None]"
         );
     }

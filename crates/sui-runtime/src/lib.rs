@@ -6,6 +6,8 @@ mod diagnostics;
 mod logo;
 mod overlay;
 mod reactive;
+mod resources;
+use resources::ResourceStore;
 mod widget;
 
 use std::{
@@ -95,10 +97,7 @@ static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 pub const EXTERNAL_WAKE_KIND: &str = "sui.external.wake";
 
 pub struct Runtime {
-    next_font_id: u64,
-    next_image_id: u64,
-    font_registry: Arc<FontRegistry>,
-    image_registry: Arc<ImageRegistry>,
+    resources: ResourceStore,
     text_system: Arc<TextSystem>,
     clipboard: Clipboard,
     windows: Vec<WindowState>,
@@ -109,25 +108,12 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new() -> Self {
-        Self::with_registries(
-            1,
-            Arc::new(FontRegistry::new()),
-            1,
-            Arc::new(ImageRegistry::new()),
-        )
+        Self::with_resources(ResourceStore::default())
     }
 
-    fn with_registries(
-        next_font_id: u64,
-        font_registry: Arc<FontRegistry>,
-        next_image_id: u64,
-        image_registry: Arc<ImageRegistry>,
-    ) -> Self {
+    fn with_resources(resources: ResourceStore) -> Self {
         Self {
-            next_font_id: next_font_id.max(1),
-            next_image_id: next_image_id.max(1),
-            font_registry,
-            image_registry,
+            resources,
             text_system: Arc::new(TextSystem::new()),
             clipboard: Clipboard::new(),
             windows: Vec::new(),
@@ -259,8 +245,8 @@ impl Runtime {
     /// [`Runtime::handle_event`] when the dispatch outcome is not relevant.
     pub fn dispatch_event(&mut self, window_id: WindowId, event: Event) -> Result<bool> {
         let text_system = Arc::clone(&self.text_system);
-        let font_registry = Arc::clone(&self.font_registry);
-        let image_registry = Arc::clone(&self.image_registry);
+        let font_registry = Arc::clone(self.resources.fonts());
+        let image_registry = Arc::clone(self.resources.images());
         let window = self.window_mut(window_id)?;
         window.drain_reactive_invalidations();
         let handled = window.handle_event(event, text_system, font_registry, image_registry);
@@ -283,8 +269,8 @@ impl Runtime {
         action: SemanticsActionRequest,
     ) -> Result<bool> {
         let text_system = Arc::clone(&self.text_system);
-        let font_registry = Arc::clone(&self.font_registry);
-        let image_registry = Arc::clone(&self.image_registry);
+        let font_registry = Arc::clone(self.resources.fonts());
+        let image_registry = Arc::clone(self.resources.images());
         let window = self.window_mut(window_id)?;
         Ok(window.handle_semantics_action(
             target,
@@ -340,40 +326,15 @@ impl Runtime {
     }
 
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
-        if Arc::make_mut(&mut self.font_registry)
-            .insert(handle, font)
-            .is_some()
-        {
-            return Err(Error::new(format!(
-                "font handle {} is already registered",
-                handle.get()
-            )));
-        }
-
-        self.next_font_id = self.next_font_id.max(handle.get() + 1);
-        Ok(())
+        self.resources.register_font(handle, font)
     }
 
     pub fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
-        let handle = FontHandle::new(self.next_font_id.max(1));
-        self.next_font_id = handle.get() + 1;
-        self.register_font(handle, RegisteredFont::from_bytes(data))?;
-        Ok(handle)
+        self.resources.register_font_bytes(data)
     }
 
     pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
-        if Arc::make_mut(&mut self.image_registry)
-            .insert(handle, image)
-            .is_some()
-        {
-            return Err(Error::new(format!(
-                "image handle {} is already registered",
-                handle.get()
-            )));
-        }
-
-        self.next_image_id = self.next_image_id.max(handle.get() + 1);
-        Ok(())
+        self.resources.register_image(handle, image)
     }
 
     pub fn register_svg_image_with_handle(
@@ -381,7 +342,7 @@ impl Runtime {
         handle: ImageHandle,
         data: impl AsRef<[u8]>,
     ) -> Result<()> {
-        self.register_image(handle, RegisteredImage::from_svg(data)?)
+        self.resources.register_svg_image_with_handle(handle, data)
     }
 
     pub fn register_rgba_image(
@@ -390,17 +351,11 @@ impl Runtime {
         height: u32,
         data: impl Into<Vec<u8>>,
     ) -> Result<ImageHandle> {
-        let handle = ImageHandle::new(self.next_image_id.max(1));
-        self.next_image_id = handle.get() + 1;
-        self.register_image(handle, RegisteredImage::from_rgba8(width, height, data)?)?;
-        Ok(handle)
+        self.resources.register_rgba_image(width, height, data)
     }
 
     pub fn register_svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
-        let handle = ImageHandle::new(self.next_image_id.max(1));
-        self.next_image_id = handle.get() + 1;
-        self.register_image(handle, RegisteredImage::from_svg(data)?)?;
-        Ok(handle)
+        self.resources.register_svg_image(data)
     }
 
     pub fn register_svg_image_at_size_with_handle(
@@ -410,10 +365,8 @@ impl Runtime {
         height: u32,
         data: impl AsRef<[u8]>,
     ) -> Result<()> {
-        self.register_image(
-            handle,
-            RegisteredImage::from_svg_at_size(width, height, data)?,
-        )
+        self.resources
+            .register_svg_image_at_size_with_handle(handle, width, height, data)
     }
 
     pub fn register_svg_image_at_size(
@@ -422,44 +375,36 @@ impl Runtime {
         height: u32,
         data: impl AsRef<[u8]>,
     ) -> Result<ImageHandle> {
-        let handle = ImageHandle::new(self.next_image_id.max(1));
-        self.next_image_id = handle.get() + 1;
-        self.register_image(
-            handle,
-            RegisteredImage::from_svg_at_size(width, height, data)?,
-        )?;
-        Ok(handle)
+        self.resources
+            .register_svg_image_at_size(width, height, data)
     }
 
     pub fn register_embedded_svg_image(
         &mut self,
         resource: EmbeddedSvgImageResource,
     ) -> Result<()> {
-        self.register_image(resource.handle(), resource.registered_image()?)
+        self.resources.register_embedded_svg_image(resource)
     }
 
     pub fn register_embedded_svg_images(
         &mut self,
         resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,
     ) -> Result<()> {
-        for resource in resources {
-            self.register_embedded_svg_image(resource)?;
-        }
-        Ok(())
+        self.resources.register_embedded_svg_images(resources)
     }
 
     pub fn font_registry(&self) -> &Arc<FontRegistry> {
-        &self.font_registry
+        self.resources.fonts()
     }
 
     pub fn image_registry(&self) -> &Arc<ImageRegistry> {
-        &self.image_registry
+        self.resources.images()
     }
 
     pub fn render(&mut self, window_id: WindowId) -> Result<RenderOutput> {
         let text_system = Arc::clone(&self.text_system);
-        let font_registry = Arc::clone(&self.font_registry);
-        let image_registry = Arc::clone(&self.image_registry);
+        let font_registry = Arc::clone(self.resources.fonts());
+        let image_registry = Arc::clone(self.resources.images());
         let window = self.window_mut(window_id)?;
         window.drain_reactive_invalidations();
         Ok(window.render(text_system, font_registry, image_registry))

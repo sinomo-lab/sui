@@ -1,7 +1,40 @@
-#![allow(clippy::too_many_arguments)]
-
-use super::*;
+use crate::diagnostics::PacketRebuildReason;
+use crate::diagnostics::RetainedPacketRebuildStats;
+use crate::draw::DrawOpArena;
+use crate::geometry::hash_path;
+use crate::geometry::hash_point;
+use crate::geometry::hash_rect;
+use crate::geometry::hash_transform;
+use crate::geometry::transform_scene_path;
+use crate::path_cache::PathMeshCache;
+#[cfg(test)]
+use crate::resources::DEFAULT_FEATHER_WIDTH;
+use crate::scene::DirectPacketBuildDiagnostics;
+use crate::scene::build_direct_packet_with_diagnostics;
+use crate::text_engine::TextEngine;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::hash::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
+use sui_core::Color;
+use sui_core::ColorSpace;
+use sui_core::Path as ScenePath;
+use sui_core::Rect;
+use sui_core::Result;
+use sui_core::Size;
+use sui_core::Transform;
+use sui_core::Vector;
+use sui_scene::Brush;
 use sui_scene::LayerProperties;
+use sui_scene::Scene;
+use sui_scene::SceneCommand;
+use sui_scene::SceneFrame;
+use sui_scene::SceneLayer;
+use sui_scene::SceneLayerId;
+use sui_scene::SceneLayerUpdateKind;
+use sui_text::TextStyle;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CompositionContainerId {
@@ -16,21 +49,21 @@ pub(crate) struct RetainedPacketId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct TransformNodeId(u64);
+pub(crate) struct TransformNodeId(pub(crate) u64);
 
 impl TransformNodeId {
     const ROOT: Self = Self(0);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct ClipNodeId(u64);
+pub(crate) struct ClipNodeId(pub(crate) u64);
 
 impl ClipNodeId {
     const ROOT: Self = Self(0);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct EffectNodeId(u64);
+pub(crate) struct EffectNodeId(pub(crate) u64);
 
 impl EffectNodeId {
     const ROOT: Self = Self(0);
@@ -87,11 +120,11 @@ pub(crate) struct RetainedPacketBuildHotspot {
 }
 
 impl RetainedCompositorFrameStats {
-    fn record_packet_rebuild(&mut self, reason: PacketRebuildReason) {
+    pub(crate) fn record_packet_rebuild(&mut self, reason: PacketRebuildReason) {
         self.packet_rebuilds.record_reason(reason);
     }
 
-    fn record_packet_build_diagnostics(
+    pub(crate) fn record_packet_build_diagnostics(
         &mut self,
         diagnostics: DirectPacketBuildDiagnostics,
         normalize_time_ms: f64,
@@ -114,7 +147,7 @@ impl RetainedCompositorFrameStats {
         self.packet_rect_command_time_ms += diagnostics.rect_command_time_ms;
     }
 
-    fn consider_packet_build_hotspot(&mut self, hotspot: RetainedPacketBuildHotspot) {
+    pub(crate) fn consider_packet_build_hotspot(&mut self, hotspot: RetainedPacketBuildHotspot) {
         let should_replace = self
             .slowest_packet_build
             .as_ref()
@@ -137,13 +170,13 @@ pub(crate) enum RetainedFrameFragment {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompositionItem {
+pub(crate) enum CompositionItem {
     Packet(RetainedPacketId),
     Layer(SceneLayerId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompositionPhase {
+pub(crate) enum CompositionPhase {
     Normal,
     Overlay,
     Effect,
@@ -151,11 +184,11 @@ enum CompositionPhase {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct TransformNode {
-    id: TransformNodeId,
-    parent: Option<TransformNodeId>,
-    local: Transform,
-    world: Transform,
+pub(crate) struct TransformNode {
+    pub(crate) id: TransformNodeId,
+    pub(crate) parent: Option<TransformNodeId>,
+    pub(crate) local: Transform,
+    pub(crate) world: Transform,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -180,18 +213,18 @@ impl ResolvedClipPrimitive {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct ClipNode {
-    id: ClipNodeId,
-    parent: Option<ClipNodeId>,
-    primitive: Option<ResolvedClipPrimitive>,
+pub(crate) struct ClipNode {
+    pub(crate) id: ClipNodeId,
+    pub(crate) parent: Option<ClipNodeId>,
+    pub(crate) primitive: Option<ResolvedClipPrimitive>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct EffectNode {
-    id: EffectNodeId,
-    parent: Option<EffectNodeId>,
-    composition_mode: sui_scene::LayerCompositionMode,
+pub(crate) struct EffectNode {
+    pub(crate) id: EffectNodeId,
+    pub(crate) parent: Option<EffectNodeId>,
+    pub(crate) composition_mode: sui_scene::LayerCompositionMode,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,13 +232,13 @@ pub(crate) struct ResolvedRasterState {
     pub(crate) current_transform: Transform,
     pub(crate) pixel_snap_offset: Vector,
     pub(crate) clip_stack: Vec<ResolvedClipPrimitive>,
-    transform_node: TransformNodeId,
-    clip_node: ClipNodeId,
-    effect_node: EffectNodeId,
+    pub(crate) transform_node: TransformNodeId,
+    pub(crate) clip_node: ClipNodeId,
+    pub(crate) effect_node: EffectNodeId,
 }
 
 impl ResolvedRasterState {
-    fn signature(&self) -> u64 {
+    pub(crate) fn signature(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         hash_transform(&mut hasher, self.current_transform);
         self.pixel_snap_offset.x.to_bits().hash(&mut hasher);
@@ -232,7 +265,7 @@ impl ResolvedRasterState {
     }
 }
 
-fn clip_stack_signature(clips: &[ResolvedClipPrimitive]) -> u64 {
+pub(crate) fn clip_stack_signature(clips: &[ResolvedClipPrimitive]) -> u64 {
     let mut hasher = DefaultHasher::new();
     for clip in clips {
         match clip {
@@ -252,7 +285,7 @@ fn clip_stack_signature(clips: &[ResolvedClipPrimitive]) -> u64 {
     hasher.finish()
 }
 
-fn normalized_clip_stack_signature(
+pub(crate) fn normalized_clip_stack_signature(
     clips: &[ResolvedClipPrimitive],
     normalization_origin: Vector,
 ) -> u64 {
@@ -276,21 +309,21 @@ pub(crate) struct RetainedDirectPacket {
     pub(crate) scene: Scene,
     pub(crate) initial_state: ResolvedRasterState,
     pub(crate) signature: u64,
-    coordinate_space: PacketCoordinateSpace,
+    pub(crate) coordinate_space: PacketCoordinateSpace,
     pub(crate) draw_ops: DrawOpArena,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PacketCoordinateSpace {
+pub(crate) enum PacketCoordinateSpace {
     World,
     LayerLocal,
 }
 
 #[derive(Debug, Clone, Default)]
-struct RetainedRootNode {
-    items: Vec<CompositionItem>,
-    packet_ids: Vec<RetainedPacketId>,
-    structure_version: u64,
+pub(crate) struct RetainedRootNode {
+    pub(crate) items: Vec<CompositionItem>,
+    pub(crate) packet_ids: Vec<RetainedPacketId>,
+    pub(crate) structure_version: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -299,60 +332,60 @@ pub(crate) struct RetainedLayer {
     pub(crate) composed_properties: LayerProperties,
     pub(crate) parent: Option<SceneLayerId>,
     pub(crate) children: Vec<SceneLayerId>,
-    items: Vec<CompositionItem>,
+    pub(crate) items: Vec<CompositionItem>,
     pub(crate) packet_ids: Vec<RetainedPacketId>,
-    transform_node: TransformNodeId,
-    clip_node: ClipNodeId,
+    pub(crate) transform_node: TransformNodeId,
+    pub(crate) clip_node: ClipNodeId,
     pub(crate) clip_signature: u64,
-    effect_node: EffectNodeId,
+    pub(crate) effect_node: EffectNodeId,
     pub(crate) content_version: u64,
     pub(crate) structure_version: u64,
 }
 
 #[derive(Debug, Clone)]
-struct PacketSnapshot {
-    id: RetainedPacketId,
-    scene: Scene,
-    initial_state: ResolvedRasterState,
-    inherited_clip_count: usize,
+pub(crate) struct PacketSnapshot {
+    pub(crate) id: RetainedPacketId,
+    pub(crate) scene: Scene,
+    pub(crate) initial_state: ResolvedRasterState,
+    pub(crate) inherited_clip_count: usize,
 }
 
 #[derive(Debug, Clone)]
-struct LayerSnapshot {
-    descriptor: sui_scene::SceneLayerDescriptor,
-    composed_properties: LayerProperties,
-    parent: Option<SceneLayerId>,
-    children: Vec<SceneLayerId>,
-    items: Vec<CompositionItem>,
-    packet_ids: Vec<RetainedPacketId>,
-    packets: Vec<PacketSnapshot>,
-    transform_node: TransformNodeId,
-    clip_node: ClipNodeId,
-    clip_signature: u64,
-    effect_node: EffectNodeId,
+pub(crate) struct LayerSnapshot {
+    pub(crate) descriptor: sui_scene::SceneLayerDescriptor,
+    pub(crate) composed_properties: LayerProperties,
+    pub(crate) parent: Option<SceneLayerId>,
+    pub(crate) children: Vec<SceneLayerId>,
+    pub(crate) items: Vec<CompositionItem>,
+    pub(crate) packet_ids: Vec<RetainedPacketId>,
+    pub(crate) packets: Vec<PacketSnapshot>,
+    pub(crate) transform_node: TransformNodeId,
+    pub(crate) clip_node: ClipNodeId,
+    pub(crate) clip_signature: u64,
+    pub(crate) effect_node: EffectNodeId,
 }
 
 #[derive(Debug, Clone, Default)]
-struct RootSnapshot {
-    items: Vec<CompositionItem>,
-    packet_ids: Vec<RetainedPacketId>,
-    packets: Vec<PacketSnapshot>,
+pub(crate) struct RootSnapshot {
+    pub(crate) items: Vec<CompositionItem>,
+    pub(crate) packet_ids: Vec<RetainedPacketId>,
+    pub(crate) packets: Vec<PacketSnapshot>,
 }
 
 #[derive(Debug, Clone, Default)]
-struct CompositorSnapshot {
-    root: RootSnapshot,
-    layers: HashMap<SceneLayerId, LayerSnapshot>,
+pub(crate) struct CompositorSnapshot {
+    pub(crate) root: RootSnapshot,
+    pub(crate) layers: HashMap<SceneLayerId, LayerSnapshot>,
 }
 
 #[derive(Debug, Clone)]
-struct CompositionTraversalState {
-    current_transform: Transform,
-    transform_node: TransformNodeId,
-    transform_stack: Vec<(Transform, TransformNodeId)>,
-    clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
-    effect_node: EffectNodeId,
-    composed_layer_properties: LayerProperties,
+pub(crate) struct CompositionTraversalState {
+    pub(crate) current_transform: Transform,
+    pub(crate) transform_node: TransformNodeId,
+    pub(crate) transform_stack: Vec<(Transform, TransformNodeId)>,
+    pub(crate) clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
+    pub(crate) effect_node: EffectNodeId,
+    pub(crate) composed_layer_properties: LayerProperties,
 }
 
 impl Default for CompositionTraversalState {
@@ -369,7 +402,7 @@ impl Default for CompositionTraversalState {
 }
 
 impl CompositionTraversalState {
-    fn resolved_state(&self) -> ResolvedRasterState {
+    pub(crate) fn resolved_state(&self) -> ResolvedRasterState {
         ResolvedRasterState {
             current_transform: self.current_transform,
             pixel_snap_offset: Vector::ZERO,
@@ -391,12 +424,12 @@ impl CompositionTraversalState {
 
 #[derive(Debug)]
 pub(crate) struct RetainedCompositorState {
-    root: RetainedRootNode,
+    pub(crate) root: RetainedRootNode,
     pub(crate) layers: HashMap<SceneLayerId, RetainedLayer>,
     pub(crate) packets: HashMap<RetainedPacketId, RetainedDirectPacket>,
-    transforms: HashMap<TransformNodeId, TransformNode>,
-    clips: HashMap<ClipNodeId, ClipNode>,
-    effects: HashMap<EffectNodeId, EffectNode>,
+    pub(crate) transforms: HashMap<TransformNodeId, TransformNode>,
+    pub(crate) clips: HashMap<ClipNodeId, ClipNode>,
+    pub(crate) effects: HashMap<EffectNodeId, EffectNode>,
     pub(crate) next_transform_node: u64,
     pub(crate) next_clip_node: u64,
     pub(crate) next_effect_node: u64,
@@ -488,7 +521,7 @@ impl RetainedCompositorState {
         Ok(submission)
     }
 
-    fn refresh_frame_state(
+    pub(crate) fn refresh_frame_state(
         &mut self,
         frame: &SceneFrame,
         text_engine: &mut TextEngine,
@@ -520,7 +553,7 @@ impl RetainedCompositorState {
         Ok(frame_stats)
     }
 
-    fn finish_frame(
+    pub(crate) fn finish_frame(
         &mut self,
         viewport: Size,
         surface_size: Size,
@@ -539,7 +572,7 @@ impl RetainedCompositorState {
         self.feather_width_bits = feather_width.to_bits();
     }
 
-    fn build_snapshot(&mut self, scene: &Scene) -> Result<CompositorSnapshot> {
+    pub(crate) fn build_snapshot(&mut self, scene: &Scene) -> Result<CompositorSnapshot> {
         self.reset_property_trees();
         let mut snapshot = CompositorSnapshot::default();
         snapshot.root = self.build_container_snapshot(
@@ -553,7 +586,7 @@ impl RetainedCompositorState {
         Ok(snapshot)
     }
 
-    fn build_container_snapshot(
+    pub(crate) fn build_container_snapshot(
         &mut self,
         container: CompositionContainerId,
         scene: &Scene,
@@ -658,7 +691,7 @@ impl RetainedCompositorState {
         Ok(result)
     }
 
-    fn build_layer_snapshot(
+    pub(crate) fn build_layer_snapshot(
         &mut self,
         layer: &SceneLayer,
         parent_layer: Option<SceneLayerId>,
@@ -705,7 +738,7 @@ impl RetainedCompositorState {
         })
     }
 
-    fn apply_command_to_traversal_state(
+    pub(crate) fn apply_command_to_traversal_state(
         &mut self,
         command: &SceneCommand,
         state: &mut CompositionTraversalState,
@@ -777,7 +810,7 @@ impl RetainedCompositorState {
         }
     }
 
-    fn apply_snapshot(
+    pub(crate) fn apply_snapshot(
         &mut self,
         frame: &SceneFrame,
         snapshot: CompositorSnapshot,
@@ -954,7 +987,7 @@ impl RetainedCompositorState {
         Ok(())
     }
 
-    fn upsert_packet(
+    pub(crate) fn upsert_packet(
         &mut self,
         frame: &SceneFrame,
         snapshot: PacketSnapshot,
@@ -1076,7 +1109,7 @@ impl RetainedCompositorState {
     }
 
     #[cfg(test)]
-    fn compose_draw_ops(
+    pub(crate) fn compose_draw_ops(
         &self,
         viewport: Size,
         stats: &mut RetainedCompositorFrameStats,
@@ -1092,7 +1125,7 @@ impl RetainedCompositorState {
         Ok(draw_ops)
     }
 
-    fn compose_submission(
+    pub(crate) fn compose_submission(
         &self,
         viewport: Size,
         stats: &mut RetainedCompositorFrameStats,
@@ -1119,7 +1152,7 @@ impl RetainedCompositorState {
     }
 
     #[cfg(test)]
-    fn append_items_for_phase(
+    pub(crate) fn append_items_for_phase(
         &self,
         items: &[CompositionItem],
         phase: CompositionPhase,
@@ -1198,7 +1231,7 @@ impl RetainedCompositorState {
         Ok(())
     }
 
-    fn append_items_to_submission_for_phase(
+    pub(crate) fn append_items_to_submission_for_phase(
         &self,
         items: &[CompositionItem],
         phase: CompositionPhase,
@@ -1278,7 +1311,10 @@ impl RetainedCompositorState {
     }
 }
 
-fn flush_transient_fragment(submission: &mut RetainedFrameSubmission, current: &mut DrawOpArena) {
+pub(crate) fn flush_transient_fragment(
+    submission: &mut RetainedFrameSubmission,
+    current: &mut DrawOpArena,
+) {
     if current.draw_ops.is_empty() {
         return;
     }
@@ -1288,7 +1324,7 @@ fn flush_transient_fragment(submission: &mut RetainedFrameSubmission, current: &
         .push(RetainedFrameFragment::Transient(std::mem::take(current)));
 }
 
-fn push_composition_item(
+pub(crate) fn push_composition_item(
     phase: CompositionPhase,
     item: CompositionItem,
     normal_items: &mut Vec<CompositionItem>,
@@ -1302,7 +1338,7 @@ fn push_composition_item(
     }
 }
 
-fn flush_container_segment(
+pub(crate) fn flush_container_segment(
     container: CompositionContainerId,
     result: &mut RootSnapshot,
     normal_items: &mut Vec<CompositionItem>,
@@ -1346,7 +1382,7 @@ fn flush_container_segment(
     });
 }
 
-fn composition_phase_for_effect_node(
+pub(crate) fn composition_phase_for_effect_node(
     mut effect_node: EffectNodeId,
     effects: &HashMap<EffectNodeId, EffectNode>,
 ) -> CompositionPhase {
@@ -1372,7 +1408,9 @@ fn composition_phase_for_effect_node(
     phase
 }
 
-fn composition_phase_for_mode(mode: sui_scene::LayerCompositionMode) -> CompositionPhase {
+pub(crate) fn composition_phase_for_mode(
+    mode: sui_scene::LayerCompositionMode,
+) -> CompositionPhase {
     match mode {
         sui_scene::LayerCompositionMode::Normal | sui_scene::LayerCompositionMode::Scroll => {
             CompositionPhase::Normal
@@ -1382,7 +1420,7 @@ fn composition_phase_for_mode(mode: sui_scene::LayerCompositionMode) -> Composit
     }
 }
 
-fn resolved_clip_primitives(
+pub(crate) fn resolved_clip_primitives(
     mut clip_node: ClipNodeId,
     clips: &HashMap<ClipNodeId, ClipNode>,
 ) -> Vec<ResolvedClipPrimitive> {
@@ -1401,7 +1439,7 @@ fn resolved_clip_primitives(
 }
 
 impl RetainedCompositorState {
-    fn reset_property_trees(&mut self) {
+    pub(crate) fn reset_property_trees(&mut self) {
         self.transforms.clear();
         self.clips.clear();
         self.effects.clear();
@@ -1435,7 +1473,7 @@ impl RetainedCompositorState {
         self.next_effect_node = 1;
     }
 
-    fn push_transform_node(
+    pub(crate) fn push_transform_node(
         &mut self,
         parent: Option<TransformNodeId>,
         local: Transform,
@@ -1455,7 +1493,7 @@ impl RetainedCompositorState {
         id
     }
 
-    fn push_clip_node(
+    pub(crate) fn push_clip_node(
         &mut self,
         parent: Option<ClipNodeId>,
         primitive: ResolvedClipPrimitive,
@@ -1473,7 +1511,7 @@ impl RetainedCompositorState {
         id
     }
 
-    fn push_effect_node(
+    pub(crate) fn push_effect_node(
         &mut self,
         parent: Option<EffectNodeId>,
         composition_mode: sui_scene::LayerCompositionMode,
@@ -1492,7 +1530,7 @@ impl RetainedCompositorState {
     }
 }
 
-fn scene_has_draw_content(scene: &Scene) -> bool {
+pub(crate) fn scene_has_draw_content(scene: &Scene) -> bool {
     scene.commands().iter().any(|command| {
         matches!(
             command,
@@ -1513,7 +1551,7 @@ fn scene_has_draw_content(scene: &Scene) -> bool {
     })
 }
 
-fn normalize_packet_snapshot(
+pub(crate) fn normalize_packet_snapshot(
     mut snapshot: PacketSnapshot,
     coordinate_space: PacketCoordinateSpace,
     normalization_origin: Vector,
@@ -1540,7 +1578,7 @@ fn normalize_packet_snapshot(
     snapshot
 }
 
-fn physical_pixel_phase(origin: Vector, raster_scale_factor: f32) -> Vector {
+pub(crate) fn physical_pixel_phase(origin: Vector, raster_scale_factor: f32) -> Vector {
     if !raster_scale_factor.is_finite() || raster_scale_factor <= 0.0 {
         return Vector::ZERO;
     }
@@ -1555,7 +1593,7 @@ fn physical_pixel_phase(origin: Vector, raster_scale_factor: f32) -> Vector {
     Vector::new(phase(origin.x), phase(origin.y))
 }
 
-fn packet_text_sample(scene: &Scene) -> Option<String> {
+pub(crate) fn packet_text_sample(scene: &Scene) -> Option<String> {
     for command in scene.commands() {
         let text = match command {
             SceneCommand::Label { text, .. } => Some(text.as_str()),
@@ -1576,7 +1614,7 @@ fn packet_text_sample(scene: &Scene) -> Option<String> {
     None
 }
 
-fn translate_resolved_raster_state(
+pub(crate) fn translate_resolved_raster_state(
     state: &ResolvedRasterState,
     delta: Vector,
 ) -> ResolvedRasterState {
@@ -1589,7 +1627,7 @@ fn translate_resolved_raster_state(
     translated
 }
 
-fn translate_resolved_clip_primitive(
+pub(crate) fn translate_resolved_clip_primitive(
     primitive: ResolvedClipPrimitive,
     delta: Vector,
 ) -> ResolvedClipPrimitive {
@@ -1607,7 +1645,7 @@ fn translate_resolved_clip_primitive(
     }
 }
 
-fn descriptor_translation_delta(
+pub(crate) fn descriptor_translation_delta(
     previous: &sui_scene::SceneLayerDescriptor,
     current: &sui_scene::SceneLayerDescriptor,
 ) -> Option<Vector> {
@@ -1631,14 +1669,17 @@ fn descriptor_translation_delta(
     Some(bounds_delta + (current.properties.translation - previous.properties.translation))
 }
 
-fn compose_layer_properties(parent: LayerProperties, local: LayerProperties) -> LayerProperties {
+pub(crate) fn compose_layer_properties(
+    parent: LayerProperties,
+    local: LayerProperties,
+) -> LayerProperties {
     LayerProperties::new(
         parent.opacity * local.opacity,
         parent.translation + local.translation,
     )
 }
 
-fn packet_signature(
+pub(crate) fn packet_signature(
     scene: &Scene,
     initial_state: &ResolvedRasterState,
     viewport: Size,
@@ -1657,13 +1698,13 @@ fn packet_signature(
     hasher.finish()
 }
 
-fn hash_scene(scene: &Scene, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_scene(scene: &Scene, hasher: &mut DefaultHasher) {
     for command in scene.commands() {
         hash_scene_command(command, hasher);
     }
 }
 
-fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
     match command {
         SceneCommand::Clear(color) => {
             0u8.hash(hasher);
@@ -1847,7 +1888,7 @@ fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
     }
 }
 
-fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHasher) {
     match shader {
         sui_scene::WidgetShader::ColorWheel => {
             0u8.hash(hasher);
@@ -1906,7 +1947,10 @@ fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHash
     }
 }
 
-fn hash_text_render_policy(policy: sui_scene::TextRenderPolicy, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_text_render_policy(
+    policy: sui_scene::TextRenderPolicy,
+    hasher: &mut DefaultHasher,
+) {
     match policy.render_mode {
         Some(sui_scene::TextRenderMode::Grayscale) => {
             1u8.hash(hasher);
@@ -1975,7 +2019,7 @@ fn hash_text_render_policy(policy: sui_scene::TextRenderPolicy, hasher: &mut Def
     }
 }
 
-fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
     match brush {
         Brush::Solid(color) => {
             0u8.hash(hasher);
@@ -1996,14 +2040,14 @@ fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
     }
 }
 
-fn hash_color(color: Color, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_color(color: Color, hasher: &mut DefaultHasher) {
     color.red.to_bits().hash(hasher);
     color.green.to_bits().hash(hasher);
     color.blue.to_bits().hash(hasher);
     color.alpha.to_bits().hash(hasher);
 }
 
-fn hash_optional_color(color: Option<Color>, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_optional_color(color: Option<Color>, hasher: &mut DefaultHasher) {
     match color {
         Some(color) => {
             1u8.hash(hasher);
@@ -2014,7 +2058,7 @@ fn hash_optional_color(color: Option<Color>, hasher: &mut DefaultHasher) {
     }
 }
 
-fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {
     (match space {
         ColorSpace::Srgb => 0u8,
         ColorSpace::LinearSrgb => 1u8,
@@ -2024,7 +2068,7 @@ fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {
     .hash(hasher);
 }
 
-fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
+pub(crate) fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
     style.font.map(|font| font.get()).hash(hasher);
     style.font_size.to_bits().hash(hasher);
     style.line_height.to_bits().hash(hasher);
@@ -2032,7 +2076,7 @@ fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
 

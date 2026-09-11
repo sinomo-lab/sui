@@ -1,12 +1,21 @@
-use lyon_path::{PathEvent, iterator::PathIterator};
-use lyon_tessellation::{
-    BuffersBuilder, FillOptions, FillTessellator, LineCap, LineJoin, StrokeOptions,
-    StrokeTessellator, VertexBuffers,
-};
+use crate::geometry::CachedGlyphMesh;
+use crate::gpu::TessellatedPoint;
+use lyon_path::Path as LyonPath;
+use lyon_path::PathEvent;
+use lyon_tessellation::BuffersBuilder;
+use lyon_tessellation::FillOptions;
+use lyon_tessellation::FillTessellator;
+use lyon_tessellation::LineCap;
+use lyon_tessellation::LineJoin;
+use lyon_tessellation::StrokeOptions;
+use lyon_tessellation::StrokeTessellator;
+use lyon_tessellation::VertexBuffers;
+use sui_core::Error;
+use sui_core::Point;
+use sui_core::Result;
+use sui_scene::StrokeStyle;
 
-use super::*;
-
-const AA_FLATTEN_TOLERANCE: f32 = 0.1;
+pub(crate) const AA_FLATTEN_TOLERANCE: f32 = 0.1;
 
 #[derive(Debug, Clone)]
 pub(super) struct FlattenedContour {
@@ -48,7 +57,7 @@ pub(super) fn build_local_stroke_mesh(
     Ok(mesh)
 }
 
-fn append_local_hard_stroked_lyon_path(
+pub(crate) fn append_local_hard_stroked_lyon_path(
     mesh: &mut CachedGlyphMesh,
     path: &LyonPath,
     stroke: StrokeStyle,
@@ -129,6 +138,7 @@ pub(super) fn flatten_path_contours(path: &LyonPath) -> Vec<FlattenedContour> {
     contours
 }
 
-fn points_nearly_equal(a: Point, b: Point) -> bool {
+pub(crate) fn points_nearly_equal(a: Point, b: Point) -> bool {
     (a.x - b.x).abs() <= 1.0e-4 && (a.y - b.y).abs() <= 1.0e-4
 }
+use lyon_path::iterator::PathIterator;

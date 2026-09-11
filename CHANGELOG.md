@@ -11,6 +11,12 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Centralized builder/runtime resource registration so rejected duplicate handles
+  preserve the original resource, and shared native/web GPU resource setup.
+- Shared button press, text-change, and caret lifecycle logic across controls;
+  organized composites, binding infrastructure, and renderer internals by feature.
+- Made binding signatures language-neutral with explicit numeric and identifier
+  types, and changed export verification to follow Rust modules and declarations.
 - Fixed selector observer write-back deadlocks and removed obsolete reactive
   dependencies after completed widget phases while preserving cached phases.
 - Bounded text-layout and renderer path caches, preserving layouts and geometry

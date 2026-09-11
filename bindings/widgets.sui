@@ -116,10 +116,10 @@ descriptor TextSpan
   core_descriptor BindingTextSpan
   python class
   js class
-  ts class
-    constructor(text: string, color?: Color, fontSize?: number, lineHeight?: number, font?: FontHandle, weight?: number, style?: FontStyle, stretch?: FontStretch);
+  api class
+    constructor(text: string, color?: Color, fontSize?: number, lineHeight?: number, font?: FontHandle, weight?: int, style?: FontStyle, stretch?: FontStretch);
     readonly text: string;
-  endts
+  endapi
   docs TextSpan
 end
 
@@ -127,9 +127,9 @@ descriptor StatusBarSegment
   core_descriptor BindingStatusBarSegment
   python class
   js class
-  ts class
+  api class
     constructor(text: State | BindingValue, tone?: SemanticTone | string, minWidth?: number, expand?: boolean);
-  endts
+  endapi
   docs StatusBarSegment
 end
 
@@ -137,9 +137,9 @@ descriptor SegmentedControlItem
   core_descriptor BindingSegmentedControlItem
   python class
   js class
-  ts class
+  api class
     constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
-  endts
+  endapi
   docs SegmentedControlItem
 end
 
@@ -147,9 +147,9 @@ descriptor TableColumn
   core_descriptor BindingTableColumn
   python class
   js class
-  ts class
+  api class
     constructor(title: string, width?: number, minWidth?: number, alignment?: "start" | "center" | "end" | "left" | "right", numeric?: boolean);
-  endts
+  endapi
   docs TableColumn
 end
 
@@ -157,9 +157,9 @@ descriptor TableRow
   core_descriptor BindingTableRow
   python class
   js class
-  ts class
+  api class
     constructor(cells: string[]);
-  endts
+  endapi
   docs TableRow
 end
 
@@ -168,7 +168,7 @@ widget Label
   core_constructor label
   python function py_label
   js function js_label
-  ts function Label(value: State | BindingValue): Widget;
+  api function Label(value: State | BindingValue): Widget;
   docs Label
   compat
 end
@@ -178,7 +178,7 @@ widget Button
   core_constructor button
   python function py_button
   js function js_button
-  ts function Button(label: State | BindingValue, onPress?: () => void): Widget;
+  api function Button(label: State | BindingValue, onPress?: () => void): Widget;
   docs Button
   compat
 end
@@ -188,7 +188,7 @@ widget Icon
   core_constructor icon
   python function py_icon
   js function js_icon
-  ts function Icon(glyph: IconGlyph | string, label?: string, size?: number, color?: Color): Widget;
+  api function Icon(glyph: IconGlyph | string, label?: string, size?: number, color?: Color): Widget;
   docs Icon
   compat
 end
@@ -198,7 +198,7 @@ widget IconButton
   core_constructor icon_button
   python function py_icon_button
   js function js_icon_button
-  ts function IconButton(glyph: IconGlyph | string, label: State | BindingValue, selected?: State | boolean | number, enabled?: State | boolean | number, size?: number, iconSize?: number, description?: string, onPress?: () => void): Widget;
+  api function IconButton(glyph: IconGlyph | string, label: State | BindingValue, selected?: State | boolean | number, enabled?: State | boolean | number, size?: number, iconSize?: number, description?: string, onPress?: () => void): Widget;
   docs IconButton
   compat
 end
@@ -208,7 +208,7 @@ widget Link
   core_constructor link
   python function py_link
   js function js_link
-  ts function Link(label: State | BindingValue, url: State | BindingValue, semanticName?: string, enabled?: State | boolean | number, onOpen?: (url: string) => void): Widget;
+  api function Link(label: State | BindingValue, url: State | BindingValue, semanticName?: string, enabled?: State | boolean | number, onOpen?: (url: string) => void): Widget;
   docs Link
   compat
 end
@@ -218,7 +218,7 @@ widget Checkbox
   core_constructor checkbox
   python function py_checkbox
   js function js_checkbox
-  ts function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onToggle?: (checked: boolean) => void): Widget;
+  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onToggle?: (checked: boolean) => void): Widget;
   docs Checkbox
   compat
 end
@@ -228,7 +228,7 @@ widget Switch
   core_constructor switch
   python function py_switch
   js function js_switch
-  ts function Switch(label: State | BindingValue, on?: State | boolean | number, onToggle?: (on: boolean) => void): Widget;
+  api function Switch(label: State | BindingValue, on?: State | boolean | number, onToggle?: (on: boolean) => void): Widget;
   docs Switch
   compat
 end
@@ -238,7 +238,7 @@ widget RadioButton
   core_constructor radio_button
   python function py_radio_button
   js function js_radio_button
-  ts function RadioButton(label: State | BindingValue, selected?: State | boolean | number, onSelect?: () => void): Widget;
+  api function RadioButton(label: State | BindingValue, selected?: State | boolean | number, onSelect?: () => void): Widget;
   docs RadioButton
   compat
 end
@@ -248,7 +248,7 @@ widget RadioGroup
   core_constructor radio_group
   python function py_radio_group
   js function js_radio_group
-  ts function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs RadioGroup
   compat
 end
@@ -258,7 +258,7 @@ widget SegmentedControl
   core_constructor segmented_control
   python function py_segmented_control
   js function js_segmented_control
-  ts function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs SegmentedControl
   compat
 end
@@ -268,7 +268,7 @@ widget Breadcrumb
   core_constructor breadcrumb
   python function py_breadcrumb
   js function js_breadcrumb
-  ts function Breadcrumb(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+  api function Breadcrumb(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: int, value: string) => void): Widget;
   docs Breadcrumb
   compat
 end
@@ -276,7 +276,7 @@ end
 alias PathBar
   python function py_path_bar
   js function js_path_bar
-  ts function PathBar(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+  api function PathBar(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: int, value: string) => void): Widget;
   docs PathBar
 end
 
@@ -285,7 +285,7 @@ widget ListView
   core_constructor list_view
   python function py_list_view
   js function js_list_view
-  ts function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs ListView
   compat
 end
@@ -295,7 +295,7 @@ widget Table
   core_constructor table
   python function py_table
   js function js_table
-  ts function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs Table
   compat
 end
@@ -303,7 +303,7 @@ end
 alias DataGrid
   python function py_data_grid
   js function js_data_grid
-  ts function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs DataGrid
 end
 
@@ -312,7 +312,7 @@ widget Slider
   core_constructor slider
   python function py_slider
   js function js_slider
-  ts function Slider(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, onChange?: (value: number) => void): Widget;
+  api function Slider(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, step?: number, onChange?: (value: number) => void): Widget;
   docs Slider
   compat
 end
@@ -322,7 +322,7 @@ widget NumberInput
   core_constructor number_input
   python function py_number_input
   js function js_number_input
-  ts function NumberInput(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, precision?: number, onChange?: (value: number) => void): Widget;
+  api function NumberInput(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, step?: number, precision?: int, onChange?: (value: number) => void): Widget;
   docs NumberInput
   compat
 end
@@ -332,7 +332,7 @@ widget Select
   core_constructor select
   python function py_select
   js function js_select
-  ts function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: number, value: string) => void): Widget;
+  api function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: int, value: string) => void): Widget;
   docs Select
   compat
 end
@@ -342,7 +342,7 @@ widget ProgressBar
   core_constructor progress_bar
   python function py_progress_bar
   js function js_progress_bar
-  ts function ProgressBar(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, showValue?: boolean): Widget;
+  api function ProgressBar(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, showValue?: boolean): Widget;
   docs ProgressBar
   compat
 end
@@ -352,7 +352,7 @@ widget SignalMeter
   core_constructor signal_meter
   python function py_signal_meter
   js function js_signal_meter
-  ts function SignalMeter(name: State | BindingValue, active?: State | boolean | number, description?: string, bars?: number, size?: Size): Widget;
+  api function SignalMeter(name: State | BindingValue, active?: State | boolean | number, description?: string, bars?: int, size?: Size): Widget;
   docs SignalMeter
   compat
 end
@@ -362,7 +362,7 @@ widget StatusBadge
   core_constructor status_badge
   python function py_status_badge
   js function js_status_badge
-  ts function StatusBadge(label: State | BindingValue, tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number): Widget;
+  api function StatusBadge(label: State | BindingValue, tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number): Widget;
   docs StatusBadge
   compat
 end
@@ -372,7 +372,7 @@ widget StatusBar
   core_constructor status_bar
   python function py_status_bar
   js function js_status_bar
-  ts function StatusBar(segments: StatusBarSegment[], name?: string, description?: State | BindingValue, height?: number): Widget;
+  api function StatusBar(segments: StatusBarSegment[], name?: string, description?: State | BindingValue, height?: number): Widget;
   docs StatusBar
   compat
 end
@@ -382,7 +382,7 @@ widget DetailRow
   core_constructor detail_row
   python function py_detail_row
   js function js_detail_row
-  ts function DetailRow(label: State | BindingValue, value: State | BindingValue, maxValueLines?: number): Widget;
+  api function DetailRow(label: State | BindingValue, value: State | BindingValue, maxValueLines?: int): Widget;
   docs DetailRow
   compat
 end
@@ -392,7 +392,7 @@ widget BusyIndicator
   core_constructor busy_indicator
   python function py_busy_indicator
   js function js_busy_indicator
-  ts function BusyIndicator(name: State | BindingValue, label?: State | BindingValue, size?: number): Widget;
+  api function BusyIndicator(name: State | BindingValue, label?: State | BindingValue, size?: number): Widget;
   docs BusyIndicator
   compat
 end
@@ -402,7 +402,7 @@ widget TextInput
   core_constructor text_input
   python function py_text_input
   js function js_text_input
-  ts function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
   docs TextInput
   compat
 end
@@ -412,7 +412,7 @@ widget TextArea
   core_constructor text_area
   python function py_text_area
   js function js_text_area
-  ts function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
   docs TextArea
   compat
 end
@@ -422,7 +422,7 @@ widget RichText
   core_constructor rich_text
   python function py_rich_text
   js function js_rich_text
-  ts function RichText(spans: TextSpan[], semanticName?: string, minWidth?: number, minHeight?: number): Widget;
+  api function RichText(spans: TextSpan[], semanticName?: string, minWidth?: number, minHeight?: number): Widget;
   docs RichText
   compat
 end
@@ -430,8 +430,9 @@ end
 descriptor RichDocument
   core_descriptor BindingRichDocument
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(markdown?: string);
     readonly revision: string;
     readonly markdown: string;
@@ -440,22 +441,23 @@ descriptor RichDocument
     lastUpdate(): RichDocumentUpdate;
     appendAttachment(name: string, options?: RichAttachmentOptions): string;
     appendExtension(renderer: string, title: string, options?: RichExtensionOptions): string;
-  endts
+  endapi
   docs RichDocument
 end
 
 descriptor RichDocumentUpdate
   core_descriptor BindingRichDocumentUpdate
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     readonly revision: string;
     readonly reparsedStart: number;
     readonly reparsedEnd: number;
     readonly reusedPrefixBlocks: number;
     readonly changedBlockIds: string[];
     readonly appendOnly: boolean;
-  endts
+  endapi
   docs RichDocumentUpdate
 end
 
@@ -464,7 +466,7 @@ widget RichDocumentView
   core_constructor rich_document
   python function py_rich_document_view
   js function js_rich_document_view
-  ts function RichDocumentView(document: RichDocument, onLink?: (destination: string) => void, onImage?: (source: string) => void, onAttachment?: (blockId: string) => void): Widget;
+  api function RichDocumentView(document: RichDocument, onLink?: (destination: string) => void, onImage?: (source: string) => void, onAttachment?: (blockId: id) => void): Widget;
   docs RichDocumentView
   compat
 end
@@ -474,7 +476,7 @@ widget Image
   core_constructor image
   python function py_image
   js function js_image
-  ts function Image(image: ImageHandle, label?: string, fit?: ImageFit, size?: Size): Widget;
+  api function Image(image: ImageHandle, label?: string, fit?: ImageFit, size?: Size): Widget;
   docs Image
 end
 
@@ -483,7 +485,7 @@ widget ColorSwatch
   core_constructor color_swatch
   python function py_color_swatch
   js function js_color_swatch
-  ts function ColorSwatch(name: string, color: Color, size?: Size, readOnly?: boolean, onPress?: () => void): Widget;
+  api function ColorSwatch(name: string, color: Color, size?: Size, readOnly?: boolean, onPress?: () => void): Widget;
   docs ColorSwatch
   compat
 end
@@ -493,7 +495,7 @@ widget Separator
   core_constructor separator
   python function py_separator
   js function js_separator
-  ts function Separator(axis?: Axis, name?: string, inset?: number, thickness?: number, length?: number): Widget;
+  api function Separator(axis?: Axis, name?: string, inset?: number, thickness?: number, length?: number): Widget;
   docs Separator
   compat
 end
@@ -503,7 +505,7 @@ widget EmptyState
   core_constructor empty_state
   python function py_empty_state
   js function js_empty_state
-  ts function EmptyState(title: string, description: string, name?: string, detail?: string, icon?: IconGlyph | string, action?: Widget, background?: Color, transparent?: boolean): Widget;
+  api function EmptyState(title: string, description: string, name?: string, detail?: string, icon?: IconGlyph | string, action?: Widget, background?: Color, transparent?: boolean): Widget;
   docs EmptyState
   compat
 end
@@ -513,7 +515,7 @@ widget Surface
   core_constructor surface
   python function py_surface
   js function js_surface
-  ts function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, radius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
+  api function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, radius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
   docs Surface
   compat
 end
@@ -523,7 +525,7 @@ widget Toolbar
   core_constructor toolbar
   python function py_toolbar
   js function js_toolbar
-  ts function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, spacing?: number, background?: Color, divider?: boolean): Widget;
+  api function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, spacing?: number, background?: Color, divider?: boolean): Widget;
   docs Toolbar
   compat
 end
@@ -532,7 +534,7 @@ layout Column
   core_constructor column
   python function py_column
   js function js_column
-  ts function Column(children: Widget[], gap?: number): Widget;
+  api function Column(children: Widget[], gap?: number): Widget;
   docs Column
 end
 
@@ -540,7 +542,7 @@ layout Row
   core_constructor row
   python function py_row
   js function js_row
-  ts function Row(children: Widget[], gap?: number): Widget;
+  api function Row(children: Widget[], gap?: number): Widget;
   docs Row
 end
 
@@ -549,7 +551,7 @@ layout Grid
   core_constructor grid
   python function py_grid
   js function js_grid
-  ts function Grid(children: Widget[], columns?: number, name?: string, gap?: number, columnGap?: number, rowGap?: number): Widget;
+  api function Grid(children: Widget[], columns?: int, name?: string, gap?: number, columnGap?: number, rowGap?: number): Widget;
   docs Grid
   compat
 end
@@ -559,7 +561,7 @@ layout AspectRatio
   core_constructor aspect_ratio
   python function py_aspect_ratio
   js function js_aspect_ratio
-  ts function AspectRatio(child: Widget, ratio: number, fit?: "contain" | "cover", horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+  api function AspectRatio(child: Widget, ratio: number, fit?: "contain" | "cover", horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
   docs AspectRatio
   compat
 end
@@ -569,7 +571,7 @@ layout SafeArea
   core_constructor safe_area
   python function py_safe_area
   js function js_safe_area
-  ts function SafeArea(child: Widget, edges?: string, minimumLeft?: number, minimumTop?: number, minimumRight?: number, minimumBottom?: number): Widget;
+  api function SafeArea(child: Widget, edges?: string, minimumLeft?: number, minimumTop?: number, minimumRight?: number, minimumBottom?: number): Widget;
   docs SafeArea
   compat
 end
@@ -579,7 +581,7 @@ layout LayoutTransition
   core_constructor layout_transition
   python function py_layout_transition
   js function js_layout_transition
-  ts function LayoutTransition(child: Widget, duration?: number, easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out"): Widget;
+  api function LayoutTransition(child: Widget, duration?: number, easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out"): Widget;
   docs LayoutTransition
   compat
 end
@@ -589,7 +591,7 @@ widget AdaptiveView
   core_constructor adaptive_view
   python function py_adaptive_view
   js function js_adaptive_view
-  ts function AdaptiveView(compact: Widget, medium: Widget, expanded: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, onClassChange?: (value: "compact" | "medium" | "expanded") => void): Widget;
+  api function AdaptiveView(compact: Widget, medium: Widget, expanded: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, onClassChange?: (value: "compact" | "medium" | "expanded") => void): Widget;
   docs AdaptiveView
   compat
 end
@@ -598,9 +600,9 @@ descriptor ConstraintCase
   core_descriptor BindingConstraintCase
   python class
   js class
-  ts class
+  api class
     constructor(child: Widget, minWidth?: number, maxWidth?: number, minHeight?: number, maxHeight?: number, minAspectRatio?: number, maxAspectRatio?: number, orientation?: "any" | "portrait" | "landscape");
-  endts
+  endapi
   docs ConstraintCase
 end
 
@@ -609,7 +611,7 @@ widget ConstraintView
   core_constructor constraint_view
   python function py_constraint_view
   js function js_constraint_view
-  ts function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
+  api function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
   docs ConstraintView
   compat
 end
@@ -618,7 +620,7 @@ descriptor ResponsiveSidebarState
   core_descriptor BindingResponsiveSidebarState
   python class
   js class
-  ts class
+  api class
     constructor(expanded?: boolean, overlayOpen?: boolean);
     readonly expanded: boolean;
     readonly overlayOpen: boolean;
@@ -627,7 +629,7 @@ descriptor ResponsiveSidebarState
     openOverlay(): boolean;
     closeOverlay(): boolean;
     toggleOverlay(): boolean;
-  endts
+  endapi
   docs ResponsiveSidebarState
 end
 
@@ -636,7 +638,7 @@ widget ResponsiveSidebar
   core_constructor responsive_sidebar
   python function py_responsive_sidebar
   js function js_responsive_sidebar
-  ts function ResponsiveSidebar(state: ResponsiveSidebarState, sidebar: Widget, content: Widget, name?: string, mediumBreakpoint?: number, expandedBreakpoint?: number, railWidth?: number, overlayWidth?: number, dismissOnScrim?: boolean, onModeChange?: (mode: "overlay-closed" | "overlay-open" | "rail" | "inline") => void): Widget;
+  api function ResponsiveSidebar(state: ResponsiveSidebarState, sidebar: Widget, content: Widget, name?: string, mediumBreakpoint?: number, expandedBreakpoint?: number, railWidth?: number, overlayWidth?: number, dismissOnScrim?: boolean, onModeChange?: (mode: "overlay-closed" | "overlay-open" | "rail" | "inline") => void): Widget;
   docs ResponsiveSidebar
   compat
 end
@@ -645,13 +647,13 @@ descriptor MasterDetailState
   core_descriptor BindingMasterDetailState
   python class
   js class
-  ts class
+  api class
     constructor(route?: "master" | "detail");
     readonly route: "master" | "detail";
     setRoute(route: "master" | "detail"): boolean;
     showMaster(): boolean;
     showDetail(): boolean;
-  endts
+  endapi
   docs MasterDetailState
 end
 
@@ -660,7 +662,7 @@ widget MasterDetail
   core_constructor master_detail
   python function py_master_detail
   js function js_master_detail
-  ts function MasterDetail(state: MasterDetailState, master: Widget, detail: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, masterWidth?: number): Widget;
+  api function MasterDetail(state: MasterDetailState, master: Widget, detail: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, masterWidth?: number): Widget;
   docs MasterDetail
   compat
 end
@@ -670,7 +672,7 @@ widget OverlayHost
   core_constructor overlay_host
   python function py_overlay_host
   js function js_overlay_host
-  ts function OverlayHost(child: Widget): Widget;
+  api function OverlayHost(child: Widget): Widget;
   docs OverlayHost
   compat
 end
@@ -678,14 +680,15 @@ end
 descriptor NotificationCenter
   core_descriptor BindingNotificationCenter
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor();
     notify(title: string, message: string, options?: NotificationOptions): string;
     dismiss(id: string): boolean;
     clear(): boolean;
     readonly size: number;
-  endts
+  endapi
   docs NotificationCenter
 end
 
@@ -694,7 +697,7 @@ widget NotificationHost
   core_constructor notification_host
   python function py_notification_host
   js function js_notification_host
-  ts function NotificationHost(center: NotificationCenter, width?: number): Widget;
+  api function NotificationHost(center: NotificationCenter, width?: number): Widget;
   docs NotificationHost
   compat
 end
@@ -702,29 +705,31 @@ end
 descriptor VirtualListItem
   core_descriptor BindingVirtualListItem
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(key: string, text: string);
     readonly key: string;
     readonly text: string;
-  endts
+  endapi
   docs VirtualListItem
 end
 
 descriptor VirtualListModel
   core_descriptor BindingVirtualListModel
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(name: string, items?: VirtualListItem[]);
     readonly size: number;
     append(item: VirtualListItem): boolean;
     prepend(items: VirtualListItem[]): boolean;
     update(item: VirtualListItem): boolean;
     remove(key: string): boolean;
-    moveTo(key: string, index: number): boolean;
+    moveTo(key: string, index: int): boolean;
     replace(items: VirtualListItem[]): boolean;
-  endts
+  endapi
   docs VirtualListModel
 end
 
@@ -732,13 +737,13 @@ descriptor CanvasViewport
   core_descriptor BindingCanvasViewport
   python class
   js class
-  ts class
+  api class
     constructor(panX?: number, panY?: number, zoom?: number, rotation?: number);
     readonly panX: number;
     readonly panY: number;
     readonly zoom: number;
     readonly rotation: number;
-  endts
+  endapi
   docs CanvasViewport
 end
 
@@ -746,11 +751,11 @@ descriptor CanvasStroke
   core_descriptor BindingCanvasStroke
   python class
   js class
-  ts class
+  api class
     constructor(color: Color, width?: number);
     readonly color: Color;
     readonly width: number;
-  endts
+  endapi
   docs CanvasStroke
 end
 
@@ -758,12 +763,12 @@ descriptor CanvasShape
   core_descriptor BindingCanvasShape
   python class
   js class
-  ts class
+  api class
     static path(path: Path, fill?: Color, stroke?: CanvasStroke): CanvasShape;
     static rect(rect: Rect, fill?: Color, stroke?: CanvasStroke): CanvasShape;
     static circle(center: Point, radius: number, fill?: Color, stroke?: CanvasStroke): CanvasShape;
     static polyline(points: Point[], stroke: CanvasStroke): CanvasShape;
-  endts
+  endapi
   docs CanvasShape
 end
 
@@ -772,7 +777,7 @@ widget Canvas
   core_constructor canvas
   python function py_canvas
   js function js_canvas
-  ts function Canvas(name: string, shapes?: CanvasShape[], viewport?: CanvasViewport, drawStroke?: CanvasStroke, desiredSize?: Size): Widget;
+  api function Canvas(name: string, shapes?: CanvasShape[], viewport?: CanvasViewport, drawStroke?: CanvasStroke, desiredSize?: Size): Widget;
   docs Canvas
   compat
 end
@@ -782,7 +787,7 @@ widget CanvasRuler
   core_constructor canvas_ruler
   python function py_canvas_ruler
   js function js_canvas_ruler
-  ts function CanvasRuler(axis: Axis, name: string, documentSize: Size, viewport?: CanvasViewport, viewportSize?: Size, extent?: number): Widget;
+  api function CanvasRuler(axis: Axis, name: string, documentSize: Size, viewport?: CanvasViewport, viewportSize?: Size, extent?: number): Widget;
   docs CanvasRuler
   compat
 end
@@ -790,22 +795,24 @@ end
 descriptor PixelCanvasExport
   core_descriptor BindingPixelCanvasExport
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     readonly revision: string;
     readonly name: string;
     readonly width: number;
     readonly height: number;
     readonly rgba8: Uint8Array;
-  endts
+  endapi
   docs PixelCanvasExport
 end
 
 descriptor PixelCanvasState
   core_descriptor BindingPixelCanvasState
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor();
     tool: "brush" | "eraser" | "fill" | "pan";
     brushColor: Color;
@@ -826,7 +833,7 @@ descriptor PixelCanvasState
     zoomOut(): void;
     requestExport(): void;
     latestExport(): PixelCanvasExport | undefined;
-  endts
+  endapi
   docs PixelCanvasState
 end
 
@@ -835,7 +842,7 @@ widget PixelCanvas
   core_constructor pixel_canvas
   python function py_pixel_canvas
   js function js_pixel_canvas
-  ts function PixelCanvas(state: PixelCanvasState, name: string, width: number, height: number, paperColor?: Color, desiredSize?: Size, viewport?: CanvasViewport, fitOnFirstLayout?: boolean, pixels?: Color[]): Widget;
+  api function PixelCanvas(state: PixelCanvasState, name: string, width: number, height: number, paperColor?: Color, desiredSize?: Size, viewport?: CanvasViewport, fitOnFirstLayout?: boolean, pixels?: Color[]): Widget;
   docs PixelCanvas
   compat
 end
@@ -844,10 +851,10 @@ descriptor DragScope
   core_descriptor BindingDragScope
   python class
   js class
-  ts class
+  api class
     constructor();
     readonly active: boolean;
-  endts
+  endapi
   docs DragScope
 end
 
@@ -856,7 +863,7 @@ widget DragDropHost
   core_constructor drag_drop_host
   python function py_drag_drop_host
   js function js_drag_drop_host
-  ts function DragDropHost(scope: DragScope, child: Widget, onExternalHover?: (paths: string[]) => void, onExternalDrop?: (path: string) => void, onExternalCancel?: () => void): Widget;
+  api function DragDropHost(scope: DragScope, child: Widget, onExternalHover?: (paths: string[]) => void, onExternalDrop?: (path: string) => void, onExternalCancel?: () => void): Widget;
   docs DragDropHost
   compat
 end
@@ -866,7 +873,7 @@ widget Draggable
   core_constructor draggable
   python function py_draggable
   js function js_draggable
-  ts function Draggable(scope: DragScope, child: Widget, payload: string, effect?: "copy" | "move" | "link", previewLabel?: string, threshold?: number, onStart?: (payload: string) => void, onEnd?: (payload: string) => void): Widget;
+  api function Draggable(scope: DragScope, child: Widget, payload: string, effect?: "copy" | "move" | "link", previewLabel?: string, threshold?: number, onStart?: (payload: string) => void, onEnd?: (payload: string) => void): Widget;
   docs Draggable
   compat
 end
@@ -876,7 +883,7 @@ widget DropTarget
   core_constructor drop_target
   python function py_drop_target
   js function js_drop_target
-  ts function DropTarget(scope: DragScope, child: Widget, effect?: "none" | "copy" | "move" | "link", onDrop?: (payload: string) => void, onHoverChange?: (hovered: boolean) => void): Widget;
+  api function DropTarget(scope: DragScope, child: Widget, effect?: "none" | "copy" | "move" | "link", onDrop?: (payload: string) => void, onHoverChange?: (hovered: boolean) => void): Widget;
   docs DropTarget
   compat
 end
@@ -886,7 +893,7 @@ widget VirtualList
   core_constructor virtual_list
   python function py_virtual_list
   js function js_virtual_list
-  ts function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, spacing?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
+  api function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, spacing?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
   docs VirtualList
   compat
 end
@@ -896,7 +903,7 @@ widget ScrollView
   core_constructor scroll_view
   python function py_scroll_view
   js function js_scroll_view
-  ts function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
+  api function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
   docs ScrollView
   compat
 end
@@ -906,7 +913,7 @@ interop-widget ExternalSurface
   core_constructor external_surface
   python function py_external_surface
   js function js_external_surface
-  ts function ExternalSurface(texture: ExternalTextureDescriptor, desiredSize?: Size, name?: string): Widget;
+  api function ExternalSurface(texture: ExternalTextureDescriptor, desiredSize?: Size, name?: string): Widget;
   docs ExternalSurface
 end
 
@@ -914,9 +921,9 @@ descriptor TreeItem
   core_descriptor BindingTreeItem
   python class
   js class
-  ts class
+  api class
     constructor(label: string, detail?: string, expanded?: boolean, disabled?: boolean, children?: TreeItem[]);
-  endts
+  endapi
   docs TreeItem
 end
 
@@ -925,7 +932,7 @@ widget TreeView
   core_constructor tree_view
   python function py_tree_view
   js function js_tree_view
-  ts function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs TreeView
 end
 
@@ -933,9 +940,9 @@ descriptor LayerListItem
   core_descriptor BindingLayerListItem
   python class
   js class
-  ts class
+  api class
     constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, disabled?: boolean);
-  endts
+  endapi
   docs LayerListItem
 end
 
@@ -944,7 +951,7 @@ widget LayerList
   core_constructor layer_list
   python function py_layer_list
   js function js_layer_list
-  ts function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs LayerList
 end
 
@@ -952,9 +959,9 @@ descriptor MenuItem
   core_descriptor BindingMenuItem
   python class
   js class
-  ts class
+  api class
     constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
-  endts
+  endapi
   docs MenuItem
 end
 
@@ -962,9 +969,9 @@ descriptor ToolPaletteItem
   core_descriptor BindingToolPaletteItem
   python class
   js class
-  ts class
+  api class
     constructor(icon: IconGlyph | string, label: string, disabled?: boolean);
-  endts
+  endapi
   docs ToolPaletteItem
 end
 
@@ -972,11 +979,11 @@ descriptor ColorPaletteSwatch
   core_descriptor BindingColorPaletteSwatch
   python class
   js class
-  ts class
+  api class
     constructor(name: string, color: Color);
     readonly name: string;
     readonly color: Color;
-  endts
+  endapi
   docs ColorPaletteSwatch
 end
 
@@ -985,7 +992,7 @@ widget Menu
   core_constructor menu
   python function py_menu
   js function js_menu
-  ts function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+  api function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: int, value: string) => void): Widget;
   docs Menu
 end
 
@@ -994,7 +1001,7 @@ widget ContextMenu
   core_constructor context_menu
   python function py_context_menu
   js function js_context_menu
-  ts function ContextMenu(name: string, trigger: Widget, items: MenuItem[], onActivate?: (index: number, value: string) => void): Widget;
+  api function ContextMenu(name: string, trigger: Widget, items: MenuItem[], onActivate?: (index: int, value: string) => void): Widget;
   docs ContextMenu
 end
 
@@ -1003,7 +1010,7 @@ widget TabBar
   core_constructor tab_bar
   python function py_tab_bar
   js function js_tab_bar
-  ts function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+  api function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
   docs TabBar
 end
 
@@ -1012,7 +1019,7 @@ widget Tabs
   core_constructor tabs
   python function py_tabs
   js function js_tabs
-  ts function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
+  api function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
   docs Tabs
 end
 
@@ -1021,7 +1028,7 @@ widget Dialog
   core_constructor dialog
   python function py_dialog
   js function js_dialog
-  ts function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
+  api function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
   docs Dialog
 end
 
@@ -1030,7 +1037,7 @@ widget CommandPalette
   core_constructor command_palette
   python function py_command_palette
   js function js_command_palette
-  ts function CommandPalette(name: string, content: Widget, description?: string, shown?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
+  api function CommandPalette(name: string, content: Widget, description?: string, shown?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
   docs CommandPalette
   compat
 end
@@ -1040,7 +1047,7 @@ widget Padding
   core_constructor padding
   python function py_padding
   js function js_padding
-  ts function Padding(child: Widget, padding?: number, top?: number, right?: number, bottom?: number, fillChildWidth?: boolean, fillChildHeight?: boolean): Widget;
+  api function Padding(child: Widget, padding?: number, top?: number, right?: number, bottom?: number, fillChildWidth?: boolean, fillChildHeight?: boolean): Widget;
   docs Padding
 end
 
@@ -1049,7 +1056,7 @@ widget Align
   core_constructor align
   python function py_align
   js function js_align
-  ts function Align(child: Widget, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+  api function Align(child: Widget, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
   docs Align
 end
 
@@ -1058,7 +1065,7 @@ widget Background
   core_constructor background
   python function py_background
   js function js_background
-  ts function Background(child: Widget, color: Color): Widget;
+  api function Background(child: Widget, color: Color): Widget;
   docs Background
 end
 
@@ -1067,7 +1074,7 @@ widget SizedBox
   core_constructor sized_box
   python function py_sized_box
   js function js_sized_box
-  ts function SizedBox(child?: Widget, width?: number, height?: number): Widget;
+  api function SizedBox(child?: Widget, width?: number, height?: number): Widget;
   docs SizedBox
 end
 
@@ -1076,7 +1083,7 @@ widget Stack
   core_constructor stack
   python function py_stack
   js function js_stack
-  ts function Stack(children: Widget[], axis?: Axis, spacing?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
+  api function Stack(children: Widget[], axis?: Axis, spacing?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
   docs Stack
 end
 
@@ -1085,7 +1092,7 @@ widget SemanticRegion
   core_constructor semantic_region
   python function py_semantic_region
   js function js_semantic_region
-  ts function SemanticRegion(name: State | BindingValue, child: Widget, description?: State | BindingValue, role?: string): Widget;
+  api function SemanticRegion(name: State | BindingValue, child: Widget, description?: State | BindingValue, role?: string): Widget;
   docs SemanticRegion
 end
 
@@ -1094,7 +1101,7 @@ widget FormRow
   core_constructor form_row
   python function py_form_row
   js function js_form_row
-  ts function FormRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
+  api function FormRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
   docs FormRow
 end
 
@@ -1103,7 +1110,7 @@ widget FieldGroup
   core_constructor field_group
   python function py_field_group
   js function js_field_group
-  ts function FieldGroup(children: Widget[], spacing?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
+  api function FieldGroup(children: Widget[], spacing?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
   docs FieldGroup
 end
 
@@ -1112,7 +1119,7 @@ widget FormSection
   core_constructor form_section
   python function py_form_section
   js function js_form_section
-  ts function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, radius?: number, elevation?: SurfaceElevation | string): Widget;
+  api function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, radius?: number, elevation?: SurfaceElevation | string): Widget;
   docs FormSection
 end
 
@@ -1121,7 +1128,7 @@ widget PanelSection
   core_constructor panel_section
   python function py_panel_section
   js function js_panel_section
-  ts function PanelSection(title: string, child: Widget, headerAction?: Widget, gap?: number, actionGap?: number, collapsible?: boolean, expanded?: boolean): Widget;
+  api function PanelSection(title: string, child: Widget, headerAction?: Widget, gap?: number, actionGap?: number, collapsible?: boolean, expanded?: boolean): Widget;
   docs PanelSection
 end
 
@@ -1130,7 +1137,7 @@ widget DockPanel
   core_constructor dock_panel
   python function py_dock_panel
   js function js_dock_panel
-  ts function DockPanel(title: string, child: Widget, name?: string, headerHeight?: number, padding?: number, background?: Color, headerBackground?: Color): Widget;
+  api function DockPanel(title: string, child: Widget, name?: string, headerHeight?: number, padding?: number, background?: Color, headerBackground?: Color): Widget;
   docs DockPanel
 end
 
@@ -1139,7 +1146,7 @@ widget StatusBarHost
   core_constructor status_bar_host
   python function py_status_bar_host
   js function js_status_bar_host
-  ts function StatusBarHost(content: Widget, statusBar: Widget): Widget;
+  api function StatusBarHost(content: Widget, statusBar: Widget): Widget;
   docs StatusBarHost
 end
 
@@ -1148,7 +1155,7 @@ widget Tooltip
   core_constructor tooltip
   python function py_tooltip
   js function js_tooltip
-  ts function Tooltip(text: string, child: Widget, placement?: "above" | "below"): Widget;
+  api function Tooltip(text: string, child: Widget, placement?: "above" | "below"): Widget;
   docs Tooltip
 end
 
@@ -1157,7 +1164,7 @@ widget Popover
   core_constructor popover
   python function py_popover
   js function js_popover
-  ts function Popover(name: string, trigger: Widget, content: Widget, open?: boolean): Widget;
+  api function Popover(name: string, trigger: Widget, content: Widget, open?: boolean): Widget;
   docs Popover
 end
 
@@ -1166,7 +1173,7 @@ widget ToolPalette
   core_constructor tool_palette
   python function py_tool_palette
   js function js_tool_palette
-  ts function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, spacing?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+  api function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: int, value: string) => void, extent?: number, padding?: number, spacing?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
   docs ToolPalette
 end
 
@@ -1175,7 +1182,7 @@ widget PresetStrip
   core_constructor preset_strip
   python function py_preset_strip
   js function js_preset_strip
-  ts function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number): Widget;
+  api function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number): Widget;
   docs PresetStrip
 end
 
@@ -1184,7 +1191,7 @@ widget BrowserTabBar
   core_constructor browser_tab_bar
   python function py_browser_tab_bar
   js function js_browser_tab_bar
-  ts function BrowserTabBar(name: string, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, onClose?: (index: number, value: string) => void): Widget;
+  api function BrowserTabBar(name: string, tabs: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, onClose?: (index: int, value: string) => void): Widget;
   docs BrowserTabBar
 end
 
@@ -1193,7 +1200,7 @@ widget ColorPalette
   core_constructor color_palette
   python function py_color_palette
   js function js_color_palette
-  ts function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number): Widget;
+  api function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: int, name: string, color: Color) => void, columns?: int, swatchSize?: number, gap?: number): Widget;
   docs ColorPalette
 end
 
@@ -1202,7 +1209,7 @@ widget ColorPicker
   core_constructor color_picker
   python function py_color_picker
   js function js_color_picker
-  ts function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+  api function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
   docs ColorPicker
 end
 
@@ -1211,7 +1218,7 @@ widget SimpleColorPicker
   core_constructor simple_color_picker
   python function py_simple_color_picker
   js function js_simple_color_picker
-  ts function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+  api function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
   docs SimpleColorPicker
   compat
 end
@@ -1220,13 +1227,13 @@ descriptor BrushPreviewSpec
   core_descriptor BindingBrushPreviewSpec
   python class
   js class
-  ts class
+  api class
     constructor(color: Color, size?: number, opacity?: number, shape?: "round" | "square");
     readonly color: Color;
     readonly size: number;
     readonly opacity: number;
     readonly shape: "round" | "square";
-  endts
+  endapi
   docs BrushPreviewSpec
 end
 
@@ -1235,7 +1242,7 @@ widget PasswordInput
   core_constructor password_input
   python function py_password_input
   js function js_password_input
-  ts function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
   docs PasswordInput
   compat
 end
@@ -1245,7 +1252,7 @@ widget DateTimeInput
   core_constructor datetime_input
   python function py_datetime_input
   js function js_datetime_input
-  ts function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
   docs DateTimeInput
   compat
 end
@@ -1255,7 +1262,7 @@ widget ActionCard
   core_constructor action_card
   python function py_action_card
   js function js_action_card
-  ts function ActionCard(title: string, description: string, icon?: IconGlyph | string, tone?: SemanticTone | string, enabled?: State | boolean | number, onPress?: () => void): Widget;
+  api function ActionCard(title: string, description: string, icon?: IconGlyph | string, tone?: SemanticTone | string, enabled?: State | boolean | number, onPress?: () => void): Widget;
   docs ActionCard
   compat
 end
@@ -1265,7 +1272,7 @@ widget BrushPreview
   core_constructor brush_preview
   python function py_brush_preview
   js function js_brush_preview
-  ts function BrushPreview(name: string, spec: BrushPreviewSpec, kind?: string, size?: Size): Widget;
+  api function BrushPreview(name: string, spec: BrushPreviewSpec, kind?: string, size?: Size): Widget;
   docs BrushPreview
   compat
 end
@@ -1275,7 +1282,7 @@ widget CommandGroup
   core_constructor command_group
   python function py_command_group
   js function js_command_group
-  ts function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, spacing?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
+  api function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, spacing?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
   docs CommandGroup
   compat
 end
@@ -1285,7 +1292,7 @@ widget CoverageDots
   core_constructor coverage_dots
   python function py_coverage_dots
   js function js_coverage_dots
-  ts function CoverageDots(name: string, current: number, target: number, tone?: SemanticTone | string, maxDots?: number, showLabel?: boolean, minWidth?: number): Widget;
+  api function CoverageDots(name: string, current: int, target: int, tone?: SemanticTone | string, maxDots?: int, showLabel?: boolean, minWidth?: number): Widget;
   docs CoverageDots
   compat
 end
@@ -1295,7 +1302,7 @@ widget Dock
   core_constructor dock
   python function py_dock
   js function js_dock
-  ts function Dock(body: Widget, top?: Widget, topHeight?: number, bottom?: Widget, bottomHeight?: number, fallbackWidth?: number, fallbackBodyHeight?: number): Widget;
+  api function Dock(body: Widget, top?: Widget, topHeight?: number, bottom?: Widget, bottomHeight?: number, fallbackWidth?: number, fallbackBodyHeight?: number): Widget;
   docs Dock
   compat
 end
@@ -1305,7 +1312,7 @@ widget FixedPaneSplit
   core_constructor fixed_pane_split
   python function py_fixed_pane_split
   js function js_fixed_pane_split
-  ts function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane?: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
+  api function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane?: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
   docs FixedPaneSplit
   compat
 end
@@ -1315,7 +1322,7 @@ widget FramedField
   core_constructor framed_field
   python function py_framed_field
   js function js_framed_field
-  ts function FramedField(child: Widget, name?: string, description?: string, padding?: number, minHeight?: number, fillWidth?: boolean, focused?: State | boolean | number, invalid?: State | boolean | number): Widget;
+  api function FramedField(child: Widget, name?: string, description?: string, padding?: number, minHeight?: number, fillWidth?: boolean, focused?: State | boolean | number, invalid?: State | boolean | number): Widget;
   docs FramedField
   compat
 end
@@ -1325,7 +1332,7 @@ widget MeasuredBottomDock
   core_constructor measured_bottom_dock
   python function py_measured_bottom_dock
   js function js_measured_bottom_dock
-  ts function MeasuredBottomDock(body: Widget, bottom: Widget, fallbackSize?: Size): Widget;
+  api function MeasuredBottomDock(body: Widget, bottom: Widget, fallbackSize?: Size): Widget;
   docs MeasuredBottomDock
   compat
 end
@@ -1335,7 +1342,7 @@ widget PlacementBadge
   core_constructor placement_badge
   python function py_placement_badge
   js function js_placement_badge
-  ts function PlacementBadge(label: State | BindingValue, icon?: IconGlyph | string, tone?: SemanticTone | string, current?: number, target?: number, minWidth?: number): Widget;
+  api function PlacementBadge(label: State | BindingValue, icon?: IconGlyph | string, tone?: SemanticTone | string, current?: int, target?: int, minWidth?: number): Widget;
   docs PlacementBadge
   compat
 end
@@ -1345,7 +1352,7 @@ widget PropertyRow
   core_constructor property_row
   python function py_property_row
   js function js_property_row
-  ts function PropertyRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
+  api function PropertyRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
   docs PropertyRow
   compat
 end
@@ -1355,7 +1362,7 @@ widget SectionLabel
   core_constructor section_label
   python function py_section_label
   js function js_section_label
-  ts function SectionLabel(label: string, semanticName?: string, color?: Color): Widget;
+  api function SectionLabel(label: string, semanticName?: string, color?: Color): Widget;
   docs SectionLabel
   compat
 end
@@ -1365,7 +1372,7 @@ widget SideSheet
   core_constructor side_sheet
   python function py_side_sheet
   js function js_side_sheet
-  ts function SideSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+  api function SideSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
   docs SideSheet
   compat
 end
@@ -1375,7 +1382,7 @@ widget BottomSheet
   core_constructor bottom_sheet
   python function py_bottom_sheet
   js function js_bottom_sheet
-  ts function BottomSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+  api function BottomSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
   docs BottomSheet
   compat
 end
@@ -1385,7 +1392,7 @@ widget SplitView
   core_constructor split_view
   python function py_split_view
   js function js_split_view
-  ts function SplitView(first: Widget, second: Widget, axis?: Axis, name?: string, ratio?: State | number | boolean, minFirst?: number, minSecond?: number, dividerThickness?: number, onChange?: (ratio: number) => void): Widget;
+  api function SplitView(first: Widget, second: Widget, axis?: Axis, name?: string, ratio?: State | number | boolean, minFirst?: number, minSecond?: number, dividerThickness?: number, onChange?: (ratio: number) => void): Widget;
   docs SplitView
   compat
 end
@@ -1395,7 +1402,7 @@ widget SwitchView
   core_constructor switch_view
   python function py_switch_view
   js function js_switch_view
-  ts function SwitchView(children: Widget[], selected?: State | number | boolean): Widget;
+  api function SwitchView(children: Widget[], selected?: State | number | boolean): Widget;
   docs SwitchView
   compat
 end
@@ -1405,7 +1412,7 @@ widget TrailingSlotRow
   core_constructor trailing_slot_row
   python function py_trailing_slot_row
   js function js_trailing_slot_row
-  ts function TrailingSlotRow(body: Widget, trailing: Widget, trailingWidth?: number, trailingHeight?: number, gap?: number): Widget;
+  api function TrailingSlotRow(body: Widget, trailing: Widget, trailingWidth?: number, trailingHeight?: number, gap?: number): Widget;
   docs TrailingSlotRow
   compat
 end
@@ -1414,53 +1421,56 @@ descriptor FloatingStackWindow
   core_descriptor BindingFloatingStackWindow
   python class
   js class
-  ts class
+  api class
     constructor(bounds: Rect, child: Widget);
-  endts
+  endapi
   docs FloatingStackWindow
 end
 
 descriptor FloatingView
   core_descriptor BindingFloatingView
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(title: string, bounds: Rect, child: Widget, minSize?: Size, visible?: boolean);
     readonly title: string;
     readonly bounds: Rect;
     readonly minSize: Size;
     readonly visible: boolean;
-  endts
+  endapi
   docs FloatingView
 end
 
 descriptor FloatingViewSnapshot
   core_descriptor BindingFloatingViewSnapshot
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     readonly id: string;
     readonly title: string;
     readonly bounds: Rect;
     readonly minSize: Size;
     readonly visible: boolean;
     readonly maximized: boolean;
-  endts
+  endapi
   docs FloatingViewSnapshot
 end
 
 descriptor FloatingWorkspaceState
   core_descriptor BindingFloatingWorkspaceState
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor();
     views(): FloatingViewSnapshot[];
     setVisible(id: string, visible: boolean): boolean;
     setBounds(id: string, bounds: Rect): boolean;
     bringToFront(id: string): boolean;
     setMaximized(id: string, maximized: boolean): boolean;
-  endts
+  endapi
   docs FloatingWorkspaceState
 end
 
@@ -1469,7 +1479,7 @@ widget FloatingWorkspace
   core_constructor floating_workspace
   python function py_floating_workspace
   js function js_floating_workspace
-  ts function FloatingWorkspace(state: FloatingWorkspaceState, views: FloatingView[], name?: string): Widget;
+  api function FloatingWorkspace(state: FloatingWorkspaceState, views: FloatingView[], name?: string): Widget;
   docs FloatingWorkspace
   compat
 end
@@ -1477,47 +1487,51 @@ end
 descriptor DockNode
   core_descriptor BindingDockNode
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     static empty(): DockNode;
     static tabs(panelIds: string[], active?: string): DockNode;
     static split(axis: Axis, fraction: number, first: DockNode, second: DockNode): DockNode;
-  endts
+  endapi
   docs DockNode
 end
 
 descriptor DockFloatingGroup
   core_descriptor BindingDockFloatingGroup
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(id: string, panelIds: string[], active: string, bounds: Rect);
     readonly id: string;
     readonly panelIds: string[];
     readonly active: string;
     readonly bounds: Rect;
-  endts
+  endapi
   docs DockFloatingGroup
 end
 
 descriptor DockLayout
   core_descriptor BindingDockLayout
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(root: DockNode, floating?: DockFloatingGroup[], hidden?: string[]);
     readonly root: DockNode;
     readonly floating: DockFloatingGroup[];
     readonly hidden: string[];
-  endts
+  endapi
   docs DockLayout
 end
 
 descriptor DockState
   core_descriptor BindingDockState
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(layout?: DockLayout);
     snapshot(): DockLayout;
     apply(layout: DockLayout): boolean;
@@ -1527,19 +1541,20 @@ descriptor DockState
     hide(panel: string): boolean;
     show(panel: string): boolean;
     activate(panel: string): boolean;
-  endts
+  endapi
   docs DockState
 end
 
 descriptor DockPanelSpec
   core_descriptor BindingDockPanel
   python class
+  python_stub manual
   js class
-  ts class
+  api class
     constructor(id: string, title: string, child: Widget);
     readonly id: string;
     readonly title: string;
-  endts
+  endapi
   docs DockPanel
 end
 
@@ -1548,7 +1563,7 @@ widget DockWorkspace
   core_constructor dock_workspace
   python function py_dock_workspace
   js function js_dock_workspace
-  ts function DockWorkspace(state: DockState, panels: DockPanelSpec[], name?: string): Widget;
+  api function DockWorkspace(state: DockState, panels: DockPanelSpec[], name?: string): Widget;
   docs DockWorkspace
   compat
 end
@@ -1558,7 +1573,7 @@ widget FloatingStack
   core_constructor floating_stack
   python function py_floating_stack
   js function js_floating_stack
-  ts function FloatingStack(windows: FloatingStackWindow[], name?: string): Widget;
+  api function FloatingStack(windows: FloatingStackWindow[], name?: string): Widget;
   docs FloatingStack
   compat
 end
@@ -1568,7 +1583,7 @@ widget VirtualScrollView
   core_constructor virtual_scroll_view
   python function py_virtual_scroll_view
   js function js_virtual_scroll_view
-  ts function VirtualScrollView(children: Widget[], name?: string, padding?: number, spacing?: number): Widget;
+  api function VirtualScrollView(children: Widget[], name?: string, padding?: number, spacing?: number): Widget;
   docs VirtualScrollView
   compat
 end
@@ -1578,7 +1593,7 @@ widget ReorderableList
   core_constructor reorderable_list
   python function py_reorderable_list
   js function js_reorderable_list
-  ts function ReorderableList(name: string, children: Widget[], spacing?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: number, fromIndex: number, toIndex: number) => void): Widget;
+  api function ReorderableList(name: string, children: Widget[], spacing?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: int, fromIndex: int, toIndex: int) => void): Widget;
   docs ReorderableList
   compat
 end

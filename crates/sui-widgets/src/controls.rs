@@ -1,10 +1,11 @@
+mod interaction;
 use crate::{
-    Blink, ControlMetrics, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar,
-    ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, ThemeColorScheme, WidgetColorRole,
-    WidgetLuminanceRole, WidgetMaterialRole,
+    ControlMetrics, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar, ResolvedEffectStyle,
+    ResolvedHdrStyle, SemanticTone, ThemeColorScheme, WidgetColorRole, WidgetLuminanceRole,
+    WidgetMaterialRole,
     editable_text::{
-        EditableTextController, EditableTextLineMode, keyboard_text, paste_command,
-        single_line_text,
+        CaretBlink, EditableTextController, EditableTextLineMode, TextChangeCallbacks,
+        keyboard_text, single_line_text,
     },
     editor::{EditorCommand, EditorCommandResult, selection_range},
     overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
@@ -17,12 +18,13 @@ use crate::{
     },
     text_command::TextCommand,
 };
+use interaction::PressInteraction;
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
     SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsPopupKind, SemanticsRole,
-    SemanticsTextRange, SemanticsValue, Size, TimerToken, ToggleState, Vector, WakeEvent, WidgetId,
+    SemanticsTextRange, SemanticsValue, Size, ToggleState, Vector, WakeEvent, WidgetId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, Padding as Insets};
 use sui_lucide::LucideIcon;
@@ -1016,10 +1018,7 @@ pub struct IconButton {
     selected_reader: Option<Box<dyn Fn() -> bool>>,
     enabled: bool,
     enabled_reader: Option<Box<dyn Fn() -> bool>>,
-    hovered: bool,
-    pressed: bool,
-    hover_animation: AnimatedScalar,
-    press_animation: AnimatedScalar,
+    interaction: PressInteraction,
     focus_animation: AnimatedScalar,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
@@ -1041,10 +1040,7 @@ impl IconButton {
             selected_reader: None,
             enabled: true,
             enabled_reader: None,
-            hovered: false,
-            pressed: false,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
+            interaction: PressInteraction::default(),
             focus_animation: AnimatedScalar::new(0.0),
             on_press: None,
             on_press_with_ctx: None,
@@ -1181,123 +1177,25 @@ impl IconButton {
             on_press(ctx);
         }
     }
-
-    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
-        if self.hovered != hovered {
-            let theme = self.resolved_theme();
-            self.hovered = hovered;
-            set_hover_animation_target(
-                &mut self.hover_animation,
-                hovered as u8 as f32,
-                &theme,
-                ctx,
-            );
-            ctx.request_paint();
-            ctx.request_semantics();
-        }
-    }
-
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
 }
 
 impl Widget for IconButton {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if !self.is_enabled() {
-            if self.hovered || self.pressed {
-                let theme = self.resolved_theme();
-                self.hovered = false;
-                self.pressed = false;
-                set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
-                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
-                ctx.request_paint();
-                ctx.request_semantics();
-            }
-            return;
-        }
-
-        match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
-            }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
-                self.set_hovered(true, ctx);
-            }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                self.set_hovered(false, ctx);
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                let theme = self.resolved_theme();
-                self.pressed = true;
-                self.hovered = true;
-                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
-                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
-                ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_focus();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && (pointer.button == Some(PointerButton::Primary) || self.pressed) =>
-            {
-                let theme = self.resolved_theme();
-                let hovered = ctx.bounds().contains(pointer.position);
-                let activate = self.pressed && hovered;
-                self.pressed = false;
-                self.hovered = hovered;
-                set_hover_animation_target(
-                    &mut self.hover_animation,
-                    hovered as u8 as f32,
-                    &theme,
-                    ctx,
-                );
-                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
-                ctx.release_pointer_capture(pointer.pointer_id);
-                if activate {
-                    self.activate(ctx);
-                }
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed {
-                    let theme = self.resolved_theme();
-                    self.pressed = false;
-                    self.hovered = false;
-                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
-                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                }
-            }
-            Event::Keyboard(key)
-                if key.state == KeyState::Pressed
-                    && ctx.is_focused()
-                    && matches!(key.key.as_str(), "Enter" | " ") =>
-            {
-                self.activate(ctx);
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
-            _ => {}
+        let enabled = self.is_enabled();
+        let theme = &self.theme;
+        let reader = &self.theme_reader;
+        let activate = self.interaction.event(
+            ctx,
+            event,
+            enabled,
+            || reader.as_ref().map(|read| read()).unwrap_or(**theme),
+            &mut self.focus_animation,
+        );
+        if activate {
+            self.activate(ctx);
+            ctx.request_paint();
+            ctx.request_semantics();
+            ctx.set_handled();
         }
     }
 
@@ -1318,8 +1216,8 @@ impl Widget for IconButton {
                 .tone(self.tone)
                 .selected(self.is_selected())
                 .enabled(self.is_enabled())
-                .hover_progress(self.hover_animation.value)
-                .press_progress(self.press_animation.value)
+                .hover_progress(self.interaction.hover_animation.value)
+                .press_progress(self.interaction.press_animation.value)
                 .focus_progress(self.focus_animation.value)
                 .icon_size(self.resolved_icon_size()),
         );
@@ -1330,7 +1228,7 @@ impl Widget for IconButton {
         node.name = Some(self.label.clone());
         node.description = self.semantic_description.clone();
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.hovered = self.interaction.hovered && self.is_enabled();
         node.state.selected = self.is_selected();
         node.state.disabled = !self.is_enabled();
         node.actions = if self.is_enabled() {
@@ -1371,10 +1269,7 @@ pub struct Button {
     padding: Option<Insets>,
     min_width: Option<f32>,
     min_height: Option<f32>,
-    hovered: bool,
-    pressed: bool,
-    hover_animation: AnimatedScalar,
-    press_animation: AnimatedScalar,
+    interaction: PressInteraction,
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     label_layout: Option<PersistentTextLayout>,
@@ -1412,10 +1307,7 @@ impl Button {
             padding: None,
             min_width: None,
             min_height: None,
-            hovered: false,
-            pressed: false,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
+            interaction: PressInteraction::default(),
             focus_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             label_layout: None,
@@ -1578,27 +1470,6 @@ impl Button {
         }
     }
 
-    fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
-        if self.hovered != hovered {
-            let theme = self.resolved_theme();
-            self.hovered = hovered;
-            set_hover_animation_target(
-                &mut self.hover_animation,
-                hovered as u8 as f32,
-                &theme,
-                ctx,
-            );
-            ctx.request_paint();
-            ctx.request_semantics();
-        }
-    }
-
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
-
     fn is_enabled(&self) -> bool {
         self.enabled_reader
             .as_ref()
@@ -1672,12 +1543,12 @@ impl Button {
             0.0
         };
         let hover_progress = if enabled {
-            self.hover_animation.value * interaction.hover_blend
+            self.interaction.hover_animation.value * interaction.hover_blend
         } else {
             0.0
         };
         let press_progress = if enabled {
-            self.press_animation.value * interaction.pressed_blend
+            self.interaction.press_animation.value * interaction.pressed_blend
         } else {
             0.0
         };
@@ -1689,8 +1560,8 @@ impl Button {
                 self.appearance,
                 self.tone,
                 enabled,
-                self.hover_animation.value,
-                self.press_animation.value,
+                self.interaction.hover_animation.value,
+                self.interaction.press_animation.value,
             );
             let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
             let label_color = if enabled {
@@ -1859,98 +1730,21 @@ impl Button {
 
 impl Widget for Button {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if !self.is_enabled() {
-            if self.hovered || self.pressed {
-                let theme = self.resolved_theme();
-                self.hovered = false;
-                self.pressed = false;
-                set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
-                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
-                ctx.request_paint();
-                ctx.request_semantics();
-            }
-            return;
-        }
-
-        match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
-            }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
-                self.set_hovered(true, ctx);
-            }
-            Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Leave) => {
-                self.set_hovered(false, ctx);
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                let theme = self.resolved_theme();
-                self.pressed = true;
-                self.hovered = true;
-                set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
-                set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
-                ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_focus();
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && (pointer.button == Some(PointerButton::Primary) || self.pressed) =>
-            {
-                let theme = self.resolved_theme();
-                let hovered = ctx.bounds().contains(pointer.position);
-                let activate = self.pressed && hovered;
-                self.pressed = false;
-                self.hovered = hovered;
-                set_hover_animation_target(
-                    &mut self.hover_animation,
-                    hovered as u8 as f32,
-                    &theme,
-                    ctx,
-                );
-                set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
-                ctx.release_pointer_capture(pointer.pointer_id);
-                if activate {
-                    self.activate(ctx);
-                }
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.pressed {
-                    let theme = self.resolved_theme();
-                    self.pressed = false;
-                    self.hovered = false;
-                    set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
-                    set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                }
-            }
-            Event::Keyboard(key)
-                if key.state == KeyState::Pressed
-                    && ctx.is_focused()
-                    && matches!(key.key.as_str(), "Enter" | " ") =>
-            {
-                self.activate(ctx);
-                ctx.request_paint();
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
-            _ => {}
+        let enabled = self.is_enabled();
+        let theme = &self.theme;
+        let reader = &self.theme_reader;
+        let activate = self.interaction.event(
+            ctx,
+            event,
+            enabled,
+            || reader.as_ref().map(|read| read()).unwrap_or(**theme),
+            &mut self.focus_animation,
+        );
+        if activate {
+            self.activate(ctx);
+            ctx.request_paint();
+            ctx.request_semantics();
+            ctx.set_handled();
         }
     }
 
@@ -2055,7 +1849,7 @@ impl Widget for Button {
         );
         node.description = self.semantic_description.clone();
         node.state.focused = ctx.is_focused();
-        node.state.hovered = self.hovered && self.is_enabled();
+        node.state.hovered = self.interaction.hovered && self.is_enabled();
         node.state.disabled = !self.is_enabled();
         node.actions = if self.is_enabled() {
             vec![SemanticsAction::Focus, SemanticsAction::Activate]
@@ -5087,13 +4881,10 @@ pub struct TextArea {
     dragging_selection: bool,
     hover_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
-    caret_blink: Blink,
-    caret_timer: Option<TimerToken>,
-    caret_visible: bool,
+    caret: CaretBlink,
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
-    on_change: Option<Box<dyn FnMut(String)>>,
-    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
+    changes: TextChangeCallbacks,
     on_submit: Option<Box<dyn FnMut(&str)>>,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
 }
@@ -5117,13 +4908,10 @@ impl TextArea {
             dragging_selection: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
-            caret_blink: Blink::new(CARET_BLINK_PERIOD_SECONDS),
-            caret_timer: None,
-            caret_visible: true,
+            caret: CaretBlink::new(CARET_BLINK_PERIOD_SECONDS),
             display_layout: None,
             input_layout: None,
-            on_change: None,
-            on_change_with_ctx: None,
+            changes: TextChangeCallbacks::default(),
             on_submit: None,
             on_focus_change: None,
         }
@@ -5223,7 +5011,7 @@ impl TextArea {
     where
         F: FnMut(String) + 'static,
     {
-        self.on_change = Some(Box::new(on_change));
+        self.changes.value = Some(Box::new(on_change));
         self
     }
 
@@ -5231,7 +5019,7 @@ impl TextArea {
     where
         F: FnMut(&mut EventCtx, String) + 'static,
     {
-        self.on_change_with_ctx = Some(Box::new(on_change));
+        self.changes.with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -5309,34 +5097,15 @@ impl TextArea {
             .unwrap_or(*self.theme)
     }
 
-    fn commit_text_change(&mut self, ctx: &mut EventCtx) {
-        let value = self.current_value().to_string();
-        if let Some(on_change) = &mut self.on_change {
-            on_change(value.clone());
-        }
-        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
-            on_change_with_ctx(ctx, value);
-        }
-    }
-
-    fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let handled = result.handled;
-        self.editor.apply_result_common(ctx, &mut result);
-        if result.text_changed {
-            self.commit_text_change(ctx);
-        }
-        if result.layout_changed() {
-            ctx.request_measure();
-            ctx.request_paint();
-        } else if result.overlay_changed() {
-            ctx.request_paint();
-        }
-        if result.text_changed || result.selection_changed || result.composition_changed {
-            ctx.request_semantics();
-        }
-        if handled && self.focused {
-            self.reset_caret_blink(ctx);
-        }
+    fn apply_editor_result(&mut self, ctx: &mut EventCtx, result: EditorCommandResult) {
+        self.editor.apply_field_result(
+            ctx,
+            result,
+            &mut self.changes,
+            &mut self.caret,
+            self.focused,
+            self.read_only,
+        );
     }
 
     fn execute_editor_command(&mut self, ctx: &mut EventCtx, command: EditorCommand) {
@@ -5346,32 +5115,25 @@ impl TextArea {
 
     /// Select the entire document.
     pub fn select_all(&mut self, ctx: &mut EventCtx) {
-        self.execute_editor_command(ctx, EditorCommand::SelectAll);
+        self.apply_text_command(ctx, TextCommand::SelectAll);
     }
 
     /// Copy the current selection to the clipboard. No-op when the selection
     /// is collapsed.
     pub fn copy(&mut self, ctx: &mut EventCtx) {
-        self.execute_editor_command(ctx, EditorCommand::Copy);
+        self.apply_text_command(ctx, TextCommand::Copy);
     }
 
     /// Copy the current selection to the clipboard and delete it. No-op when
     /// read-only or the selection is collapsed.
     pub fn cut(&mut self, ctx: &mut EventCtx) {
-        if self.read_only {
-            return;
-        }
-        self.execute_editor_command(ctx, EditorCommand::Cut);
+        self.apply_text_command(ctx, TextCommand::Cut);
     }
 
     /// Replace the current selection with the clipboard text. No-op when
     /// read-only or the clipboard has no text.
     pub fn paste(&mut self, ctx: &mut EventCtx) {
-        if self.read_only {
-            return;
-        }
-        let command = paste_command(ctx, EditableTextLineMode::MultiLine);
-        self.execute_editor_command(ctx, command);
+        self.apply_text_command(ctx, TextCommand::Paste);
     }
 
     /// Currently selected document text (empty when the selection is
@@ -5429,36 +5191,6 @@ impl TextArea {
         self.apply_editor_result(ctx, result);
     }
 
-    fn caret_blink_delay(&self) -> f64 {
-        let span = if self.caret_visible {
-            self.caret_blink.period * self.caret_blink.duty_cycle as f64
-        } else {
-            self.caret_blink.period * (1.0 - self.caret_blink.duty_cycle as f64)
-        };
-        span.max(f64::EPSILON)
-    }
-
-    fn arm_caret_blink(&mut self, ctx: &mut EventCtx) {
-        if let Some(token) = self.caret_timer.take() {
-            ctx.cancel_timer(token);
-        }
-        if self.focused {
-            self.caret_timer = Some(ctx.schedule_timer_after(self.caret_blink_delay()));
-        }
-    }
-
-    fn reset_caret_blink(&mut self, ctx: &mut EventCtx) {
-        if self.read_only {
-            if let Some(token) = self.caret_timer.take() {
-                ctx.cancel_timer(token);
-            }
-            self.caret_visible = false;
-            return;
-        }
-        self.caret_visible = self.focused;
-        self.arm_caret_blink(ctx);
-    }
-
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
         if self.hovered != hovered {
             let theme = self.resolved_theme();
@@ -5505,7 +5237,7 @@ impl Widget for TextArea {
             {
                 self.set_hovered(true, ctx);
                 if self.focused {
-                    self.reset_caret_blink(ctx);
+                    self.caret.reset(ctx, self.focused, self.read_only);
                 }
                 self.set_caret_from_position(
                     ctx.bounds(),
@@ -5626,16 +5358,8 @@ impl Widget for TextArea {
                     self.execute_editor_command(ctx, command);
                 }
             }
-            Event::Wake(sui_core::WakeEvent::Timer { token, .. })
-                if self.caret_timer == Some(*token) =>
-            {
-                self.caret_timer = None;
-                if self.focused {
-                    self.caret_visible = !self.caret_visible;
-                    self.arm_caret_blink(ctx);
-                    ctx.request_paint();
-                    ctx.set_handled();
-                }
+            Event::Wake(sui_core::WakeEvent::Timer { token, .. }) if self.caret.matches(*token) => {
+                self.caret.tick(ctx, self.focused);
             }
             Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
                 let previous_hover = self.hover_animation.value;
@@ -5831,7 +5555,7 @@ impl Widget for TextArea {
                 caret.height().max(text_style.line_height).max(1.0),
             );
             ctx.set_ime_composition_rect(caret);
-            if self.caret_visible {
+            if self.caret.visible {
                 ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.caret);
             }
         }
@@ -5872,12 +5596,9 @@ impl Widget for TextArea {
             }
         }
         if focused {
-            self.reset_caret_blink(ctx);
+            self.caret.reset(ctx, self.focused, self.read_only);
         } else {
-            if let Some(token) = self.caret_timer.take() {
-                ctx.cancel_timer(token);
-            }
-            self.caret_visible = false;
+            self.caret.stop(ctx);
         }
         let theme = self.resolved_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
@@ -6937,15 +6658,12 @@ pub struct TextInput {
     dragging_selection: bool,
     hover_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
-    caret_blink: Blink,
-    caret_timer: Option<TimerToken>,
-    caret_visible: bool,
+    caret: CaretBlink,
     visible_measurement: Option<TextMeasurement>,
     input_measurement: Option<TextMeasurement>,
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
-    on_change: Option<Box<dyn FnMut(String)>>,
-    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
+    changes: TextChangeCallbacks,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
 }
 
@@ -6970,15 +6688,12 @@ impl TextInput {
             dragging_selection: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
-            caret_blink: Blink::new(CARET_BLINK_PERIOD_SECONDS),
-            caret_timer: None,
-            caret_visible: true,
+            caret: CaretBlink::new(CARET_BLINK_PERIOD_SECONDS),
             visible_measurement: None,
             input_measurement: None,
             display_layout: None,
             input_layout: None,
-            on_change: None,
-            on_change_with_ctx: None,
+            changes: TextChangeCallbacks::default(),
             on_focus_change: None,
         }
     }
@@ -7091,7 +6806,7 @@ impl TextInput {
     where
         F: FnMut(String) + 'static,
     {
-        self.on_change = Some(Box::new(on_change));
+        self.changes.value = Some(Box::new(on_change));
         self
     }
 
@@ -7099,7 +6814,7 @@ impl TextInput {
     where
         F: FnMut(&mut EventCtx, String) + 'static,
     {
-        self.on_change_with_ctx = Some(Box::new(on_change));
+        self.changes.with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -7179,34 +6894,15 @@ impl TextInput {
         }
     }
 
-    fn commit_text_change(&mut self, ctx: &mut EventCtx) {
-        let value = self.current_value().to_string();
-        if let Some(on_change) = &mut self.on_change {
-            on_change(value.clone());
-        }
-        if let Some(on_change_with_ctx) = &mut self.on_change_with_ctx {
-            on_change_with_ctx(ctx, value);
-        }
-    }
-
-    fn apply_editor_result(&mut self, ctx: &mut EventCtx, mut result: EditorCommandResult) {
-        let handled = result.handled;
-        self.editor.apply_result_common(ctx, &mut result);
-        if result.text_changed {
-            self.commit_text_change(ctx);
-        }
-        if result.layout_changed() {
-            ctx.request_measure();
-            ctx.request_paint();
-        } else if result.overlay_changed() {
-            ctx.request_paint();
-        }
-        if result.text_changed || result.selection_changed || result.composition_changed {
-            ctx.request_semantics();
-        }
-        if handled && self.focused {
-            self.reset_caret_blink(ctx);
-        }
+    fn apply_editor_result(&mut self, ctx: &mut EventCtx, result: EditorCommandResult) {
+        self.editor.apply_field_result(
+            ctx,
+            result,
+            &mut self.changes,
+            &mut self.caret,
+            self.focused,
+            self.read_only,
+        );
     }
 
     fn execute_editor_command(&mut self, ctx: &mut EventCtx, command: EditorCommand) {
@@ -7216,32 +6912,25 @@ impl TextInput {
 
     /// Select the entire document.
     pub fn select_all(&mut self, ctx: &mut EventCtx) {
-        self.execute_editor_command(ctx, EditorCommand::SelectAll);
+        self.apply_text_command(ctx, TextCommand::SelectAll);
     }
 
     /// Copy the current selection to the clipboard. No-op when the selection
     /// is collapsed.
     pub fn copy(&mut self, ctx: &mut EventCtx) {
-        self.execute_editor_command(ctx, EditorCommand::Copy);
+        self.apply_text_command(ctx, TextCommand::Copy);
     }
 
     /// Copy the current selection to the clipboard and delete it. No-op when
     /// read-only or the selection is collapsed.
     pub fn cut(&mut self, ctx: &mut EventCtx) {
-        if self.read_only {
-            return;
-        }
-        self.execute_editor_command(ctx, EditorCommand::Cut);
+        self.apply_text_command(ctx, TextCommand::Cut);
     }
 
     /// Replace the current selection with the clipboard text (coerced to a
     /// single line). No-op when read-only or the clipboard has no text.
     pub fn paste(&mut self, ctx: &mut EventCtx) {
-        if self.read_only {
-            return;
-        }
-        let command = paste_command(ctx, EditableTextLineMode::SingleLine);
-        self.execute_editor_command(ctx, command);
+        self.apply_text_command(ctx, TextCommand::Paste);
     }
 
     /// Currently selected document text (empty when the selection is
@@ -7299,37 +6988,7 @@ impl TextInput {
         };
         let result = self.editor.execute(command);
         self.apply_editor_result(ctx, result);
-        self.reset_caret_blink(ctx);
-    }
-
-    fn caret_blink_delay(&self) -> f64 {
-        let span = if self.caret_visible {
-            self.caret_blink.period * self.caret_blink.duty_cycle as f64
-        } else {
-            self.caret_blink.period * (1.0 - self.caret_blink.duty_cycle as f64)
-        };
-        span.max(f64::EPSILON)
-    }
-
-    fn arm_caret_blink(&mut self, ctx: &mut EventCtx) {
-        if let Some(token) = self.caret_timer.take() {
-            ctx.cancel_timer(token);
-        }
-        if self.focused {
-            self.caret_timer = Some(ctx.schedule_timer_after(self.caret_blink_delay()));
-        }
-    }
-
-    fn reset_caret_blink(&mut self, ctx: &mut EventCtx) {
-        if self.read_only {
-            if let Some(token) = self.caret_timer.take() {
-                ctx.cancel_timer(token);
-            }
-            self.caret_visible = false;
-            return;
-        }
-        self.caret_visible = self.focused;
-        self.arm_caret_blink(ctx);
+        self.caret.reset(ctx, self.focused, self.read_only);
     }
 
     fn set_hovered(&mut self, hovered: bool, ctx: &mut EventCtx) {
@@ -7538,16 +7197,8 @@ impl Widget for TextInput {
                     self.execute_editor_command(ctx, command);
                 }
             }
-            Event::Wake(sui_core::WakeEvent::Timer { token, .. })
-                if self.caret_timer == Some(*token) =>
-            {
-                self.caret_timer = None;
-                if self.focused {
-                    self.caret_visible = !self.caret_visible;
-                    self.arm_caret_blink(ctx);
-                    ctx.request_paint();
-                    ctx.set_handled();
-                }
+            Event::Wake(sui_core::WakeEvent::Timer { token, .. }) if self.caret.matches(*token) => {
+                self.caret.tick(ctx, self.focused);
             }
             Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
                 let previous_hover = self.hover_animation.value;
@@ -7791,7 +7442,7 @@ impl Widget for TextInput {
                 caret_rect.height().max(text_style.line_height),
             );
             ctx.set_ime_composition_rect(caret_rect);
-            if self.caret_visible {
+            if self.caret.visible {
                 ctx.fill(
                     rounded_rect_path(caret_rect, caret_width * 0.5),
                     palette.caret,
@@ -7835,12 +7486,9 @@ impl Widget for TextInput {
             }
         }
         if focused {
-            self.reset_caret_blink(ctx);
+            self.caret.reset(ctx, self.focused, self.read_only);
         } else {
-            if let Some(token) = self.caret_timer.take() {
-                ctx.cancel_timer(token);
-            }
-            self.caret_visible = false;
+            self.caret.stop(ctx);
         }
         let theme = self.resolved_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);

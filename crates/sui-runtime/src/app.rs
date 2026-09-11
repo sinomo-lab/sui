@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use sui_core::{Error, FontHandle, ImageHandle, Point, Result, Size, WindowId};
-use sui_scene::{ImageRegistry, RegisteredImage};
-use sui_text::{FontRegistry, RegisteredFont};
+use sui_scene::RegisteredImage;
+use sui_text::RegisteredFont;
 
 use crate::{
     Runtime, WindowState,
@@ -242,12 +242,10 @@ impl EmbeddedSvgImageResource {
     }
 }
 
+#[derive(Default)]
 pub struct Application {
     windows: Vec<WindowBuilder>,
-    next_font_id: u64,
-    next_image_id: u64,
-    font_registry: Arc<FontRegistry>,
-    image_registry: Arc<ImageRegistry>,
+    resources: crate::resources::ResourceStore,
     command_listeners: CommandListeners,
 }
 
@@ -278,40 +276,15 @@ impl Application {
     }
 
     pub fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> Result<()> {
-        if Arc::make_mut(&mut self.font_registry)
-            .insert(handle, font)
-            .is_some()
-        {
-            return Err(Error::new(format!(
-                "font handle {} is already registered",
-                handle.get()
-            )));
-        }
-
-        self.next_font_id = self.next_font_id.max(handle.get() + 1);
-        Ok(())
+        self.resources.register_font(handle, font)
     }
 
     pub fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
-        let handle = FontHandle::new(self.next_font_id.max(1));
-        self.next_font_id = handle.get() + 1;
-        self.register_font(handle, RegisteredFont::from_bytes(data))?;
-        Ok(handle)
+        self.resources.register_font_bytes(data)
     }
 
     pub fn register_image(&mut self, handle: ImageHandle, image: RegisteredImage) -> Result<()> {
-        if Arc::make_mut(&mut self.image_registry)
-            .insert(handle, image)
-            .is_some()
-        {
-            return Err(Error::new(format!(
-                "image handle {} is already registered",
-                handle.get()
-            )));
-        }
-
-        self.next_image_id = self.next_image_id.max(handle.get() + 1);
-        Ok(())
+        self.resources.register_image(handle, image)
     }
 
     pub fn register_svg_image_with_handle(
@@ -319,7 +292,7 @@ impl Application {
         handle: ImageHandle,
         data: impl AsRef<[u8]>,
     ) -> Result<()> {
-        self.register_image(handle, RegisteredImage::from_svg(data)?)
+        self.resources.register_svg_image_with_handle(handle, data)
     }
 
     pub fn register_rgba_image(
@@ -328,17 +301,11 @@ impl Application {
         height: u32,
         data: impl Into<Vec<u8>>,
     ) -> Result<ImageHandle> {
-        let handle = ImageHandle::new(self.next_image_id.max(1));
-        self.next_image_id = handle.get() + 1;
-        self.register_image(handle, RegisteredImage::from_rgba8(width, height, data)?)?;
-        Ok(handle)
+        self.resources.register_rgba_image(width, height, data)
     }
 
     pub fn register_svg_image(&mut self, data: impl AsRef<[u8]>) -> Result<ImageHandle> {
-        let handle = ImageHandle::new(self.next_image_id.max(1));
-        self.next_image_id = handle.get() + 1;
-        self.register_image(handle, RegisteredImage::from_svg(data)?)?;
-        Ok(handle)
+        self.resources.register_svg_image(data)
     }
 
     pub fn register_svg_image_at_size_with_handle(
@@ -348,10 +315,8 @@ impl Application {
         height: u32,
         data: impl AsRef<[u8]>,
     ) -> Result<()> {
-        self.register_image(
-            handle,
-            RegisteredImage::from_svg_at_size(width, height, data)?,
-        )
+        self.resources
+            .register_svg_image_at_size_with_handle(handle, width, height, data)
     }
 
     pub fn register_svg_image_at_size(
@@ -360,39 +325,26 @@ impl Application {
         height: u32,
         data: impl AsRef<[u8]>,
     ) -> Result<ImageHandle> {
-        let handle = ImageHandle::new(self.next_image_id.max(1));
-        self.next_image_id = handle.get() + 1;
-        self.register_image(
-            handle,
-            RegisteredImage::from_svg_at_size(width, height, data)?,
-        )?;
-        Ok(handle)
+        self.resources
+            .register_svg_image_at_size(width, height, data)
     }
 
     pub fn register_embedded_svg_image(
         &mut self,
         resource: EmbeddedSvgImageResource,
     ) -> Result<()> {
-        self.register_image(resource.handle(), resource.registered_image()?)
+        self.resources.register_embedded_svg_image(resource)
     }
 
     pub fn register_embedded_svg_images(
         &mut self,
         resources: impl IntoIterator<Item = EmbeddedSvgImageResource>,
     ) -> Result<()> {
-        for resource in resources {
-            self.register_embedded_svg_image(resource)?;
-        }
-        Ok(())
+        self.resources.register_embedded_svg_images(resources)
     }
 
     pub fn build(self) -> Result<Runtime> {
-        let mut runtime = Runtime::with_registries(
-            self.next_font_id,
-            self.font_registry,
-            self.next_image_id,
-            self.image_registry,
-        );
+        let mut runtime = Runtime::with_resources(self.resources);
         runtime.command_listeners = self.command_listeners;
 
         for window in self.windows {
@@ -400,18 +352,5 @@ impl Application {
         }
 
         Ok(runtime)
-    }
-}
-
-impl Default for Application {
-    fn default() -> Self {
-        Self {
-            windows: Vec::new(),
-            next_font_id: 1,
-            next_image_id: 1,
-            font_registry: Arc::new(FontRegistry::new()),
-            image_registry: Arc::new(ImageRegistry::new()),
-            command_listeners: CommandListeners::default(),
-        }
     }
 }

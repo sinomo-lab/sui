@@ -8,19 +8,27 @@ The workspace currently contains these crates:
 crates/
   sui/
   sui-animation/
+  sui-avif/
+  sui-bindings-core/
   sui-core/
   sui-debug/
   sui-demo/
+  sui-js/
   sui-layout/
+  sui-lucide/
   sui-nodes/
   sui-platform/
+  sui-python/
+  sui-reactive/
   sui-render-wgpu/
   sui-runtime/
   sui-scene/
   sui-testing/
   sui-text/
+  sui-tui/
   sui-webview/
   sui-widgets/
+  xtask/
 ```
 
 There is no separate surface protocol crate. Core window/viewport, event,
@@ -52,6 +60,12 @@ The codebase is easiest to understand as three stacked layers plus tooling.
 - `sinomo-ui-nodes`
 - `sinomo-ui-webview`
 - `sinomo-ui-debug`
+
+### Language bindings
+
+- `sinomo-ui-bindings-core`
+- `sinomo-ui-python`
+- `sinomo-ui-js`
 
 ### Development and test tooling
 
@@ -281,6 +295,23 @@ performance overlays, and visual artifact generation.
 - Change platform event handling or IME behavior: `sinomo-ui-platform`, preserving `WindowId + Event` delivery.
 - Add locator behavior or test actions: `sinomo-ui-testing`.
 - Add gallery stories, screenshots, or performance panels: `sinomo-ui-demo`.
+
+## Implementation Modules
+
+The public facades preserve their existing exports while implementation work
+is grouped into the following internal modules:
+
+| Crate | Implementation ownership |
+| --- | --- |
+| `sui-runtime` | `resources.rs` owns validated registration and handle allocation for both `Application` and `Runtime`. |
+| `sui-widgets` | `composites/` separates surfaces, forms, navigation, toolbars, popups, dialogs, status, indicators, and shared painting. `controls/interaction.rs` and `editable_text.rs` own shared input behavior. |
+| `sui-bindings-core` | Descriptors and models live by feature; `widget_descriptor`, `widget_factory`, `widget_bindings`, and `widget_build` separate the widget model from construction and traversal. Runtime, foreign-widget, and graphics interop adapters have separate modules. |
+| `sui-render-wgpu` | `device`, `resources`, `surface`, `output`, and `capture` own host/GPU lifecycle. `draw` and `submission` define draw data and submission. `scene`, `primitives`, `geometry`, `paths`, `path_cache`, `text`, and `text_engine` own raster preparation. WGSL lives under `shaders/`, and renderer tests are grouped under `tests/`. |
+| `xtask` | `api.rs` parses logical binding signatures and renders host-language types; `source.rs` inspects declarations and module trees. See [the binding specification guide](../bindings/README.md). |
+
+Renderer implementation modules import their dependencies explicitly. Keep
+shared data contracts independent of resource ownership, and retain each
+pipeline's vertex representation when moving rendering code.
 
 ## Common Mistakes To Avoid
 
