@@ -882,6 +882,24 @@ mod tests {
     }
 
     #[test]
+    fn mixed_direction_movement_preserves_arabic_and_hebrew_marks() {
+        let mut state = EditorState::from_text("AبِשָׁZ");
+        state.execute(EditorCommand::MoveLeft { extend: false });
+        assert_eq!(state.selection().focus.utf8_offset, "Aبِשָׁ".len());
+        state.execute(EditorCommand::MoveLeft { extend: false });
+        assert_eq!(state.selection().focus.utf8_offset, "Aبِ".len());
+        state.execute(EditorCommand::MoveLeft { extend: false });
+        assert_eq!(state.selection().focus.utf8_offset, "A".len());
+        state.execute(EditorCommand::MoveRight { extend: true });
+        assert_eq!(state.selection().anchor.utf8_offset, "A".len());
+        assert_eq!(state.selection().focus.utf8_offset, "Aبِ".len());
+        state.execute(EditorCommand::DeleteBackward);
+        assert_eq!(state.document().text(), "AשָׁZ");
+        state.execute(EditorCommand::Undo);
+        assert_eq!(state.document().text(), "AبِשָׁZ");
+    }
+
+    #[test]
     fn transactions_support_undo_redo_and_clipboard_commands() {
         let mut state = EditorState::from_text("hello world");
         state.execute(EditorCommand::SetSelection {

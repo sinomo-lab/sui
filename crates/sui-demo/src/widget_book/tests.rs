@@ -440,21 +440,24 @@ fn text_editing_benchmark_exercises_rich_code_style_ranges() {
             .iter()
             .any(|overlay| matches!(overlay.kind, TextSurfaceOverlayKind::Diagnostic))
     );
+    let emoji_previews = overlays
+        .iter()
+        .filter(|overlay| matches!(overlay.kind, TextSurfaceOverlayKind::RichTextPreview))
+        .collect::<Vec<_>>();
+    assert!(!emoji_previews.is_empty());
     assert!(
-        overlays
+        emoji_previews
             .iter()
-            .any(|overlay| matches!(overlay.kind, TextSurfaceOverlayKind::RichTextPreview))
+            .all(|overlay| document.get(overlay.range.clone()) == Some("\u{1f642}"))
     );
-    assert!(
-        spans
-            .iter()
-            .all(|span| span.range.start < span.range.end && span.range.end <= document.len())
-    );
+    assert!(spans.iter().all(
+        |span| span.range.start < span.range.end && document.get(span.range.clone()).is_some()
+    ));
     assert!(
         overlays
             .iter()
             .all(|overlay| overlay.range.start < overlay.range.end
-                && overlay.range.end <= document.len())
+                && document.get(overlay.range.clone()).is_some())
     );
 
     let (preview, preview_spans) = text_editing_syntax_preview_content(DefaultTheme::default());
@@ -1129,19 +1132,19 @@ fn collect_headless_text_editing_benchmark_samples(
     const EDIT_COMMITS: [&str; 10] = [
         " // typed atlas reuse",
         "\nlet pending_frame = cache_hits + 1;",
-        "\n// bidi check: abc ××‘×’ 123 Ù…Ø±Ø\u{ad}Ø¨Ø§",
-        "\nlet emoji = \"ðŸ™‚âœ…ðŸŽ¨\";",
-        "\nlet ime_probe = \"å€™è£œ\";",
+        "\n// bidi check: abc אבג 123 مرحبا",
+        "\nlet emoji = \"🙂✅🎨\";",
+        "\nlet ime_probe = \"候補\";",
         "\nlet syntax_band = highlight_rows.len();",
-        "\n// fallback sample: Ð– ä¸\u{ad} à¤¨à¤®à¤¸à¥à¤¤à¥‡",
+        "\n// fallback sample: Ж 中 नमस्ते",
         "\nrecord_selection_delta(cursor, viewport);",
         "\nlet scroll_budget_ms = 16.67;",
         "\ncommit_overlay_sample(frame_index);",
     ];
     const IME_PREEDIT_UPDATES: [(&str, Option<(usize, usize)>); 3] = [
-        ("å€™", Some((0, 1))),
-        ("å€™è£œ", Some((1, 2))),
-        ("å€™è£œã‚’", Some((2, 3))),
+        ("候", Some((0, 1))),
+        ("候補", Some((1, 2))),
+        ("候補を", Some((2, 3))),
     ];
     const EDITOR_SCROLL_FRAMES: usize = 18;
     const SYNTAX_SCROLL_FRAMES: usize = 28;
@@ -1179,7 +1182,7 @@ fn collect_headless_text_editing_benchmark_samples(
         )?);
     }
     editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit {
-        text: "å€™è£œã‚’".to_string(),
+        text: "候補を".to_string(),
     }))?;
     collected.push(next_headless_benchmark_frame(
         window,
@@ -2763,11 +2766,11 @@ fn text_validation_surface_supports_ime_and_selection() -> Result<()> {
     let before_selection = editor.capture_screenshot()?;
     editor.dispatch_event(Event::Ime(ImeEvent::CompositionStart))?;
     editor.dispatch_event(Event::Ime(ImeEvent::CompositionUpdate {
-        text: " // validatedðŸ™‚".to_string(),
+        text: " // validated🙂".to_string(),
         cursor_range: None,
     }))?;
     editor.dispatch_event(Event::Ime(ImeEvent::CompositionCommit {
-        text: " // validatedðŸ™‚".to_string(),
+        text: " // validated🙂".to_string(),
     }))?;
     editor.dispatch_event(Event::Ime(ImeEvent::CompositionEnd))?;
 
@@ -2794,7 +2797,7 @@ fn text_validation_surface_supports_ime_and_selection() -> Result<()> {
             _ => None,
         })
         .expect("validation editor semantics value present after IME commit");
-    assert!(editor_value.contains("validatedðŸ™‚"));
+    assert!(editor_value.contains("validated\u{1f642}"));
 
     Ok(())
 }

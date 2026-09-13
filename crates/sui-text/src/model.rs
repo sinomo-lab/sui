@@ -485,25 +485,15 @@ impl TextLine {
     }
 
     pub(crate) fn offset_for_x(&self, x: f32) -> usize {
-        if self.clusters.is_empty() {
-            return self.byte_range.start;
-        }
-
-        let first = &self.clusters[0];
-        let first_min = first.x_start.min(first.x_end);
-        if x <= first_min {
-            return if first.x_start <= first.x_end {
-                first.range.start
-            } else {
-                first.range.end
-            };
-        }
-
+        let mut nearest_offset = self.byte_range.start;
+        let mut nearest_distance = f32::INFINITY;
+        // Clusters are stored in logical text order, which can run in either
+        // direction on screen. Find the visual cluster containing the point.
         for cluster in &self.clusters {
             let cluster_min = cluster.x_start.min(cluster.x_end);
             let cluster_max = cluster.x_start.max(cluster.x_end);
             let midpoint = (cluster_min + cluster_max) * 0.5;
-            if x <= cluster_max {
+            if cluster_min < cluster_max && x >= cluster_min && x <= cluster_max {
                 let ascending = cluster.x_start <= cluster.x_end;
                 return if x <= midpoint {
                     if ascending {
@@ -517,17 +507,19 @@ impl TextLine {
                     cluster.range.start
                 };
             }
+            // Outside the text (or in a visual gap), use the nearest edge.
+            for (edge, offset) in [
+                (cluster.x_start, cluster.range.start),
+                (cluster.x_end, cluster.range.end),
+            ] {
+                let distance = (x - edge).abs();
+                if distance < nearest_distance {
+                    nearest_distance = distance;
+                    nearest_offset = offset;
+                }
+            }
         }
-
-        let last = self
-            .clusters
-            .last()
-            .expect("text lines with clusters should have a last cluster");
-        if last.x_start <= last.x_end {
-            last.range.end
-        } else {
-            last.range.start
-        }
+        nearest_offset
     }
 }
 

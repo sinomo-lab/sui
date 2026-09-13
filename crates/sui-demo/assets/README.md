@@ -1,5 +1,11 @@
 # Web demo fonts
 
+SUI's text engine embeds complete Noto Sans Arabic and Noto Sans Hebrew regular
+fonts alongside its portable sans, serif, and monospace fallbacks. Arabic and
+Hebrew letters, joining forms, and combining marks therefore work without any
+external font request. See the [core font inventory](../../sui-text/assets/README.md)
+for versions, licenses, and source checksums.
+
 The browser demo embeds small subsets of the CJK and color emoji fallback fonts
 for its built-in samples. Trunk copies the full upstream fonts alongside the
 site, and the WebAssembly startup code fetches and registers them with SUI's
@@ -14,7 +20,7 @@ embedded subsets still keep the built-in demo samples renderable.
 
 All fonts are covered by the adjacent Noto license files.
 
-The subsets cover the non-Latin samples exercised by the demo:
+The subsets cover the CJK and emoji samples exercised by the demo:
 
 - `NotoSansCJKsc-DemoSubset.otf`: `你好日本語한국어中文候補を`
 - `NotoColorEmoji-DemoSubset.ttf`: `🙂`, `✅`, `🎨`, and emoji variation

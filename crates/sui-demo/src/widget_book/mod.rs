@@ -1914,7 +1914,7 @@ fn hdr_theme_lab_card(
                 .with_child(MaximumWidth::new(
                     980.0,
                     Label::new(format!(
-                        "Token mode: {} Â· accent peak {:.2}Ã— Â· indicator peak {:.2}Ã— Â· alert peak {:.2}Ã—",
+                        "Token mode: {} · accent peak {:.2}× · indicator peak {:.2}× · alert peak {:.2}×",
                         hdr_theme_mode_title(mode),
                         theme.hdr.luminance.semantic_accent,
                         theme.hdr.luminance.emissive_indicator,
@@ -6379,7 +6379,7 @@ pub fn build_text_validation_surface_with_theme(
                     Rc::clone(&theme_reader),
                     "Glyph coverage probe",
                     "Glyph coverage",
-                    "Aa ill minimum | Cyrillic ÐŸÑ€Ð¸Ð²ÐµÑ‚",
+                    "Aa ill minimum | Cyrillic Привет",
                     "Checks Latin stems and one common fallback family without filling the page with missing-glyph blocks.",
                 ))
                 .with_child(build_text_validation_probe_card_with_theme(
@@ -6393,7 +6393,7 @@ pub fn build_text_validation_surface_with_theme(
                     Rc::clone(&theme_reader),
                     "Bidi caret probe",
                     "Bidi caret",
-                    "abc 123 | RTL run | caret crosses",
+                    "abc 123 | שָׁלוֹם | مَرْحَبًا",
                     "Use the editor below for live RTL input while this card keeps the visual checklist compact.",
                 )),
         ))
@@ -6574,7 +6574,7 @@ fn retained_text_benchmark_section(section_index: usize) -> (String, String) {
 
     let (topic, subtitle) = THEMES[section_index % THEMES.len()];
     (
-        format!("Section {:02} Â· {topic}", section_index + 1),
+        format!("Section {:02} · {topic}", section_index + 1),
         subtitle.to_string(),
     )
 }
@@ -6622,7 +6622,8 @@ fn text_validation_editor_seed() -> String {
         "- Caret: moving across bidi boundaries should preserve stable layout handles and visible overlays.",
         "",
         "Fallback probes to paste, edit, or compare:",
-        "Arabic: Ù…Ø±Ø\u{ad}Ø¨Ø§ | Hebrew: ×©×œ×•× | Hindi: à¤¨à¤®à¤¸à¥à¤¤à¥‡ | Han: ä¸\u{ad}æ–‡ | Emoji: ðŸ™‚",
+        "Arabic: مرحبا | Hebrew: שלום | Hindi: नमस्ते | Han: 中文 | Emoji: 🙂",
+        "Joining and marks: بِبِبِ | שָׁלוֹם | Mixed direction: abc שלום 123 مرحبا end",
         "",
         "Type here to confirm the runtime still exposes semantics-first text input for automated tests.",
     ]
@@ -6645,10 +6646,10 @@ fn text_editing_benchmark_document() -> String {
             "record_scroll_sample",
         ][(index * 3) % 6];
         let comment = [
-            "// atlas reuse should stay warm ðŸ™‚",
-            "// bidi note: abc ××‘×’ 123 Ù…Ø±Ø\u{ad}Ø¨Ø§",
+            "// atlas reuse should stay warm 🙂",
+            "// bidi note: abc אבג 123 مرحبا",
             "// syntax colors keep changing across the preview pane",
-            "// fallback sample includes Ð–, ä¸\u{ad}, and à¤¨à¤®à¤¸à¥à¤¤à¥‡ in comments",
+            "// fallback sample includes Ж, 中, and नमस्ते in comments",
             "// selection overlays should repaint locally",
             "// retained packets should not rebuild unrelated code blocks",
         ][(index * 5) % 6];
@@ -6659,7 +6660,7 @@ fn text_editing_benchmark_document() -> String {
         ));
         if index % 8 == 7 {
             lines.push(format!(
-                "        // folded section {:02}: syntax_color = accent::{:?}; ime = \"å€™è£œ{}\";",
+                "        // folded section {:02}: syntax_color = accent::{:?}; ime = \"候補{}\";",
                 (index / 8) + 1,
                 ["Keyword", "Type", "Comment", "Number"][index % 4],
                 index
@@ -6762,7 +6763,7 @@ fn text_editing_benchmark_style_overlays(document: &str) -> Vec<TextSurfaceStyle
     collect_text_editing_overlays(
         &mut overlays,
         document,
-        "ðŸ™‚",
+        "🙂",
         TextSurfaceOverlayKind::RichTextPreview,
         rich_preview_style,
     );

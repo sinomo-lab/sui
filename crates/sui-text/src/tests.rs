@@ -5,6 +5,8 @@ use crate::{
 };
 use sui_core::{Color, FontHandle, Point, Size};
 
+mod portable_fonts;
+
 fn load_test_font() -> RegisteredFont {
     RegisteredFont::from_bytes(include_bytes!("../assets/NotoSans-Regular.ttf").to_vec())
 }

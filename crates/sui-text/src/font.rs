@@ -386,10 +386,21 @@ pub(crate) struct TextSystemState {
 
 impl TextSystemState {
     pub(crate) fn new() -> Result<Self> {
-        let locale = String::from("en-US");
         let mut font_db = fontdb::Database::new();
         font_db.load_system_fonts();
         load_bundled_fallback_fonts(&mut font_db);
+        Self::from_font_database(font_db)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_bundled_fonts() -> Result<Self> {
+        let mut font_db = fontdb::Database::new();
+        load_bundled_portable_fallback_fonts(&mut font_db);
+        Self::from_font_database(font_db)
+    }
+
+    fn from_font_database(mut font_db: fontdb::Database) -> Result<Self> {
+        let locale = String::from("en-US");
         configure_platform_generic_families(&mut font_db);
 
         let families = [fontdb::Family::SansSerif];
@@ -603,6 +614,14 @@ fn load_bundled_portable_fallback_fonts(font_db: &mut fontdb::Database) {
         include_bytes!("../assets/NotoSansMono-Variable.ttf").to_vec(),
     )));
     let _ = set_monospace_family_from_loaded_faces(font_db, &mono_ids);
+
+    // Keep complete script fonts available without browser downloads or system fonts.
+    for bytes in [
+        include_bytes!("../assets/NotoSansArabic-Regular.ttf").as_slice(),
+        include_bytes!("../assets/NotoSansHebrew-Regular.ttf").as_slice(),
+    ] {
+        font_db.load_font_source(fontdb::Source::Binary(Arc::new(bytes.to_vec())));
+    }
 }
 
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]

@@ -11,6 +11,10 @@ widgets, overlays, demos, and accessibility surfaces.
 
 ### Highlights
 
+- Bundled complete Noto Sans Arabic and Hebrew fallback fonts for offline web
+  and Android text, and corrected caret hit testing across right-to-left runs.
+- Restored corrupted Unicode, emoji, and IME sample text in the demo and its
+  text-editing benchmarks.
 - Continued VSync presentation and animation/timer delivery inside native
   window move/resize loops, including while the title bar is held still.
 - Preferred compatible Direct3D12 hardware on Windows to improve native window

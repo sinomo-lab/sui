@@ -128,6 +128,16 @@ impl TextSystem {
         Self::default()
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_bundled_fonts() -> Self {
+        Self {
+            state: OnceLock::from(Ok(
+                TextSystemState::with_bundled_fonts().expect("bundled fonts should load")
+            )),
+            ..Self::default()
+        }
+    }
+
     pub fn measure_text(
         &self,
         text: impl Into<String>,
