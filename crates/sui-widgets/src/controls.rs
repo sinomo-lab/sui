@@ -7779,6 +7779,12 @@ fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeas
         })
 }
 
+fn measure_text_size(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> Size {
+    ctx.layout()
+        .measure_text_size(text.to_owned(), style.clone())
+        .unwrap_or(Size::new(0.0, style.line_height))
+}
+
 fn numeric_text_style(mut style: TextStyle) -> TextStyle {
     style.features.enable(FontFeature::TABULAR_FIGURES);
     style

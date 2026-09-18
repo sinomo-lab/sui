@@ -90,6 +90,9 @@ guide](api/rich-documents.md).
 to widgets as `LayoutContext`, with these current operations:
 
 - `measure_text` and `measure_document` return a `TextMeasurement`.
+- `measure_text_size` and `measure_document_size` return only advance width and
+  natural line-box height (`Size`). The document form accepts a
+  `TextLayoutRequest`, including the width and paragraph wrapping policy.
 - `shape_text` lays out plain text in a box and returns a `TextLayout`.
 - `layout_document` lays out a `TextLayoutRequest`.
 - `shape_text_persistent` and `layout_document_persistent` additionally pin
@@ -117,6 +120,41 @@ The layout cache is owned by `TextSystem`. Its key includes the document's
 text, layout-affecting span and paragraph styles, resolved faces, and optional
 box size. Paint-only color changes can reuse the same geometry. Cache counters
 are available through `TextSystem::layout_cache_snapshot`.
+
+Shaping is retained separately from final layout. Each font context owns an LRU
+of prepared paragraphs with exact typed text/style keys, plus an LRU of intrinsic
+glyph metrics keyed by resolved font ID and glyph ID. A changed width reuses the
+paragraph's Cosmic Text shape and reruns its line breaker. Paragraph span metadata
+is local and remapped when materializing a document, so inserting earlier
+paragraphs does not discard unchanged suffix preparation. Font-registry changes
+rebuild the context and discard both caches.
+
+Prepared paragraphs are limited to 512 entries and 16 MiB of conservatively
+charged storage; glyph metrics are limited to 32,768 entries and 4 MiB. Accounting
+includes actual vector capacities, text/style allocations and per-entry overhead.
+Oversized entries bypass retention without flushing smaller entries. Temporary
+line-breaking scratch is released after reflow; shared font-system storage and
+final layouts pinned by widgets are separate from these budgets. Evicting
+preparation cannot invalidate published layout handles or geometry.
+
+Size-only measurement and materialization use the same prepared shape and Cosmic
+line breaker. The prepared paragraph retains its latest line layout, so requesting
+the full layout after measuring at the same width reuses that work. Size-only
+measurement does not build SUI glyph/cluster/run arrays, caret/selection geometry,
+ink bounds or a final-layout version. Use `TextMeasurement` when ink bounds or
+font ascent/descent/cap height are required; the size-only API is not a substitute
+for those metrics. Box height does not clip the returned natural size.
+
+`Label` uses size-only measurement for natural and constrained sizing, then builds
+one persistent layout at the final box height. The final box height remains part
+of the full-layout key because it affects vertical placement.
+
+`TextSystem::preparation_cache_snapshot` reports hits, misses, evictions, entries
+and charged bytes for both preparation caches. Size-only calls remain visible in
+the optional runtime text profiler through `size_only_request_count` and
+`size_only_time_us`; full-layout cache hit/miss counters retain their meaning.
+See [Prepared text layout performance](text-layout-performance.md) for the
+benchmark design, reproduction instructions and validation procedure.
 
 ## Persistent Layouts and Scene Handoff
 

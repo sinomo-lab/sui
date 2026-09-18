@@ -22,3 +22,7 @@ lru = { workspace = true }
 rustybuzz = { workspace = true }
 sui-core = { workspace = true }
 ttf-parser = { workspace = true }
+
+[[bench]]
+name = "text_layout"
+harness = false

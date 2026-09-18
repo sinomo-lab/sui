@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use cosmic_text::{Align, Buffer, Hinting, LayoutGlyph, Wrap};
+use cosmic_text::{Align, AttrsOwned, Buffer, Ellipsize, Hinting, LayoutGlyph, Wrap};
 use sui_core::{Error, Rect, Result, Size, Vector};
 
 use crate::{
@@ -17,9 +17,153 @@ use crate::{
         TextLayout, TextLayoutData, TextLayoutId, TextLayoutMetadata, TextLayoutRun,
         TextLayoutVersion, TextLine, TextMeasurement, TextParagraphLayout, TextStyle, TextWrap,
     },
+    prepared::{PreparedParagraphKey, PreparedParagraphState, PreparedSpanKey},
 };
 
 const DIRECTION_SENTINEL_METADATA: usize = usize::MAX;
+
+fn with_prepared_paragraph<T>(
+    paragraph: &FlattenedParagraph,
+    resolved_spans: &[ResolvedSpanInput],
+    font_context: &mut FontContext,
+    consume: impl FnOnce(&mut PreparedParagraphState, &mut FontContext) -> Result<T>,
+) -> Result<T> {
+    let spans = &resolved_spans[paragraph.span_range.clone()];
+    let primary = spans
+        .first()
+        .map(|span| span.style.clone())
+        .unwrap_or_default();
+    let defaults = default_attrs_for_style(
+        &primary,
+        spans.first().and_then(|span| span.family_name.as_deref()),
+        DIRECTION_SENTINEL_METADATA,
+    );
+    let key = PreparedParagraphKey {
+        style: paragraph.style.clone(),
+        defaults: AttrsOwned::new(&defaults),
+        spans: spans
+            .iter()
+            .enumerate()
+            .map(|(index, span)| PreparedSpanKey {
+                text: span.text.clone(),
+                attrs: AttrsOwned::new(&FontContext::attrs_for_span(span, index)),
+            })
+            .collect(),
+    };
+    let mut prepared = if let Some(prepared) = font_context.preparation.paragraphs.take(&key) {
+        prepared
+    } else {
+        let metrics = cosmic_text::Metrics::new(primary.font_size, primary.line_height);
+        let mut buffer = Buffer::new_empty(metrics);
+        let prefix = direction_prefix(paragraph.style.direction);
+        let suffix = if prefix.is_empty() { "" } else { "\u{202C}" };
+        let rich_spans = (!prefix.is_empty())
+            .then_some((prefix, defaults.clone()))
+            .into_iter()
+            .chain(
+                key.spans
+                    .iter()
+                    .map(|span| (span.text.as_str(), span.attrs.as_attrs())),
+            )
+            .chain((!suffix.is_empty()).then_some((suffix, defaults.clone())));
+        buffer.set_rich_text(
+            rich_spans,
+            &defaults,
+            cosmic_text::Shaping::Advanced,
+            map_align(paragraph.style.align, paragraph.style.direction),
+        );
+        // Shape through Buffer so its rich-text normalization, tabs and direction
+        // handling stay identical to the materialized path. Retain only the shape:
+        // its allocations are inspectable and independent of a wrapping width.
+        let shape = buffer
+            .line_shape(&mut font_context.font_system, 0)
+            .ok_or_else(|| Error::new("cosmic-text paragraph buffer did not contain a line"))?
+            .clone();
+        PreparedParagraphState {
+            shape,
+            metrics,
+            lines: Vec::new(),
+            layout_width: None,
+        }
+    };
+    let result = consume(&mut prepared, font_context);
+    let bytes = key
+        .allocated_bytes()
+        .saturating_add(prepared.allocated_bytes());
+    font_context
+        .preparation
+        .paragraphs
+        .insert(key, prepared, bytes);
+    result
+}
+
+fn layout_prepared_paragraph(
+    prepared: &mut PreparedParagraphState,
+    style: &crate::model::TextParagraphStyle,
+    width: Option<f32>,
+) {
+    let width = width.map(|value| value.max(0.0));
+    let width_key = width.map(f32::to_bits);
+    if prepared.layout_width == Some(width_key) {
+        return;
+    }
+    // The same Cosmic line breaker is used for size-only and materialized output.
+    // Preserve its last line arrays so a measure/paint pass at this width reuses them.
+    // Cosmic's scratch owns private spare vectors. Keep it transient rather than
+    // retaining unaccountable allocations outside the prepared-cache byte budget.
+    let mut scratch = cosmic_text::ShapeBuffer::default();
+    prepared.shape.layout_to_buffer(
+        &mut scratch,
+        prepared.metrics.font_size,
+        width,
+        map_wrap(style.wrap),
+        Ellipsize::None,
+        map_align(style.align, style.direction),
+        &mut prepared.lines,
+        None,
+        Hinting::Disabled,
+    );
+    prepared.layout_width = Some(width_key);
+}
+
+pub(crate) fn measure_document_size(
+    flattened: &FlattenedTextDocument,
+    resolved_spans: &[ResolvedSpanInput],
+    box_size: Option<Size>,
+    font_context: &mut FontContext,
+) -> Result<Size> {
+    let mut width = 0.0_f32;
+    let mut height = 0.0_f32;
+    let mut ascent = 0.0_f32;
+    let mut descent = 0.0_f32;
+    for paragraph in &flattened.paragraphs {
+        with_prepared_paragraph(
+            paragraph,
+            resolved_spans,
+            font_context,
+            |prepared, _font_context| {
+                layout_prepared_paragraph(
+                    prepared,
+                    &paragraph.style,
+                    box_size.map(|size| size.width),
+                );
+                let paragraph_top = height;
+                let mut line_top = 0.0_f32;
+                for line in &prepared.lines {
+                    let line_height = line.line_height_opt.unwrap_or(prepared.metrics.line_height);
+                    width = width.max(line.w);
+                    // Match materialization's translated line rectangles and arithmetic order.
+                    height = height.max((line_top + paragraph_top) + line_height);
+                    ascent = ascent.max(line.max_ascent);
+                    descent = descent.max(line.max_descent);
+                    line_top += line_height;
+                }
+                Ok(())
+            },
+        )?;
+    }
+    Ok(Size::new(width, height.max(ascent + descent)))
+}
 
 #[derive(Debug, Clone)]
 struct PreparedGlyph {
@@ -69,12 +213,6 @@ struct PreparedParagraph {
     line_range: Range<usize>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct FaceMetrics {
-    units_per_em: f32,
-    cap_height: Option<f32>,
-}
-
 #[derive(Debug)]
 struct PreparedParagraphResult {
     paragraph_rect: Rect,
@@ -84,10 +222,10 @@ struct PreparedParagraphResult {
 struct GlyphPreparationContext<'a> {
     paragraph_start: usize,
     baseline: f32,
-    font_context: &'a FontContext,
+    font_context: &'a mut FontContext,
+    span_start: usize,
     faces: &'a mut Vec<ResolvedTextFace>,
     face_slots: &'a mut HashMap<cosmic_text::fontdb::ID, usize>,
-    face_metrics: &'a mut Vec<Option<FaceMetrics>>,
     max_cap_height: &'a mut Option<f32>,
 }
 
@@ -112,7 +250,6 @@ pub(crate) fn layout_document(
     let box_width = box_size.map(|size| size.width);
     let mut faces = vec![font_context.default_face().clone()];
     let mut face_slots: HashMap<cosmic_text::fontdb::ID, usize> = HashMap::new();
-    let mut face_metrics: Vec<Option<FaceMetrics>> = vec![None];
 
     let mut paragraphs = Vec::with_capacity(flattened.paragraphs.len());
     let mut lines = Vec::new();
@@ -130,7 +267,6 @@ pub(crate) fn layout_document(
             font_context,
             &mut faces,
             &mut face_slots,
-            &mut face_metrics,
             &mut max_cap_height,
         )?;
 
@@ -390,180 +526,123 @@ fn prepare_paragraph(
     font_context: &mut FontContext,
     faces: &mut Vec<ResolvedTextFace>,
     face_slots: &mut HashMap<cosmic_text::fontdb::ID, usize>,
-    face_metrics: &mut Vec<Option<FaceMetrics>>,
     max_cap_height: &mut Option<f32>,
 ) -> Result<PreparedParagraphResult> {
-    let paragraph_spans = paragraph
-        .span_range
-        .clone()
-        .map(|index| &resolved_spans[index])
-        .collect::<Vec<_>>();
-    let primary_style = paragraph_spans
-        .first()
-        .map(|span| span.style.clone())
-        .unwrap_or_else(TextStyle::default);
+    with_prepared_paragraph(
+        paragraph,
+        resolved_spans,
+        font_context,
+        |prepared, font_context| {
+            layout_prepared_paragraph(prepared, &paragraph.style, box_width);
+            let metrics = prepared.metrics;
+            let prefix_len = direction_prefix(paragraph.style.direction).len();
+            let paragraph_len = paragraph
+                .byte_range
+                .end
+                .saturating_sub(paragraph.byte_range.start);
+            let paragraph_rtl = prepared.shape.rtl;
+            let layout_lines = &prepared.lines;
 
-    let metrics = cosmic_text::Metrics::new(primary_style.font_size, primary_style.line_height);
-    let mut buffer = Buffer::new(&mut font_context.font_system, metrics);
-    buffer.set_wrap(map_wrap(paragraph.style.wrap));
-    buffer.set_hinting(Hinting::Disabled);
-    buffer.set_size(box_width, None);
+            let mut prepared_lines = Vec::with_capacity(layout_lines.len());
+            let mut line_top = 0.0_f32;
+            let mut paragraph_rect: Option<Rect> = None;
 
-    let prefix = direction_prefix(paragraph.style.direction);
-    let suffix = if prefix.is_empty() { "" } else { "\u{202C}" };
-    let prefix_len = prefix.len();
-    let paragraph_len = paragraph
-        .byte_range
-        .end
-        .saturating_sub(paragraph.byte_range.start);
-    let default_family_name = paragraph_spans
-        .first()
-        .and_then(|span| span.family_name.clone());
-    let default_attrs = default_attrs_for_style(
-        &primary_style,
-        default_family_name.as_deref(),
-        DIRECTION_SENTINEL_METADATA,
-    );
+            for layout_line in layout_lines {
+                let line_height = layout_line.line_height_opt.unwrap_or(metrics.line_height);
+                let glyph_height = layout_line.max_ascent + layout_line.max_descent;
+                let centering_offset = (line_height - glyph_height) * 0.5;
+                let baseline = line_top + centering_offset + layout_line.max_ascent;
 
-    let mut rich_spans = Vec::new();
-    if !prefix.is_empty() {
-        rich_spans.push((
-            prefix.to_string(),
-            default_attrs.clone().metadata(DIRECTION_SENTINEL_METADATA),
-        ));
-    }
-    for (index, span) in paragraph.span_range.clone().zip(paragraph_spans.iter()) {
-        rich_spans.push((span.text.clone(), FontContext::attrs_for_span(span, index)));
-    }
-    if !suffix.is_empty() {
-        rich_spans.push((
-            suffix.to_string(),
-            default_attrs.clone().metadata(DIRECTION_SENTINEL_METADATA),
-        ));
-    }
+                let visible_glyphs = layout_line
+                    .glyphs
+                    .iter()
+                    .filter_map(|glyph| {
+                        if glyph.metadata == DIRECTION_SENTINEL_METADATA {
+                            return None;
+                        }
+                        let adjusted =
+                            adjust_working_range(glyph.start, glyph.end, prefix_len, paragraph_len);
+                        if adjusted.start >= adjusted.end {
+                            return None;
+                        }
+                        Some((glyph, adjusted))
+                    })
+                    .collect::<Vec<_>>();
 
-    buffer.set_rich_text(
-        rich_spans
-            .iter()
-            .map(|(text, attrs)| (text.as_str(), attrs.clone())),
-        &default_attrs,
-        cosmic_text::Shaping::Advanced,
-        map_align(paragraph.style.align, paragraph.style.direction),
-    );
-    buffer.shape_until_scroll(&mut font_context.font_system, false);
+                let line_byte_range =
+                    visible_line_byte_range(&visible_glyphs, paragraph.byte_range.start);
+                let line_direction = if paragraph_rtl {
+                    TextFlowDirection::RightToLeft
+                } else {
+                    TextFlowDirection::LeftToRight
+                };
+                let line_left = visible_glyphs
+                    .iter()
+                    .map(|(glyph, _)| glyph.x)
+                    .reduce(f32::min)
+                    .unwrap_or_else(|| {
+                        line_origin_x(
+                            paragraph.style.align,
+                            line_direction,
+                            box_width.unwrap_or(layout_line.w),
+                            layout_line.w,
+                        )
+                    });
+                let line_rect = Rect::new(line_left, line_top, layout_line.w.max(0.0), line_height);
+                paragraph_rect = Some(match paragraph_rect {
+                    Some(rect) => rect.union(line_rect),
+                    None => line_rect,
+                });
 
-    let buffer_line = buffer
-        .lines
-        .first()
-        .ok_or_else(|| Error::new("cosmic-text paragraph buffer did not contain a line"))?;
-    let paragraph_rtl = buffer_line
-        .shape_opt()
-        .map(|shape| shape.rtl)
-        .unwrap_or(matches!(
-            paragraph.style.direction,
-            TextDirection::RightToLeft
-        ));
-    let layout_lines = buffer_line
-        .layout_opt()
-        .ok_or_else(|| Error::new("cosmic-text paragraph buffer did not produce layout lines"))?;
+                let clusters = build_cluster_geometries(
+                    &visible_glyphs,
+                    paragraph.byte_range.start,
+                    line_byte_range.clone(),
+                );
+                let prepared_glyphs = build_prepared_glyphs(
+                    &visible_glyphs,
+                    GlyphPreparationContext {
+                        paragraph_start: paragraph.byte_range.start,
+                        baseline,
+                        font_context,
+                        span_start: paragraph.span_range.start,
+                        faces,
+                        face_slots,
+                        max_cap_height,
+                    },
+                )?;
+                let runs = build_run_segments(
+                    &visible_glyphs,
+                    &prepared_glyphs,
+                    paragraph.byte_range.start,
+                    line_top,
+                    line_height,
+                );
 
-    let mut prepared_lines = Vec::with_capacity(layout_lines.len());
-    let mut line_top = 0.0_f32;
-    let mut paragraph_rect: Option<Rect> = None;
+                prepared_lines.push(PreparedLine {
+                    paragraph_index: paragraph.index,
+                    byte_range: line_byte_range,
+                    rect: line_rect,
+                    baseline,
+                    ascent: layout_line.max_ascent,
+                    descent: layout_line.max_descent,
+                    width: layout_line.w,
+                    direction: line_direction,
+                    clusters,
+                    glyphs: prepared_glyphs,
+                    runs,
+                });
 
-    for layout_line in layout_lines {
-        let line_height = layout_line.line_height_opt.unwrap_or(metrics.line_height);
-        let glyph_height = layout_line.max_ascent + layout_line.max_descent;
-        let centering_offset = (line_height - glyph_height) * 0.5;
-        let baseline = line_top + centering_offset + layout_line.max_ascent;
+                line_top += line_height;
+            }
 
-        let visible_glyphs = layout_line
-            .glyphs
-            .iter()
-            .filter_map(|glyph| {
-                if glyph.metadata == DIRECTION_SENTINEL_METADATA {
-                    return None;
-                }
-                let adjusted =
-                    adjust_working_range(glyph.start, glyph.end, prefix_len, paragraph_len);
-                if adjusted.start >= adjusted.end {
-                    return None;
-                }
-                Some((glyph, adjusted))
+            Ok(PreparedParagraphResult {
+                paragraph_rect: paragraph_rect
+                    .unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, metrics.line_height)),
+                lines: prepared_lines,
             })
-            .collect::<Vec<_>>();
-
-        let line_byte_range = visible_line_byte_range(&visible_glyphs, paragraph.byte_range.start);
-        let line_direction = if paragraph_rtl {
-            TextFlowDirection::RightToLeft
-        } else {
-            TextFlowDirection::LeftToRight
-        };
-        let line_left = visible_glyphs
-            .iter()
-            .map(|(glyph, _)| glyph.x)
-            .reduce(f32::min)
-            .unwrap_or_else(|| {
-                line_origin_x(
-                    paragraph.style.align,
-                    line_direction,
-                    box_width.unwrap_or(layout_line.w),
-                    layout_line.w,
-                )
-            });
-        let line_rect = Rect::new(line_left, line_top, layout_line.w.max(0.0), line_height);
-        paragraph_rect = Some(match paragraph_rect {
-            Some(rect) => rect.union(line_rect),
-            None => line_rect,
-        });
-
-        let clusters = build_cluster_geometries(
-            &visible_glyphs,
-            paragraph.byte_range.start,
-            line_byte_range.clone(),
-        );
-        let prepared_glyphs = build_prepared_glyphs(
-            &visible_glyphs,
-            GlyphPreparationContext {
-                paragraph_start: paragraph.byte_range.start,
-                baseline,
-                font_context,
-                faces,
-                face_slots,
-                face_metrics,
-                max_cap_height,
-            },
-        )?;
-        let runs = build_run_segments(
-            &visible_glyphs,
-            &prepared_glyphs,
-            paragraph.byte_range.start,
-            line_top,
-            line_height,
-        );
-
-        prepared_lines.push(PreparedLine {
-            paragraph_index: paragraph.index,
-            byte_range: line_byte_range,
-            rect: line_rect,
-            baseline,
-            ascent: layout_line.max_ascent,
-            descent: layout_line.max_descent,
-            width: layout_line.w,
-            direction: line_direction,
-            clusters,
-            glyphs: prepared_glyphs,
-            runs,
-        });
-
-        line_top += line_height;
-    }
-
-    Ok(PreparedParagraphResult {
-        paragraph_rect: paragraph_rect
-            .unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, metrics.line_height)),
-        lines: prepared_lines,
-    })
+        },
+    )
 }
 
 fn build_prepared_glyphs(
@@ -574,21 +653,27 @@ fn build_prepared_glyphs(
         paragraph_start,
         baseline,
         font_context,
+        span_start,
         faces,
         face_slots,
-        face_metrics,
         max_cap_height,
     } = context;
     let mut prepared = Vec::with_capacity(visible_glyphs.len());
 
     for (glyph, adjusted_range) in visible_glyphs {
         let face_index = font_context.resolve_face_index(face_slots, faces, glyph.font_id)?;
-        ensure_face_metrics(face_index, faces, face_metrics)?;
-        let metrics = face_metrics[face_index].expect("face metrics initialized");
+        let metrics =
+            font_context.glyph_metrics(glyph.font_id, glyph.glyph_id, &faces[face_index])?;
         let scale = glyph.font_size / metrics.units_per_em;
         let origin_x = glyph.x + (glyph.font_size * glyph.x_offset);
         let origin_y = baseline - (glyph.font_size * glyph.y_offset);
-        let bounds = faces[face_index].glyph_bounds(glyph.glyph_id, origin_x, origin_y, scale);
+        let bounds = metrics.bounds.map(|bbox| {
+            let min_x = origin_x + f32::from(bbox.x_min) * scale;
+            let max_x = origin_x + f32::from(bbox.x_max) * scale;
+            let min_y = origin_y - f32::from(bbox.y_max) * scale;
+            let max_y = origin_y - f32::from(bbox.y_min) * scale;
+            Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
+        });
         if let Some(cap_height) = metrics.cap_height.map(|value| value * scale) {
             *max_cap_height =
                 Some(max_cap_height.map_or(cap_height, |current| current.max(cap_height)));
@@ -597,7 +682,7 @@ fn build_prepared_glyphs(
         prepared.push(PreparedGlyph {
             glyph_id: glyph.glyph_id,
             cluster_start: paragraph_start + adjusted_range.start,
-            span_metadata: glyph.metadata,
+            span_metadata: span_start + glyph.metadata,
             origin_x,
             origin_y,
             advance: Vector::new(glyph.w, 0.0),
@@ -662,7 +747,7 @@ fn build_run_segments(
             .unwrap_or_else(|| Rect::new(0.0, line_top, 0.0, line_height));
 
         runs.push(PreparedRunSegment {
-            span_metadata: first.metadata,
+            span_metadata: first_prepared.span_metadata,
             byte_range: (paragraph_start + local_range.start)..(paragraph_start + local_range.end),
             face_index: first_prepared.face_index,
             direction: first_prepared.direction,
@@ -999,34 +1084,6 @@ fn adjust_working_range(
     let adjusted_start = start.saturating_sub(prefix_len).min(paragraph_len);
     let adjusted_end = end.saturating_sub(prefix_len).min(paragraph_len);
     adjusted_start..adjusted_end
-}
-
-fn ensure_face_metrics(
-    face_index: usize,
-    faces: &[ResolvedTextFace],
-    face_metrics: &mut Vec<Option<FaceMetrics>>,
-) -> Result<()> {
-    while face_metrics.len() <= face_index {
-        face_metrics.push(None);
-    }
-    if face_metrics[face_index].is_some() {
-        return Ok(());
-    }
-
-    let face = ttf_parser::Face::parse(faces[face_index].bytes(), faces[face_index].face_index())
-        .map_err(|_| Error::new("failed to parse text face metrics"))?;
-    let units_per_em = face.units_per_em();
-    if units_per_em == 0 {
-        return Err(Error::new(
-            "text face reported an invalid units-per-em value",
-        ));
-    }
-
-    face_metrics[face_index] = Some(FaceMetrics {
-        units_per_em: units_per_em as f32,
-        cap_height: face.capital_height().map(f32::from),
-    });
-    Ok(())
 }
 
 fn direction_prefix(direction: TextDirection) -> &'static str {

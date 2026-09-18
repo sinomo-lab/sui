@@ -5,6 +5,7 @@ mod flatten;
 mod font;
 mod layout;
 mod model;
+mod prepared;
 mod style;
 mod system;
 
@@ -19,6 +20,7 @@ pub use model::{
     TextParagraphStyle, TextRun, TextRunView, TextSelection, TextSelectionGeometry, TextSpan,
     TextSpanId, TextStyle, TextWrap, TextWritingMode,
 };
+pub use prepared::{PreparationCacheSnapshot, TextPreparationCacheSnapshot};
 pub use style::{FontFeature, FontFeatures, FontStretch, FontStyle, FontWeight};
 pub use system::{
     RuntimeTextTimingDiagnostics, TextSystem, begin_text_timing_collection,

@@ -4,10 +4,10 @@ use std::{
 };
 
 use cosmic_text::{Attrs, Family, FeatureTag, FontSystem, Metrics, Stretch, Style, Weight, fontdb};
-use sui_core::{Error, FontHandle, Rect, Result};
-use ttf_parser::GlyphId;
+use sui_core::{Error, FontHandle, Result};
 
 use crate::model::{FontFamilyStack, TextSpanId, TextStyle};
+use crate::prepared::{GlyphMetricsKey, IntrinsicGlyphMetrics, PreparationCaches};
 use crate::style::{FontFeatures, FontStretch, FontStyle, FontWeight};
 
 /// Map sui-text's `FontWeight` to cosmic-text's `Weight` (drives bold-face selection and, for
@@ -210,23 +210,6 @@ impl ResolvedTextFace {
     pub const fn face_index(&self) -> u32 {
         self.face_index
     }
-
-    pub(crate) fn glyph_bounds(
-        &self,
-        glyph_id: u16,
-        origin_x: f32,
-        origin_y: f32,
-        scale: f32,
-    ) -> Option<Rect> {
-        let face = ttf_parser::Face::parse(self.bytes(), self.face_index()).ok()?;
-        face.glyph_bounding_box(GlyphId(glyph_id)).map(|bbox| {
-            let min_x = origin_x + (f32::from(bbox.x_min) * scale);
-            let max_x = origin_x + (f32::from(bbox.x_max) * scale);
-            let min_y = origin_y - (f32::from(bbox.y_max) * scale);
-            let max_y = origin_y - (f32::from(bbox.y_min) * scale);
-            Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
-        })
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -270,6 +253,7 @@ struct ExplicitFontSpec {
 #[derive(Debug)]
 pub(crate) struct FontContext {
     pub font_system: FontSystem,
+    pub preparation: PreparationCaches,
     default_face: ResolvedTextFace,
     explicit_fonts: HashMap<FontHandle, ExplicitFontSpec>,
     explicit_faces: HashMap<fontdb::ID, ResolvedTextFace>,
@@ -277,6 +261,33 @@ pub(crate) struct FontContext {
 }
 
 impl FontContext {
+    pub(crate) fn glyph_metrics(
+        &mut self,
+        font: fontdb::ID,
+        glyph: u16,
+        face: &ResolvedTextFace,
+    ) -> Result<IntrinsicGlyphMetrics> {
+        let key = GlyphMetricsKey { font, glyph };
+        if let Some(metrics) = self.preparation.glyphs.get(&key) {
+            return Ok(*metrics);
+        }
+        let parsed = ttf_parser::Face::parse(face.bytes(), face.face_index())
+            .map_err(|_| Error::new("failed to parse text face metrics"))?;
+        let units_per_em = parsed.units_per_em();
+        if units_per_em == 0 {
+            return Err(Error::new(
+                "text face reported an invalid units-per-em value",
+            ));
+        }
+        let metrics = IntrinsicGlyphMetrics {
+            units_per_em: f32::from(units_per_em),
+            cap_height: parsed.capital_height().map(f32::from),
+            bounds: parsed.glyph_bounding_box(ttf_parser::GlyphId(glyph)),
+        };
+        self.preparation.glyphs.insert(key, metrics, 0);
+        Ok(metrics)
+    }
+
     pub(crate) fn resolve_span(
         &self,
         span_id: TextSpanId,
@@ -473,6 +484,7 @@ impl TextSystemState {
         let font_system = FontSystem::new_with_locale_and_db(self.locale.clone(), font_db);
         Ok(FontContext {
             font_system,
+            preparation: PreparationCaches::default(),
             default_face: self.default_face.clone(),
             explicit_fonts,
             explicit_faces,

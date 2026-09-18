@@ -12,7 +12,6 @@ pub struct Label {
     line_height_override: Option<f32>,
     color_override: Option<Color>,
     color_reader: Option<Box<dyn Fn() -> Color>>,
-    measurement: Option<TextMeasurement>,
     layout: Option<PersistentTextLayout>,
     selection_scope: Option<SelectionScope>,
     clipboard_behavior: SelectionClipboardBehavior,
@@ -34,7 +33,6 @@ impl Label {
             line_height_override: None,
             color_override: None,
             color_reader: None,
-            measurement: None,
             layout: None,
             selection_scope: None,
             clipboard_behavior: SelectionClipboardBehavior::AppManaged,
@@ -457,10 +455,10 @@ impl Widget for Label {
         if axis == Axis::Horizontal {
             let text = self.observed_text(ctx);
             let style = self.resolved_style();
-            let natural = measure_text(ctx, &text, &style).width;
+            let natural = measure_text_size(ctx, &text, &style).width;
             let minimum = text
                 .split_whitespace()
-                .map(|segment| measure_text(ctx, segment, &style).width)
+                .map(|segment| measure_text_size(ctx, segment, &style).width)
                 .fold(0.0_f32, f32::max);
             return IntrinsicSize::new(minimum, natural);
         }
@@ -480,10 +478,9 @@ impl Widget for Label {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let text = self.observed_text(ctx);
         let style = self.resolved_style();
-        let natural_measurement = measure_text(ctx, &text, &style);
+        let natural_measurement = measure_text_size(ctx, &text, &style);
         if self.single_line {
             self.layout = None;
-            self.measurement = Some(natural_measurement);
             return constraints.clamp(Size::new(natural_measurement.width, style.line_height));
         }
         let max_width = constraints.max.width;
@@ -506,12 +503,13 @@ impl Widget for Label {
             };
             measurement = ctx
                 .layout()
-                .shape_text(
-                    text.clone(),
-                    Size::new(layout_width, f32::INFINITY),
-                    style.clone(),
+                .measure_document_size(
+                    sui_text::TextLayoutRequest::new(sui_text::TextDocument::from_plain_text(
+                        text.clone(),
+                        style.clone(),
+                    ))
+                    .with_box_size(Size::new(layout_width, 1.0)),
                 )
-                .map(|layout| layout.measurement())
                 .unwrap_or(measurement);
             if !wraps_to_constraint {
                 measured_width = if max_width.is_finite() {
@@ -535,7 +533,6 @@ impl Widget for Label {
         } else {
             self.layout = None;
         }
-        self.measurement = Some(measurement);
         constraints.clamp(Size::new(
             measured_width,
             measurement.height.max(style.line_height),

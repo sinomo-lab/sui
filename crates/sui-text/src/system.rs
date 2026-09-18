@@ -22,7 +22,11 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RuntimeTextTimingDiagnostics {
+    /// All measured requests, including size-only requests.
     pub request_count: usize,
+    pub size_only_request_count: usize,
+    pub size_only_time_us: u64,
+    /// Full-layout cache results; size-only requests use the preparation caches.
     pub cache_hit_count: usize,
     pub cache_miss_count: usize,
     pub total_time_us: u64,
@@ -86,6 +90,17 @@ fn record_text_timing(
             diagnostics.cache_hit_count += 1;
         } else {
             diagnostics.cache_miss_count += 1;
+        }
+    });
+}
+
+fn record_size_timing(total_time_us: u64) {
+    TEXT_TIMING_COLLECTOR.with(|collector| {
+        if let Some(diagnostics) = collector.borrow_mut().as_mut() {
+            diagnostics.request_count += 1;
+            diagnostics.size_only_request_count += 1;
+            diagnostics.total_time_us += total_time_us;
+            diagnostics.size_only_time_us += total_time_us;
         }
     });
 }
@@ -158,6 +173,58 @@ impl TextSystem {
         Ok(self
             .layout_document(TextLayoutRequest::new(document), font_registry)?
             .measurement())
+    }
+
+    /// Measure advance width and natural line-box height without building SUI's
+    /// glyph, caret, selection or ink-bounds geometry. Box height does not constrain
+    /// the result; box width and paragraph wrapping determine the line breaks.
+    pub fn measure_document_size(
+        &self,
+        request: TextLayoutRequest,
+        font_registry: &FontRegistry,
+    ) -> Result<Size> {
+        let started = text_timing_enabled().then(Instant::now);
+        let TextLayoutRequest { document, box_size } = request;
+        let flattened = FlattenedTextDocument::new(document.into_normalized());
+        let result = self.with_font_context(font_registry, |font_context| {
+            let resolved_spans = self.resolve_span_inputs(&flattened, font_context)?;
+            crate::layout::measure_document_size(
+                &flattened,
+                &resolved_spans,
+                box_size,
+                font_context,
+            )
+        });
+        if let Some(started) = started {
+            record_size_timing(started.elapsed().as_micros() as u64);
+        }
+        result
+    }
+
+    /// Size-only measurement of unconstrained plain text. Use measure_text when
+    /// ink bounds, ascent, descent or cap height are also needed.
+    pub fn measure_text_size(
+        &self,
+        text: impl Into<String>,
+        style: TextStyle,
+        font_registry: &FontRegistry,
+    ) -> Result<Size> {
+        self.measure_document_size(
+            TextLayoutRequest::new(TextDocument::from_plain_text(text, style)),
+            font_registry,
+        )
+    }
+
+    pub fn preparation_cache_snapshot(&self) -> crate::TextPreparationCacheSnapshot {
+        self.font_context
+            .lock()
+            .ok()
+            .and_then(|cached| {
+                cached
+                    .as_ref()
+                    .map(|cached| cached.context.preparation.snapshot())
+            })
+            .unwrap_or_default()
     }
 
     pub fn shape_text(
@@ -497,6 +564,10 @@ impl TextSystem {
         self.font_context_build_count.load(Ordering::Relaxed)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/preparation.rs"]
+mod preparation_tests;
 
 #[cfg(test)]
 mod cache_tests {

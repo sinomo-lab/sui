@@ -1107,6 +1107,37 @@ fn label_measures_wrapped_height_when_width_is_constrained() {
 }
 
 #[test]
+fn wrapped_label_materializes_only_its_final_layout_and_keeps_selection_geometry() {
+    let text = "A wrapped selectable label should reuse preparation across its measurement passes.";
+    let (mut runtime, window_id) = build_runtime(
+        SizedBox::new()
+            .width(96.0)
+            .with_child(Label::new(text).selectable(SelectionScope::new())),
+    );
+    sui_runtime::set_window_scene_statistics_detail_mode(
+        window_id,
+        sui_runtime::SceneStatisticsDetailMode::Detailed,
+    );
+    let output = runtime.render(window_id).unwrap();
+    let layout = shaped_text_layout_for(&output, text);
+    assert!(layout.lines().len() > 1);
+    assert_eq!(output.diagnostics.text_caches.runtime_layout.misses, 1);
+    assert!(
+        layout
+            .glyphs()
+            .iter()
+            .all(|glyph| glyph.origin_y.is_finite())
+    );
+    assert!(layout.selection_rects(0..text.len()).len() > 1);
+    let label = output
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some(text))
+        .unwrap();
+    assert!(label.bounds.height() >= layout.measurement().height);
+}
+
+#[test]
 fn single_line_label_keeps_long_titles_and_line_breaks_within_one_row() {
     let text = "Validate and finish the Todo app\nalready present in this workspace.";
     let output = render(

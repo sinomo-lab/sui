@@ -509,6 +509,22 @@ impl LayoutContext {
             .measure_document(document, self.font_registry.as_ref())
     }
 
+    /// Advance width and natural line-box height, without materializing text geometry.
+    pub fn measure_text_size(
+        &self,
+        text: impl Into<String>,
+        style: TextStyle,
+    ) -> sui_core::Result<Size> {
+        self.text_system
+            .measure_text_size(text, style, self.font_registry.as_ref())
+    }
+
+    /// Size-only document layout using the same line breaker as layout_document.
+    pub fn measure_document_size(&self, request: TextLayoutRequest) -> sui_core::Result<Size> {
+        self.text_system
+            .measure_document_size(request, self.font_registry.as_ref())
+    }
+
     pub fn shape_text(
         &self,
         text: impl Into<String>,
