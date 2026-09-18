@@ -10,22 +10,30 @@ For the visual design direction, see the
 
 ## Status at a glance
 
+This status reflects the implementation reviewed at `c1a60f8`. Implemented code
+paths and unit tests are distinguished from hardware/OS/browser acceptance,
+which remains open.
+
 | Area | Status | Current contract |
 | --- | --- | --- |
-| Color values | Shipped | `ColorSpace` distinguishes encoded and linear sRGB and Display-P3 values. |
-| Primary conversion | Shipped | `Color::to_linear_srgb()` decodes transfer functions and converts Display-P3 primaries. |
-| Output intent | Shipped | `WindowRenderOptions` expresses automatic, SDR, wide-gamut, and HDR preferences. |
-| Capability reporting | Shipped, platform-dependent | Each window publishes detected capabilities and the active renderer strategy. |
-| Renderer output selection | Shipped | The renderer chooses SDR, wide-gamut, or native-HDR presentation conservatively. |
-| Windows native HDR | Shipped with runtime gates | DXGI Advanced Color detection and an FP16/scRGB presentation path are available when the monitor, OS, and surface all qualify. |
+| Color values | Implemented | `ColorSpace` distinguishes encoded and linear sRGB and Display-P3 values. |
+| Primary conversion | Implemented | `Color::to_linear_srgb()` decodes transfer functions and converts Display-P3 primaries. |
+| Output intent | Implemented | `WindowRenderOptions` expresses automatic, SDR, wide-gamut, and HDR preferences. |
+| Capability reporting | Implemented, platform-dependent | Each window publishes detected capabilities and the active renderer strategy. |
+| Renderer output selection | Implemented | The renderer chooses SDR, wide-gamut, or native-HDR presentation conservatively. |
+| Windows native HDR | Implemented with runtime gates | DXGI Advanced Color detection, FP16/scRGB selection, and DXGI color-space configuration exist; hardware acceptance remains open. |
 | macOS | Partial | Display-P3 SDR is assumed conservatively; EDR headroom detection and EDR layer configuration are not implemented. |
-| Web | Partial | Gamut/HDR media signals and explicit launch hints are detected; final canvas color management remains browser-controlled and is not treated as native HDR. |
+| Web | Partial | Signals and hints are detected; the demo attempts P3/extended canvas configuration and catches failures. Effective presentation validation and a supported shared platform path remain open. |
 | Linux and other desktop targets | SDR fallback | No native wide-gamut or HDR capability probe is wired yet. |
-| HDR capture and inspection | Shipped | Tests and artifact tooling can capture linear HDR data or SDR diagnostic visualizations. |
+| Monitor/display-mode changes | Partial | Startup, surface restoration, and scale-change refresh paths exist; same-scale monitor migration and OS HDR-toggle handling remain open. |
+| Native configuration failures | Partial | Windows color-space setup errors propagate to the caller; coherent recovery and output diagnostics remain open. |
+| HDR capture and inspection | Implemented | Tests and artifact tooling can capture linear HDR data or SDR diagnostic visualizations. |
+| Broader resource color metadata | Partial | Shared-texture binding descriptors carry a color space; end-to-end image/external-surface color management remains open. |
+| Theme policy | Partial | HDR theme tokens exist; deriving a safe mode from actual output diagnostics remains open. |
 
-"Shipped" here describes the code path, not a promise that every display stack
-will expose the same result. `wgpu`, the window system, the OS compositor, the
-monitor mode, and the physical display must all support a native output path.
+"Implemented" here describes the code path, not a promise that every display
+stack will expose the same result. `wgpu`, the window system, the OS compositor,
+the monitor mode, and the physical display must all support a native output path.
 
 ## Current architecture
 
@@ -129,9 +137,9 @@ The renderer resolves the active strategy conservatively:
   captures.
 
 Automatic mode re-evaluates this choice when the platform refreshes the
-window's capabilities. The desktop path currently refreshes at startup and on
-scale-factor changes; complete same-scale monitor migration is part of the
-remaining platform work below.
+window's capabilities. The desktop path currently refreshes at startup, surface
+restoration, and scale-factor changes. Same-scale monitor migration and OS HDR
+toggles need additional invalidation and reconfiguration handling.
 
 ## Inspecting the active output
 
@@ -164,6 +172,11 @@ When all gates pass, SUI presents through a linear scRGB path and configures the
 native DXGI color space. scRGB uses sRGB/BT.709 primaries; values above reference
 white carry HDR headroom. If any gate fails, SUI remains on the SDR path.
 
+`SetColorSpace1` failures propagate through surface configuration as errors.
+Recovery and diagnostics that consistently describe the resulting active surface
+still need validation and completion; error propagation alone does not close
+that milestone.
+
 ### macOS
 
 The current probe assumes Display-P3 SDR conservatively. It does not query EDR
@@ -176,7 +189,14 @@ Mac display.
 The web path observes `(color-gamut: p3)`, `(color-gamut: rec2020)`, and
 `(dynamic-range: high)` media queries. The demo can also supply explicit query
 hints for canvas format, color space, tone mapping, policy, and SDR-white nits.
-These signals are diagnostic input; browser color management still owns the
+The demo's canvas configuration wrapper requests `colorSpace: "display-p3"`
+for wide-gamut SDR and `toneMapping: { mode: "extended" }` when HDR is requested
+and the selected format is `rgba16float`. It records the attempted configuration
+and errors, and retries the original configuration after a failure.
+
+Effective configuration and display output still require browser validation,
+including the fallback case. This configuration code lives in the demo; a shared
+platform contract remains open. Browser color management owns the
 canvas-to-display path, and SUI currently reports
 `native_hdr_presentation_supported = false` on the web.
 
@@ -208,7 +228,10 @@ See the [HDR debugging guide](../hdr-debugging.md) for capture recipes and the
 
 ## Remaining roadmap
 
-### P0: complete native platform presentation
+### P0: complete platform presentation
+
+The shared output policies and Windows native path exist. Extend those
+boundaries and retain the SDR fallback while completing the remaining platforms.
 
 - **macOS:** detect current/potential EDR headroom, select a float presentation
   format, configure the native layer for extended-range content, attach the
@@ -216,9 +239,16 @@ See the [HDR debugging guide](../hdr-debugging.md) for capture recipes and the
 - **Linux:** discover compositor/output color capabilities and only enable a
   wide-gamut or HDR surface when the window-system protocol can communicate the
   required color space and transfer behavior.
-- **Web:** configure supported WebGPU canvases with explicit color-space and
-  extended tone-mapping options, then verify the effective configuration rather
-  than inferring presentation from media queries alone.
+- **Web:** move the demo's configuration attempt into a supported shared
+  platform path, verify effective canvas configuration and actual browser output,
+  and report requested, accepted, and fallback configurations distinctly.
+- **Monitor/display-mode changes:** invalidate capabilities and reconfigure on
+  same-scale monitor migration and OS HDR toggles, then publish diagnostics for
+  the newly active strategy.
+
+Exit criteria: each supported path has platform-specific tests and real-display
+evidence for successful presentation, unsupported capability, and failed setup;
+moving a window or changing display mode updates the strategy coherently.
 
 ### P0: hardware validation and failure reporting
 
@@ -226,26 +256,30 @@ See the [HDR debugging guide](../hdr-debugging.md) for capture recipes and the
   displays.
 - Validate window migration between unlike monitors and OS HDR toggles.
 - Verify reference-white handling against system controls on Windows.
-- Make failed native color-space configuration visible in diagnostics without
-  leaving the window in an ambiguous state.
+- Build on existing native setup-error propagation: record failures in output
+  diagnostics and define/test recovery so the reported strategy matches the
+  surface that remains active.
 
 ### P1: broaden color-management inputs
 
 - Add explicit Rec.2020 authoring and output primaries only after conversion and
   validation coverage exists.
-- Define image and external-texture color metadata instead of assuming every
-  sampled resource is sRGB.
+- Extend the existing color-space fields on shared-texture binding descriptors
+  through import, sampling, composition, and CPU fallback. Define the missing
+  color metadata contracts for ordinary image resources.
 - Decide whether PQ and HLG are public presentation contracts or remain
   platform/media interop details.
-- Add calibrated comparison fixtures for gamut conversion, tone mapping,
-  clipping, and alpha compositing.
+- Extend existing color-conversion, output-policy, tone-mapping, and capture
+  tests with calibrated comparison fixtures for gamut conversion, clipping,
+  reference white, and alpha compositing.
 
 ### P1: integrate policy with themes
 
 `HdrThemeMode` and the renderer output policy are intentionally separate today.
-A future integration may derive a safe theme mode from output diagnostics, but
-it must preserve application overrides and never enable luminous styling from
-GPU capability alone. Track the authoring side in
+The remaining integration should derive a safe theme mode from the active
+output diagnostics while preserving application overrides. Test SDR fallback,
+monitor migration, and output-mode changes; GPU capability alone must not enable
+luminous styling. Track the implemented authoring side and its follow-ups in
 [HDR theme tokens](../hdr-theme-token-schema-proposal.md).
 
 ## Completion criteria
@@ -274,7 +308,11 @@ This roadmap is complete when:
   `crates/sui-platform/src/display_capabilities/windows_display.rs`
 - Windows Advanced Color integration:
   `crates/sui-platform/src/display_capabilities/windows_display.rs` and
-  `crates/sui-render-wgpu/src/scene/windows_surface.rs`
-- Output strategy and capture pipeline: `crates/sui-render-wgpu/src/lib.rs` and
-  `crates/sui-render-wgpu/src/scene.rs`
+  `crates/sui-render-wgpu/src/surface/windows.rs`
+- Output strategy and surface configuration: `crates/sui-render-wgpu/src/output.rs`
+  and `crates/sui-render-wgpu/src/surface.rs`
+- Output/capture regression coverage: `crates/sui-render-wgpu/src/tests/output.rs`
+- Browser canvas configuration attempt: `crates/sui-demo/web/index.html`
+- Monitor-event refresh: `crates/sui-platform/src/desktop.rs`
+- Binding external-texture color metadata: `crates/sui-bindings-core/src/interop.rs`
 - Theme policy: `crates/sui-widgets/src/hdr_theme.rs`

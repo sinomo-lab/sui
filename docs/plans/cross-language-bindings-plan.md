@@ -1,15 +1,34 @@
 # Cross-language bindings roadmap
 
-**Status:** Active. Native Python and Node/Electron bindings have an alpha
-foundation and classify every public Rust widget, but they are not published
-and do not yet cover every deployment target.
+**Status:** Active. The native Python and Node/Electron alpha foundations and
+generated API coverage are implemented. Native package release, platform smoke
+coverage, exact editor/virtual-table parity, browser bindings, custom WGSL, and
+zero-copy binding composition remain open.
 
 This document tracks unfinished binding work. Current setup and examples live
 in the [Python guide](../../crates/sui-python/README.md), the
 [Node/Electron guide](../../crates/sui-js/README.md), and the
 [examples catalog](../examples.md).
 
-## Shipped foundation
+## Implementation status
+
+This status reflects the implementation reviewed at `c1a60f8`. Generation and
+manifest coverage checks pass; platform and package acceptance remain separate
+release gates.
+
+| Area | Status | Remaining work |
+| --- | --- | --- |
+| Native Python and Node/Electron API | Implemented alpha | Preserve lifecycle, state, resource, paint, semantics, animation, and rich-document contracts during release work. |
+| Generated APIs and widget classification | Implemented | Keep generation and coverage checks passing as public Rust APIs evolve. |
+| Exact portable widget parity | Partial | `TextSurface` uses `TextArea` and `VirtualTable` uses `Table`; editor-surface behavior, virtual rows, and arbitrary foreign row renderers still need dedicated contracts and tests. |
+| Native packages | Partial | Local builds, loaders, metadata, and declarations exist; supported artifact matrices, release CI, clean-install tests, and publication remain open. |
+| Desktop smoke coverage | Partial | Host-driven tests and examples exist; supported-platform real-window lifecycle/input/render coverage remains open. |
+| Browser JavaScript/WASM bindings | Not implemented | Define and implement the browser package and lifecycle; the Rust/WASM demo is an existing, separate surface. |
+| User shader registration | Not implemented | Built-in shader descriptors exist; custom WGSL validation, schemas, caching, and lifecycle handling remain open. |
+| Zero-copy binding surfaces | Partial | Descriptors and synchronization types exist; only CPU RGBA composition is rendered through the bindings today. |
+| Stable compatibility policy | Partial | Guides and generated declarations exist; deprecation policy, package/platform support policy, and release gates remain open. |
+
+## Implemented foundation
 
 The workspace currently includes:
 
@@ -48,9 +67,10 @@ cargo xtask bindings generate --check
 cargo xtask bindings coverage
 ```
 
-The coverage command is the release gate. The current high-level manifest
-contains these public names, grouped here so documentation coverage remains
-auditable:
+Generation and coverage are required release gates. Widget classification
+includes documented equivalents; exact feature parity is tracked separately
+below. The current high-level manifest contains these public names, grouped
+here so documentation coverage remains auditable:
 
 - Descriptors: `TextSpan`, `StatusBarSegment`, `SegmentedControlItem`,
   `TableColumn`, `TableRow`, `TreeItem`, `LayerListItem`, `MenuItem`,
@@ -131,6 +151,11 @@ Future work should preserve these boundaries:
 
 ### 1. Publish reproducible native packages
 
+**Status: partial.** Python has maturin configuration and type metadata;
+Node/Electron has a native loader, package metadata, TypeScript declarations,
+and local build/consumer commands. The remaining work is artifact production,
+installation validation, and release automation.
+
 Python:
 
 - select supported CPython versions and target triples;
@@ -156,6 +181,10 @@ Shared exit criteria:
 
 ### 2. Add real desktop smoke coverage
 
+**Status: partial.** Desktop entry points, deterministic host-driven tests, and
+language examples exist. A supported-platform real-window acceptance matrix
+remains open.
+
 Host-driven render tests already validate the model, but release builds also
 need supported-platform smoke tests that open a window and exercise:
 
@@ -169,7 +198,27 @@ Keep deterministic host-driven tests as the primary compatibility suite; use
 desktop smoke tests to catch packaging, event-loop, graphics, and dynamic
 library failures.
 
+### 3. Close editor and virtual-table parity gaps
+
+**Status: partial.** Every public Rust widget has a classification, including
+documented equivalents. Keep those equivalents explicit while extending the
+portable API:
+
+- define the supported editor-surface behavior beyond the current `TextArea`
+  equivalent, including styled content and large-document viewport behavior;
+- provide true virtual-table row lifecycle and arbitrary foreign row-renderer
+  callbacks with UI-thread ownership and retained identity;
+- add matching Python/JavaScript conformance tests for the newly supported
+  behavior before changing an equivalent into a direct binding or wrapper.
+
+These are capability follow-ups. The first native alpha may retain documented
+equivalents; complete classification alone must not be advertised as exact
+editor or virtual-table parity.
+
 ### 4. Design browser JavaScript/WASM bindings
+
+**Status: not implemented.** SUI's Rust/WASM demo and web renderer exist, but
+the native napi-rs package does not provide a browser JavaScript API.
 
 Browser bindings are a separate product surface, not a rebuild of the napi-rs
 package. Before implementation, specify:
@@ -189,6 +238,9 @@ the portable widget tier.
 
 ### 5. Extend safe shader support
 
+**Status: not implemented for user shaders.** Validated built-in shader
+descriptors are already available in both languages.
+
 Bindings currently select validated built-in SUI shaders. User shader support
 requires a separate reviewed contract for:
 
@@ -202,9 +254,11 @@ Raw render-pass access is not part of this milestone.
 
 ### 6. Integrate zero-copy external surfaces
 
-The descriptor and capability foundation exists, while shared-texture and
-shared-target renderer composition is unfinished. Each backend integration
-must define:
+**Status: partial.** Backend handles, synchronization descriptors, and
+capability tiers exist. `BindingExternalSurfaceWidget` currently paints only
+the `CpuRgba8` descriptor. Native Rust external-texture APIs exist separately;
+the Python/JavaScript bridge still needs shared-texture and shared-target
+composition. Each backend integration must define:
 
 - compatible formats, dimensions, color encoding, and alpha conventions;
 - import/export handle ownership and lifetime;
@@ -217,6 +271,10 @@ Land one backend at a time behind capability checks and conformance tests. Do
 not describe a descriptor-only path as zero-copy support.
 
 ### 7. Stabilize documentation and compatibility policy
+
+**Status: partial.** Language guides, examples, generated declarations, and
+manifest coverage exist. Stable support and deprecation policies and the full
+artifact/platform release gate remain open.
 
 - Version the portable API tier and document deprecation expectations.
 - Generate reference material from the binding specification where practical.
@@ -236,6 +294,23 @@ These are not required for the first native alpha release:
   native backend handle;
 - making foreign widget objects freely thread-safe;
 - exact parity with every internal Rust-only debug or editor widget.
+
+## Implementation references
+
+- Native lifecycle and host-driven runtime:
+  `crates/sui-bindings-core/src/application.rs`.
+- Python packaging and current limitations:
+  [Python guide](../../crates/sui-python/README.md) and
+  `crates/sui-python/pyproject.toml`.
+- Node/Electron packaging and current limitations:
+  [Node/Electron guide](../../crates/sui-js/README.md) and
+  `crates/sui-js/package.json`.
+- Generation and coverage gates: `crates/xtask/src/main.rs`.
+- Built-in shader descriptors: `crates/sui-bindings-core/src/shader.rs`.
+- External-surface descriptors and binding composition:
+  `crates/sui-bindings-core/src/interop.rs` and
+  `crates/sui-bindings-core/src/widget_adapters.rs`.
+- Native Rust external-texture support: `crates/sui-render-wgpu/src/interop.rs`.
 
 ## Definition of done
 
