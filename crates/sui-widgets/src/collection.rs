@@ -27,7 +27,7 @@ use sui_scene::LayerCompositionMode;
 use crate::{
     DefaultTheme,
     containers::{
-        OverlayScrollBars, ScrollAxes, ScrollInvalidationCtx, ScrollState, ScrollWidgetCtx,
+        ScrollAxes, ScrollBars, ScrollInvalidationCtx, ScrollState, ScrollWidgetCtx,
         request_scroll_bar_refresh,
     },
     data::{draw_surface, paint_data_row_state},
@@ -1125,7 +1125,7 @@ type VirtualListContextEdge = Box<dyn FnMut(&mut EventCtx)>;
 pub struct VirtualList<K, T> {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Rc<dyn Fn() -> DefaultTheme>>,
-    overlay_theme: Rc<RefCell<DefaultTheme>>,
+    scroll_bar_theme: Rc<RefCell<DefaultTheme>>,
     name: String,
     source: Arc<dyn VirtualCollectionSource<K, T>>,
     state: VirtualListState<K>,
@@ -1162,8 +1162,8 @@ pub struct VirtualList<K, T> {
     focused_row: RefCell<Option<K>>,
     near_start_notified: bool,
     near_end_notified: bool,
-    overlay_scroll_bars: bool,
-    overlay_bars: Option<OverlayScrollBars>,
+    scroll_bars: bool,
+    bars: Option<ScrollBars>,
     touch_scroll: Option<TouchGesture>,
 }
 
@@ -1182,7 +1182,7 @@ where
         Self {
             theme: Box::new(theme),
             theme_reader: None,
-            overlay_theme: Rc::new(RefCell::new(theme)),
+            scroll_bar_theme: Rc::new(RefCell::new(theme)),
             name: name.into(),
             source: Arc::new(source),
             state: VirtualListState::new(),
@@ -1219,22 +1219,22 @@ where
             focused_row: RefCell::new(None),
             near_start_notified: false,
             near_end_notified: false,
-            overlay_scroll_bars: true,
-            overlay_bars: None,
+            scroll_bars: true,
+            bars: None,
             touch_scroll: None,
         }
     }
 
     pub fn state(mut self, state: VirtualListState<K>) -> Self {
         self.state = state;
-        self.overlay_bars = None;
+        self.bars = None;
         self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
         self.theme_reader = None;
-        *self.overlay_theme.borrow_mut() = theme;
+        *self.scroll_bar_theme.borrow_mut() = theme;
         self
     }
 
@@ -1299,10 +1299,16 @@ where
         self
     }
 
-    pub fn overlay_scroll_bars(mut self, enabled: bool) -> Self {
-        self.overlay_scroll_bars = enabled;
+    /// Compatibility name for `scroll_bars`. Built-in bars reserve layout space.
+    pub fn overlay_scroll_bars(self, enabled: bool) -> Self {
+        self.scroll_bars(enabled)
+    }
+
+    /// Show built-in scrollbars in their own gutters when content overflows.
+    pub fn scroll_bars(mut self, enabled: bool) -> Self {
+        self.scroll_bars = enabled;
         if !enabled {
-            self.overlay_bars = None;
+            self.bars = None;
         }
         self
     }
@@ -1392,17 +1398,17 @@ where
             .unwrap_or(*self.theme)
     }
 
-    fn sync_overlay_theme(&self) -> DefaultTheme {
+    fn sync_scroll_bar_theme(&self) -> DefaultTheme {
         let theme = self.resolved_theme();
-        *self.overlay_theme.borrow_mut() = theme;
+        *self.scroll_bar_theme.borrow_mut() = theme;
         theme
     }
 
-    fn ensure_overlay_bars(&mut self) {
-        if self.overlay_scroll_bars && self.overlay_bars.is_none() {
-            self.overlay_bars = Some(OverlayScrollBars::new(
+    fn ensure_scroll_bars(&mut self) {
+        if self.scroll_bars && self.bars.is_none() {
+            self.bars = Some(ScrollBars::new(
                 self.state.scroll.clone(),
-                Rc::clone(&self.overlay_theme),
+                Rc::clone(&self.scroll_bar_theme),
                 Some(&self.name),
                 ScrollAxes::Vertical,
             ));
@@ -1435,7 +1441,18 @@ where
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, self.resolved_padding())
+        let viewport = inset_rect(bounds, self.resolved_padding());
+        let gutter = crate::containers::scroll_bar_gutter(
+            self.scroll_bars,
+            ScrollAxes::Vertical,
+            viewport.size,
+            Size::new(0.0, self.content_height()),
+            self.resolved_theme().metrics.scroll_bar_thickness,
+        );
+        Rect::from_origin_size(
+            viewport.origin,
+            crate::containers::scroll_viewport_size(viewport.size, gutter),
+        )
     }
 
     fn rebuild_index(&mut self) {
@@ -2311,8 +2328,8 @@ where
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let theme = self.sync_overlay_theme();
-        self.ensure_overlay_bars();
+        let theme = self.sync_scroll_bar_theme();
+        self.ensure_scroll_bars();
         let _ = ctx.observe_with(self.source.as_ref(), InvalidationKind::Measure);
         let _ = ctx.observe(&self.state.revision);
         self.offset_y = self.state.scroll.current_offset().y;
@@ -2334,7 +2351,7 @@ where
             estimated_height.min(DEFAULT_UNBOUNDED_VIEWPORT_HEIGHT)
         };
         let size = constraints.clamp(Size::new(width, height));
-        let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
+        let mut viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
 
         if source_changed {
             if was_following {
@@ -2355,9 +2372,12 @@ where
             .then(|| self.capture_anchor())
             .flatten()
             .or(anchor);
-        for _ in 0..3 {
+        for _ in 0..5 {
             let changed = self.measure_active_rows(ctx, viewport.width(), viewport.height());
-            if !changed {
+            let next_viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
+            let viewport_changed = next_viewport != viewport;
+            viewport = next_viewport;
+            if !changed && !viewport_changed {
                 break;
             }
             if was_following {
@@ -2379,15 +2399,15 @@ where
         self.publish_viewport(viewport.height());
 
         let max_offset = self.state.scroll.max_offset();
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
-            overlay_bars.measure(ctx, size, theme.metrics.scroll_bar_thickness);
+        if let Some(bars) = &mut self.bars {
+            bars.set_visibility(ScrollAxes::Vertical, max_offset);
+            bars.measure(ctx, size, theme.metrics.scroll_bar_thickness);
         }
         size
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let theme = self.sync_overlay_theme();
+        let theme = self.sync_scroll_bar_theme();
         let viewport = self.viewport_rect(bounds);
         let row_padding = self.resolved_row_padding();
         self.offset_y = self.state.scroll.current_offset().y;
@@ -2440,16 +2460,16 @@ where
         }
 
         let max_offset = self.state.scroll.max_offset();
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
-            overlay_bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
+        if let Some(bars) = &mut self.bars {
+            bars.set_visibility(ScrollAxes::Vertical, max_offset);
+            bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
         }
         self.publish_viewport(viewport.height());
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         self.sync_focused_row(ctx.focused_widget_id());
-        self.sync_overlay_theme();
+        self.sync_scroll_bar_theme();
         let theme = self.resolved_theme();
         let viewport = self.viewport_rect(ctx.bounds());
         let selected = self.state.selected_key();
@@ -2482,9 +2502,9 @@ where
             row.pod.paint(ctx);
         }
         ctx.pop_clip();
-        if let Some(overlay_bars) = &self.overlay_bars {
+        if let Some(bars) = &self.bars {
             ctx.push_clip_rect(ctx.bounds());
-            overlay_bars.paint(ctx);
+            bars.paint(ctx);
             ctx.pop_clip();
         }
     }
@@ -2583,8 +2603,8 @@ where
             ctx.push(node);
             row.pod.semantics(ctx);
         }
-        if let Some(overlay_bars) = &self.overlay_bars {
-            overlay_bars.semantics(ctx);
+        if let Some(bars) = &self.bars {
+            bars.semantics(ctx);
         }
     }
 
@@ -2603,8 +2623,8 @@ where
                 visitor.visit(&row.pod);
             }
         }
-        if let Some(overlay_bars) = &self.overlay_bars {
-            overlay_bars.visit_children(visitor);
+        if let Some(bars) = &self.bars {
+            bars.visit_children(visitor);
         }
     }
 
@@ -2615,8 +2635,8 @@ where
                 visitor.visit(&mut row.pod);
             }
         }
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.visit_children_mut(visitor);
+        if let Some(bars) = &mut self.bars {
+            bars.visit_children_mut(visitor);
         }
     }
 }
@@ -2983,6 +3003,54 @@ mod tests {
             CollectionSync::Reset { keys, .. }
                 if keys.len() == super::COLLECTION_JOURNAL_LIMIT + 1
         ));
+    }
+
+    #[test]
+    fn virtual_list_scrollbar_gutter_resizes_retained_rows_without_losing_selection() {
+        let model = VirtualCollectionModel::from_items(
+            "rows",
+            [(1_u64, (1, 40.0)), (2, (2, 40.0)), (3, (3, 40.0))],
+        )
+        .unwrap();
+        let state = VirtualListState::new();
+        state.select(Some(1));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(120.0, 80.0)).with_child(
+                VirtualList::new("Rows", model.clone(), |_key, value| RowBox { value })
+                    .padding(sui_layout::Padding::ZERO)
+                    .row_padding(sui_layout::Padding::ZERO)
+                    .state(state.clone()),
+            ),
+        );
+        let before = runtime.render(window_id).unwrap();
+        let row = before
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Row 1"))
+            .unwrap();
+        let row_id = row.id;
+        let bar = before
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Rows vertical scroll bar"))
+            .unwrap();
+        assert_eq!(row.bounds.max_x(), bar.bounds.x());
+        assert_eq!(state.selected_key(), Some(1));
+        model.replace([(1, (1, 40.0))]).unwrap();
+        let after = runtime.render(window_id).unwrap();
+        let row = after
+            .semantics
+            .iter()
+            .find(|node| node.id == row_id)
+            .expect("row retained");
+        assert_eq!(row.bounds.width(), 120.0);
+        assert_eq!(state.selected_key(), Some(1));
+        assert!(
+            after
+                .semantics
+                .iter()
+                .all(|node| node.role != SemanticsRole::Slider)
+        );
     }
 
     #[test]

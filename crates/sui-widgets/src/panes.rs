@@ -1018,6 +1018,8 @@ struct FloatingViewHost {
     state: FloatingWorkspaceState,
     view_id: u64,
     content: SingleChild,
+    scroll_state: ScrollState,
+    gutter: Size,
     vertical_scroll_bar: SingleChild,
     horizontal_scroll_bar: SingleChild,
 }
@@ -1036,7 +1038,7 @@ impl FloatingViewHost {
         let scroll_state = ScrollState::new();
         let scroll_view = ScrollView::both(child)
             .state(scroll_state.clone())
-            .overlay_scroll_bars(false)
+            .scroll_bars(false)
             .viewport_size_hint(true)
             .name("Floating view content");
         let vertical_scroll_bar = ScrollBar::vertical(scroll_state.clone());
@@ -1061,6 +1063,8 @@ impl FloatingViewHost {
                 horizontal_scroll_bar.name("Horizontal scroll bar"),
             ),
             content: SingleChild::new(scroll_view),
+            scroll_state,
+            gutter: Size::ZERO,
         }
     }
 
@@ -1085,8 +1089,23 @@ impl Widget for FloatingViewHost {
         let outer = constraints.max;
         let probe = Rect::from_origin_size(Point::ZERO, outer);
         let content = floating_view_content_rect(&theme, probe, view.maximized);
-        self.content.measure(ctx, Constraints::tight(content.size));
         let thickness = theme.metrics.scroll_bar_thickness;
+        self.gutter = Size::ZERO;
+        for _ in 0..3 {
+            let viewport = crate::containers::scroll_viewport_size(content.size, self.gutter);
+            self.content.measure(ctx, Constraints::tight(viewport));
+            let next = crate::containers::scroll_bar_gutter(
+                true,
+                crate::ScrollAxes::Both,
+                content.size,
+                self.scroll_state.content_size(),
+                thickness,
+            );
+            if next == self.gutter {
+                break;
+            }
+            self.gutter = next;
+        }
         self.vertical_scroll_bar.measure(
             ctx,
             Constraints::tight(Size::new(thickness, content.height())),
@@ -1104,30 +1123,32 @@ impl Widget for FloatingViewHost {
         };
         let theme = self.resolved_theme();
         let content = floating_view_content_rect(&theme, bounds, view.maximized);
-        self.content.arrange(ctx, content);
-        let thickness = theme
-            .metrics
-            .scroll_bar_thickness
-            .min(content.width().max(0.0))
-            .min(content.height().max(0.0));
-        let vertical_height = (content.height() - thickness).max(0.0);
-        let horizontal_width = (content.width() - thickness).max(0.0);
+        self.gutter = crate::containers::scroll_bar_gutter(
+            true,
+            crate::ScrollAxes::Both,
+            content.size,
+            self.scroll_state.content_size(),
+            theme.metrics.scroll_bar_thickness,
+        );
+        let viewport = crate::containers::scroll_viewport_size(content.size, self.gutter);
+        self.content
+            .arrange(ctx, Rect::from_origin_size(content.origin, viewport));
         self.vertical_scroll_bar.arrange(
             ctx,
             Rect::new(
-                content.max_x() - thickness,
+                content.x() + viewport.width,
                 content.y(),
-                thickness,
-                vertical_height,
+                self.gutter.width,
+                viewport.height,
             ),
         );
         self.horizontal_scroll_bar.arrange(
             ctx,
             Rect::new(
                 content.x(),
-                content.max_y() - thickness,
-                horizontal_width,
-                thickness,
+                content.y() + viewport.height,
+                viewport.width,
+                self.gutter.height,
             ),
         );
     }
@@ -1136,8 +1157,12 @@ impl Widget for FloatingViewHost {
         ctx.push_clip_rect(ctx.bounds());
         self.content.paint(ctx);
         if !self.resizing() {
-            self.vertical_scroll_bar.paint(ctx);
-            self.horizontal_scroll_bar.paint(ctx);
+            if self.gutter.width > 0.0 {
+                self.vertical_scroll_bar.paint(ctx);
+            }
+            if self.gutter.height > 0.0 {
+                self.horizontal_scroll_bar.paint(ctx);
+            }
         }
         ctx.pop_clip();
     }
@@ -1160,21 +1185,33 @@ impl Widget for FloatingViewHost {
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.content.semantics(ctx);
         if !self.resizing() {
-            self.vertical_scroll_bar.semantics(ctx);
-            self.horizontal_scroll_bar.semantics(ctx);
+            if self.gutter.width > 0.0 {
+                self.vertical_scroll_bar.semantics(ctx);
+            }
+            if self.gutter.height > 0.0 {
+                self.horizontal_scroll_bar.semantics(ctx);
+            }
         }
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.content.visit_children(visitor);
-        self.vertical_scroll_bar.visit_children(visitor);
-        self.horizontal_scroll_bar.visit_children(visitor);
+        if self.gutter.width > 0.0 && !self.resizing() {
+            self.vertical_scroll_bar.visit_children(visitor);
+        }
+        if self.gutter.height > 0.0 && !self.resizing() {
+            self.horizontal_scroll_bar.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.content.visit_children_mut(visitor);
-        self.vertical_scroll_bar.visit_children_mut(visitor);
-        self.horizontal_scroll_bar.visit_children_mut(visitor);
+        if self.gutter.width > 0.0 && !self.resizing() {
+            self.vertical_scroll_bar.visit_children_mut(visitor);
+        }
+        if self.gutter.height > 0.0 && !self.resizing() {
+            self.horizontal_scroll_bar.visit_children_mut(visitor);
+        }
     }
 }
 
@@ -3387,7 +3424,11 @@ mod tests {
             .copied()
             .expect("content should be measured");
 
-        assert_eq!(hinted.max, content.size);
+        let thickness = crate::DefaultTheme::default().metrics.scroll_bar_thickness;
+        assert_eq!(
+            hinted.max,
+            Size::new(content.width() - thickness, content.height() - thickness)
+        );
 
         let vertical = output
             .semantics

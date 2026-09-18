@@ -2882,27 +2882,70 @@ impl Widget for ScrollBar {
     }
 }
 
-const OVERLAY_SCROLL_BAR_INSET: f32 = 3.0;
 const OVERLAY_SCROLL_BAR_IDLE_THICKNESS: f32 = 4.0;
 
 fn pointer_supports_hover(pointer_kind: PointerKind) -> bool {
     matches!(pointer_kind, PointerKind::Mouse | PointerKind::Pen)
 }
 
-pub(crate) struct OverlayScrollBars {
+/// Resolve classic scrollbar gutters from an initially unobstructed viewport.
+/// A gutter on either axis can make the opposite axis overflow as well.
+pub(crate) fn scroll_bar_gutter(
+    enabled: bool,
+    axes: ScrollAxes,
+    outer: Size,
+    content: Size,
+    thickness: f32,
+) -> Size {
+    let mut gutter = Size::ZERO;
+    if enabled {
+        for _ in 0..3 {
+            let viewport = scroll_viewport_size(outer, gutter);
+            let next = Size::new(
+                if axes.allows_vertical() && content.height > viewport.height + f32::EPSILON {
+                    thickness.max(0.0).min(outer.width.max(0.0))
+                } else {
+                    gutter.width
+                },
+                if axes.allows_horizontal() && content.width > viewport.width + f32::EPSILON {
+                    thickness.max(0.0).min(outer.height.max(0.0))
+                } else {
+                    gutter.height
+                },
+            );
+            if next == gutter {
+                break;
+            }
+            gutter = next;
+        }
+    }
+    gutter
+}
+
+pub(crate) fn scroll_viewport_size(outer: Size, gutter: Size) -> Size {
+    Size::new(
+        (outer.width - gutter.width).max(0.0),
+        (outer.height - gutter.height).max(0.0),
+    )
+}
+
+pub(crate) struct ScrollBars {
+    corner: SingleChild,
     vertical: Option<SingleChild>,
     horizontal: Option<SingleChild>,
     show_vertical: bool,
     show_horizontal: bool,
 }
 
-impl OverlayScrollBars {
+impl ScrollBars {
     pub(crate) fn new(
         state: ScrollState,
         theme: Rc<RefCell<DefaultTheme>>,
         name: Option<&str>,
         axes: ScrollAxes,
     ) -> Self {
+        // Compact thumb styling is independent of layout: the full hit area
+        // lives inside a reserved gutter, outside the content viewport.
         let vertical = axes.allows_vertical().then(|| {
             let vertical_theme = Rc::clone(&theme);
             let vertical_name = name
@@ -2930,6 +2973,7 @@ impl OverlayScrollBars {
         });
 
         Self {
+            corner: SingleChild::new(SizedBox::new()),
             vertical,
             horizontal,
             show_vertical: false,
@@ -2947,6 +2991,8 @@ impl OverlayScrollBars {
     }
 
     pub(crate) fn measure(&mut self, ctx: &mut MeasureCtx, viewport: Size, thickness: f32) {
+        self.corner
+            .measure(ctx, Constraints::tight(Size::new(thickness, thickness)));
         if let Some(vertical) = &mut self.vertical {
             vertical.measure(
                 ctx,
@@ -2962,51 +3008,60 @@ impl OverlayScrollBars {
     }
 
     pub(crate) fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect, thickness: f32) {
-        let inset = OVERLAY_SCROLL_BAR_INSET
-            .min((bounds.width() * 0.5).min(bounds.height() * 0.5).max(0.0));
-        let vertical_height = (bounds.height()
-            - inset * 2.0
-            - if self.show_horizontal {
-                thickness + inset
+        let gutter = Size::new(
+            if self.show_vertical {
+                thickness.min(bounds.width()).max(0.0)
             } else {
                 0.0
-            })
-        .max(0.0);
-        let vertical_bounds = if self.show_vertical {
-            Rect::new(
-                (bounds.max_x() - inset - thickness).max(bounds.x()),
-                bounds.y() + inset,
-                thickness.min(bounds.width()),
-                vertical_height,
-            )
-        } else {
-            Rect::from_origin_size(Point::new(bounds.max_x(), bounds.max_y()), Size::ZERO)
-        };
-        if let Some(vertical) = &mut self.vertical {
-            vertical.arrange(ctx, vertical_bounds);
-        }
-
-        if let Some(horizontal) = &mut self.horizontal {
-            let horizontal_width = (bounds.width()
-                - inset * 2.0
-                - if self.show_vertical {
-                    thickness + inset
-                } else {
-                    0.0
-                })
-            .max(0.0);
-            let horizontal_bounds = if self.show_horizontal {
-                Rect::new(
-                    bounds.x() + inset,
-                    (bounds.max_y() - inset - thickness).max(bounds.y()),
-                    horizontal_width,
-                    thickness.min(bounds.height()),
-                )
+            },
+            if self.show_horizontal {
+                thickness.min(bounds.height()).max(0.0)
             } else {
-                Rect::from_origin_size(Point::new(bounds.max_x(), bounds.max_y()), Size::ZERO)
-            };
-            horizontal.arrange(ctx, horizontal_bounds);
+                0.0
+            },
+        );
+        let viewport = scroll_viewport_size(bounds.size, gutter);
+        if let Some(vertical) = &mut self.vertical {
+            vertical.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x() + viewport.width,
+                    bounds.y(),
+                    gutter.width,
+                    if self.show_vertical {
+                        viewport.height
+                    } else {
+                        0.0
+                    },
+                ),
+            );
         }
+        if let Some(horizontal) = &mut self.horizontal {
+            horizontal.arrange(
+                ctx,
+                Rect::new(
+                    bounds.x(),
+                    bounds.y() + viewport.height,
+                    if self.show_horizontal {
+                        viewport.width
+                    } else {
+                        0.0
+                    },
+                    gutter.height,
+                ),
+            );
+        }
+        // The shared corner also owns its hit area so clicks cannot reach
+        // scrolled content painted behind the two gutters.
+        self.corner.arrange(
+            ctx,
+            Rect::new(
+                bounds.x() + viewport.width,
+                bounds.y() + viewport.height,
+                gutter.width,
+                gutter.height,
+            ),
+        );
     }
 
     pub(crate) fn paint(&self, ctx: &mut PaintCtx) {
@@ -3032,6 +3087,7 @@ impl OverlayScrollBars {
     }
 
     pub(crate) fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.corner.visit_children(visitor);
         if let Some(vertical) = &self.vertical {
             vertical.visit_children(visitor);
         }
@@ -3041,6 +3097,7 @@ impl OverlayScrollBars {
     }
 
     pub(crate) fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.corner.visit_children_mut(visitor);
         if let Some(vertical) = &mut self.vertical {
             vertical.visit_children_mut(visitor);
         }
@@ -3053,19 +3110,21 @@ impl OverlayScrollBars {
 pub struct ScrollView {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Rc<dyn Fn() -> DefaultTheme>>,
-    overlay_theme: Rc<RefCell<DefaultTheme>>,
+    scroll_bar_theme: Rc<RefCell<DefaultTheme>>,
     name: Option<String>,
     state: ScrollState,
     overflow_x: Overflow,
     overflow_y: Overflow,
     content_width: ContentExtent,
     content_height: ContentExtent,
+    shrink_height: bool,
+    gutter: Size,
     offset: Vector,
     content_size: Size,
     focus_animation: AnimatedScalar,
     retain_content: bool,
-    overlay_scroll_bars: bool,
-    overlay_bars: Option<OverlayScrollBars>,
+    scroll_bars: bool,
+    bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
     child: SingleChild,
 }
@@ -3079,19 +3138,21 @@ impl ScrollView {
         Self {
             theme: Box::new(theme),
             theme_reader: None,
-            overlay_theme: Rc::new(RefCell::new(theme)),
+            scroll_bar_theme: Rc::new(RefCell::new(theme)),
             name: None,
             state: ScrollState::new(),
             overflow_x: Overflow::Clip,
             overflow_y: Overflow::Auto,
             content_width: ContentExtent::Natural,
             content_height: ContentExtent::Natural,
+            shrink_height: false,
+            gutter: Size::ZERO,
             offset: Vector::ZERO,
             content_size: Size::ZERO,
             focus_animation: AnimatedScalar::new(0.0),
             retain_content: false,
-            overlay_scroll_bars: true,
-            overlay_bars: None,
+            scroll_bars: true,
+            bars: None,
             touch_scroll: None,
             child: SingleChild::new(child),
         }
@@ -3176,6 +3237,13 @@ impl ScrollView {
         self
     }
 
+    /// Fit short content while retaining vertical scrolling when it exceeds
+    /// the available height. Parent minimum constraints still take precedence.
+    pub const fn shrink_height(mut self, enabled: bool) -> Self {
+        self.shrink_height = enabled;
+        self
+    }
+
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -3184,7 +3252,7 @@ impl ScrollView {
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
         self.theme_reader = None;
-        *self.overlay_theme.borrow_mut() = theme;
+        *self.scroll_bar_theme.borrow_mut() = theme;
         self
     }
 
@@ -3199,17 +3267,23 @@ impl ScrollView {
     pub fn state(mut self, state: ScrollState) -> Self {
         self.state = state;
         self.state.sync_unmeasured_axes(self.scroll_axes());
-        self.overlay_bars = None;
+        self.bars = None;
         self
     }
 
-    /// Controls the built-in scroll bars painted over overflowing content.
+    /// Controls the built-in scroll bars beside overflowing content.
     /// Disable this when composing a standalone [`ScrollBar`] with the same
     /// [`ScrollState`].
-    pub fn overlay_scroll_bars(mut self, enabled: bool) -> Self {
-        self.overlay_scroll_bars = enabled;
+    /// Compatibility name for `scroll_bars`. Built-in bars reserve layout space.
+    pub fn overlay_scroll_bars(self, enabled: bool) -> Self {
+        self.scroll_bars(enabled)
+    }
+
+    /// Show built-in scrollbars in their own gutters when content overflows.
+    pub fn scroll_bars(mut self, enabled: bool) -> Self {
+        self.scroll_bars = enabled;
         if !enabled {
-            self.overlay_bars = None;
+            self.bars = None;
         }
         self
     }
@@ -3325,18 +3399,18 @@ impl ScrollView {
             .unwrap_or(*self.theme)
     }
 
-    fn sync_overlay_theme(&self) -> DefaultTheme {
+    fn sync_scroll_bar_theme(&self) -> DefaultTheme {
         let theme = self.resolved_theme();
-        *self.overlay_theme.borrow_mut() = theme;
+        *self.scroll_bar_theme.borrow_mut() = theme;
         theme
     }
 
-    fn ensure_overlay_bars(&mut self) {
+    fn ensure_scroll_bars(&mut self) {
         let axes = self.scroll_axes();
-        if self.overlay_scroll_bars && axes != ScrollAxes::None && self.overlay_bars.is_none() {
-            self.overlay_bars = Some(OverlayScrollBars::new(
+        if self.scroll_bars && axes != ScrollAxes::None && self.bars.is_none() {
+            self.bars = Some(ScrollBars::new(
                 self.state.clone(),
-                Rc::clone(&self.overlay_theme),
+                Rc::clone(&self.scroll_bar_theme),
                 self.name.as_deref(),
                 axes,
             ));
@@ -3368,7 +3442,7 @@ impl ScrollView {
             PointerEventKind::Down
                 if pointer.is_primary
                     && pointer.button == Some(PointerButton::Primary)
-                    && ctx.bounds().contains(pointer.position)
+                    && self.viewport_rect(ctx.bounds()).contains(pointer.position)
                     && self.has_touch_overflow() =>
             {
                 self.touch_scroll = Some(TouchScrollGesture::new(pointer));
@@ -3432,7 +3506,15 @@ impl ScrollView {
         self.overflow_x.clips_paint() || self.overflow_y.clips_paint()
     }
 
+    fn viewport_rect(&self, bounds: Rect) -> Rect {
+        Rect::from_origin_size(
+            bounds.origin,
+            scroll_viewport_size(bounds.size, self.gutter),
+        )
+    }
+
     fn clip_rect(&self, bounds: Rect) -> Rect {
+        let bounds = self.viewport_rect(bounds);
         let large = 1_000_000.0;
         let x = if self.overflow_x.clips_paint() {
             bounds.x()
@@ -3526,7 +3608,7 @@ impl ScrollView {
 pub struct VirtualScrollView {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Rc<dyn Fn() -> DefaultTheme>>,
-    overlay_theme: Rc<RefCell<DefaultTheme>>,
+    scroll_bar_theme: Rc<RefCell<DefaultTheme>>,
     name: Option<String>,
     padding: Insets,
     spacing: f32,
@@ -3537,8 +3619,8 @@ pub struct VirtualScrollView {
     item_offsets: Vec<f32>,
     visible_range: Range<usize>,
     focus_animation: AnimatedScalar,
-    overlay_scroll_bars: bool,
-    overlay_bars: Option<OverlayScrollBars>,
+    scroll_bars: bool,
+    bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
     children: WidgetChildren,
 }
@@ -3549,7 +3631,7 @@ impl VirtualScrollView {
         Self {
             theme: Box::new(theme),
             theme_reader: None,
-            overlay_theme: Rc::new(RefCell::new(theme)),
+            scroll_bar_theme: Rc::new(RefCell::new(theme)),
             name: None,
             padding: Insets::ZERO,
             spacing: 0.0,
@@ -3560,8 +3642,8 @@ impl VirtualScrollView {
             item_offsets: Vec::new(),
             visible_range: 0..0,
             focus_animation: AnimatedScalar::new(0.0),
-            overlay_scroll_bars: true,
-            overlay_bars: None,
+            scroll_bars: true,
+            bars: None,
             touch_scroll: None,
             children: WidgetChildren::new(),
         }
@@ -3575,7 +3657,7 @@ impl VirtualScrollView {
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
         self.theme_reader = None;
-        *self.overlay_theme.borrow_mut() = theme;
+        *self.scroll_bar_theme.borrow_mut() = theme;
         self
     }
 
@@ -3600,17 +3682,23 @@ impl VirtualScrollView {
     pub fn state(mut self, state: ScrollState) -> Self {
         self.state = state;
         self.state.sync_unmeasured_axes(ScrollAxes::Vertical);
-        self.overlay_bars = None;
+        self.bars = None;
         self
     }
 
     /// Controls the built-in vertical scroll bar painted over overflowing
     /// content. Disable this when composing a standalone [`ScrollBar`] with
     /// the same [`ScrollState`].
-    pub fn overlay_scroll_bars(mut self, enabled: bool) -> Self {
-        self.overlay_scroll_bars = enabled;
+    /// Compatibility name for `scroll_bars`. Built-in bars reserve layout space.
+    pub fn overlay_scroll_bars(self, enabled: bool) -> Self {
+        self.scroll_bars(enabled)
+    }
+
+    /// Show built-in scrollbars in their own gutters when content overflows.
+    pub fn scroll_bars(mut self, enabled: bool) -> Self {
+        self.scroll_bars = enabled;
         if !enabled {
-            self.overlay_bars = None;
+            self.bars = None;
         }
         self
     }
@@ -3647,17 +3735,17 @@ impl VirtualScrollView {
             .unwrap_or(*self.theme)
     }
 
-    fn sync_overlay_theme(&self) -> DefaultTheme {
+    fn sync_scroll_bar_theme(&self) -> DefaultTheme {
         let theme = self.resolved_theme();
-        *self.overlay_theme.borrow_mut() = theme;
+        *self.scroll_bar_theme.borrow_mut() = theme;
         theme
     }
 
-    fn ensure_overlay_bars(&mut self) {
-        if self.overlay_scroll_bars && self.overlay_bars.is_none() {
-            self.overlay_bars = Some(OverlayScrollBars::new(
+    fn ensure_scroll_bars(&mut self) {
+        if self.scroll_bars && self.bars.is_none() {
+            self.bars = Some(ScrollBars::new(
                 self.state.clone(),
-                Rc::clone(&self.overlay_theme),
+                Rc::clone(&self.scroll_bar_theme),
                 self.name.as_deref(),
                 ScrollAxes::Vertical,
             ));
@@ -3734,7 +3822,15 @@ impl VirtualScrollView {
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
-        inset_rect(bounds, self.padding)
+        let viewport = inset_rect(bounds, self.padding);
+        let gutter = scroll_bar_gutter(
+            self.scroll_bars,
+            ScrollAxes::Vertical,
+            viewport.size,
+            Size::new(0.0, self.content_height),
+            self.resolved_theme().metrics.scroll_bar_thickness,
+        );
+        Rect::from_origin_size(viewport.origin, scroll_viewport_size(viewport.size, gutter))
     }
 
     fn clamp_offset(&self, viewport_height: f32, offset_y: f32) -> f32 {
@@ -3894,8 +3990,8 @@ impl Default for VirtualScrollView {
 
 impl Widget for ScrollView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.sync_overlay_theme();
-        let viewport = ctx.bounds().size;
+        self.sync_scroll_bar_theme();
+        let viewport = self.viewport_rect(ctx.bounds()).size;
         if let Event::Pointer(pointer) = event {
             self.handle_touch_pointer(ctx, pointer, viewport);
         }
@@ -3958,86 +4054,111 @@ impl Widget for ScrollView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let theme = self.sync_overlay_theme();
-        self.ensure_overlay_bars();
-        let viewport_hint = Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width
-            } else {
-                constraints.min.width
-            },
-            if constraints.max.height.is_finite() {
-                constraints.max.height
-            } else {
-                constraints.min.height
-            },
-        );
-        let width_intrinsic =
-            if self.overflow_x.is_scrollable() && self.content_width == ContentExtent::MinContent {
+        let theme = self.sync_scroll_bar_theme();
+        self.ensure_scroll_bars();
+        let previous_gutter = self.gutter;
+        self.gutter = Size::ZERO;
+        let mut outer = constraints.min;
+        // Start without bars on every measure so shrinking content releases its
+        // gutter. Remeasure after reserving space so wrapped text uses the real
+        // viewport width; both axes can need one additional resolution pass.
+        for _ in 0..3 {
+            let available = scroll_viewport_size(constraints.max, self.gutter);
+            let hint = Size::new(
+                if available.width.is_finite() {
+                    available.width
+                } else {
+                    constraints.min.width
+                },
+                if available.height.is_finite() {
+                    available.height
+                } else {
+                    constraints.min.height
+                },
+            );
+            let width_intrinsic = if self.overflow_x.is_scrollable()
+                && self.content_width == ContentExtent::MinContent
+            {
                 self.child
                     .child_mut()
-                    .intrinsic_size(ctx, Axis::Horizontal, viewport_hint.height)
+                    .intrinsic_size(ctx, Axis::Horizontal, hint.height)
             } else {
                 IntrinsicSize::default()
             };
-        let height_intrinsic = if self.overflow_y.is_scrollable()
-            && self.content_height == ContentExtent::MinContent
-        {
-            self.child
-                .child_mut()
-                .intrinsic_size(ctx, Axis::Vertical, viewport_hint.width)
-        } else {
-            IntrinsicSize::default()
-        };
-        let mut child_constraints = constraints.loosen();
-        if self.overflow_x.is_scrollable() {
-            (child_constraints.min.width, child_constraints.max.width) = self
-                .content_width
-                .resolve(viewport_hint.width, width_intrinsic.minimum);
-        } else if constraints.max.width.is_finite() {
-            child_constraints.min.width = constraints.max.width;
-            child_constraints.max.width = constraints.max.width;
-        }
-
-        if self.overflow_y.is_scrollable() {
-            (child_constraints.min.height, child_constraints.max.height) = self
-                .content_height
-                .resolve(viewport_hint.height, height_intrinsic.minimum);
-        } else if constraints.max.height.is_finite() {
-            child_constraints.min.height = constraints.max.height;
-            child_constraints.max.height = constraints.max.height;
-        }
-
-        let child_size = self.child.measure(ctx, child_constraints);
-        self.content_size = child_size;
-
-        let viewport = constraints.clamp(Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width
+            let height_intrinsic = if self.overflow_y.is_scrollable()
+                && self.content_height == ContentExtent::MinContent
+            {
+                self.child
+                    .child_mut()
+                    .intrinsic_size(ctx, Axis::Vertical, hint.width)
             } else {
-                child_size.width
-            },
-            if constraints.max.height.is_finite() {
-                constraints.max.height
-            } else {
-                child_size.height
-            },
-        ));
-        self.sync_state(ctx, viewport);
+                IntrinsicSize::default()
+            };
+            let mut child_constraints = Constraints::new(Size::ZERO, available);
+            if self.overflow_x.is_scrollable() {
+                (child_constraints.min.width, child_constraints.max.width) = self
+                    .content_width
+                    .resolve(hint.width, width_intrinsic.minimum);
+            } else if available.width.is_finite() {
+                child_constraints.min.width = available.width;
+            }
+            if self.overflow_y.is_scrollable() {
+                (child_constraints.min.height, child_constraints.max.height) = self
+                    .content_height
+                    .resolve(hint.height, height_intrinsic.minimum);
+            } else if available.height.is_finite() {
+                child_constraints.min.height = available.height;
+            }
+            self.content_size = self.child.measure(ctx, child_constraints);
+            outer = constraints.clamp(Size::new(
+                if constraints.max.width.is_finite() {
+                    constraints.max.width
+                } else {
+                    self.content_size.width + self.gutter.width
+                },
+                if self.shrink_height || !constraints.max.height.is_finite() {
+                    self.content_size.height + self.gutter.height
+                } else {
+                    constraints.max.height
+                },
+            ));
+            let next = scroll_bar_gutter(
+                self.scroll_bars,
+                self.scroll_axes(),
+                outer,
+                self.content_size,
+                theme.metrics.scroll_bar_thickness,
+            );
+            if next == self.gutter {
+                break;
+            }
+            self.gutter = next;
+        }
+        if self.gutter != previous_gutter {
+            ctx.request_paint();
+        }
+        self.sync_state(ctx, scroll_viewport_size(outer, self.gutter));
         let axes = self.scroll_axes();
         let max_offset = self.state.max_offset();
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.set_visibility(axes, max_offset);
-            overlay_bars.measure(ctx, viewport, theme.metrics.scroll_bar_thickness);
+        if let Some(bars) = &mut self.bars {
+            bars.set_visibility(axes, max_offset);
+            bars.measure(ctx, outer, theme.metrics.scroll_bar_thickness);
         }
-
-        viewport
+        outer
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let theme = self.sync_overlay_theme();
+        let theme = self.sync_scroll_bar_theme();
         let previous_offset = self.offset;
-        self.sync_state(ctx, bounds.size);
+        self.gutter = scroll_bar_gutter(
+            self.scroll_bars,
+            self.scroll_axes(),
+            bounds.size,
+            self.content_size,
+            theme.metrics.scroll_bar_thickness,
+        );
+        let viewport = self.viewport_rect(bounds);
+        self.sync_state(ctx, viewport.size);
         // A bound scroll bar writes through shared state. Keep flattened content
         // dirty when redraw handling eagerly consumes this arrange pass.
         if self.offset != previous_offset && !self.retain_content {
@@ -4046,12 +4167,12 @@ impl Widget for ScrollView {
         let measured = self.child.child().measured_size();
         let child_size = Size::new(
             if self.overflow_x == Overflow::Clip {
-                bounds.width()
+                viewport.width()
             } else {
                 measured.width
             },
             if self.overflow_y == Overflow::Clip {
-                bounds.height()
+                viewport.height()
             } else {
                 measured.height
             },
@@ -4065,14 +4186,14 @@ impl Widget for ScrollView {
         );
         let axes = self.scroll_axes();
         let max_offset = self.state.max_offset();
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.set_visibility(axes, max_offset);
-            overlay_bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
+        if let Some(bars) = &mut self.bars {
+            bars.set_visibility(axes, max_offset);
+            bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
         }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        self.sync_overlay_theme();
+        self.sync_scroll_bar_theme();
         if self.should_clip_paint() {
             ctx.push_clip_rect(self.clip_rect(ctx.bounds()));
             self.child.paint(ctx);
@@ -4080,9 +4201,9 @@ impl Widget for ScrollView {
         } else {
             self.child.paint(ctx);
         }
-        if let Some(overlay_bars) = &self.overlay_bars {
+        if let Some(bars) = &self.bars {
             ctx.push_clip_rect(ctx.bounds());
-            overlay_bars.paint(ctx);
+            bars.paint(ctx);
             ctx.pop_clip();
         }
     }
@@ -4105,8 +4226,8 @@ impl Widget for ScrollView {
         node.state.focused = ctx.is_focused();
         ctx.push(node);
         self.child.semantics(ctx);
-        if let Some(overlay_bars) = &self.overlay_bars {
-            overlay_bars.semantics(ctx);
+        if let Some(bars) = &self.bars {
+            bars.semantics(ctx);
         }
     }
 
@@ -4115,7 +4236,7 @@ impl Widget for ScrollView {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        let theme = self.sync_overlay_theme();
+        let theme = self.sync_scroll_bar_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
@@ -4123,22 +4244,22 @@ impl Widget for ScrollView {
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.child.visit_children(visitor);
-        if let Some(overlay_bars) = &self.overlay_bars {
-            overlay_bars.visit_children(visitor);
+        if let Some(bars) = &self.bars {
+            bars.visit_children(visitor);
         }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.visit_children_mut(visitor);
+        if let Some(bars) = &mut self.bars {
+            bars.visit_children_mut(visitor);
         }
     }
 }
 
 impl Widget for VirtualScrollView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.sync_overlay_theme();
+        self.sync_scroll_bar_theme();
         let viewport = self.viewport_rect(ctx.bounds());
         if let Event::Pointer(pointer) = event {
             self.handle_touch_pointer(ctx, pointer, viewport);
@@ -4197,67 +4318,77 @@ impl Widget for VirtualScrollView {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let theme = self.sync_overlay_theme();
-        self.ensure_overlay_bars();
+        let theme = self.sync_scroll_bar_theme();
+        self.ensure_scroll_bars();
         let previous_content_height = self.content_height;
         let previous_item_offsets = std::mem::take(&mut self.item_offsets);
         let previous_visible_range = self.visible_range.clone();
-        let available_width = if constraints.max.width.is_finite() {
-            (constraints.max.width - (self.padding.left + self.padding.right)).max(0.0)
-        } else {
-            f32::INFINITY
-        };
-        let child_constraints = Constraints::new(
-            Size::new(
-                if available_width.is_finite() {
-                    available_width
+        let mut gutter = 0.0;
+        let mut size = constraints.min;
+        for _ in 0..3 {
+            let available_width = if constraints.max.width.is_finite() {
+                (constraints.max.width - self.padding.left - self.padding.right - gutter).max(0.0)
+            } else {
+                f32::INFINITY
+            };
+            let child_constraints = Constraints::new(
+                Size::new(
+                    if available_width.is_finite() {
+                        available_width
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ),
+                Size::new(available_width, f32::INFINITY),
+            );
+            self.item_offsets.clear();
+            self.item_offsets.reserve(self.children.len());
+            let mut content_width: f32 = 0.0;
+            let mut content_height = 0.0;
+            for child in self.children.as_mut_slice() {
+                let child_size = child.measure(ctx, child_constraints);
+                self.item_offsets.push(content_height);
+                content_width = content_width.max(child_size.width);
+                content_height += child_size.height + self.spacing;
+            }
+            if !self.item_offsets.is_empty() {
+                content_height -= self.spacing;
+            }
+            self.content_height = content_height;
+            size = constraints.clamp(Size::new(
+                if constraints.max.width.is_finite() {
+                    constraints.max.width
                 } else {
-                    0.0
+                    content_width + self.padding.left + self.padding.right + gutter
                 },
-                0.0,
-            ),
-            Size::new(available_width, f32::INFINITY),
-        );
-
-        self.item_offsets.reserve(self.children.len());
-        let mut content_width: f32 = 0.0;
-        let mut content_height = 0.0;
-        for child in self.children.as_mut_slice() {
-            let child_size = child.measure(ctx, child_constraints);
-            self.item_offsets.push(content_height);
-            content_width = content_width.max(child_size.width);
-            content_height += child_size.height;
-            content_height += self.spacing;
+                if constraints.max.height.is_finite() {
+                    constraints.max.height
+                } else {
+                    content_height + self.padding.top + self.padding.bottom
+                },
+            ));
+            let inner = inset_rect(Rect::from_origin_size(Point::ZERO, size), self.padding);
+            let next = scroll_bar_gutter(
+                self.scroll_bars,
+                ScrollAxes::Vertical,
+                inner.size,
+                Size::new(0.0, self.content_height),
+                theme.metrics.scroll_bar_thickness,
+            )
+            .width;
+            if next == gutter {
+                break;
+            }
+            gutter = next;
         }
-        if !self.item_offsets.is_empty() {
-            content_height -= self.spacing;
-        }
-        self.content_height = content_height;
-
-        let desired = Size::new(
-            content_width + self.padding.left + self.padding.right,
-            content_height + self.padding.top + self.padding.bottom,
-        );
-        let size = constraints.clamp(Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width
-            } else {
-                desired.width
-            },
-            if constraints.max.height.is_finite() {
-                constraints.max.height
-            } else {
-                desired.height
-            },
-        ));
-
         let viewport = self.viewport_rect(Rect::from_origin_size(Point::ZERO, size));
         self.sync_state(ctx, viewport.size);
         self.update_visible_range(viewport.height());
         let max_offset = self.state.max_offset();
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
-            overlay_bars.measure(ctx, size, theme.metrics.scroll_bar_thickness);
+        if let Some(bars) = &mut self.bars {
+            bars.set_visibility(ScrollAxes::Vertical, max_offset);
+            bars.measure(ctx, size, theme.metrics.scroll_bar_thickness);
         }
         if previous_content_height != self.content_height
             || previous_item_offsets != self.item_offsets
@@ -4269,7 +4400,7 @@ impl Widget for VirtualScrollView {
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let theme = self.sync_overlay_theme();
+        let theme = self.sync_scroll_bar_theme();
         let viewport = self.viewport_rect(bounds);
         let previous_offset_y = self.offset_y;
         self.sync_state(ctx, viewport.size);
@@ -4314,23 +4445,23 @@ impl Widget for VirtualScrollView {
             );
         }
         let max_offset = self.state.max_offset();
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.set_visibility(ScrollAxes::Vertical, max_offset);
-            overlay_bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
+        if let Some(bars) = &mut self.bars {
+            bars.set_visibility(ScrollAxes::Vertical, max_offset);
+            bars.arrange(ctx, bounds, theme.metrics.scroll_bar_thickness);
         }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        self.sync_overlay_theme();
+        self.sync_scroll_bar_theme();
         let viewport = self.viewport_rect(ctx.bounds());
         ctx.push_clip_rect(viewport);
         for child in self.visible_children() {
             child.paint(ctx);
         }
         ctx.pop_clip();
-        if let Some(overlay_bars) = &self.overlay_bars {
+        if let Some(bars) = &self.bars {
             ctx.push_clip_rect(ctx.bounds());
-            overlay_bars.paint(ctx);
+            bars.paint(ctx);
             ctx.pop_clip();
         }
     }
@@ -4351,8 +4482,8 @@ impl Widget for VirtualScrollView {
         for child in self.visible_children() {
             child.semantics(ctx);
         }
-        if let Some(overlay_bars) = &self.overlay_bars {
-            overlay_bars.semantics(ctx);
+        if let Some(bars) = &self.bars {
+            bars.semantics(ctx);
         }
     }
 
@@ -4361,7 +4492,7 @@ impl Widget for VirtualScrollView {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        let theme = self.sync_overlay_theme();
+        let theme = self.sync_scroll_bar_theme();
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         ctx.request_paint();
         ctx.request_semantics();
@@ -4378,8 +4509,8 @@ impl Widget for VirtualScrollView {
                 visitor.visit(child);
             }
         }
-        if let Some(overlay_bars) = &self.overlay_bars {
-            overlay_bars.visit_children(visitor);
+        if let Some(bars) = &self.bars {
+            bars.visit_children(visitor);
         }
     }
 
@@ -4395,8 +4526,8 @@ impl Widget for VirtualScrollView {
                 visitor.visit(child);
             }
         }
-        if let Some(overlay_bars) = &mut self.overlay_bars {
-            overlay_bars.visit_children_mut(visitor);
+        if let Some(bars) = &mut self.bars {
+            bars.visit_children_mut(visitor);
         }
     }
 }
@@ -6021,9 +6152,20 @@ mod tests {
         let content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .find(|node| {
+                node.bounds.width() == 80.0 - DefaultTheme::default().metrics.scroll_bar_thickness
+                    && node.bounds.height() == 120.0
+            })
             .expect("scroll content present");
-        assert_eq!(content.bounds, Rect::new(0.0, -32.0, 80.0, 120.0));
+        assert_eq!(
+            content.bounds,
+            Rect::new(
+                0.0,
+                -32.0,
+                80.0 - DefaultTheme::default().metrics.scroll_bar_thickness,
+                120.0
+            )
+        );
 
         let semantic_content = output
             .semantics
@@ -6042,7 +6184,7 @@ mod tests {
             matches!(
                 command,
                 SceneCommand::PushClip { rect }
-                    if *rect == Rect::new(0.0, 0.0, 80.0, 40.0)
+                    if *rect == Rect::new(0.0, 0.0, 80.0 - DefaultTheme::default().metrics.scroll_bar_thickness, 40.0)
             )
         }));
     }
@@ -6249,7 +6391,131 @@ mod tests {
     }
 
     #[test]
-    fn scroll_view_overlays_scroll_bar_only_when_content_overflows() {
+    fn scrollbar_gutters_resolve_cross_axis_overflow_and_own_the_corner() {
+        let thickness = DefaultTheme::default().metrics.scroll_bar_thickness;
+        for content in [Size::new(96.0, 120.0), Size::new(120.0, 96.0)] {
+            let state = ScrollState::new();
+            let presses = Rc::new(RefCell::new(vec![0]));
+            let (mut runtime, window_id) = build_runtime(
+                SizedBox::new().size(Size::new(100.0, 100.0)).with_child(
+                    ScrollView::both(HitTestBox::new(content, Rc::clone(&presses), 0))
+                        .state(state.clone())
+                        .name("Canvas"),
+                ),
+            );
+            let output = runtime.render(window_id).unwrap();
+            let viewport = 100.0 - thickness;
+            assert_eq!(state.viewport_size(), Size::new(viewport, viewport));
+            assert_eq!(
+                state.max_offset(),
+                Vector::new(content.width - viewport, content.height - viewport)
+            );
+            let bounds = |name| {
+                output
+                    .semantics
+                    .iter()
+                    .find(|node| node.name.as_deref() == Some(name))
+                    .unwrap()
+                    .bounds
+            };
+            assert_eq!(
+                bounds("Canvas vertical scroll bar"),
+                Rect::new(viewport, 0.0, thickness, viewport)
+            );
+            assert_eq!(
+                bounds("Canvas horizontal scroll bar"),
+                Rect::new(0.0, viewport, viewport, thickness)
+            );
+            for (point, expected) in [
+                (Point::new(viewport + 1.0, viewport + 1.0), 0),
+                (Point::new(10.0, 10.0), 1),
+            ] {
+                let mut down = PointerEvent::new(PointerEventKind::Down, point);
+                down.button = Some(PointerButton::Primary);
+                runtime
+                    .handle_event(window_id, Event::Pointer(down))
+                    .unwrap();
+                assert_eq!(
+                    presses.borrow()[0],
+                    expected,
+                    "gutter corner must not activate content"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scrollbar_gutter_reflows_content_and_releases_space_after_shrinking() {
+        struct ResponsiveContent {
+            short: Signal<bool>,
+        }
+        impl Widget for ResponsiveContent {
+            fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+                let height = if ctx.observe(&self.short) {
+                    20.0
+                } else if constraints.max.width < 100.0 {
+                    240.0
+                } else {
+                    120.0
+                };
+                constraints.clamp(Size::new(constraints.max.width, height))
+            }
+        }
+        let short = Signal::new(false);
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(100.0, 80.0)).with_child(
+                ScrollView::vertical(ResponsiveContent {
+                    short: short.clone(),
+                })
+                .state(state.clone()),
+            ),
+        );
+        runtime.render(window_id).unwrap();
+        assert_eq!(
+            state.viewport_size().width,
+            100.0 - DefaultTheme::default().metrics.scroll_bar_thickness
+        );
+        assert_eq!(
+            state.content_size().height,
+            240.0,
+            "content must reflow inside the gutter"
+        );
+        state.set_offset(Vector::new(0.0, 160.0));
+        short.set(true);
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(state.viewport_size(), Size::new(100.0, 80.0));
+        assert_eq!(state.current_offset(), Vector::ZERO);
+        assert!(
+            output
+                .semantics
+                .iter()
+                .all(|node| node.role != SemanticsRole::Slider)
+        );
+    }
+
+    #[test]
+    fn hidden_scrollbars_keep_the_full_scroll_viewport() {
+        let state = ScrollState::new();
+        let (output, _) = render_root(
+            SizedBox::new().size(Size::new(100.0, 80.0)).with_child(
+                ScrollView::both(FixedBox::new(Size::new(240.0, 240.0), Color::WHITE))
+                    .state(state.clone())
+                    .scroll_bars(false),
+            ),
+        );
+        assert_eq!(state.viewport_size(), Size::new(100.0, 80.0));
+        assert_eq!(state.max_offset(), Vector::new(140.0, 160.0));
+        assert!(
+            output
+                .semantics
+                .iter()
+                .all(|node| node.role != SemanticsRole::Slider)
+        );
+    }
+
+    #[test]
+    fn scroll_view_reserves_scroll_bar_space_only_when_content_overflows() {
         let theme = DefaultTheme::default();
         let (overflowing, graph) = render_root(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
@@ -6274,7 +6540,7 @@ mod tests {
                 node.role == SemanticsRole::Slider
                     && node.name.as_deref() == Some("Results vertical scroll bar")
             })
-            .expect("overflowing content should expose an overlay scroll bar");
+            .expect("overflowing content should expose a scroll bar");
         assert_eq!(
             scroll_bar.bounds.width(),
             theme.metrics.scroll_bar_thickness
@@ -6287,9 +6553,16 @@ mod tests {
         let content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.height() == 120.0 && node.bounds.width() == 80.0)
-            .expect("scroll content keeps the full viewport width");
-        assert_eq!(content.bounds.width(), scroll_view.bounds.width());
+            .find(|node| {
+                node.bounds.height() == 120.0
+                    && node.bounds.width() == 80.0 - theme.metrics.scroll_bar_thickness
+            })
+            .expect("scroll content leaves space for the bar");
+        assert_eq!(content.bounds.max_x(), scroll_bar.bounds.x());
+        assert_eq!(
+            content.bounds.width() + scroll_bar.bounds.width(),
+            scroll_view.bounds.width()
+        );
 
         let (fitting, _) = render_root(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
@@ -6346,7 +6619,13 @@ mod tests {
         let content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.size == Size::new(80.0, 180.0))
+            .find(|node| {
+                node.bounds.size
+                    == Size::new(
+                        80.0 - DefaultTheme::default().metrics.scroll_bar_thickness,
+                        180.0,
+                    )
+            })
             .expect("scroll content present");
         assert_eq!(content.bounds.y(), -state.current_offset().y);
     }
@@ -6477,7 +6756,7 @@ mod tests {
     }
 
     #[test]
-    fn both_axis_overlay_scroll_bars_share_the_corner_without_reserving_space() {
+    fn both_axis_scroll_bars_reserve_space_and_share_the_corner() {
         let (output, graph) = render_root(
             SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
                 ScrollView::both(OverflowingBox::new(
@@ -6563,7 +6842,10 @@ mod tests {
             .last()
             .copied()
             .expect("probe should be measured");
-        assert_eq!(constraints.max.width, 120.0);
+        assert_eq!(
+            constraints.max.width,
+            120.0 - DefaultTheme::default().metrics.scroll_bar_thickness
+        );
         assert!(constraints.max.height.is_infinite());
         assert_eq!(output.frame.viewport, Size::new(120.0, 60.0));
     }
@@ -6587,7 +6869,13 @@ mod tests {
             .last()
             .copied()
             .expect("probe should be measured");
-        assert_eq!(constraints.min, Size::new(120.0, 100.0));
+        assert_eq!(
+            constraints.min,
+            Size::new(
+                120.0 - DefaultTheme::default().metrics.scroll_bar_thickness,
+                100.0
+            )
+        );
         assert!(constraints.max.width.is_infinite());
         assert!(constraints.max.height.is_infinite());
     }
@@ -6922,7 +7210,13 @@ mod tests {
         assert_eq!(*counts.borrow(), vec![2, 2, 2, 2]);
         assert!(output.frame.layer_updates.iter().any(|update| {
             update.kind == sui_scene::SceneLayerUpdateKind::Content
-                && update.damage == Some(Rect::new(0.0, 76.0, 80.0, 4.0))
+                && update.damage
+                    == Some(Rect::new(
+                        0.0,
+                        76.0,
+                        80.0 - DefaultTheme::default().metrics.scroll_bar_thickness,
+                        4.0,
+                    ))
         }));
     }
 
@@ -6998,12 +7292,19 @@ mod tests {
         let outer_content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 228.0)
+            .find(|node| {
+                node.bounds.width() == 80.0 - DefaultTheme::default().metrics.scroll_bar_thickness
+                    && node.bounds.height() == 228.0
+            })
             .expect("outer scroll content present");
         let inner_content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .find(|node| {
+                node.bounds.width()
+                    == 80.0 - 2.0 * DefaultTheme::default().metrics.scroll_bar_thickness
+                    && node.bounds.height() == 120.0
+            })
             .expect("inner scroll content present");
 
         assert_eq!(outer_content.bounds.y(), 0.0);
@@ -7057,12 +7358,19 @@ mod tests {
         let outer_content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 228.0)
+            .find(|node| {
+                node.bounds.width() == 80.0 - DefaultTheme::default().metrics.scroll_bar_thickness
+                    && node.bounds.height() == 228.0
+            })
             .expect("outer scroll content present");
         let inner_content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.width() == 80.0 && node.bounds.height() == 120.0)
+            .find(|node| {
+                node.bounds.width()
+                    == 80.0 - 2.0 * DefaultTheme::default().metrics.scroll_bar_thickness
+                    && node.bounds.height() == 120.0
+            })
             .expect("inner scroll content present");
 
         assert_eq!(inner_content.bounds.y(), -64.0);
@@ -7652,7 +7960,7 @@ mod tests {
                         Color::rgba(0.2, 0.3, 0.7, 1.0),
                     ))
                     .state(state.clone())
-                    .overlay_scroll_bars(false)
+                    .scroll_bars(false)
                     .name("Scrollable content"),
                     ScrollBar::vertical(state).name("Scroll bar"),
                 )),
@@ -8091,7 +8399,7 @@ mod tests {
                         Color::rgba(0.2, 0.3, 0.7, 1.0),
                     ))
                     .state(state.clone())
-                    .overlay_scroll_bars(false),
+                    .scroll_bars(false),
                     ScrollBar::vertical(state),
                 )),
         );
