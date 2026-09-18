@@ -3304,12 +3304,23 @@ impl Table {
         let theme = self.resolved_theme();
         let padding = theme.metrics.data_viewport_padding;
         let gap = theme.metrics.select_menu_gap;
-        Rect::new(
+        let body = Rect::new(
             bounds.x() + padding.left,
             bounds.y() + padding.top + self.resolved_header_height() + gap,
             (bounds.width() - padding.left - padding.right).max(0.0),
             (bounds.height() - padding.top - padding.bottom - self.resolved_header_height() - gap)
                 .max(0.0),
+        );
+        let gutter = crate::containers::scroll_bar_gutter(
+            true,
+            crate::ScrollAxes::Vertical,
+            body.size,
+            Size::new(0.0, self.content_height()),
+            theme.metrics.scroll_bar_thickness,
+        );
+        Rect::from_origin_size(
+            body.origin,
+            crate::containers::scroll_viewport_size(body.size, gutter),
         )
     }
 
@@ -3527,13 +3538,17 @@ impl Widget for Table {
         };
         let theme = self.resolved_theme();
         let padding = theme.metrics.data_viewport_padding;
-        self.resolve_column_widths(ctx, (desired_width - padding.left - padding.right).max(0.0));
         let desired_height = padding.top
             + self.resolved_header_height()
             + theme.metrics.select_menu_gap
             + self.content_height()
             + padding.bottom;
         let size = constraints.clamp(Size::new(desired_width, desired_height));
+        self.resolve_column_widths(
+            ctx,
+            self.body_rect(Rect::from_origin_size(Point::ZERO, size))
+                .width(),
+        );
         self.scroll_y = self.clamp_scroll(
             self.body_rect(Rect::from_origin_size(Point::ZERO, size))
                 .height(),
@@ -3554,7 +3569,7 @@ impl Widget for Table {
         let header = Rect::new(
             ctx.bounds().x() + padding.left,
             ctx.bounds().y() + padding.top,
-            (ctx.bounds().width() - padding.left - padding.right).max(0.0),
+            body.width(),
             self.resolved_header_height(),
         );
         let row_height = self.resolved_row_height();
@@ -3565,6 +3580,7 @@ impl Widget for Table {
             palette.control,
         );
 
+        ctx.push_clip_rect(header);
         let mut x = header.x();
         for (index, column) in self.columns.iter().enumerate() {
             let width = *self.column_widths.get(index).unwrap_or(&column.min_width);
@@ -3594,6 +3610,7 @@ impl Widget for Table {
             x += width;
         }
 
+        ctx.pop_clip();
         ctx.push_clip_rect(body);
         let start = (self.scroll_y / row_height).floor().max(0.0) as usize;
         let end = (((self.scroll_y + body.height()) / row_height).ceil() as usize + 1)
@@ -4222,12 +4239,23 @@ impl VirtualTable {
         let theme = self.resolved_theme();
         let padding = theme.metrics.data_viewport_padding;
         let gap = theme.metrics.select_menu_gap;
-        Rect::new(
+        let body = Rect::new(
             bounds.x() + padding.left,
             bounds.y() + padding.top + self.resolved_header_height() + gap,
             (bounds.width() - padding.left - padding.right).max(0.0),
             (bounds.height() - padding.top - padding.bottom - self.resolved_header_height() - gap)
                 .max(0.0),
+        );
+        let gutter = crate::containers::scroll_bar_gutter(
+            true,
+            crate::ScrollAxes::Vertical,
+            body.size,
+            Size::new(0.0, self.content_height()),
+            theme.metrics.scroll_bar_thickness,
+        );
+        Rect::from_origin_size(
+            body.origin,
+            crate::containers::scroll_viewport_size(body.size, gutter),
         )
     }
 
@@ -4237,7 +4265,7 @@ impl VirtualTable {
         Rect::new(
             bounds.x() + padding.left,
             bounds.y() + padding.top,
-            (bounds.width() - padding.left - padding.right).max(0.0),
+            self.body_rect(bounds).width(),
             self.resolved_header_height(),
         )
     }
@@ -4892,11 +4920,9 @@ impl Widget for VirtualTable {
                 + padding.bottom)
                 .min(420.0)
         };
-        let theme = self.resolved_theme();
-        let padding = theme.metrics.data_viewport_padding;
-        self.resolve_column_widths(ctx, (desired_width - padding.left - padding.right).max(0.0));
         let size = constraints.clamp(Size::new(desired_width, desired_height));
         let body = self.body_rect(Rect::from_origin_size(Point::ZERO, size));
+        self.resolve_column_widths(ctx, body.width());
         self.sync_retained_scroll_state(ctx, body);
         if let Some(state) = &self.state {
             let offset = state.scroll.current_offset();
@@ -5799,20 +5825,26 @@ fn draw_vertical_scroll_thumb(
 
     let ratio = (viewport.height() / content_height).clamp(0.08, 1.0);
     let metrics = theme.metrics;
-    let thumb_height = (viewport.height() * ratio).max(metrics.data_scroll_thumb_min_length);
+    let thumb_height = (viewport.height() * ratio)
+        .max(metrics.data_scroll_thumb_min_length)
+        .min(viewport.height());
+    let gutter_width =
+        (ctx.bounds().max_x() - metrics.data_viewport_padding.right - viewport.max_x())
+            .max(0.0)
+            .min(metrics.scroll_bar_thickness);
+    if gutter_width <= 0.0 {
+        return;
+    }
     let max_scroll = (content_height - viewport.height()).max(1.0);
     let thumb_y = viewport.y() + ((viewport.height() - thumb_height) * (scroll_y / max_scroll));
-    let thumb_width = metrics
-        .data_scroll_thumb_width
-        .min(viewport.width())
-        .max(0.0);
+    let thumb_width = metrics.data_scroll_thumb_width.min(gutter_width).max(0.0);
     let thumb_inset = metrics
         .data_scroll_thumb_inset
-        .min((viewport.width() - thumb_width).max(0.0));
+        .min((gutter_width - thumb_width).max(0.0));
     ctx.fill(
         rounded_rect_path(
             Rect::new(
-                viewport.max_x() - thumb_inset - thumb_width,
+                viewport.max_x() + gutter_width - thumb_inset - thumb_width,
                 thumb_y,
                 thumb_width,
                 thumb_height,
@@ -9526,6 +9558,23 @@ mod tests {
                     .with_alpha(theme.metrics.data_scroll_thumb_opacity)
             )
         );
+        let thumb_color = theme
+            .palette
+            .border_hover
+            .with_alpha(theme.metrics.data_scroll_thumb_opacity);
+        let thumbs = solid_fill_bounds_for_color(&output, thumb_color);
+        let header = solid_fill_bounds_for_color(&output, theme.palette.control)
+            .into_iter()
+            .find(|rect| (rect.height() - theme.metrics.table_header_height).abs() < 0.01)
+            .expect("table header");
+        assert!(!thumbs.is_empty());
+        for thumb in thumbs {
+            assert!(
+                header.max_x() <= thumb.x(),
+                "table columns must end before the scrollbar gutter"
+            );
+            assert!(thumb.max_x() <= 320.0 - theme.metrics.data_viewport_padding.right);
+        }
     }
 
     #[test]
@@ -10052,7 +10101,10 @@ mod tests {
         let outer_content = graph
             .nodes
             .iter()
-            .find(|node| node.bounds.width() == 220.0 && node.bounds.height() == 360.0)
+            .find(|node| {
+                node.bounds.width() == 220.0 - DefaultTheme::default().metrics.scroll_bar_thickness
+                    && node.bounds.height() == 360.0
+            })
             .expect("outer scroll content present");
 
         assert_eq!(outer_content.bounds.y(), -24.0);

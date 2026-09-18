@@ -146,6 +146,19 @@ Widgets paint through `PaintCtx` into `sinomo-ui-scene`. The renderer-facing pay
 `SceneFrame`, which carries `window_id`, viewport size, dirty regions, layer
 updates, scene commands, and resource snapshots.
 
+Scroll containers use classic scrollbar layout: a visible scrollbar reserves a
+theme-sized gutter outside the content viewport. Fitting content uses the whole
+viewport. Measurement starts without gutters and resolves both axes together,
+remeasuring content when a gutter changes the available width or height. Paint
+clips, scroll ranges, page navigation, and hit areas use the resulting viewport;
+the corner between two bars belongs to the scrollbar chrome. Ordinary and virtual
+scroll views, virtual lists, tables, and floating panes follow this rule.
+`scroll_bars(false)` hides the built-in bars without reserving their space, for
+containers with separate chrome or intentionally hidden indicators.
+`overlay_scroll_bars` remains a compatibility alias for that visibility setting.
+This follows the classic-scrollbar `overflow: auto` model described in
+[CSS Overflow](https://www.w3.org/TR/css-overflow-3/#scrollbar-gutter-property).
+
 Semantics are produced through `SemanticsCtx` and included in `RenderOutput`.
 They are consumed by accessibility bridges, testing locators, debug tooling, and
 widget-book validation. On Windows desktop, `sinomo-ui-platform` translates the same

@@ -932,6 +932,75 @@ fn side_sheet_takes_initial_focus_and_escape_dismisses_from_a_child() {
 }
 
 #[test]
+fn dialog_header_and_footer_stay_reachable_with_content_sized_scrolling() {
+    for content_height in [40.0, 900.0] {
+        for viewport in [Size::new(640.0, 720.0), Size::new(280.0, 300.0)] {
+            let closes = Rc::new(Cell::new(0));
+            let close_count = Rc::clone(&closes);
+            let scroll = crate::ScrollState::new();
+            let (mut runtime, window_id) = build_runtime(
+                Dialog::new(
+                    "Edit conversation",
+                    ScrollView::vertical(SizedBox::new().height(content_height))
+                        .name("Editor body")
+                        .state(scroll.clone())
+                        .shrink_height(true),
+                )
+                .max_width(520.0)
+                .header_action(crate::Button::new("Close").on_press(move || {
+                    close_count.set(close_count.get() + 1);
+                }))
+                .action(crate::Button::new("Save")),
+            );
+            runtime
+                .handle_event(window_id, Event::Window(WindowEvent::Resized(viewport)))
+                .unwrap();
+            runtime.render(window_id).unwrap();
+            runtime.tick(1.0);
+            handle_ready_events(&mut runtime).unwrap();
+            let output = runtime.render(window_id).unwrap();
+            let bounds = |name: &str| {
+                output
+                    .semantics
+                    .iter()
+                    .find(|node| node.name.as_deref() == Some(name))
+                    .unwrap_or_else(|| panic!("missing {name}"))
+                    .bounds
+            };
+            let dialog = bounds("Edit conversation");
+            let header = bounds("Close");
+            let body = bounds("Editor body");
+            let footer = bounds("Save");
+            assert!(dialog.x() >= 0.0 && dialog.max_x() <= viewport.width);
+            assert!(dialog.y() >= 0.0 && dialog.max_y() <= viewport.height);
+            assert!(header.max_y() < body.y());
+            assert!(body.max_y() < footer.y());
+            assert!(footer.max_y() <= dialog.max_y());
+            if content_height == 40.0 {
+                assert_eq!(body.height(), content_height);
+                assert_eq!(scroll.max_offset().y, 0.0);
+            } else {
+                assert!(scroll.max_offset().y > 0.0);
+            }
+            let point = super::rect_center(header);
+            for (kind, pressed) in [
+                (PointerEventKind::Down, true),
+                (PointerEventKind::Up, false),
+            ] {
+                runtime
+                    .handle_event(window_id, primary_pointer(kind, point, pressed))
+                    .unwrap();
+            }
+            assert_eq!(
+                closes.get(),
+                1,
+                "the header action must receive pointer input"
+            );
+        }
+    }
+}
+
+#[test]
 fn dialog_title_and_description_visual_centers_match_header_slots() {
     let theme = DefaultTheme::default();
     let output = render(

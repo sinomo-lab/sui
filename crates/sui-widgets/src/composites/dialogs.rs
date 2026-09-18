@@ -142,6 +142,7 @@ pub struct Dialog {
     pub(super) modal: bool,
     pub(super) dismiss_on_scrim: bool,
     pub(super) max_width: Option<f32>,
+    pub(super) header_action: Option<SingleChild>,
     pub(super) body: SingleChild,
     pub(super) actions: WidgetChildren,
     pub(super) body_frame: Rect,
@@ -171,6 +172,7 @@ impl Dialog {
             modal: true,
             dismiss_on_scrim: false,
             max_width: None,
+            header_action: None,
             body: SingleChild::new(body),
             actions: WidgetChildren::new(),
             body_frame: Rect::ZERO,
@@ -238,6 +240,18 @@ impl Dialog {
         F: FnMut() + 'static,
     {
         self.on_dismiss = Some(Box::new(on_dismiss));
+        self
+    }
+
+    /// Place a compact control beside the title, such as a close button.
+    pub fn header_action<W: Widget + 'static>(mut self, action: W) -> Self {
+        self.header_action = Some(SingleChild::new(action));
+        self
+    }
+
+    /// Add a footer control or a composed action row outside the scrolling body.
+    pub fn action<W: Widget + 'static>(mut self, action: W) -> Self {
+        self.actions.push(action);
         self
     }
 
@@ -422,17 +436,25 @@ impl Widget for Dialog {
             .as_ref()
             .map(|text| measure_text(ctx, text, &description_style));
 
-        let dialog_width = (viewport.width - (outer_margin * 2.0))
+        let available_width = (viewport.width - outer_margin * 2.0).max(0.0);
+        let dialog_width = available_width
             .min(self.resolved_max_width())
-            .max(metrics.dialog_min_width);
+            .max(metrics.dialog_min_width.min(available_width));
+        let content_width = (dialog_width - padding.left - padding.right).max(0.0);
+        let header_action_size = self.header_action.as_mut().map_or(Size::ZERO, |action| {
+            action.measure(
+                ctx,
+                Constraints::new(
+                    Size::ZERO,
+                    Size::new(content_width, metrics.touch_target_size),
+                ),
+            )
+        });
         let mut footer_height: f32 = 0.0;
         for button in self.actions.as_mut_slice().iter_mut() {
             let button_size = button.measure(
                 ctx,
-                Constraints::new(
-                    Size::ZERO,
-                    Size::new(dialog_width, metrics.min_height + metrics.dialog_action_gap),
-                ),
+                Constraints::new(Size::ZERO, Size::new(content_width, viewport.height)),
             );
             footer_height = footer_height.max(button_size.height);
         }
@@ -440,7 +462,8 @@ impl Widget for Dialog {
         let title_height = self
             .title_measurement
             .map(|measurement| measurement.height.max(title_style.line_height))
-            .unwrap_or(title_style.line_height);
+            .unwrap_or(title_style.line_height)
+            .max(header_action_size.height);
         let description_height = self
             .description_measurement
             .map(|measurement| measurement.height.max(description_style.line_height))
@@ -499,6 +522,25 @@ impl Widget for Dialog {
         let dialog = self.dialog_frame.translate(bounds.origin.to_vector());
         self.focus_state.borrow_mut().frame = dialog;
         self.focus_surface.arrange(ctx, dialog);
+        let title_line_height = self.title_style().line_height;
+        if let Some(action) = &mut self.header_action {
+            let size = action.child().measured_size();
+            let padding = self.theme.metrics.dialog_padding;
+            let title_height = self
+                .title_measurement
+                .map(|measurement| measurement.height.max(title_line_height))
+                .unwrap_or(title_line_height)
+                .max(size.height);
+            action.arrange(
+                ctx,
+                Rect::new(
+                    dialog.max_x() - padding.right - size.width,
+                    dialog.y() + padding.top + (title_height - size.height) * 0.5,
+                    size.width,
+                    size.height,
+                ),
+            );
+        }
         self.body.arrange(
             ctx,
             Rect::new(
@@ -573,11 +615,22 @@ impl Widget for Dialog {
         let padding = metrics.dialog_padding;
         let text_x = dialog.x() + padding.left;
         let text_y = dialog.y() + padding.top;
-        let text_width = (dialog.width() - padding.left - padding.right).max(0.0);
+        let header_action_size = self
+            .header_action
+            .as_ref()
+            .map(|action| action.child().measured_size())
+            .unwrap_or(Size::ZERO);
+        let action_gap = if self.header_action.is_some() {
+            header_action_size.width + metrics.dialog_action_gap
+        } else {
+            0.0
+        };
+        let text_width = (dialog.width() - padding.left - padding.right - action_gap).max(0.0);
         let title_height = self
             .title_measurement
             .map(|measurement| measurement.height.max(title_style.line_height))
-            .unwrap_or(title_style.line_height);
+            .unwrap_or(title_style.line_height)
+            .max(header_action_size.height);
         let title_slot = Rect::new(text_x, text_y, text_width, title_height);
         ctx.push_clip_rect(title_slot);
         paint_aligned_text(
@@ -597,7 +650,7 @@ impl Widget for Dialog {
             let description_slot = Rect::new(
                 text_x,
                 title_slot.max_y() + metrics.dialog_description_gap,
-                text_width,
+                (dialog.width() - padding.left - padding.right).max(0.0),
                 description_height,
             );
             ctx.push_clip_rect(description_slot);
@@ -612,6 +665,9 @@ impl Widget for Dialog {
             ctx.pop_clip();
         }
 
+        if let Some(action) = &self.header_action {
+            action.paint(ctx);
+        }
         self.body.paint(ctx);
         for button in self.actions.as_slice() {
             button.paint(ctx);
@@ -679,6 +735,9 @@ impl Widget for Dialog {
         node.state.modal = self.modal;
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::Collapse];
         ctx.push(node);
+        if let Some(action) = &self.header_action {
+            action.semantics(ctx);
+        }
         self.body.semantics(ctx);
         for button in self.actions.as_slice() {
             button.semantics(ctx);
@@ -715,6 +774,9 @@ impl Widget for Dialog {
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         if self.shown {
+            if let Some(action) = &self.header_action {
+                action.visit_children(visitor);
+            }
             self.body.visit_children(visitor);
             self.actions.visit_children(visitor);
             self.focus_surface.visit_children(visitor);
@@ -723,6 +785,9 @@ impl Widget for Dialog {
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         if self.shown {
+            if let Some(action) = &mut self.header_action {
+                action.visit_children_mut(visitor);
+            }
             self.body.visit_children_mut(visitor);
             self.actions.visit_children_mut(visitor);
             self.focus_surface.visit_children_mut(visitor);
