@@ -4488,6 +4488,7 @@ version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
+ "sinomo-ui",
  "sinomo-ui-core",
  "sinomo-ui-layout",
  "sinomo-ui-platform",

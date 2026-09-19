@@ -23,6 +23,7 @@ pub struct Backend {
     stats: Vec<Value>,
     widget_details: Vec<Value>,
     diagnostics: bool,
+    redraw: bool,
     #[cfg(feature = "gpu")]
     renderer: Option<sui_render_wgpu::WgpuRenderer>,
     #[cfg(feature = "gpu")]
@@ -51,6 +52,7 @@ impl Backend {
             stats: Vec::new(),
             widget_details: Vec::new(),
             diagnostics: c.diagnostics,
+            redraw: c.redraw == "requested",
             #[cfg(feature = "gpu")]
             renderer,
             #[cfg(feature = "gpu")]
@@ -76,7 +78,9 @@ impl Backend {
                         "composition_us":s.composition_time_us,"resource_collection_us":s.resource_collection_time_us,
                         "bind_group_prepare_us":s.bind_group_prepare_time_us,"batch_prepare_us":s.batch_prepare_time_us,
                         "gpu_upload_us":s.gpu_upload_time_us,"pass_encode_us":s.pass_encode_time_us,
-                        "queue_submit_us":s.queue_submit_time_us}));
+                        "queue_submit_us":s.queue_submit_time_us,"queue_submit_count":s.queue_submit_count,
+                        "atlas_allocate_us":s.text_atlas_allocate_time_us,"atlas_clear_us":s.text_atlas_clear_time_us,
+                        "atlas_copy_us":s.text_atlas_copy_time_us,"atlas_bind_group_create_us":s.text_atlas_create_bind_group_time_us}));
             }
             if let Some(context) = self.registry.context() {
                 let info = context.adapter_info();
@@ -189,9 +193,11 @@ fn settle(
 ) -> Result<(RenderOutput, usize, BTreeMap<String, f64>), String> {
     let mut phases = BTreeMap::new();
     for frame in 1..=16 {
+        #[cfg(feature = "diagnostics")]
         if backend.diagnostics {
-            // Native hosts start the existing widget/text timing collectors on
-            // RedrawRequested. Explicitly do the same for diagnostic CPU replays.
+            sui_runtime::begin_frame_timing_collection();
+        }
+        if backend.redraw {
             let started = Instant::now();
             runtime
                 .handle_event(window, Event::Window(WindowEvent::RedrawRequested))
@@ -487,6 +493,33 @@ fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(feature = "diagnostics")]
+    fn local_grid_updates_reuse_clean_paint_and_semantics_in_both_redraw_modes() {
+        for redraw in ["natural", "requested"] {
+            let config = Config {
+                fixture: "controls-grid".into(),
+                size: 128,
+                steps: 3,
+                warmup: 32,
+                diagnostics: true,
+                redraw: redraw.into(),
+                ..Default::default()
+            };
+            let result = run(&config, 0);
+            assert_eq!(result.status, "ok", "{:?}", result.error);
+            for sample in result
+                .samples
+                .iter()
+                .filter(|sample| sample.phase == "update")
+            {
+                assert!(sample.work["paint_cache_hits"].as_u64().unwrap() > 20);
+                assert!(sample.work["semantics_cache_hits"].as_u64().unwrap() > 20);
+                assert!(sample.work["paint_executions"].as_u64().unwrap() < 20);
+            }
+        }
+    }
+
     #[test]
     fn every_fixture_reaches_requested_content_with_finite_geometry() {
         for fixture in crate::config::FIXTURES {

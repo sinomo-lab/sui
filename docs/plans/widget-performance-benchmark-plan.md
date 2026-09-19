@@ -49,6 +49,23 @@ share a window-level CPU shadow budget. Diagnostics now distinguish device,
 text-engine, target, and pipeline setup from steady renderer phases. Pipeline
 creation is a subset of pass encoding time, so those spans must not be summed.
 
+The fourth pass adds public-facade startup and independent redraw-event controls
+in the runner. Public application configuration reads plain renderer defaults
+without creating temporary GPU instances. Scene and output-conversion passes
+share a submission; fresh atlas pages rely on WGPU initialization, while recycled
+pages retain explicit clears. Atlas setup has separate preparation spans.
+
+Output reuse is opt-in through `Widget::supports_output_reuse`. Known built-in
+containers and controls participate when they do not use untracked readers;
+opaque custom subtrees retain full callback behavior and prevent ancestor reuse.
+Window-owned paint and semantics LRUs have conservative eight/four MiB byte
+budgets and reject fragments larger than 32 KiB. Reuse preserves graph geometry,
+context, observations, IME data and text-handle versions. Frame-scoped cache leases
+prevent saved contexts from repopulating later frames or closed windows. Geometry invalidation keeps exact changed nodes separate
+from promotion to a scene-layer repaint boundary. Explicit full invalidations
+bypass caching, as do passes with a majority of nodes invalidated; unsupported
+paint payloads use normal callbacks.
+
 ## Questions the suite must answer
 
 1. What does constructing and attaching a widget tree cost before rendering?

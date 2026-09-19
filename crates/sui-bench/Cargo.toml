@@ -14,10 +14,12 @@ path = "src/main.rs"
 [features]
 default = []
 diagnostics = ["sui-runtime/layout-diagnostics"]
-gpu = ["dep:sui-render-wgpu", "dep:wgpu"]
+gpu = ["dep:sui-render-wgpu", "dep:wgpu", "sui?/wgpu"]
+public-api = ["dep:sui"]
 desktop = ["gpu", "dep:sui-platform"]
 
 [dependencies]
+sui = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sui-core = { workspace = true }

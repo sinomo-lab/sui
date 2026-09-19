@@ -375,3 +375,72 @@ fn initialization_diagnostics_distinguish_cold_and_reused_resources() {
     assert_eq!(disabled.text_engine_init_time_us, 0);
     assert_eq!(disabled.target_prepare_time_us, 0);
 }
+
+#[test]
+fn combined_scene_and_output_submission_matches_separate_passes() {
+    use crate::tests::support::assert_rgba_images_match;
+    let window = WindowId::new(8968);
+    let mut combined = WgpuRenderer::new();
+    let mut separate = WgpuRenderer::new();
+    for revision in 0usize..4 {
+        let mut content = frame(
+            window,
+            if revision.is_multiple_of(2) {
+                Color::WHITE
+            } else {
+                Color::BLACK
+            },
+            12,
+        );
+        content.scene.push(SceneCommand::Label {
+            rect: Rect::new(0.0, 0.0, 32.0, 30.0),
+            text: format!("A{revision}"),
+            color: Color::srgba(0.7, 0.2, 0.3, 0.8),
+        });
+        if revision == 2 {
+            for renderer in [&mut combined, &mut separate] {
+                renderer.text_engine.as_mut().unwrap().atlas.pages[0].clear_for_reuse();
+                renderer.text_engine.as_mut().unwrap().glyph_cache.clear();
+            }
+        }
+        combined.render(&content).unwrap();
+        separate.ensure_shared(None).unwrap();
+        let destination = separate
+            .ensure_offscreen_target(window, (32, 32), wgpu::TextureFormat::Bgra8UnormSrgb)
+            .unwrap();
+        let prepared = separate.prepare_scene_submission(&content).unwrap();
+        let intermediate = separate
+            .ensure_intermediate_target(window, (32, 32))
+            .unwrap();
+        let mut stats = separate
+            .submit_prepared_scene(prepared, wgpu::TextureFormat::Rgba16Float, &intermediate)
+            .unwrap();
+        separate
+            .submit_output_transform_pass(
+                window,
+                &intermediate,
+                &destination,
+                wgpu::TextureFormat::Bgra8UnormSrgb,
+                OutputStrategy::SdrSurface {
+                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                },
+                RequestedToneMappingMode::Clamp,
+                ColorManagementMode::default().sdr_content_brightness_nits,
+                None,
+                &mut stats,
+            )
+            .unwrap();
+        assert_eq!(
+            combined
+                .last_frame_stats(window)
+                .unwrap()
+                .queue_submit_count,
+            1
+        );
+        assert_eq!(stats.queue_submit_count, 2);
+        assert_rgba_images_match(
+            &combined.capture_rgba(window).unwrap(),
+            &separate.capture_rgba(window).unwrap(),
+        );
+    }
+}

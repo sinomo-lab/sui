@@ -404,9 +404,9 @@ impl Default for Application {
         Self {
             inner,
             #[cfg(feature = "wgpu")]
-            feathering_enabled: WgpuRenderer::new().feathering_enabled(),
+            feathering_enabled: sui_render_wgpu::FeatheringOptions::default().enabled,
             #[cfg(feature = "wgpu")]
-            feather_width: WgpuRenderer::new().feather_width(),
+            feather_width: sui_render_wgpu::FeatheringOptions::default().width,
             #[cfg(feature = "wgpu")]
             external_texture_registry: None,
             initial_window_render_options: None,

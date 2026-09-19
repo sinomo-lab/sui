@@ -1763,6 +1763,9 @@ impl Button {
 }
 
 impl Widget for Button {
+    fn supports_output_reuse(&self) -> bool {
+        self.theme_reader.is_none() && self.enabled_reader.is_none()
+    }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         let enabled = self.is_enabled();
         let theme = &self.theme;

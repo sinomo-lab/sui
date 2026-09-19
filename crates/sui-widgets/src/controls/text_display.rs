@@ -295,6 +295,12 @@ impl Label {
 }
 
 impl Widget for Label {
+    fn supports_output_reuse(&self) -> bool {
+        self.text_reader.is_none()
+            && self.style_reader.is_none()
+            && self.color_reader.is_none()
+            && self.selection_scope.is_none()
+    }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         if self.selection_scope.is_none() {
             return;

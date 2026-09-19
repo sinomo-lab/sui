@@ -1736,6 +1736,9 @@ impl SplitView {
 }
 
 impl Widget for SplitView {
+    fn supports_output_reuse(&self) -> bool {
+        self.theme_reader.is_none()
+    }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.remember_focus(ctx.focused_widget_id());
         let divider = self.resolved_divider_thickness();

@@ -16,6 +16,8 @@ pub const FIXTURES: &[&str] = &[
 pub struct Config {
     pub preset: String,
     pub mode: String,
+    pub builder: String,
+    pub redraw: String,
     pub fixture: String,
     pub size: usize,
     pub depth: usize,
@@ -41,6 +43,8 @@ impl Default for Config {
         Self {
             preset: "smoke".into(),
             mode: "runtime".into(),
+            builder: "runtime".into(),
+            redraw: "natural".into(),
             fixture: "all".into(),
             size: 64,
             depth: 4,
@@ -111,6 +115,8 @@ pub fn parse(args: &[String]) -> Result<(Config, String), String> {
                 match key.as_str() {
                     "--preset" => (),
                     "--mode" => c.mode = v.clone(),
+                    "--builder" => c.builder = v.clone(),
+                    "--redraw" => c.redraw = v.clone(),
                     "--fixture" => c.fixture = v.clone(),
                     "--output" => output = v.clone(),
                     "--mutation" => c.mutation = v.clone(),
@@ -140,6 +146,12 @@ pub fn parse(args: &[String]) -> Result<(Config, String), String> {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
+        if !["runtime", "public"].contains(&self.builder.as_str()) {
+            return Err(format!("unknown builder {}", self.builder));
+        }
+        if !["natural", "requested"].contains(&self.redraw.as_str()) {
+            return Err(format!("unknown redraw mode {}", self.redraw));
+        }
         if !["construct", "runtime", "offscreen", "desktop"].contains(&self.mode.as_str()) {
             return Err(format!("unknown mode {}", self.mode));
         }

@@ -149,6 +149,7 @@ impl WgpuRenderer {
         let mut text_atlas_upload_copy_time_us = 0u64;
         let mut text_atlas_upload_write_time_us = 0u64;
         let mut text_atlas_upload_bytes = 0u64;
+        let mut atlas_setup = crate::resources::TextAtlasBindGroupStats::default();
         let text_atlas_bind_group = if uses_text_atlas {
             let mut text_engine = self
                 .text_engine
@@ -157,6 +158,7 @@ impl WgpuRenderer {
             let (bind_group, stats) =
                 self.ensure_text_atlas_bind_group(&mut text_engine, diagnostics_enabled)?;
             self.text_engine = Some(text_engine);
+            atlas_setup = stats;
             text_atlas_bind_group_time_us = stats.total_time_us;
             text_atlas_upload_copy_time_us = stats.upload_copy_time_us;
             text_atlas_upload_write_time_us = stats.upload_write_time_us;
@@ -316,6 +318,10 @@ impl WgpuRenderer {
         frame_stats.analytic_path_bind_group_miss_count = analytic_path_bind_group_miss_count;
         frame_stats.analytic_path_bind_group_upload_bytes = analytic_path_bind_group_upload_bytes;
         frame_stats.text_atlas_bind_group_time_us = text_atlas_bind_group_time_us;
+        frame_stats.text_atlas_allocate_time_us = atlas_setup.allocate_time_us;
+        frame_stats.text_atlas_clear_time_us = atlas_setup.clear_time_us;
+        frame_stats.text_atlas_copy_time_us = atlas_setup.copy_time_us;
+        frame_stats.text_atlas_create_bind_group_time_us = atlas_setup.create_bind_group_time_us;
         frame_stats.text_atlas_upload_copy_time_us = text_atlas_upload_copy_time_us;
         frame_stats.text_atlas_upload_write_time_us = text_atlas_upload_write_time_us;
         frame_stats.text_atlas_upload_bytes = text_atlas_upload_bytes;
@@ -332,24 +338,51 @@ impl WgpuRenderer {
         })
     }
 
+    pub(crate) fn frame_encoder(&self) -> wgpu::CommandEncoder {
+        self.shared
+            .as_ref()
+            .expect("renderer initialized")
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("SUI frame encoder"),
+            })
+    }
+
+    pub(crate) fn submit_frame_encoder(
+        &mut self,
+        encoder: wgpu::CommandEncoder,
+        stats: &mut RendererFrameStats,
+    ) {
+        let started = self.runtime_diagnostics_enabled.then(Instant::now);
+        let uploads = self.frame_resources.uploads.finish();
+        self.shared
+            .as_ref()
+            .expect("renderer initialized")
+            .queue
+            .submit(uploads.into_iter().chain(std::iter::once(encoder.finish())));
+        stats.queue_submit_count += 1;
+        stats.queue_submit_time_us += started.map_or(0, |s| s.elapsed().as_micros() as u64);
+    }
+
     pub(crate) fn submit_prepared_scene(
+        &mut self,
+        prepared: PreparedSceneSubmission,
+        format: wgpu::TextureFormat,
+        view: &wgpu::TextureView,
+    ) -> Result<RendererFrameStats> {
+        let mut encoder = self.frame_encoder();
+        let mut stats = self.encode_prepared_scene(prepared, format, view, &mut encoder)?;
+        self.submit_frame_encoder(encoder, &mut stats);
+        Ok(stats)
+    }
+
+    pub(crate) fn encode_prepared_scene(
         &mut self,
         prepared: PreparedSceneSubmission,
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
     ) -> Result<RendererFrameStats> {
-        let mut encoder = {
-            let shared = self
-                .shared
-                .as_ref()
-                .expect("renderer shared state initialized");
-            shared
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("SUI scene encoder"),
-                })
-        };
-
         let pass_encode_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let pass_count = if prepared.encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -385,7 +418,7 @@ impl WgpuRenderer {
             });
             encode_fragment_passes(
                 shared,
-                &mut encoder,
+                encoder,
                 view,
                 target_format,
                 prepared.viewport,
@@ -401,20 +434,8 @@ impl WgpuRenderer {
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or(0);
 
-        let queue_submit_started = self.runtime_diagnostics_enabled.then(Instant::now);
-        let uploads = self.frame_resources.uploads.finish();
-        self.shared
-            .as_ref()
-            .expect("renderer shared state initialized")
-            .queue
-            .submit(uploads.into_iter().chain(std::iter::once(encoder.finish())));
-        let queue_submit_time_us = queue_submit_started
-            .map(|started| started.elapsed().as_micros() as u64)
-            .unwrap_or(0);
-
         let mut frame_stats = prepared.frame_stats;
         frame_stats.pass_encode_time_us = pass_encode_time_us;
-        frame_stats.queue_submit_time_us = queue_submit_time_us;
         frame_stats.pass_count = pass_count.max(1);
         Ok(frame_stats)
     }

@@ -125,6 +125,9 @@ impl Padding {
 }
 
 impl Widget for Padding {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
         let (min, max, padding) = match axis {
             Axis::Horizontal => (
@@ -232,6 +235,9 @@ impl Align {
 }
 
 impl Widget for Align {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
         let (min, max, alignment) = match axis {
             Axis::Horizontal => (
@@ -343,6 +349,9 @@ impl Background {
 }
 
 impl Widget for Background {
+    fn supports_output_reuse(&self) -> bool {
+        self.brush_reader.is_none()
+    }
     fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
         self.child.measure_axis(ctx, constraints, axis)
     }
@@ -457,6 +466,9 @@ impl SemanticRegion {
 }
 
 impl Widget for SemanticRegion {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
         self.child.measure_axis(ctx, constraints, axis)
     }
@@ -549,6 +561,9 @@ impl Default for SizedBox {
 }
 
 impl Widget for SizedBox {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
         let (min, max, explicit) = match axis {
             Axis::Horizontal => (constraints.min.width, constraints.max.width, self.width),
@@ -724,6 +739,9 @@ impl Stack {
 }
 
 impl Widget for Stack {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.measure_children(ctx, constraints, false)
     }
@@ -1611,6 +1629,9 @@ impl Flex {
 }
 
 impl Widget for Flex {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
         let extent = |size: Size| match axis {
             Axis::Horizontal => size.width,
@@ -4169,6 +4190,9 @@ impl Default for VirtualScrollView {
 }
 
 impl Widget for ScrollView {
+    fn supports_output_reuse(&self) -> bool {
+        self.theme_reader.is_none()
+    }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.sync_scroll_bar_theme();
         let viewport = self.viewport_rect(ctx.bounds()).size;
@@ -5025,6 +5049,124 @@ mod tests {
         WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+
+    #[test]
+    fn retained_output_matches_full_callbacks_across_text_dpi_and_style_changes() {
+        use crate::{Button, Grid, Label};
+        use sui_layout::GridTrack;
+        use sui_render_wgpu::WgpuRenderer;
+        struct Gate {
+            child: SingleChild,
+            reuse: bool,
+        }
+        impl Widget for Gate {
+            fn supports_output_reuse(&self) -> bool {
+                self.reuse
+            }
+            fn measure(&mut self, c: &mut MeasureCtx, k: Constraints) -> Size {
+                self.child.measure(c, k)
+            }
+            fn arrange(&mut self, c: &mut ArrangeCtx, r: Rect) {
+                self.child.arrange(c, r);
+            }
+            fn paint(&self, c: &mut PaintCtx) {
+                self.child.paint(c);
+            }
+            fn semantics(&self, c: &mut SemanticsCtx) {
+                self.child.semantics(c);
+            }
+            fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+                self.child.visit_children(v);
+            }
+            fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+                self.child.visit_children_mut(v);
+            }
+        }
+        let text = Signal::new("Initial text".to_string());
+        let mut runtimes = [Runtime::new(), Runtime::new()];
+        let mut renderers = [WgpuRenderer::new(), WgpuRenderer::new()];
+        let windows: Vec<_> = runtimes
+            .iter_mut()
+            .enumerate()
+            .map(|(i, runtime)| {
+                let mut grid =
+                    Grid::new([GridTrack::Fraction(1.0), GridTrack::Fraction(1.0)]).gap(3.0);
+                for index in 0..12 {
+                    let label = if index == 0 {
+                        Label::new("").text_from(text.clone())
+                    } else {
+                        Label::new("Stable text")
+                    };
+                    grid.push(
+                        Stack::horizontal()
+                            .with_child(label)
+                            .with_child(Button::new(format!("Button {index}"))),
+                    );
+                }
+                runtime
+                    .add_window(
+                        WindowBuilder::new()
+                            .initial_size(Size::new(640.0, 320.0))
+                            .root(Gate {
+                                child: SingleChild::new(grid),
+                                reuse: i == 0,
+                            }),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        for revision in 0..4 {
+            text.set(
+                match revision {
+                    1 => "A longer line for measurement",
+                    3 => "Another revision",
+                    _ => "Short",
+                }
+                .to_string(),
+            );
+            let mut captures = Vec::new();
+            let mut semantic_names = Vec::new();
+            for ((runtime, renderer), window) in
+                runtimes.iter_mut().zip(&mut renderers).zip(&windows)
+            {
+                if revision == 2 {
+                    runtime
+                        .handle_event(
+                            *window,
+                            Event::Window(sui_core::WindowEvent::ScaleFactorChanged {
+                                scale_factor: 1.25,
+                                raw_dpi: None,
+                                suggested_size: Some(Size::new(640.0, 320.0)),
+                            }),
+                        )
+                        .unwrap();
+                }
+                if revision == 3 {
+                    sui_runtime::set_window_render_options(
+                        *window,
+                        sui_runtime::WindowRenderOptions::new(false, 1.0)
+                            .with_optical_vertical_text_alignment_enabled(false),
+                    );
+                }
+                let output = runtime.render(*window).unwrap();
+                semantic_names.push(
+                    output
+                        .semantics
+                        .iter()
+                        .map(|n| n.name.clone())
+                        .collect::<Vec<_>>(),
+                );
+                renderer.render(&output.frame).unwrap();
+                captures.push(renderer.capture_rgba(*window).unwrap());
+            }
+            assert_eq!(semantic_names[0], semantic_names[1]);
+            assert_eq!(
+                captures[0].pixels(),
+                captures[1].pixels(),
+                "revision {revision}"
+            );
+        }
+    }
 
     #[test]
     fn axis_flex_matches_full_probe_geometry_after_text_and_viewport_changes() {

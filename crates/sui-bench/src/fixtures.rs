@@ -49,7 +49,53 @@ fn boxed(widget: impl Widget + 'static) -> SingleChild {
     SingleChild::from_pod(WidgetPod::new(widget))
 }
 
+pub enum AppBuilder {
+    Runtime(Application),
+    #[cfg(feature = "public-api")]
+    Public(sui::App),
+}
+
+impl AppBuilder {
+    pub fn build(self) -> sui_core::Result<Runtime> {
+        match self {
+            Self::Runtime(app) => app.build(),
+            #[cfg(feature = "public-api")]
+            Self::Public(app) => app.build(),
+        }
+    }
+    fn register_font(&mut self, handle: FontHandle, font: RegisteredFont) -> sui_core::Result<()> {
+        match self {
+            Self::Runtime(app) => app.register_font(handle, font),
+            #[cfg(feature = "public-api")]
+            Self::Public(app) => app.resources().register_font(handle, font),
+        }
+    }
+}
+
+// Keep the verification marker's invalidation local, like a changed label.
+// Observing it on the root would force whole-tree semantics on every update.
+struct RevisionMarker(Signal<usize>);
+impl Widget for RevisionMarker {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(
+            ctx.widget_id(),
+            SemanticsRole::GenericContainer,
+            ctx.bounds(),
+        );
+        node.name = Some(MARKER.into());
+        node.value = Some(sui_core::SemanticsValue::Text(
+            ctx.observe(&self.0).to_string(),
+        ));
+        ctx.push(node);
+    }
+}
+
 struct Root {
+    root_marker: bool,
+    marker: WidgetPod,
     child: SingleChild,
     revision: Signal<usize>,
     color: Signal<Color>,
@@ -58,6 +104,9 @@ struct Root {
 }
 
 impl Widget for Root {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         if let Some(build) = &self.rebuild {
             let revision = ctx.observe(&self.revision);
@@ -81,18 +130,25 @@ impl Widget for Root {
             SemanticsRole::GenericContainer,
             ctx.bounds(),
         );
-        node.name = Some(MARKER.into());
-        node.value = Some(sui_core::SemanticsValue::Text(
-            ctx.observe(&self.revision).to_string(),
-        ));
+        if self.root_marker {
+            // A modal filters unrelated siblings; its root ancestor remains exposed.
+            node.name = Some(MARKER.into());
+            node.value = Some(sui_core::SemanticsValue::Text(
+                ctx.observe(&self.revision).to_string(),
+            ));
+        } else {
+            self.marker.semantics(ctx);
+        }
         ctx.push(node);
         self.child.semantics(ctx);
     }
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.child.visit_children(visitor);
+        visitor.visit(&self.marker);
     }
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
         self.child.visit_children_mut(visitor);
+        visitor.visit(&mut self.marker);
     }
 }
 
@@ -100,6 +156,9 @@ impl Widget for Root {
 // as built-in containers, rather than a second layout model.
 struct Child(SingleChild);
 impl Widget for Child {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_axis(
         &mut self,
         c: &mut MeasureCtx,
@@ -150,7 +209,7 @@ fn controls_grid(labels: &[Signal<String>], style: &TextStyle) -> Grid {
     grid
 }
 
-pub fn build(config: &Config, input: Input) -> Result<(Application, Fixture), String> {
+pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), String> {
     let is_collection = matches!(
         config.fixture.as_str(),
         "keyed-collection" | "virtual-collection"
@@ -261,18 +320,39 @@ pub fn build(config: &Config, input: Input) -> Result<(Application, Fixture), St
         None
     };
     let root = Root {
+        root_marker: config.fixture == "overlays-and-dialogs",
+        marker: WidgetPod::new(RevisionMarker(revision.clone())),
         rebuild,
         built_revision: 0,
         child,
         revision: revision.clone(),
         color: color.clone(),
     };
-    let mut app = Application::new().window(
-        WindowBuilder::new()
-            .title(MARKER)
-            .initial_size(Size::new(config.width, config.height))
-            .root(root),
-    );
+    let mut app = if config.builder == "public" {
+        #[cfg(feature = "public-api")]
+        {
+            AppBuilder::Public(
+                sui::App::new().window(
+                    sui::Window::new(MARKER)
+                        .initial_size(Size::new(config.width, config.height))
+                        .root(root),
+                ),
+            )
+        }
+        #[cfg(not(feature = "public-api"))]
+        {
+            return Err("unsupported: rebuild with --features public-api".into());
+        }
+    } else {
+        AppBuilder::Runtime(
+            Application::new().window(
+                WindowBuilder::new()
+                    .title(MARKER)
+                    .initial_size(Size::new(config.width, config.height))
+                    .root(root),
+            ),
+        )
+    };
     app.register_font(
         FontHandle::new(1),
         RegisteredFont::from_bytes(BUNDLED_NOTO_SANS_REGULAR_FONT),

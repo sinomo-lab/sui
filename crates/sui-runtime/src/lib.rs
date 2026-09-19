@@ -6,6 +6,7 @@ mod diagnostics;
 mod layout_work;
 mod logo;
 mod measure_cache;
+mod output_cache;
 mod overlay;
 mod reactive;
 mod resources;
@@ -111,6 +112,14 @@ pub struct Runtime {
     external_waker: Option<Arc<dyn Fn() + Send + Sync>>,
     command_sender: CommandSender,
     command_listeners: CommandListeners,
+}
+
+/// Begin opt-in widget/text timing collection without dispatching a redraw or
+/// changing invalidation. Intended for diagnostic replay and custom hosts.
+#[cfg(feature = "layout-diagnostics")]
+pub fn begin_frame_timing_collection() {
+    diagnostics::begin_widget_timing_collection();
+    sui_text::begin_text_timing_collection();
 }
 
 impl Runtime {
@@ -1116,6 +1125,8 @@ struct LayerDescriptorRefresh {
 
 #[derive(Debug, Default)]
 struct GraphChangeSet {
+    // Exact changed nodes, before promotion to a scene-layer repaint boundary.
+    output_widgets: Vec<WidgetId>,
     repaint_widgets: Vec<WidgetId>,
     transform_widgets: Vec<LayerTranslation>,
 }
@@ -1197,6 +1208,7 @@ struct WindowState {
     initial_position: Option<Point>,
     root: WidgetPod,
     measure_queries: measure_cache::SharedQueryCache,
+    output_cache: output_cache::SharedOutputCache,
     graph: WidgetGraph,
     overlay_manager: overlay::OverlayManager,
     pending_overlay_focus: Option<FocusRequest>,
@@ -1272,6 +1284,7 @@ impl WindowState {
             initial_position,
             graph: WidgetGraph::empty(root.id()),
             measure_queries: measure_cache::MeasureQueryCache::shared(),
+            output_cache: output_cache::OutputCache::shared(),
             overlay_manager: overlay::OverlayManager::default(),
             pending_overlay_focus: None,
             root,
@@ -3203,6 +3216,13 @@ impl WindowState {
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
         let dpi_info = self.dpi_info_for_viewport(viewport);
+        self.prepare_output_reuse(
+            &invalidations,
+            &graph_changes,
+            dpi_info,
+            Arc::clone(&font_registry),
+            Arc::clone(&image_registry),
+        );
         let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
         let mut composition_only_transforms = self
             .select_composition_only_transforms(previous_scene, &graph_changes.transform_widgets);
@@ -3419,6 +3439,7 @@ impl WindowState {
                 self.root.bounds(),
                 self.focus.focused_widget,
             );
+            semantics_ctx.output_cache = output_cache::OutputCache::scope(&self.output_cache);
             self.root.semantics(&mut semantics_ctx);
             let semantics = self.assemble_semantics_tree(semantics_ctx.into_nodes());
             self.last_semantics = self.filter_modal_semantics(semantics);
@@ -3521,6 +3542,83 @@ impl WindowState {
         Arc::new(registry)
     }
 
+    fn prepare_output_reuse(
+        &mut self,
+        invalidations: &[InvalidationRequest],
+        changes: &GraphChangeSet,
+        dpi: DpiInfo,
+        fonts: Arc<FontRegistry>,
+        images: Arc<ImageRegistry>,
+    ) {
+        if invalidations.is_empty()
+            && changes.output_widgets.is_empty()
+            && !self.schedule.paint
+            && !self.schedule.semantics
+        {
+            // Retrieving an unchanged frame needs no cache scan or resource
+            // comparison, but saved contexts must still expire.
+            self.output_cache.borrow_mut().next_frame();
+            return;
+        }
+        let mut cache = self.output_cache.borrow_mut();
+        cache.next_frame();
+        cache.context(
+            dpi,
+            self.focus.focused_widget,
+            fonts,
+            images,
+            window_render_options(self.id),
+        );
+        if self.last_frame.is_none()
+            || (invalidations.is_empty() && (self.schedule.paint || self.schedule.semantics))
+        {
+            cache.clear();
+            cache.active = self.last_frame.is_none();
+            return;
+        }
+        let mut roots = HashSet::new();
+        for request in invalidations {
+            match request.target {
+                InvalidationTarget::Widget(id) if self.graph.contains(id) => {
+                    roots.insert(id);
+                }
+                _ => {
+                    cache.clear();
+                    cache.active = false;
+                    return;
+                }
+            }
+        }
+        if roots.contains(&self.root.id()) {
+            cache.clear();
+            cache.active = false;
+            return;
+        }
+        let mut dirty = HashSet::new();
+        // A flat child's geometry change can repaint the root scene, but it does
+        // not invalidate every sibling's retained callback output.
+        for id in &changes.output_widgets {
+            dirty.insert(*id);
+            if let Some(path) = self.graph.path_to(*id) {
+                dirty.extend(path);
+            }
+        }
+        for id in roots {
+            dirty.extend(self.graph.subtree_ids(id));
+            if let Some(path) = self.graph.path_to(id) {
+                dirty.extend(path);
+            }
+        }
+        // Broad updates have little reusable output. Avoid filling the cache
+        // with copies that the next bulk update would immediately invalidate.
+        if dirty.len().saturating_mul(2) >= self.graph.nodes.len() {
+            cache.clear();
+            cache.active = false;
+            return;
+        }
+        cache.retain(|id| self.graph.contains(id) && !dirty.contains(&id));
+    }
+
     fn paint_full_scene(
         &mut self,
         dpi_info: DpiInfo,
@@ -3541,6 +3639,7 @@ impl WindowState {
                 .map(|frame| Arc::clone(&frame.image_registry))
                 .unwrap_or(image_registry),
         );
+        paint_ctx.output_cache = output_cache::OutputCache::scope(&self.output_cache);
         let _ = self
             .root
             .paint_layer_contents_for(self.root.id(), &mut paint_ctx);
@@ -3588,6 +3687,7 @@ impl WindowState {
                     .map(|frame| Arc::clone(&frame.image_registry))
                     .unwrap_or_else(|| Arc::clone(&image_registry)),
             );
+            paint_ctx.output_cache = output_cache::OutputCache::scope(&self.output_cache);
             if !self
                 .root
                 .paint_layer_contents_for(widget_id, &mut paint_ctx)
@@ -3685,6 +3785,7 @@ impl WindowState {
     fn collect_graph_changes(&self, previous: Option<&WidgetGraphSnapshot>) -> GraphChangeSet {
         let Some(previous) = previous else {
             return GraphChangeSet {
+                output_widgets: vec![self.graph.root],
                 repaint_widgets: vec![self.graph.root],
                 transform_widgets: Vec::new(),
             };
@@ -3703,6 +3804,7 @@ impl WindowState {
             .chain(current_nodes.keys())
             .copied()
             .collect::<HashSet<_>>();
+        let mut output_widgets = Vec::new();
         let mut repaint_candidates = HashSet::new();
         let mut transform_candidates = Vec::new();
 
@@ -3718,6 +3820,7 @@ impl WindowState {
                         || previous_node.parent != current_node.parent
                         || previous_node.children != current_node.children
                     {
+                        output_widgets.push(current_node.id);
                         repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
                             &current_snapshot,
                             current_node.id,
@@ -3727,6 +3830,11 @@ impl WindowState {
 
                     let delta = current_node.geometry.layout_bounds.origin
                         - previous_node.geometry.layout_bounds.origin;
+                    if delta != Vector::ZERO
+                        || previous_node.geometry.input_bounds != current_node.geometry.input_bounds
+                    {
+                        output_widgets.push(current_node.id);
+                    }
                     if delta != Vector::ZERO {
                         let resolved_boundary = resolve_snapshot_paint_boundary_or_root(
                             &current_snapshot,
@@ -3759,6 +3867,7 @@ impl WindowState {
                     }
                 }
                 (None, Some(current_node)) => {
+                    output_widgets.push(current_node.id);
                     repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
                         &current_snapshot,
                         current_node.id,
@@ -3817,6 +3926,7 @@ impl WindowState {
         }
 
         GraphChangeSet {
+            output_widgets,
             repaint_widgets: minimized_repaint,
             transform_widgets: minimized_transforms,
         }
@@ -4484,6 +4594,7 @@ impl WindowState {
 
 impl Drop for WindowState {
     fn drop(&mut self) {
+        self.output_cache.borrow_mut().close();
         reactive::unregister_window(self.id);
         diagnostics::clear_widget_rebuilds(self.id);
     }

@@ -293,9 +293,14 @@ impl WgpuRenderer {
                 .get(&frame.window_id)
                 .map(|target| target.format)
                 .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
-            let mut frame_stats =
-                self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
-            self.submit_output_transform_pass(
+            let mut encoder = self.frame_encoder();
+            let mut frame_stats = self.encode_prepared_scene(
+                prepared,
+                intermediate_format,
+                &intermediate_view,
+                &mut encoder,
+            )?;
+            self.encode_output_transform_pass(
                 frame.window_id,
                 &intermediate_view,
                 &final_view,
@@ -305,7 +310,9 @@ impl WgpuRenderer {
                 sdr_content_brightness_nits,
                 display_sdr_white_nits,
                 &mut frame_stats,
+                &mut encoder,
             )?;
+            self.submit_frame_encoder(encoder, &mut frame_stats);
             Ok(frame_stats)
         } else {
             self.submit_prepared_scene(prepared, final_format, &final_view)
@@ -333,9 +340,14 @@ impl WgpuRenderer {
             .map(|target| target.format)
             .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
         target_us += target_started.map_or(0, |started| started.elapsed().as_micros() as u64);
-        let mut frame_stats =
-            self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
-        self.submit_output_transform_pass(
+        let mut encoder = self.frame_encoder();
+        let mut frame_stats = self.encode_prepared_scene(
+            prepared,
+            intermediate_format,
+            &intermediate_view,
+            &mut encoder,
+        )?;
+        self.encode_output_transform_pass(
             frame.window_id,
             &intermediate_view,
             &final_view,
@@ -347,7 +359,9 @@ impl WgpuRenderer {
             ColorManagementMode::default().sdr_content_brightness_nits,
             None,
             &mut frame_stats,
+            &mut encoder,
         )?;
+        self.submit_frame_encoder(encoder, &mut frame_stats);
         frame_stats.target_prepare_time_us = target_us;
         Ok(frame_stats)
     }
@@ -444,7 +458,38 @@ impl WgpuRenderer {
             .ok_or_else(|| Error::new(format!("missing target for window {}", window_id.get())))
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn submit_output_transform_pass(
+        &mut self,
+        window_id: WindowId,
+        source: &wgpu::TextureView,
+        destination: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        strategy: OutputStrategy,
+        tone: RequestedToneMappingMode,
+        brightness: f32,
+        white: Option<f32>,
+        stats: &mut RendererFrameStats,
+    ) -> Result<()> {
+        let mut encoder = self.frame_encoder();
+        self.encode_output_transform_pass(
+            window_id,
+            source,
+            destination,
+            format,
+            strategy,
+            tone,
+            brightness,
+            white,
+            stats,
+            &mut encoder,
+        )?;
+        self.submit_frame_encoder(encoder, stats);
+        Ok(())
+    }
+
+    pub(crate) fn encode_output_transform_pass(
         &mut self,
         window_id: WindowId,
         source_view: &wgpu::TextureView,
@@ -455,6 +500,7 @@ impl WgpuRenderer {
         sdr_content_brightness_nits: f32,
         display_sdr_white_nits: Option<f32>,
         frame_stats: &mut RendererFrameStats,
+        encoder: &mut wgpu::CommandEncoder,
     ) -> Result<()> {
         let prepare_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let resolved_tone_mapping = match strategy {
@@ -538,11 +584,6 @@ impl WgpuRenderer {
             cached.uniform = uniform;
         }
         let bind_group = cached.bind_group.clone();
-        let mut encoder = shared
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("SUI output transform encoder"),
-            });
         if let Some(started) = prepare_started {
             frame_stats.gpu_upload_time_us += started.elapsed().as_micros() as u64;
         }
@@ -571,14 +612,6 @@ impl WgpuRenderer {
         }
         if let Some(started) = encode_started {
             frame_stats.pass_encode_time_us += started.elapsed().as_micros() as u64;
-        }
-        let submit_started = self.runtime_diagnostics_enabled.then(Instant::now);
-        let uploads = self.frame_resources.uploads.finish();
-        shared
-            .queue
-            .submit(uploads.into_iter().chain(std::iter::once(encoder.finish())));
-        if let Some(started) = submit_started {
-            frame_stats.queue_submit_time_us += started.elapsed().as_micros() as u64;
         }
         frame_stats.pass_count += 1;
         Ok(())

@@ -64,6 +64,12 @@ impl RetainedPacketRebuildStats {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RendererFrameStats {
+    /// Scene/output submissions; atlas resource preparation is reported separately.
+    pub queue_submit_count: usize,
+    pub text_atlas_allocate_time_us: u64,
+    pub text_atlas_clear_time_us: u64,
+    pub text_atlas_copy_time_us: u64,
+    pub text_atlas_create_bind_group_time_us: u64,
     /// Adapter/device acquisition and shared renderer resources, on first use.
     pub device_prepare_time_us: u64,
     /// Offscreen color-target preparation (including resize allocations).
@@ -163,6 +169,11 @@ impl RendererFrameStats {
         uploaded_vertex_bytes: u64,
     ) -> Self {
         Self {
+            queue_submit_count: 0,
+            text_atlas_allocate_time_us: 0,
+            text_atlas_clear_time_us: 0,
+            text_atlas_copy_time_us: 0,
+            text_atlas_create_bind_group_time_us: 0,
             device_prepare_time_us: 0,
             target_prepare_time_us: 0,
             text_engine_init_time_us: 0,

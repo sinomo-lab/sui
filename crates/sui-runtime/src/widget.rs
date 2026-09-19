@@ -222,6 +222,15 @@ pub trait Widget {
 
     fn paint(&self, _ctx: &mut PaintCtx) {}
 
+    /// Opt into retaining paint and semantics between targeted invalidations.
+    /// Output must depend only on widget state, context, and observed sources;
+    /// changes must invalidate the widget. Untracked readers and callbacks with
+    /// side effects should keep the default. An opaque descendant also prevents
+    /// caching its ancestors. Explicit subtree/window requests always rerun them.
+    fn supports_output_reuse(&self) -> bool {
+        false
+    }
+
     fn layer_options(&self) -> LayerOptions {
         LayerOptions::default()
     }
@@ -1423,7 +1432,6 @@ impl WidgetPod {
     }
 
     fn paint_into(&self, parent_ctx: &mut PaintCtx, emit_layer: bool) {
-        crate::layout_work::record(|work| work.paint_executions += 1);
         let presentation_transform = self.layout_state.presentation_transform;
         let relative_transform =
             relative_transform(presentation_transform, parent_ctx.presentation_transform());
@@ -1438,24 +1446,57 @@ impl WidgetPod {
             Arc::clone(&parent_ctx.image_registry),
             presentation_transform,
         );
-        let started = Instant::now();
-        let observations = ObservationScope::new(
-            parent_ctx.window_id(),
-            self.id,
-            ObservationPhase::Paint,
-            &self.observed_phases,
-        );
-        self.widget.paint(&mut child_ctx);
-        drop(observations);
-        record_widget_timing(
-            self.id,
-            self.widget.debug_name(),
-            WidgetTimingPhase::Paint,
-            started.elapsed(),
-        );
-
+        let reusable = self.widget.supports_output_reuse();
+        parent_ctx.output_reusable &= reusable;
+        let output_cache = parent_ctx.output_cache.as_ref().filter(|_| reusable);
+        child_ctx.output_cache = output_cache.cloned();
+        let key = crate::output_cache::GeometryKey {
+            bounds: self.bounds(),
+            transform: presentation_transform,
+        };
+        let cached = output_cache.and_then(|cache| {
+            cache.paint(self.id, key, &parent_ctx.text_system.text_layout_registry())
+        });
         let (mut scene, images, mut widget_paint_bounds, invalidations, mut ime_composition_rect) =
-            child_ctx.into_parts();
+            if let Some(fragment) = cached {
+                crate::layout_work::record(|work| work.paint_cache_hits += 1);
+                (
+                    fragment.scene,
+                    Vec::new(),
+                    fragment.bounds,
+                    Vec::new(),
+                    fragment.ime,
+                )
+            } else {
+                crate::layout_work::record(|work| work.paint_executions += 1);
+                let started = Instant::now();
+                let observations = ObservationScope::new(
+                    parent_ctx.window_id(),
+                    self.id,
+                    ObservationPhase::Paint,
+                    &self.observed_phases,
+                );
+                self.widget.paint(&mut child_ctx);
+                drop(observations);
+                record_widget_timing(
+                    self.id,
+                    self.widget.debug_name(),
+                    WidgetTimingPhase::Paint,
+                    started.elapsed(),
+                );
+
+                parent_ctx.output_reusable &= child_ctx.output_reusable;
+                let can_reuse = child_ctx.output_reusable;
+                let parts = child_ctx.into_parts();
+                if can_reuse
+                    && parts.1.is_empty()
+                    && parts.3.is_empty()
+                    && let Some(cache) = output_cache
+                {
+                    cache.put_paint(self.id, key, &parts.0, &parts.2, parts.4);
+                }
+                parts
+            };
         if !relative_transform.is_identity() {
             let mut transformed = Scene::new();
             transformed.push(SceneCommand::PushTransform {
@@ -1508,7 +1549,6 @@ impl WidgetPod {
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
-        crate::layout_work::record(|work| work.semantics_executions += 1);
         let presentation_transform = self.layout_state.presentation_transform;
         let relative_transform =
             relative_transform(presentation_transform, parent_ctx.presentation_transform());
@@ -1520,22 +1560,43 @@ impl WidgetPod {
             parent_ctx.focused_widget_id(),
             presentation_transform,
         );
-        let started = Instant::now();
-        let observations = ObservationScope::new(
-            parent_ctx.window_id(),
-            self.id,
-            ObservationPhase::Semantics,
-            &self.observed_phases,
-        );
-        self.widget.semantics(&mut child_ctx);
-        drop(observations);
-        record_widget_timing(
-            self.id,
-            self.widget.debug_name(),
-            WidgetTimingPhase::Semantics,
-            started.elapsed(),
-        );
-        let mut nodes = child_ctx.into_nodes();
+        let reusable = self.widget.supports_output_reuse();
+        parent_ctx.output_reusable &= reusable;
+        let output_cache = parent_ctx.output_cache.as_ref().filter(|_| reusable);
+        child_ctx.output_cache = output_cache.cloned();
+        let key = crate::output_cache::GeometryKey {
+            bounds: self.bounds(),
+            transform: presentation_transform,
+        };
+        let cached = output_cache.and_then(|cache| cache.semantics(self.id, key));
+        let mut nodes = if let Some(nodes) = cached {
+            crate::layout_work::record(|work| work.semantics_cache_hits += 1);
+            nodes
+        } else {
+            crate::layout_work::record(|work| work.semantics_executions += 1);
+            let started = Instant::now();
+            let observations = ObservationScope::new(
+                parent_ctx.window_id(),
+                self.id,
+                ObservationPhase::Semantics,
+                &self.observed_phases,
+            );
+            self.widget.semantics(&mut child_ctx);
+            drop(observations);
+            record_widget_timing(
+                self.id,
+                self.widget.debug_name(),
+                WidgetTimingPhase::Semantics,
+                started.elapsed(),
+            );
+            parent_ctx.output_reusable &= child_ctx.output_reusable;
+            let can_reuse = child_ctx.output_reusable;
+            let nodes = child_ctx.into_nodes();
+            if can_reuse && let Some(cache) = output_cache {
+                cache.put_semantics(self.id, key, &nodes);
+            }
+            nodes
+        };
         if !relative_transform.is_identity() {
             for node in &mut nodes {
                 node.bounds = relative_transform.transform_rect_bbox(node.bounds);
@@ -3082,6 +3143,8 @@ impl ArrangeCtx {
 
 #[derive(Debug, Clone)]
 pub struct PaintCtx {
+    pub(crate) output_cache: Option<crate::output_cache::OutputScope>,
+    output_reusable: bool,
     window_id: WindowId,
     widget_id: WidgetId,
     focused_widget_id: Option<WidgetId>,
@@ -3141,6 +3204,8 @@ impl PaintCtx {
         presentation_transform: Transform,
     ) -> Self {
         Self {
+            output_cache: None,
+            output_reusable: true,
             window_id,
             widget_id,
             focused_widget_id,
@@ -3598,7 +3663,9 @@ impl PaintCtx {
             Arc::clone(&self.image_registry),
             self.presentation_transform,
         );
+        child_ctx.output_cache = self.output_cache.clone();
         let output = paint(&mut child_ctx);
+        self.output_reusable &= child_ctx.output_reusable;
         let (scene, images, widget_paint_bounds, invalidations, ime_composition_rect) =
             child_ctx.into_parts();
 
@@ -3733,6 +3800,8 @@ fn stable_text_run_handle(run: &TextRun) -> TextLayoutHandle {
 
 #[derive(Debug, Clone)]
 pub struct SemanticsCtx {
+    pub(crate) output_cache: Option<crate::output_cache::OutputScope>,
+    output_reusable: bool,
     window_id: WindowId,
     widget_id: WidgetId,
     root_widget_id: WidgetId,
@@ -3769,6 +3838,8 @@ impl SemanticsCtx {
         presentation_transform: Transform,
     ) -> Self {
         Self {
+            output_cache: None,
+            output_reusable: true,
             window_id,
             widget_id,
             root_widget_id,

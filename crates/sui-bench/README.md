@@ -46,6 +46,25 @@ actual native DPR is recorded. Present-return is a host API timestamp, not
 physical scanout. Offscreen timings describe CPU work/submission, not GPU
 execution. GPU timestamp metrics are unavailable rather than reported as zero.
 
+## Public startup and redraw controls
+
+`--builder runtime` uses the lower-level runtime builder. `--builder public`
+uses `sui::App`, including its normal resource and renderer configuration setup;
+build with `--features public-api,gpu,diagnostics` to measure the GPU-enabled
+public facade even in `construct` mode. Both builders use the same widget tree.
+
+`--redraw natural` is the default: diagnostics start collectors directly without
+injecting an event. `--redraw requested` dispatches `RedrawRequested` before each
+render, independently of diagnostics. Compare these lanes separately. Native
+mode always follows its platform's event flow.
+
+Fixture version 2 places the content revision marker in its own semantic leaf,
+so verification does not invalidate the entire semantic tree on each mutation.
+The modal fixture keeps its marker on the root ancestor because unrelated
+semantic leaves are filtered while a modal is active. Benchmark adapters opt
+into `Widget::supports_output_reuse`; widget content and mutation traces match
+between revisions.
+
 ## Fixtures and mutations
 
 | Fixture | Implemented workload |
@@ -99,7 +118,7 @@ target/release/sui-bench run --preset updates --fixture controls-grid --size 128
 
 The runtime `layout-diagnostics` feature supplies thread-local construction/drop,
 measure/cache/constraint, size-only hook executions, local/window query cache hits,
-and intrinsic cache hits,
+paint/semantics reuse hits, and intrinsic cache hits,
 arrange/cache/translation, paint, semantics,
 and gutter-iteration counters. Disjoint root measure, arrange, and graph spans
 complement the existing aggregate frame phase. These call sites compile away in
@@ -109,7 +128,10 @@ Diagnostic samples also retain bounded inclusive widget hotspots, invalidation
 details, rebuild counts, and text-cache snapshots. GPU diagnostic runs include
 renderer draw/upload/atlas/retained-packet statistics and device, target,
 text-engine, pipeline creation, composition, batching, upload, encode, and queue
-submission timings. Pipeline creation is included in pass encoding; do not add
+submission timings and submission counts. Atlas setup separates allocation,
+explicit clearing, growth copying and bind-group creation; automatic WGPU
+initialization during partial uploads is included in upload/resource timing.
+Pipeline creation is included in pass encoding; do not add
 these overlapping spans. Target preparation currently describes the offscreen
 path. The fixture's transparent child adapter forwards both size and axis queries,
 as custom wrappers can do through `SingleChild`. Vertex upload bytes count

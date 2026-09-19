@@ -6,6 +6,12 @@ pub struct FeatheringOptions {
     pub width: f32,
 }
 
+impl Default for FeatheringOptions {
+    fn default() -> Self {
+        Self::new(false, crate::resources::DEFAULT_FEATHER_WIDTH)
+    }
+}
+
 impl FeatheringOptions {
     pub const fn new(enabled: bool, width: f32) -> Self {
         Self { enabled, width }

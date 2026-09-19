@@ -37,7 +37,7 @@ fn dispatch(entered: Instant) -> Result<(), String> {
             let result=runner::run_at(&c,trial,entered);
             write_json(Path::new(&args[3]),&result)
         }
-        _=>Err("usage: sui-bench list | run [--preset smoke|startup|updates|stress] [--fixture NAME|all] [--mode construct|runtime|offscreen|desktop] [--size N] [--depth N] [--trials N] [--steps N] [--warmup N] [--cold-processes N] [--mutation default|local|distributed|all|resize|paint|reorder|scroll|rebuild|idle] [--change-fraction F] [--rate-hz HZ] [--width PX] [--height PX] [--dpr SCALE] [--seed N] [--diagnostics] [--allow-software] [--vsync on|off] [--timeout-secs N] [--output DIR] | compare BEFORE AFTER".into()),
+        _=>Err("usage: sui-bench list | run [--preset smoke|startup|updates|stress] [--fixture NAME|all] [--mode construct|runtime|offscreen|desktop] [--builder runtime|public] [--redraw natural|requested] [--size N] [--depth N] [--trials N] [--steps N] [--warmup N] [--cold-processes N] [--mutation default|local|distributed|all|resize|paint|reorder|scroll|rebuild|idle] [--change-fraction F] [--rate-hz HZ] [--width PX] [--height PX] [--dpr SCALE] [--seed N] [--diagnostics] [--allow-software] [--vsync on|off] [--timeout-secs N] [--output DIR] | compare BEFORE AFTER".into()),
     }
 }
 
@@ -87,7 +87,7 @@ fn environment() -> Value {
     json!({"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"cpu":cpu,
         "rustc":env!("SUI_BENCH_RUSTC"),"opt_level":env!("SUI_BENCH_OPT"),"target":env!("SUI_BENCH_TARGET"),"profile":if cfg!(debug_assertions){"debug"}else{"release"},
         "primary_font":fingerprint(sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT),"fallback_fonts":fallback_fingerprint,
-        "features":{"diagnostics":cfg!(feature="diagnostics"),"gpu":cfg!(feature="gpu"),"desktop":cfg!(feature="desktop")},
+        "features":{"diagnostics":cfg!(feature="diagnostics"),"gpu":cfg!(feature="gpu"),"desktop":cfg!(feature="desktop"),"public_api":cfg!(feature="public-api")},
         "display":std::env::var("DISPLAY").ok(),"wayland_display":std::env::var("WAYLAND_DISPLAY").ok(),
         "power_governor":fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").ok().map(|s|s.trim().to_owned())})
 }
@@ -106,7 +106,7 @@ fn run(config: Config, out: &Path) -> Result<(), String> {
     }
     fs::create_dir_all(out).map_err(|e| e.to_string())?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut manifest = json!({"schema_version":1,"fixture_version":1,"status":"running","config":config,
+    let mut manifest = json!({"schema_version":1,"fixture_version":2,"status":"running","config":config,
         "environment":environment(),"commit":env!("SUI_BENCH_COMMIT"),"source_fingerprint":env!("SUI_BENCH_SOURCE"),"built_dirty":env!("SUI_BENCH_DIRTY"),
         "invocation_commit":command_text("git",&["rev-parse","HEAD"]),"worktree":command_text("git",&["status","--porcelain"]),"binary":fingerprint(&fs::read(&exe).map_err(|e|e.to_string())?),
         "lockfile":fs::read("Cargo.lock").ok().map(|b|fingerprint(&b)),"startup_regime":"fresh child process, OS/driver caches uncontrolled",

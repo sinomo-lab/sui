@@ -187,6 +187,9 @@ impl Grid {
 }
 
 impl Widget for Grid {
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
     fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.measure_layout(ctx, constraints, true).size
     }

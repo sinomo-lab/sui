@@ -460,6 +460,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "wgpu")]
+    fn application_uses_plain_renderer_configuration_defaults() {
+        let app = Application::new();
+        let options = sui_render_wgpu::FeatheringOptions::default();
+        assert_eq!(app.feathering_enabled(), options.enabled);
+        assert_eq!(app.feather_width(), options.width);
+    }
+
+    #[test]
     fn app_builds_window_after_registering_resources() -> Result<()> {
         let mut app = App::new();
         let image = {

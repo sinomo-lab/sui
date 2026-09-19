@@ -468,7 +468,11 @@ impl WgpuRenderer {
 
         // One persistent texture array; each atlas page is a layer. Dirty rects are written
         // directly to their layer -- no ring rotation, no full-texture forward-copy.
-        self.ensure_text_atlas_array(page_size, page_count)?;
+        let setup = self.ensure_text_atlas_array(page_size, page_count)?;
+        stats.allocate_time_us = setup.allocate_time_us;
+        stats.clear_time_us = setup.clear_time_us;
+        stats.copy_time_us = setup.copy_time_us;
+        stats.create_bind_group_time_us = setup.create_bind_group_time_us;
 
         if !uploads.is_empty() {
             let shared = self
@@ -480,15 +484,19 @@ impl WgpuRenderer {
                 .as_ref()
                 .expect("text atlas array created above");
             let upload_write_started = collect_stats.then(Instant::now);
-            clear_text_atlas_pages(
-                &shared.device,
-                &shared.queue,
-                &cached.texture,
-                uploads
-                    .iter()
-                    .filter(|(_, upload)| upload.clear_texture)
-                    .map(|(page, _)| *page as u32),
-            );
+            if uploads.iter().any(|(_, upload)| upload.clear_texture) {
+                let clear_started = collect_stats.then(Instant::now);
+                clear_text_atlas_pages(
+                    &shared.device,
+                    &shared.queue,
+                    &cached.texture,
+                    uploads
+                        .iter()
+                        .filter(|(_, upload)| upload.clear_texture)
+                        .map(|(page, _)| *page as u32),
+                );
+                stats.clear_time_us += clear_started.map_or(0, |s| s.elapsed().as_micros() as u64);
+            }
             for (page_index, upload) in &uploads {
                 if upload.pixels.is_empty() {
                     continue;
@@ -537,7 +545,7 @@ impl WgpuRenderer {
         &mut self,
         page_size: (u32, u32),
         required_layers: u32,
-    ) -> Result<()> {
+    ) -> Result<TextAtlasBindGroupStats> {
         // Allocate only as many layers as there are live pages, growing on demand up to the page
         // budget. This keeps the common single-page case at one 16 MB layer instead of committing
         // the whole budget up front.
@@ -547,7 +555,7 @@ impl WgpuRenderer {
             .as_ref()
             .is_some_and(|cached| cached.size == page_size && cached.layers >= required_layers)
         {
-            return Ok(());
+            return Ok(TextAtlasBindGroupStats::default());
         }
 
         let shared = self
@@ -555,6 +563,8 @@ impl WgpuRenderer {
             .as_ref()
             .expect("renderer shared state initialized before text atlas texture setup");
 
+        let mut stats = TextAtlasBindGroupStats::default();
+        let started = self.runtime_diagnostics_enabled.then(Instant::now);
         let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("SUI text atlas array texture"),
             size: wgpu::Extent3d {
@@ -572,17 +582,11 @@ impl WgpuRenderer {
                 | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let existing_layers = self
-            .text_atlas_array
-            .as_ref()
-            .filter(|old| old.size == page_size)
-            .map_or(0, |old| old.layers);
-        clear_text_atlas_pages(
-            &shared.device,
-            &shared.queue,
-            &texture,
-            existing_layers..required_layers,
-        );
+        stats.allocate_time_us = started.map_or(0, |s| s.elapsed().as_micros() as u64);
+        // Fresh texture subresources are initialized by WGPU before partial
+        // writes/reads. Do not submit a separate render-pass clear here. Recycled
+        // pages still require explicit clearing in ensure_text_atlas_bind_group.
+        let started = self.runtime_diagnostics_enabled.then(Instant::now);
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
@@ -602,6 +606,8 @@ impl WgpuRenderer {
             ],
         });
 
+        stats.create_bind_group_time_us = started.map_or(0, |s| s.elapsed().as_micros() as u64);
+        let started = self.runtime_diagnostics_enabled.then(Instant::now);
         // Growing an existing array of the same page size: copy the already-populated layers
         // forward so their glyphs survive (their CPU dirty state was cleared after first upload).
         if let Some(old) = self.text_atlas_array.as_ref()
@@ -635,6 +641,7 @@ impl WgpuRenderer {
             shared.queue.submit([encoder.finish()]);
         }
 
+        stats.copy_time_us = started.map_or(0, |s| s.elapsed().as_micros() as u64);
         self.text_atlas_array = Some(CachedTextAtlasTexture {
             texture,
             _view: view,
@@ -643,7 +650,7 @@ impl WgpuRenderer {
             layers: required_layers,
         });
 
-        Ok(())
+        Ok(stats)
     }
 
     pub(crate) fn prepare_analytic_path_resources(
@@ -1105,6 +1112,10 @@ pub(crate) struct CachedTextAtlasTexture {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct TextAtlasBindGroupStats {
+    pub(crate) allocate_time_us: u64,
+    pub(crate) clear_time_us: u64,
+    pub(crate) copy_time_us: u64,
+    pub(crate) create_bind_group_time_us: u64,
     pub(crate) total_time_us: u64,
     pub(crate) upload_copy_time_us: u64,
     pub(crate) upload_write_time_us: u64,

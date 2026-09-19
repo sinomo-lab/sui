@@ -73,9 +73,14 @@ impl WgpuRenderer {
                 .get(&frame.window_id)
                 .map(|target| target.format)
                 .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
-            let mut frame_stats =
-                self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
-            self.submit_output_transform_pass(
+            let mut encoder = self.frame_encoder();
+            let mut frame_stats = self.encode_prepared_scene(
+                prepared,
+                intermediate_format,
+                &intermediate_view,
+                &mut encoder,
+            )?;
+            self.encode_output_transform_pass(
                 frame.window_id,
                 &intermediate_view,
                 &view,
@@ -85,7 +90,9 @@ impl WgpuRenderer {
                 sdr_content_brightness_nits,
                 display_sdr_white_nits,
                 &mut frame_stats,
+                &mut encoder,
             )?;
+            self.submit_frame_encoder(encoder, &mut frame_stats);
             frame_stats
         } else {
             self.submit_prepared_scene(prepared, format, &view)?

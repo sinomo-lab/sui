@@ -6,7 +6,6 @@ use crate::output::ColorManagementMode;
 use crate::output::DisplayCapabilities;
 use crate::output::OutputStrategy;
 use crate::output::RendererCapabilities;
-use crate::resources::DEFAULT_FEATHER_WIDTH;
 use crate::resources::FrameResources;
 use crate::surface::normalize_framebuffer_size;
 use crate::text::RendererTextCacheSnapshot;
@@ -406,8 +405,8 @@ impl Default for WgpuRenderer {
     fn default() -> Self {
         Self {
             instance: default_wgpu_instance(),
-            feathering_enabled: false,
-            feather_width: DEFAULT_FEATHER_WIDTH,
+            feathering_enabled: FeatheringOptions::default().enabled,
+            feather_width: FeatheringOptions::default().width,
             text_render_mode: TextRenderMode::default(),
             text_subpixel_order: TextSubpixelOrder::default(),
             text_hinting: TextHinting::default(),
