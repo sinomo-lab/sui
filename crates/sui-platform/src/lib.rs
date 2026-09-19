@@ -43,7 +43,7 @@ pub use accessibility::{
 pub use desktop::AndroidApp;
 pub use desktop::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopExtension, DesktopExtensionContext,
-    DesktopPlatform, DesktopWindow, WakeSignal, Waker,
+    DesktopFramePresented, DesktopPlatform, DesktopWindow, WakeSignal, Waker,
 };
 pub use display_capabilities::{
     WindowOutputDiagnostics, clear_window_output_diagnostics, clear_window_output_diagnostics_all,

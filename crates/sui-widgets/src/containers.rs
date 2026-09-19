@@ -7,8 +7,8 @@ use sui_core::{
     WidgetId, WindowEvent,
 };
 use sui_layout::{
-    Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexStyle, FlexWrap,
-    IntrinsicSize, Padding as Insets, arrange_flex, flex_layout,
+    Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexMeasurePhase,
+    FlexStyle, FlexWrap, IntrinsicSize, Padding as Insets, arrange_flex, flex_layout_with_probes,
 };
 use sui_reactive::Observable;
 use sui_runtime::{
@@ -1455,11 +1455,18 @@ impl Flex {
 impl Widget for Flex {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let items = self.items.clone();
-        let layout = flex_layout(
+        let layout = flex_layout_with_probes(
             self.style,
             &items,
             constraints,
-            |index, child_constraints| self.children.measure_child(index, ctx, child_constraints),
+            |index, child_constraints, phase| match phase {
+                FlexMeasurePhase::Probe => {
+                    self.children.as_mut_slice()[index].probe_measure(ctx, child_constraints)
+                }
+                FlexMeasurePhase::Commit => {
+                    self.children.measure_child(index, ctx, child_constraints)
+                }
+            },
         );
 
         layout.size
@@ -2900,6 +2907,7 @@ pub(crate) fn scroll_bar_gutter(
     let mut gutter = Size::ZERO;
     if enabled {
         for _ in 0..3 {
+            sui_runtime::record_scrollbar_gutter_iteration();
             let viewport = scroll_viewport_size(outer, gutter);
             let next = Size::new(
                 if axes.allows_vertical() && content.height > viewport.height + f32::EPSILON {

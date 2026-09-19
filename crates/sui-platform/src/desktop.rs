@@ -107,6 +107,17 @@ pub trait DesktopExtension: fmt::Debug {
         Ok(())
     }
 
+    /// Observe a successfully submitted content frame. The timestamp is captured
+    /// immediately after the renderer returns from presentation, before diagnostics
+    /// or extension work. This is not a physical scanout timestamp.
+    fn frame_presented(
+        &mut self,
+        _context: DesktopExtensionContext<'_>,
+        _frame: DesktopFramePresented,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Release or suspend native resources before the host surfaces suspend.
     fn suspended(&mut self) -> Result<()> {
         Ok(())
@@ -117,6 +128,14 @@ pub trait DesktopExtension: fmt::Debug {
     fn poll_interval(&self) -> Option<Duration> {
         None
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DesktopFramePresented {
+    pub window_id: WindowId,
+    pub frame_index: u64,
+    pub presented_at: Instant,
+    pub runtime_duration: Duration,
 }
 
 /// Read-only state supplied to a [`DesktopExtension`] update.
@@ -1357,6 +1376,7 @@ impl DesktopApp {
             ),
         )?;
         self.renderer.render(&output.frame)?;
+        let presented_at = (!self.extensions.is_empty()).then(Instant::now);
         if let (Some(display_capabilities), Some(active_output_strategy)) = (
             self.renderer.window_display_capabilities(window_id),
             self.renderer.window_output_strategy(window_id),
@@ -1445,6 +1465,25 @@ impl DesktopApp {
             &self.renderer,
             renderer_time_ms,
         );
+
+        if let Some(presented_at) = presented_at {
+            let commands = self.runtime.command_sender();
+            for extension in &mut self.extensions {
+                extension.frame_presented(
+                    DesktopExtensionContext {
+                        runtime: &self.runtime,
+                        windows: &self.windows,
+                        commands: &commands,
+                    },
+                    DesktopFramePresented {
+                        window_id,
+                        frame_index,
+                        presented_at,
+                        runtime_duration: Duration::from_secs_f64(runtime_time_ms / 1000.0),
+                    },
+                )?;
+            }
+        }
 
         #[cfg(target_arch = "wasm32")]
         if let Some(window) = self.windows.get(&window_id) {

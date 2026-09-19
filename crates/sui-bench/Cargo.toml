@@ -1,0 +1,31 @@
+[package]
+name = "sinomo-ui-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+description = "Reproducible widget construction, layout, and first-frame benchmarks."
+
+[[bin]]
+name = "sui-bench"
+path = "src/main.rs"
+
+[features]
+default = []
+diagnostics = ["sui-runtime/layout-diagnostics"]
+gpu = ["dep:sui-render-wgpu", "dep:wgpu"]
+desktop = ["gpu", "dep:sui-platform"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sui-core = { workspace = true }
+sui-layout = { workspace = true }
+sui-reactive = { workspace = true }
+sui-runtime = { workspace = true }
+sui-text = { workspace = true }
+sui-widgets = { workspace = true }
+sui-render-wgpu = { workspace = true, optional = true }
+sui-platform = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }

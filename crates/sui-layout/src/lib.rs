@@ -336,12 +336,50 @@ pub fn flex_layout<F>(
 where
     F: FnMut(usize, Constraints) -> Size,
 {
+    flex_layout_impl(style, items, constraints, false, |index, constraints, _| {
+        measure_child(index, constraints)
+    })
+}
+
+/// The initial flex-basis query only needs a size. The resolved query commits
+/// each child's layout, even when its constraints equal those of the probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlexMeasurePhase {
+    Probe,
+    Commit,
+}
+
+pub fn flex_layout_with_probes<F>(
+    style: FlexStyle,
+    items: &[FlexItem],
+    constraints: Constraints,
+    measure_child: F,
+) -> FlexLayout
+where
+    F: FnMut(usize, Constraints, FlexMeasurePhase) -> Size,
+{
+    flex_layout_impl(style, items, constraints, true, measure_child)
+}
+
+fn flex_layout_impl<F>(
+    style: FlexStyle,
+    items: &[FlexItem],
+    constraints: Constraints,
+    commit_unchanged: bool,
+    mut measure_child: F,
+) -> FlexLayout
+where
+    F: FnMut(usize, Constraints, FlexMeasurePhase) -> Size,
+{
     let initial_measurements = items
         .iter()
         .enumerate()
         .map(|(index, item)| {
             let child_constraints = flex_child_constraints(style, *item, constraints);
-            let measured_size = clamp_item_size(*item, measure_child(index, child_constraints));
+            let measured_size = clamp_item_size(
+                *item,
+                measure_child(index, child_constraints, FlexMeasurePhase::Probe),
+            );
             (child_constraints, measured_size)
         })
         .collect::<Vec<_>>();
@@ -370,10 +408,13 @@ where
             let child_constraints =
                 resolved_flex_child_constraints(style, *item, constraints, resolved_main);
             let (initial_constraints, initial_size) = initial_measurements[index];
-            if child_constraints == initial_constraints {
+            if !commit_unchanged && child_constraints == initial_constraints {
                 initial_size
             } else {
-                clamp_item_size(*item, measure_child(index, child_constraints))
+                clamp_item_size(
+                    *item,
+                    measure_child(index, child_constraints, FlexMeasurePhase::Commit),
+                )
             }
         })
         .collect::<Vec<_>>();
@@ -1264,6 +1305,33 @@ mod tests {
         assert_eq!(
             layout.image_size(ImageHandle::new(7)),
             Some(Size::new(4.0, 2.0))
+        );
+    }
+
+    #[test]
+    fn phased_flex_commits_even_when_probe_constraints_are_unchanged() {
+        use super::{FlexMeasurePhase, flex_layout_with_probes};
+        let items = [FlexItem::fill()];
+        let constraints = Constraints::tight(Size::ZERO);
+        let mut phases = Vec::new();
+        let layout = flex_layout_with_probes(
+            FlexStyle::horizontal(),
+            &items,
+            constraints,
+            |_, c, phase| {
+                phases.push((phase, c));
+                Size::ZERO
+            },
+        );
+        assert_eq!(phases.len(), 2);
+        assert_eq!(phases[0].0, FlexMeasurePhase::Probe);
+        assert_eq!(phases[1].0, FlexMeasurePhase::Commit);
+        assert_eq!(phases[0].1, phases[1].1);
+        assert_eq!(
+            layout,
+            flex_layout(FlexStyle::horizontal(), &items, constraints, |_, _| {
+                Size::ZERO
+            })
         );
     }
 

@@ -76,6 +76,8 @@ cargo doc -p sinomo-ui --no-deps --open
   direction, and benchmark workflow.
 - [Text rendering benchmarks](./text-rendering-benchmarks.md) — performance
   and visual-quality capture procedures.
+- [Widget performance benchmarks](../crates/sui-bench/README.md) — process-cold
+  initialization, layout/update workloads, diagnostic counters, and comparisons.
 - [HDR debugging](./hdr-debugging.md) — linear EXR capture, SDR previews,
   headroom and clip maps, and output diagnostics.
 - [HDR theme tokens](./hdr-theme-token-schema-proposal.md) — implemented HDR

@@ -3,6 +3,7 @@
 mod app;
 mod command;
 mod diagnostics;
+mod layout_work;
 mod logo;
 mod overlay;
 mod reactive;
@@ -55,6 +56,11 @@ pub use diagnostics::{
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_performance_summary, window_performance_text_caches, window_render_options,
     window_scene_statistics_detail_mode,
+};
+#[doc(hidden)]
+pub use layout_work::record_scrollbar_gutter_iteration;
+pub use layout_work::{
+    LayoutWorkSnapshot, begin_layout_work_collection, take_layout_work_collection,
 };
 pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
 pub use overlay::{
@@ -395,6 +401,11 @@ impl Runtime {
 
     pub fn font_registry(&self) -> &Arc<FontRegistry> {
         self.resources.fonts()
+    }
+
+    /// Read-only cache diagnostics for measurement/profiling tools.
+    pub fn text_preparation_cache_snapshot(&self) -> sui_text::TextPreparationCacheSnapshot {
+        self.text_system.preparation_cache_snapshot()
     }
 
     pub fn image_registry(&self) -> &Arc<ImageRegistry> {
@@ -3156,10 +3167,9 @@ impl WindowState {
         };
         let mut graph_changes = GraphChangeSet::default();
 
-        if self.last_frame.is_none() {
-            self.schedule = FrameSchedule::bootstrap();
-        }
-
+        // WindowState starts with a bootstrap schedule. Initial size/DPI events
+        // can already have completed layout; preserve that work and any later
+        // invalidations instead of resetting all phases before the first paint.
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
             let started = Instant::now();
             let pass_invalidations = self.run_measure_arrange_pass(
@@ -4166,11 +4176,14 @@ impl WindowState {
             scope,
             self.last_tick_time,
         );
+        layout_work::record(|work| work.layout_passes += 1);
+        let measure_started = layout_work::started();
         let measured_root = if self.schedule.measure || self.viewport.is_none() {
             self.root.measure(&mut measure_ctx, constraints)
         } else {
             self.root.measured_size()
         };
+        layout_work::elapsed(measure_started, |work, us| work.measure_us += us);
         let viewport = constraints.clamp(measured_root);
 
         let mut pass_invalidations = measure_ctx.take_invalidations();
@@ -4184,10 +4197,12 @@ impl WindowState {
             self.last_tick_time,
             arrange_scope,
         );
+        let arrange_started = layout_work::started();
         self.root.arrange(
             &mut arrange_ctx,
             Rect::from_origin_size(Point::ZERO, viewport),
         );
+        layout_work::elapsed(arrange_started, |work, us| work.arrange_us += us);
         self.viewport = Some(viewport);
         self.schedule.measure = false;
         self.schedule.arrange = false;
@@ -4202,6 +4217,7 @@ impl WindowState {
     }
 
     fn refresh_graph(&mut self) {
+        let graph_started = layout_work::started();
         self.graph.rebuild_in_place(
             &self.root,
             self.focus.focused_widget,
@@ -4217,6 +4233,7 @@ impl WindowState {
         }
         self.prune_runtime_state();
         self.schedule.hit_test = false;
+        layout_work::elapsed(graph_started, |work, us| work.graph_us += us);
     }
 
     fn filter_modal_semantics(&self, mut nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {

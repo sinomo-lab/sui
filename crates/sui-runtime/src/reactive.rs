@@ -127,6 +127,7 @@ pub(crate) enum ObservationPhase {
     Arrange,
     Paint,
     Semantics,
+    MeasureProbe,
 }
 
 impl ObservationPhase {
@@ -137,7 +138,7 @@ impl ObservationPhase {
 
 // Event/command observers are explicit registrations rather than dependencies
 // of a replayable frame phase. Keep them until the widget is dropped.
-const EXPLICIT_OBSERVATION: u8 = 1 << 6;
+const EXPLICIT_OBSERVATION: u8 = 1 << 7;
 
 struct WidgetSubscription {
     _subscription: Subscription,
@@ -187,6 +188,15 @@ impl Drop for ObservationScope<'_> {
         let previous = self.observed_phases.get();
         if !frame.reads.is_empty() {
             self.observed_phases.set(previous | frame.phase);
+        }
+        // A parent's cached natural size can depend on any of the constraints
+        // its descendants probed. Keep their dependencies until measurement
+        // invalidation also discards the affected ancestor caches.
+        let probe_phases = ObservationPhase::MeasureProbe.bit()
+            | ObservationPhase::IntrinsicHorizontal.bit()
+            | ObservationPhase::IntrinsicVertical.bit();
+        if frame.phase & probe_phases != 0 {
+            return;
         }
         if std::thread::panicking() {
             return;
@@ -272,6 +282,42 @@ pub(crate) fn clear_widget(widget_id: WidgetId) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&widget_id);
+    drop(removed);
+}
+
+/// Drop conservative probe dependencies when the corresponding layout caches
+/// are invalidated. Ordinary committed phases retain their own subscriptions.
+pub(crate) fn clear_probe_observations(widget_id: WidgetId, observed: &Cell<u8>) {
+    let phases = ObservationPhase::MeasureProbe.bit()
+        | ObservationPhase::IntrinsicHorizontal.bit()
+        | ObservationPhase::IntrinsicVertical.bit();
+    if observed.get() & phases == 0 {
+        return;
+    }
+    observed.set(observed.get() & !phases);
+    let removed = {
+        let mut all = widget_subscriptions()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(subscriptions) = all.get_mut(&widget_id) else {
+            return;
+        };
+        let mut stale = Vec::new();
+        for (key, subscription) in subscriptions.iter_mut() {
+            subscription.phases &= !phases;
+            if subscription.phases == 0 {
+                stale.push(*key);
+            }
+        }
+        let removed = stale
+            .into_iter()
+            .filter_map(|key| subscriptions.remove(&key))
+            .collect::<Vec<_>>();
+        if subscriptions.is_empty() {
+            all.remove(&widget_id);
+        }
+        removed
+    };
     drop(removed);
 }
 
