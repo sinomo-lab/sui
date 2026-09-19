@@ -872,8 +872,19 @@ pub fn paint_icon_button(
     icon: IconGlyph,
     style: IconButtonPaint,
 ) {
+    if let Some((bounds, color)) = paint_icon_button_frame(ctx, theme, rect, style) {
+        draw_icon_glyph(ctx, icon, bounds, color);
+    }
+}
+
+fn paint_icon_button_frame(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    rect: Rect,
+    style: IconButtonPaint,
+) -> Option<(Rect, Color)> {
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
-        return;
+        return None;
     }
 
     let palette = theme.palette;
@@ -1001,13 +1012,19 @@ pub fn paint_icon_button(
                 .with_alpha(palette.focus_ring.alpha * focus_progress),
         ),
     );
-    draw_icon_glyph(ctx, icon, center_square(rect, icon_size), icon_color);
+    Some((center_square(rect, icon_size), icon_color))
+}
+
+#[derive(Clone, Copy)]
+enum ButtonIcon {
+    Glyph(IconGlyph),
+    Image(sui_core::ImageHandle),
 }
 
 pub struct IconButton {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
-    icon: IconGlyph,
+    icon: ButtonIcon,
     label: String,
     semantic_description: Option<String>,
     appearance: ButtonAppearance,
@@ -1026,11 +1043,21 @@ pub struct IconButton {
 
 impl IconButton {
     pub fn new(icon: IconGlyph, label: impl Into<String>) -> Self {
+        Self::with_icon(ButtonIcon::Glyph(icon), label.into())
+    }
+
+    /// Use a registered mask image with the same interaction, tint and focus behavior
+    /// as the built-in glyph buttons.
+    pub fn from_image(icon: sui_core::ImageHandle, label: impl Into<String>) -> Self {
+        Self::with_icon(ButtonIcon::Image(icon), label.into())
+    }
+
+    fn with_icon(icon: ButtonIcon, label: String) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             icon,
-            label: label.into(),
+            label,
             semantic_description: None,
             appearance: ButtonAppearance::Tonal,
             tone: SemanticTone::Neutral,
@@ -1206,21 +1233,28 @@ impl Widget for IconButton {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        paint_icon_button(
-            ctx,
-            &theme,
-            ctx.bounds(),
-            self.icon,
-            IconButtonPaint::new()
-                .appearance(self.appearance)
-                .tone(self.tone)
-                .selected(self.is_selected())
-                .enabled(self.is_enabled())
-                .hover_progress(self.interaction.hover_animation.value)
-                .press_progress(self.interaction.press_animation.value)
-                .focus_progress(self.focus_animation.value)
-                .icon_size(self.resolved_icon_size()),
-        );
+        let style = IconButtonPaint::new()
+            .appearance(self.appearance)
+            .tone(self.tone)
+            .selected(self.is_selected())
+            .enabled(self.is_enabled())
+            .hover_progress(self.interaction.hover_animation.value)
+            .press_progress(self.interaction.press_animation.value)
+            .focus_progress(self.focus_animation.value)
+            .icon_size(self.resolved_icon_size());
+        match self.icon {
+            ButtonIcon::Glyph(icon) => paint_icon_button(ctx, &theme, ctx.bounds(), icon, style),
+            ButtonIcon::Image(icon) => {
+                if let Some((bounds, color)) =
+                    paint_icon_button_frame(ctx, &theme, ctx.bounds(), style)
+                {
+                    ctx.draw_image_source(
+                        bounds,
+                        sui_scene::ImageSource::new(icon).with_tint(color),
+                    );
+                }
+            }
+        }
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {

@@ -788,6 +788,7 @@ pub struct BrowserTabBar {
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     pub(super) name: String,
     pub(super) tabs: Vec<String>,
+    max_tab_width: f32,
     pub(super) tabs_reader: Option<Box<dyn Fn() -> Vec<String>>>,
     pub(super) selected: Option<usize>,
     pub(super) selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
@@ -816,6 +817,7 @@ impl BrowserTabBar {
             theme_reader: None,
             name: name.into(),
             tabs: Vec::new(),
+            max_tab_width: f32::INFINITY,
             tabs_reader: None,
             selected: None,
             selected_reader: None,
@@ -867,6 +869,22 @@ impl BrowserTabBar {
     {
         self.tabs_reader = Some(Box::new(tabs));
         self
+    }
+
+    /// Bound document labels while keeping the close control visible.
+    pub fn max_tab_width(mut self, width: f32) -> Self {
+        self.max_tab_width = width.max(0.0);
+        self
+    }
+
+    /// Selected tab's measured bounds in content coordinates, for a containing viewport.
+    pub fn selected_tab_bounds(&self) -> Option<Rect> {
+        let width = self.widths.iter().sum::<f32>()
+            + self.resolved_theme().metrics.tab_gap * self.tabs.len().saturating_sub(1) as f32;
+        self.tab_rect(
+            Rect::new(0.0, 0.0, width, self.tab_height()),
+            self.normalized_selected()?,
+        )
     }
 
     pub fn selected(mut self, index: Option<usize>) -> Self {
@@ -1270,6 +1288,7 @@ impl Widget for BrowserTabBar {
             .map(|measurement| {
                 (measurement.width + padding.left + padding.right + close_extent)
                     .max(theme.metrics.tab_min_width)
+                    .min(self.max_tab_width.max(theme.metrics.tab_min_width))
             })
             .collect();
 

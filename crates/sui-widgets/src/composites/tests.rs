@@ -5674,6 +5674,74 @@ fn browser_tab_bar_semantics_ids_are_javascript_safe_and_distinct() {
     }
 }
 
+#[test]
+fn browser_tab_bar_caps_long_labels_without_hiding_close_buttons() {
+    let output = render(
+        BrowserTabBar::new("Documents")
+            .max_tab_width(160.0)
+            .tabs([
+                "A very long document name which should not monopolize the navigation bar",
+                "Notes",
+            ])
+            .selected(Some(0)),
+    );
+    let tabs: Vec<_> = output
+        .semantics
+        .iter()
+        .filter(|node| {
+            node.role == SemanticsRole::Button
+                && !node
+                    .name
+                    .as_deref()
+                    .unwrap_or_default()
+                    .starts_with("Close ")
+        })
+        .collect();
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[0].bounds.width(), 160.0);
+    for tab in tabs {
+        let name = format!("Close {} tab", tab.name.as_deref().unwrap());
+        let close = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(&name))
+            .unwrap();
+        assert!(close.bounds.x() >= tab.bounds.x());
+        assert!(close.bounds.max_x() <= tab.bounds.max_x());
+    }
+}
+
+#[test]
+fn icon_button_registered_image_keeps_selection_and_accessibility() {
+    let handle = ImageHandle::new(0x5049_4e4e_4544);
+    let output = render_isolated_with_image(
+        crate::IconButton::from_image(handle, "Files")
+            .description("Pinned Files tab")
+            .selected(true)
+            .icon_size(18.0),
+        handle,
+    );
+    let button = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::Button)
+        .unwrap();
+    assert_eq!(button.name.as_deref(), Some("Files"));
+    assert_eq!(button.description.as_deref(), Some("Pinned Files tab"));
+    assert!(button.state.selected);
+    let mut painted = false;
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::DrawImage { rect, source } = command {
+            if source.image == handle {
+                assert_eq!(rect.width(), 18.0);
+                assert!(source.tint.is_some());
+                painted = true;
+            }
+        }
+    });
+    assert!(painted);
+}
+
 fn assert_keyboard_tab_switch_uses_duration<W>(
     widget: W,
     role: SemanticsRole,
