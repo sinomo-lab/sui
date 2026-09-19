@@ -8,7 +8,8 @@ use sui_core::{
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexMeasurePhase,
-    FlexStyle, FlexWrap, IntrinsicSize, Padding as Insets, arrange_flex, flex_layout_with_probes,
+    FlexStyle, FlexWrap, IntrinsicSize, Padding as Insets, arrange_flex, flex_layout,
+    flex_layout_with_probes,
 };
 use sui_reactive::Observable;
 use sui_runtime::{
@@ -131,6 +132,13 @@ impl Widget for Padding {
         constraints.clamp(expand_size(child_size, self.insets))
     }
 
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let child_constraints = inset_constraints(constraints, self.insets);
+        let child_size = self.child.measure_size(ctx, child_constraints);
+
+        constraints.clamp(expand_size(child_size, self.insets))
+    }
+
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let content = inset_rect(bounds, self.insets);
         let measured = self.child.child().measured_size();
@@ -212,6 +220,16 @@ impl Widget for Align {
         ))
     }
 
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let child_constraints =
+            aligned_child_constraints(constraints, self.horizontal, self.vertical);
+        let child_size = self.child.measure_size(ctx, child_constraints);
+        constraints.clamp(Size::new(
+            stretched_dimension(self.horizontal, constraints.max.width, child_size.width),
+            stretched_dimension(self.vertical, constraints.max.height, child_size.height),
+        ))
+    }
+
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let child_size = self.child.child().measured_size();
         self.child.arrange(
@@ -282,6 +300,10 @@ impl Background {
 impl Widget for Background {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.child.measure(ctx, constraints)
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child.measure_size(ctx, constraints)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -390,6 +412,10 @@ impl Widget for SemanticRegion {
         self.child.measure(ctx, constraints)
     }
 
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child.measure_size(ctx, constraints)
+    }
+
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.child.arrange(ctx, bounds);
     }
@@ -474,6 +500,20 @@ impl Widget for SizedBox {
         let child_constraints = sized_box_constraints(constraints, self.width, self.height);
         let child_size = if let Some(child) = &mut self.child {
             child.measure(ctx, child_constraints)
+        } else {
+            Size::ZERO
+        };
+
+        constraints.clamp(Size::new(
+            self.width.unwrap_or(child_size.width),
+            self.height.unwrap_or(child_size.height),
+        ))
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let child_constraints = sized_box_constraints(constraints, self.width, self.height);
+        let child_size = if let Some(child) = &mut self.child {
+            child.measure_size(ctx, child_constraints)
         } else {
             Size::ZERO
         };
@@ -579,8 +619,13 @@ impl Stack {
     }
 }
 
-impl Widget for Stack {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+impl Stack {
+    fn measure_children(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        size_only: bool,
+    ) -> Size {
         let max_main = axis_main(self.axis, constraints.max);
         let max_cross = axis_cross(self.axis, constraints.max);
         let stretch_cross = self.alignment == Alignment::Stretch && max_cross.is_finite();
@@ -592,12 +637,26 @@ impl Widget for Stack {
             let remaining_main = (max_main - main_extent - spacing_before).max(0.0);
             let child_constraints =
                 stack_child_constraints(self.axis, remaining_main, max_cross, stretch_cross);
-            let child_size = child.measure(ctx, child_constraints);
+            let child_size = if size_only {
+                child.probe_measure(ctx, child_constraints)
+            } else {
+                child.measure(ctx, child_constraints)
+            };
             main_extent += spacing_before + axis_main(self.axis, child_size);
             cross_extent = cross_extent.max(axis_cross(self.axis, child_size));
         }
 
         constraints.clamp(axis_size(self.axis, main_extent, cross_extent))
+    }
+}
+
+impl Widget for Stack {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measure_children(ctx, constraints, false)
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measure_children(ctx, constraints, true)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -1453,11 +1512,22 @@ impl Flex {
 }
 
 impl Widget for Flex {
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        flex_layout(
+            self.style,
+            &self.items,
+            constraints,
+            |index, child_constraints| {
+                self.children.as_mut_slice()[index].probe_measure(ctx, child_constraints)
+            },
+        )
+        .size
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let items = self.items.clone();
         let layout = flex_layout_with_probes(
             self.style,
-            &items,
+            &self.items,
             constraints,
             |index, child_constraints, phase| match phase {
                 FlexMeasurePhase::Probe => {
@@ -4853,6 +4923,85 @@ mod tests {
         WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+
+    #[test]
+    fn nested_flex_probes_commit_leaf_layout_only_after_constraints_are_resolved() {
+        struct Leaf(Rc<Cell<u32>>, Rc<Cell<f32>>);
+        impl Widget for Leaf {
+            fn measure_size(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+                c.clamp(Size::new(30.0, 12.0))
+            }
+            fn measure(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+                self.0.set(self.0.get() + 1);
+                self.1.set(c.max.width);
+                c.clamp(Size::new(30.0, 12.0))
+            }
+        }
+        struct Preview {
+            child: WidgetPod,
+            commits: Rc<Cell<u32>>,
+        }
+        impl Widget for Preview {
+            fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+                let before = self.commits.get();
+                let provisional = self.child.probe_measure(ctx, c);
+                assert_eq!(
+                    self.commits.get(),
+                    before,
+                    "provisional Flex traversal committed a leaf"
+                );
+                let size = self.child.measure(ctx, c);
+                assert_eq!(size, provisional);
+                assert_eq!(
+                    self.commits.get(),
+                    before + 1,
+                    "final traversal should commit the leaf once"
+                );
+                size
+            }
+            fn arrange(&mut self, ctx: &mut ArrangeCtx, r: Rect) {
+                self.child.arrange(ctx, r);
+            }
+            fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+                v.visit(&self.child);
+            }
+            fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+                v.visit(&mut self.child);
+            }
+        }
+        struct SizeForwarder(WidgetPod);
+        impl Widget for SizeForwarder {
+            fn measure_size(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+                self.0.probe_measure(ctx, c)
+            }
+            fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+                self.0.measure(ctx, c)
+            }
+            fn arrange(&mut self, ctx: &mut ArrangeCtx, r: Rect) {
+                self.0.arrange(ctx, r);
+            }
+            fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+                v.visit(&self.0);
+            }
+            fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+                v.visit(&mut self.0);
+            }
+        }
+        let commits = Rc::new(Cell::new(0));
+        let width = Rc::new(Cell::new(0.0));
+        let mut child = WidgetPod::new(Leaf(commits.clone(), width.clone()));
+        for _ in 0..6 {
+            child = WidgetPod::new(
+                Flex::horizontal().with_child(Padding::all(1.0, SizeForwarder(child))),
+            );
+        }
+        let mut runtime = Runtime::new();
+        let window = runtime
+            .add_window(WindowBuilder::new().root(Preview { child, commits }))
+            .unwrap();
+        runtime.render(window).unwrap();
+        assert!(width.get().is_finite() && width.get() > 0.0);
+    }
 
     struct FixedBox {
         size: Size,

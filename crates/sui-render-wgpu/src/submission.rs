@@ -166,7 +166,7 @@ impl WgpuRenderer {
             .unwrap_or(0);
         let mut prepared_fragments = Vec::new();
         let mut draw_count = 0usize;
-        let mut uploaded_vertex_bytes = 0u64;
+        let upload_bytes_before = self.frame_resources.uploads.bytes_written;
         let mut needs_stencil = false;
         let mut batch_prepare_time_us = 0u64;
         let mut gpu_upload_time_us = 0u64;
@@ -176,9 +176,7 @@ impl WgpuRenderer {
             .fragments
             .entry(frame.window_id)
             .or_default();
-        if buffers.len() < submission.fragments.len() {
-            buffers.resize_with(submission.fragments.len(), Default::default);
-        }
+        buffers.resize_with(submission.fragments.len(), Default::default);
         for (fragment_index, fragment) in submission.fragments.into_iter().enumerate() {
             let RetainedFrameFragment::Transient(draw_ops) = fragment;
             let batch_prepare_started = diagnostics_enabled.then(Instant::now);
@@ -196,13 +194,6 @@ impl WgpuRenderer {
             if diagnostics_enabled {
                 let (_, fragment_draw_count) = prepared_batch_counts(&prepared.passes);
                 draw_count += fragment_draw_count;
-                uploaded_vertex_bytes += (prepared.solid_vertices.len() as u64
-                    + prepared.clip_vertices.len() as u64)
-                    * SOLID_VERTEX_SIZE
-                    + prepared.scene_vertices.len() as u64 * COMPACT_VERTEX_SIZE
-                    + prepared.analytic_vertices.len() as u64 * ANALYTIC_QUAD_INSTANCE_SIZE
-                    + prepared.extended_vertices.len() as u64 * EXTENDED_QUAD_INSTANCE_SIZE
-                    + prepared.text_instances.len() as u64 * TEXT_ATLAS_INSTANCE_SIZE;
             }
 
             if prepared.passes.is_empty() {
@@ -287,6 +278,11 @@ impl WgpuRenderer {
         if let Some(started) = batch_prepare_started {
             batch_prepare_time_us += started.elapsed().as_micros() as u64;
         }
+        let uploaded_vertex_bytes = self
+            .frame_resources
+            .uploads
+            .bytes_written
+            .wrapping_sub(upload_bytes_before);
         let mut frame_stats = if diagnostics_enabled {
             RendererFrameStats::from_prepared_counts(0, draw_count, uploaded_vertex_bytes)
                 .with_text_stats(text_frame_stats)

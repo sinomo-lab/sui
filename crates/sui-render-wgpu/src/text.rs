@@ -252,13 +252,6 @@ impl AtlasRectU {
         max_y: 0,
     };
 
-    const EVERYTHING: Self = Self {
-        min_x: 0,
-        min_y: 0,
-        max_x: usize::MAX,
-        max_y: usize::MAX,
-    };
-
     pub(crate) fn include_rect(&mut self, x: usize, y: usize, width: usize, height: usize) {
         self.min_x = self.min_x.min(x);
         self.min_y = self.min_y.min(y);
@@ -286,6 +279,7 @@ pub(crate) struct TextAtlasUpload {
     pub(crate) offset: (u32, u32),
     pub(crate) extent: (u32, u32),
     pub(crate) pixels: Vec<u8>,
+    pub(crate) clear_texture: bool,
 }
 
 /// A single atlas page: a CPU-side pixel buffer with a shelf-packing cursor and a dirty
@@ -297,7 +291,8 @@ pub(crate) struct TextAtlas {
     pub(crate) height: usize,
     pub(crate) pixels: Vec<u8>,
     pub(crate) dirty: AtlasRectU,
-    pub(crate) full_upload: bool,
+    pub(crate) clear_texture: bool,
+    pub(crate) generation: u64,
     pub(crate) cursor: (usize, usize),
     pub(crate) row_height: usize,
     /// Frame index of the most recent insert/touch, used for whole-page LRU eviction.
@@ -316,8 +311,9 @@ impl TextAtlas {
             width,
             height,
             pixels: vec![0; width * height * 4],
-            dirty: AtlasRectU::EVERYTHING,
-            full_upload: true,
+            dirty: AtlasRectU::NOTHING,
+            clear_texture: false,
+            generation: 1,
             cursor: (TEXT_ATLAS_PADDING, TEXT_ATLAS_PADDING),
             row_height: 0,
             last_used_frame: 0,
@@ -325,18 +321,15 @@ impl TextAtlas {
     }
 
     /// Reset this page so its space can be recycled (used when a page is evicted). Zeroes the
-    /// pixels, rewinds the packing cursor, and forces a full re-upload of the cleared contents.
+    /// CPU pixels and GPU page are cleared separately; only new glyphs need uploading.
     pub(crate) fn clear_for_reuse(&mut self) {
         self.pixels.iter_mut().for_each(|byte| *byte = 0);
         self.cursor = (TEXT_ATLAS_PADDING, TEXT_ATLAS_PADDING);
         self.row_height = 0;
-        self.dirty = AtlasRectU::EVERYTHING;
-        self.full_upload = true;
+        self.dirty = AtlasRectU::NOTHING;
+        self.clear_texture = true;
+        self.generation = self.generation.wrapping_add(1);
         self.last_used_frame = 0;
-    }
-
-    pub(crate) fn size(&self) -> (u32, u32) {
-        (self.width as u32, self.height as u32)
     }
 
     pub(crate) fn allocate(
@@ -398,16 +391,13 @@ impl TextAtlas {
 
     pub(crate) fn take_upload(&mut self) -> Option<TextAtlasUpload> {
         let dirty = std::mem::replace(&mut self.dirty, AtlasRectU::NOTHING);
+        let clear_texture = std::mem::take(&mut self.clear_texture);
         if dirty == AtlasRectU::NOTHING {
-            return None;
-        }
-
-        if self.full_upload || dirty == AtlasRectU::EVERYTHING {
-            self.full_upload = false;
-            return Some(TextAtlasUpload {
+            return clear_texture.then(|| TextAtlasUpload {
                 offset: (0, 0),
-                extent: self.size(),
-                pixels: self.pixels.clone(),
+                extent: (0, 0),
+                pixels: Vec::new(),
+                clear_texture,
             });
         }
 
@@ -426,6 +416,7 @@ impl TextAtlas {
             offset: (dirty.min_x as u32, dirty.min_y as u32),
             extent: (width as u32, height as u32),
             pixels,
+            clear_texture,
         })
     }
 }
@@ -571,6 +562,38 @@ impl TextAtlasPages {
 #[cfg(test)]
 pub(crate) mod page_tests {
     use super::*;
+
+    #[test]
+    fn optimization_regression_fresh_atlas_uploads_only_populated_pixels() {
+        let mut atlas = TextAtlas::new(2048, 2048);
+        atlas.insert_rgba(12, 18, &vec![255; 12 * 18 * 4]).unwrap();
+        let upload = atlas.take_upload().unwrap();
+        assert!(
+            upload.pixels.len() < 4096,
+            "a tiny glyph uploaded a whole page"
+        );
+        assert!(atlas.take_upload().is_none());
+    }
+
+    #[test]
+    fn recycled_page_upload_clears_old_glyphs_without_copying_a_full_page() {
+        let mut atlas = TextAtlas::new(64, 64);
+        atlas.insert_rgba(60, 60, &vec![255; 60 * 60 * 4]).unwrap();
+        atlas.take_upload().unwrap();
+        let generation = atlas.generation;
+        atlas.clear_for_reuse();
+        atlas.insert_rgba(4, 4, &[255; 4 * 4 * 4]).unwrap();
+        let upload = atlas.take_upload().unwrap();
+        assert!(upload.clear_texture);
+        assert_ne!(atlas.generation, generation);
+        assert_eq!(upload.pixels.len(), 4 * 4 * 4);
+        assert_eq!(atlas.pixels[(32 * 64 + 32) * 4], 0);
+        atlas.clear_for_reuse();
+        let clear_only = atlas.take_upload().unwrap();
+        assert!(clear_only.clear_texture);
+        assert!(clear_only.pixels.is_empty());
+        assert!(atlas.take_upload().is_none());
+    }
 
     fn opaque(width: usize, height: usize) -> Vec<u8> {
         vec![255u8; width * height * 4]

@@ -39,6 +39,172 @@ use sui_text::TextRun;
 use sui_text::TextStyle;
 
 #[test]
+fn packet_chunks_match_unsplit_rendering_through_state_and_content_changes() {
+    use sui_core::Transform;
+    use sui_scene::{TextRenderCoveragePolicy, TextRenderPolicy};
+    let window = WindowId::new(8954);
+    let mut chunked = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    reference
+        .compositors
+        .entry(window)
+        .or_default()
+        .packet_draw_limit = usize::MAX;
+    for layer in [false, true] {
+        for revision in 0..4 {
+            let mut content = Scene::new();
+            for index in 0..48 {
+                let x = (index % 8) as f32 * 24.0;
+                let y = (index / 8) as f32 * 20.0;
+                content.push(SceneCommand::PushTransform {
+                    transform: Transform::translation(revision as f32 * 0.25, 0.5),
+                });
+                content.push(SceneCommand::PushClipPath {
+                    path: Path::rect(Rect::new(x, y, 23.0, 19.0)),
+                });
+                content.push(SceneCommand::PushTextRenderPolicy {
+                    policy: TextRenderPolicy {
+                        coverage_policy: Some(TextRenderCoveragePolicy::Gamma(1.6)),
+                        ..Default::default()
+                    },
+                });
+                content.push(SceneCommand::FillRect {
+                    rect: Rect::new(x, y, 22.0, 18.0),
+                    brush: Color::srgba(0.2, 0.1, 0.3, 0.5).into(),
+                });
+                content.push(SceneCommand::Label {
+                    rect: Rect::new(x, y, 22.0, 18.0),
+                    text: if index == 19 && revision % 2 == 1 {
+                        "B"
+                    } else {
+                        "A"
+                    }
+                    .into(),
+                    color: Color::WHITE,
+                });
+                content.push(SceneCommand::PopTextRenderPolicy);
+                content.push(SceneCommand::PopClip);
+                content.push(SceneCommand::PopTransform);
+            }
+            let mut frame = SceneFrame::new(window, Size::new(200.0, 128.0));
+            frame.scale_factor = if revision < 2 { 1.0 } else { 1.25 };
+            frame.surface_size = Size::new(200.0 * frame.scale_factor, 128.0 * frame.scale_factor);
+            frame.scene.push(SceneCommand::Clear(Color::BLACK));
+            if layer {
+                let owner = WidgetId::new(8955);
+                let descriptor = SceneLayerDescriptor::new(
+                    SceneLayerId::from_widget(owner),
+                    owner,
+                    Rect::new(1.5, 2.5, 190.0, 116.0),
+                )
+                .with_composition_mode(LayerCompositionMode::Scroll);
+                frame
+                    .scene
+                    .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                        descriptor, content,
+                    )));
+            } else {
+                frame.scene.append(content);
+            }
+            chunked.render(&frame).unwrap();
+            reference.render(&frame).unwrap();
+            assert_eq!(reference.compositors[&window].packet_draw_limit, usize::MAX);
+            assert!(
+                chunked.compositors[&window].packets.len()
+                    > reference.compositors[&window].packets.len()
+            );
+            assert_rgba_images_match(
+                &chunked.capture_rgba(window).unwrap(),
+                &reference.capture_rgba(window).unwrap(),
+            );
+        }
+    }
+    let empty = SceneFrame::new(window, Size::new(200.0, 128.0));
+    chunked.render(&empty).unwrap();
+    assert!(
+        chunked.compositors[&window].packets.is_empty(),
+        "obsolete packets must be released"
+    );
+    assert!(chunked.frame_resources.fragments[&window].is_empty());
+}
+
+#[test]
+fn optimization_regression_local_change_rebuilds_only_a_small_packet() {
+    let make_scene = |changed: bool| {
+        let mut scene = Scene::new();
+        for i in 0..96 {
+            scene.push(SceneCommand::FillRect {
+                rect: Rect::new((i % 12) as f32 * 8.0, (i / 12) as f32 * 8.0, 7.0, 7.0),
+                brush: if changed && i == 32 {
+                    Color::BLACK
+                } else {
+                    Color::WHITE
+                }
+                .into(),
+            });
+        }
+        scene
+    };
+    let mut frame = SceneFrame::new(WindowId::new(8952), Size::new(96.0, 64.0));
+    frame.scene = make_scene(false);
+    let mut engine = TextEngine::new().unwrap();
+    let mut compositor = RetainedCompositorState::default();
+    prepare_with_compositor(&frame, &mut engine, &mut compositor).unwrap();
+    frame.scene = make_scene(true);
+    prepare_with_compositor(&frame, &mut engine, &mut compositor).unwrap();
+    assert!(
+        compositor.last_frame_stats.packet_command_count <= 16,
+        "a local edit rebuilt {} commands",
+        compositor.last_frame_stats.packet_command_count
+    );
+}
+
+#[test]
+fn optimization_regression_recycled_atlas_invalidates_retained_text() {
+    let mut renderer = WgpuRenderer::new();
+    let window = WindowId::new(8953);
+    let mut frame = SceneFrame::new(window, Size::new(200.0, 60.0));
+    frame.scene.push(SceneCommand::Clear(Color::BLACK));
+    frame.scene.push(SceneCommand::Label {
+        rect: Rect::new(8.0, 8.0, 180.0, 40.0),
+        text: "Retained glyphs".into(),
+        color: Color::WHITE,
+    });
+    renderer.render(&frame).unwrap();
+    let original = renderer.capture_rgba(window).unwrap();
+    // Reproduce the invalidation boundary of page eviction (including eviction
+    // caused by another window sharing the renderer's text atlas).
+    let engine = renderer.text_engine.as_mut().unwrap();
+    engine.atlas.pages[0].clear_for_reuse();
+    engine.glyph_cache.clear();
+    renderer.render(&frame).unwrap();
+    let restored = renderer.capture_rgba(window).unwrap();
+    assert!(
+        original.pixels() == restored.pixels(),
+        "atlas recycling corrupted retained text"
+    );
+}
+
+#[test]
+fn cached_packets_keep_their_atlas_pages_live_without_rasterizing_glyphs() {
+    let mut frame = SceneFrame::new(WindowId::new(8957), Size::new(200.0, 60.0));
+    frame.scene.push(SceneCommand::Label {
+        rect: Rect::new(0.0, 0.0, 200.0, 60.0),
+        text: "Keep this page".into(),
+        color: Color::WHITE,
+    });
+    let mut engine = TextEngine::new().unwrap();
+    let mut compositor = RetainedCompositorState::default();
+    engine.begin_frame();
+    prepare_with_compositor(&frame, &mut engine, &mut compositor).unwrap();
+    engine.begin_frame();
+    prepare_with_compositor(&frame, &mut engine, &mut compositor).unwrap();
+    assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
+    assert_eq!(engine.atlas.pages[0].last_used_frame, engine.frame_counter);
+    assert_eq!(engine.frame_stats.atlas_miss_count, 0);
+}
+
+#[test]
 pub(crate) fn retained_packet_rebuild_stats_record_each_reason_and_preserve_grouping() {
     let mut rebuilds = RetainedPacketRebuildStats::default();
 

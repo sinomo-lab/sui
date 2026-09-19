@@ -5,6 +5,7 @@ mod command;
 mod diagnostics;
 mod layout_work;
 mod logo;
+mod measure_cache;
 mod overlay;
 mod reactive;
 mod resources;
@@ -1195,6 +1196,7 @@ struct WindowState {
     initial_size: Option<Size>,
     initial_position: Option<Point>,
     root: WidgetPod,
+    measure_queries: measure_cache::SharedQueryCache,
     graph: WidgetGraph,
     overlay_manager: overlay::OverlayManager,
     pending_overlay_focus: Option<FocusRequest>,
@@ -1269,6 +1271,7 @@ impl WindowState {
             initial_size,
             initial_position,
             graph: WidgetGraph::empty(root.id()),
+            measure_queries: measure_cache::MeasureQueryCache::shared(),
             overlay_manager: overlay::OverlayManager::default(),
             pending_overlay_focus: None,
             root,
@@ -4165,6 +4168,9 @@ impl WindowState {
     ) -> Vec<InvalidationRequest> {
         let constraints = self.measure_constraints();
         let scope = self.build_measure_scope(invalidations);
+        if (self.schedule.measure || self.viewport.is_none()) && scope.is_full_invalidation() {
+            self.measure_queries.borrow_mut().invalidate_context();
+        }
         let mut measure_ctx = MeasureCtx::new_scoped_at(
             self.id,
             self.root.id(),
@@ -4176,6 +4182,7 @@ impl WindowState {
             scope,
             self.last_tick_time,
         );
+        measure_ctx.set_query_cache(self.measure_queries.clone());
         layout_work::record(|work| work.layout_passes += 1);
         let measure_started = layout_work::started();
         let measured_root = if self.schedule.measure || self.viewport.is_none() {

@@ -479,7 +479,19 @@ impl WgpuRenderer {
                 .as_ref()
                 .expect("text atlas array created above");
             let upload_write_started = collect_stats.then(Instant::now);
+            clear_text_atlas_pages(
+                &shared.device,
+                &shared.queue,
+                &cached.texture,
+                uploads
+                    .iter()
+                    .filter(|(_, upload)| upload.clear_texture)
+                    .map(|(page, _)| *page as u32),
+            );
             for (page_index, upload) in &uploads {
+                if upload.pixels.is_empty() {
+                    continue;
+                }
                 shared.queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &cached.texture,
@@ -555,9 +567,21 @@ impl WgpuRenderer {
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
+        let existing_layers = self
+            .text_atlas_array
+            .as_ref()
+            .filter(|old| old.size == page_size)
+            .map_or(0, |old| old.layers);
+        clear_text_atlas_pages(
+            &shared.device,
+            &shared.queue,
+            &texture,
+            existing_layers..required_layers,
+        );
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
@@ -1104,4 +1128,42 @@ pub(crate) struct OffscreenTarget {
     pub(crate) view: wgpu::TextureView,
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) size: (u32, u32),
+}
+
+/// Initialize fresh/recycled pages on the GPU, avoiding a full CPU zero-image copy.
+fn clear_text_atlas_pages(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    pages: impl Iterator<Item = u32>,
+) {
+    let mut pages = pages.peekable();
+    if pages.peek().is_none() {
+        return;
+    }
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("SUI clear text atlas pages"),
+    });
+    for page in pages {
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: page,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("SUI clear text atlas page"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+    }
+    queue.submit([encoder.finish()]);
 }

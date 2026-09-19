@@ -311,6 +311,21 @@ pub(crate) struct RetainedDirectPacket {
     pub(crate) signature: u64,
     pub(crate) coordinate_space: PacketCoordinateSpace,
     pub(crate) draw_ops: DrawOpArena,
+    pub(crate) text_pages: u8,
+    pub(crate) atlas_versions: [u64; crate::text::TEXT_ATLAS_MAX_PAGES],
+}
+
+impl RetainedDirectPacket {
+    fn atlas_is_current(&self, engine: &TextEngine) -> bool {
+        (0..crate::text::TEXT_ATLAS_MAX_PAGES).all(|page| {
+            self.text_pages & (1 << page) == 0
+                || engine
+                    .atlas
+                    .pages
+                    .get(page)
+                    .is_some_and(|p| p.generation == self.atlas_versions[page])
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,6 +455,9 @@ pub(crate) struct RetainedCompositorState {
     pub(crate) last_frame_stats: RetainedCompositorFrameStats,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) path_cache: PathMeshCache,
+    // Small packets are retained only while present in the current snapshot.
+    // Split at balanced graphics-state boundaries, without adding scene layers.
+    pub(crate) packet_draw_limit: usize,
 }
 
 impl Default for RetainedCompositorState {
@@ -461,6 +479,7 @@ impl Default for RetainedCompositorState {
             last_frame_stats: RetainedCompositorFrameStats::default(),
             diagnostics_enabled: true,
             path_cache: PathMeshCache::default(),
+            packet_draw_limit: 16,
         }
     }
 }
@@ -601,6 +620,8 @@ impl RetainedCompositorState {
         let mut effect_items = Vec::new();
         let mut segment_scene = Scene::new();
         let mut segment_start = None::<ResolvedRasterState>;
+        let mut draws = 0usize;
+        let mut scopes = [0usize; 3]; // transform, clip, text render policy
 
         for command in scene.commands() {
             match command {
@@ -616,6 +637,7 @@ impl RetainedCompositorState {
                         inherited_clip_count,
                     );
 
+                    draws = 0;
                     let mut child_state = state.clone();
                     if !layer.descriptor.clip_to_ancestors {
                         child_state.clip_stack.clear();
@@ -671,6 +693,32 @@ impl RetainedCompositorState {
                     }
                     segment_scene.push(command.clone());
                     self.apply_command_to_traversal_state(command, &mut state);
+                    match command {
+                        SceneCommand::PushTransform { .. } => scopes[0] += 1,
+                        SceneCommand::PopTransform => scopes[0] = scopes[0].saturating_sub(1),
+                        SceneCommand::PushClip { .. } | SceneCommand::PushClipPath { .. } => {
+                            scopes[1] += 1
+                        }
+                        SceneCommand::PopClip => scopes[1] = scopes[1].saturating_sub(1),
+                        SceneCommand::PushTextRenderPolicy { .. } => scopes[2] += 1,
+                        SceneCommand::PopTextRenderPolicy => {
+                            scopes[2] = scopes[2].saturating_sub(1)
+                        }
+                        _ => draws += usize::from(command_has_draw_content(command)),
+                    }
+                    if draws >= self.packet_draw_limit && scopes == [0; 3] {
+                        flush_container_segment(
+                            container,
+                            &mut result,
+                            &mut normal_items,
+                            &mut overlay_items,
+                            &mut effect_items,
+                            &mut segment_scene,
+                            &mut segment_start,
+                            inherited_clip_count,
+                        );
+                        draws = 0;
+                    }
                 }
             }
         }
@@ -819,6 +867,34 @@ impl RetainedCompositorState {
         global_rebuild: bool,
         frame_stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
+        for packet in &snapshot.root.packets {
+            self.protect_reused_packet_pages(
+                frame,
+                packet,
+                PacketCoordinateSpace::World,
+                text_engine,
+                feather_width,
+            );
+        }
+        for layer in snapshot.layers.values() {
+            let (origin, pixel_origin) = self.layer_packet_origins(layer);
+            for packet in &layer.packets {
+                let normalized = normalize_packet_snapshot(
+                    packet.clone(),
+                    PacketCoordinateSpace::LayerLocal,
+                    origin,
+                    pixel_origin,
+                    frame.scale_factor,
+                );
+                self.protect_reused_packet_pages(
+                    frame,
+                    &normalized,
+                    PacketCoordinateSpace::LayerLocal,
+                    text_engine,
+                    feather_width,
+                );
+            }
+        }
         let previous_layers = self.layers.clone();
         let layer_translation_deltas = snapshot
             .layers
@@ -954,18 +1030,8 @@ impl RetainedCompositorState {
             let packet_dirty =
                 global_rebuild || structure_changed || packet_dirty_layers.contains(&layer_id);
             let coordinate_space = PacketCoordinateSpace::LayerLocal;
-            let normalization_origin = layer_snapshot.descriptor.bounds.origin.to_vector();
-            let local_origin = layer_snapshot.descriptor.bounds.origin
-                + layer_snapshot.composed_properties.translation;
-            let layer_world_transform = self
-                .transforms
-                .get(&layer_snapshot.transform_node)
-                .map_or(Transform::IDENTITY, |transform| transform.world);
-            let pixel_snap_origin = if layer_world_transform.is_identity() {
-                local_origin.to_vector()
-            } else {
-                Vector::ZERO
-            };
+            let (normalization_origin, pixel_snap_origin) =
+                self.layer_packet_origins(&layer_snapshot);
             for packet in layer_snapshot.packets {
                 self.upsert_packet(
                     frame,
@@ -985,6 +1051,57 @@ impl RetainedCompositorState {
         self.packets
             .retain(|packet_id, _| valid_packets.contains(packet_id));
         Ok(())
+    }
+
+    fn layer_packet_origins(&self, layer: &LayerSnapshot) -> (Vector, Vector) {
+        let origin = layer.descriptor.bounds.origin.to_vector();
+        let local_origin = layer.descriptor.bounds.origin + layer.composed_properties.translation;
+        let transform = self
+            .transforms
+            .get(&layer.transform_node)
+            .map_or(Transform::IDENTITY, |node| node.world);
+        (
+            origin,
+            if transform.is_identity() {
+                local_origin.to_vector()
+            } else {
+                Vector::ZERO
+            },
+        )
+    }
+
+    fn protect_reused_packet_pages(
+        &self,
+        frame: &SceneFrame,
+        snapshot: &PacketSnapshot,
+        space: PacketCoordinateSpace,
+        engine: &mut TextEngine,
+        feather_width: f32,
+    ) {
+        let Some(packet) = self.packets.get(&snapshot.id) else {
+            return;
+        };
+        if packet.text_pages == 0
+            || packet.coordinate_space != space
+            || !packet.atlas_is_current(engine)
+            || packet.initial_state != snapshot.initial_state
+            || packet.scene != snapshot.scene
+            || packet.signature
+                != packet_signature(
+                    &snapshot.scene,
+                    &snapshot.initial_state,
+                    frame.viewport,
+                    frame.surface_size,
+                    feather_width,
+                )
+        {
+            return;
+        }
+        for page in 0..crate::text::TEXT_ATLAS_MAX_PAGES {
+            if packet.text_pages & (1 << page) != 0 {
+                engine.atlas.touch_page(page, engine.frame_counter);
+            }
+        }
     }
 
     pub(crate) fn upsert_packet(
@@ -1026,6 +1143,10 @@ impl RetainedCompositorState {
             None => Some(PacketRebuildReason::NewPacket),
             Some(packet) if packet.coordinate_space != coordinate_space => {
                 Some(PacketRebuildReason::CoordinateSpace)
+            }
+            // Another window can recycle a page used by this retained packet.
+            Some(packet) if !packet.atlas_is_current(text_engine) => {
+                Some(PacketRebuildReason::State)
             }
             Some(packet) if packet.signature != signature => {
                 if self.diagnostics_enabled {
@@ -1100,6 +1221,17 @@ impl RetainedCompositorState {
                     initial_state: snapshot.initial_state,
                     signature,
                     coordinate_space,
+                    text_pages: draw_ops
+                        .text_instances
+                        .iter()
+                        .fold(0, |mask, glyph| mask | (1 << glyph.layer)),
+                    atlas_versions: std::array::from_fn(|page| {
+                        text_engine
+                            .atlas
+                            .pages
+                            .get(page)
+                            .map_or(0, |p| p.generation)
+                    }),
                     draw_ops,
                 },
             );
@@ -1531,24 +1663,26 @@ impl RetainedCompositorState {
 }
 
 pub(crate) fn scene_has_draw_content(scene: &Scene) -> bool {
-    scene.commands().iter().any(|command| {
-        matches!(
-            command,
-            SceneCommand::Clear(_)
-                | SceneCommand::FillRect { .. }
-                | SceneCommand::StrokeRect { .. }
-                | SceneCommand::FillPath { .. }
-                | SceneCommand::StrokePath { .. }
-                | SceneCommand::DrawText(_)
-                | SceneCommand::DrawShapedText(_)
-                | SceneCommand::DrawShapedTextWindow(_)
-                | SceneCommand::DrawImage { .. }
-                | SceneCommand::DrawImageQuad { .. }
-                | SceneCommand::DrawShaderRect { .. }
-                | SceneCommand::FillRoundedRect { .. }
-                | SceneCommand::Label { .. }
-        )
-    })
+    scene.commands().iter().any(command_has_draw_content)
+}
+
+fn command_has_draw_content(command: &SceneCommand) -> bool {
+    matches!(
+        command,
+        SceneCommand::Clear(_)
+            | SceneCommand::FillRect { .. }
+            | SceneCommand::StrokeRect { .. }
+            | SceneCommand::FillPath { .. }
+            | SceneCommand::StrokePath { .. }
+            | SceneCommand::DrawText(_)
+            | SceneCommand::DrawShapedText(_)
+            | SceneCommand::DrawShapedTextWindow(_)
+            | SceneCommand::DrawImage { .. }
+            | SceneCommand::DrawImageQuad { .. }
+            | SceneCommand::DrawShaderRect { .. }
+            | SceneCommand::FillRoundedRect { .. }
+            | SceneCommand::Label { .. }
+    )
 }
 
 pub(crate) fn normalize_packet_snapshot(

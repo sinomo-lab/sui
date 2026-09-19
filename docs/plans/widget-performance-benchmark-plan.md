@@ -16,9 +16,27 @@ by initial window events through the first render. Final measurement still
 commits widget state before arrangement; cached scalar probes do not restore
 layout handles or child geometry. Probe dependencies remain observable until
 measurement invalidation discards the affected caches. Dirty/forced subtrees
-continue to execute ordinary measurement callbacks. Diagnostic counters separate
-probe hits from final measurement hits. Renderer packet granularity and native
-first-present validation remain follow-up work.
+continue to execute final measurement callbacks. Diagnostic counters separate
+probe hits, size-only hook execution, and final measurement hits.
+
+The second optimization pass adds a compatible `Widget::measure_size` fallback
+and dedicated size-only paths for Flex, Grid, Stack, and common wrappers.
+Child `measure` calls retain their stateful contract; transparent custom wrappers
+can explicitly forward `measure_size`. A lazy,
+window-owned LRU supplements the small pod caches only after their local slots
+fill, avoiding shared-cache work for small query sets.
+Its fixed-size entries have a conservative byte charge and an eight MiB budget;
+keys include widget revision and exact constraints. Full window invalidation
+changes the context identity, so unvisited pods also discard stale measurements.
+The retained
+renderer splits direct packets at balanced graphics-state boundaries (long open
+state scopes remain intact), tracks
+atlas page generations, and updates changed GPU buffer ranges using bounded CPU
+shadows. Fresh and recycled atlas pages clear on the GPU and upload populated
+regions. Cached packets protect the atlas pages they reference. Packet history
+is pruned with the current scene; buffer shadows follow window/fragment lifetime.
+The benchmark matrix includes nested-layout depth scaling and separate cold
+atlas and warm packet/upload runs. Native first-present validation remains open.
 
 ## Questions the suite must answer
 

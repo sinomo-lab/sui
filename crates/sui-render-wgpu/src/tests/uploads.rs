@@ -18,6 +18,82 @@ fn frame(window: WindowId, color: Color, rect_count: usize) -> SceneFrame {
 }
 
 #[test]
+fn optimization_regression_unchanged_vertices_are_not_uploaded_again() {
+    let mut renderer = WgpuRenderer::new();
+    let window = WindowId::new(8951);
+    let content = frame(window, Color::WHITE, 64);
+    renderer.render(&content).unwrap();
+    assert!(
+        renderer
+            .last_frame_stats(window)
+            .unwrap()
+            .uploaded_vertex_bytes
+            > 0
+    );
+    let original = renderer.capture_rgba(window).unwrap();
+    renderer.render(&content).unwrap();
+    assert_eq!(
+        renderer
+            .last_frame_stats(window)
+            .unwrap()
+            .uploaded_vertex_bytes,
+        0
+    );
+    assert!(original.pixels() == renderer.capture_rgba(window).unwrap().pixels());
+}
+
+#[test]
+fn local_vertex_changes_upload_a_subrange_and_preserve_other_geometry() {
+    let window = WindowId::new(8956);
+    let mut renderer = WgpuRenderer::new();
+    let mut scene = frame(window, Color::WHITE, 8);
+    renderer.render(&scene).unwrap();
+    let full_bytes = renderer
+        .last_frame_stats(window)
+        .unwrap()
+        .uploaded_vertex_bytes;
+    let mut updated = frame(window, Color::WHITE, 8);
+    // Rebuild the same geometry with one changed color in the middle.
+    updated.scene.clear();
+    updated.scene.push(SceneCommand::Clear(Color::BLACK));
+    for i in 0..8 {
+        updated.scene.push(SceneCommand::FillRect {
+            rect: Rect::new(i as f32 * 4.0, 0.0, 4.0, 32.0),
+            brush: if i == 4 { Color::BLACK } else { Color::WHITE }.into(),
+        });
+    }
+    renderer.render(&updated).unwrap();
+    let changed_bytes = renderer
+        .last_frame_stats(window)
+        .unwrap()
+        .uploaded_vertex_bytes;
+    assert!(changed_bytes > 0 && changed_bytes < full_bytes);
+    assert_rgba_pixel_near(
+        &renderer.capture_rgba(window).unwrap(),
+        18,
+        16,
+        [0, 0, 0, 255],
+        1,
+    );
+    let mut reference = WgpuRenderer::new();
+    reference.render(&updated).unwrap();
+    crate::tests::support::assert_rgba_images_match(
+        &renderer.capture_rgba(window).unwrap(),
+        &reference.capture_rgba(window).unwrap(),
+    );
+    // Growth and shrink must also update bytes beyond the old logical length.
+    for count in [2, 64, 8] {
+        scene = frame(window, Color::WHITE, count);
+        renderer.render(&scene).unwrap();
+        reference.render(&scene).unwrap();
+        crate::tests::support::assert_rgba_images_match(
+            &renderer.capture_rgba(window).unwrap(),
+            &reference.capture_rgba(window).unwrap(),
+        );
+    }
+}
+
+#[test]
 fn vertex_allocations_are_reused_across_changes_empty_frames_and_growth() {
     let mut renderer = WgpuRenderer::new();
     let window = WindowId::new(8901);

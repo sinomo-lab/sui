@@ -100,6 +100,9 @@ impl Widget for Root {
 // as built-in containers, rather than a second layout model.
 struct Child(SingleChild);
 impl Widget for Child {
+    fn measure_size(&mut self, c: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.0.measure_size(c, constraints)
+    }
     fn measure(&mut self, c: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.0.measure(c, constraints)
     }

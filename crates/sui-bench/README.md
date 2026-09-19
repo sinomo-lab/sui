@@ -98,7 +98,8 @@ target/release/sui-bench run --preset updates --fixture controls-grid --size 128
 ```
 
 The runtime `layout-diagnostics` feature supplies thread-local construction/drop,
-measure/cache/constraint, natural-probe and intrinsic cache hits,
+measure/cache/constraint, size-only hook executions, local/window query cache hits,
+and intrinsic cache hits,
 arrange/cache/translation, paint, semantics,
 and gutter-iteration counters. Disjoint root measure, arrange, and graph spans
 complement the existing aggregate frame phase. These call sites compile away in
@@ -106,7 +107,9 @@ normal builds without the feature; the collector is inactive until requested.
 
 Diagnostic samples also retain bounded inclusive widget hotspots, invalidation
 details, rebuild counts, and text-cache snapshots. GPU diagnostic runs include
-renderer draw/upload/atlas/retained-packet statistics. Warmup and teardown work
+renderer draw/upload/atlas/retained-packet statistics. Vertex upload bytes count
+actual buffer writes, including partial updates; atlas upload bytes exclude GPU
+page clears. Warmup and teardown work
 are identified separately. Text cache values are cumulative snapshots; use
 adjacent snapshots for deltas. Do not sum inclusive widget timings into totals.
 
@@ -162,3 +165,30 @@ display server.
 See the [suite design](../../docs/plans/widget-performance-benchmark-plan.md) for
 the complete measurement model and extension criteria. Benchmark source stays in
 this crate; measurements stay under `target/widget-bench/` or CI artifacts.
+
+## Renderer and nested-layout comparisons
+
+Use the same fixture inputs, feature set, CPU affinity, and observation level on
+both revisions. Keep a copy of each executable before editing/building the next
+revision. Run CPU timing separately from detailed GPU diagnostics:
+
+```sh
+target/release/sui-bench run --preset updates --size 128 --trials 5 --steps 200 --output target/widget-bench/cpu-updates
+for depth in 2 4 8; do
+  target/release/sui-bench run --preset updates --fixture nested-flex --size 128 --depth "$depth" --trials 3 --steps 100 --output "target/widget-bench/depth-$depth"
+done
+# Build with --all-features for these instrumented GPU runs.
+target/release/sui-bench run --preset startup --mode offscreen --fixture controls-grid --size 128 --cold-processes 30 --diagnostics --output target/widget-bench/gpu-startup
+target/release/sui-bench run --preset updates --mode offscreen --size 128 --trials 3 --steps 100 --diagnostics --output target/widget-bench/gpu-updates
+```
+
+Check local changes against whole-set text changes, resize, paint-only changes,
+and scrolling. For retained rendering, inspect packet build work and actual
+vertex/atlas uploads together with latency. The renderer tests compare chunked
+packets with an unsplit reference, including clips, transforms, text policy,
+DPI changes, atlas recycling, buffer growth, and window/resource lifetimes.
+The transparent `Child` adapter explicitly forwards `measure_size`, as built-in
+wrappers do; fixture content, topology, constraints, and mutations are unchanged.
+Custom containers retain the full-measure fallback until they opt into this hook.
+Repeat comparisons in reverse run order on shared hosts. Native presentation
+still needs a display-equipped runner.

@@ -68,10 +68,10 @@ pub fn work_json(work: Option<LayoutWorkSnapshot>) -> Value {
         return Value::Null;
     };
     json!({"constructed":w.constructed,"dropped":w.dropped,
-        "measure_requests":w.measure_requests,"measure_executions":w.measure_executions,
+        "measure_requests":w.measure_requests,"measure_executions":w.measure_executions,"size_measure_executions":w.size_measure_executions,
         "measure_cache_hits":w.measure_cache_hits,"forced_measures":w.forced_measures,
         "constraint_changes":w.constraint_changes,"first_measures":w.first_measures,"paint_executions":w.paint_executions,"semantics_executions":w.semantics_executions,
-        "probe_requests":w.probe_requests,"probe_cache_hits":w.probe_cache_hits,
+        "probe_requests":w.probe_requests,"probe_cache_hits":w.probe_cache_hits,"shared_probe_cache_hits":w.shared_probe_cache_hits,
         "intrinsic_executions":w.intrinsic_executions,"intrinsic_cache_hits":w.intrinsic_cache_hits,
         "intrinsic_horizontal":w.intrinsic_horizontal,"intrinsic_vertical":w.intrinsic_vertical,
         "arrange_requests":w.arrange_requests,"arrange_executions":w.arrange_executions,

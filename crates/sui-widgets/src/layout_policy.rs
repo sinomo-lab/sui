@@ -144,8 +144,13 @@ impl Grid {
     }
 }
 
-impl Widget for Grid {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+impl Grid {
+    fn measure_layout(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        size_only: bool,
+    ) -> GridLayout {
         let mut natural_sizes = Vec::with_capacity(self.children.len());
         let mut minimum_widths = Vec::with_capacity(self.children.len());
         for child in self.children.as_mut_slice() {
@@ -166,16 +171,28 @@ impl Widget for Grid {
                 .get(index)
                 .map(|item| item.cell)
                 .unwrap_or(Rect::ZERO);
-            natural_sizes[index] = child.measure(
-                ctx,
-                Constraints::new(Size::ZERO, Size::new(cell.width(), f32::INFINITY)),
-            );
+            let resolved = Constraints::new(Size::ZERO, Size::new(cell.width(), f32::INFINITY));
+            natural_sizes[index] = if size_only {
+                child.probe_measure(ctx, resolved)
+            } else {
+                child.measure(ctx, resolved)
+            };
         }
-        self.layout = grid_layout(
+        grid_layout(
             &self.style,
             &self.layout_items(&natural_sizes, &minimum_widths),
             constraints,
-        );
+        )
+    }
+}
+
+impl Widget for Grid {
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measure_layout(ctx, constraints, true).size
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.layout = self.measure_layout(ctx, constraints, false);
         self.layout.size
     }
 
