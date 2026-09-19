@@ -27,5 +27,6 @@ sui = { workspace = true, features = ["desktop"] }
 wry = { workspace = true, features = ["os-webview"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gtk = "0.18"
+# Wry 0.57 uses the GTK 0.18 binding types.
+gtk = "0.18.2"
 wry = { workspace = true, features = ["os-webview", "x11"] }

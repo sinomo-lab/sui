@@ -8,13 +8,30 @@
   ],
   "use-cases": [],
   "tags": [
+    "empty",
+    "deletion",
+    "cleanup",
+    "junk",
+    "clear",
     "garbage",
     "delete",
     "remove",
-    "bin"
+    "bin",
+    "waste",
+    "recycle",
+    "discard",
+    "binoculars",
+    "rubbish"
   ],
   "categories": [
     "files",
     "mail"
+  ],
+  "aliases": [
+    {
+      "name": "trash-2",
+      "deprecated": true,
+      "deprecationReason": "alias.duplicate"
+    }
   ]
 }

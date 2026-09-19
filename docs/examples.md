@@ -184,7 +184,7 @@ the checkout, build the extension, and run every example:
 ```bash
 python3 -m venv /tmp/sui-python-venv
 source /tmp/sui-python-venv/bin/activate
-python -m pip install "maturin>=1.7,<2"
+python -m pip install "maturin>=1.15,<2"
 (cd crates/sui-python && maturin develop)
 python crates/sui-python/examples/counter.py
 python crates/sui-python/examples/custom_widget.py

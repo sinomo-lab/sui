@@ -481,6 +481,7 @@ mod tests {
                 rect_command_time_us: 80,
                 text_sample: Some("packet text".to_string()),
             }),
+            ..Default::default()
         };
 
         let diagnostics = renderer_submission_diagnostics_from_frame_stats(&renderer_stats);

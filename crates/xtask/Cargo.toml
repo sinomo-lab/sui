@@ -14,6 +14,6 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-syn = { version = "2.0.119", features = ["full", "visit"] }
-quote = "1.0.46"
-proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
+syn = { version = "3.0.6", features = ["full", "visit"] }
+quote = "1.0.47"
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }

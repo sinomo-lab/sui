@@ -18,7 +18,6 @@ name = "sui_render_wgpu"
 [dependencies]
 bytemuck = { workspace = true }
 half = "2.7.1"
-fontdb = { workspace = true }
 lru = { workspace = true }
 lyon_path = { workspace = true }
 lyon_tessellation = { workspace = true }
@@ -38,4 +37,5 @@ web-time = { workspace = true }
 windows = { version = "0.62.2", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 
 [dev-dependencies]
-naga = { version = "30.0.0", features = ["wgsl-in"] }
+fontdb = { workspace = true }
+naga = { version = "30.0.1", features = ["wgsl-in"] }

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-pub const LUCIDE_VERSION: &str = "1.17.0";
+pub const LUCIDE_VERSION: &str = "1.47.0";
 pub const LUCIDE_IMAGE_HANDLE_BASE: u64 = 0x4c55_4349_0000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,6 +143,56 @@ mod tests {
     fn icon_lookup_finds_local_assets_by_kebab_name() {
         assert_eq!(icon_named("zoom-in"), Some(LucideIcon::ZoomIn));
         assert_eq!(icon_named("not-a-lucide-icon"), None);
+    }
+
+    #[test]
+    fn renamed_icons_preserve_existing_names_and_variants() {
+        let aliases = [
+            ("album", LucideIcon::Album, LucideIcon::SquareBookmark),
+            ("angry", LucideIcon::Angry, LucideIcon::FaceAngry),
+            (
+                "annoyed",
+                LucideIcon::Annoyed,
+                LucideIcon::FaceExpressionless,
+            ),
+            (
+                "book-marked",
+                LucideIcon::BookMarked,
+                LucideIcon::BookBookmark,
+            ),
+            (
+                "building-2",
+                LucideIcon::Building2,
+                LucideIcon::BuildingComplex,
+            ),
+            (
+                "flip-horizontal-2",
+                LucideIcon::FlipHorizontal2,
+                LucideIcon::TrianglesCenterlineDashedHorizontal,
+            ),
+            (
+                "flip-vertical-2",
+                LucideIcon::FlipVertical2,
+                LucideIcon::TrianglesCenterlineDashedVertical,
+            ),
+            ("frown", LucideIcon::Frown, LucideIcon::FaceSlightlyFrowning),
+            ("history", LucideIcon::History, LucideIcon::RotateCcwClock),
+            ("laugh", LucideIcon::Laugh, LucideIcon::FaceGrinning),
+            ("meh", LucideIcon::Meh, LucideIcon::FaceNeutral),
+            ("podcast", LucideIcon::Podcast, LucideIcon::MicSignal),
+            (
+                "smile-plus",
+                LucideIcon::SmilePlus,
+                LucideIcon::FaceSlightlySmilingPlus,
+            ),
+            ("smile", LucideIcon::Smile, LucideIcon::FaceSlightlySmiling),
+            ("trash-2", LucideIcon::Trash2, LucideIcon::Trash),
+        ];
+        for (name, alias, canonical) in aliases {
+            assert_eq!(icon_named(name), Some(alias));
+            assert_eq!(alias.svg(), canonical.svg(), "{name}");
+            assert_eq!(alias.path_data(), canonical.path_data(), "{name}");
+        }
     }
 
     #[test]

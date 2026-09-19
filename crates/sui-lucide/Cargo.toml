@@ -1,6 +1,6 @@
 [package]
 name = "sinomo-ui-lucide"
-version = "1.17.2"
+version = "1.47.0"
 description = "Embedded Lucide SVG icon resources for SUI."
 edition.workspace = true
 authors.workspace = true

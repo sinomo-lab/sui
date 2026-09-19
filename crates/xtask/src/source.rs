@@ -243,7 +243,7 @@ pub(crate) fn public_widgets(
                     types.insert(v.ident.to_string(), v.enum_token.span.start().line);
                 }
                 Item::Impl(v) => {
-                    if v.trait_.as_ref().is_some_and(|(_, path, _)| {
+                    if v.trait_.as_ref().is_some_and(|(path, _)| {
                         path.segments
                             .last()
                             .is_some_and(|part| part.ident == "Widget")

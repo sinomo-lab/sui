@@ -2,12 +2,15 @@
   "name": "sui-text-rendering-tools",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "text:compare": "node tools/text-rendering-compare/compare.mjs"
   },
   "devDependencies": {
     "pixelmatch": "7.2.0",
-    "playwright": "1.61.1",
+    "playwright": "1.63.0",
     "pngjs": "7.0.0"
   }
 }

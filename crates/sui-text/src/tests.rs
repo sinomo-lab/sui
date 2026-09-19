@@ -3,6 +3,7 @@ use crate::{
     TextDirection, TextDocument, TextFlowDirection, TextLayoutCacheSnapshot, TextLayoutRequest,
     TextParagraph, TextParagraphStyle, TextSelection, TextSpan, TextStyle, TextSystem,
 };
+use cosmic_text::fontdb;
 use sui_core::{Color, FontHandle, Point, Size};
 
 mod portable_fonts;

@@ -16,7 +16,7 @@ package; prebuilt wheels are not published yet.
 
 - Python 3.10 or newer;
 - Rust 1.90 or newer and Cargo;
-- Maturin 1.x (`maturin>=1.7,<2`);
+- Maturin 1.x (`maturin>=1.15,<2`);
 - for `App.run()`, a desktop supported by SUI's `winit` and `wgpu` backends.
 
 Use a virtual environment. If you are working in the SUI checkout, placing the
@@ -27,7 +27,7 @@ worktree:
 python3 -m venv /tmp/sui-python-venv
 source /tmp/sui-python-venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install "maturin>=1.7,<2"
+python -m pip install "maturin>=1.15,<2"
 ```
 
 ## Build for development
