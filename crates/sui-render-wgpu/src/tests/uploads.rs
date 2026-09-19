@@ -100,7 +100,11 @@ fn vertex_allocations_are_reused_across_changes_empty_frames_and_growth() {
     renderer
         .render(&frame(window, Color::srgba(1.0, 0.0, 0.0, 1.0), 1))
         .unwrap();
-    let original = renderer.frame_resources.fragments[&window][0]
+    let original = renderer.frame_resources.fragments[&window]
+        [&crate::retained::RetainedPacketId {
+            container: crate::retained::CompositionContainerId::Root,
+            segment_index: 0,
+        }]
         .extended
         .buffer
         .clone()
@@ -109,7 +113,10 @@ fn vertex_allocations_are_reused_across_changes_empty_frames_and_growth() {
         .render(&frame(window, Color::srgba(0.0, 1.0, 0.0, 1.0), 1))
         .unwrap();
     assert_eq!(
-        renderer.frame_resources.fragments[&window][0]
+        renderer.frame_resources.fragments[&window][&crate::retained::RetainedPacketId {
+            container: crate::retained::CompositionContainerId::Root,
+            segment_index: 0
+        }]
             .extended
             .buffer
             .as_ref(),
@@ -126,14 +133,20 @@ fn vertex_allocations_are_reused_across_changes_empty_frames_and_growth() {
     renderer.render(&frame(window, Color::BLACK, 0)).unwrap();
     renderer.render(&frame(window, Color::WHITE, 1)).unwrap();
     assert_eq!(
-        renderer.frame_resources.fragments[&window][0]
+        renderer.frame_resources.fragments[&window][&crate::retained::RetainedPacketId {
+            container: crate::retained::CompositionContainerId::Root,
+            segment_index: 0
+        }]
             .extended
             .buffer
             .as_ref(),
         Some(&original)
     );
     renderer.render(&frame(window, Color::WHITE, 32)).unwrap();
-    let grown = renderer.frame_resources.fragments[&window][0]
+    let grown = renderer.frame_resources.fragments[&window][&crate::retained::RetainedPacketId {
+        container: crate::retained::CompositionContainerId::Root,
+        segment_index: 0,
+    }]
         .extended
         .buffer
         .clone()
@@ -144,7 +157,10 @@ fn vertex_allocations_are_reused_across_changes_empty_frames_and_growth() {
         .render(&frame(window, Color::srgba(0.0, 0.0, 1.0, 1.0), 1))
         .unwrap();
     assert_eq!(
-        renderer.frame_resources.fragments[&window][0]
+        renderer.frame_resources.fragments[&window][&crate::retained::RetainedPacketId {
+            container: crate::retained::CompositionContainerId::Root,
+            segment_index: 0
+        }]
             .extended
             .buffer
             .as_ref(),
@@ -261,4 +277,101 @@ fn output_resources_reuse_bindings_but_update_color_policy_and_resized_source() 
         bind_group
     );
     assert_rgba_pixel_near(&renderer.capture_rgba(window).unwrap(), 16, 16, [255; 4], 1);
+}
+
+#[test]
+fn growing_text_keeps_other_packet_allocations_and_uploads_local() {
+    use crate::retained::{CompositionContainerId, RetainedPacketId};
+    use crate::tests::support::assert_rgba_images_match;
+    let window = WindowId::new(8962);
+    let mut renderer = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    reference
+        .compositors
+        .entry(window)
+        .or_default()
+        .packet_draw_limit = usize::MAX;
+    let make = |grow| {
+        let mut frame = SceneFrame::new(window, Size::new(480.0, 160.0));
+        frame.scene.push(SceneCommand::Clear(Color::BLACK));
+        for index in 0..64 {
+            frame.scene.push(SceneCommand::Label {
+                rect: Rect::new(
+                    (index % 8) as f32 * 60.0,
+                    (index / 8) as f32 * 20.0,
+                    59.0,
+                    20.0,
+                ),
+                text: if grow && index == 0 { "AAAA" } else { "A" }.into(),
+                color: Color::WHITE,
+            });
+        }
+        frame
+    };
+    renderer.render(&make(false)).unwrap();
+    let full_upload = renderer
+        .last_frame_stats(window)
+        .unwrap()
+        .uploaded_vertex_bytes;
+    let stable = RetainedPacketId {
+        container: CompositionContainerId::Root,
+        segment_index: 2,
+    };
+    let buffer = renderer.frame_resources.fragments[&window][&stable]
+        .text
+        .buffer
+        .clone();
+    for grow in [true, false, true] {
+        let frame = make(grow);
+        renderer.render(&frame).unwrap();
+        reference.render(&frame).unwrap();
+        assert_eq!(
+            renderer.frame_resources.fragments[&window][&stable]
+                .text
+                .buffer,
+            buffer
+        );
+        let stats = renderer.last_frame_stats(window).unwrap();
+        assert!(
+            stats.uploaded_vertex_bytes < full_upload / 2,
+            "{} of {} bytes uploaded",
+            stats.uploaded_vertex_bytes,
+            full_upload
+        );
+        assert_rgba_images_match(
+            &renderer.capture_rgba(window).unwrap(),
+            &reference.capture_rgba(window).unwrap(),
+        );
+    }
+    renderer
+        .render(&SceneFrame::new(window, Size::new(480.0, 160.0)))
+        .unwrap();
+    assert!(renderer.frame_resources.fragments[&window].is_empty());
+}
+
+#[test]
+fn initialization_diagnostics_distinguish_cold_and_reused_resources() {
+    let window = WindowId::new(8963);
+    let mut renderer = WgpuRenderer::new();
+    let content = frame(window, Color::WHITE, 1);
+    renderer.render(&content).unwrap();
+    let cold = renderer.last_frame_stats(window).unwrap();
+    assert!(cold.device_prepare_time_us > 0);
+    assert!(cold.pipeline_create_count > 0);
+    assert!(cold.pipeline_create_time_us > 0);
+    renderer.render(&content).unwrap();
+    let warm = renderer.last_frame_stats(window).unwrap();
+    assert_eq!(warm.device_prepare_time_us, 0);
+    assert_eq!(warm.pipeline_create_count, 0);
+    assert_eq!(warm.pipeline_create_time_us, 0);
+    assert_eq!(warm.text_engine_init_time_us, 0);
+    let mut disabled = WgpuRenderer::new();
+    disabled.set_runtime_diagnostics_enabled(false);
+    disabled.render(&content).unwrap();
+    let disabled = disabled.last_frame_stats(window).unwrap();
+    assert_eq!(disabled.device_prepare_time_us, 0);
+    assert_eq!(disabled.pipeline_create_time_us, 0);
+    assert_eq!(disabled.pipeline_create_count, 0);
+    assert_eq!(disabled.text_engine_init_time_us, 0);
+    assert_eq!(disabled.target_prepare_time_us, 0);
 }

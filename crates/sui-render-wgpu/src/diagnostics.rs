@@ -64,6 +64,14 @@ impl RetainedPacketRebuildStats {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RendererFrameStats {
+    /// Adapter/device acquisition and shared renderer resources, on first use.
+    pub device_prepare_time_us: u64,
+    /// Offscreen color-target preparation (including resize allocations).
+    pub target_prepare_time_us: u64,
+    pub text_engine_init_time_us: u64,
+    /// Shader and pipeline creation; also included in pass encoding time.
+    pub pipeline_create_time_us: u64,
+    pub pipeline_create_count: usize,
     pub pass_count: usize,
     pub draw_count: usize,
     pub uploaded_vertex_bytes: u64,
@@ -155,6 +163,11 @@ impl RendererFrameStats {
         uploaded_vertex_bytes: u64,
     ) -> Self {
         Self {
+            device_prepare_time_us: 0,
+            target_prepare_time_us: 0,
+            text_engine_init_time_us: 0,
+            pipeline_create_time_us: 0,
+            pipeline_create_count: 0,
             pass_count,
             draw_count,
             uploaded_vertex_bytes,

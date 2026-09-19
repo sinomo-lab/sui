@@ -69,7 +69,14 @@ impl Backend {
                         "text_glyph_instances":s.text_glyph_instance_count,"atlas_misses":s.text_atlas_miss_count,"atlas_upload_bytes":s.text_atlas_upload_bytes,
                         "retained_packet_builds":s.retained_packet_build_count,"retained_packet_build_us":s.retained_packet_build_time_us,
                         "surface_acquire_us":s.surface_acquire_time_us,"surface_present_us":s.surface_present_time_us,
-                        "retained_rebuild_reasons":format!("{:?}",s.retained_packet_rebuilds)}));
+                        "retained_rebuild_reasons":format!("{:?}",s.retained_packet_rebuilds),
+                        "device_prepare_us":s.device_prepare_time_us,"target_prepare_us":s.target_prepare_time_us,
+                        "text_engine_init_us":s.text_engine_init_time_us,"pipeline_create_us":s.pipeline_create_time_us,
+                        "pipeline_create_count":s.pipeline_create_count,"scene_traversal_us":s.retained_scene_traversal_time_us,
+                        "composition_us":s.composition_time_us,"resource_collection_us":s.resource_collection_time_us,
+                        "bind_group_prepare_us":s.bind_group_prepare_time_us,"batch_prepare_us":s.batch_prepare_time_us,
+                        "gpu_upload_us":s.gpu_upload_time_us,"pass_encode_us":s.pass_encode_time_us,
+                        "queue_submit_us":s.queue_submit_time_us}));
             }
             if let Some(context) = self.registry.context() {
                 let info = context.adapter_info();

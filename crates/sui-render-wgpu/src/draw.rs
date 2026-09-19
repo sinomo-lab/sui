@@ -280,9 +280,11 @@ impl SceneRasterState {
         let mut state = Self::new(draw_ops);
         state.current_transform = resolved.current_transform;
         state.pixel_snap_offset = resolved.pixel_snap_offset;
-        state.transform_stack.clear();
-        state.text_render_policy = None;
-        state.text_render_policy_stack.clear();
+        state.transform_stack.clone_from(&resolved.transform_stack);
+        state.text_render_policy = resolved.text_render_policy;
+        state
+            .text_render_policy_stack
+            .clone_from(&resolved.text_render_policy_stack);
         state.path_clip_state_id = 0;
         state.active_path_clips.clear();
         state.clip_stack.clear();

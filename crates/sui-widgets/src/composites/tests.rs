@@ -5731,12 +5731,12 @@ fn icon_button_registered_image_keeps_selection_and_accessibility() {
     assert!(button.state.selected);
     let mut painted = false;
     output.frame.scene.visit_commands(&mut |command| {
-        if let SceneCommand::DrawImage { rect, source } = command {
-            if source.image == handle {
-                assert_eq!(rect.width(), 18.0);
-                assert!(source.tint.is_some());
-                painted = true;
-            }
+        if let SceneCommand::DrawImage { rect, source } = command
+            && source.image == handle
+        {
+            assert_eq!(rect.width(), 18.0);
+            assert!(source.tint.is_some());
+            painted = true;
         }
     });
     assert!(painted);

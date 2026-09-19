@@ -320,14 +320,19 @@ impl WgpuRenderer {
         self.ensure_shared(None)?;
 
         let final_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let target_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let final_view = self.ensure_offscreen_target(frame.window_id, size, final_format)?;
+        let mut target_us =
+            target_started.map_or(0, |started| started.elapsed().as_micros() as u64);
         let prepared = self.prepare_scene_submission(frame)?;
+        let target_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
         let intermediate_format = self
             .intermediate_targets
             .get(&frame.window_id)
             .map(|target| target.format)
             .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
+        target_us += target_started.map_or(0, |started| started.elapsed().as_micros() as u64);
         let mut frame_stats =
             self.submit_prepared_scene(prepared, intermediate_format, &intermediate_view)?;
         self.submit_output_transform_pass(
@@ -343,6 +348,7 @@ impl WgpuRenderer {
             None,
             &mut frame_stats,
         )?;
+        frame_stats.target_prepare_time_us = target_us;
         Ok(frame_stats)
     }
 

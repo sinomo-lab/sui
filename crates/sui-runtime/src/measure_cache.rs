@@ -7,7 +7,7 @@ use std::{
 
 use lru::LruCache;
 use sui_core::{Size, WidgetId};
-use sui_layout::Constraints;
+use sui_layout::{Axis, Constraints};
 
 // Fixed-size keys/values plus a conservative charge for the LRU node, hash
 // bucket, and allocation overhead. Storage grows on demand, never up front.
@@ -19,13 +19,30 @@ static NEXT_CONTEXT: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct QueryContext(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum QueryKind {
+    Size,
+    Width,
+    Height,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct QueryKey {
     widget: WidgetId,
     revision: u64,
     constraints: [u32; 4],
+    kind: QueryKind,
 }
 
 impl QueryKey {
+    pub(crate) fn with_axis(mut self, axis: Option<Axis>) -> Self {
+        self.kind = match axis {
+            None => QueryKind::Size,
+            Some(Axis::Horizontal) => QueryKind::Width,
+            Some(Axis::Vertical) => QueryKind::Height,
+        };
+        self
+    }
+
     pub(crate) fn new(widget: WidgetId, revision: u64, constraints: Constraints) -> Option<Self> {
         let values = [
             constraints.min.width,
@@ -39,6 +56,7 @@ impl QueryKey {
         Some(Self {
             widget,
             revision,
+            kind: QueryKind::Size,
             constraints: values.map(|v| if v == 0.0 { 0 } else { v.to_bits() }),
         })
     }

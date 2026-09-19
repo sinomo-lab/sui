@@ -138,6 +138,9 @@ impl SharedRenderer {
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
         Self {
+            collect_pipeline_timings: true,
+            pipeline_create_time_us: 0,
+            pipeline_create_count: 0,
             adapter,
             device,
             queue,
@@ -155,7 +158,8 @@ impl SharedRenderer {
     }
 }
 impl WgpuRenderer {
-    pub(crate) fn install_shared(&mut self, shared: SharedRenderer) {
+    pub(crate) fn install_shared(&mut self, mut shared: SharedRenderer) {
+        shared.collect_pipeline_timings = self.runtime_diagnostics_enabled;
         if let Some(registry) = &self.external_texture_registry {
             registry.attach(
                 shared.device.clone(),
@@ -174,6 +178,9 @@ impl WgpuRenderer {
             return Ok(());
         }
 
+        let started = self
+            .runtime_diagnostics_enabled
+            .then(web_time::Instant::now);
         #[cfg(target_os = "windows")]
         let preferred = self.preferred_windows_adapter(compatible_surface);
         #[cfg(not(target_os = "windows"))]
@@ -201,6 +208,9 @@ impl WgpuRenderer {
         .map_err(|error| Error::new(format!("failed to create wgpu device: {error}")))?;
 
         self.install_shared(SharedRenderer::new(adapter, device, queue));
+        if let Some(started) = started {
+            self.pending_device_prepare_time_us += started.elapsed().as_micros() as u64;
+        }
 
         Ok(())
     }

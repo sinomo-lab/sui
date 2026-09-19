@@ -39,6 +39,132 @@ use sui_text::TextRun;
 use sui_text::TextStyle;
 
 #[test]
+fn open_scope_checkpoints_preserve_pops_policy_and_pixels_across_chunks() {
+    use sui_core::Transform;
+    use sui_scene::{TextRenderCoveragePolicy, TextRenderPolicy};
+    let window = WindowId::new(8960);
+    let mut chunked = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    reference
+        .compositors
+        .entry(window)
+        .or_default()
+        .packet_draw_limit = usize::MAX;
+    for mode in 0..4 {
+        let layer = mode != 0;
+        for revision in 0..3 {
+            let mut content = Scene::new();
+            if !layer {
+                content.push(SceneCommand::PushTransform {
+                    transform: Transform::translation(0.25, 0.5),
+                });
+            }
+            if mode == 3 {
+                content.push(SceneCommand::PushTransform {
+                    transform: Transform::scale(1.1, 0.9),
+                });
+            }
+            content.push(SceneCommand::PushClip {
+                rect: Rect::new(2.0, 1.0, 186.0, 117.0),
+            });
+            content.push(SceneCommand::PushTextRenderPolicy {
+                policy: TextRenderPolicy {
+                    coverage_policy: Some(TextRenderCoveragePolicy::Gamma(1.4)),
+                    ..Default::default()
+                },
+            });
+            content.push(SceneCommand::PushClipPath {
+                path: Path::rounded_rect(Rect::new(0.0, 0.0, 192.0, 120.0), 8.0),
+            });
+            if mode == 3 {
+                content.push(SceneCommand::PopTransform);
+            }
+            for index in 0..48 {
+                if index == 19 {
+                    content.push(SceneCommand::PopClip);
+                    content.push(SceneCommand::PushTextRenderPolicy {
+                        policy: TextRenderPolicy {
+                            coverage_policy: Some(TextRenderCoveragePolicy::Gamma(2.0)),
+                            ..Default::default()
+                        },
+                    });
+                }
+                if index == 37 {
+                    content.push(SceneCommand::PopTextRenderPolicy);
+                    if !layer {
+                        content.push(SceneCommand::PopTransform);
+                    }
+                }
+                let x = (index % 8) as f32 * 24.0;
+                let y = (index / 8) as f32 * 20.0;
+                content.push(SceneCommand::FillRect {
+                    rect: Rect::new(x, y, 22.0, 18.0),
+                    brush: Color::srgba(0.2, 0.1, 0.3, 0.5).into(),
+                });
+                content.push(SceneCommand::Label {
+                    rect: Rect::new(x, y, 22.0, 18.0),
+                    text: if index == 22 && revision == 1 {
+                        "BBB"
+                    } else {
+                        "A"
+                    }
+                    .into(),
+                    color: Color::WHITE,
+                });
+            }
+            content.push(SceneCommand::PopClip);
+            content.push(SceneCommand::PopTextRenderPolicy);
+            // Draw after the pops to catch leaked clips and policies.
+            content.push(SceneCommand::Label {
+                rect: Rect::new(0.0, 117.0, 200.0, 20.0),
+                text: "Restored".into(),
+                color: Color::WHITE,
+            });
+            let mut frame = SceneFrame::new(window, Size::new(200.0, 140.0));
+            frame.scale_factor = 1.25;
+            frame.surface_size = Size::new(250.0, 175.0);
+            frame.scene.push(SceneCommand::Clear(Color::BLACK));
+            if layer {
+                if mode == 2 {
+                    frame.scene.push(SceneCommand::PushTransform {
+                        transform: Transform::scale(1.1, 0.9)
+                            .then(Transform::translation(2.0, 3.0)),
+                    });
+                }
+                frame.scene.push(SceneCommand::Layer(SceneLayer::new(
+                    WidgetId::new(8961),
+                    Rect::new(1.5, 2.5, 192.0, 130.0),
+                    content,
+                )));
+                if mode == 2 {
+                    frame.scene.push(SceneCommand::PopTransform);
+                }
+            } else {
+                frame.scene.append(content);
+            }
+            chunked.render(&frame).unwrap();
+            reference.render(&frame).unwrap();
+            if mode < 2 {
+                assert!(chunked.compositors[&window].packets.len() >= 6);
+            }
+            if revision == 1 {
+                assert!(
+                    chunked
+                        .last_frame_stats(window)
+                        .unwrap()
+                        .retained_packet_build_count
+                        <= 2
+                );
+            }
+            assert_rgba_images_match(
+                &chunked.capture_rgba(window).unwrap(),
+                &reference.capture_rgba(window).unwrap(),
+            );
+        }
+    }
+}
+
+#[test]
 fn packet_chunks_match_unsplit_rendering_through_state_and_content_changes() {
     use sui_core::Transform;
     use sui_scene::{TextRenderCoveragePolicy, TextRenderPolicy};

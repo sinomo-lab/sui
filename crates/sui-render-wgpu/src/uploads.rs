@@ -48,6 +48,8 @@ impl GpuUploads {
 // Bound CPU copies independently of GPU buffer capacity. Oversized streams
 // keep the full-upload fallback, and shadows follow their window/fragment lifetime.
 const MAX_VERTEX_SHADOW_BYTES: usize = 4 * 1024 * 1024;
+// Packet-local allocations must not multiply the old six-stream shadow budget.
+pub(crate) const MAX_WINDOW_VERTEX_SHADOW_BYTES: usize = 6 * MAX_VERTEX_SHADOW_BYTES;
 
 #[derive(Default)]
 pub(crate) struct VertexBuffer {
@@ -116,6 +118,26 @@ pub(crate) struct FragmentBuffers {
     pub(crate) text: VertexBuffer,
 }
 
+impl FragmentBuffers {
+    pub(crate) fn limit_shadows(&mut self, remaining: &mut usize) {
+        for stream in [
+            &mut self.solid,
+            &mut self.scene,
+            &mut self.analytic,
+            &mut self.extended,
+            &mut self.clip,
+            &mut self.text,
+        ] {
+            let bytes = stream.shadow.capacity();
+            if bytes <= *remaining {
+                *remaining -= bytes;
+            } else {
+                stream.shadow = Vec::new();
+            }
+        }
+    }
+}
+
 /// Compare aligned chunks, then tighten the changed interval to copy alignment.
 /// Suffix comparisons use the same offsets even when a stream grows or shrinks.
 fn changed_vertex_range(previous: &[u8], next: &[u8]) -> std::ops::Range<usize> {
@@ -148,6 +170,20 @@ fn changed_vertex_range(previous: &[u8], next: &[u8]) -> std::ops::Range<usize> 
 #[cfg(test)]
 mod tests {
     use super::changed_vertex_range;
+
+    #[test]
+    fn packet_shadows_share_a_window_budget_charged_by_capacity() {
+        let mut first = super::FragmentBuffers::default();
+        let mut second = super::FragmentBuffers::default();
+        first.solid.shadow = vec![0; 16];
+        second.text.shadow = vec![0; 16];
+        let mut remaining = 24;
+        first.limit_shadows(&mut remaining);
+        second.limit_shadows(&mut remaining);
+        assert_eq!(remaining, 8);
+        assert_eq!(first.solid.shadow.capacity(), 16);
+        assert_eq!(second.text.shadow.capacity(), 0);
+    }
 
     #[test]
     fn dirty_range_handles_alignment_growth_shrink_and_multiple_edits() {

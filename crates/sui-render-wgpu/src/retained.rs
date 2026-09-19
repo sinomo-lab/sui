@@ -33,6 +33,7 @@ use sui_scene::SceneFrame;
 use sui_scene::SceneLayer;
 use sui_scene::SceneLayerId;
 use sui_scene::SceneLayerUpdateKind;
+use sui_scene::TextRenderPolicy;
 use sui_text::TextStyle;
 use web_time::Instant;
 
@@ -165,8 +166,9 @@ pub(crate) struct RetainedFrameSubmission {
 }
 
 #[derive(Debug)]
-pub(crate) enum RetainedFrameFragment {
-    Transient(DrawOpArena),
+pub(crate) struct RetainedFrameFragment {
+    pub(crate) id: RetainedPacketId,
+    pub(crate) draw_ops: DrawOpArena,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,6 +232,9 @@ pub(crate) struct EffectNode {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedRasterState {
     pub(crate) current_transform: Transform,
+    pub(crate) transform_stack: Vec<Transform>,
+    pub(crate) text_render_policy: Option<TextRenderPolicy>,
+    pub(crate) text_render_policy_stack: Vec<Option<TextRenderPolicy>>,
     pub(crate) pixel_snap_offset: Vector,
     pub(crate) clip_stack: Vec<ResolvedClipPrimitive>,
     pub(crate) transform_node: TransformNodeId,
@@ -241,6 +246,19 @@ impl ResolvedRasterState {
     pub(crate) fn signature(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         hash_transform(&mut hasher, self.current_transform);
+        self.transform_stack.len().hash(&mut hasher);
+        for transform in &self.transform_stack {
+            hash_transform(&mut hasher, *transform);
+        }
+        self.text_render_policy_stack.len().hash(&mut hasher);
+        for policy in
+            std::iter::once(&self.text_render_policy).chain(&self.text_render_policy_stack)
+        {
+            policy.is_some().hash(&mut hasher);
+            if let Some(policy) = policy {
+                hash_text_render_policy(*policy, &mut hasher);
+            }
+        }
         self.pixel_snap_offset.x.to_bits().hash(&mut hasher);
         self.pixel_snap_offset.y.to_bits().hash(&mut hasher);
         self.transform_node.hash(&mut hasher);
@@ -398,6 +416,8 @@ pub(crate) struct CompositionTraversalState {
     pub(crate) current_transform: Transform,
     pub(crate) transform_node: TransformNodeId,
     pub(crate) transform_stack: Vec<(Transform, TransformNodeId)>,
+    pub(crate) text_render_policy: Option<TextRenderPolicy>,
+    pub(crate) text_render_policy_stack: Vec<Option<TextRenderPolicy>>,
     pub(crate) clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
     pub(crate) effect_node: EffectNodeId,
     pub(crate) composed_layer_properties: LayerProperties,
@@ -409,6 +429,8 @@ impl Default for CompositionTraversalState {
             current_transform: Transform::IDENTITY,
             transform_node: TransformNodeId::ROOT,
             transform_stack: Vec::new(),
+            text_render_policy: None,
+            text_render_policy_stack: Vec::new(),
             clip_stack: Vec::new(),
             effect_node: EffectNodeId::ROOT,
             composed_layer_properties: LayerProperties::default(),
@@ -420,6 +442,13 @@ impl CompositionTraversalState {
     pub(crate) fn resolved_state(&self) -> ResolvedRasterState {
         ResolvedRasterState {
             current_transform: self.current_transform,
+            transform_stack: self
+                .transform_stack
+                .iter()
+                .map(|(transform, _)| *transform)
+                .collect(),
+            text_render_policy: self.text_render_policy,
+            text_render_policy_stack: self.text_render_policy_stack.clone(),
             pixel_snap_offset: Vector::ZERO,
             clip_stack: self
                 .clip_stack
@@ -456,7 +485,9 @@ pub(crate) struct RetainedCompositorState {
     pub(crate) diagnostics_enabled: bool,
     pub(crate) path_cache: PathMeshCache,
     // Small packets are retained only while present in the current snapshot.
-    // Split at balanced graphics-state boundaries, without adding scene layers.
+    // Checkpoints carry clips and text policy across chunk boundaries. World
+    // packets also carry transform stacks; layer-local transforms stay balanced
+    // so normalization can remove the inherited transform without inversion.
     pub(crate) packet_draw_limit: usize,
 }
 
@@ -524,11 +555,9 @@ impl RetainedCompositorState {
         let composition_started = self.diagnostics_enabled.then(Instant::now);
         let mut submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
         for fragment in &mut submission.fragments {
-            match fragment {
-                RetainedFrameFragment::Transient(draw_ops) => {
-                    draw_ops.finalize_image_draws(frame.viewport, frame.surface_size);
-                }
-            }
+            fragment
+                .draw_ops
+                .finalize_image_draws(frame.viewport, frame.surface_size);
         }
         self.finish_frame(
             frame.viewport,
@@ -622,6 +651,9 @@ impl RetainedCompositorState {
         let mut segment_start = None::<ResolvedRasterState>;
         let mut draws = 0usize;
         let mut scopes = [0usize; 3]; // transform, clip, text render policy
+        // A transformed clip's world-space bounding box cannot be converted
+        // back to layer-local geometry losslessly. Keep that scope intact.
+        let mut local_clips_untransformed = Vec::new();
 
         for command in scene.commands() {
             match command {
@@ -697,16 +729,24 @@ impl RetainedCompositorState {
                         SceneCommand::PushTransform { .. } => scopes[0] += 1,
                         SceneCommand::PopTransform => scopes[0] = scopes[0].saturating_sub(1),
                         SceneCommand::PushClip { .. } | SceneCommand::PushClipPath { .. } => {
-                            scopes[1] += 1
+                            scopes[1] += 1;
+                            local_clips_untransformed.push(state.current_transform.is_identity());
                         }
-                        SceneCommand::PopClip => scopes[1] = scopes[1].saturating_sub(1),
+                        SceneCommand::PopClip => {
+                            scopes[1] = scopes[1].saturating_sub(1);
+                            local_clips_untransformed.pop();
+                        }
                         SceneCommand::PushTextRenderPolicy { .. } => scopes[2] += 1,
                         SceneCommand::PopTextRenderPolicy => {
                             scopes[2] = scopes[2].saturating_sub(1)
                         }
                         _ => draws += usize::from(command_has_draw_content(command)),
                     }
-                    if draws >= self.packet_draw_limit && scopes == [0; 3] {
+                    if draws >= self.packet_draw_limit
+                        && (container == CompositionContainerId::Root
+                            || (scopes[0] == 0
+                                && local_clips_untransformed.iter().all(|safe| *safe)))
+                    {
                         flush_container_segment(
                             container,
                             &mut result,
@@ -839,6 +879,15 @@ impl RetainedCompositorState {
             SceneCommand::PopClip => {
                 let _ = state.clip_stack.pop();
             }
+            SceneCommand::PushTextRenderPolicy { policy } => {
+                state
+                    .text_render_policy_stack
+                    .push(state.text_render_policy);
+                state.text_render_policy = Some(policy.normalized());
+            }
+            SceneCommand::PopTextRenderPolicy => {
+                state.text_render_policy = state.text_render_policy_stack.pop().unwrap_or(None);
+            }
             SceneCommand::Clear(_)
             | SceneCommand::FillRect { .. }
             | SceneCommand::StrokeRect { .. }
@@ -852,8 +901,6 @@ impl RetainedCompositorState {
             | SceneCommand::DrawShaderRect { .. }
             | SceneCommand::Layer(_)
             | SceneCommand::FillRoundedRect { .. }
-            | SceneCommand::PushTextRenderPolicy { .. }
-            | SceneCommand::PopTextRenderPolicy
             | SceneCommand::Label { .. } => {}
         }
     }
@@ -1265,7 +1312,6 @@ impl RetainedCompositorState {
         let mut submission = RetainedFrameSubmission {
             fragments: Vec::new(),
         };
-        let mut current = DrawOpArena::default();
         for phase in [
             CompositionPhase::Normal,
             CompositionPhase::Overlay,
@@ -1274,12 +1320,11 @@ impl RetainedCompositorState {
             self.append_items_to_submission_for_phase(
                 &self.root.items,
                 phase,
-                &mut current,
+                &mut submission,
                 viewport,
                 stats,
             )?;
         }
-        flush_transient_fragment(&mut submission, &mut current);
         Ok(submission)
     }
 
@@ -1367,7 +1412,7 @@ impl RetainedCompositorState {
         &self,
         items: &[CompositionItem],
         phase: CompositionPhase,
-        current: &mut DrawOpArena,
+        submission: &mut RetainedFrameSubmission,
         viewport: Size,
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
@@ -1382,6 +1427,7 @@ impl RetainedCompositorState {
                         {
                             continue;
                         }
+                        let mut current = DrawOpArena::default();
                         match packet.coordinate_space {
                             PacketCoordinateSpace::World => {
                                 current.append_fragment(&packet.draw_ops);
@@ -1421,6 +1467,12 @@ impl RetainedCompositorState {
                                 )?;
                             }
                         }
+                        if !current.draw_ops.is_empty() {
+                            submission.fragments.push(RetainedFrameFragment {
+                                id: packet.id,
+                                draw_ops: current,
+                            });
+                        }
                         stats.direct_packets += 1;
                     }
                 }
@@ -1430,7 +1482,7 @@ impl RetainedCompositorState {
                         self.append_items_to_submission_for_phase(
                             &layer.items,
                             phase,
-                            current,
+                            submission,
                             viewport,
                             stats,
                         )?;
@@ -1441,19 +1493,6 @@ impl RetainedCompositorState {
 
         Ok(())
     }
-}
-
-pub(crate) fn flush_transient_fragment(
-    submission: &mut RetainedFrameSubmission,
-    current: &mut DrawOpArena,
-) {
-    if current.draw_ops.is_empty() {
-        return;
-    }
-
-    submission
-        .fragments
-        .push(RetainedFrameFragment::Transient(std::mem::take(current)));
 }
 
 pub(crate) fn push_composition_item(
@@ -1705,6 +1744,7 @@ pub(crate) fn normalize_packet_snapshot(
         snapshot.initial_state.clip_stack.drain(0..strip_count);
         snapshot.initial_state.clip_node = ClipNodeId::ROOT;
         snapshot.initial_state.current_transform = Transform::IDENTITY;
+        snapshot.initial_state.transform_stack.clear();
         snapshot.initial_state.transform_node = TransformNodeId::ROOT;
         snapshot.initial_state.pixel_snap_offset =
             physical_pixel_phase(pixel_snap_origin, raster_scale_factor);

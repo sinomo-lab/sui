@@ -29,14 +29,25 @@ Its fixed-size entries have a conservative byte charge and an eight MiB budget;
 keys include widget revision and exact constraints. Full window invalidation
 changes the context identity, so unvisited pods also discard stale measurements.
 The retained
-renderer splits direct packets at balanced graphics-state boundaries (long open
-state scopes remain intact), tracks
-atlas page generations, and updates changed GPU buffer ranges using bounded CPU
-shadows. Fresh and recycled atlas pages clear on the GPU and upload populated
+renderer splits direct packets with clip and text-policy checkpoints; world
+packets also checkpoint transform stacks. Layer-local packets keep transforms
+balanced while normalization removes inherited transforms, and keep transformed
+clip scopes intact. It tracks atlas page
+generations and updates changed GPU buffer ranges using bounded CPU shadows. Fresh and recycled atlas pages clear on the GPU and upload populated
 regions. Cached packets protect the atlas pages they reference. Packet history
 is pruned with the current scene; buffer shadows follow window/fragment lifetime.
 The benchmark matrix includes nested-layout depth scaling and separate cold
 atlas and warm packet/upload runs. Native first-present validation remains open.
+
+The third optimization pass adds exact axis queries through `Widget::measure_axis`, with the
+same invalidation and bounded query cache as full-size probes. Flex's basis pass
+queries only the main axis; final measurement still commits the complete layout.
+Transparent wrappers can forward axis queries explicitly. Both paths use the
+same Flex allocation implementation. GPU allocations are keyed by retained
+packet identity within each window, pruned with the current submission, and
+share a window-level CPU shadow budget. Diagnostics now distinguish device,
+text-engine, target, and pipeline setup from steady renderer phases. Pipeline
+creation is a subset of pass encoding time, so those spans must not be summed.
 
 ## Questions the suite must answer
 

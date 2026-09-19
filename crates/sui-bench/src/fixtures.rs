@@ -100,6 +100,15 @@ impl Widget for Root {
 // as built-in containers, rather than a second layout model.
 struct Child(SingleChild);
 impl Widget for Child {
+    fn measure_axis(
+        &mut self,
+        c: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: sui_layout::Axis,
+    ) -> f32 {
+        self.0.measure_axis(c, constraints, axis)
+    }
+
     fn measure_size(&mut self, c: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.0.measure_size(c, constraints)
     }

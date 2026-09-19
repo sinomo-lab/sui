@@ -35,6 +35,9 @@ pub(crate) fn analytic_path_buffer_size<T>(capacity: usize) -> u64 {
 }
 
 pub(crate) struct SharedRenderer {
+    pub(crate) collect_pipeline_timings: bool,
+    pub(crate) pipeline_create_time_us: u64,
+    pub(crate) pipeline_create_count: usize,
     pub(crate) adapter: wgpu::Adapter,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -160,6 +163,7 @@ impl SharedRenderer {
         kind: PipelineKind,
     ) -> &wgpu::RenderPipeline {
         self.pipelines.entry((format, kind)).or_insert_with(|| {
+            let started = self.collect_pipeline_timings.then(web_time::Instant::now);
             let shader_label = match kind {
                 PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
                     "SUI solid scene shader"
@@ -415,7 +419,8 @@ impl SharedRenderer {
                 _ => &compact_vertex_layouts[..],
             };
 
-            self.device
+            let pipeline = self
+                .device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(match kind {
                         PipelineKind::Solid => "SUI solid scene pipeline",
@@ -470,7 +475,12 @@ impl SharedRenderer {
                     },
                     multiview_mask: None,
                     cache: None,
-                })
+                });
+            if let Some(started) = started {
+                self.pipeline_create_time_us += started.elapsed().as_micros() as u64;
+                self.pipeline_create_count += 1;
+            }
+            pipeline
         })
     }
 }

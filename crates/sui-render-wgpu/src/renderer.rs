@@ -280,6 +280,9 @@ impl WgpuRenderer {
 
     pub fn set_runtime_diagnostics_enabled(&mut self, enabled: bool) {
         self.runtime_diagnostics_enabled = enabled;
+        if let Some(shared) = &mut self.shared {
+            shared.collect_pipeline_timings = enabled;
+        }
         if let Some(text_engine) = self.text_engine.as_mut() {
             text_engine.set_diagnostics_enabled(enabled);
         }
@@ -337,6 +340,9 @@ impl WgpuRenderer {
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
+        let pipeline_before = self.shared.as_ref().map_or((0, 0), |shared| {
+            (shared.pipeline_create_time_us, shared.pipeline_create_count)
+        });
         let viewport = normalize_framebuffer_size(frame.surface_size);
         let mut frame_stats = RendererFrameStats::default();
 
@@ -348,6 +354,13 @@ impl WgpuRenderer {
             }
         }
 
+        frame_stats.device_prepare_time_us =
+            std::mem::take(&mut self.pending_device_prepare_time_us);
+        if let Some(shared) = &self.shared {
+            frame_stats.pipeline_create_time_us =
+                shared.pipeline_create_time_us - pipeline_before.0;
+            frame_stats.pipeline_create_count = shared.pipeline_create_count - pipeline_before.1;
+        }
         self.frames_rendered += 1;
         self.last_frames.insert(frame.window_id, frame.clone());
         self.last_frame_stats.insert(frame.window_id, frame_stats);
@@ -407,6 +420,7 @@ impl Default for WgpuRenderer {
             runtime_stem_darkening_override: None,
             runtime_text_coverage_policy_override: None,
             runtime_diagnostics_enabled: true,
+            pending_device_prepare_time_us: 0,
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
             last_frames: HashMap::new(),

@@ -71,8 +71,12 @@ impl WgpuRenderer {
         let text_hinting = self.active_text_hinting();
         let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();
+        let mut text_engine_init_time_us = 0;
         if self.text_engine.is_none() {
+            let started = diagnostics_enabled.then(Instant::now);
             self.text_engine = Some(TextEngine::new()?);
+            text_engine_init_time_us =
+                started.map_or(0, |started| started.elapsed().as_micros() as u64);
         }
         // The multi-page atlas grows and evicts on demand, so a glyph that cannot be placed is
         // simply dropped for the frame -- there is no longer an "atlas full" error to recover
@@ -107,7 +111,7 @@ impl WgpuRenderer {
         let mut uses_text_atlas = false;
         let resource_collection_started = diagnostics_enabled.then(Instant::now);
         for fragment in &submission.fragments {
-            let RetainedFrameFragment::Transient(draw_ops) = fragment;
+            let draw_ops = &fragment.draw_ops;
             uses_text_atlas |=
                 collect_draw_op_resources(draw_ops, &mut analytic_paths, &mut image_resources);
         }
@@ -176,9 +180,15 @@ impl WgpuRenderer {
             .fragments
             .entry(frame.window_id)
             .or_default();
-        buffers.resize_with(submission.fragments.len(), Default::default);
-        for (fragment_index, fragment) in submission.fragments.into_iter().enumerate() {
-            let RetainedFrameFragment::Transient(draw_ops) = fragment;
+        let live_packets: HashSet<_> = submission
+            .fragments
+            .iter()
+            .map(|fragment| fragment.id)
+            .collect();
+        buffers.retain(|id, _| live_packets.contains(id));
+        let mut shadow_budget = crate::uploads::MAX_WINDOW_VERTEX_SHADOW_BYTES;
+        for fragment in submission.fragments {
+            let RetainedFrameFragment { id, draw_ops } = fragment;
             let batch_prepare_started = diagnostics_enabled.then(Instant::now);
             let prepared = prepare_frame_batches_with_analytic_slots(
                 draw_ops,
@@ -197,6 +207,11 @@ impl WgpuRenderer {
             }
 
             if prepared.passes.is_empty() {
+                self.frame_resources
+                    .fragments
+                    .get_mut(&frame.window_id)
+                    .expect("window buffers present")
+                    .remove(&id);
                 continue;
             }
 
@@ -213,48 +228,51 @@ impl WgpuRenderer {
                 .frame_resources
                 .fragments
                 .get_mut(&frame.window_id)
-                .expect("frame buffers allocated")[fragment_index];
+                .expect("frame buffers allocated")
+                .entry(id)
+                .or_default();
             let uploads = &mut self.frame_resources.uploads;
             prepared_fragments.push(PreparedFragmentSubmission {
                 passes: prepared.passes,
                 solid_buffer: buffers.solid.upload(
                     &shared.device,
                     uploads,
-                    "SUI transient fragment solid vertices",
+                    "SUI retained fragment solid vertices",
                     &prepared.solid_vertices,
                 ),
                 scene_buffer: buffers.scene.upload(
                     &shared.device,
                     uploads,
-                    "SUI transient fragment scene",
+                    "SUI retained fragment scene",
                     &prepared.scene_vertices,
                 ),
                 analytic_buffer: buffers.analytic.upload(
                     &shared.device,
                     uploads,
-                    "SUI transient fragment analytic instances",
+                    "SUI retained fragment analytic instances",
                     &prepared.analytic_vertices,
                 ),
                 extended_buffer: buffers.extended.upload(
                     &shared.device,
                     uploads,
-                    "SUI transient fragment extended vertices",
+                    "SUI retained fragment extended vertices",
                     &prepared.extended_vertices,
                 ),
                 clip_buffer: buffers.clip.upload(
                     &shared.device,
                     uploads,
-                    "SUI transient fragment clip",
+                    "SUI retained fragment clip",
                     &prepared.clip_vertices,
                 ),
                 text_instance_buffer: buffers.text.upload(
                     &shared.device,
                     uploads,
-                    "SUI transient fragment text instances",
+                    "SUI retained fragment text instances",
                     &prepared.text_instances,
                 ),
                 translation: Vector::ZERO,
             });
+            buffers.limit_shadows(&mut shadow_budget);
             if let Some(started) = gpu_upload_started {
                 gpu_upload_time_us += started.elapsed().as_micros() as u64;
             }
@@ -290,6 +308,7 @@ impl WgpuRenderer {
         } else {
             RendererFrameStats::default()
         };
+        frame_stats.text_engine_init_time_us = text_engine_init_time_us;
         frame_stats.resource_collection_time_us = resource_collection_time_us;
         frame_stats.bind_group_prepare_time_us = bind_group_prepare_time_us;
         frame_stats.image_bind_group_time_us = image_bind_group_time_us;

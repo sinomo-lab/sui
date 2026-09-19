@@ -29,7 +29,8 @@ pub(crate) struct FrameResources {
     pub(crate) stencil: Option<StencilTarget>,
     pub(crate) analytic_path_arena: AnalyticPathArena,
     pub(crate) uploads: GpuUploads,
-    pub(crate) fragments: HashMap<sui_core::WindowId, Vec<FragmentBuffers>>,
+    pub(crate) fragments:
+        HashMap<sui_core::WindowId, HashMap<crate::retained::RetainedPacketId, FragmentBuffers>>,
     pub(crate) output_transforms: HashMap<sui_core::WindowId, crate::output::CachedOutputTransform>,
 }
 

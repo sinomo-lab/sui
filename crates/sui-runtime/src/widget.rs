@@ -180,6 +180,17 @@ pub trait Widget {
         self.measure(ctx, constraints)
     }
 
+    /// Query one component of `measure_size` under exactly the same constraints.
+    /// Overrides may avoid computing the other component, but must return the
+    /// same extent. Like size probes, this does not replace final measurement.
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        let size = self.measure_size(ctx, constraints);
+        match axis {
+            Axis::Horizontal => size.width,
+            Axis::Vertical => size.height,
+        }
+    }
+
     /// Report the smallest and preferred extent along one axis.
     ///
     /// The conservative default treats the ordinary natural measurement as
@@ -375,6 +386,15 @@ impl SingleChild {
 
     pub fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.child.probe_measure(ctx, constraints)
+    }
+
+    pub fn measure_axis(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: Axis,
+    ) -> f32 {
+        self.child.probe_measure_axis(ctx, constraints, axis)
     }
 
     pub fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -931,7 +951,7 @@ impl Drop for WidgetPod {
 struct ProbeCache {
     revision: u64,
     promoted: bool,
-    measurements: [Option<(Constraints, Size)>; 4],
+    measurements: [Option<(Constraints, Option<Axis>, Size)>; 4],
     intrinsics: [Option<(f32, IntrinsicSize)>; 2],
 }
 
@@ -1043,6 +1063,30 @@ impl WidgetPod {
     /// does not restore child layouts, text handles, or other committed state.
     /// Final `measure` calls in dirty/forced subtrees still always execute.
     pub fn probe_measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.probe_measure_query(parent_ctx, constraints, None)
+    }
+
+    /// Size-only query for one axis; shares the exact-key, invalidation and
+    /// bounded eviction rules of `probe_measure`, with a distinct query kind.
+    pub fn probe_measure_axis(
+        &mut self,
+        parent_ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: Axis,
+    ) -> f32 {
+        let size = self.probe_measure_query(parent_ctx, constraints, Some(axis));
+        match axis {
+            Axis::Horizontal => size.width,
+            Axis::Vertical => size.height,
+        }
+    }
+
+    fn probe_measure_query(
+        &mut self,
+        parent_ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: Option<Axis>,
+    ) -> Size {
         crate::layout_work::record(|work| work.probe_requests += 1);
         self.invalidate_probes(parent_ctx);
         if let Some(size) = self.probe_cache.as_ref().and_then(|cache| {
@@ -1050,8 +1094,8 @@ impl WidgetPod {
                 .measurements
                 .iter()
                 .flatten()
-                .find(|(key, _)| *key == constraints)
-                .map(|(_, size)| *size)
+                .find(|(key, kind, _)| *key == constraints && *kind == axis)
+                .map(|(_, _, size)| *size)
         }) {
             crate::layout_work::record(|work| work.probe_cache_hits += 1);
             return size;
@@ -1063,18 +1107,19 @@ impl WidgetPod {
             .as_ref()
             .filter(|_| parent_ctx.scope.reusable_queries && cache.measurements[3].is_some());
         let key = shared
-            .and_then(|_| crate::measure_cache::QueryKey::new(self.id, revision, constraints));
+            .and_then(|_| crate::measure_cache::QueryKey::new(self.id, revision, constraints))
+            .map(|key| key.with_axis(axis));
         let cached = shared
             .zip(parent_ctx.query_context)
             .zip(key.as_ref())
             .and_then(|((shared, context), key)| {
                 let mut window = shared.borrow_mut();
                 if !cache.promoted {
-                    for (constraints, size) in cache.measurements.iter().flatten() {
+                    for (constraints, axis, size) in cache.measurements.iter().flatten() {
                         if let Some(key) =
                             crate::measure_cache::QueryKey::new(self.id, revision, *constraints)
                         {
-                            window.put(context, key, *size);
+                            window.put(context, key.with_axis(*axis), *size);
                         }
                     }
                     cache.promoted = true;
@@ -1088,7 +1133,7 @@ impl WidgetPod {
             });
             size
         } else {
-            let size = self.measure_impl(parent_ctx, constraints, true);
+            let size = self.measure_impl(parent_ctx, constraints, true, axis);
             if let Some(cache) = parent_ctx
                 .query_cache
                 .as_ref()
@@ -1101,10 +1146,10 @@ impl WidgetPod {
             size
         };
         let cache = self.probe_cache.get_or_insert_with(Default::default);
-        if cache.measurements[0].is_none_or(|(key, _)| key != constraints) {
+        if cache.measurements[0].is_none_or(|(key, kind, _)| key != constraints || kind != axis) {
             cache.measurements.rotate_right(1);
         }
-        cache.measurements[0] = Some((constraints, size));
+        cache.measurements[0] = Some((constraints, axis, size));
         size
     }
 
@@ -1140,7 +1185,7 @@ impl WidgetPod {
     }
 
     pub fn measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.measure_impl(parent_ctx, constraints, false)
+        self.measure_impl(parent_ctx, constraints, false, None)
     }
 
     fn measure_impl(
@@ -1148,6 +1193,7 @@ impl WidgetPod {
         parent_ctx: &mut MeasureCtx,
         constraints: Constraints,
         size_only: bool,
+        axis: Option<Axis>,
     ) -> Size {
         let probing = size_only || parent_ctx.probing;
         crate::layout_work::record(|work| work.measure_requests += 1);
@@ -1195,7 +1241,13 @@ impl WidgetPod {
             },
             &self.observed_phases,
         );
-        let size = if size_only {
+        let size = if let Some(axis) = axis {
+            let extent = self.widget.measure_axis(&mut child_ctx, constraints, axis);
+            match axis {
+                Axis::Horizontal => Size::new(extent, 0.0),
+                Axis::Vertical => Size::new(0.0, extent),
+            }
+        } else if size_only {
             self.widget.measure_size(&mut child_ctx, constraints)
         } else {
             self.widget.measure(&mut child_ctx, constraints)
@@ -1207,8 +1259,11 @@ impl WidgetPod {
             WidgetTimingPhase::Measure,
             started.elapsed(),
         );
-        self.layout_state.measured_size = size;
-        self.layout_state.last_constraints = constraints;
+        // An axis query has no complete size to publish as committed geometry.
+        if axis.is_none() {
+            self.layout_state.measured_size = size;
+            self.layout_state.last_constraints = constraints;
+        }
         self.layout_state.measure_valid = !size_only;
         // Keep measurement probes separate from the last arranged geometry.
         // Parents can measure a clean sibling more than once before giving it
@@ -4241,6 +4296,49 @@ mod tests {
         assert_eq!(pod.probe_measure(&mut ctx, c(100.0)).width, 100.0);
         assert_eq!(pod.measure(&mut ctx, c(100.0)).width, 100.0);
         assert_eq!(width.get(), 100.0);
+    }
+
+    #[test]
+    fn axis_queries_are_distinct_and_invalidate_with_the_window_context() {
+        use sui_layout::Axis;
+        struct Leaf(Rc<Cell<u32>>, Rc<Cell<f32>>);
+        impl Widget for Leaf {
+            fn measure(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+                self.0.set(self.0.get() + 1);
+                c.clamp(Size::new(self.1.get(), 13.0))
+            }
+        }
+        let calls = Rc::new(Cell::new(0));
+        let value = Rc::new(Cell::new(27.0));
+        let mut pod = WidgetPod::new(Leaf(calls.clone(), value.clone()));
+        let shared = crate::measure_cache::MeasureQueryCache::shared();
+        let root = WidgetId::new(u64::MAX);
+        let mut ctx = scoped_measure_ctx(root, MeasureScope::default());
+        ctx.set_query_cache(shared.clone());
+        let c = Constraints::new(Size::ZERO, Size::new(100.0, 100.0));
+        for width in 100..110 {
+            let c = Constraints::new(Size::ZERO, Size::new(width as f32, 100.0));
+            assert_eq!(pod.probe_measure_axis(&mut ctx, c, Axis::Horizontal), 27.0);
+            assert_eq!(pod.probe_measure_axis(&mut ctx, c, Axis::Vertical), 13.0);
+            assert_eq!(pod.probe_measure(&mut ctx, c), Size::new(27.0, 13.0));
+        }
+        let before = calls.get();
+        assert_eq!(pod.probe_measure_axis(&mut ctx, c, Axis::Horizontal), 27.0);
+        assert_eq!(pod.probe_measure_axis(&mut ctx, c, Axis::Vertical), 13.0);
+        assert_eq!(pod.probe_measure(&mut ctx, c), Size::new(27.0, 13.0));
+        assert_eq!(
+            calls.get(),
+            before,
+            "overflow hits must preserve query kind"
+        );
+        assert_eq!(pod.measure(&mut ctx, c), Size::new(27.0, 13.0));
+        assert_eq!(calls.get(), before + 1, "axis hits cannot commit layout");
+        value.set(41.0);
+        shared.borrow_mut().invalidate_context();
+        let mut next = scoped_measure_ctx(root, MeasureScope::default());
+        next.set_query_cache(shared);
+        assert_eq!(pod.probe_measure_axis(&mut next, c, Axis::Horizontal), 41.0);
+        assert_eq!(pod.measure(&mut next, c), Size::new(41.0, 13.0));
     }
 
     #[test]

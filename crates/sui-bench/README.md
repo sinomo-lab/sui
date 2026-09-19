@@ -107,7 +107,12 @@ normal builds without the feature; the collector is inactive until requested.
 
 Diagnostic samples also retain bounded inclusive widget hotspots, invalidation
 details, rebuild counts, and text-cache snapshots. GPU diagnostic runs include
-renderer draw/upload/atlas/retained-packet statistics. Vertex upload bytes count
+renderer draw/upload/atlas/retained-packet statistics and device, target,
+text-engine, pipeline creation, composition, batching, upload, encode, and queue
+submission timings. Pipeline creation is included in pass encoding; do not add
+these overlapping spans. Target preparation currently describes the offscreen
+path. The fixture's transparent child adapter forwards both size and axis queries,
+as custom wrappers can do through `SingleChild`. Vertex upload bytes count
 actual buffer writes, including partial updates; atlas upload bytes exclude GPU
 page clears. Warmup and teardown work
 are identified separately. Text cache values are cumulative snapshots; use

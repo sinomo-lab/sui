@@ -125,6 +125,28 @@ impl Padding {
 }
 
 impl Widget for Padding {
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        let (min, max, padding) = match axis {
+            Axis::Horizontal => (
+                constraints.min.width,
+                constraints.max.width,
+                self.insets.left + self.insets.right,
+            ),
+            Axis::Vertical => (
+                constraints.min.height,
+                constraints.max.height,
+                self.insets.top + self.insets.bottom,
+            ),
+        };
+        if min == max {
+            return min;
+        }
+        let extent =
+            self.child
+                .measure_axis(ctx, inset_constraints(constraints, self.insets), axis);
+        (extent + padding).clamp(min, max)
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let child_constraints = inset_constraints(constraints, self.insets);
         let child_size = self.child.measure(ctx, child_constraints);
@@ -210,6 +232,29 @@ impl Align {
 }
 
 impl Widget for Align {
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        let (min, max, alignment) = match axis {
+            Axis::Horizontal => (
+                constraints.min.width,
+                constraints.max.width,
+                self.horizontal,
+            ),
+            Axis::Vertical => (
+                constraints.min.height,
+                constraints.max.height,
+                self.vertical,
+            ),
+        };
+        if min == max || (alignment == Alignment::Stretch && max.is_finite()) {
+            return max;
+        }
+        let child_constraints =
+            aligned_child_constraints(constraints, self.horizontal, self.vertical);
+        self.child
+            .measure_axis(ctx, child_constraints, axis)
+            .clamp(min, max)
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let child_constraints =
             aligned_child_constraints(constraints, self.horizontal, self.vertical);
@@ -298,6 +343,10 @@ impl Background {
 }
 
 impl Widget for Background {
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        self.child.measure_axis(ctx, constraints, axis)
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.child.measure(ctx, constraints)
     }
@@ -408,6 +457,10 @@ impl SemanticRegion {
 }
 
 impl Widget for SemanticRegion {
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        self.child.measure_axis(ctx, constraints, axis)
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.child.measure(ctx, constraints)
     }
@@ -496,6 +549,26 @@ impl Default for SizedBox {
 }
 
 impl Widget for SizedBox {
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        let (min, max, explicit) = match axis {
+            Axis::Horizontal => (constraints.min.width, constraints.max.width, self.width),
+            Axis::Vertical => (constraints.min.height, constraints.max.height, self.height),
+        };
+        if let Some(value) = explicit {
+            return value.clamp(min, max);
+        }
+        if min == max {
+            return min;
+        }
+        let child_constraints = sized_box_constraints(constraints, self.width, self.height);
+        self.child
+            .as_mut()
+            .map_or(0.0, |child| {
+                child.measure_axis(ctx, child_constraints, axis)
+            })
+            .clamp(min, max)
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let child_constraints = sized_box_constraints(constraints, self.width, self.height);
         let child_size = if let Some(child) = &mut self.child {
@@ -1511,35 +1584,64 @@ impl Flex {
     }
 }
 
-impl Widget for Flex {
-    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        flex_layout(
-            self.style,
-            &self.items,
-            constraints,
-            |index, child_constraints| {
-                self.children.as_mut_slice()[index].probe_measure(ctx, child_constraints)
-            },
-        )
+impl Flex {
+    fn measure_flex(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        commit: bool,
+    ) -> Size {
+        let axis = self.style.axis;
+        flex_layout_with_probes(self.style, &self.items, constraints, |index, c, phase| {
+            let child = &mut self.children.as_mut_slice()[index];
+            match phase {
+                FlexMeasurePhase::Probe => {
+                    let main = child.probe_measure_axis(ctx, c, axis);
+                    match axis {
+                        Axis::Horizontal => Size::new(main, 0.0),
+                        Axis::Vertical => Size::new(0.0, main),
+                    }
+                }
+                FlexMeasurePhase::Commit if commit => child.measure(ctx, c),
+                FlexMeasurePhase::Commit => child.probe_measure(ctx, c),
+            }
+        })
         .size
+    }
+}
+
+impl Widget for Flex {
+    fn measure_axis(&mut self, ctx: &mut MeasureCtx, constraints: Constraints, axis: Axis) -> f32 {
+        let extent = |size: Size| match axis {
+            Axis::Horizontal => size.width,
+            Axis::Vertical => size.height,
+        };
+        if extent(constraints.min) == extent(constraints.max) {
+            return extent(constraints.min);
+        }
+        if axis != self.style.axis {
+            return extent(self.measure_size(ctx, constraints));
+        }
+        // Main-axis line allocation is independent of cross-axis extents. Keep
+        // the shared flex algorithm, projecting only the child sizes it needs.
+        extent(
+            flex_layout(self.style, &self.items, constraints, |index, c| {
+                let main = self.children.as_mut_slice()[index].probe_measure_axis(ctx, c, axis);
+                match axis {
+                    Axis::Horizontal => Size::new(main, 0.0),
+                    Axis::Vertical => Size::new(0.0, main),
+                }
+            })
+            .size,
+        )
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measure_flex(ctx, constraints, false)
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let layout = flex_layout_with_probes(
-            self.style,
-            &self.items,
-            constraints,
-            |index, child_constraints, phase| match phase {
-                FlexMeasurePhase::Probe => {
-                    self.children.as_mut_slice()[index].probe_measure(ctx, child_constraints)
-                }
-                FlexMeasurePhase::Commit => {
-                    self.children.measure_child(index, ctx, child_constraints)
-                }
-            },
-        );
-
-        layout.size
+        self.measure_flex(ctx, constraints, true)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -4923,6 +5025,179 @@ mod tests {
         WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+
+    #[test]
+    fn axis_flex_matches_full_probe_geometry_after_text_and_viewport_changes() {
+        use crate::Label;
+        use sui_layout::{FlexMeasurePhase, flex_layout, flex_layout_with_probes};
+        struct ProbeMode {
+            flex: Flex,
+            legacy: bool,
+        }
+        impl Widget for ProbeMode {
+            fn measure_axis(&mut self, ctx: &mut MeasureCtx, c: Constraints, axis: Axis) -> f32 {
+                if !self.legacy {
+                    return self.flex.measure_axis(ctx, c, axis);
+                }
+                let size = self.measure_size(ctx, c);
+                match axis {
+                    Axis::Horizontal => size.width,
+                    Axis::Vertical => size.height,
+                }
+            }
+            fn measure_size(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+                if !self.legacy {
+                    return self.flex.measure_size(ctx, c);
+                }
+                flex_layout(self.flex.style, &self.flex.items, c, |i, c| {
+                    self.flex.children.as_mut_slice()[i].probe_measure(ctx, c)
+                })
+                .size
+            }
+            fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+                if !self.legacy {
+                    return self.flex.measure(ctx, c);
+                }
+                flex_layout_with_probes(self.flex.style, &self.flex.items, c, |i, c, phase| {
+                    let child = &mut self.flex.children.as_mut_slice()[i];
+                    match phase {
+                        FlexMeasurePhase::Probe => child.probe_measure(ctx, c),
+                        FlexMeasurePhase::Commit => child.measure(ctx, c),
+                    }
+                })
+                .size
+            }
+            fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+                self.flex.arrange(ctx, bounds);
+            }
+            fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+                self.flex.visit_children(v);
+            }
+            fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+                self.flex.visit_children_mut(v);
+            }
+        }
+        fn tree(legacy: bool, depth: usize, text: Signal<String>) -> ProbeMode {
+            let flex = if depth == 0 {
+                Flex::vertical()
+                    .gap(2.0)
+                    .with_child(Label::new("").text_from(text))
+                    .with_child(Label::new("A second wrapping label with several words"))
+            } else {
+                Flex::horizontal()
+                    .gap(2.0)
+                    .with_child(Label::new(format!("Depth {depth}")))
+                    .with_child(Padding::all(1.0, tree(legacy, depth - 1, text)))
+            };
+            ProbeMode { flex, legacy }
+        }
+        let text = Signal::new("Wrapping text with variable width".to_string());
+        let mut runtimes = [Runtime::new(), Runtime::new()];
+        let windows: Vec<_> = runtimes
+            .iter_mut()
+            .enumerate()
+            .map(|(index, runtime)| {
+                runtime
+                    .add_window(
+                        WindowBuilder::new()
+                            .initial_size(Size::new(640.0, 320.0))
+                            .root(tree(index == 0, 5, text.clone())),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        for (width, content) in [
+            (640.0, "Initial contents"),
+            (347.25, "A much longer revision wrapping at a new width"),
+            (720.5, "Short"),
+        ] {
+            text.set(content.to_string());
+            let bounds: Vec<Vec<_>> = runtimes
+                .iter_mut()
+                .zip(&windows)
+                .map(|(runtime, window)| {
+                    runtime
+                        .handle_event(
+                            *window,
+                            Event::Window(sui_core::WindowEvent::Resized(Size::new(width, 320.0))),
+                        )
+                        .unwrap();
+                    runtime.render(*window).unwrap();
+                    runtime
+                        .widget_graph(*window)
+                        .unwrap()
+                        .nodes
+                        .iter()
+                        .map(|n| n.bounds)
+                        .collect()
+                })
+                .collect();
+            assert_eq!(bounds[0], bounds[1]);
+        }
+    }
+
+    #[test]
+    fn projected_flex_queries_match_full_probes_with_wrap_and_cross_dependent_children() {
+        use std::sync::Arc;
+        use sui_layout::{FlexStyle, FlexWrap, flex_layout};
+        struct Responsive(usize);
+        impl Widget for Responsive {
+            fn measure_size(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+                c.clamp(Size::new(
+                    (45.0 + self.0 as f32 * 7.0).min(c.max.height * 2.0),
+                    7.0 * (120.0 / c.max.width.max(1.0)).ceil(),
+                ))
+            }
+        }
+        for axis in [Axis::Horizontal, Axis::Vertical] {
+            for wrap in [FlexWrap::NoWrap, FlexWrap::Wrap] {
+                for width in [31.25, 117.5, 480.0] {
+                    for alignment in [Alignment::Start, Alignment::Stretch] {
+                        let style = FlexStyle::new(axis)
+                            .wrap(wrap)
+                            .gap(3.5)
+                            .align_items(alignment);
+                        let items = [
+                            FlexItem::new(),
+                            FlexItem::flex(1.0).min_width(8.0).max_height(45.0),
+                            FlexItem::new().basis_fraction(0.3),
+                            FlexItem::fixed(23.0),
+                        ];
+                        let c = Constraints::new(Size::new(4.0, 9.0), Size::new(width, 180.0));
+                        let mut ctx = MeasureCtx::with_layout(
+                            sui_core::WindowId::new(1),
+                            WidgetId::new(1),
+                            Rect::ZERO,
+                            sui_layout::LayoutContext::new(
+                                sui_core::DpiInfo::default(),
+                                Arc::new(sui_text::TextSystem::new()),
+                                Arc::new(sui_text::FontRegistry::new()),
+                                Arc::new(sui_scene::ImageRegistry::new()),
+                            ),
+                        );
+                        let expected = flex_layout(style, &items, c, |index, c| {
+                            Responsive(index).measure_size(&mut ctx, c)
+                        })
+                        .size;
+                        let mut flex = Flex::new(axis);
+                        flex.style = style;
+                        for (index, item) in items.into_iter().enumerate() {
+                            flex.push_item(Responsive(index), item);
+                        }
+                        assert_eq!(flex.measure_size(&mut ctx, c), expected);
+                        assert_eq!(
+                            flex.measure_axis(&mut ctx, c, Axis::Horizontal),
+                            expected.width
+                        );
+                        assert_eq!(
+                            flex.measure_axis(&mut ctx, c, Axis::Vertical),
+                            expected.height
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn nested_flex_probes_commit_leaf_layout_only_after_constraints_are_resolved() {
