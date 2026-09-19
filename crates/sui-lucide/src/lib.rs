@@ -190,7 +190,19 @@ mod tests {
         ];
         for (name, alias, canonical) in aliases {
             assert_eq!(icon_named(name), Some(alias));
-            assert_eq!(alias.svg(), canonical.svg(), "{name}");
+            // Git may normalize newly added and existing SVGs to different checkout line
+            // endings on Windows. Compare their content independently of CRLF versus LF.
+            assert_eq!(
+                std::str::from_utf8(alias.svg())
+                    .unwrap()
+                    .lines()
+                    .collect::<Vec<_>>(),
+                std::str::from_utf8(canonical.svg())
+                    .unwrap()
+                    .lines()
+                    .collect::<Vec<_>>(),
+                "{name}"
+            );
             assert_eq!(alias.path_data(), canonical.path_data(), "{name}");
         }
     }
