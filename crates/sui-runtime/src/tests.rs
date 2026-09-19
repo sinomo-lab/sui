@@ -37,6 +37,268 @@ use sui_scene::{
 };
 use sui_text::{PersistentTextLayout, RegisteredFont, TextStyle, TextSystem};
 
+#[test]
+fn initial_event_layout_is_reused_by_first_render() {
+    struct StartupProbe(Rc<Cell<usize>>, Rc<Cell<usize>>);
+    impl Widget for StartupProbe {
+        fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.0.set(self.0.get() + 1);
+            constraints.clamp(Size::new(80.0, 24.0))
+        }
+        fn arrange(&mut self, _: &mut ArrangeCtx, _: Rect) {
+            self.1.set(self.1.get() + 1);
+        }
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::WHITE);
+        }
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
+            node.name = Some("Startup content".into());
+            ctx.push(node);
+        }
+    }
+    let measures = Rc::new(Cell::new(0));
+    let arranges = Rc::new(Cell::new(0));
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(StartupProbe(measures.clone(), arranges.clone())))
+        .build()
+        .unwrap();
+    let window = runtime.window_ids()[0];
+    runtime
+        .handle_event(
+            window,
+            Event::Window(WindowEvent::Resized(Size::new(200.0, 80.0))),
+        )
+        .unwrap();
+    assert_eq!(measures.get(), 1);
+    let frame = runtime.render(window).unwrap();
+    assert_eq!(
+        measures.get(),
+        1,
+        "bootstrap repeated an already valid layout"
+    );
+    assert_eq!(arranges.get(), 1);
+    assert!(!frame.frame.scene.commands().is_empty());
+    assert!(
+        frame
+            .semantics
+            .iter()
+            .any(|node| node.name.as_deref() == Some("Startup content"))
+    );
+}
+
+#[test]
+fn initial_event_invalidation_still_remeasures_before_first_paint() {
+    struct ChangingOnResize {
+        revision: usize,
+        measured: Rc<Cell<usize>>,
+    }
+    impl Widget for ChangingOnResize {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            if matches!(event, Event::Window(WindowEvent::Resized(_))) {
+                self.revision += 1;
+                ctx.request_measure();
+            }
+        }
+        fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.measured.set(self.revision);
+            constraints.clamp(Size::new(80.0, 24.0))
+        }
+    }
+    let measured = Rc::new(Cell::new(usize::MAX));
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(ChangingOnResize {
+            revision: 0,
+            measured: measured.clone(),
+        }))
+        .build()
+        .unwrap();
+    let window = runtime.window_ids()[0];
+    runtime
+        .handle_event(
+            window,
+            Event::Window(WindowEvent::Resized(Size::new(200.0, 80.0))),
+        )
+        .unwrap();
+    assert_eq!(measured.get(), 0);
+    runtime.render(window).unwrap();
+    assert_eq!(measured.get(), 1);
+}
+
+#[test]
+fn cached_parent_probes_retain_descendant_dependencies_until_invalidation() {
+    struct NaturalLeaf {
+        selected: Signal<usize>,
+        values: [Signal<u32>; 3],
+        calls: Rc<Cell<u32>>,
+    }
+    impl Widget for NaturalLeaf {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.calls.set(self.calls.get() + 1);
+            let height = if constraints.max.width < 50.0 {
+                let selected = ctx.observe(&self.selected);
+                let index = if constraints.max.width < 15.0 {
+                    selected
+                } else {
+                    2
+                };
+                ctx.observe(&self.values[index]) as f32
+            } else {
+                10.0
+            };
+            Size::new(constraints.max.width, height)
+        }
+    }
+    struct Forward(SingleChild);
+    impl Widget for Forward {
+        fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+            self.0.measure(ctx, c)
+        }
+        fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+            self.0.visit_children(v);
+        }
+        fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+            self.0.visit_children_mut(v);
+        }
+    }
+    struct Driver(Signal<u32>);
+    impl Widget for Driver {
+        fn measure(&mut self, ctx: &mut MeasureCtx, _: Constraints) -> Size {
+            Size::new(ctx.observe(&self.0) as f32, 10.0)
+        }
+    }
+    struct Parent {
+        children: WidgetChildren,
+        natural: Rc<Cell<f32>>,
+    }
+    impl Widget for Parent {
+        fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+            self.children.measure_child(0, ctx, c);
+            let branch = &mut self.children.as_mut_slice()[1];
+            let a = branch.probe_measure(ctx, Constraints::new(Size::ZERO, Size::new(10.0, 100.0)));
+            let b = branch.probe_measure(ctx, Constraints::new(Size::ZERO, Size::new(20.0, 100.0)));
+            self.natural.set(a.height + b.height);
+            branch.measure(ctx, Constraints::tight(Size::new(100.0, 10.0)));
+            c.clamp(Size::new(100.0, self.natural.get()))
+        }
+        fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+            self.children.visit_children(v);
+        }
+        fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+            self.children.visit_children_mut(v);
+        }
+    }
+    let selected = Signal::new(0);
+    let values = [Signal::new(10), Signal::new(20), Signal::new(30)];
+    let driver = Signal::new(0);
+    let calls = Rc::new(Cell::new(0));
+    let natural = Rc::new(Cell::new(0.0));
+    let mut children = WidgetChildren::new();
+    children.push(Driver(driver.clone()));
+    children.push(Forward(SingleChild::new(NaturalLeaf {
+        selected: selected.clone(),
+        values: values.clone(),
+        calls: calls.clone(),
+    })));
+    let mut runtime = Runtime::new();
+    let id = runtime
+        .add_window(WindowBuilder::new().root(Parent {
+            children,
+            natural: natural.clone(),
+        }))
+        .unwrap();
+    runtime.render(id).unwrap();
+    let before = calls.get();
+    driver.set(1);
+    runtime.render(id).unwrap();
+    assert_eq!(
+        calls.get(),
+        before,
+        "clean branch should reuse probes and committed layout"
+    );
+    assert_eq!(natural.get(), 40.0);
+    values[0].set(11); // Read only by a descendant's earlier natural constraint.
+    assert!(runtime.needs_render(id).unwrap());
+    runtime.render(id).unwrap();
+    assert_eq!(natural.get(), 41.0);
+    selected.set(1);
+    runtime.render(id).unwrap();
+    assert_eq!(natural.get(), 50.0);
+    assert!(!runtime.needs_render(id).unwrap());
+    values[0].set(12);
+    assert!(
+        !runtime.needs_render(id).unwrap(),
+        "invalidated probes must release obsolete dependencies"
+    );
+    values[2].set(31);
+    assert!(runtime.needs_render(id).unwrap());
+    runtime.render(id).unwrap();
+    assert_eq!(natural.get(), 51.0);
+}
+
+#[test]
+fn external_measure_context_preserves_intrinsic_only_dependencies() {
+    struct IntrinsicLeaf(Signal<u32>);
+    impl Widget for IntrinsicLeaf {
+        fn intrinsic_size(
+            &mut self,
+            ctx: &mut MeasureCtx,
+            _: sui_layout::Axis,
+            _: f32,
+        ) -> sui_layout::IntrinsicSize {
+            sui_layout::IntrinsicSize::fixed(ctx.observe(&self.0) as f32)
+        }
+        fn measure(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+            c.clamp(Size::new(10.0, 10.0))
+        }
+    }
+    struct ExternalLayout {
+        child: super::WidgetPod,
+        natural: Rc<Cell<f32>>,
+    }
+    impl Widget for ExternalLayout {
+        fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+            let mut external = MeasureCtx::with_layout(
+                ctx.window_id(),
+                ctx.widget_id(),
+                ctx.bounds(),
+                ctx.layout().clone(),
+            );
+            self.natural.set(
+                self.child
+                    .intrinsic_size(&mut external, sui_layout::Axis::Horizontal, 10.0)
+                    .natural,
+            );
+            self.child.measure(&mut external, c);
+            c.clamp(Size::new(self.natural.get(), 10.0))
+        }
+        fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+            v.visit(&self.child);
+        }
+        fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+            v.visit(&mut self.child);
+        }
+    }
+    let value = Signal::new(20);
+    let natural = Rc::new(Cell::new(0.0));
+    let mut runtime = Runtime::new();
+    let window = runtime
+        .add_window(WindowBuilder::new().root(ExternalLayout {
+            child: super::WidgetPod::new(IntrinsicLeaf(value.clone())),
+            natural: natural.clone(),
+        }))
+        .unwrap();
+    runtime.render(window).unwrap();
+    assert_eq!(natural.get(), 20.0);
+    value.set(40);
+    assert!(
+        runtime.needs_render(window).unwrap(),
+        "final measurement removed an intrinsic dependency"
+    );
+    runtime.render(window).unwrap();
+    assert_eq!(natural.get(), 40.0);
+}
+
 #[derive(Default)]
 struct Counters {
     paint: usize,

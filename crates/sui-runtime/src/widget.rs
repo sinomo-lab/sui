@@ -895,6 +895,8 @@ impl<K, T> Default for KeyedChildren<K, T> {
 pub struct WidgetPod {
     id: WidgetId,
     layout_state: LayoutState,
+    probe_cache: Option<Box<ProbeCache>>,
+    last_probe_invalidation: u64,
     force_paint_boundary: bool,
     observed_phases: Cell<u8>,
     widget: Box<dyn Widget>,
@@ -902,8 +904,17 @@ pub struct WidgetPod {
 
 impl Drop for WidgetPod {
     fn drop(&mut self) {
+        crate::layout_work::record(|work| work.dropped += 1);
         crate::reactive::clear_widget(self.id);
     }
+}
+
+// Four recent natural constraints plus one cross extent per intrinsic axis.
+// Allocate only for widgets actually queried by a multi-pass layout.
+#[derive(Default)]
+struct ProbeCache {
+    measurements: [Option<(Constraints, Size)>; 4],
+    intrinsics: [Option<(f32, IntrinsicSize)>; 2],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -945,9 +956,12 @@ impl WidgetPod {
     /// Dynamic widget registries use this when the concrete widget type is
     /// selected from application data at runtime.
     pub fn new_boxed(widget: Box<dyn Widget>) -> Self {
+        crate::layout_work::record(|work| work.constructed += 1);
         Self {
             id: WidgetId::new(NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)),
             layout_state: LayoutState::default(),
+            probe_cache: None,
+            last_probe_invalidation: 0,
             force_paint_boundary: false,
             observed_phases: Cell::new(0),
             widget,
@@ -995,13 +1009,72 @@ impl WidgetPod {
 
     pub fn set_bounds(&mut self, bounds: Rect) {
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
+        crate::layout_work::record(|work| work.translations += u64::from(delta != Vector::ZERO));
         self.layout_state.arranged_bounds = bounds;
         self.layout_state.measured_size = bounds.size;
         self.layout_state.arrange_valid = true;
         self.translate_descendants(delta);
     }
 
+    /// Query a size without requiring the widget's retained layout to match it.
+    ///
+    /// Reuse four recent constraint results, invalidated once per dirty pass.
+    /// Call `measure` with the final constraints before arrangement: a probe hit
+    /// does not restore child layouts, text handles, or other committed state.
+    /// Ordinary `measure` calls in dirty/forced subtrees still always execute.
+    pub fn probe_measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        crate::layout_work::record(|work| work.probe_requests += 1);
+        self.invalidate_probes(parent_ctx);
+        if let Some(size) = self.probe_cache.as_ref().and_then(|cache| {
+            cache
+                .measurements
+                .iter()
+                .flatten()
+                .find(|(key, _)| *key == constraints)
+                .map(|(_, size)| *size)
+        }) {
+            crate::layout_work::record(|work| work.probe_cache_hits += 1);
+            return size;
+        }
+        let size = self.measure_impl(parent_ctx, constraints, true);
+        let cache = self.probe_cache.get_or_insert_with(Default::default);
+        if cache.measurements[0].is_none_or(|(key, _)| key != constraints) {
+            cache.measurements.rotate_right(1);
+        }
+        cache.measurements[0] = Some((constraints, size));
+        size
+    }
+
+    fn invalidate_probes(&mut self, ctx: &MeasureCtx) -> bool {
+        let dirty = ctx.child_force() || ctx.scope().must_remeasure(self.id);
+        if dirty
+            && (!ctx.scope().reusable_queries
+                || self.last_probe_invalidation != ctx.scope().generation)
+        {
+            if let Some(cache) = &mut self.probe_cache {
+                **cache = ProbeCache::default();
+            }
+            // A reused external context disables scalar caching, but its final
+            // measure must not erase dependencies read by earlier probes.
+            if self.last_probe_invalidation != ctx.scope().generation {
+                crate::reactive::clear_probe_observations(self.id, &self.observed_phases);
+            }
+            self.last_probe_invalidation = ctx.scope().generation;
+        }
+        dirty
+    }
+
     pub fn measure(&mut self, parent_ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measure_impl(parent_ctx, constraints, parent_ctx.probing)
+    }
+
+    fn measure_impl(
+        &mut self,
+        parent_ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        probing: bool,
+    ) -> Size {
+        crate::layout_work::record(|work| work.measure_requests += 1);
         // Incremental-layout fast path. Cache invalidation is driven entirely by
         // the measure recursion (never a separate tree walk), so it cannot diverge
         // from how parents actually reach their children:
@@ -1013,20 +1086,36 @@ impl WidgetPod {
         //   pod measured before under identical constraints returns its cached size
         //   without recursing.
         let force = parent_ctx.child_force();
-        let must_remeasure = force || parent_ctx.scope().must_remeasure(self.id);
-        if !must_remeasure
+        let must_remeasure = self.invalidate_probes(parent_ctx);
+        if !probing
+            && !must_remeasure
             && self.layout_state.measure_valid
             && self.layout_state.last_constraints == constraints
         {
+            crate::layout_work::record(|work| work.measure_cache_hits += 1);
             return self.layout_state.measured_size;
         }
+        crate::layout_work::record(|work| {
+            work.measure_executions += 1;
+            work.forced_measures += u64::from(must_remeasure);
+            work.constraint_changes += u64::from(
+                self.layout_state.measure_valid
+                    && self.layout_state.last_constraints != constraints,
+            );
+            work.first_measures += u64::from(!self.layout_state.measure_valid);
+        });
 
         let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
+        child_ctx.probing = probing;
         let started = Instant::now();
         let observations = ObservationScope::new(
             parent_ctx.window_id(),
             self.id,
-            ObservationPhase::Measure,
+            if probing {
+                ObservationPhase::MeasureProbe
+            } else {
+                ObservationPhase::Measure
+            },
             &self.observed_phases,
         );
         let size = self.widget.measure(&mut child_ctx, constraints);
@@ -1059,8 +1148,32 @@ impl WidgetPod {
         axis: Axis,
         available_cross: f32,
     ) -> IntrinsicSize {
+        crate::layout_work::record(|work| match axis {
+            Axis::Horizontal => work.intrinsic_horizontal += 1,
+            Axis::Vertical => work.intrinsic_vertical += 1,
+        });
+        self.invalidate_probes(parent_ctx);
+        let axis_index = match axis {
+            Axis::Horizontal => 0,
+            Axis::Vertical => 1,
+        };
+        let cross = available_cross;
+        if let Some((key, size)) = self
+            .probe_cache
+            .as_ref()
+            .and_then(|cache| cache.intrinsics[axis_index])
+            && key == cross
+        {
+            crate::layout_work::record(|work| work.intrinsic_cache_hits += 1);
+            return size;
+        }
+        crate::layout_work::record(|work| work.intrinsic_executions += 1);
         let force = parent_ctx.child_force();
         let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
+        child_ctx.probing = true;
+        // The default intrinsic implementation invokes Widget::measure directly.
+        // Its scalar result does not describe the retained final measurement.
+        self.layout_state.measure_valid = false;
         let started = Instant::now();
         let phase = match axis {
             Axis::Horizontal => ObservationPhase::IntrinsicHorizontal,
@@ -1072,9 +1185,7 @@ impl WidgetPod {
             phase,
             &self.observed_phases,
         );
-        let intrinsic = self
-            .widget
-            .intrinsic_size(&mut child_ctx, axis, available_cross);
+        let intrinsic = self.widget.intrinsic_size(&mut child_ctx, axis, cross);
         drop(observations);
         record_widget_timing(
             self.id,
@@ -1084,7 +1195,11 @@ impl WidgetPod {
         );
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
         parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
-        IntrinsicSize::new(intrinsic.minimum, intrinsic.natural)
+        let intrinsic = IntrinsicSize::new(intrinsic.minimum, intrinsic.natural);
+        self.probe_cache
+            .get_or_insert_with(Default::default)
+            .intrinsics[axis_index] = Some((cross, intrinsic));
+        intrinsic
     }
 
     pub fn arrange(&mut self, parent_ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -1108,6 +1223,7 @@ impl WidgetPod {
         bounds: Rect,
         transform: Transform,
     ) {
+        crate::layout_work::record(|work| work.arrange_requests += 1);
         let presentation_transform = transform.then(parent_ctx.presentation_transform());
         if self.layout_state.arrange_valid
             && !parent_ctx.scope().must_rearrange(self.id)
@@ -1121,10 +1237,13 @@ impl WidgetPod {
                 };
                 self.visit_children_mut(&mut visitor);
             }
+            crate::layout_work::record(|work| work.arrange_cache_hits += 1);
             return;
         }
+        crate::layout_work::record(|work| work.arrange_executions += 1);
         let size_changed = self.layout_state.arranged_bounds.size != bounds.size;
         let delta = bounds.origin - self.layout_state.arranged_bounds.origin;
+        crate::layout_work::record(|work| work.translations += u64::from(delta != Vector::ZERO));
         self.layout_state.arranged_bounds = bounds;
         self.layout_state.relative_presentation_transform = transform;
         self.layout_state.presentation_transform = presentation_transform;
@@ -1168,6 +1287,7 @@ impl WidgetPod {
     }
 
     fn paint_into(&self, parent_ctx: &mut PaintCtx, emit_layer: bool) {
+        crate::layout_work::record(|work| work.paint_executions += 1);
         let presentation_transform = self.layout_state.presentation_transform;
         let relative_transform =
             relative_transform(presentation_transform, parent_ctx.presentation_transform());
@@ -1252,6 +1372,7 @@ impl WidgetPod {
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
+        crate::layout_work::record(|work| work.semantics_executions += 1);
         let presentation_transform = self.layout_state.presentation_transform;
         let relative_transform =
             relative_transform(presentation_transform, parent_ctx.presentation_transform());
@@ -2311,8 +2432,12 @@ impl EventCtx {
 ///   depend on a descendant's size).
 /// - `subtree_roots`: the changed widgets themselves; entering their children
 ///   forces the whole subtree to re-measure, because the change is inside them.
-#[derive(Debug, Default)]
+static NEXT_MEASURE_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
 pub(crate) struct MeasureScope {
+    generation: u64,
+    reusable_queries: bool,
     force_all: bool,
     dirty: HashSet<WidgetId>,
     subtree_roots: HashSet<WidgetId>,
@@ -2345,12 +2470,25 @@ impl ArrangeScope {
     }
 }
 
+impl Default for MeasureScope {
+    fn default() -> Self {
+        Self {
+            generation: NEXT_MEASURE_GENERATION.fetch_add(1, Ordering::Relaxed),
+            reusable_queries: true,
+            force_all: false,
+            dirty: HashSet::new(),
+            subtree_roots: HashSet::new(),
+        }
+    }
+}
+
 impl MeasureScope {
     pub(crate) fn force_all() -> Self {
         Self {
             force_all: true,
             dirty: HashSet::new(),
             subtree_roots: HashSet::new(),
+            ..Self::default()
         }
     }
 
@@ -2359,6 +2497,7 @@ impl MeasureScope {
             force_all: false,
             dirty,
             subtree_roots,
+            ..Self::default()
         }
     }
 
@@ -2383,6 +2522,7 @@ pub struct MeasureCtx {
     scope: Rc<MeasureScope>,
     /// Whether the pod this ctx belongs to is inside a forced subtree.
     force: bool,
+    probing: bool,
 }
 
 impl MeasureCtx {
@@ -2399,7 +2539,12 @@ impl MeasureCtx {
             bounds,
             layout,
             0.0,
-            Rc::new(MeasureScope::force_all()),
+            Rc::new(MeasureScope {
+                // External callers can reuse this context across arbitrary
+                // measure calls, without the runtime's per-pass lifetime.
+                reusable_queries: false,
+                ..MeasureScope::force_all()
+            }),
             true,
         )
     }
@@ -2423,6 +2568,7 @@ impl MeasureCtx {
             wake_requests: Vec::new(),
             scope,
             force,
+            probing: false,
         }
     }
 
@@ -2480,7 +2626,7 @@ impl MeasureCtx {
     /// Build the measure ctx for a child pod, carrying the shared scope and the
     /// child's resolved force flag.
     pub(crate) fn child(&self, widget_id: WidgetId, bounds: Rect, force: bool) -> Self {
-        Self::with_layout_scoped(
+        let mut child = Self::with_layout_scoped(
             self.window_id,
             widget_id,
             bounds,
@@ -2488,7 +2634,9 @@ impl MeasureCtx {
             self.current_time,
             Rc::clone(&self.scope),
             force,
-        )
+        );
+        child.probing = self.probing;
+        child
     }
 
     pub const fn window_id(&self) -> WindowId {
@@ -3858,6 +4006,245 @@ mod tests {
             Rc::new(scope),
             0.0,
         )
+    }
+
+    #[test]
+    fn scalar_probes_preserve_final_state_and_have_bounded_storage() {
+        struct Probe {
+            calls: Rc<Cell<u32>>,
+            width: Rc<Cell<f32>>,
+        }
+        impl Widget for Probe {
+            fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+                self.calls.set(self.calls.get() + 1);
+                self.width.set(constraints.max.width);
+                constraints.clamp(Size::new(30.0, 10.0))
+            }
+        }
+        let calls = Rc::new(Cell::new(0));
+        let width = Rc::new(Cell::new(0.0));
+        let mut pod = WidgetPod::new(Probe {
+            calls: calls.clone(),
+            width: width.clone(),
+        });
+        let root = WidgetId::new(u64::MAX);
+        let constraint = |width| Constraints::tight(Size::new(width, 10.0));
+        let mut clean = scoped_measure_ctx(root, MeasureScope::default());
+        pod.probe_measure(&mut clean, constraint(10.0));
+        pod.probe_measure(&mut clean, constraint(20.0));
+        pod.measure(&mut clean, constraint(100.0));
+        let before = calls.get();
+        assert_eq!(pod.probe_measure(&mut clean, constraint(10.0)).width, 10.0);
+        pod.measure(&mut clean, constraint(100.0));
+        assert_eq!(calls.get(), before);
+        assert_eq!(width.get(), 100.0);
+        assert_eq!(pod.measured_size().width, 100.0);
+        pod.probe_measure(&mut clean, constraint(30.0));
+        pod.probe_measure(&mut clean, constraint(40.0));
+        pod.probe_measure(&mut clean, constraint(50.0));
+        pod.probe_measure(&mut clean, constraint(10.0)); // oldest entry was evicted
+        assert_eq!(calls.get(), before + 4);
+        assert_eq!(
+            pod.probe_cache
+                .as_ref()
+                .unwrap()
+                .measurements
+                .iter()
+                .flatten()
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn probe_invalidation_discards_all_constraints_and_preserves_forced_callbacks() {
+        struct Probe(Rc<Cell<u32>>);
+        impl Widget for Probe {
+            fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+                self.0.set(self.0.get() + 1);
+                ctx.request_paint();
+                ctx.request_animation_frame();
+                constraints.clamp(Size::new(self.0.get() as f32, 10.0))
+            }
+        }
+        let calls = Rc::new(Cell::new(0));
+        let mut pod = WidgetPod::new(Probe(calls.clone()));
+        let root = WidgetId::new(u64::MAX);
+        let a = Constraints::new(Size::ZERO, Size::new(100.0, 10.0));
+        let b = Constraints::new(Size::ZERO, Size::new(200.0, 10.0));
+        let mut initial = scoped_measure_ctx(root, MeasureScope::force_all());
+        pod.probe_measure(&mut initial, a);
+        pod.probe_measure(&mut initial, b);
+        let mut dirty = scoped_measure_ctx(
+            root,
+            MeasureScope::scoped(HashSet::from([pod.id()]), HashSet::new()),
+        );
+        pod.probe_measure(&mut dirty, a);
+        pod.measure(&mut dirty, a);
+        pod.measure(&mut dirty, a);
+        assert_eq!(
+            calls.get(),
+            5,
+            "forced ordinary callbacks must still execute"
+        );
+        assert_eq!(dirty.invalidations.len(), 3);
+        assert_eq!(dirty.wake_requests.len(), 3);
+        let mut clean = scoped_measure_ctx(root, MeasureScope::default());
+        pod.probe_measure(&mut clean, b);
+        assert_eq!(
+            calls.get(),
+            6,
+            "an unqueried constraint survived invalidation"
+        );
+        let mut subtree = scoped_measure_ctx(
+            root,
+            MeasureScope::scoped(HashSet::new(), HashSet::from([root])),
+        );
+        pod.probe_measure(&mut subtree, b);
+        assert_eq!(calls.get(), 7);
+        let mut resized = scoped_measure_ctx(root, MeasureScope::force_all());
+        pod.probe_measure(&mut resized, b);
+        assert_eq!(calls.get(), 8);
+    }
+
+    #[test]
+    fn external_measure_context_keeps_full_measure_semantics_when_reused() {
+        struct Leaf(Rc<Cell<f32>>);
+        impl Widget for Leaf {
+            fn measure(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+                c.clamp(Size::new(self.0.get(), 10.0))
+            }
+        }
+        struct Parent(WidgetPod);
+        impl Widget for Parent {
+            fn measure(&mut self, ctx: &mut MeasureCtx, c: Constraints) -> Size {
+                let natural = self.0.probe_measure(ctx, Constraints::UNBOUNDED);
+                self.0.measure(ctx, c);
+                c.clamp(natural)
+            }
+        }
+        let value = Rc::new(Cell::new(20.0));
+        let mut pod = WidgetPod::new(Parent(WidgetPod::new(Leaf(value.clone()))));
+        let root = WidgetId::new(u64::MAX);
+        let template = scoped_measure_ctx(root, MeasureScope::force_all());
+        let mut ctx = MeasureCtx::with_layout(
+            template.window_id(),
+            root,
+            Rect::ZERO,
+            template.layout().clone(),
+        );
+        let constraints = Constraints::new(Size::ZERO, Size::new(100.0, 20.0));
+        assert_eq!(pod.measure(&mut ctx, constraints).width, 20.0);
+        value.set(40.0);
+        assert_eq!(pod.measure(&mut ctx, constraints).width, 40.0);
+    }
+
+    #[test]
+    fn dirty_probes_reuse_results_within_a_pass_but_final_measurement_still_executes() {
+        let calls = Rc::new(Cell::new(0));
+        let mut pod = WidgetPod::new(CountingChild {
+            measures: calls.clone(),
+        });
+        let root = WidgetId::new(u64::MAX);
+        let constraints = Constraints::tight(Size::new(100.0, 10.0));
+        let mut pass = scoped_measure_ctx(root, MeasureScope::force_all());
+        pod.probe_measure(&mut pass, constraints);
+        pod.probe_measure(&mut pass, constraints);
+        assert_eq!(calls.get(), 1);
+        pod.measure(&mut pass, constraints);
+        pod.measure(&mut pass, constraints);
+        assert_eq!(calls.get(), 3);
+        pod.intrinsic_size(&mut pass, sui_layout::Axis::Horizontal, 10.0);
+        pod.intrinsic_size(&mut pass, sui_layout::Axis::Horizontal, 10.0);
+        assert_eq!(calls.get(), 4);
+        let mut next = scoped_measure_ctx(root, MeasureScope::force_all());
+        pod.probe_measure(&mut next, constraints);
+        assert_eq!(
+            calls.get(),
+            5,
+            "a new dirty pass must invalidate the previous queries"
+        );
+    }
+
+    #[test]
+    fn intrinsic_cache_keys_include_axis_and_cross_extent() {
+        struct Probe(Rc<Cell<u32>>);
+        impl Widget for Probe {
+            fn intrinsic_size(
+                &mut self,
+                _: &mut MeasureCtx,
+                axis: sui_layout::Axis,
+                cross: f32,
+            ) -> sui_layout::IntrinsicSize {
+                self.0.set(self.0.get() + 1);
+                let offset = if axis == sui_layout::Axis::Horizontal {
+                    1.0
+                } else {
+                    2.0
+                };
+                sui_layout::IntrinsicSize::fixed(cross + offset)
+            }
+        }
+        let calls = Rc::new(Cell::new(0));
+        let mut pod = WidgetPod::new(Probe(calls.clone()));
+        let root = WidgetId::new(u64::MAX);
+        let mut clean = scoped_measure_ctx(root, MeasureScope::default());
+        for _ in 0..2 {
+            assert_eq!(
+                pod.intrinsic_size(&mut clean, sui_layout::Axis::Horizontal, 10.0)
+                    .natural,
+                11.0
+            );
+            assert_eq!(
+                pod.intrinsic_size(&mut clean, sui_layout::Axis::Vertical, 10.0)
+                    .natural,
+                12.0
+            );
+        }
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            pod.intrinsic_size(&mut clean, sui_layout::Axis::Horizontal, 20.0)
+                .natural,
+            21.0
+        );
+        assert_eq!(calls.get(), 3);
+        let mut dirty = scoped_measure_ctx(
+            root,
+            MeasureScope::scoped(HashSet::from([pod.id()]), HashSet::new()),
+        );
+        pod.measure(&mut dirty, Constraints::tight(Size::new(10.0, 10.0)));
+        pod.intrinsic_size(&mut clean, sui_layout::Axis::Vertical, 10.0);
+        assert_eq!(
+            calls.get(),
+            4,
+            "ordinary dirty measurement must also clear intrinsic probes"
+        );
+    }
+
+    #[test]
+    fn intrinsic_probe_cannot_leave_a_cached_final_layout_in_the_wrong_state() {
+        struct StatefulMeasure(Rc<Cell<f32>>);
+        impl Widget for StatefulMeasure {
+            fn measure(&mut self, _: &mut MeasureCtx, constraints: Constraints) -> Size {
+                self.0.set(constraints.max.width);
+                constraints.clamp(Size::new(20.0, 20.0))
+            }
+        }
+        let committed_width = Rc::new(Cell::new(0.0));
+        let mut pod = WidgetPod::new(StatefulMeasure(committed_width.clone()));
+        let root = WidgetId::new(u64::MAX);
+        let final_constraints = Constraints::tight(Size::new(100.0, 20.0));
+        let mut initial = scoped_measure_ctx(root, MeasureScope::force_all());
+        pod.measure(&mut initial, final_constraints);
+        let mut clean =
+            scoped_measure_ctx(root, MeasureScope::scoped(HashSet::new(), HashSet::new()));
+        pod.intrinsic_size(&mut clean, sui_layout::Axis::Horizontal, 20.0);
+        pod.measure(&mut clean, final_constraints);
+        assert_eq!(
+            committed_width.get(),
+            100.0,
+            "a scalar cache hit did not restore the final layout state"
+        );
     }
 
     #[test]

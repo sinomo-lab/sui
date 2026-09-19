@@ -149,7 +149,7 @@ impl Widget for Grid {
         let mut natural_sizes = Vec::with_capacity(self.children.len());
         let mut minimum_widths = Vec::with_capacity(self.children.len());
         for child in self.children.as_mut_slice() {
-            let natural = child.measure(ctx, Constraints::UNBOUNDED);
+            let natural = child.probe_measure(ctx, Constraints::UNBOUNDED);
             let intrinsic = child.intrinsic_size(ctx, Axis::Horizontal, natural.height);
             natural_sizes.push(natural);
             minimum_widths.push(intrinsic.minimum);

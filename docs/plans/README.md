@@ -7,6 +7,11 @@ documents and completed plans are removed.
 
 ## Current plans
 
+- [Widget initialization and layout benchmarks](./widget-performance-benchmark-plan.md)
+  tracks the benchmark suite and remaining coverage. The initial runner measures
+  construction, CPU/offscreen updates, and native startup with explicit backend
+  selection and diagnostic counters; broader native/fixture/profile coverage
+  remains open.
 - [Cross-language bindings](./cross-language-bindings-plan.md) tracks package
   publication, desktop smoke coverage, editor/virtual-table parity, browser
   JavaScript/WASM support, custom shader registration, and zero-copy binding
