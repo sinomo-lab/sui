@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use accesskit::{
     Action, ActionData, ActionRequest, CustomAction, HasPopup, Live, Node, NodeId, Rect, Role,
-    TextPosition, TextSelection, Toggled, Tree, TreeId, TreeUpdate,
+    TextPosition, TextSelection, Toggled, TreeId, TreeInfo, TreeUpdate,
 };
 use sui_core::{
     SemanticsAction, SemanticsActionRequest, SemanticsLiveRegion, SemanticsNode,
@@ -215,7 +215,7 @@ pub(crate) fn build_accesskit_snapshot(
         .max_by_key(|id| semantic_depth(*id, &parents))
         .map(|id| NodeId(id.get()))
         .unwrap_or(tree_root);
-    let mut tree = Tree::new(tree_root);
+    let mut tree = TreeInfo::new(tree_root);
     tree.toolkit_name = Some("SUI".to_string());
     tree.toolkit_version = Some(env!("CARGO_PKG_VERSION").to_string());
 
@@ -529,10 +529,7 @@ fn map_semantics_node(
             id = id.wrapping_add(1);
         }
         node.add_action(Action::CustomAction);
-        node.push_custom_action(CustomAction {
-            id,
-            description: description.into_boxed_str(),
-        });
+        node.push_custom_action(CustomAction { id, description });
         custom_actions.insert((node_id, id), request);
     }
 
@@ -714,7 +711,7 @@ fn character_index_to_byte_offset(offsets: &[usize], character_index: usize) -> 
 mod tests {
     use super::*;
     use accesskit::ActionData;
-    use accesskit_consumer::{Node as ConsumerNode, TreeChangeHandler};
+    use accesskit_consumer::{NodeRef as ConsumerNode, TreeChangeHandler};
     use sui_core::{EditableTextSemantics, Rect as SuiRect, SemanticsState};
 
     fn node(id: u64, role: SemanticsRole) -> SemanticsNode {
@@ -986,7 +983,7 @@ mod tests {
         assert_eq!(node.numeric_value(), Some(2.0));
         assert_eq!(node.min_numeric_value(), Some(0.0));
         assert_eq!(node.max_numeric_value(), Some(10.0));
-        assert_eq!(node.custom_actions()[0].description.as_ref(), "Reset");
+        assert_eq!(node.custom_actions()[0].description.as_str(), "Reset");
 
         let set_value = ActionRequest {
             action: Action::SetValue,
