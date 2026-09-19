@@ -717,6 +717,18 @@ impl Scene {
         self.commands.append(&mut scene.commands);
     }
 
+    /// Append a retained scene without allocating an intermediate command vector.
+    pub fn append_ref(&mut self, scene: &Scene) {
+        if self.bounds.state.is_balanced() && scene.bounds.state.is_balanced() {
+            self.bounds.extend(&scene.bounds);
+        } else {
+            for command in &scene.commands {
+                self.bounds.push(command);
+            }
+        }
+        self.commands.extend(scene.commands.iter().cloned());
+    }
+
     pub fn clear(&mut self) {
         self.commands.clear();
         self.bounds = SceneBoundsSummary::default();
@@ -1495,6 +1507,43 @@ mod tests {
     #[test]
     fn scene_frame_is_send_sync() {
         assert_send_sync::<SceneFrame>();
+    }
+
+    #[test]
+    fn borrowed_append_preserves_commands_bounds_and_source_under_nested_scopes() {
+        for inherited in [false, true] {
+            for unbalanced_source in [false, true] {
+                let mut source = Scene::new();
+                source.push(SceneCommand::PushTransform {
+                    transform: Transform::translation(4.0, 7.0),
+                });
+                source.push(SceneCommand::FillRect {
+                    rect: Rect::new(2.0, 3.0, 20.0, 30.0),
+                    brush: Color::WHITE.into(),
+                });
+                if !unbalanced_source {
+                    source.push(SceneCommand::PopTransform);
+                }
+                let snapshot = source.clone();
+                let mut actual = Scene::new();
+                if inherited {
+                    actual.push(SceneCommand::PushClip {
+                        rect: Rect::new(0.0, 0.0, 16.0, 18.0),
+                    });
+                    actual.push(SceneCommand::PushTransform {
+                        transform: Transform::translation(1.0, 2.0),
+                    });
+                }
+                let mut expected = actual.clone();
+                expected.append(source.clone());
+                actual.append_ref(&source);
+                assert_eq!(actual, expected);
+                assert_eq!(source, snapshot);
+                assert_bounds_summary_matches_commands(&actual);
+                source.clear();
+                assert_eq!(actual, expected);
+            }
+        }
     }
 
     #[test]

@@ -1224,6 +1224,10 @@ struct WindowState {
     last_paint_bounds_by_widget: HashMap<WidgetId, Rect>,
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
+    // Counts preserve provenance without changing the public request type. If an
+    // explicit request has the same target/kind, the combined request is a subtree
+    // invalidation; layout/command-generated requests are conservative too.
+    pending_local_output: HashMap<(WidgetId, InvalidationKind), usize>,
     pending_reactive_diagnostics: Vec<ReactiveInvalidationSample>,
     reactive_hub: Arc<reactive::ReactiveInvalidationHub>,
     pointer_capture: HashMap<u64, WidgetId>,
@@ -1300,6 +1304,7 @@ impl WindowState {
             last_paint_bounds_by_widget: HashMap::new(),
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
+            pending_local_output: HashMap::new(),
             pending_reactive_diagnostics: Vec::new(),
             reactive_hub,
             pointer_capture: HashMap::new(),
@@ -1345,7 +1350,7 @@ impl WindowState {
 
             let mut invalidations = Vec::new();
             let mut targets = BTreeSet::new();
-            for (request, mut sample) in pending {
+            for (request, mut sample, local_output) in pending {
                 let InvalidationTarget::Widget(widget_id) = request.target else {
                     continue;
                 };
@@ -1365,6 +1370,12 @@ impl WindowState {
                 }
                 self.pending_reactive_diagnostics.push(sample);
                 if delivered {
+                    if local_output {
+                        *self
+                            .pending_local_output
+                            .entry((widget_id, request.kind))
+                            .or_default() += 1;
+                    }
                     targets.insert(widget_id);
                     invalidations.push(request);
                 }
@@ -1383,6 +1394,11 @@ impl WindowState {
                 let Some(dispatch) = self.dispatch_direct_command(target, &command) else {
                     continue;
                 };
+                if dispatch.handled {
+                    // A handler may mutate descendants as part of reacting to
+                    // the source. Retain the prior subtree callback contract.
+                    self.pending_local_output.retain(|(id, _), _| *id != target);
+                }
                 let focus_request = dispatch.focus_request;
                 let mut effects = EventEffects::default();
                 effects.extend(dispatch);
@@ -3167,6 +3183,7 @@ impl WindowState {
         let diagnostics_enabled = window_scene_statistics_detail_mode(self.id).is_detailed();
         let mut diagnostics = RenderDiagnostics::default();
         let mut invalidations = std::mem::take(&mut self.pending_invalidations);
+        let local_output = std::mem::take(&mut self.pending_local_output);
         let mut repainted = false;
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
@@ -3218,6 +3235,7 @@ impl WindowState {
         let dpi_info = self.dpi_info_for_viewport(viewport);
         self.prepare_output_reuse(
             &invalidations,
+            &local_output,
             &graph_changes,
             dpi_info,
             Arc::clone(&font_registry),
@@ -3545,6 +3563,7 @@ impl WindowState {
     fn prepare_output_reuse(
         &mut self,
         invalidations: &[InvalidationRequest],
+        local_output: &HashMap<(WidgetId, InvalidationKind), usize>,
         changes: &GraphChangeSet,
         dpi: DpiInfo,
         fonts: Arc<FontRegistry>,
@@ -3569,54 +3588,117 @@ impl WindowState {
             images,
             window_render_options(self.id),
         );
-        if self.last_frame.is_none()
-            || (invalidations.is_empty() && (self.schedule.paint || self.schedule.semantics))
-        {
+        if self.last_frame.is_none() {
             cache.clear();
-            cache.active = self.last_frame.is_none();
             return;
         }
-        let mut roots = HashSet::new();
+        // Full window/explicit root requests need no per-node bookkeeping.
+        // In particular, resizing must not build two dirty sets only to discard
+        // both caches. Geometry changes that already cover half the graph also
+        // satisfy the broad-update policy without expanding ancestor paths.
+        let mut explicit_full_paint = false;
+        let mut explicit_full_semantics = false;
         for request in invalidations {
-            match request.target {
-                InvalidationTarget::Widget(id) if self.graph.contains(id) => {
-                    roots.insert(id);
+            let full = match request.target {
+                InvalidationTarget::Widget(id) => {
+                    id == self.root.id() && !local_output.contains_key(&(id, request.kind))
                 }
-                _ => {
-                    cache.clear();
-                    cache.active = false;
-                    return;
+                _ => true,
+            };
+            if full {
+                match request.kind {
+                    InvalidationKind::Paint | InvalidationKind::Effect => {
+                        explicit_full_paint = true
+                    }
+                    InvalidationKind::Semantics => explicit_full_semantics = true,
+                    _ => {
+                        explicit_full_paint = true;
+                        explicit_full_semantics = true;
+                    }
                 }
             }
         }
-        if roots.contains(&self.root.id()) {
-            cache.clear();
-            cache.active = false;
+        if (explicit_full_paint && explicit_full_semantics)
+            || (!changes.output_widgets.is_empty()
+                && changes.output_widgets.len().saturating_mul(2) >= self.graph.nodes.len())
+        {
+            cache.disable_paint();
+            cache.disable_semantics();
             return;
         }
-        let mut dirty = HashSet::new();
+        let mut counts = HashMap::<_, usize>::new();
+        for request in invalidations {
+            if let InvalidationTarget::Widget(id) = request.target
+                && local_output.contains_key(&(id, request.kind))
+            {
+                *counts.entry((id, request.kind)).or_default() += 1;
+            }
+        }
+        let mut paint_dirty = HashSet::new();
+        let mut semantics_dirty = HashSet::new();
+        let mut full_paint = invalidations.is_empty() && self.schedule.paint;
+        let mut full_semantics = invalidations.is_empty() && self.schedule.semantics;
         // A flat child's geometry change can repaint the root scene, but it does
         // not invalidate every sibling's retained callback output.
         for id in &changes.output_widgets {
-            dirty.insert(*id);
+            paint_dirty.insert(*id);
+            semantics_dirty.insert(*id);
             if let Some(path) = self.graph.path_to(*id) {
-                dirty.extend(path);
+                paint_dirty.extend(path.iter().copied());
+                semantics_dirty.extend(path);
             }
         }
-        for id in roots {
-            dirty.extend(self.graph.subtree_ids(id));
+        for request in invalidations {
+            let (paint, semantics) = match request.kind {
+                InvalidationKind::Paint | InvalidationKind::Effect => (true, false),
+                InvalidationKind::Semantics => (false, true),
+                _ => (true, true),
+            };
+            let InvalidationTarget::Widget(id) = request.target else {
+                full_paint |= paint;
+                full_semantics |= semantics;
+                continue;
+            };
+            let local = local_output
+                .get(&(id, request.kind))
+                .is_some_and(|count| counts.get(&(id, request.kind)) == Some(count));
+            if !self.graph.contains(id) || (id == self.root.id() && !local) {
+                full_paint |= paint;
+                full_semantics |= semantics;
+                continue;
+            }
+            let nodes = if local {
+                vec![id]
+            } else {
+                self.graph.subtree_ids(id)
+            };
+            if paint {
+                paint_dirty.extend(nodes.iter().copied());
+            }
+            if semantics {
+                semantics_dirty.extend(nodes);
+            }
             if let Some(path) = self.graph.path_to(id) {
-                dirty.extend(path);
+                if paint {
+                    paint_dirty.extend(path.iter().copied());
+                }
+                if semantics {
+                    semantics_dirty.extend(path);
+                }
             }
         }
         // Broad updates have little reusable output. Avoid filling the cache
         // with copies that the next bulk update would immediately invalidate.
-        if dirty.len().saturating_mul(2) >= self.graph.nodes.len() {
-            cache.clear();
-            cache.active = false;
-            return;
+        if full_paint || paint_dirty.len().saturating_mul(2) >= self.graph.nodes.len() {
+            cache.disable_paint();
         }
-        cache.retain(|id| self.graph.contains(id) && !dirty.contains(&id));
+        if full_semantics || semantics_dirty.len().saturating_mul(2) >= self.graph.nodes.len() {
+            cache.disable_semantics();
+        }
+        cache.retain(
+            |id| self.graph.contains(id) && !paint_dirty.contains(&id),
+            |id| self.graph.contains(id) && !semantics_dirty.contains(&id),
+        );
     }
 
     fn paint_full_scene(

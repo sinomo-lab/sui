@@ -115,6 +115,65 @@ fn resizing_reuses_shaping_and_intrinsic_metrics_without_changing_published_geom
 }
 
 #[test]
+fn alignment_and_wrapping_reuse_shapes_but_recompute_line_geometry() {
+    for (text, direction) in [
+        (
+            "office affinity e\u{301} and more words",
+            TextDirection::Auto,
+        ),
+        ("العربية שָׁלוֹם 123 office", TextDirection::Auto),
+        ("العربية שָׁלוֹם 123 office", TextDirection::RightToLeft),
+    ] {
+        let system = TextSystem::with_bundled_fonts();
+        let fonts = FontRegistry::new();
+        let mut outputs = Vec::new();
+        for width in [73.25, 320.0] {
+            for wrap in [
+                TextWrap::Word,
+                TextWrap::NoWrap,
+                TextWrap::Character,
+                TextWrap::Word,
+            ] {
+                for align in [
+                    TextAlign::Start,
+                    TextAlign::Left,
+                    TextAlign::Center,
+                    TextAlign::Right,
+                    TextAlign::End,
+                    TextAlign::Justified,
+                    TextAlign::Start,
+                ] {
+                    let mut document = TextDocument::from_plain_text(text, TextStyle::default());
+                    document.paragraphs[0].style.direction = direction;
+                    document.paragraphs[0].style.wrap = wrap;
+                    document.paragraphs[0].style.align = align;
+                    let request = request(&document, width);
+                    let size = system
+                        .measure_document_size(request.clone(), &fonts)
+                        .unwrap();
+                    let layout = system.layout_document(request.clone(), &fonts).unwrap();
+                    assert_eq!(
+                        size,
+                        Size::new(layout.measurement().width, layout.measurement().height)
+                    );
+                    outputs.push((request, layout));
+                    discard_final_layouts(&system);
+                }
+            }
+        }
+        assert_eq!(system.preparation_cache_snapshot().paragraphs.misses, 1);
+        // Compare every result, including old retained geometry, with a new shape
+        // in the same font context. Layout IDs and face identities stay comparable.
+        for (request, cached) in outputs {
+            discard_final_layouts(&system);
+            discard_preparation(&system);
+            let fresh = system.layout_document(request, &fonts).unwrap();
+            assert_geometry(&cached, &fresh);
+        }
+    }
+}
+
+#[test]
 fn size_and_materialized_reflow_agree_across_styles_breaks_bidi_and_empty_text() {
     let system = TextSystem::with_bundled_fonts();
     let fonts = FontRegistry::new();

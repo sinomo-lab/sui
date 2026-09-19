@@ -18,6 +18,37 @@ fn frame(window: WindowId, color: Color, rect_count: usize) -> SceneFrame {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn background_device_preparation_preserves_output_and_initializes_once() {
+    let window = WindowId::new(8961);
+    let content = frame(window, Color::WHITE, 8);
+    let mut lazy = WgpuRenderer::new();
+    lazy.render(&content).unwrap();
+    let expected = lazy.capture_rgba(window).unwrap();
+    let mut prepared = WgpuRenderer::new();
+    let registry = crate::WgpuExternalTextureRegistry::default();
+    prepared.set_external_texture_registry(registry.clone());
+    prepared.prepare_device();
+    prepared.prepare_device();
+    assert!(registry.context().is_none());
+    prepared.render(&content).unwrap();
+    assert!(registry.context().is_some());
+    let stats = prepared.last_frame_stats(window).unwrap();
+    assert!(stats.device_prepare_time_us > 0);
+    assert!(stats.command_finish_time_us <= stats.queue_submit_time_us);
+    assert_eq!(
+        expected.pixels(),
+        prepared.capture_rgba(window).unwrap().pixels()
+    );
+    prepared.prepare_device();
+    prepared.render(&content).unwrap();
+    let stats = prepared.last_frame_stats(window).unwrap();
+    assert_eq!(stats.device_prepare_time_us, 0);
+    assert_eq!(stats.device_prepare_wait_time_us, 0);
+    assert!(prepared.device_preparation.is_none());
+}
+
+#[test]
 fn optimization_regression_unchanged_vertices_are_not_uploaded_again() {
     let mut renderer = WgpuRenderer::new();
     let window = WindowId::new(8951);

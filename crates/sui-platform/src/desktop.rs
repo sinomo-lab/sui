@@ -141,6 +141,7 @@ pub struct DesktopFramePresented {
 /// Read-only state supplied to a [`DesktopExtension`] update.
 pub struct DesktopExtensionContext<'a> {
     runtime: &'a Runtime,
+    renderer: &'a WgpuRenderer,
     windows: &'a HashMap<WindowId, WindowState>,
     commands: &'a CommandSender,
 }
@@ -149,6 +150,11 @@ impl<'a> DesktopExtensionContext<'a> {
     /// Borrow the retained runtime for widget graph and lifecycle snapshots.
     pub const fn runtime(&self) -> &'a Runtime {
         self.runtime
+    }
+
+    /// Inspect renderer state and adapter metadata without enabling GPU interop.
+    pub const fn renderer(&self) -> &'a WgpuRenderer {
+        self.renderer
     }
 
     /// Borrow the command sender associated with the running application.
@@ -828,6 +834,7 @@ impl DesktopApp {
         for extension in &mut self.extensions {
             extension.update(DesktopExtensionContext {
                 runtime,
+                renderer: &self.renderer,
                 windows,
                 commands: &commands,
             })?;
@@ -931,8 +938,17 @@ impl DesktopApp {
             );
             #[cfg(target_os = "windows")]
             let accesskit_snapshot = build_accesskit_snapshot(window_id, scale_factor, &title, &[]);
-            self.renderer
-                .register_window(window_id, Arc::clone(&window))?;
+            // Interop clients may create GPU resources during initial layout.
+            // Keep their context available at the original boundary; ordinary
+            // windows can overlap device setup with the size/DPI layout below.
+            let prepare_in_background = self.renderer.external_texture_registry().is_none();
+            if prepare_in_background {
+                self.renderer
+                    .prepare_window(window_id, Arc::clone(&window))?;
+            } else {
+                self.renderer
+                    .register_window(window_id, Arc::clone(&window))?;
+            }
             #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             crate::file_dialog::register_native_file_dialog_parent(window_id, &window);
 
@@ -966,13 +982,11 @@ impl DesktopApp {
                     window,
                 },
             );
-            self.refresh_window_display_capabilities(window_id)?;
-
-            #[cfg(target_os = "windows")]
-            if let Some(window) = self.windows.get(&window_id) {
-                window.window.set_visible(true);
+            if !prepare_in_background {
+                self.refresh_window_display_capabilities(window_id)?;
+                #[cfg(target_os = "windows")]
+                self.windows[&window_id].window.set_visible(true);
             }
-
             self.process_event(
                 event_loop,
                 window_id,
@@ -988,6 +1002,13 @@ impl DesktopApp {
                 window_id,
                 Event::Window(WindowEvent::Resized(size)),
             )?;
+            if prepare_in_background {
+                self.renderer
+                    .register_window(window_id, Arc::clone(&self.windows[&window_id].window))?;
+                self.refresh_window_display_capabilities(window_id)?;
+                #[cfg(target_os = "windows")]
+                self.windows[&window_id].window.set_visible(true);
+            }
         }
 
         if self.windows.is_empty() {
@@ -1472,6 +1493,7 @@ impl DesktopApp {
                 extension.frame_presented(
                     DesktopExtensionContext {
                         runtime: &self.runtime,
+                        renderer: &self.renderer,
                         windows: &self.windows,
                         commands: &commands,
                     },

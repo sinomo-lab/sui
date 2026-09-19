@@ -17,7 +17,9 @@ use crate::{
         TextLayout, TextLayoutData, TextLayoutId, TextLayoutMetadata, TextLayoutRun,
         TextLayoutVersion, TextLine, TextMeasurement, TextParagraphLayout, TextStyle, TextWrap,
     },
-    prepared::{PreparedParagraphKey, PreparedParagraphState, PreparedSpanKey},
+    prepared::{
+        PreparedLineLayoutKey, PreparedParagraphKey, PreparedParagraphState, PreparedSpanKey,
+    },
 };
 
 const DIRECTION_SENTINEL_METADATA: usize = usize::MAX;
@@ -39,7 +41,8 @@ fn with_prepared_paragraph<T>(
         DIRECTION_SENTINEL_METADATA,
     );
     let key = PreparedParagraphKey {
-        style: paragraph.style.clone(),
+        direction: paragraph.style.direction,
+        writing_mode: paragraph.style.writing_mode,
         defaults: AttrsOwned::new(&defaults),
         spans: spans
             .iter()
@@ -66,12 +69,7 @@ fn with_prepared_paragraph<T>(
                     .map(|span| (span.text.as_str(), span.attrs.as_attrs())),
             )
             .chain((!suffix.is_empty()).then_some((suffix, defaults.clone())));
-        buffer.set_rich_text(
-            rich_spans,
-            &defaults,
-            cosmic_text::Shaping::Advanced,
-            map_align(paragraph.style.align, paragraph.style.direction),
-        );
+        buffer.set_rich_text(rich_spans, &defaults, cosmic_text::Shaping::Advanced, None);
         // Shape through Buffer so its rich-text normalization, tabs and direction
         // handling stay identical to the materialized path. Retain only the shape:
         // its allocations are inspectable and independent of a wrapping width.
@@ -83,7 +81,7 @@ fn with_prepared_paragraph<T>(
             shape,
             metrics,
             lines: Vec::new(),
-            layout_width: None,
+            layout_key: None,
         }
     };
     let result = consume(&mut prepared, font_context);
@@ -103,8 +101,12 @@ fn layout_prepared_paragraph(
     width: Option<f32>,
 ) {
     let width = width.map(|value| value.max(0.0));
-    let width_key = width.map(f32::to_bits);
-    if prepared.layout_width == Some(width_key) {
+    let key = PreparedLineLayoutKey {
+        width: width.map(f32::to_bits),
+        align: style.align,
+        wrap: style.wrap,
+    };
+    if prepared.layout_key == Some(key) {
         return;
     }
     // The same Cosmic line breaker is used for size-only and materialized output.
@@ -123,7 +125,7 @@ fn layout_prepared_paragraph(
         None,
         Hinting::Disabled,
     );
-    prepared.layout_width = Some(width_key);
+    prepared.layout_key = Some(key);
 }
 
 pub(crate) fn measure_document_size(

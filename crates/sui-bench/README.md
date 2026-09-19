@@ -219,3 +219,30 @@ wrappers do; fixture content, topology, constraints, and mutations are unchanged
 Custom containers retain the full-measure fallback until they opt into this hook.
 Repeat comparisons in reverse run order on shared hosts. Native presentation
 still needs a display-equipped runner.
+
+## Text, output reuse, and startup preparation
+
+Paragraph preparation shares glyph shaping across alignment and wrapping changes;
+the retained line-layout key still includes width, alignment, and wrap policy.
+Button measurement and painting share one persistent natural layout. Check both
+preparation misses and materialized-layout misses when diagnosing cold text or
+whole-set updates, and preserve caret, selection, bidi, and optical geometry.
+
+Tracked sources read only in paint or semantics invalidate that widget's output
+in that phase. Explicit subtree/window requests and cross-phase or event observers
+retain their conservative behavior. Output-cache hits borrow shared fragments and
+append into the destination directly. The byte budgets, context generations,
+opaque-widget fallback, and text-handle checks still apply.
+
+Offscreen startup creates the backend and calls `WgpuRenderer::prepare_device`
+before the initial size/DPI event. Desktop startup uses `prepare_window` with the
+actual surface, runs CPU layout, then completes `register_window`. All of this
+work remains inside startup timing. Adapter/device work may overlap CPU layout:
+`device_prepare_us` reports that work and `device_wait_us` reports the time first
+use blocks waiting for it. Do not add the overlapping work to frame duration.
+`command_finish_us` is nested inside `queue_submit_us`; it separates command-buffer
+finishing from the queue call. Other targets retain their existing initialization
+path. Compare startup using matching harness ordering, and retain failed/cancelled
+initialization evidence alongside successful trials.
+Native external-texture clients keep synchronous registration so their GPU context
+remains available during initial layout.

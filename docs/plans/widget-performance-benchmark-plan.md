@@ -66,6 +66,23 @@ from promotion to a scene-layer repaint boundary. Explicit full invalidations
 bypass caching, as do passes with a majority of nodes invalidated; unsupported
 paint payloads use normal callbacks.
 
+The fifth pass separates shaping identity from alignment/wrapping policy and
+retains a complete line-layout key, allowing measurement and painting to share
+preparation. Buttons materialize their natural label layout once. Paint and
+semantics invalidation now retain their separate scopes: output-only reactive
+reads can invalidate the observing node, while explicit subtree/window requests,
+cross-phase observers, and handled reactive commands remain conservative. Shared
+cache fragments append without intermediate vectors/maps; public scene and
+returned-frame ownership contracts stay unchanged.
+
+GPU preparation can overlap initial CPU layout. Native preparation selects an
+adapter using the actual surface, and registration still completes configuration
+before returning. Offscreen and native startup start preparation inside the
+measured startup boundary. Device work, blocked preparation time, and nested
+command-buffer finishing are separate diagnostics. Dropping preparation cancels
+later stages; in-flight driver calls finish and release their owned resources.
+Native first-present measurement remains a display-equipped-runner requirement.
+
 ## Questions the suite must answer
 
 1. What does constructing and attaching a widget tree cost before rendering?

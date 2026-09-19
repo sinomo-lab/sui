@@ -1629,6 +1629,39 @@ fn button_cached_label_uses_visual_color_without_changing_layout_metrics() {
 }
 
 #[test]
+fn button_measurement_and_paint_share_one_layout_across_resize() {
+    let (mut runtime, window_id) = build_runtime(Button::new("Apply office e\u{301}"));
+    sui_runtime::set_window_scene_statistics_detail_mode(
+        window_id,
+        sui_runtime::SceneStatisticsDetailMode::Detailed,
+    );
+    let first = runtime.render(window_id).unwrap();
+    let first_text = first_shaped_text(&first);
+    let first_layout = first_text
+        .resolve(first.frame.text_layout_registry.as_ref())
+        .unwrap();
+    assert_eq!(first.diagnostics.text_caches.runtime_layout.misses, 1);
+    let before = (first_text.layout_handle, first_text.layout_version);
+    runtime
+        .handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(500.0, 120.0))),
+        )
+        .unwrap();
+    let resized = runtime.render(window_id).unwrap();
+    let resized_text = first_shaped_text(&resized);
+    let resized_layout = resized_text
+        .resolve(resized.frame.text_layout_registry.as_ref())
+        .unwrap();
+    assert_eq!(
+        (resized_text.layout_handle, resized_text.layout_version),
+        before
+    );
+    assert_eq!(first_layout.measurement(), resized_layout.measurement());
+    assert_eq!(resized.diagnostics.text_caches.runtime_layout.misses, 1);
+}
+
+#[test]
 fn button_with_icon_keeps_label_semantics_and_paints_icon() {
     let plain = render(Button::new("Export").min_width(96.0));
     let with_icon = render_isolated(

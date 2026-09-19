@@ -20,10 +20,37 @@ use web_time::Instant;
 use winit::window::Window;
 
 impl WgpuRenderer {
+    /// Begin device setup using this native surface before the first CPU layout.
+    /// Call `register_window` afterwards to finish configuration. Preparation is
+    /// optional, idempotent, and cancelled when the window/renderer is removed.
+    pub fn prepare_window(&mut self, window_id: WindowId, window: Arc<Window>) -> Result<()> {
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self.shared.is_none() && !self.prepared_surfaces.contains_key(&window_id) {
+            let surface = Arc::new(
+                self.instance
+                    .create_surface(Arc::clone(&window))
+                    .map_err(|error| {
+                        Error::new(format!("failed to create wgpu surface: {error}"))
+                    })?,
+            );
+            self.start_device_preparation(Some(window_id), Some(surface.clone()));
+            self.prepared_surfaces
+                .insert(window_id, PreparedSurface { window, surface });
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let _ = (window_id, window);
+        Ok(())
+    }
+
     pub fn register_window(&mut self, window_id: WindowId, window: Arc<Window>) -> Result<()> {
         let physical_size = window.inner_size();
         let size = normalize_surface_size(physical_size.width, physical_size.height);
-        let state = self.create_surface_state(window, size)?;
+        let state = match self.prepared_surfaces.remove(&window_id) {
+            Some(prepared) if Arc::ptr_eq(&prepared.window, &window) => {
+                self.configure_new_surface(window, prepared.surface, size)?
+            }
+            _ => self.create_surface_state(window, size)?,
+        };
 
         self.surfaces.insert(window_id, state);
         self.offscreen_targets.remove(&window_id);
@@ -229,6 +256,15 @@ impl WgpuRenderer {
             .instance
             .create_surface(Arc::clone(&window))
             .map_err(|error| Error::new(format!("failed to create wgpu surface: {error}")))?;
+        self.configure_new_surface(window, Arc::new(surface), size)
+    }
+
+    fn configure_new_surface(
+        &mut self,
+        window: Arc<Window>,
+        surface: Arc<wgpu::Surface<'static>>,
+        size: (u32, u32),
+    ) -> Result<SurfaceState> {
         self.ensure_shared(Some(&surface))?;
 
         let shared = self
@@ -345,9 +381,14 @@ pub(crate) fn configure_surface(
     Ok((config, strategy))
 }
 
+pub(crate) struct PreparedSurface {
+    window: Arc<Window>,
+    surface: Arc<wgpu::Surface<'static>>,
+}
+
 pub(crate) struct SurfaceState {
     pub(crate) window: Arc<Window>,
-    pub(crate) surface: wgpu::Surface<'static>,
+    pub(crate) surface: Arc<wgpu::Surface<'static>>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) display_capabilities: DisplayCapabilities,
     pub(crate) color_management: ColorManagementMode,

@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex, OnceLock, RwLock, Weak,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
 
@@ -17,6 +17,7 @@ type ExternalWaker = dyn Fn() + Send + Sync + 'static;
 struct PendingReactiveInvalidation {
     request: InvalidationRequest,
     sample: ReactiveInvalidationSample,
+    local_output: bool,
 }
 
 pub(crate) struct ReactiveInvalidationHub {
@@ -41,7 +42,13 @@ impl ReactiveInvalidationHub {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = waker;
     }
 
-    fn enqueue(&self, widget_id: WidgetId, kind: InvalidationKind, change: Change) {
+    fn enqueue(
+        &self,
+        widget_id: WidgetId,
+        kind: InvalidationKind,
+        change: Change,
+        local_output: bool,
+    ) {
         let should_wake = {
             let mut pending = self
                 .pending
@@ -61,10 +68,12 @@ impl ReactiveInvalidationHub {
                     && pending.sample.kind == kind
             }) {
                 existing.sample = sample;
+                existing.local_output &= local_output;
             } else {
                 pending.push(PendingReactiveInvalidation {
                     request: InvalidationRequest::new(InvalidationTarget::Widget(widget_id), kind),
                     sample,
+                    local_output,
                 });
             }
             !self.wake_pending.swap(true, Ordering::AcqRel)
@@ -81,7 +90,7 @@ impl ReactiveInvalidationHub {
         }
     }
 
-    pub(crate) fn drain(&self) -> Vec<(InvalidationRequest, ReactiveInvalidationSample)> {
+    pub(crate) fn drain(&self) -> Vec<(InvalidationRequest, ReactiveInvalidationSample, bool)> {
         let pending = {
             let mut pending = self
                 .pending
@@ -93,7 +102,7 @@ impl ReactiveInvalidationHub {
         };
         pending
             .into_iter()
-            .map(|pending| (pending.request, pending.sample))
+            .map(|pending| (pending.request, pending.sample, pending.local_output))
             .collect()
     }
 
@@ -142,7 +151,7 @@ const EXPLICIT_OBSERVATION: u8 = 1 << 7;
 
 struct WidgetSubscription {
     _subscription: Subscription,
-    phases: u8,
+    phases: Arc<AtomicU8>,
 }
 
 struct ObservationFrame {
@@ -217,9 +226,11 @@ impl Drop for ObservationScope<'_> {
             let mut stale = Vec::new();
             for (key, subscription) in subscriptions.iter_mut() {
                 if key.window_id == frame.window_id && !frame.reads.contains(key) {
-                    subscription.phases &= !frame.phase;
+                    subscription
+                        .phases
+                        .fetch_and(!frame.phase, Ordering::Relaxed);
                 }
-                if subscription.phases == 0 {
+                if subscription.phases.load(Ordering::Relaxed) == 0 {
                     stale.push(*key);
                 }
             }
@@ -263,6 +274,18 @@ fn widget_subscriptions()
     WIDGET_SUBSCRIPTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn is_local_output_observation(kind: InvalidationKind, phases: u8) -> bool {
+    let phase = match kind {
+        InvalidationKind::Paint => ObservationPhase::Paint,
+        InvalidationKind::Semantics => ObservationPhase::Semantics,
+        _ => return false,
+    };
+    // Explicit event/command observers and reads from any other phase keep the
+    // original subtree invalidation contract. Read the current phase membership:
+    // cached phases retain subscriptions, and conditional reads can change it.
+    phases == phase.bit()
+}
+
 pub(crate) fn register_window(window_id: WindowId, hub: &Arc<ReactiveInvalidationHub>) {
     window_hubs()
         .write()
@@ -304,8 +327,8 @@ pub(crate) fn clear_probe_observations(widget_id: WidgetId, observed: &Cell<u8>)
         };
         let mut stale = Vec::new();
         for (key, subscription) in subscriptions.iter_mut() {
-            subscription.phases &= !phases;
-            if subscription.phases == 0 {
+            subscription.phases.fetch_and(!phases, Ordering::Relaxed);
+            if subscription.phases.load(Ordering::Relaxed) == 0 {
                 stale.push(*key);
             }
         }
@@ -356,7 +379,7 @@ where
                 || candidate.kind != kind
         });
         if let Some(subscription) = subscriptions.get_mut(&key) {
-            subscription.phases |= phase;
+            subscription.phases.fetch_or(phase, Ordering::Relaxed);
             true
         } else {
             false
@@ -371,9 +394,18 @@ where
             .and_then(Weak::upgrade);
         if let Some(hub) = hub {
             let weak_hub = Arc::downgrade(&hub);
+            // Notifications can run on producer threads or inside application
+            // callbacks. Scope membership must not acquire the registry lock.
+            let phases = Arc::new(AtomicU8::new(phase));
+            let observer_phases = Arc::clone(&phases);
             let subscription = observable.subscribe(Observer::new(move |change| {
                 if let Some(hub) = weak_hub.upgrade() {
-                    hub.enqueue(widget_id, kind, change);
+                    hub.enqueue(
+                        widget_id,
+                        kind,
+                        change,
+                        is_local_output_observation(kind, observer_phases.load(Ordering::Relaxed)),
+                    );
                 }
             }));
             widget_subscriptions()
@@ -382,10 +414,12 @@ where
                 .entry(widget_id)
                 .or_default()
                 .entry(key)
-                .and_modify(|existing| existing.phases |= phase)
+                .and_modify(|existing| {
+                    existing.phases.fetch_or(phase, Ordering::Relaxed);
+                })
                 .or_insert(WidgetSubscription {
                     _subscription: subscription,
-                    phases: phase,
+                    phases,
                 });
         }
     }

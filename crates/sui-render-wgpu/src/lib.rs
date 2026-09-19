@@ -95,6 +95,10 @@ pub struct WgpuRenderer {
     runtime_text_coverage_policy_override: Option<TextCoveragePolicy>,
     runtime_diagnostics_enabled: bool,
     pending_device_prepare_time_us: u64,
+    pending_device_wait_time_us: u64,
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    device_preparation: Option<device::DevicePreparation>,
+    prepared_surfaces: HashMap<WindowId, surface::PreparedSurface>,
     frames_rendered: usize,
     capabilities: RendererCapabilities,
     last_frames: HashMap<WindowId, SceneFrame>,

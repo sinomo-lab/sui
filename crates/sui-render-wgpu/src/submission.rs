@@ -355,11 +355,15 @@ impl WgpuRenderer {
     ) {
         let started = self.runtime_diagnostics_enabled.then(Instant::now);
         let uploads = self.frame_resources.uploads.finish();
+        let commands = encoder.finish();
+        stats.command_finish_time_us += started
+            .as_ref()
+            .map_or(0, |s| s.elapsed().as_micros() as u64);
         self.shared
             .as_ref()
             .expect("renderer initialized")
             .queue
-            .submit(uploads.into_iter().chain(std::iter::once(encoder.finish())));
+            .submit(uploads.into_iter().chain(std::iter::once(commands)));
         stats.queue_submit_count += 1;
         stats.queue_submit_time_us += started.map_or(0, |s| s.elapsed().as_micros() as u64);
     }

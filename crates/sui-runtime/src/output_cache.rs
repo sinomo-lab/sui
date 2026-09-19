@@ -18,6 +18,7 @@ pub(crate) struct OutputScope {
     cache: SharedOutputCache,
     generation: u64,
 }
+
 impl OutputScope {
     fn current<T>(&self, f: impl FnOnce(&mut OutputCache) -> T) -> Option<T> {
         let mut cache = self.cache.borrow_mut();
@@ -28,7 +29,7 @@ impl OutputScope {
         id: WidgetId,
         key: GeometryKey,
         registry: &TextLayoutRegistry,
-    ) -> Option<PaintFragment> {
+    ) -> Option<Rc<PaintFragment>> {
         self.current(|cache| cache.paint(id, key, registry))
             .flatten()
     }
@@ -42,7 +43,7 @@ impl OutputScope {
     ) {
         self.current(|cache| cache.put_paint(id, key, scene, bounds, ime));
     }
-    pub fn semantics(&self, id: WidgetId, key: GeometryKey) -> Option<Vec<SemanticsNode>> {
+    pub fn semantics(&self, id: WidgetId, key: GeometryKey) -> Option<Rc<[SemanticsNode]>> {
         self.current(|cache| cache.semantics(id, key)).flatten()
     }
     pub fn put_semantics(&self, id: WidgetId, key: GeometryKey, nodes: &[SemanticsNode]) {
@@ -199,15 +200,19 @@ struct Context {
 #[derive(Debug)]
 pub(crate) struct OutputCache {
     pub active: bool,
+    paint_active: bool,
+    semantics_active: bool,
     generation: u64,
-    paints: Entries<PaintFragment>,
-    semantics: Entries<Vec<SemanticsNode>>,
+    paints: Entries<Rc<PaintFragment>>,
+    semantics: Entries<Rc<[SemanticsNode]>>,
     context: Option<Context>,
 }
 impl Default for OutputCache {
     fn default() -> Self {
         Self {
             active: true,
+            paint_active: true,
+            semantics_active: true,
             generation: 0,
             paints: Entries::new(8 * 1024 * 1024),
             semantics: Entries::new(4 * 1024 * 1024),
@@ -219,6 +224,8 @@ impl OutputCache {
     pub fn next_frame(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.active = true;
+        self.paint_active = true;
+        self.semantics_active = true;
     }
     pub fn scope(cache: &SharedOutputCache) -> Option<OutputScope> {
         let current = cache.borrow();
@@ -266,16 +273,33 @@ impl OutputCache {
         self.paints.clear();
         self.semantics.clear();
     }
-    pub fn retain(&mut self, keep: impl Fn(WidgetId) -> bool) {
-        self.paints.retain(&keep);
-        self.semantics.retain(&keep);
+    pub fn disable_paint(&mut self) {
+        self.paint_active = false;
+        self.active = self.semantics_active;
+        self.paints.clear();
+    }
+    pub fn disable_semantics(&mut self) {
+        self.semantics_active = false;
+        self.active = self.paint_active;
+        self.semantics.clear();
+    }
+    pub fn retain(
+        &mut self,
+        paint: impl Fn(WidgetId) -> bool,
+        semantics: impl Fn(WidgetId) -> bool,
+    ) {
+        self.paints.retain(&paint);
+        self.semantics.retain(&semantics);
     }
     pub fn paint(
         &mut self,
         id: WidgetId,
         key: GeometryKey,
         registry: &TextLayoutRegistry,
-    ) -> Option<PaintFragment> {
+    ) -> Option<Rc<PaintFragment>> {
+        if !self.paint_active {
+            return None;
+        }
         let fragment = self.paints.get(id, key)?;
         if fragment.text_is_current(registry) {
             Some(fragment)
@@ -292,7 +316,8 @@ impl OutputCache {
         bounds: &HashMap<WidgetId, Rect>,
         ime: Option<Rect>,
     ) {
-        if let Some(bytes) = PaintFragment::charge(scene, bounds)
+        if self.paint_active
+            && let Some(bytes) = PaintFragment::charge(scene, bounds)
             && bytes <= self.paints.budget.min(MAX_FRAGMENT_BYTES)
         {
             let fragment = PaintFragment {
@@ -300,16 +325,21 @@ impl OutputCache {
                 bounds: bounds.clone(),
                 ime,
             };
-            self.paints.put(id, key, fragment, bytes);
+            self.paints.put(id, key, Rc::new(fragment), bytes);
         }
     }
-    pub fn semantics(&mut self, id: WidgetId, key: GeometryKey) -> Option<Vec<SemanticsNode>> {
-        self.semantics.get(id, key)
+    pub fn semantics(&mut self, id: WidgetId, key: GeometryKey) -> Option<Rc<[SemanticsNode]>> {
+        self.semantics_active
+            .then(|| self.semantics.get(id, key))
+            .flatten()
     }
     pub fn put_semantics(&mut self, id: WidgetId, key: GeometryKey, nodes: &[SemanticsNode]) {
+        if !self.semantics_active {
+            return;
+        }
         let bytes = semantics_charge(nodes);
         if bytes <= self.semantics.budget.min(MAX_FRAGMENT_BYTES) {
-            self.semantics.put(id, key, nodes.to_vec(), bytes);
+            self.semantics.put(id, key, Rc::from(nodes), bytes);
         }
     }
 }
@@ -569,5 +599,233 @@ mod tests {
             Some(crate::WindowRenderOptions::new(false, 1.0)),
         );
         assert_eq!(cache.semantics.bytes, 0);
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use crate::{
+        Application, ArrangeCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, WidgetPod,
+        WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
+    };
+    use std::cell::Cell;
+    use sui_core::{
+        Color, InvalidationKind, InvalidationRequest, InvalidationTarget, SemanticsRole, Size,
+    };
+    use sui_layout::Constraints;
+    use sui_reactive::Signal;
+
+    #[derive(Default)]
+    struct Calls {
+        paint: Cell<usize>,
+        semantics: Cell<usize>,
+    }
+    struct Leaf {
+        value: Signal<usize>,
+        calls: Rc<Calls>,
+    }
+    impl Widget for Leaf {
+        fn supports_output_reuse(&self) -> bool {
+            true
+        }
+        fn measure(&mut self, _: &mut MeasureCtx, c: Constraints) -> Size {
+            c.clamp(Size::new(30.0, 20.0))
+        }
+        fn paint(&self, c: &mut PaintCtx) {
+            self.calls.paint.set(self.calls.paint.get() + 1);
+            let value = c.observe(&self.value);
+            c.fill_bounds(if value == 0 {
+                Color::BLACK
+            } else {
+                Color::WHITE
+            });
+        }
+        fn semantics(&self, c: &mut SemanticsCtx) {
+            self.calls.semantics.set(self.calls.semantics.get() + 1);
+            let mut node = SemanticsNode::new(c.widget_id(), SemanticsRole::Text, c.bounds());
+            node.name = Some(c.observe(&self.value).to_string());
+            c.push(node);
+        }
+    }
+    struct Parent {
+        color: Signal<Color>,
+        caption: Signal<usize>,
+        calls: Rc<Calls>,
+        children: Vec<WidgetPod>,
+        observe_in_measure: bool,
+    }
+    impl Widget for Parent {
+        fn supports_output_reuse(&self) -> bool {
+            true
+        }
+        fn measure(&mut self, c: &mut MeasureCtx, constraints: Constraints) -> Size {
+            if self.observe_in_measure {
+                c.observe_with(&self.color, InvalidationKind::Paint);
+            }
+            for child in &mut self.children {
+                child.measure(c, Constraints::tight(Size::new(30.0, 20.0)));
+            }
+            constraints.clamp(Size::new(200.0, 40.0))
+        }
+        fn arrange(&mut self, c: &mut ArrangeCtx, bounds: Rect) {
+            for (i, child) in self.children.iter_mut().enumerate() {
+                child.arrange(
+                    c,
+                    Rect::new(bounds.x() + i as f32 * 35.0, bounds.y(), 30.0, 20.0),
+                );
+            }
+        }
+        fn paint(&self, c: &mut PaintCtx) {
+            self.calls.paint.set(self.calls.paint.get() + 1);
+            let color = c.observe(&self.color);
+            c.fill_bounds(color);
+            for child in &self.children {
+                child.paint(c);
+            }
+        }
+        fn semantics(&self, c: &mut SemanticsCtx) {
+            self.calls.semantics.set(self.calls.semantics.get() + 1);
+            let mut node =
+                SemanticsNode::new(c.widget_id(), SemanticsRole::GenericContainer, c.bounds());
+            node.name = Some(format!("parent {}", c.observe(&self.caption)));
+            c.push(node);
+            for child in &self.children {
+                child.semantics(c);
+            }
+        }
+        fn visit_children(&self, v: &mut dyn WidgetPodVisitor) {
+            for child in &self.children {
+                v.visit(child);
+            }
+        }
+        fn visit_children_mut(&mut self, v: &mut dyn WidgetPodMutVisitor) {
+            for child in &mut self.children {
+                v.visit(child);
+            }
+        }
+    }
+
+    #[test]
+    fn parent_output_changes_preserve_children_and_independent_phases() {
+        let color = Signal::new(Color::BLACK);
+        let caption = Signal::new(0usize);
+        let value = Signal::new(0usize);
+        let calls = Rc::new(Calls::default());
+        let child_calls: Vec<_> = (0..5).map(|_| Rc::new(Calls::default())).collect();
+        let children = child_calls
+            .iter()
+            .map(|calls| {
+                WidgetPod::new(Leaf {
+                    value: value.clone(),
+                    calls: calls.clone(),
+                })
+            })
+            .collect();
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().root(Parent {
+                color: color.clone(),
+                caption: caption.clone(),
+                calls: calls.clone(),
+                children,
+                observe_in_measure: false,
+            }))
+            .build()
+            .unwrap();
+        let window = runtime.window_ids()[0];
+        runtime.render(window).unwrap();
+        color.set(Color::WHITE);
+        runtime.render(window).unwrap();
+        assert_eq!((calls.paint.get(), calls.semantics.get()), (2, 1));
+        assert!(
+            child_calls
+                .iter()
+                .all(|calls| calls.paint.get() == 1 && calls.semantics.get() == 1)
+        );
+        caption.set(1);
+        let partial = runtime.render(window).unwrap();
+        assert!(
+            partial
+                .semantics
+                .iter()
+                .any(|n| n.name.as_deref() == Some("parent 1"))
+        );
+        assert_eq!((calls.paint.get(), calls.semantics.get()), (2, 2));
+        assert!(
+            child_calls
+                .iter()
+                .all(|calls| calls.paint.get() == 1 && calls.semantics.get() == 1)
+        );
+        // Retained descendants keep their own subscriptions alive.
+        value.set(1);
+        let updated = runtime.render(window).unwrap();
+        assert!(
+            child_calls
+                .iter()
+                .all(|calls| calls.paint.get() == 2 && calls.semantics.get() == 2)
+        );
+        let state = runtime.window_mut(window).unwrap();
+        for kind in [InvalidationKind::Paint, InvalidationKind::Semantics] {
+            state.pending_invalidations.push(InvalidationRequest::new(
+                InvalidationTarget::Widget(state.root.id()),
+                kind,
+            ));
+            state.schedule.mark(kind);
+        }
+        let full = runtime.render(window).unwrap();
+        assert_eq!(updated.frame.scene, full.frame.scene);
+        assert_eq!(updated.semantics, full.semantics);
+        assert!(
+            child_calls
+                .iter()
+                .all(|calls| calls.paint.get() == 3 && calls.semantics.get() == 3)
+        );
+        // Older returned frames remain immutable after replacement/reuse.
+        assert!(
+            partial
+                .semantics
+                .iter()
+                .any(|n| n.name.as_deref() == Some("0"))
+        );
+    }
+
+    #[test]
+    fn explicit_requests_and_cross_phase_observers_keep_subtree_behavior() {
+        for observe_in_measure in [false, true] {
+            let color = Signal::new(Color::BLACK);
+            let child_calls = Rc::new(Calls::default());
+            let children = (0..5)
+                .map(|_| {
+                    WidgetPod::new(Leaf {
+                        value: Signal::new(0),
+                        calls: child_calls.clone(),
+                    })
+                })
+                .collect();
+            let mut runtime = Application::new()
+                .window(WindowBuilder::new().root(Parent {
+                    color: color.clone(),
+                    caption: Signal::new(0),
+                    calls: Rc::new(Calls::default()),
+                    children,
+                    observe_in_measure,
+                }))
+                .build()
+                .unwrap();
+            let window = runtime.window_ids()[0];
+            runtime.render(window).unwrap();
+            color.set(Color::WHITE);
+            if !observe_in_measure {
+                let state = runtime.window_mut(window).unwrap();
+                state.pending_invalidations.push(InvalidationRequest::new(
+                    InvalidationTarget::Widget(state.root.id()),
+                    InvalidationKind::Paint,
+                ));
+                state.schedule.mark(InvalidationKind::Paint);
+            }
+            runtime.render(window).unwrap();
+            assert_eq!(child_calls.paint.get(), 10);
+            assert_eq!(child_calls.semantics.get(), 5);
+        }
     }
 }

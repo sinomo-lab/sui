@@ -1789,23 +1789,27 @@ impl Widget for Button {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
-        let measured = measure_text(ctx, &self.label, &text_style);
         let label_layout = ctx
             .layout()
-            .shape_text_persistent(
+            .layout_document_persistent(
                 self.label_layout.as_ref().map(|layout| layout.handle()),
-                self.label.clone(),
-                Size::new(
-                    f32::INFINITY,
-                    measured.height.max(text_style.line_height).max(1.0),
-                ),
-                text_style.clone(),
+                sui_text::TextLayoutRequest::new(sui_text::TextDocument::from_plain_text(
+                    self.label.clone(),
+                    text_style.clone(),
+                )),
             )
             .ok();
         let measurement = label_layout
             .as_ref()
             .map(|layout| layout.measurement())
-            .unwrap_or(measured);
+            .unwrap_or(TextMeasurement {
+                width: 0.0,
+                height: text_style.line_height,
+                bounds: Rect::new(0.0, 0.0, 0.0, text_style.line_height),
+                ascent: text_style.font_size,
+                descent: 0.0,
+                cap_height: Some(text_style.font_size),
+            });
         self.label_measurement = Some(measurement);
         self.label_layout = label_layout;
 

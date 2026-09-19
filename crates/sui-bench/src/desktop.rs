@@ -27,6 +27,7 @@ struct Observation {
     frames: usize,
     mounted: usize,
     dpr: Option<f64>,
+    adapter: Option<wgpu::AdapterInfo>,
     work: serde_json::Value,
 }
 
@@ -59,6 +60,7 @@ impl DesktopExtension for Observer {
         data.first
             .get_or_insert((elapsed, frame.runtime_duration.as_secs_f64() * 1e6));
         data.frames += 1;
+        data.adapter = context.renderer().adapter_info();
         data.mounted = context.runtime().widget_graph(frame.window_id)?.nodes.len();
         data.dpr = context
             .window(frame.window_id)
@@ -104,12 +106,11 @@ pub fn run(
         frames: 0,
         mounted: 0,
         dpr: None,
+        adapter: None,
         work: serde_json::Value::Null,
     }));
-    let registry = sui_render_wgpu::WgpuExternalTextureRegistry::default();
     let platform = DesktopPlatform::new()
         .with_vsync_enabled(c.vsync)
-        .with_external_texture_registry(registry.clone())
         .with_extension(Observer {
             started,
             data: data.clone(),
@@ -140,10 +141,10 @@ pub fn run(
             c.dpr, data.dpr
         ));
     }
-    let context = registry
-        .context()
+    let info = data
+        .adapter
+        .as_ref()
         .ok_or("native renderer has no adapter information")?;
-    let info = context.adapter_info();
     if info.device_type == wgpu::DeviceType::Cpu && !c.allow_software {
         return Err("unsupported: native runner selected a software adapter".into());
     }

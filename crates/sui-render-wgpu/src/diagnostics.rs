@@ -70,8 +70,12 @@ pub struct RendererFrameStats {
     pub text_atlas_clear_time_us: u64,
     pub text_atlas_copy_time_us: u64,
     pub text_atlas_create_bind_group_time_us: u64,
-    /// Adapter/device acquisition and shared renderer resources, on first use.
+    /// Adapter/device acquisition and shared renderer resources. Background work
+    /// can overlap CPU layout; this is not an additive frame phase.
     pub device_prepare_time_us: u64,
+    /// Time first use blocks on device preparation (synchronous work or joining
+    /// background preparation). Included in renderer/registration wall time.
+    pub device_prepare_wait_time_us: u64,
     /// Offscreen color-target preparation (including resize allocations).
     pub target_prepare_time_us: u64,
     pub text_engine_init_time_us: u64,
@@ -123,6 +127,8 @@ pub struct RendererFrameStats {
     pub gpu_upload_time_us: u64,
     pub pass_encode_time_us: u64,
     pub queue_submit_time_us: u64,
+    /// Upload/scene command-buffer finishing, a subset of queue_submit_time_us.
+    pub command_finish_time_us: u64,
     pub surface_present_time_us: u64,
     pub retained_packet_hotspot: Option<RendererPacketHotspot>,
 }
@@ -175,6 +181,8 @@ impl RendererFrameStats {
             text_atlas_copy_time_us: 0,
             text_atlas_create_bind_group_time_us: 0,
             device_prepare_time_us: 0,
+            device_prepare_wait_time_us: 0,
+            command_finish_time_us: 0,
             target_prepare_time_us: 0,
             text_engine_init_time_us: 0,
             pipeline_create_time_us: 0,

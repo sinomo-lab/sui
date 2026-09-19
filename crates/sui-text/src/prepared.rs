@@ -4,7 +4,7 @@ use std::{hash::Hash, mem::size_of};
 
 use cosmic_text::{AttrsOwned, FamilyOwned, LayoutLine, Metrics, ShapeLine, fontdb};
 
-use crate::model::TextParagraphStyle;
+use crate::model::{TextAlign, TextDirection, TextWrap, TextWritingMode};
 
 const PARAGRAPH_BYTES: usize = 16 * 1024 * 1024;
 const GLYPH_BYTES: usize = 4 * 1024 * 1024;
@@ -113,7 +113,8 @@ pub(crate) struct PreparedSpanKey {
 /// to the paragraph, so moving an unchanged paragraph does not invalidate shaping.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PreparedParagraphKey {
-    pub style: TextParagraphStyle,
+    pub direction: TextDirection,
+    pub writing_mode: TextWritingMode,
     pub defaults: AttrsOwned,
     pub spans: Vec<PreparedSpanKey>,
 }
@@ -139,13 +140,22 @@ fn attrs_bytes(attrs: &AttrsOwned) -> usize {
     family + allocation_bytes(&attrs.font_features.features)
 }
 
+/// Alignment and wrapping affect line layout, not glyph shaping. Keep them here
+/// so measurement and painting can share a shape without sharing stale lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PreparedLineLayoutKey {
+    pub width: Option<u32>,
+    pub align: TextAlign,
+    pub wrap: TextWrap,
+}
+
 #[derive(Debug)]
 pub(crate) struct PreparedParagraphState {
     pub shape: ShapeLine,
     pub metrics: Metrics,
     pub lines: Vec<LayoutLine>,
-    /// None means not laid out yet; Some(None) is an unconstrained layout.
-    pub layout_width: Option<Option<u32>>,
+    /// None means not laid out yet; a key with no width is unconstrained.
+    pub layout_key: Option<PreparedLineLayoutKey>,
 }
 
 impl PreparedParagraphState {

@@ -43,6 +43,7 @@ impl Backend {
             let mut renderer = sui_render_wgpu::WgpuRenderer::new();
             renderer.set_external_texture_registry(registry.clone());
             renderer.set_runtime_diagnostics_enabled(c.diagnostics);
+            renderer.prepare_device();
             Some(renderer)
         } else {
             None
@@ -72,13 +73,13 @@ impl Backend {
                         "retained_packet_builds":s.retained_packet_build_count,"retained_packet_build_us":s.retained_packet_build_time_us,
                         "surface_acquire_us":s.surface_acquire_time_us,"surface_present_us":s.surface_present_time_us,
                         "retained_rebuild_reasons":format!("{:?}",s.retained_packet_rebuilds),
-                        "device_prepare_us":s.device_prepare_time_us,"target_prepare_us":s.target_prepare_time_us,
+                        "device_prepare_us":s.device_prepare_time_us,"device_wait_us":s.device_prepare_wait_time_us,"target_prepare_us":s.target_prepare_time_us,
                         "text_engine_init_us":s.text_engine_init_time_us,"pipeline_create_us":s.pipeline_create_time_us,
                         "pipeline_create_count":s.pipeline_create_count,"scene_traversal_us":s.retained_scene_traversal_time_us,
                         "composition_us":s.composition_time_us,"resource_collection_us":s.resource_collection_time_us,
                         "bind_group_prepare_us":s.bind_group_prepare_time_us,"batch_prepare_us":s.batch_prepare_time_us,
                         "gpu_upload_us":s.gpu_upload_time_us,"pass_encode_us":s.pass_encode_time_us,
-                        "queue_submit_us":s.queue_submit_time_us,"queue_submit_count":s.queue_submit_count,
+                        "queue_submit_us":s.queue_submit_time_us,"command_finish_us":s.command_finish_time_us,"queue_submit_count":s.queue_submit_count,
                         "atlas_allocate_us":s.text_atlas_allocate_time_us,"atlas_clear_us":s.text_atlas_clear_time_us,
                         "atlas_copy_us":s.text_atlas_copy_time_us,"atlas_bind_group_create_us":s.text_atlas_create_bind_group_time_us}));
             }
@@ -330,6 +331,11 @@ fn run_inner(
             warmup_work: Value::Null,
         });
     }
+    // Preparation starts inside the measured startup boundary, before initial
+    // CPU layout, just as the native host prepares its surface/device.
+    let backend_started = Instant::now();
+    let mut backend = Backend::new(c)?;
+    let backend_us = micros(backend_started);
     let event_started = Instant::now();
     runtime
         .handle_event(
@@ -350,9 +356,6 @@ fn run_inner(
             SceneStatisticsDetailMode::Lightweight
         },
     );
-    let backend_started = Instant::now();
-    let mut backend = Backend::new(c)?;
-    let backend_us = micros(backend_started);
     let first_started = Instant::now();
     let (initial, frames, mut timings) = settle(&mut runtime, window, &mut backend)?;
     let first_us = micros(first_started);

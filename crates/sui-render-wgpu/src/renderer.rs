@@ -328,6 +328,15 @@ impl WgpuRenderer {
     }
 
     pub fn remove_window(&mut self, window_id: WindowId) {
+        self.prepared_surfaces.remove(&window_id);
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self
+            .device_preparation
+            .as_ref()
+            .is_some_and(|pending| pending.window == Some(window_id))
+        {
+            self.device_preparation = None;
+        }
         self.frame_resources.fragments.remove(&window_id);
         self.frame_resources.output_transforms.remove(&window_id);
         self.surfaces.remove(&window_id);
@@ -355,6 +364,8 @@ impl WgpuRenderer {
 
         frame_stats.device_prepare_time_us =
             std::mem::take(&mut self.pending_device_prepare_time_us);
+        frame_stats.device_prepare_wait_time_us =
+            std::mem::take(&mut self.pending_device_wait_time_us);
         if let Some(shared) = &self.shared {
             frame_stats.pipeline_create_time_us =
                 shared.pipeline_create_time_us - pipeline_before.0;
@@ -372,6 +383,11 @@ impl WgpuRenderer {
 
     pub fn capabilities(&self) -> RendererCapabilities {
         self.capabilities
+    }
+
+    /// Adapter metadata after initialization, without requiring an interop registry.
+    pub fn adapter_info(&self) -> Option<wgpu::AdapterInfo> {
+        self.shared.as_ref().map(|shared| shared.adapter.get_info())
     }
 
     pub fn frames_rendered(&self) -> usize {
@@ -420,6 +436,10 @@ impl Default for WgpuRenderer {
             runtime_text_coverage_policy_override: None,
             runtime_diagnostics_enabled: true,
             pending_device_prepare_time_us: 0,
+            pending_device_wait_time_us: 0,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            device_preparation: None,
+            prepared_surfaces: HashMap::new(),
             frames_rendered: 0,
             capabilities: RendererCapabilities::default(),
             last_frames: HashMap::new(),
