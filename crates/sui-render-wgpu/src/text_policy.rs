@@ -114,6 +114,12 @@ impl StemDarkening {
 pub enum TextCoveragePolicy {
     #[default]
     Perceptual,
+    /// Resolved luminances for the perceptual curve. Prefer `Perceptual` to
+    /// let the renderer resolve these from the text and its solid backdrop.
+    PerceptualLuminance {
+        text: f32,
+        background: f32,
+    },
     Linear,
     Gamma(f32),
     CoverageBoost(f32),
@@ -124,6 +130,15 @@ impl TextCoveragePolicy {
     pub fn normalized(self) -> Self {
         match self {
             Self::Perceptual => Self::Perceptual,
+            Self::PerceptualLuminance { text, background }
+                if text.is_finite() && background.is_finite() =>
+            {
+                Self::PerceptualLuminance {
+                    text: text.clamp(0.0, 1.0),
+                    background: background.clamp(0.0, 1.0),
+                }
+            }
+            Self::PerceptualLuminance { .. } => Self::Linear,
             Self::Linear => Self::Linear,
             Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
             Self::Gamma(_) => Self::Linear,
@@ -136,8 +151,31 @@ impl TextCoveragePolicy {
     }
 
     pub fn resolved_for_text_color(self, color: Color) -> Self {
+        self.resolved_for_text_background(color, None)
+    }
+
+    pub(crate) fn resolved_for_text_background(
+        self,
+        color: Color,
+        background: Option<Color>,
+    ) -> Self {
         match self.normalized() {
-            Self::Perceptual => Self::CoverageBoost(perceptual_text_coverage_boost(color)),
+            Self::Perceptual => {
+                let is_sdr = |color: Color| {
+                    let c = color.to_linear_srgb();
+                    [c.red, c.green, c.blue]
+                        .iter()
+                        .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+                };
+                if !is_sdr(color) || background.is_some_and(|c| !is_sdr(c)) {
+                    return Self::Linear;
+                }
+                let text = encoded_srgb_luminance(color);
+                Self::PerceptualLuminance {
+                    text,
+                    background: background.map(encoded_srgb_luminance).unwrap_or(1.0 - text),
+                }
+            }
             policy => policy,
         }
     }
@@ -145,8 +183,9 @@ impl TextCoveragePolicy {
     pub fn apply(self, coverage: f32) -> f32 {
         let coverage = coverage.clamp(0.0, 1.0);
         match self.normalized() {
-            Self::Perceptual => {
-                apply_coverage_boost(coverage, perceptual_text_coverage_boost(Color::BLACK))
+            Self::Perceptual => perceptual_text_coverage(coverage, 0.0, 1.0),
+            Self::PerceptualLuminance { text, background } => {
+                perceptual_text_coverage(coverage, text, background)
             }
             Self::Linear => coverage,
             Self::Gamma(gamma) => coverage.powf(gamma),
@@ -156,9 +195,33 @@ impl TextCoveragePolicy {
     }
 }
 
-pub(crate) fn perceptual_text_coverage_boost(color: Color) -> f32 {
-    let luminance = encoded_srgb_luminance(color);
-    (1.0 - luminance).clamp(0.45, 0.92)
+/// Contrast/gamma compensation modeled on Skia's mask-gamma construction,
+/// converted back to coverage for our linear-light framebuffer. The 1.8
+/// perceptual exponent is calibrated against Chrome's light/dark UI text;
+/// it is not the framebuffer transfer function. Keep in sync with both text
+/// atlas shaders. Endpoint preservation also keeps glyph padding transparent.
+pub(crate) fn perceptual_text_coverage(coverage: f32, text: f32, background: f32) -> f32 {
+    let c = coverage.clamp(0.0, 1.0);
+    if c == 0.0 || c == 1.0 {
+        return c;
+    }
+    let gamma = 1.8;
+    let a = apply_coverage_boost(c, 0.5 * background.powf(gamma));
+    let fg = encoded_srgb_to_linear_unit(text);
+    let bg = encoded_srgb_to_linear_unit(background);
+    if (fg - bg).abs() < 1e-4 {
+        return a;
+    }
+    let perceptual = (text.powf(gamma) * a + background.powf(gamma) * (1.0 - a)).powf(1.0 / gamma);
+    ((encoded_srgb_to_linear_unit(perceptual) - bg) / (fg - bg)).clamp(0.0, 1.0)
+}
+
+fn encoded_srgb_to_linear_unit(value: f32) -> f32 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 pub(crate) fn apply_coverage_boost(coverage: f32, amount: f32) -> f32 {

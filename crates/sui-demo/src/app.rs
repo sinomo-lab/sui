@@ -2215,7 +2215,9 @@ fn window_text_coverage_policy_from_renderer(
     policy: TextCoveragePolicy,
 ) -> WindowTextCoveragePolicy {
     match policy.normalized() {
-        TextCoveragePolicy::Perceptual => WindowTextCoveragePolicy::Perceptual,
+        TextCoveragePolicy::Perceptual | TextCoveragePolicy::PerceptualLuminance { .. } => {
+            WindowTextCoveragePolicy::Perceptual
+        }
         TextCoveragePolicy::Linear => WindowTextCoveragePolicy::Linear,
         TextCoveragePolicy::Gamma(gamma) => WindowTextCoveragePolicy::Gamma(gamma),
         TextCoveragePolicy::CoverageBoost(amount) => {

@@ -115,6 +115,61 @@ Primary metrics:
 
 ## Quality Benchmarks
 
+### Chrome reference comparison
+
+`npm run text:compare` captures the native headless SUI path and installed Google
+Chrome using the same embedded font bytes, weight, sizes, positions, line heights,
+and unrounded colors. The snapshot binary writes `samples.json`; the browser
+reads that manifest instead of maintaining a second copy of the corpus. The
+corpus includes muted/body text and blue, green, red, purple, and orange accents.
+
+```powershell
+$env:SUI_TEXT_COMPARE_SURFACE = 'dark' # light or dark
+$env:SUI_TEXT_COMPARE_DPI_SCALE = '1.5' # also compare 1, 1.25, and 2
+$env:SUI_TEXT_COMPARE_COVERAGE = 'perceptual'
+$env:SUI_TEXT_COMPARE_OUTPUT = 'target/text-rendering-compare/dark-1.5x'
+npm run text:compare
+```
+
+Use `legacy-perceptual` to reproduce the previous foreground-only coverage boost
+with the same corpus. `SUI_TEXT_COMPARE_FONT` can select another local TTF for
+both renderers (for example `C:\Windows\Fonts\segoeui.ttf`).
+`SUI_TEXT_COMPARE_BROWSER` selects a Playwright channel; the default is `chrome`.
+Install the Node dependencies with `npm ci` and install the selected browser.
+
+Artifacts include `sui.png`, `browser.png`, `diff.png`, and `summary.json`, which
+records Chrome's version and the font SHA-256. Per-row `inkMassRatio` compares
+the total encoded-luminance difference from the background (ideal ratio 1).
+`meanInkChannelError` measures RGB error over the union of ink pixels. Check both:
+matching weight alone does not establish matching sharpness or glyph placement.
+
+The perceptual curve follows the contrast/gamma construction in
+[Skia's mask-gamma implementation](https://github.com/google/skia/blob/main/src/core/SkMaskGamma.cpp),
+adapted for linear-light blending and known solid backdrops. The calibrated 1.8
+exponent is SUI's setting, not a claim about Chrome's configured gamma. Chrome
+also has [platform rendering-parameter overrides](https://chromium.googlesource.com/chromium/src/+/HEAD/ui/gfx/font_util_win.cc).
+
+Calibration on Windows, Chrome 153.0.8010.48, with ten samples per surface:
+
+| Font / DPR | Light mean weight error, before → after | Dark mean weight error, before → after |
+| --- | --- | --- |
+| Bundled Noto Sans / 1 | 2.98% → 2.12% | 13.48% → 4.66% |
+| Bundled Noto Sans / 1.25 | 2.11% → 1.87% | 12.34% → 3.99% |
+| Bundled Noto Sans / 1.5 | 2.05% → 1.45% | 10.01% → 2.92% |
+| Bundled Noto Sans / 2 | 1.47% → 1.08% | 7.75% → 2.26% |
+| Segoe UI / 1 | 4.21% → 3.92% | 14.72% → 3.46% |
+| Segoe UI / 1.5 | 3.68% → 2.65% | 10.28% → 2.65% |
+
+These are appearance measurements, not pixel-equivalence percentages. Chrome's
+Windows captures use subpixel antialiasing while SUI defaults to grayscale.
+Hinting, fractional glyph phases, and occasional one-physical-pixel baseline
+differences remain. Review at original resolution and repeat on the target
+platform rather than assuming every Chrome installation produces the same mask.
+
+The renderer regression `transformed_text_rasterizes_at_display_resolution`
+separately compares scene-scaled text to directly sized text, including retained
+layers, zoom-out, and fractional DPI. This avoids confusing scene zoom with DPI.
+
 ### 1. Renderer Quality Matrix
 
 Purpose: verify perceptual text behavior across DPR and light/dark surfaces with metrics that are closer to perceived weight than raw changed-pixel percentages.
@@ -148,7 +203,8 @@ Primary metrics:
 
 Expected signals:
 
-- perceptual coverage should not be lighter than linear for the same surface
+- perceptual coverage should preserve opaque cores and transparent padding;
+  light-on-dark edges need less coverage than the former unconditional boost
 - all DPR variants should produce finite edge/core metrics and nontrivial inked pixels
 - optional captures should show distinct policy behavior, especially in small UI labels
 

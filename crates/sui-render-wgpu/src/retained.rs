@@ -232,6 +232,10 @@ pub(crate) struct EffectNode {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedRasterState {
     pub(crate) current_transform: Transform,
+    // Linear part of the inherited layer transform. Geometry stays layer-local,
+    // but glyph resolution and pixel phase must be chosen in display space.
+    pub(crate) text_raster_transform: Transform,
+    pub(crate) text_background: crate::text_background::TextBackground,
     pub(crate) transform_stack: Vec<Transform>,
     pub(crate) text_render_policy: Option<TextRenderPolicy>,
     pub(crate) text_render_policy_stack: Vec<Option<TextRenderPolicy>>,
@@ -246,6 +250,8 @@ impl ResolvedRasterState {
     pub(crate) fn signature(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         hash_transform(&mut hasher, self.current_transform);
+        hash_transform(&mut hasher, self.text_raster_transform);
+        self.text_background.fingerprint(&mut hasher);
         self.transform_stack.len().hash(&mut hasher);
         for transform in &self.transform_stack {
             hash_transform(&mut hasher, *transform);
@@ -414,6 +420,7 @@ pub(crate) struct CompositorSnapshot {
 #[derive(Debug, Clone)]
 pub(crate) struct CompositionTraversalState {
     pub(crate) current_transform: Transform,
+    pub(crate) text_background: crate::text_background::TextBackground,
     pub(crate) transform_node: TransformNodeId,
     pub(crate) transform_stack: Vec<(Transform, TransformNodeId)>,
     pub(crate) text_render_policy: Option<TextRenderPolicy>,
@@ -427,6 +434,7 @@ impl Default for CompositionTraversalState {
     fn default() -> Self {
         Self {
             current_transform: Transform::IDENTITY,
+            text_background: Default::default(),
             transform_node: TransformNodeId::ROOT,
             transform_stack: Vec::new(),
             text_render_policy: None,
@@ -442,6 +450,8 @@ impl CompositionTraversalState {
     pub(crate) fn resolved_state(&self) -> ResolvedRasterState {
         ResolvedRasterState {
             current_transform: self.current_transform,
+            text_raster_transform: Transform::IDENTITY,
+            text_background: self.text_background.clone(),
             transform_stack: self
                 .transform_stack
                 .iter()
@@ -724,6 +734,25 @@ impl RetainedCompositorState {
                         segment_start = Some(state.resolved_state());
                     }
                     segment_scene.push(command.clone());
+                    let clip = state
+                        .clip_stack
+                        .iter()
+                        .map(|(clip, _)| match clip {
+                            ResolvedClipPrimitive::Rect(rect) => *rect,
+                            ResolvedClipPrimitive::Path { bounds, .. } => *bounds,
+                        })
+                        .reduce(|a, b| a.intersection(b).unwrap_or(Rect::ZERO));
+                    let rectangular_clip = state
+                        .clip_stack
+                        .iter()
+                        .all(|(clip, _)| matches!(clip, ResolvedClipPrimitive::Rect(_)));
+                    state.text_background.observe(
+                        command,
+                        Transform::translation_vector(state.composed_layer_properties.translation)
+                            .then(state.current_transform),
+                        clip,
+                        rectangular_clip,
+                    );
                     self.apply_command_to_traversal_state(command, &mut state);
                     match command {
                         SceneCommand::PushTransform { .. } => scopes[0] += 1,
@@ -1107,14 +1136,7 @@ impl RetainedCompositorState {
             .transforms
             .get(&layer.transform_node)
             .map_or(Transform::IDENTITY, |node| node.world);
-        (
-            origin,
-            if transform.is_identity() {
-                local_origin.to_vector()
-            } else {
-                Vector::ZERO
-            },
-        )
+        (origin, transform.transform_point(local_origin).to_vector())
     }
 
     fn protect_reused_packet_pages(
@@ -1731,6 +1753,24 @@ pub(crate) fn normalize_packet_snapshot(
     pixel_snap_origin: Vector,
     raster_scale_factor: f32,
 ) -> PacketSnapshot {
+    if coordinate_space == PacketCoordinateSpace::LayerLocal {
+        let inverse = snapshot
+            .initial_state
+            .current_transform
+            .inverse()
+            .unwrap_or(Transform::IDENTITY);
+        let presented_origin = inverse.transform_point(sui_core::Point::new(
+            pixel_snap_origin.x,
+            pixel_snap_origin.y,
+        ));
+        snapshot
+            .initial_state
+            .text_background
+            .transform(inverse.then(Transform::translation(
+                -presented_origin.x,
+                -presented_origin.y,
+            )));
+    }
     if coordinate_space == PacketCoordinateSpace::LayerLocal && normalization_origin != Vector::ZERO
     {
         let delta = Vector::new(-normalization_origin.x, -normalization_origin.y);
@@ -1743,11 +1783,34 @@ pub(crate) fn normalize_packet_snapshot(
             .min(snapshot.initial_state.clip_stack.len());
         snapshot.initial_state.clip_stack.drain(0..strip_count);
         snapshot.initial_state.clip_node = ClipNodeId::ROOT;
+        let inherited = snapshot.initial_state.current_transform;
+        snapshot.initial_state.text_raster_transform = Transform::new(
+            inherited.xx,
+            inherited.yx,
+            inherited.xy,
+            inherited.yy,
+            0.0,
+            0.0,
+        );
         snapshot.initial_state.current_transform = Transform::IDENTITY;
         snapshot.initial_state.transform_stack.clear();
         snapshot.initial_state.transform_node = TransformNodeId::ROOT;
         snapshot.initial_state.pixel_snap_offset =
             physical_pixel_phase(pixel_snap_origin, raster_scale_factor);
+    }
+    if !snapshot.scene.commands().iter().any(|command| {
+        matches!(
+            command,
+            SceneCommand::DrawText(_)
+                | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawShapedTextWindow(_)
+                | SceneCommand::Label { .. }
+        )
+    }) {
+        // Text metadata must not invalidate retained geometry-only packets.
+        snapshot.initial_state.text_background = Default::default();
+        snapshot.initial_state.text_raster_transform = Transform::IDENTITY;
+        snapshot.initial_state.pixel_snap_offset = Vector::ZERO;
     }
     snapshot
 }

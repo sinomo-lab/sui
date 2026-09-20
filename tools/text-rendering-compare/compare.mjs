@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,62 +15,20 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const outputDir =
   process.env.SUI_TEXT_COMPARE_OUTPUT ??
   path.join(repoRoot, 'target', 'text-rendering-compare');
-const width = 480;
-const height = 260;
+let width;
+let height;
+const dark = process.env.SUI_TEXT_COMPARE_SURFACE === 'dark';
+let background;
 const coveragePolicy = process.env.SUI_TEXT_COMPARE_COVERAGE ?? 'perceptual';
+const browserChannel = process.env.SUI_TEXT_COMPARE_BROWSER ?? 'chrome';
 const dpiScale = Number.parseFloat(process.env.SUI_TEXT_COMPARE_DPI_SCALE ?? '1');
 if (!Number.isFinite(dpiScale) || dpiScale <= 0) {
   throw new Error(`invalid SUI_TEXT_COMPARE_DPI_SCALE: ${process.env.SUI_TEXT_COMPARE_DPI_SCALE}`);
 }
-const fontPath = path.join(repoRoot, 'crates', 'sui-text', 'assets', 'NotoSans-Regular.ttf');
+const fontPath = process.env.SUI_TEXT_COMPARE_FONT ?? path.join(repoRoot, 'crates', 'sui-text', 'assets', 'NotoSans-Regular.ttf');
 
-const samples = [
-  {
-    text: 'minimum ill scroll',
-    x: 32,
-    y: 30,
-    width: 416,
-    fontSize: 11,
-    lineHeight: 14,
-    color: 'rgba(107, 125, 145, 1)'
-  },
-  {
-    text: 'Toolbar 12 px glyph atlas',
-    x: 32,
-    y: 64,
-    width: 416,
-    fontSize: 12,
-    lineHeight: 15,
-    color: 'rgba(26, 36, 51, 1)'
-  },
-  {
-    text: 'Status row 13 px / AVWA',
-    x: 32,
-    y: 100,
-    width: 416,
-    fontSize: 13,
-    lineHeight: 17,
-    color: 'rgba(46, 61, 82, 1)'
-  },
-  {
-    text: 'Quick brown text renders in Noto Sans',
-    x: 32,
-    y: 140,
-    width: 416,
-    fontSize: 14,
-    lineHeight: 19,
-    color: 'rgba(31, 41, 56, 1)'
-  },
-  {
-    text: 'Small UI text should not look fuzzy',
-    x: 32,
-    y: 184,
-    width: 416,
-    fontSize: 16,
-    lineHeight: 21,
-    color: 'rgba(26, 36, 51, 1)'
-  }
-];
+let samples;
+let browserVersion;
 
 function run(command, args) {
   const result = spawnSync(command, args, {
@@ -116,7 +75,7 @@ function luminance(data, index) {
 }
 
 function darkness(data, index) {
-  return Math.max(0, 255 - luminance(data, index));
+  return Math.abs(luminance(data, index) - (0.2126*background[0] + 0.7152*background[1] + 0.0722*background[2]));
 }
 
 function rowInkStats(sui, browser) {
@@ -130,6 +89,7 @@ function rowInkStats(sui, browser) {
     let differingInkPixels = 0;
     let suiInkMass = 0;
     let browserInkMass = 0;
+    let channelError = 0;
 
     for (let y = top; y < bottom; y += 1) {
       for (let x = 0; x < sui.width; x += 1) {
@@ -141,6 +101,9 @@ function rowInkStats(sui, browser) {
         }
 
         unionPixels += 1;
+        for (let c = 0; c < 3; c += 1) {
+          channelError += Math.abs(sui.data[index + c] - browser.data[index + c]);
+        }
         suiInkMass += suiDarkness;
         browserInkMass += browserDarkness;
         if (Math.abs(suiDarkness - browserDarkness) > 12) {
@@ -156,7 +119,8 @@ function rowInkStats(sui, browser) {
       differingInkRatio: unionPixels === 0 ? 0 : differingInkPixels / unionPixels,
       suiInkMass: Math.round(suiInkMass),
       browserInkMass: Math.round(browserInkMass),
-      inkMassRatio: browserInkMass <= 0 ? 1 : suiInkMass / browserInkMass
+      inkMassRatio: browserInkMass <= 0 ? 1 : suiInkMass / browserInkMass,
+      meanInkChannelError: unionPixels === 0 ? 0 : channelError / (unionPixels * 3)
     };
   });
 }
@@ -166,6 +130,10 @@ function comparisonSummary(sui, browser, diffPixels) {
   const totalPixels = sui.width * sui.height;
   return {
     dpiScale,
+    surface: dark ? 'dark' : 'light',
+    browserChannel,
+    browserVersion,
+    fontSha256: createHash('sha256').update(readFileSync(fontPath)).digest('hex'),
     coveragePolicy,
     cssWidth: width,
     cssHeight: height,
@@ -191,7 +159,7 @@ async function writeBrowserReference() {
         height:${sample.lineHeight}px;
         font-size:${sample.fontSize}px;
         line-height:${sample.lineHeight}px;
-        color:${sample.color};
+        color:rgba(${sample.color.join(',')});
       ">${sample.text}</div>`
     )
     .join('\n');
@@ -213,7 +181,7 @@ async function writeBrowserReference() {
       width: ${width}px;
       height: ${height}px;
       overflow: hidden;
-      background: white;
+      background: rgb(${background.join(',')});
     }
     body {
       font-family: "SuiNotoSans", sans-serif;
@@ -233,7 +201,8 @@ async function writeBrowserReference() {
 <body>${sampleHtml}</body>
 </html>`;
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ channel: browserChannel });
+  browserVersion = browser.version();
   const page = await browser.newPage({
     viewport: { width, height },
     deviceScaleFactor: dpiScale
@@ -266,6 +235,8 @@ async function main() {
     outputDir
   ]);
 
+  const manifest = JSON.parse(readFileSync(path.join(outputDir, 'samples.json'), 'utf8'));
+  ({ width, height, background, samples } = manifest);
   const browserPath = await writeBrowserReference();
   const suiPath = path.join(outputDir, 'sui.png');
   const diffPath = path.join(outputDir, 'diff.png');

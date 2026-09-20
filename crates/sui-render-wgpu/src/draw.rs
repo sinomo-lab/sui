@@ -246,6 +246,8 @@ pub(crate) struct ScissorRect {
 #[derive(Debug, Clone)]
 pub(crate) struct SceneRasterState {
     pub(crate) current_transform: Transform,
+    pub(crate) text_raster_transform: Transform,
+    pub(crate) text_background: crate::text_background::TextBackground,
     pub(crate) pixel_snap_offset: Vector,
     pub(crate) transform_stack: Vec<Transform>,
     pub(crate) clip_stack: Vec<ClipPrimitive>,
@@ -261,6 +263,8 @@ impl SceneRasterState {
         let clip_state_index = draw_ops.push_clip_state(&[]);
         Self {
             current_transform: Transform::IDENTITY,
+            text_raster_transform: Transform::IDENTITY,
+            text_background: Default::default(),
             pixel_snap_offset: Vector::ZERO,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
@@ -279,6 +283,8 @@ impl SceneRasterState {
     ) -> Result<Self> {
         let mut state = Self::new(draw_ops);
         state.current_transform = resolved.current_transform;
+        state.text_raster_transform = resolved.text_raster_transform;
+        state.text_background = resolved.text_background.clone();
         state.pixel_snap_offset = resolved.pixel_snap_offset;
         state.transform_stack.clone_from(&resolved.transform_stack);
         state.text_render_policy = resolved.text_render_policy;

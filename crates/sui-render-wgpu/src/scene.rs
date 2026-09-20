@@ -170,6 +170,18 @@ impl SceneDrawOpBuilder<'_> {
         let viewport = self.frame.viewport;
         diagnostics.command_count += 1;
         let command_started = Instant::now();
+        let clip = state
+            .clip_stack
+            .iter()
+            .map(|clip| clip.bounds())
+            .reduce(|a, b| a.intersection(b).unwrap_or(Rect::ZERO));
+        let rectangular_clip = state
+            .clip_stack
+            .iter()
+            .all(|clip| matches!(clip, crate::draw::ClipPrimitive::Rect(_)));
+        state
+            .text_background
+            .observe(command, state.current_transform, clip, rectangular_clip);
 
         let result = match command {
             SceneCommand::Clear(color) => {

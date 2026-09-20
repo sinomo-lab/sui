@@ -5,7 +5,7 @@ struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
-    @location(2) metadata: vec4<f32>,
+    @location(2) @interpolate(flat) metadata: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
     @location(4) uv_min: vec2<f32>,
     @location(5) uv_max: vec2<f32>,
@@ -71,6 +71,21 @@ fn apply_text_coverage(coverage: f32, policy: f32, parameter: f32) -> f32 {
     }
     if policy < 3.5 {
         return (2.0 * c) - (c * c);
+    }
+    if policy < 4.5 {
+        // Skia-style perceptual gamma/contrast, expressed as coverage for a
+        // linear-light blend target. Two UNORM12 luminances share one exact
+        // f32 integer; flat interpolation preserves the packed value.
+        if c <= 0.0 || c >= 1.0 { return c; }
+        let foreground = floor(parameter / 4096.0) / 4095.0;
+        let background = (parameter % 4096.0) / 4095.0;
+        let gamma = 1.8;
+        let a = c + c * (1.0 - c) * 0.5 * pow(background, gamma);
+        let endpoints = srgb_to_linear(vec3<f32>(foreground, background, 0.0));
+        if abs(endpoints.x - endpoints.y) < 1e-4 { return a; }
+        let value = pow(pow(foreground, gamma) * a + pow(background, gamma) * (1.0 - a), 1.0 / gamma);
+        let linear = srgb_to_linear(vec3<f32>(value)).x;
+        return clamp((linear - endpoints.y) / (endpoints.x - endpoints.y), 0.0, 1.0);
     }
     return c;
 }

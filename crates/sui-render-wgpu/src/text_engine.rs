@@ -27,7 +27,6 @@ use crate::text_policy::StemDarkening;
 use crate::text_policy::TextCoveragePolicy;
 use crate::text_policy::TextHinting;
 use crate::text_policy::TextRenderMode;
-use crate::text_policy::perceptual_text_coverage_boost;
 use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
@@ -450,6 +449,8 @@ impl TextEngine {
         let mut active_face_index = None;
         let mut swash_face = None;
         let text_policy = self.resolved_text_render_policy(state.active_text_render_policy());
+        let raster_transform = state.current_transform.then(state.text_raster_transform);
+        let glyph_raster_scale = raster_scale_factor * text_transform_scale(raster_transform);
         for glyph in glyphs {
             let face_index = glyph.glyph.face_index;
             if active_face_index != Some(face_index) {
@@ -461,12 +462,18 @@ impl TextEngine {
             let face_key = GlyphFaceCacheKey::new(glyph_face);
             let glyph_style = glyph.style;
             let glyph_color = color_override.unwrap_or(glyph_style.color);
-            let coverage_policy = text_policy
-                .coverage_policy
-                .resolved_for_text_color(glyph_color);
+            // Bound raster allocation during extreme canvas zoom. Larger text
+            // reuses a high-resolution mask instead of attempting an unbounded
+            // CPU image that cannot fit in an atlas page.
+            let actual_raster_scale = glyph_raster_scale.min(
+                (crate::text::TEXT_ATLAS_HEIGHT as f32 * 0.5)
+                    / glyph_style.font_size.max(f32::EPSILON),
+            );
+            let resolution_limited = actual_raster_scale < glyph_raster_scale;
             let render_mode = if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
                 && (matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
-                    || !allows_lcd_text(state.current_transform))
+                    || !allows_lcd_text(raster_transform)
+                    || resolution_limited)
             {
                 TextRenderMode::Grayscale
             } else {
@@ -482,6 +489,14 @@ impl TextEngine {
             if let Some(bounds) = translated_glyph.bounds {
                 translated_glyph.bounds = Some(bounds.translate(origin.to_vector()));
             }
+            let background = translated_glyph.bounds.and_then(|bounds| {
+                state
+                    .text_background
+                    .color_under(state.current_transform.transform_rect_bbox(bounds))
+            });
+            let coverage_policy = text_policy
+                .coverage_policy
+                .resolved_for_text_background(glyph_color, background);
 
             if let Some(atlas) = self.cached_glyph_primitive(
                 glyph_face,
@@ -489,13 +504,17 @@ impl TextEngine {
                 face_key,
                 glyph.glyph.glyph_id,
                 glyph.glyph.scale,
-                raster_scale_factor,
-                glyph_subpixel_offset(
-                    state.current_transform,
-                    state.pixel_snap_offset,
-                    &translated_glyph,
-                    raster_scale_factor,
-                ),
+                actual_raster_scale,
+                if resolution_limited {
+                    GlyphSubpixelOffsetKey::default()
+                } else {
+                    glyph_subpixel_offset(
+                        raster_transform,
+                        state.pixel_snap_offset,
+                        &translated_glyph,
+                        raster_scale_factor,
+                    )
+                },
                 render_mode,
                 subpixel_order,
                 text_policy.hinting,
@@ -507,6 +526,7 @@ impl TextEngine {
                 glyph_color,
                 coverage_policy,
                 state.current_transform,
+                state.text_raster_transform,
                 state.pixel_snap_offset,
                 viewport,
                 raster_scale_factor,
@@ -545,7 +565,8 @@ impl TextEngine {
         stem_darkening: StemDarkening,
         weight: u16,
     ) -> Result<Option<&CachedGlyphAtlas>> {
-        let atlas_physical_scale = glyph_scale * raster_scale_factor.max(1.0);
+        let raster_scale_factor = raster_scale_factor.max(f32::EPSILON);
+        let atlas_physical_scale = glyph_scale * raster_scale_factor;
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
         let key = GlyphCacheKey::new(
             face_key,
@@ -584,14 +605,14 @@ impl TextEngine {
             .expect("swash text face should be cached after initialization");
         let atlas_miss_started = self.diagnostics_enabled.then(Instant::now);
         let bucketed_physical_scale = glyph_scale_from_bucket(scale_bucket);
-        let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor.max(1.0);
+        let bucketed_logical_scale = bucketed_physical_scale / raster_scale_factor;
         let built = build_cached_glyph_atlas(
             &mut self.atlas,
             &mut self.swash_scale_context,
             swash_face,
             glyph_id,
             swash_face.ppem_for_scale(bucketed_physical_scale),
-            raster_scale_factor.max(1.0),
+            raster_scale_factor,
             bucketed_logical_scale,
             subpixel_offset,
             text_render_mode,
@@ -1196,6 +1217,7 @@ pub(crate) fn append_cached_glyph_atlas(
         color,
         TextCoveragePolicy::Linear,
         transform,
+        Transform::IDENTITY,
         Vector::ZERO,
         viewport,
         raster_scale_factor,
@@ -1210,6 +1232,7 @@ pub(crate) fn build_text_atlas_instance(
     color: Color,
     coverage_policy: TextCoveragePolicy,
     transform: Transform,
+    inherited_transform: Transform,
     pixel_snap_offset: Vector,
     viewport: Size,
     raster_scale_factor: f32,
@@ -1228,18 +1251,24 @@ pub(crate) fn build_text_atlas_instance(
     let top = glyph.origin_y + (atlas.offset.y * residual_scale);
     let width = atlas.size.width * residual_scale;
     let height = atlas.size.height * residual_scale;
+    let raster_transform = transform.then(inherited_transform);
     let (top_left, top_right, bottom_left, bottom_right) = snapped_glyph_quad(
-        transform,
+        raster_transform,
         pixel_snap_offset,
         Point::new(glyph.origin_x, glyph.origin_y),
         Rect::new(left, top, width, height),
         raster_scale_factor,
     );
 
-    let top_left = to_ndc(top_left.x, top_left.y, viewport);
-    let top_right = to_ndc(top_right.x, top_right.y, viewport);
-    let bottom_left = to_ndc(bottom_left.x, bottom_left.y, viewport);
-    let _bottom_right = to_ndc(bottom_right.x, bottom_right.y, viewport);
+    let inverse = inherited_transform.inverse()?;
+    let to_local_ndc = |point: Point| {
+        let local = inverse.transform_point(point);
+        to_ndc(local.x, local.y, viewport)
+    };
+    let top_left = to_local_ndc(top_left);
+    let top_right = to_local_ndc(top_right);
+    let bottom_left = to_local_ndc(bottom_left);
+    let _bottom_right = to_local_ndc(bottom_right);
 
     let atlas_contains_lcd_subpixels = matches!(atlas.color_mode, TextAtlasColorMode::LcdSubpixel);
     let (coverage_policy_kind, coverage_policy_parameter) =
@@ -1253,7 +1282,7 @@ pub(crate) fn build_text_atlas_instance(
         uv_max: atlas.uv_max.map(pack_unorm16),
         color: rgba,
         coverage_flags: [
-            (atlas_contains_lcd_subpixels && allows_lcd_text(transform)) as u8,
+            (atlas_contains_lcd_subpixels && allows_lcd_text(raster_transform)) as u8,
             atlas_contains_lcd_subpixels as u8,
             coverage_policy_kind.round().clamp(0.0, u8::MAX as f32) as u8,
             0,
@@ -1274,9 +1303,19 @@ pub(crate) fn unpack_unorm16(value: u16) -> f32 {
 
 pub(crate) fn coverage_policy_shader_metadata(policy: TextCoveragePolicy) -> (f32, f32) {
     match policy.normalized() {
-        TextCoveragePolicy::Perceptual => coverage_policy_shader_metadata(
-            TextCoveragePolicy::CoverageBoost(perceptual_text_coverage_boost(Color::BLACK)),
-        ),
+        TextCoveragePolicy::Perceptual => {
+            coverage_policy_shader_metadata(TextCoveragePolicy::PerceptualLuminance {
+                text: 0.0,
+                background: 1.0,
+            })
+        }
+        TextCoveragePolicy::PerceptualLuminance { text, background } => {
+            // Two 12-bit luminances fit exactly in the f32 instance parameter.
+            (
+                4.0,
+                (text * 4095.0).round() * 4096.0 + (background * 4095.0).round(),
+            )
+        }
         TextCoveragePolicy::Linear => (0.0, 0.0),
         TextCoveragePolicy::Gamma(gamma) => (1.0, gamma),
         TextCoveragePolicy::CoverageBoost(amount) => (2.0, amount),
@@ -1286,6 +1325,32 @@ pub(crate) fn coverage_policy_shader_metadata(policy: TextCoveragePolicy) -> (f3
 
 pub(crate) fn allows_lcd_text(transform: Transform) -> bool {
     transform_is_lcd_safe(transform)
+}
+
+/// Largest singular value of the linear transform: enough raster resolution
+/// for either axis, including rotation, nonuniform scaling, and shear.
+pub(crate) fn text_transform_scale(transform: Transform) -> f32 {
+    let [xx, xy, yx, yy] = [transform.xx, transform.xy, transform.yx, transform.yy].map(f64::from);
+    let a = xx * xx + yx * yx;
+    let b = xy * xy + yy * yy;
+    let cross = xx * xy + yx * yy;
+    let scale = ((a + b + (a - b).hypot(2.0 * cross)) * 0.5).sqrt();
+    if scale.is_finite() {
+        (scale as f32).max(f32::EPSILON)
+    } else {
+        1.0
+    }
+}
+
+fn text_subpixel_variants_x(transform: Transform) -> u8 {
+    // A raster texel maps to one physical pixel only under positive uniform
+    // scaling. Other transforms use whole-pixel origins without a phase that
+    // would be stretched or mirrored along with the mask.
+    if transform.xx > 0.0 && (transform.xx - transform.yy).abs() <= 1e-5 * transform.xx {
+        GLYPH_SUBPIXEL_VARIANTS_X
+    } else {
+        1
+    }
 }
 
 pub(crate) fn glyph_subpixel_offset(
@@ -1301,7 +1366,11 @@ pub(crate) fn glyph_subpixel_offset(
     let origin =
         transform.transform_point(Point::new(glyph.origin_x, glyph.origin_y)) + pixel_snap_offset;
     GlyphSubpixelOffsetKey::new(
-        physical_pixel_phase(origin.x * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_X).variant,
+        physical_pixel_phase(
+            origin.x * raster_scale_factor,
+            text_subpixel_variants_x(transform),
+        )
+        .variant,
         physical_pixel_phase(origin.y * raster_scale_factor, GLYPH_SUBPIXEL_VARIANTS_Y).variant,
     )
 }
@@ -1313,15 +1382,19 @@ pub(crate) struct PhysicalPixelPhase {
 }
 
 pub(crate) fn physical_pixel_phase(physical_position: f32, variants: u8) -> PhysicalPixelPhase {
+    // Equivalent DPI/font/scene scale products can land a few ULPs on either
+    // side of a phase tie. Keep those equivalent placements in the same bin.
+    let round_phase =
+        |value: f32| (value + value.signum() * (4.0 * f32::EPSILON * value.abs().max(1.0))).round();
     if variants <= 1 {
         return PhysicalPixelPhase {
-            integer: physical_position.round(),
+            integer: round_phase(physical_position),
             variant: 0,
         };
     }
 
     let variants_i32 = i32::from(variants);
-    let rounded = (physical_position * f32::from(variants)).round() as i32;
+    let rounded = round_phase(physical_position * f32::from(variants)) as i32;
     let variant = rounded.rem_euclid(variants_i32) as u8;
     let integer = (rounded - i32::from(variant)) as f32 / f32::from(variants);
 
@@ -1390,7 +1463,7 @@ pub(crate) fn snapped_glyph_quad(
     let snap_origin = transformed_origin + pixel_snap_offset;
     let snapped_origin_x = physical_pixel_phase(
         snap_origin.x * raster_scale_factor,
-        GLYPH_SUBPIXEL_VARIANTS_X,
+        text_subpixel_variants_x(transform),
     )
     .integer
         / raster_scale_factor

@@ -280,9 +280,17 @@ There are two render modes:
 
 LCD rendering requires an explicit `TextSubpixelOrder::Rgb` or `Bgr`, an
 axis-aligned transform, and positive X/Y scale. Requests with no subpixel order
-or with rotated or mirrored transforms fall back to grayscale. Axis-aligned
-glyphs use quarter-pixel X-phase atlas variants while their quads are snapped
-to the physical pixel grid.
+or with rotated or mirrored transforms fall back to grayscale. Positive uniform
+scales use quarter-pixel X-phase atlas variants while their quads are snapped
+to the physical pixel grid. Nonuniform or mirrored transforms use whole-pixel
+origins; rotated text remains unsnapped.
+
+Glyph raster resolution includes display DPI and the scene transform, including
+inherited retained-layer transforms. Uniformly zoomed text uses the same physical
+font size as directly sized text. Nonuniform transforms and shear use the largest
+singular value to provide sufficient resolution along either axis. Raster size
+is capped at half the atlas page height (1024 ppem with the current atlas) to
+bound allocation during extreme zoom; that case falls back to grayscale.
 
 `TextRenderPolicy` can override render mode, subpixel order, hinting, stem
 darkening, and coverage for a scoped part of a scene. A custom widget brackets
@@ -296,10 +304,23 @@ Window defaults are deliberately conservative:
 - perceptual grayscale coverage;
 - no LCD subpixel order.
 
-`TextCoveragePolicy::Perceptual` resolves a color-aware coverage boost for
-light-on-dark and dark-on-light text. `Linear`, `Gamma`, `CoverageBoost`, and
-`TwoCoverageMinusCoverageSq` are available for explicit comparison or product
-policy.
+`TextCoveragePolicy::Perceptual` compensates edge coverage using foreground and
+solid-backdrop luminance, with a perceptual gamma/contrast curve converted to
+the renderer's linear-light blend space. Its 1.8 perceptual exponent and 0.5
+contrast setting were calibrated against Chrome captures of the same font,
+including muted, blue, green, red, purple, and orange text on light/dark surfaces.
+This darkens thin dark strokes without additionally brightening light edges.
+The framebuffer transfer function remains unchanged.
+
+Backdrop metadata follows clears and solid rectangular fills through packet
+and retained-layer boundaries. Rounded interiors and rectangular clips can
+establish a solid backdrop; images, gradients, path clips, or ambiguous overlap
+fall back to an assumed contrasting luminance. This is a bounded approximation,
+not framebuffer sampling. HDR colors outside SDR use linear coverage; color
+emoji bypass coverage remapping. Paint-only coverage/background changes do not
+duplicate glyph atlas entries, and geometry-only packets ignore text metadata.
+`Linear`, `Gamma`, `CoverageBoost`, and `TwoCoverageMinusCoverageSq` remain
+available for explicit comparison or product policy.
 
 ## Diagnostics and Benchmark Workflow
 

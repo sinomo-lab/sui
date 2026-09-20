@@ -305,25 +305,224 @@ pub(crate) fn text_coverage_policy_defaults_to_perceptual_luminance_curve() {
         TextCoveragePolicy::Perceptual
     );
 
-    let TextCoveragePolicy::CoverageBoost(black_boost) =
-        TextCoveragePolicy::default().resolved_for_text_color(Color::BLACK)
-    else {
-        panic!("perceptual coverage should resolve to a coverage boost policy");
-    };
-    let TextCoveragePolicy::CoverageBoost(white_boost) =
-        TextCoveragePolicy::default().resolved_for_text_color(Color::WHITE)
-    else {
-        panic!("perceptual coverage should resolve to a coverage boost policy");
-    };
-
-    assert!((black_boost - 0.92).abs() < 0.0001);
-    assert!((white_boost - 0.45).abs() < 0.0001);
-    assert!(black_boost > white_boost);
+    let dark = TextCoveragePolicy::Perceptual.resolved_for_text_color(Color::BLACK);
+    let light = TextCoveragePolicy::Perceptual.resolved_for_text_color(Color::WHITE);
+    assert!(
+        dark.apply(0.5) > 0.5,
+        "dark stems need contrast compensation"
+    );
+    assert!(
+        light.apply(0.5) < 0.5,
+        "light edges must not be brightened twice"
+    );
+    // The same accent needs different compensation on opposite surfaces.
+    let accent = Color::rgba(0.1, 0.5, 0.8, 1.0);
+    let on_white =
+        TextCoveragePolicy::Perceptual.resolved_for_text_background(accent, Some(Color::WHITE));
+    let on_black =
+        TextCoveragePolicy::Perceptual.resolved_for_text_background(accent, Some(Color::BLACK));
+    assert!(on_white.apply(0.5) > on_black.apply(0.5));
+    for text in [
+        Color::BLACK,
+        Color::WHITE,
+        accent,
+        Color::rgba(0.5, 0.5, 0.5, 1.0),
+    ] {
+        for bg in [Color::BLACK, Color::WHITE, text] {
+            let policy =
+                TextCoveragePolicy::Perceptual.resolved_for_text_background(text, Some(bg));
+            let mut previous = 0.0;
+            for i in 0..=255 {
+                let alpha = policy.apply(i as f32 / 255.0);
+                assert!(alpha.is_finite() && alpha >= previous && alpha <= 1.0);
+                previous = alpha;
+            }
+            assert_eq!(policy.apply(0.0), 0.0);
+            assert_eq!(policy.apply(1.0), 1.0);
+        }
+    }
+    assert_eq!(
+        TextCoveragePolicy::Perceptual
+            .resolved_for_text_color(Color::linear_rgba(2.0, 1.0, 1.0, 1.0)),
+        TextCoveragePolicy::Linear
+    );
 }
 
 #[test]
 pub(crate) fn text_render_mode_defaults_to_grayscale() {
     assert_eq!(TextRenderMode::default(), TextRenderMode::Grayscale);
+}
+
+#[test]
+fn transformed_text_rasterizes_at_display_resolution() {
+    use sui_core::WidgetId;
+    use sui_scene::SceneLayer;
+    let handle = FontHandle::new(9001);
+    let mut fonts = FontRegistry::new();
+    fonts.insert(
+        handle,
+        sui_text::RegisteredFont::from_bytes(sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT.to_vec()),
+    );
+    let fonts = Arc::new(fonts);
+    let render = |zoom: f32, dpi: f32, transformed: bool, retained: bool| {
+        let mut content = Scene::new();
+        let size_scale = if transformed { 1.0 } else { zoom };
+        content.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(
+                12.125 * size_scale,
+                8.25 * size_scale,
+                220.0 * size_scale,
+                26.0 * size_scale,
+            ),
+            text: "minimum AVWA 012345".to_string(),
+            style: TextStyle {
+                font: Some(handle),
+                font_size: 15.0 * size_scale,
+                line_height: 22.0 * size_scale,
+                color: Color::BLACK,
+                ..TextStyle::default()
+            },
+        }));
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Clear(Color::WHITE));
+        if transformed {
+            scene.push(SceneCommand::PushTransform {
+                transform: Transform::scale(zoom, zoom),
+            });
+        }
+        if retained {
+            let widget = WidgetId::new(9001);
+            scene.push(SceneCommand::Layer(SceneLayer::new(
+                widget,
+                Rect::new(8.0, 4.0, 230.0, 40.0),
+                content,
+            )));
+        } else {
+            for command in content.commands() {
+                scene.push(command.clone());
+            }
+        }
+        if transformed {
+            scene.push(SceneCommand::PopTransform);
+        }
+        let window_id = WindowId::new(9001);
+        let viewport = Size::new(500.0, 100.0);
+        let frame = SceneFrame {
+            window_id,
+            viewport,
+            surface_size: Size::new(viewport.width * dpi, viewport.height * dpi),
+            scale_factor: dpi,
+            dirty_regions: vec![],
+            layer_updates: vec![],
+            scene,
+            font_registry: Arc::clone(&fonts),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        };
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&frame).unwrap();
+        renderer.capture_last_frame_rgba(window_id).unwrap()
+    };
+    for dpi in [1.0, 1.25, 2.0] {
+        for zoom in [0.5, 1.25, 1.5, 2.0] {
+            let reference = render(zoom, dpi, false, false);
+            for retained in [false, true] {
+                let scaled = render(zoom, dpi, true, retained);
+                let differing = scaled
+                    .pixels()
+                    .chunks_exact(4)
+                    .zip(reference.pixels().chunks_exact(4))
+                    .filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 3))
+                    .count();
+                let max_delta = scaled
+                    .pixels()
+                    .iter()
+                    .zip(reference.pixels())
+                    .map(|(a, b)| a.abs_diff(*b))
+                    .max()
+                    .unwrap();
+                // Separate allocations can quantize packed atlas UVs differently;
+                // allow a small edge-channel error, not the large differences
+                // caused by magnifying a lower-resolution mask.
+                assert!(
+                    max_delta <= 10,
+                    "scaled text differs from directly sized text: zoom={zoom}, dpi={dpi}, retained={retained}, pixels={differing}, max_delta={max_delta}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn text_raster_resolution_covers_rotated_stretched_and_sheared_axes() {
+    use crate::text_engine::text_transform_scale;
+    assert!(
+        (text_transform_scale(Transform::scale(2.0, 2.0).then(Transform::rotation(0.6))) - 2.0)
+            .abs()
+            < 1e-5
+    );
+    assert!((text_transform_scale(Transform::scale(0.5, 0.75)) - 0.75).abs() < 1e-5);
+    assert!((text_transform_scale(Transform::scale(-2.0, 1.0)) - 2.0).abs() < 1e-5);
+    assert!(
+        (text_transform_scale(Transform::new(1.0, 0.0, 1.0, 1.0, 0.0, 0.0)) - 1.618034).abs()
+            < 1e-5
+    );
+}
+
+#[test]
+fn perceptual_text_uses_inherited_backdrop_and_refreshes_when_it_changes() {
+    use sui_core::WidgetId;
+    use sui_scene::SceneLayer;
+    let mut actual = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    let foreground = Color::rgba(0.08, 0.49, 0.72, 1.0);
+    let window = WindowId::new(9020);
+    for background in [
+        Color::WHITE,
+        Color::rgba(0.07, 0.09, 0.12, 1.0),
+        Color::WHITE,
+    ] {
+        let mut text = Scene::new();
+        text.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(16.0, 16.0, 250.0, 26.0),
+            text: "Colored minimum 012345".into(),
+            style: TextStyle {
+                font_size: 15.0,
+                line_height: 22.0,
+                color: foreground,
+                ..TextStyle::default()
+            },
+        }));
+        let mut panel = Scene::new();
+        panel.push(SceneCommand::FillRect {
+            rect: Rect::new(8.0, 8.0, 284.0, 60.0),
+            brush: background.into(),
+        });
+        panel.push(SceneCommand::Layer(SceneLayer::new(
+            WidgetId::new(9022),
+            Rect::new(16.0, 16.0, 250.0, 26.0),
+            text,
+        )));
+        let mut frame = SceneFrame::new(window, Size::new(300.0, 80.0));
+        frame
+            .scene
+            .push(SceneCommand::Clear(Color::rgba(0.3, 0.1, 0.2, 1.0)));
+        frame.scene.push(SceneCommand::Layer(SceneLayer::new(
+            WidgetId::new(9021),
+            Rect::new(8.0, 8.0, 284.0, 60.0),
+            panel,
+        )));
+        reference.set_text_coverage_policy(
+            TextCoveragePolicy::Perceptual
+                .resolved_for_text_background(foreground, Some(background)),
+        );
+        actual.render(&frame).unwrap();
+        reference.render(&frame).unwrap();
+        crate::tests::support::assert_rgba_images_match(
+            &actual.capture_last_frame_rgba(window).unwrap(),
+            &reference.capture_last_frame_rgba(window).unwrap(),
+        );
+    }
 }
 
 #[test]
@@ -333,6 +532,64 @@ pub(crate) fn text_subpixel_order_defaults_to_none() {
         WgpuRenderer::new().text_subpixel_order(),
         TextSubpixelOrder::None
     );
+}
+
+#[test]
+fn translated_retained_text_resolves_the_backdrop_at_its_presented_position() {
+    use sui_core::WidgetId;
+    use sui_scene::{LayerProperties, SceneLayer, SceneLayerDescriptor, SceneLayerId};
+    let mut actual = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    let window = WindowId::new(9030);
+    let foreground = Color::rgba(0.08, 0.49, 0.72, 1.0);
+    let dark = Color::rgba(0.07, 0.09, 0.12, 1.0);
+    for translation in [0.0, 200.0, 0.0] {
+        let mut text = Scene::new();
+        text.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(16.0, 16.0, 150.0, 26.0),
+            text: "minimum".into(),
+            style: TextStyle {
+                font_size: 15.0,
+                line_height: 22.0,
+                color: foreground,
+                ..TextStyle::default()
+            },
+        }));
+        let owner = WidgetId::new(9030);
+        let descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(owner),
+            owner,
+            Rect::new(16.0, 16.0, 150.0, 26.0),
+        )
+        .with_properties(LayerProperties::new(1.0, Vector::new(translation, 0.0)));
+        let mut frame = SceneFrame::new(window, Size::new(400.0, 80.0));
+        frame.scene.push(SceneCommand::Clear(Color::WHITE));
+        frame.scene.push(SceneCommand::FillRect {
+            rect: Rect::new(200.0, 0.0, 200.0, 80.0),
+            brush: dark.into(),
+        });
+        frame
+            .scene
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                descriptor, text,
+            )));
+        reference.set_text_coverage_policy(
+            TextCoveragePolicy::Perceptual.resolved_for_text_background(
+                foreground,
+                Some(if translation == 0.0 {
+                    Color::WHITE
+                } else {
+                    dark
+                }),
+            ),
+        );
+        actual.render(&frame).unwrap();
+        reference.render(&frame).unwrap();
+        crate::tests::support::assert_rgba_images_match(
+            &actual.capture_last_frame_rgba(window).unwrap(),
+            &reference.capture_last_frame_rgba(window).unwrap(),
+        );
+    }
 }
 
 #[test]
