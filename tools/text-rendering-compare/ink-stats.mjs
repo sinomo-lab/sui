@@ -1,5 +1,6 @@
 // Align only captured rows. Keep SUI's layout, glyph phases, and RGB samples intact.
 export const ALIGNMENT_RADIUS_PHYSICAL_PIXELS = 2;
+const SAMPLE_MARGIN_CSS_PIXELS = 6;
 
 function image(width, height, background) {
   const data = Buffer.alloc(width * height * 4);
@@ -12,12 +13,13 @@ function image(width, height, background) {
   return { width, height, data };
 }
 
-function rowCrop(source, top, bottom, background) {
+function rowCrop(source, rect, background) {
   const padding = ALIGNMENT_RADIUS_PHYSICAL_PIXELS;
-  const crop = image(source.width + padding * 2, bottom - top + padding * 2, background);
-  for (let y = top; y < bottom; y += 1) {
-    source.data.copy(crop.data, ((y - top + padding) * crop.width + padding) * 4,
-      y * source.width * 4, (y + 1) * source.width * 4);
+  const crop = image(rect.width + padding * 2, rect.height + padding * 2, background);
+  for (let y = 0; y < rect.height; y += 1) {
+    const start = ((rect.y + y) * source.width + rect.x) * 4;
+    source.data.copy(crop.data, ((y + padding) * crop.width + padding) * 4,
+      start, start + rect.width * 4);
   }
   return crop;
 }
@@ -79,12 +81,16 @@ function translated(source, dx, dy, background) {
   return result;
 }
 
-function stackRows(rows, width, background) {
+function stackRows(rows, background) {
+  const width = Math.max(1, ...rows.map(row => row.width));
   const result = image(width, rows.reduce((height, row) => height + row.height, 0), background);
-  let offset = 0;
+  let top = 0;
   for (const row of rows) {
-    row.data.copy(result.data, offset);
-    offset += row.data.length;
+    for (let y = 0; y < row.height; y += 1) {
+      row.data.copy(result.data, (top + y) * width * 4,
+        y * row.width * 4, (y + 1) * row.width * 4);
+    }
+    top += row.height;
   }
   return result;
 }
@@ -111,12 +117,20 @@ export function compareTextRows(sui, browser, { samples, background, dpiScale })
   let sheetTop = 0;
 
   for (const sample of samples) {
-    const top = Math.max(0, Math.min(sui.height, Math.floor((sample.y - 6) * dpiScale)));
-    const bottom = Math.max(top, Math.min(sui.height, Math.ceil((sample.y + sample.lineHeight + 6) * dpiScale)));
+    if (![sample.x, sample.y, sample.width, sample.lineHeight].every(Number.isFinite) ||
+        sample.width < 0 || sample.lineHeight < 0) {
+      throw new Error(`Invalid text sample bounds: ${sample.text}`);
+    }
+    const margin = SAMPLE_MARGIN_CSS_PIXELS;
+    const left = Math.max(0, Math.min(sui.width, Math.floor((sample.x - margin) * dpiScale)));
+    const right = Math.max(left, Math.min(sui.width, Math.ceil((sample.x + sample.width + margin) * dpiScale)));
+    const top = Math.max(0, Math.min(sui.height, Math.floor((sample.y - margin) * dpiScale)));
+    const bottom = Math.max(top, Math.min(sui.height, Math.ceil((sample.y + sample.lineHeight + margin) * dpiScale)));
+    const sourceRect = { x: left, y: top, width: right - left, height: bottom - top };
     // Padding retains ink translated beyond the crop/image edge instead of dropping
     // difficult pixels from the score. Each isolated row is scored independently.
-    const suiRow = rowCrop(sui, top, bottom, background);
-    const browserRow = rowCrop(browser, top, bottom, background);
+    const suiRow = rowCrop(sui, sourceRect, background);
+    const browserRow = rowCrop(browser, sourceRect, background);
     const raw = measureInk(suiRow, browserRow, background);
     let best = raw;
     let bestX = 0;
@@ -136,9 +150,10 @@ export function compareTextRows(sui, browser, { samples, background, dpiScale })
         }
       }
     }
-    rowInkStats.push({ text: sample.text, ...raw });
+    rowInkStats.push({ text: sample.text, sourceRect, ...raw });
     alignedRowInkStats.push({
       text: sample.text,
+      sourceRect,
       ...best,
       alignment: {
         suiShiftX: bestX,
@@ -165,8 +180,12 @@ export function compareTextRows(sui, browser, { samples, background, dpiScale })
       shiftedRows: alignedRowInkStats.filter(row => row.alignment.suiShiftX !== 0 || row.alignment.suiShiftY !== 0).length,
       boundaryRows: alignedRowInkStats.filter(row => row.alignment.atSearchBoundary).length
     },
-    textQuality: { raw: aggregate(rowInkStats), aligned: aggregate(alignedRowInkStats) },
-    alignedSui: stackRows(suiRows, sui.width + radius * 2, background),
-    alignedBrowser: stackRows(browserRows, browser.width + radius * 2, background)
+    textQuality: {
+      sampleMarginCssPixels: SAMPLE_MARGIN_CSS_PIXELS,
+      raw: aggregate(rowInkStats),
+      aligned: aggregate(alignedRowInkStats)
+    },
+    alignedSui: stackRows(suiRows, background),
+    alignedBrowser: stackRows(browserRows, background)
   };
 }

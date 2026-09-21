@@ -287,6 +287,13 @@ atlas variants while their quads are snapped to the physical pixel grid.
 Nonuniform or mirrored transforms use whole-pixel origins; rotated text remains
 unsnapped.
 
+LCD bitmap bounds include the channel offsets before rasterization, preserving
+fringe coverage outside the outline's ordinary bounds. Atlas coordinates are
+stored compactly as UNORM16 values; the shaders recover integer texel bounds
+before interpolation. Bilinear filtering supports transforms while a half-texel
+inset prevents sampling neighbouring glyphs. These raster rules do not change
+the text layout's fractional baseline calculation.
+
 Glyph raster resolution includes display DPI and the scene transform, including
 inherited retained-layer transforms. Uniformly zoomed text uses the same physical
 font size as directly sized text. Nonuniform transforms and shear use the largest

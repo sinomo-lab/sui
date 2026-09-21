@@ -159,8 +159,10 @@ pub(crate) const GLYPH_SUBPIXEL_VARIANTS_Y: u8 = 1;
 /// Zeno translates outlines, whereas physical subpixel positions translate
 /// sample locations. A BGRA mask therefore needs the opposite offsets: blue
 /// samples to the right, red to the left. Do not infer this from format names.
+pub(crate) const LCD_SUBPIXEL_OFFSET: f32 = 1.0 / 3.0;
+
 pub(crate) fn lcd_bgra_format() -> swash::zeno::Format {
-    swash::zeno::Format::CustomSubpixel([-1.0 / 3.0, 0.0, 1.0 / 3.0])
+    swash::zeno::Format::CustomSubpixel([-LCD_SUBPIXEL_OFFSET, 0.0, LCD_SUBPIXEL_OFFSET])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

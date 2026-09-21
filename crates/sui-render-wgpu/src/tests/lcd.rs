@@ -520,3 +520,76 @@ fn lcd_shader_matches_channel_reference_on_colored_surfaces() {
         );
     }
 }
+
+#[test]
+fn text_sampling_is_independent_of_packed_atlas_location() {
+    let mut renderer = WgpuRenderer::new();
+    renderer
+        .render(&SceneFrame::new(
+            WindowId::new(9910),
+            Size::new(320.0, 128.0),
+        ))
+        .unwrap();
+    let supports_dual = renderer
+        .shared
+        .as_ref()
+        .unwrap()
+        .dual_source_blending_enabled;
+    for dual in [false, true]
+        .into_iter()
+        .filter(|dual| !dual || supports_dual)
+    {
+        renderer
+            .shared
+            .as_mut()
+            .unwrap()
+            .dual_source_blending_enabled = dual;
+        for transform in [
+            Transform::IDENTITY,
+            Transform::scale(1.25, 1.25),
+            Transform::rotation(0.13),
+        ] {
+            let draw = frame(
+                dual,
+                Color::rgba(0.1, 0.4, 0.7, 1.0),
+                Some(Color::WHITE),
+                transform,
+                1.0,
+                false,
+            );
+            let mut reference: Option<Vec<u8>> = None;
+            for cursor in [(1, 1), (900, 487), (1300, 1200)] {
+                let mut engine = TextEngine::new().unwrap();
+                // Different atlas positions have different UNORM16 rounding errors.
+                engine.atlas.pages[0].cursor = cursor;
+                renderer.text_engine = Some(engine);
+                renderer.compositors.clear();
+                renderer.render(&draw).unwrap();
+                let image = renderer.capture_last_frame_rgba(draw.window_id).unwrap();
+                assert!(
+                    !renderer
+                        .text_engine
+                        .as_ref()
+                        .unwrap()
+                        .glyph_cache
+                        .is_empty()
+                );
+                if let Some(reference) = &reference {
+                    let max_delta = image
+                        .pixels()
+                        .iter()
+                        .zip(reference)
+                        .map(|(a, b)| a.abs_diff(*b))
+                        .max()
+                        .unwrap();
+                    assert!(
+                        max_delta <= 1,
+                        "atlas location altered coverage by {max_delta}: {cursor:?}, {transform:?}, dual={dual}"
+                    );
+                } else {
+                    reference = Some(image.pixels().to_vec());
+                }
+            }
+        }
+    }
+}

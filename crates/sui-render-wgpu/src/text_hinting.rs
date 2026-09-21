@@ -136,23 +136,21 @@ impl FontAwareHinter {
         outline
             .draw(self.instances.get(&key)?, &mut self.path)
             .ok()?;
-        let format = if lcd {
-            crate::text::lcd_bgra_format()
-        } else {
-            Format::Alpha
-        };
         let offset: Vector = offset.as_swash_offset();
+        if lcd {
+            return Some(crate::text_raster::render_lcd_mask(
+                self.path.0.as_slice(),
+                offset,
+                &mut self.scratch,
+            ));
+        }
         let mut image = Image {
             source: swash::scale::Source::Outline,
-            content: if lcd {
-                Content::SubpixelMask
-            } else {
-                Content::Mask
-            },
+            content: Content::Mask,
             ..Image::default()
         };
         image.placement = Mask::with_scratch(self.path.0.as_slice(), &mut self.scratch)
-            .format(format)
+            .format(Format::Alpha)
             .origin(Origin::BottomLeft)
             .offset(offset)
             .render_offset(offset)

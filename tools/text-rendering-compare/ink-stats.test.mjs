@@ -4,7 +4,7 @@ import { compareTextRows } from './ink-stats.mjs';
 
 const white = [255, 255, 255];
 const points = [[5, 8], [5, 9], [5, 10], [6, 10], [7, 10], [10, 9], [11, 9], [10, 10], [10, 11], [12, 11]];
-const sample = { text: 'colored glyphs', y: 4, lineHeight: 8 };
+const sample = { text: 'colored glyphs', x: 0, y: 4, width: 24, lineHeight: 8 };
 
 function picture(background, marks = [], color = [0, 0, 0]) {
   const width = 24;
@@ -122,4 +122,40 @@ test('search remains bounded and reports a best offset at the boundary', () => {
   assert.equal(row.alignment.atSearchBoundary, true);
   assert.equal(result.alignment.boundaryRows, 1);
   assert.ok(row.absoluteInkChannelError > 0);
+});
+
+test('text metrics exclude canvas borders at fractional DPI but retain nearby ink', () => {
+  const bounds = { ...sample, x: 8.5, width: 0.5 };
+  for (const background of [white, [18, 22, 31]]) {
+    const browser = picture(background, [[12, 10]], [30, 90, 180]);
+    const sui = picture(background, [[12, 11]], [30, 90, 180]);
+    for (let y = 0; y < sui.height; y += 1) {
+      for (const x of [0, 23]) sui.data.set([235, 235, 235, 212], (y * sui.width + x) * 4);
+    }
+    const result = compare(sui, browser, background, [bounds], 1.5);
+    assert.deepEqual(result.rowInkStats[0].sourceRect, { x: 3, y: 0, width: 20, height: 27 });
+    assert.equal(result.rowInkStats[0].unionPixels, 2);
+    assert.equal(result.alignedRowInkStats[0].alignment.suiShiftY, -1);
+    assert.equal(result.alignedRowInkStats[0].absoluteInkChannelError, 0);
+    // Ink in the antialiasing margin, outside the declared box, still counts.
+    sui.data.set([0, 0, 0, 255], (10 * sui.width + 4) * 4);
+    assert.ok(compare(sui, browser, background, [bounds], 1.5).alignedRowInkStats[0].absoluteInkChannelError > 0);
+  }
+});
+
+test('stacked crops with different widths preserve each row and report their bounds', () => {
+  const source = picture(white, [...points, ...points.map(([x, y]) => [x, y + 30])]);
+  const result = compare(source, source, white, [sample, { ...sample, x: 7, width: 5, y: 34 }]);
+  const [a, b] = result.alignedRowInkStats;
+  assert.ok(b.alignedImageRect.width < a.alignedImageRect.width);
+  assert.equal(b.alignedImageRect.y, a.alignedImageRect.height);
+  assert.equal(result.alignedSui.width, a.alignedImageRect.width);
+  for (const row of [a, b]) {
+    const rect = row.sourceRect;
+    for (let y = 0; y < rect.height; y += 1) {
+      const start = ((y + rect.y) * source.width + rect.x) * 4;
+      const dest = ((y + row.alignedImageRect.y + 2) * result.alignedSui.width + 2) * 4;
+      assert.deepEqual(result.alignedSui.data.subarray(dest, dest + rect.width * 4), source.data.subarray(start, start + rect.width * 4));
+    }
+  }
 });

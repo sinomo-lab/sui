@@ -160,8 +160,12 @@ placement when rendering.
 
 Keep placement visible alongside the quality score:
 
-- `rowInkStats` and the top-level image-diff fields retain the original,
-  unaligned measurements. `textQuality.raw` aggregates the original ink errors.
+- `rowInkStats` contains unaligned measurements within each sample's padded
+  text region. `textQuality.raw` aggregates those ink errors. The top-level
+  image-diff fields describe the full original captures, including the backdrop.
+- `sourceRect` records each crop in physical pixels. Its bounds come from the
+  sample's X/Y position, width, and line height, expanded by six CSS pixels on
+  each side and clipped to the capture. Unrelated canvas borders are excluded.
 - Each aligned row reports `alignment.suiShiftX` / `suiShiftY`: the translation
   applied to SUI toward Chrome, in physical pixels; negative Y moves SUI up.
 - `atSearchBoundary` flags a best shift at the search limit. Inspect that row's
@@ -171,9 +175,11 @@ Keep placement visible alongside the quality score:
 
 `aligned-sui.png`, `aligned-browser.png`, and `aligned-diff.png` contain the
 sample crops stacked in manifest order at their original physical resolution.
-`alignedImageRect` locates each row in those sheets. Crops include the original
-six-CSS-pixel vertical margin and two additional physical pixels of padding on
-each side, retaining ink that a translation moves past a crop edge.
+`alignedImageRect` locates each row in those sheets. Crops include the
+six-CSS-pixel sample margin and two additional physical pixels of padding on
+each side, retaining ink that a translation moves past a crop edge. Rows with
+different widths are padded to the widest crop when assembling the sheets;
+that sheet padding does not contribute to their scores.
 `alignedImageStats` describes these sheets; their dimensions differ from the
 original captures, so their full-image diff percentages are not interchangeable.
 

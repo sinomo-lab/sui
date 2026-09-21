@@ -27,6 +27,7 @@ mod text_background;
 mod text_engine;
 mod text_hinting;
 mod text_policy;
+mod text_raster;
 mod uploads;
 
 pub use sui_scene::TextSubpixelOrder;

@@ -67,6 +67,7 @@ pub(crate) struct TextEngine {
     pub(crate) atlas: TextAtlasPages,
     pub(crate) swash_scale_context: SwashScaleContext,
     pub(crate) font_aware_hinter: crate::text_hinting::FontAwareHinter,
+    pub(crate) lcd_rasterizer: crate::text_raster::LcdRasterizer,
     pub(crate) text_render_mode: TextRenderMode,
     pub(crate) text_subpixel_order: TextSubpixelOrder,
     pub(crate) text_hinting: TextHinting,
@@ -129,6 +130,7 @@ impl Default for TextEngine {
             atlas: TextAtlasPages::new(TEXT_ATLAS_WIDTH, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_MAX_PAGES),
             swash_scale_context: SwashScaleContext::new(),
             font_aware_hinter: Default::default(),
+            lcd_rasterizer: Default::default(),
             text_render_mode: TextRenderMode::default(),
             text_subpixel_order: TextSubpixelOrder::default(),
             text_hinting: TextHinting::default(),
@@ -658,6 +660,7 @@ impl TextEngine {
             &mut self.atlas,
             &mut self.swash_scale_context,
             &mut self.font_aware_hinter,
+            &mut self.lcd_rasterizer,
             swash_face,
             glyph_id,
             swash_face.ppem_for_scale(bucketed_physical_scale),
@@ -724,6 +727,7 @@ pub(crate) fn build_cached_glyph_atlas(
     pages: &mut TextAtlasPages,
     scale_context: &mut SwashScaleContext,
     font_aware_hinter: &mut crate::text_hinting::FontAwareHinter,
+    lcd_rasterizer: &mut crate::text_raster::LcdRasterizer,
     face: &SwashFaceState<'_>,
     glyph_id: u16,
     font_size_physical: f32,
@@ -750,11 +754,13 @@ pub(crate) fn build_cached_glyph_atlas(
         .variations([("wght", f32::from(weight))])
         .hint(hinting_target != GlyphHintingTarget::None)
         .build();
-    let mut renderer = SwashRender::new(if hinting_target == GlyphHintingTarget::Asymmetric {
-        &sources[..2]
-    } else {
-        &sources
-    });
+    let lcd = text_render_mode == TextRenderMode::LcdSubpixel;
+    let mut renderer =
+        SwashRender::new(if hinting_target == GlyphHintingTarget::Asymmetric || lcd {
+            &sources[..2]
+        } else {
+            &sources
+        });
     renderer.format(match text_render_mode {
         TextRenderMode::Grayscale => SwashFormat::Alpha,
         TextRenderMode::LcdSubpixel => crate::text::lcd_bgra_format(),
@@ -762,31 +768,39 @@ pub(crate) fn build_cached_glyph_atlas(
     renderer.offset(subpixel_offset.as_swash_offset());
     let (image, font_directed) = if let Some(image) = renderer.render(&mut scaler, glyph_id) {
         (image, false)
-    } else if hinting_target == GlyphHintingTarget::Asymmetric {
-        if let Some(image) = font_aware_hinter.render_asymmetric(
-            face,
-            glyph_id,
-            font_size_physical,
-            subpixel_offset,
-            weight,
-            text_render_mode,
-        ) {
+    } else if !lcd && hinting_target != GlyphHintingTarget::Asymmetric {
+        return Ok(None);
+    } else {
+        let font_directed = if hinting_target == GlyphHintingTarget::Asymmetric {
+            font_aware_hinter.render_asymmetric(
+                face,
+                glyph_id,
+                font_size_physical,
+                subpixel_offset,
+                weight,
+                text_render_mode,
+            )
+        } else {
+            None
+        };
+        if let Some(image) = font_directed {
             (image, true)
+        } else if lcd {
+            let Some(image) =
+                lcd_rasterizer.render(&mut scaler, glyph_id, subpixel_offset.as_swash_offset())
+            else {
+                return Ok(None);
+            };
+            (image, false)
         } else {
             let mut fallback = SwashRender::new(&sources);
-            fallback.format(if text_render_mode == TextRenderMode::LcdSubpixel {
-                crate::text::lcd_bgra_format()
-            } else {
-                SwashFormat::Alpha
-            });
+            fallback.format(SwashFormat::Alpha);
             fallback.offset(subpixel_offset.as_swash_offset());
             let Some(image) = fallback.render(&mut scaler, glyph_id) else {
                 return Ok(None);
             };
             (image, false)
         }
-    } else {
-        return Ok(None);
     };
 
     let logical_offset = glyph_raster_offset(&image.placement, raster_scale_factor);

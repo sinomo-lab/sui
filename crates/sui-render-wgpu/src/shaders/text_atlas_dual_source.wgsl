@@ -4,11 +4,11 @@ enable dual_source_blending;
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) tex_coords: vec2<f32>,
+    @location(1) glyph_coords: vec2<f32>,
     @location(2) @interpolate(flat) metadata: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
-    @location(4) uv_min: vec2<f32>,
-    @location(5) uv_max: vec2<f32>,
+    @location(4) @interpolate(flat) uv_min: vec2<f32>,
+    @location(5) @interpolate(flat) uv_max: vec2<f32>,
 };
 
 struct FragmentOutput {
@@ -38,7 +38,7 @@ fn vs_main(
     var out: VsOut;
     out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
     out.color = color;
-    out.tex_coords = uv_min + local_pos * (uv_max - uv_min);
+    out.glyph_coords = local_pos;
     out.metadata = vec4<f32>(
         f32(coverage_flags.x),
         f32(coverage_flags.y),
@@ -144,11 +144,15 @@ fn lcd_perceptual_coverage(
 
 @fragment
 fn fs_main(in: VsOut) -> FragmentOutput {
-    // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
-    // edges can't reach into neighbouring glyphs (or the padding) at non-integer scales.
-    let atlas_half_texel = 0.5 / vec2<f32>(textureDimensions(text_atlas_texture));
-    let clamped_uv = clamp(in.tex_coords, in.uv_min + atlas_half_texel, in.uv_max - atlas_half_texel);
-    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, clamped_uv, i32(in.layer));
+    // Atlas bounds are integer texels. Recover them from packed UNORM16 values
+    // before interpolation, so packing error cannot blur pixel-aligned text.
+    let atlas_size = vec2<f32>(textureDimensions(text_atlas_texture));
+    let texel_min = round(in.uv_min * atlas_size);
+    let texel_max = round(in.uv_max * atlas_size);
+    // Keep bilinear filtering for transforms, but exclude neighbouring glyphs.
+    let texel = clamp(mix(texel_min, texel_max, in.glyph_coords),
+        texel_min + vec2<f32>(0.5), texel_max - vec2<f32>(0.5));
+    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, texel / atlas_size, i32(in.layer));
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         // Color/bitmap emoji glyphs carry their own RGB. Linearize the stored sRGB before
