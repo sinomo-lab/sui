@@ -236,6 +236,7 @@ pub(crate) struct ResolvedRasterState {
     // but glyph resolution and pixel phase must be chosen in display space.
     pub(crate) text_raster_transform: Transform,
     pub(crate) text_background: crate::text_background::TextBackground,
+    pub(crate) text_lcd_allowed: bool,
     pub(crate) transform_stack: Vec<Transform>,
     pub(crate) text_render_policy: Option<TextRenderPolicy>,
     pub(crate) text_render_policy_stack: Vec<Option<TextRenderPolicy>>,
@@ -252,6 +253,7 @@ impl ResolvedRasterState {
         hash_transform(&mut hasher, self.current_transform);
         hash_transform(&mut hasher, self.text_raster_transform);
         self.text_background.fingerprint(&mut hasher);
+        self.text_lcd_allowed.hash(&mut hasher);
         self.transform_stack.len().hash(&mut hasher);
         for transform in &self.transform_stack {
             hash_transform(&mut hasher, *transform);
@@ -421,6 +423,7 @@ pub(crate) struct CompositorSnapshot {
 pub(crate) struct CompositionTraversalState {
     pub(crate) current_transform: Transform,
     pub(crate) text_background: crate::text_background::TextBackground,
+    pub(crate) text_lcd_allowed: bool,
     pub(crate) transform_node: TransformNodeId,
     pub(crate) transform_stack: Vec<(Transform, TransformNodeId)>,
     pub(crate) text_render_policy: Option<TextRenderPolicy>,
@@ -435,6 +438,7 @@ impl Default for CompositionTraversalState {
         Self {
             current_transform: Transform::IDENTITY,
             text_background: Default::default(),
+            text_lcd_allowed: true,
             transform_node: TransformNodeId::ROOT,
             transform_stack: Vec::new(),
             text_render_policy: None,
@@ -452,6 +456,8 @@ impl CompositionTraversalState {
             current_transform: self.current_transform,
             text_raster_transform: Transform::IDENTITY,
             text_background: self.text_background.clone(),
+            text_lcd_allowed: self.text_lcd_allowed
+                && self.composed_layer_properties.opacity >= 1.0,
             transform_stack: self
                 .transform_stack
                 .iter()
@@ -592,7 +598,7 @@ impl RetainedCompositorState {
         self.path_cache.begin_frame(self.frame_index);
         let mut frame_stats = RetainedCompositorFrameStats::default();
         let scene_traversal_started = self.diagnostics_enabled.then(Instant::now);
-        let snapshot = self.build_snapshot(&frame.scene)?;
+        let snapshot = self.build_snapshot(&frame.scene, text_engine.lcd_blending_supported)?;
         if let Some(started) = scene_traversal_started {
             frame_stats.scene_traversal_time_ms = started.elapsed().as_secs_f64() * 1000.0;
         }
@@ -630,13 +636,20 @@ impl RetainedCompositorState {
         self.feather_width_bits = feather_width.to_bits();
     }
 
-    pub(crate) fn build_snapshot(&mut self, scene: &Scene) -> Result<CompositorSnapshot> {
+    pub(crate) fn build_snapshot(
+        &mut self,
+        scene: &Scene,
+        lcd_blending_supported: bool,
+    ) -> Result<CompositorSnapshot> {
         self.reset_property_trees();
         let mut snapshot = CompositorSnapshot::default();
         snapshot.root = self.build_container_snapshot(
             CompositionContainerId::Root,
             scene,
-            CompositionTraversalState::default(),
+            CompositionTraversalState {
+                text_lcd_allowed: lcd_blending_supported,
+                ..CompositionTraversalState::default()
+            },
             &mut snapshot,
             None,
             0,
@@ -818,6 +831,8 @@ impl RetainedCompositorState {
         let composed_properties =
             compose_layer_properties(state.composed_layer_properties, layer.descriptor.properties);
         state.composed_layer_properties = composed_properties;
+        state.text_lcd_allowed &=
+            layer.descriptor.composition_mode != sui_scene::LayerCompositionMode::Effect;
         let inherited_state = state.resolved_state();
         let container = self.build_container_snapshot(
             CompositionContainerId::Layer(layer.layer_id()),
@@ -1809,6 +1824,7 @@ pub(crate) fn normalize_packet_snapshot(
     }) {
         // Text metadata must not invalidate retained geometry-only packets.
         snapshot.initial_state.text_background = Default::default();
+        snapshot.initial_state.text_lcd_allowed = true;
         snapshot.initial_state.text_raster_transform = Transform::IDENTITY;
         snapshot.initial_state.pixel_snap_offset = Vector::ZERO;
     }

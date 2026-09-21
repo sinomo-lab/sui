@@ -71,6 +71,14 @@ impl WgpuRenderer {
         let text_hinting = self.active_text_hinting();
         let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();
+        let lcd_blending_supported =
+            self.shared
+                .as_ref()
+                .expect("renderer initialized")
+                .dual_source_blending_enabled
+                && self.surfaces.get(&frame.window_id).is_none_or(|surface| {
+                    crate::output::output_allows_lcd(surface.output_strategy)
+                });
         let mut text_engine_init_time_us = 0;
         if self.text_engine.is_none() {
             let started = diagnostics_enabled.then(Instant::now);
@@ -91,6 +99,7 @@ impl WgpuRenderer {
             text_engine.set_text_hinting(text_hinting);
             text_engine.set_stem_darkening(stem_darkening);
             text_engine.set_text_coverage_policy(text_coverage_policy);
+            text_engine.lcd_blending_supported = lcd_blending_supported;
             text_engine.set_diagnostics_enabled(diagnostics_enabled);
             text_engine.begin_frame();
             let compositor = self.compositors.entry(frame.window_id).or_default();

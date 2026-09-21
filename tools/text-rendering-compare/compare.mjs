@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import pixelmatch from 'pixelmatch';
 import { chromium } from 'playwright';
+import { compareTextRows } from './ink-stats.mjs';
 
 const require = createRequire(import.meta.url);
 const { PNG } = require('pngjs');
@@ -20,6 +21,12 @@ let height;
 const dark = process.env.SUI_TEXT_COMPARE_SURFACE === 'dark';
 let background;
 const coveragePolicy = process.env.SUI_TEXT_COMPARE_COVERAGE ?? 'perceptual';
+const renderMode = (process.env.SUI_TEXT_COMPARE_MODE ?? 'grayscale').toLowerCase();
+const orderName = (process.env.SUI_TEXT_COMPARE_SUBPIXEL_ORDER ?? (renderMode === 'lcd' ? 'rgb' : 'none')).toLowerCase();
+const subpixelOrder = orderName === 'off' ? 'none' : orderName;
+if (!['grayscale', 'lcd'].includes(renderMode) || !['rgb', 'bgr', 'none'].includes(subpixelOrder)) {
+  throw new Error('Expected mode grayscale/lcd and subpixel order rgb/bgr/none/off');
+}
 const browserChannel = process.env.SUI_TEXT_COMPARE_BROWSER ?? 'chrome';
 const dpiScale = Number.parseFloat(process.env.SUI_TEXT_COMPARE_DPI_SCALE ?? '1');
 if (!Number.isFinite(dpiScale) || dpiScale <= 0) {
@@ -70,66 +77,46 @@ function channelDeltaStats(a, b) {
   };
 }
 
-function luminance(data, index) {
-  return 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
-}
-
-function darkness(data, index) {
-  return Math.abs(luminance(data, index) - (0.2126*background[0] + 0.7152*background[1] + 0.0722*background[2]));
-}
-
-function rowInkStats(sui, browser) {
-  return samples.map((sample) => {
-    const top = Math.max(0, Math.floor((sample.y - 6) * dpiScale));
-    const bottom = Math.min(
-      sui.height,
-      Math.ceil((sample.y + sample.lineHeight + 6) * dpiScale)
-    );
-    let unionPixels = 0;
-    let differingInkPixels = 0;
-    let suiInkMass = 0;
-    let browserInkMass = 0;
-    let channelError = 0;
-
-    for (let y = top; y < bottom; y += 1) {
-      for (let x = 0; x < sui.width; x += 1) {
-        const index = (y * sui.width + x) * 4;
-        const suiDarkness = darkness(sui.data, index);
-        const browserDarkness = darkness(browser.data, index);
-        if (suiDarkness <= 2 && browserDarkness <= 2) {
-          continue;
-        }
-
-        unionPixels += 1;
-        for (let c = 0; c < 3; c += 1) {
-          channelError += Math.abs(sui.data[index + c] - browser.data[index + c]);
-        }
-        suiInkMass += suiDarkness;
-        browserInkMass += browserDarkness;
-        if (Math.abs(suiDarkness - browserDarkness) > 12) {
-          differingInkPixels += 1;
-        }
-      }
+function detectsLcdEdges(image) {
+  const probe = samples.find(sample => sample.text.startsWith('RGB edge probe'));
+  if (!probe) return null;
+  const linear = value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  const foreground = probe.color.slice(0, 3).map(value => linear(value / 255));
+  const backdrop = background.map(value => linear(value / 255));
+  for (let y = Math.floor(probe.y * dpiScale); y < Math.min(image.height, Math.ceil((probe.y + probe.lineHeight) * dpiScale)); y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const index = (y * image.width + x) * 4;
+      const coverage = foreground.map((value, channel) =>
+        (linear(image.data[index + channel] / 255) - backdrop[channel]) / (value - backdrop[channel]));
+      if (Math.max(...coverage) - Math.min(...coverage) > 0.04) return true;
     }
-
-    return {
-      text: sample.text,
-      unionPixels,
-      differingInkPixels,
-      differingInkRatio: unionPixels === 0 ? 0 : differingInkPixels / unionPixels,
-      suiInkMass: Math.round(suiInkMass),
-      browserInkMass: Math.round(browserInkMass),
-      inkMassRatio: browserInkMass <= 0 ? 1 : suiInkMass / browserInkMass,
-      meanInkChannelError: unionPixels === 0 ? 0 : channelError / (unionPixels * 3)
-    };
-  });
+  }
+  return false;
 }
 
-function comparisonSummary(sui, browser, diffPixels) {
+function writeDiff(sui, browser, filename) {
+  const diff = new PNG({ width: sui.width, height: sui.height });
+  const count = pixelmatch(sui.data, browser.data, diff.data, sui.width, sui.height, {
+    threshold: 0.12,
+    includeAA: true,
+    alpha: 0.25,
+    diffColor: [255, 0, 96],
+    diffColorAlt: [0, 128, 255]
+  });
+  writePng(path.join(outputDir, filename), diff);
+  return count;
+}
+
+function comparisonSummary(sui, browser, diffPixels, rowStats) {
   const stats = channelDeltaStats(sui, browser);
   const totalPixels = sui.width * sui.height;
   return {
     dpiScale,
+    requestedRenderMode: renderMode,
+    suiLcdChromaticEdges: detectsLcdEdges(sui),
+    browserLcdChromaticEdges: detectsLcdEdges(browser),
+    subpixelOrder,
+    hinting: process.env.SUI_TEXT_COMPARE_HINTING ?? 'slight',
     surface: dark ? 'dark' : 'light',
     browserChannel,
     browserVersion,
@@ -143,7 +130,7 @@ function comparisonSummary(sui, browser, diffPixels) {
     diffPixels,
     diffRatio: diffPixels / totalPixels,
     ...stats,
-    rowInkStats: rowInkStats(sui, browser)
+    ...rowStats
   };
 }
 
@@ -239,7 +226,6 @@ async function main() {
   ({ width, height, background, samples } = manifest);
   const browserPath = await writeBrowserReference();
   const suiPath = path.join(outputDir, 'sui.png');
-  const diffPath = path.join(outputDir, 'diff.png');
   const summaryPath = path.join(outputDir, 'summary.json');
 
   const sui = readPng(suiPath);
@@ -250,17 +236,23 @@ async function main() {
     );
   }
 
-  const diff = new PNG({ width: sui.width, height: sui.height });
-  const diffPixels = pixelmatch(sui.data, browser.data, diff.data, sui.width, sui.height, {
-    threshold: 0.12,
-    includeAA: true,
-    alpha: 0.25,
-    diffColor: [255, 0, 96],
-    diffColorAlt: [0, 128, 255]
+  const { alignedSui, alignedBrowser, ...rowStats } = compareTextRows(sui, browser, {
+    samples, background, dpiScale
   });
-  writePng(diffPath, diff);
+  const diffPixels = writeDiff(sui, browser, 'diff.png');
+  writePng(path.join(outputDir, 'aligned-sui.png'), alignedSui);
+  writePng(path.join(outputDir, 'aligned-browser.png'), alignedBrowser);
+  const alignedDiffPixels = writeDiff(alignedSui, alignedBrowser, 'aligned-diff.png');
 
-  const summary = comparisonSummary(sui, browser, diffPixels);
+  const summary = {
+    ...comparisonSummary(sui, browser, diffPixels, rowStats),
+    alignedImageStats: {
+      width: alignedSui.width,
+      height: alignedSui.height,
+      diffPixels: alignedDiffPixels,
+      diffRatio: alignedDiffPixels / (alignedSui.width * alignedSui.height)
+    }
+  };
   writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
   console.log(JSON.stringify({ ...summary, outputDir }, null, 2));
 }

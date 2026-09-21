@@ -161,13 +161,7 @@ impl TextCoveragePolicy {
     ) -> Self {
         match self.normalized() {
             Self::Perceptual => {
-                let is_sdr = |color: Color| {
-                    let c = color.to_linear_srgb();
-                    [c.red, c.green, c.blue]
-                        .iter()
-                        .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
-                };
-                if !is_sdr(color) || background.is_some_and(|c| !is_sdr(c)) {
+                if !is_sdr_color(color) || background.is_some_and(|c| !is_sdr_color(c)) {
                     return Self::Linear;
                 }
                 let text = encoded_srgb_luminance(color);
@@ -193,6 +187,13 @@ impl TextCoveragePolicy {
             Self::TwoCoverageMinusCoverageSq => (2.0 * coverage) - (coverage * coverage),
         }
     }
+}
+
+pub(crate) fn is_sdr_color(color: Color) -> bool {
+    let c = color.to_linear_srgb();
+    [c.red, c.green, c.blue]
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
 }
 
 /// Contrast/gamma compensation modeled on Skia's mask-gamma construction,
@@ -222,6 +223,44 @@ fn encoded_srgb_to_linear_unit(value: f32) -> f32 {
     } else {
         ((value + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Chrome/Skia's per-channel sRGB mask correction, followed by conversion of
+/// the resulting encoded-space composite into coverage for our linear target.
+/// Uses the Windows reference contrast of 1.0. This is LCD-only; the portable
+/// grayscale policy keeps its separately calibrated luminance curve.
+#[cfg(test)]
+pub(crate) fn lcd_text_coverage(coverage: f32, text: f32, background: f32) -> f32 {
+    let c = coverage.clamp(0.0, 1.0);
+    if c == 0.0 || c == 1.0 {
+        return c;
+    }
+    let guessed_bg = 1.0 - text;
+    let guessed_linear = encoded_srgb_to_linear_unit(guessed_bg);
+    let foreground_linear = encoded_srgb_to_linear_unit(text);
+    let a = apply_coverage_boost(c, guessed_linear);
+    let encoded_alpha = if (text - guessed_bg).abs() < 1.0 / 256.0 {
+        a
+    } else {
+        (linear_srgb_to_encoded_unit(foreground_linear * a + guessed_linear * (1.0 - a))
+            - guessed_bg)
+            / (text - guessed_bg)
+    }
+    .clamp(0.0, 1.0);
+    let bg = encoded_srgb_to_linear_unit(background);
+    if (foreground_linear - bg).abs() < 1e-4 {
+        return c;
+    }
+    let desired = encoded_srgb_to_linear_unit(background + (text - background) * encoded_alpha);
+    ((desired - bg) / (foreground_linear - bg)).clamp(0.0, 1.0)
+}
+
+pub(crate) fn pack_lcd_background(color: Color) -> f32 {
+    let c = color.to_linear_srgb();
+    let [r, g, b] =
+        [c.red, c.green, c.blue].map(|v| (linear_srgb_to_encoded_unit(v) * 255.0).round() as u32);
+    // Exactly representable as an f32 integer and interpolated flat.
+    ((r << 16) | (g << 8) | b) as f32
 }
 
 pub(crate) fn apply_coverage_boost(coverage: f32, amount: f32) -> f32 {

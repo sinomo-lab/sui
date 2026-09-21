@@ -98,6 +98,50 @@ fn dual_source(foreground: vec3<f32>, alpha: vec3<f32>) -> FragmentOutput {
     return out;
 }
 
+fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
+    let c = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(
+        1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055,
+        c * 12.92,
+        c <= vec3<f32>(0.0031308));
+}
+
+fn lcd_perceptual_coverage(
+    raw: vec3<f32>,
+    foreground: vec3<f32>,
+    packed_background: f32
+) -> vec3<f32> {
+    let c = clamp(raw, vec3<f32>(0.0), vec3<f32>(1.0));
+    let text = linear_to_srgb(foreground);
+    let packed = u32(packed_background);
+    let background = vec3<f32>(
+        f32((packed >> 16u) & 255u),
+        f32((packed >> 8u) & 255u),
+        f32(packed & 255u)) / 255.0;
+    let guessed_bg = vec3<f32>(1.0) - text;
+    let guessed_linear = srgb_to_linear(guessed_bg);
+    let a = c + c * (vec3<f32>(1.0)-c) * guessed_linear;
+    let delta = text-guessed_bg;
+    let near = abs(delta) < vec3<f32>(1.0/256.0);
+    let divisor = select(delta,vec3<f32>(1.0),near);
+    let encoded_alpha = clamp(
+        select(
+            (linear_to_srgb(foreground * a + guessed_linear * (vec3<f32>(1.0) - a)) - guessed_bg) / divisor,
+            a, near),
+        vec3<f32>(0.0), vec3<f32>(1.0));
+    let bg_linear = srgb_to_linear(background);
+    let blend_delta = foreground-bg_linear;
+    let same = abs(blend_delta) < vec3<f32>(1e-4);
+    let desired = srgb_to_linear(background+(text-background)*encoded_alpha);
+    var coverage = clamp(
+        select(
+            (desired - bg_linear) / select(blend_delta, vec3<f32>(1.0), same),
+            c, same),
+        vec3<f32>(0.0), vec3<f32>(1.0));
+    coverage = select(coverage,vec3<f32>(0.0),c <= vec3<f32>(0.0));
+    return select(coverage,vec3<f32>(1.0),c >= vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(in: VsOut) -> FragmentOutput {
     // Clamp the sample point to the glyph's half-texel-inset UV rect so bilinear taps at the quad
@@ -113,6 +157,9 @@ fn fs_main(in: VsOut) -> FragmentOutput {
     }
 
     if in.metadata.x > 0.5 {
+        if in.metadata.z > 4.5 {
+            return dual_source(in.color.rgb, lcd_perceptual_coverage(sampled.rgb,in.color.rgb,in.metadata.w)*in.color.a);
+        }
         let coverage = vec3<f32>(
             apply_text_coverage(sampled.r, in.metadata.z, in.metadata.w),
             apply_text_coverage(sampled.g, in.metadata.z, in.metadata.w),

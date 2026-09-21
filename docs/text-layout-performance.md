@@ -13,10 +13,10 @@ Run from the workspace root, without another build or benchmark running:
 cargo bench -p sinomo-ui-text --bench text_layout --locked
 ```
 
-The dependency lockfile, bundled Noto Sans font, font size (16), line height (20),
-release optimization level (2), corpus and width sequence are shared by before
-and after runs. Characters missing from Noto Sans use the installed fallback
-fonts; compare multilingual timings only on the same machine/font environment.
+The benchmark uses bundled Noto Sans, font size 16, line height 20, and release
+optimization level 2. Keep the dependency lockfile, corpus, and width sequence
+fixed across comparison runs. Characters missing from Noto Sans use installed
+fallback fonts; compare multilingual timings on the same machine/font environment.
 Seven samples retain their individual timings and report their median and maximum.
 Each resize sample visits eight new widths; no width is repeated between samples.
 An unchanged-width control verifies that existing full-layout reuse stays cheap.
@@ -30,11 +30,10 @@ An unchanged-width control verifies that existing full-layout reuse stays cheap.
 | wrapped_label_passes | The natural-size, constrained-size and final-layout requests made by a wrapped label |
 | multilingual_resize | Longer Latin, Arabic, Hebrew/bidi, CJK, combining-mark and emoji paragraphs |
 
-Before the size-only API exists, its adapter extracts width/height from a full
-layout. Afterward only that adapter changes to the new public API. The label
-adapter follows the widget's before/after request sequence; its registry is
-pruned between requests to avoid measuring unlimited handle retention. These
-two adapters measure equivalent requested outcomes, not identical internal work.
+The size-only workload calls the public measurement API without materializing
+glyph geometry. The label workload follows the widget's measurement and final
+layout request sequence; its registry is pruned between requests to avoid
+measuring unlimited handle retention.
 
 ## Correctness and memory gates
 
@@ -60,22 +59,13 @@ git diff --check
 cargo clippy -p sinomo-ui-text -p sinomo-ui-layout -p sinomo-ui-widgets --lib --tests --locked -- -D warnings
 ```
 
-## Reproducing the baseline
+## Comparing revisions
 
-Baseline source: `0cd6ad2e9eef290edb80b1e2883d3594ab2bb03c`.
+Run each revision in a separate checkout with the same compiler, primary and
+fallback fonts, workloads, iteration counts, and width sequence. If public APIs
+differ, adapt the harness to request equivalent results and document that
+adaptation with the local run record.
 
-The original baseline adapters are preserved in
-[baseline harness](../crates/sui-text/benches/baseline/text_layout.rs). To repeat
-that run, use an isolated checkout of the baseline commit, copy that file to
-`crates/sui-text/benches/text_layout.rs`, and append this target to that crate's
-Cargo.toml before running the benchmark command above:
-
-```toml
-[[bench]]
-name = "text_layout"
-harness = false
-```
-
-The current benchmark has the same workloads, loops, width sequence and requested
-results. Its size-only and label adapters call the new APIs. Keep the primary
-font, installed fallback fonts and compiler fixed when comparing the two builds.
+Keep timings, revision identifiers, machine details, and investigation notes in
+an ignored local directory under `target/`. The documentation describes the
+benchmark procedure; run-specific results and development history stay local.

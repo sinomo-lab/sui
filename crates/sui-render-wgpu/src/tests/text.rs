@@ -1055,6 +1055,7 @@ pub(crate) fn text_render_policy_scope_overrides_and_restores_render_mode() {
         layer_updates: Vec::new(),
         scene: {
             let mut scene = Scene::new();
+            scene.push(SceneCommand::Clear(Color::BLACK));
             scene.push(SceneCommand::DrawText(TextRun {
                 rect: Rect::new(8.0, 8.0, 80.0, 28.0),
                 text: "I".to_string(),
@@ -1084,6 +1085,7 @@ pub(crate) fn text_render_policy_scope_overrides_and_restores_render_mode() {
     };
 
     let mut text_engine = TextEngine::new().unwrap();
+    text_engine.lcd_blending_supported = true;
     text_engine.set_text_render_mode(TextRenderMode::Grayscale);
     let _ = build_vertices(&frame, &mut text_engine).unwrap();
 
@@ -2023,6 +2025,7 @@ pub(crate) fn text_render_policy_cache_benchmark() {
                  transform: Option<Transform>|
      -> SceneFrame {
         let mut scene = Scene::new();
+        scene.push(SceneCommand::Clear(Color::BLACK));
         scene.push(SceneCommand::PushTextRenderPolicy { policy });
         if let Some(transform) = transform {
             scene.push(SceneCommand::PushTransform { transform });
@@ -2141,6 +2144,7 @@ pub(crate) fn text_render_policy_cache_benchmark() {
     ];
 
     let mut text_engine = TextEngine::new().expect("text engine should initialize");
+    text_engine.lcd_blending_supported = true;
     println!("\n=== Text Render Policy Cache Benchmark ===");
     for (name, frame) in scenarios {
         let before = text_engine.glyph_cache_stats();

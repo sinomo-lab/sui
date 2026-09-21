@@ -11,6 +11,7 @@ use crate::text::GLYPH_SUBPIXEL_VARIANTS_Y;
 use crate::text::GlyphCacheKey;
 use crate::text::GlyphCacheSnapshot;
 use crate::text::GlyphFaceCacheKey;
+use crate::text::GlyphHintingTarget;
 use crate::text::GlyphSubpixelOffsetKey;
 use crate::text::RendererTextCacheSnapshot;
 use crate::text::TEXT_ATLAS_HEIGHT;
@@ -65,11 +66,13 @@ pub(crate) struct TextEngine {
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
     pub(crate) atlas: TextAtlasPages,
     pub(crate) swash_scale_context: SwashScaleContext,
+    pub(crate) font_aware_hinter: crate::text_hinting::FontAwareHinter,
     pub(crate) text_render_mode: TextRenderMode,
     pub(crate) text_subpixel_order: TextSubpixelOrder,
     pub(crate) text_hinting: TextHinting,
     pub(crate) stem_darkening: StemDarkening,
     pub(crate) coverage_policy: TextCoveragePolicy,
+    pub(crate) lcd_blending_supported: bool,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) glyph_cache_hits: usize,
     pub(crate) glyph_cache_misses: usize,
@@ -85,6 +88,7 @@ pub(crate) struct SwashFaceState<'a> {
     pub(crate) font_ref: SwashFontRef<'a>,
     pub(crate) font_id: [u64; 2],
     pub(crate) units_per_em: f32,
+    pub(crate) face_index: u32,
 }
 
 impl<'a> SwashFaceState<'a> {
@@ -98,6 +102,7 @@ impl<'a> SwashFaceState<'a> {
             font_ref,
             font_id: swash_font_id(face_key),
             units_per_em,
+            face_index: face.face_index(),
         })
     }
 
@@ -123,11 +128,13 @@ impl Default for TextEngine {
             glyph_cache: HashMap::new(),
             atlas: TextAtlasPages::new(TEXT_ATLAS_WIDTH, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_MAX_PAGES),
             swash_scale_context: SwashScaleContext::new(),
+            font_aware_hinter: Default::default(),
             text_render_mode: TextRenderMode::default(),
             text_subpixel_order: TextSubpixelOrder::default(),
             text_hinting: TextHinting::default(),
             stem_darkening: StemDarkening::default(),
             coverage_policy: TextCoveragePolicy::default(),
+            lcd_blending_supported: false,
             diagnostics_enabled: true,
             glyph_cache_hits: 0,
             glyph_cache_misses: 0,
@@ -448,6 +455,7 @@ impl TextEngine {
     {
         let mut active_face_index = None;
         let mut swash_face = None;
+        let mut active_hint_target = None;
         let text_policy = self.resolved_text_render_policy(state.active_text_render_policy());
         let raster_transform = state.current_transform.then(state.text_raster_transform);
         let glyph_raster_scale = raster_scale_factor * text_transform_scale(raster_transform);
@@ -456,6 +464,7 @@ impl TextEngine {
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);
                 swash_face = None;
+                active_hint_target = None;
             }
 
             let glyph_face = glyph.face;
@@ -470,8 +479,42 @@ impl TextEngine {
                     / glyph_style.font_size.max(f32::EPSILON),
             );
             let resolution_limited = actual_raster_scale < glyph_raster_scale;
+            let requested_ppem = glyph_style.font_size * actual_raster_scale;
+            let hinting_target = match active_hint_target {
+                Some((size, target)) if size == requested_ppem.to_bits() => target,
+                _ => {
+                    let target = if !text_policy.hinting.should_hint(requested_ppem) {
+                        GlyphHintingTarget::None
+                    } else if self
+                        .font_aware_hinter
+                        .uses_asymmetric_smoothing(glyph_face, requested_ppem)
+                    {
+                        GlyphHintingTarget::Asymmetric
+                    } else {
+                        GlyphHintingTarget::Symmetric
+                    };
+                    active_hint_target = Some((requested_ppem.to_bits(), target));
+                    target
+                }
+            };
+            let background = glyph.glyph.bounds.and_then(|bounds| {
+                // Include the LCD footprint outside the outline's ink bounds.
+                let bounds = bounds.translate(origin.to_vector()).inflate(
+                    2.0 / actual_raster_scale.max(f32::EPSILON),
+                    2.0 / actual_raster_scale.max(f32::EPSILON),
+                );
+                state
+                    .text_background
+                    .color_under(state.current_transform.transform_rect_bbox(bounds))
+            });
             let render_mode = if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
-                && (matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
+                && (!self.lcd_blending_supported
+                    || !state.text_lcd_allowed
+                    || !(glyph_color.alpha >= 1.0)
+                    || !crate::text_policy::is_sdr_color(glyph_color)
+                    || !background
+                        .is_some_and(|bg| bg.alpha >= 1.0 && crate::text_policy::is_sdr_color(bg))
+                    || matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
                     || !allows_lcd_text(raster_transform)
                     || resolution_limited)
             {
@@ -489,14 +532,15 @@ impl TextEngine {
             if let Some(bounds) = translated_glyph.bounds {
                 translated_glyph.bounds = Some(bounds.translate(origin.to_vector()));
             }
-            let background = translated_glyph.bounds.and_then(|bounds| {
-                state
-                    .text_background
-                    .color_under(state.current_transform.transform_rect_bbox(bounds))
-            });
-            let coverage_policy = text_policy
-                .coverage_policy
-                .resolved_for_text_background(glyph_color, background);
+            let background = if render_mode == TextRenderMode::LcdSubpixel {
+                background
+            } else {
+                translated_glyph.bounds.and_then(|bounds| {
+                    state
+                        .text_background
+                        .color_under(state.current_transform.transform_rect_bbox(bounds))
+                })
+            };
 
             if let Some(atlas) = self.cached_glyph_primitive(
                 glyph_face,
@@ -518,13 +562,15 @@ impl TextEngine {
                 render_mode,
                 subpixel_order,
                 text_policy.hinting,
+                hinting_target,
                 text_policy.stem_darkening,
                 glyph_style.weight.value(),
             )? && let Some(instance) = build_text_atlas_instance(
                 atlas,
                 &translated_glyph,
                 glyph_color,
-                coverage_policy,
+                text_policy.coverage_policy,
+                background,
                 state.current_transform,
                 state.text_raster_transform,
                 state.pixel_snap_offset,
@@ -562,13 +608,14 @@ impl TextEngine {
         text_render_mode: TextRenderMode,
         text_subpixel_order: TextSubpixelOrder,
         text_hinting: TextHinting,
+        hinting_target: GlyphHintingTarget,
         stem_darkening: StemDarkening,
         weight: u16,
     ) -> Result<Option<&CachedGlyphAtlas>> {
         let raster_scale_factor = raster_scale_factor.max(f32::EPSILON);
         let atlas_physical_scale = glyph_scale * raster_scale_factor;
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
-        let key = GlyphCacheKey::new(
+        let mut key = GlyphCacheKey::new(
             face_key,
             glyph_id,
             scale_bucket,
@@ -579,6 +626,7 @@ impl TextEngine {
             stem_darkening,
             weight,
         );
+        key.hinting_target = hinting_target;
         // Hit: stamp the glyph's page as used this frame (for LRU) and return the cached entry.
         if self.glyph_cache.contains_key(&key) {
             if self.diagnostics_enabled {
@@ -609,6 +657,7 @@ impl TextEngine {
         let built = build_cached_glyph_atlas(
             &mut self.atlas,
             &mut self.swash_scale_context,
+            &mut self.font_aware_hinter,
             swash_face,
             glyph_id,
             swash_face.ppem_for_scale(bucketed_physical_scale),
@@ -617,7 +666,7 @@ impl TextEngine {
             subpixel_offset,
             text_render_mode,
             text_subpixel_order,
-            text_hinting,
+            hinting_target,
             stem_darkening,
             weight,
             self.frame_counter,
@@ -674,6 +723,7 @@ impl TextEngine {
 pub(crate) fn build_cached_glyph_atlas(
     pages: &mut TextAtlasPages,
     scale_context: &mut SwashScaleContext,
+    font_aware_hinter: &mut crate::text_hinting::FontAwareHinter,
     face: &SwashFaceState<'_>,
     glyph_id: u16,
     font_size_physical: f32,
@@ -682,7 +732,7 @@ pub(crate) fn build_cached_glyph_atlas(
     subpixel_offset: GlyphSubpixelOffsetKey,
     text_render_mode: TextRenderMode,
     text_subpixel_order: TextSubpixelOrder,
-    text_hinting: TextHinting,
+    hinting_target: GlyphHintingTarget,
     stem_darkening: StemDarkening,
     weight: u16,
     frame: u64,
@@ -698,15 +748,44 @@ pub(crate) fn build_cached_glyph_atlas(
         // Rasterize the requested weight instance to match cosmic-text's shaped advances.
         // No-op on static fonts (no `wght` axis).
         .variations([("wght", f32::from(weight))])
-        .hint(text_hinting.should_hint(font_size_physical))
+        .hint(hinting_target != GlyphHintingTarget::None)
         .build();
-    let mut renderer = SwashRender::new(&sources);
+    let mut renderer = SwashRender::new(if hinting_target == GlyphHintingTarget::Asymmetric {
+        &sources[..2]
+    } else {
+        &sources
+    });
     renderer.format(match text_render_mode {
         TextRenderMode::Grayscale => SwashFormat::Alpha,
-        TextRenderMode::LcdSubpixel => SwashFormat::subpixel_bgra(),
+        TextRenderMode::LcdSubpixel => crate::text::lcd_bgra_format(),
     });
     renderer.offset(subpixel_offset.as_swash_offset());
-    let Some(image) = renderer.render(&mut scaler, glyph_id) else {
+    let (image, font_directed) = if let Some(image) = renderer.render(&mut scaler, glyph_id) {
+        (image, false)
+    } else if hinting_target == GlyphHintingTarget::Asymmetric {
+        if let Some(image) = font_aware_hinter.render_asymmetric(
+            face,
+            glyph_id,
+            font_size_physical,
+            subpixel_offset,
+            weight,
+            text_render_mode,
+        ) {
+            (image, true)
+        } else {
+            let mut fallback = SwashRender::new(&sources);
+            fallback.format(if text_render_mode == TextRenderMode::LcdSubpixel {
+                crate::text::lcd_bgra_format()
+            } else {
+                SwashFormat::Alpha
+            });
+            fallback.offset(subpixel_offset.as_swash_offset());
+            let Some(image) = fallback.render(&mut scaler, glyph_id) else {
+                return Ok(None);
+            };
+            (image, false)
+        }
+    } else {
         return Ok(None);
     };
 
@@ -719,6 +798,7 @@ pub(crate) fn build_cached_glyph_atlas(
     // A grayscale outline that rendered to a pure binary mask (jaggy) is re-rendered with
     // oversampling for true anti-aliased coverage; everything else uses the direct render.
     let needs_oversample = matches!(text_render_mode, TextRenderMode::Grayscale)
+        && !font_directed
         && matches!(image.content, SwashImageContent::Mask)
         && pixel_count > 0
         && image.data.len() >= pixel_count
@@ -1216,6 +1296,7 @@ pub(crate) fn append_cached_glyph_atlas(
         glyph,
         color,
         TextCoveragePolicy::Linear,
+        None,
         transform,
         Transform::IDENTITY,
         Vector::ZERO,
@@ -1231,6 +1312,7 @@ pub(crate) fn build_text_atlas_instance(
     glyph: &SceneShapedGlyph,
     color: Color,
     coverage_policy: TextCoveragePolicy,
+    background: Option<Color>,
     transform: Transform,
     inherited_transform: Transform,
     pixel_snap_offset: Vector,
@@ -1271,8 +1353,20 @@ pub(crate) fn build_text_atlas_instance(
     let _bottom_right = to_local_ndc(bottom_right);
 
     let atlas_contains_lcd_subpixels = matches!(atlas.color_mode, TextAtlasColorMode::LcdSubpixel);
-    let (coverage_policy_kind, coverage_policy_parameter) =
-        coverage_policy_shader_metadata(coverage_policy);
+    let (coverage_policy_kind, coverage_policy_parameter) = if atlas_contains_lcd_subpixels
+        && coverage_policy == TextCoveragePolicy::Perceptual
+        && background.is_some_and(crate::text_policy::is_sdr_color)
+        && crate::text_policy::is_sdr_color(color)
+    {
+        (
+            5.0,
+            crate::text_policy::pack_lcd_background(background.unwrap()),
+        )
+    } else {
+        coverage_policy_shader_metadata(
+            coverage_policy.resolved_for_text_background(color, background),
+        )
+    };
 
     Some(TextAtlasInstance {
         top_left,
@@ -1493,5 +1587,8 @@ pub(crate) fn transform_is_axis_aligned(transform: Transform) -> bool {
 }
 
 pub(crate) fn transform_is_lcd_safe(transform: Transform) -> bool {
-    transform_is_axis_aligned(transform) && transform.xx > 0.0 && transform.yy > 0.0
+    transform_is_axis_aligned(transform)
+        && transform.xx.is_finite()
+        && transform.xx > 0.0
+        && (transform.xx - transform.yy).abs() <= transform.xx * 1e-5
 }

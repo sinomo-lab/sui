@@ -6,9 +6,8 @@ widgets retain the resulting layouts; scene commands refer to those layouts by
 handle and version; and `sinomo-ui-render-wgpu` turns the selected glyphs into atlas
 instances.
 
-This document describes the implementation that ships today. For application
-examples, see [Input and text editing](api/input-and-editing.md). For the full
-performance and image-quality procedure, see
+For application examples, see [Input and text editing](api/input-and-editing.md).
+For the performance and image-quality procedure, see
 [Text rendering benchmarks](text-rendering-benchmarks.md).
 
 ## Architecture at a Glance
@@ -278,12 +277,15 @@ There are two render modes:
 - `TextRenderMode::LcdSubpixel` uses RGB or BGR coverage when the output path
   is known to match a physical LCD subpixel layout.
 
-LCD rendering requires an explicit `TextSubpixelOrder::Rgb` or `Bgr`, an
-axis-aligned transform, and positive X/Y scale. Requests with no subpixel order
-or with rotated or mirrored transforms fall back to grayscale. Positive uniform
-scales use quarter-pixel X-phase atlas variants while their quads are snapped
-to the physical pixel grid. Nonuniform or mirrored transforms use whole-pixel
-origins; rotated text remains unsnapped.
+LCD rendering requires an explicit render mode and `TextSubpixelOrder::Rgb` or
+`Bgr`, GPU dual-source blending, an SDR sRGB output, opaque text/layer opacity,
+a known opaque solid backdrop covering the glyph footprint, and positive uniform
+axis-aligned scale. Unsupported devices, effect layers, HDR/gamut conversion,
+unknown backdrops, translucency, nonuniform scaling, rotation, or mirroring fall
+back to a grayscale raster. Positive uniform scales use quarter-pixel X-phase
+atlas variants while their quads are snapped to the physical pixel grid.
+Nonuniform or mirrored transforms use whole-pixel origins; rotated text remains
+unsnapped.
 
 Glyph raster resolution includes display DPI and the scene transform, including
 inherited retained-layer transforms. Uniformly zoomed text uses the same physical
@@ -304,13 +306,30 @@ Window defaults are deliberately conservative:
 - perceptual grayscale coverage;
 - no LCD subpixel order.
 
-`TextCoveragePolicy::Perceptual` compensates edge coverage using foreground and
-solid-backdrop luminance, with a perceptual gamma/contrast curve converted to
-the renderer's linear-light blend space. Its 1.8 perceptual exponent and 0.5
-contrast setting were calibrated against Chrome captures of the same font,
-including muted, blue, green, red, purple, and orange text on light/dark surfaces.
-This darkens thin dark strokes without additionally brightening light edges.
-The framebuffer transfer function remains unchanged.
+When hinting is enabled, a valid version-1 OpenType `gasp` table selects the
+font's symmetric/non-symmetric smoothing range at the requested physical ppem.
+The non-symmetric path uses Skrifa with `symmetric_rendering: false`, a target
+matching the grayscale/LCD mask, and preserved horizontal metrics. Swash handles
+color glyphs and other smoothing ranges; Zeno rasterizes both outline paths.
+`None` and the hinting ppem limit remain authoritative. Selection happens before
+raster-size bucketing and the resolved target is part of glyph cache identity.
+The font-table and hint-instance LRUs hold at most 32 and 16 entries respectively.
+
+For grayscale, `TextCoveragePolicy::Perceptual` compensates edge coverage using
+foreground and solid-backdrop luminance. The curve uses a perceptual exponent
+of 1.8 and contrast of 0.5, converted to the renderer's linear-light blend space.
+It adjusts thin-stroke weight through mask coverage, independently of the
+framebuffer transfer function.
+
+Eligible LCD text uses independent R/G/B corrections modeled on
+[Skia's sRGB mask curve](https://github.com/google/skia/blob/main/src/core/SkMaskGamma.cpp)
+with contrast 1.0, converted for SUI's linear blend target and the actual solid
+backdrop. Background RGB is packed into instance data; color/coverage changes
+share the same raster atlas. The LCD masks sample
+physical R/G/B positions in the correct direction (outline offsets have the
+opposite sign to sample positions). BGR swaps the physical channel order.
+Dual-source blending attenuates each destination channel independently. The
+single-source shader uses grayscale coverage.
 
 Backdrop metadata follows clears and solid rectangular fills through packet
 and retained-layer boundaries. Rounded interiors and rectangular clips can
@@ -367,7 +386,7 @@ Compare performance runs on the same machine and commit; use the comparison
 surface and captures for perceptual review rather than treating changed-pixel
 percentage as a complete quality score.
 
-## Current Limits and Future Work
+## Limitations
 
 The current system is intentionally optimized for atlas-backed UI text and
 practical editable controls. These boundaries remain:
@@ -385,8 +404,3 @@ practical editable controls. These boundaries remain:
   separate outline/vector text rendering path.
 - The shared `EditorState` is private. Applications that build a wholly custom
   editor cannot currently reuse it as a public editing engine.
-
-Future work should improve these boundaries without creating a second shaping
-or rendering stack. Generic widgets, rich documents, and editor surfaces
-should continue to share `TextDocument`, `TextLayout`, persistent handles, and
-the same renderer policies.

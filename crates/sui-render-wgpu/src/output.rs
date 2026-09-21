@@ -658,6 +658,19 @@ pub(crate) fn output_transform_requires_intermediate(strategy: OutputStrategy) -
     }
 }
 
+/// LCD coverage is tied to the final RGB channels. A gamut conversion or HDR
+/// presentation/tone map after blending cannot preserve that interpretation.
+pub(crate) fn output_allows_lcd(strategy: OutputStrategy) -> bool {
+    matches!(
+        strategy,
+        OutputStrategy::SdrSurface { .. }
+            | OutputStrategy::WideGamutSurface {
+                primaries: DisplayColorPrimaries::Srgb,
+                ..
+            }
+    )
+}
+
 pub(crate) fn output_primaries(strategy: OutputStrategy) -> DisplayColorPrimaries {
     match strategy {
         OutputStrategy::SdrSurface { .. } => DisplayColorPrimaries::Srgb,

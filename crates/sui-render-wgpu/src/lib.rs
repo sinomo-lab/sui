@@ -25,6 +25,7 @@ mod tests;
 mod text;
 mod text_background;
 mod text_engine;
+mod text_hinting;
 mod text_policy;
 mod uploads;
 

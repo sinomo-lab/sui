@@ -1,6 +1,6 @@
 # Text Rendering Benchmarks
 
-This benchmark plan verifies the current text antialiasing implementation from two angles:
+Use these benchmarks to measure text rendering from two angles:
 
 - performance: cache churn, atlas uploads, text submission cost, and interactive frame cost
 - quality: perceptual weight, edge coverage, DPR stability, LCD fallback, and inspectable captures
@@ -123,52 +123,87 @@ and unrounded colors. The snapshot binary writes `samples.json`; the browser
 reads that manifest instead of maintaining a second copy of the corpus. The
 corpus includes muted/body text and blue, green, red, purple, and orange accents.
 
+Install the Node dependencies with `npm ci` and install the selected browser.
+Run the comparison from the repository root:
+
 ```powershell
 $env:SUI_TEXT_COMPARE_SURFACE = 'dark' # light or dark
 $env:SUI_TEXT_COMPARE_DPI_SCALE = '1.5' # also compare 1, 1.25, and 2
 $env:SUI_TEXT_COMPARE_COVERAGE = 'perceptual'
+$env:SUI_TEXT_COMPARE_MODE = 'grayscale' # or lcd; LCD defaults to RGB order
 $env:SUI_TEXT_COMPARE_OUTPUT = 'target/text-rendering-compare/dark-1.5x'
 npm run text:compare
 ```
 
-Use `legacy-perceptual` to reproduce the previous foreground-only coverage boost
-with the same corpus. `SUI_TEXT_COMPARE_FONT` can select another local TTF for
+`SUI_TEXT_COMPARE_FONT` can select another local TTF for
 both renderers (for example `C:\Windows\Fonts\segoeui.ttf`).
 `SUI_TEXT_COMPARE_BROWSER` selects a Playwright channel; the default is `chrome`.
-Install the Node dependencies with `npm ci` and install the selected browser.
+Use `SUI_TEXT_COMPARE_MODE=lcd` with an explicit RGB/BGR subpixel order to compare
+LCD rendering; setting the order alone does not select LCD mode.
+`SUI_TEXT_COMPARE_COVERAGE=legacy-perceptual` selects a foreground-only coverage
+boost as a control, without adapting to the actual backdrop.
 
-Artifacts include `sui.png`, `browser.png`, `diff.png`, and `summary.json`, which
-records Chrome's version and the font SHA-256. Per-row `inkMassRatio` compares
-the total encoded-luminance difference from the background (ideal ratio 1).
-`meanInkChannelError` measures RGB error over the union of ink pixels. Check both:
-matching weight alone does not establish matching sharpness or glyph placement.
+The tool writes original captures to `sui.png`, `browser.png`, and `diff.png`.
+`summary.json` records Chrome's version, the font SHA-256, requested
+mode/order/hinting, and observed chromatic edges in a neutral RGB probe. Check
+`suiLcdChromaticEdges` when requesting LCD: unavailable or ineligible LCD
+correctly falls back to gray.
 
-The perceptual curve follows the contrast/gamma construction in
-[Skia's mask-gamma implementation](https://github.com/google/skia/blob/main/src/core/SkMaskGamma.cpp),
-adapted for linear-light blending and known solid backdrops. The calibrated 1.8
-exponent is SUI's setting, not a claim about Chrome's configured gamma. Chrome
-also has [platform rendering-parameter overrides](https://chromium.googlesource.com/chromium/src/+/HEAD/ui/gfx/font_util_win.cc).
+Judge glyph shape and coverage with `alignedRowInkStats` or
+`textQuality.aligned.meanInkChannelError`. Each isolated sample row is registered
+with Chrome using one integer translation within ±2 **physical** pixels in X/Y.
+The search minimizes summed absolute RGB error, with ties preferring the
+smallest shift. It never resamples pixels, scales glyphs, adjusts colors, or
+moves individual glyphs independently. Alignment is applied to comparison
+images only; SUI uses fractional baseline layout and nearest-pixel raster
+placement when rendering.
 
-Calibration on Windows, Chrome 153.0.8010.48, with ten samples per surface:
+Keep placement visible alongside the quality score:
 
-| Font / DPR | Light mean weight error, before → after | Dark mean weight error, before → after |
-| --- | --- | --- |
-| Bundled Noto Sans / 1 | 2.98% → 2.12% | 13.48% → 4.66% |
-| Bundled Noto Sans / 1.25 | 2.11% → 1.87% | 12.34% → 3.99% |
-| Bundled Noto Sans / 1.5 | 2.05% → 1.45% | 10.01% → 2.92% |
-| Bundled Noto Sans / 2 | 1.47% → 1.08% | 7.75% → 2.26% |
-| Segoe UI / 1 | 4.21% → 3.92% | 14.72% → 3.46% |
-| Segoe UI / 1.5 | 3.68% → 2.65% | 10.28% → 2.65% |
+- `rowInkStats` and the top-level image-diff fields retain the original,
+  unaligned measurements. `textQuality.raw` aggregates the original ink errors.
+- Each aligned row reports `alignment.suiShiftX` / `suiShiftY`: the translation
+  applied to SUI toward Chrome, in physical pixels; negative Y moves SUI up.
+- `atSearchBoundary` flags a best shift at the search limit. Inspect that row's
+  placement before assuming alignment is complete.
+- `absoluteErrorReduction` uses summed errors before/after alignment. It does
+  not divide MAEs, whose ink-union denominators can differ after translation.
 
-These are appearance measurements, not pixel-equivalence percentages. Chrome's
-Windows captures use subpixel antialiasing while SUI defaults to grayscale.
-Hinting, fractional glyph phases, and occasional one-physical-pixel baseline
-differences remain. Review at original resolution and repeat on the target
-platform rather than assuming every Chrome installation produces the same mask.
+`aligned-sui.png`, `aligned-browser.png`, and `aligned-diff.png` contain the
+sample crops stacked in manifest order at their original physical resolution.
+`alignedImageRect` locates each row in those sheets. Crops include the original
+six-CSS-pixel vertical margin and two additional physical pixels of padding on
+each side, retaining ink that a translation moves past a crop edge.
+`alignedImageStats` describes these sheets; their dimensions differ from the
+original captures, so their full-image diff percentages are not interchangeable.
+
+Per-row `inkMassRatio` compares the total encoded-luminance difference from the
+background (ideal ratio 1). `meanInkChannelError` measures absolute RGB error over
+the union of ink pixels, in **0–255 channel units**, not percent mismatch.
+`textQuality` aggregates errors and ink-pixel counts across all rows; it is
+weighted by each row's ink union, rather than an equal average of row scores.
+Matching weight alone does not establish matching sharpness.
+
+Run the comparison-metric regressions without a browser or GPU:
+
+```bash
+npm run text:compare:test
+```
+
+Browser antialiasing and font metrics depend on the platform and output path.
+Check the observed render modes in `summary.json` when comparing with SUI's
+grayscale default. Aligned scores separate line placement from glyph shape and
+coverage; they do not imply identical hinting or rasterization. For coverage and
+hinting behavior, see [WGPU rendering policies](text-system.md#wgpu-rendering-policies).
 
 The renderer regression `transformed_text_rasterizes_at_display_resolution`
 separately compares scene-scaled text to directly sized text, including retained
 layers, zoom-out, and fractional DPI. This avoids confusing scene zoom with DPI.
+
+LCD regressions cover physical RGB/BGR sample direction, grayscale fallback on
+devices without dual-source blending, opacity/effect/transform/output eligibility,
+retained capability and opacity transitions, font hint-range cache boundaries,
+and GPU channel blending against a separately rendered linear-mask reference.
 
 ### 1. Renderer Quality Matrix
 
@@ -203,8 +238,8 @@ Primary metrics:
 
 Expected signals:
 
-- perceptual coverage should preserve opaque cores and transparent padding;
-  light-on-dark edges need less coverage than the former unconditional boost
+- perceptual coverage should preserve opaque cores and transparent padding,
+  while adapting edge weight to the foreground and backdrop
 - all DPR variants should produce finite edge/core metrics and nontrivial inked pixels
 - optional captures should show distinct policy behavior, especially in small UI labels
 
@@ -225,11 +260,14 @@ cargo run -p sinomo-ui-demo --bin sui-text-render-snapshot
 
 SUI_TEXT_COMPARE_DPI_SCALE=2.0 \
 SUI_TEXT_COMPARE_COVERAGE=perceptual \
+SUI_TEXT_COMPARE_MODE=lcd \
 SUI_TEXT_COMPARE_SUBPIXEL_ORDER=rgb \
 cargo run -p sinomo-ui-demo --bin sui-text-render-snapshot
 ```
 
 Use this matrix:
+
+Set `SUI_TEXT_COMPARE_MODE=lcd` for the RGB rows and `grayscale` for the others.
 
 | DPR | Coverage | Subpixel order | Purpose |
 | --- | --- | --- | --- |
@@ -247,32 +285,25 @@ Expected signals:
 
 - text remains crisp at 1.5x and 2x
 - perceptual and linear are visibly distinct in small labels
-- LCD is only used when explicitly requested through `SUI_TEXT_COMPARE_SUBPIXEL_ORDER`
+- LCD requires `SUI_TEXT_COMPARE_MODE=lcd`, a subpixel order, and eligible output;
+  RGB/BGR order alone does not enable it
 
-### 3. Browser Reference Captures
+### Reviewing Captures
 
-Purpose: compare SUI captures against browser text rendering without treating raw pixel-diff percentage as the only score.
+Inspect captures at their original resolution as well as magnified. Use aligned
+crops to compare stem weight, edge sharpness, and color fringing; use the original
+captures and reported offsets to assess placement. Compare light and dark
+surfaces at multiple device scales, and repeat on the target platform.
 
-Recommended procedure:
-
-1. Render a static browser page with the same font, text strings, foreground/background colors, and DPR.
-2. Capture Chrome screenshots at DPR 1.0, 1.5, and 2.0.
-3. Compare SUI and browser crops using:
-   - core stem luma
-   - edge profile width
-   - foreground-weight delta
-   - SSIM or delta-E on cropped glyph regions
-4. Review the images manually, because a small numeric pixel diff can still look much worse to human eyes.
-
-Acceptance guidance:
-
-- no obvious blur on 1.5x or 2x captures
-- no color fringing unless LCD RGB/BGR was explicitly enabled and display policy allows it
-- perceptual policy should better match perceived browser weight than linear in small dark-on-light labels
+A low numeric difference alone does not establish text quality. Grayscale text
+should have no LCD color fringes, while eligible RGB/BGR rendering should retain
+the requested channel order. Check that transformed and HiDPI text stays sharp.
 
 ## Reporting Template
 
-Record each run with:
+Keep run-specific results, captures, and investigation notes in an ignored local
+directory such as `target/text-rendering-compare/`; do not add development logs
+or result histories to the reference documentation. Record each run with:
 
 ```text
 date:

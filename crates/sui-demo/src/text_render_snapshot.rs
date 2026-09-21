@@ -15,7 +15,7 @@ use sui_testing::TestApp;
 #[cfg(not(target_arch = "wasm32"))]
 const WIDTH: f32 = 480.0;
 #[cfg(not(target_arch = "wasm32"))]
-const HEIGHT: f32 = 420.0;
+const HEIGHT: f32 = 460.0;
 #[cfg(not(target_arch = "wasm32"))]
 const FONT_BYTES: &[u8] = sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT;
 
@@ -133,6 +133,16 @@ const SAMPLES: &[TextSample] = &[
         color: Color::rgba(154.0 / 255.0, 103.0 / 255.0, 0.0, 1.0),
         dark_color: Color::rgba(251.0 / 255.0, 146.0 / 255.0, 60.0 / 255.0, 1.0),
     },
+    TextSample {
+        text: "RGB edge probe | minimum ill",
+        x: 32.0,
+        y: 424.0,
+        width: 416.0,
+        font_size: 15.0,
+        line_height: 21.0,
+        color: Color::BLACK,
+        dark_color: Color::WHITE,
+    },
 ];
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -140,6 +150,8 @@ struct TextReferenceSurface {
     font: FontHandle,
     dark: bool,
     legacy_coverage: bool,
+    render_mode: sui_scene::TextRenderMode,
+    subpixel_order: sui_scene::TextSubpixelOrder,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -182,17 +194,19 @@ impl Widget for TextReferenceSurface {
                 sample.line_height,
             );
             let style = self.style(sample);
+            let mut policy = TextRenderPolicy::new()
+                .with_render_mode(self.render_mode)
+                .with_subpixel_order(self.subpixel_order);
             if self.legacy_coverage {
                 let color = style.color;
                 let luminance = 0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue;
-                ctx.push_text_render_policy(TextRenderPolicy::new().with_coverage_policy(
-                    TextRenderCoveragePolicy::CoverageBoost((1.0 - luminance).clamp(0.45, 0.92)),
+                policy = policy.with_coverage_policy(TextRenderCoveragePolicy::CoverageBoost(
+                    (1.0 - luminance).clamp(0.45, 0.92),
                 ));
             }
+            ctx.push_text_render_policy(policy);
             ctx.draw_text(rect, sample.text, style);
-            if self.legacy_coverage {
-                ctx.pop_text_render_policy();
-            }
+            ctx.pop_text_render_policy();
         }
     }
 
@@ -309,6 +323,25 @@ fn main() -> sui::Result<()> {
     };
     let font = app.register_font_bytes(font_bytes)?;
     let dark = env::var("SUI_TEXT_COMPARE_SURFACE").is_ok_and(|v| v == "dark");
+    let mode_name = env::var("SUI_TEXT_COMPARE_MODE")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let render_mode = match mode_name.as_str() {
+        "lcd" => sui_scene::TextRenderMode::LcdSubpixel,
+        _ => sui_scene::TextRenderMode::Grayscale,
+    };
+    let order_name = env::var("SUI_TEXT_COMPARE_SUBPIXEL_ORDER")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let subpixel_order = match order_name.as_str() {
+        "bgr" => sui_scene::TextSubpixelOrder::Bgr,
+        "none" | "off" => sui_scene::TextSubpixelOrder::None,
+        "rgb" => sui_scene::TextSubpixelOrder::Rgb,
+        "" if render_mode == sui_scene::TextRenderMode::LcdSubpixel => {
+            sui_scene::TextSubpixelOrder::Rgb
+        }
+        _ => sui_scene::TextSubpixelOrder::None,
+    };
     let legacy_coverage =
         env::var("SUI_TEXT_COMPARE_COVERAGE").is_ok_and(|v| v == "legacy-perceptual");
     // Share the exact static ASCII corpus and unrounded channels with Chrome.
@@ -334,6 +367,8 @@ fn main() -> sui::Result<()> {
                     font,
                     dark,
                     legacy_coverage,
+                    render_mode,
+                    subpixel_order,
                 }),
         )
         .build()?;

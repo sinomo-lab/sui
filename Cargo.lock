@@ -4676,6 +4676,7 @@ dependencies = [
  "sinomo-ui-core",
  "sinomo-ui-scene",
  "sinomo-ui-text",
+ "skrifa 0.44.0",
  "swash",
  "tiny-skia 0.12.0",
  "ttf-parser",

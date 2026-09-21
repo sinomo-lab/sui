@@ -98,6 +98,7 @@ pub(crate) struct GlyphCacheKey {
     pub(crate) atlas_color_mode: TextAtlasColorMode,
     pub(crate) subpixel_order: TextSubpixelOrderCacheKey,
     pub(crate) text_hinting: TextHintingCacheKey,
+    pub(crate) hinting_target: GlyphHintingTarget,
     pub(crate) stem_darkening: StemDarkeningCacheKey,
     /// Requested `wght` axis value — different weights of a variable font rasterize to distinct
     /// outlines and must cache separately. (Static fonts ignore the axis, so this is constant.)
@@ -125,6 +126,10 @@ impl GlyphCacheKey {
             atlas_color_mode: TextAtlasColorMode::from(text_render_mode),
             subpixel_order: TextSubpixelOrderCacheKey::from(text_subpixel_order),
             text_hinting: TextHintingCacheKey::from(text_hinting),
+            hinting_target: match text_hinting.normalized() {
+                TextHinting::None => GlyphHintingTarget::None,
+                TextHinting::Slight { .. } => GlyphHintingTarget::Symmetric,
+            },
             stem_darkening: StemDarkeningCacheKey::from(stem_darkening),
             weight,
         }
@@ -150,6 +155,20 @@ impl From<TextSubpixelOrder> for TextSubpixelOrderCacheKey {
 
 pub(crate) const GLYPH_SUBPIXEL_VARIANTS_X: u8 = 4;
 pub(crate) const GLYPH_SUBPIXEL_VARIANTS_Y: u8 = 1;
+
+/// Zeno translates outlines, whereas physical subpixel positions translate
+/// sample locations. A BGRA mask therefore needs the opposite offsets: blue
+/// samples to the right, red to the left. Do not infer this from format names.
+pub(crate) fn lcd_bgra_format() -> swash::zeno::Format {
+    swash::zeno::Format::CustomSubpixel([-1.0 / 3.0, 0.0, 1.0 / 3.0])
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum GlyphHintingTarget {
+    None,
+    Symmetric,
+    Asymmetric,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(crate) struct GlyphSubpixelOffsetKey {

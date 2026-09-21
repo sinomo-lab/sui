@@ -97,17 +97,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(srgb_to_linear(sampled.rgb) * alpha, alpha);
     }
 
-    if in.metadata.x > 0.5 {
-        let coverage = vec3<f32>(
-            apply_text_coverage(sampled.r, in.metadata.z, in.metadata.w),
-            apply_text_coverage(sampled.g, in.metadata.z, in.metadata.w),
-            apply_text_coverage(sampled.b, in.metadata.z, in.metadata.w),
-        );
-        let max_coverage = max(max(coverage.r, coverage.g), coverage.b);
-        let premul = in.color.rgb * coverage * in.color.a;
-        return vec4<f32>(premul, in.color.a * max_coverage);
-    }
-
+    // LCD is disabled before atlas preparation without dual-source blending.
+    // Fail closed to grayscale if a subpixel atlas instance still arrives;
+    // one alpha cannot attenuate destination RGB independently.
     if in.metadata.y > 0.5 {
         let coverage = apply_text_coverage(
             (sampled.r + sampled.g + sampled.b) / 3.0,

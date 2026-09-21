@@ -248,6 +248,7 @@ pub(crate) struct SceneRasterState {
     pub(crate) current_transform: Transform,
     pub(crate) text_raster_transform: Transform,
     pub(crate) text_background: crate::text_background::TextBackground,
+    pub(crate) text_lcd_allowed: bool,
     pub(crate) pixel_snap_offset: Vector,
     pub(crate) transform_stack: Vec<Transform>,
     pub(crate) clip_stack: Vec<ClipPrimitive>,
@@ -265,6 +266,7 @@ impl SceneRasterState {
             current_transform: Transform::IDENTITY,
             text_raster_transform: Transform::IDENTITY,
             text_background: Default::default(),
+            text_lcd_allowed: true,
             pixel_snap_offset: Vector::ZERO,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
@@ -285,6 +287,7 @@ impl SceneRasterState {
         state.current_transform = resolved.current_transform;
         state.text_raster_transform = resolved.text_raster_transform;
         state.text_background = resolved.text_background.clone();
+        state.text_lcd_allowed = resolved.text_lcd_allowed;
         state.pixel_snap_offset = resolved.pixel_snap_offset;
         state.transform_stack.clone_from(&resolved.transform_stack);
         state.text_render_policy = resolved.text_render_policy;
