@@ -1,5 +1,5 @@
 //! Font-directed hint targets unavailable through Swash's Boolean hint switch.
-//! Keep Swash's color-glyph handling and Zeno rasterizer; only override outline
+//! Keep Swash's color-glyph handling; only override outline
 //! hinting when a version-1 gasp range asks for non-symmetric smoothing.
 use std::num::NonZeroUsize;
 
@@ -30,6 +30,7 @@ pub(crate) struct FontAwareHinter {
     instances: LruCache<HintKey, HintingInstance>,
     path: Pen,
     scratch: Scratch,
+    lcd_mask: crate::text_raster::LcdMaskRasterizer,
 }
 
 impl Default for FontAwareHinter {
@@ -39,6 +40,7 @@ impl Default for FontAwareHinter {
             instances: LruCache::new(NonZeroUsize::new(16).unwrap()),
             path: Pen::default(),
             scratch: Scratch::new(),
+            lcd_mask: Default::default(),
         }
     }
 }
@@ -138,10 +140,10 @@ impl FontAwareHinter {
             .ok()?;
         let offset: Vector = offset.as_swash_offset();
         if lcd {
-            return Some(crate::text_raster::render_lcd_mask(
+            return Some(self.lcd_mask.render(
                 self.path.0.as_slice(),
                 offset,
-                &mut self.scratch,
+                crate::text_raster::LcdSampling::Asymmetric,
             ));
         }
         let mut image = Image {

@@ -288,11 +288,17 @@ Nonuniform or mirrored transforms use whole-pixel origins; rotated text remains
 unsnapped.
 
 LCD bitmap bounds include the channel offsets before rasterization, preserving
-fringe coverage outside the outline's ordinary bounds. Atlas coordinates are
-stored compactly as UNORM16 values; the shaders recover integer texel bounds
-before interpolation. Bilinear filtering supports transforms while a half-texel
-inset prevents sampling neighbouring glyphs. These raster rules do not change
-the text layout's fractional baseline calculation.
+fringe coverage outside the outline's ordinary bounds. LCD outlines use six
+horizontal samples per pixel and a pixel-wide filter displaced for each RGB
+channel. Non-symmetric font targets use one vertical sample; symmetric targets
+use five. The sample grid is applied after hinting, independently of glyph
+advances and baseline layout. Temporary sample storage is limited to 4 MiB;
+oversized masks and glyphs missed entirely by the grid use analytic coverage.
+
+Atlas coordinates are stored compactly as UNORM16 values; the shaders recover
+integer texel bounds before interpolation. Bilinear filtering supports transforms
+while a half-texel inset prevents sampling neighbouring glyphs. These raster rules
+do not change the text layout's fractional baseline calculation.
 
 Glyph raster resolution includes display DPI and the scene transform, including
 inherited retained-layer transforms. Uniformly zoomed text uses the same physical
@@ -317,7 +323,8 @@ When hinting is enabled, a valid version-1 OpenType `gasp` table selects the
 font's symmetric/non-symmetric smoothing range at the requested physical ppem.
 The non-symmetric path uses Skrifa with `symmetric_rendering: false`, a target
 matching the grayscale/LCD mask, and preserved horizontal metrics. Swash handles
-color glyphs and other smoothing ranges; Zeno rasterizes both outline paths.
+color glyphs and other smoothing ranges. Tiny-skia generates the discrete LCD
+samples; Zeno supplies grayscale and analytic fallback coverage.
 `None` and the hinting ppem limit remain authoritative. Selection happens before
 raster-size bucketing and the resolved target is part of glyph cache identity.
 The font-table and hint-instance LRUs hold at most 32 and 16 entries respectively.
