@@ -149,8 +149,8 @@ skip arrangement, painting, and semantics until they enter that range. Set
 `cull_offscreen` to `false` only when an application deliberately needs every
 element mounted into those phases.
 
-Large static edge sets use a shared retained world layer by default. Eligible
-unselected, unhovered, non-animated, unlabeled edges cache their paths and
+Large edge sets use a shared retained world layer by default. Eligible
+unselected, unhovered, unlabeled edges cache their static paths and
 markers in flow coordinates, then reuse the renderer packet while the viewport
 changes. `retain_edge_world`, `retained_edge_world_min`, and
 `retained_edge_world_max` control the policy; the default range is 256 through
@@ -158,6 +158,13 @@ changes. `retain_edge_world`, `retained_edge_world_min`, and
 fall back to viewport culling instead of retaining one oversized packet. Custom
 edge painters always use the direct path. Retained markers scale uniformly with
 the Canvas viewport.
+
+Built-in animated edge particles use a separate repaint layer. Animation ticks
+reuse the grid, nodes, labels, and static edge strokes; distance samples are
+cached until geometry, viewport, or edge appearance changes. Particles use
+analytic rounded rectangles instead of rebuilding curve paths as they move.
+Fully offscreen animations stop requesting frames and resume when visible.
+Custom edge painters retain their per-frame repaint behavior for animated edges.
 
 Uniform custom-node groups are also emitted as shared flow-space layers once at
 least 128 visible nodes participate. `retain_node_world` and

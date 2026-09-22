@@ -1099,6 +1099,98 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "diagnostic benchmark for node graph animation runtime and GPU work"]
+    fn node_graph_animation_gpu_benchmark() -> Result<()> {
+        const FRAMES: usize = 120;
+        for animated_edges in [1, 368] {
+            let mut nodes = Vec::new();
+            let mut edges = Vec::new();
+            for row in 0..16 {
+                for column in 0..24 {
+                    let index = row * 24 + column;
+                    nodes.push(
+                        Node::new(
+                            format!("node-{index}"),
+                            Point::new(column as f32 * 120.0, row as f32 * 64.0),
+                            (),
+                        )
+                        .label(format!("Node {index}"))
+                        .size(Size::new(100.0, 48.0)),
+                    );
+                    if column > 0 {
+                        let animated = edges.len() < animated_edges;
+                        edges.push(
+                            Edge::new(
+                                format!("edge-{index}"),
+                                format!("node-{}", index - 1),
+                                format!("node-{index}"),
+                                (),
+                            )
+                            .animated(animated)
+                            .animation_speed(0.75),
+                        );
+                    }
+                }
+            }
+            let state = NodeGraphState::new(nodes, edges).unwrap();
+            let graph = NodeGraph::new("Animation benchmark", state.clone());
+            let mut runtime = Application::new()
+                .window(
+                    WindowBuilder::new()
+                        .title("Animation benchmark")
+                        .root(graph),
+                )
+                .build()?;
+            let window_id = runtime.window_ids()[0];
+            runtime.render(window_id)?;
+            state.fit_view(state.viewport_size(), FitViewOptions::default());
+            let initial = runtime.render(window_id)?;
+            let mut renderer = WgpuRenderer::new();
+            renderer.render(&initial.frame)?;
+            let mut runtime_ms = 0.0;
+            let mut renderer_ms = 0.0;
+            let mut packets = 0;
+            let mut paths = 0;
+            let mut text = 0;
+            for frame in 0..FRAMES + 20 {
+                let started = std::time::Instant::now();
+                runtime.handle_event(
+                    window_id,
+                    Event::Wake(sui::WakeEvent::AnimationFrame {
+                        time: frame as f64 / 60.0,
+                        delta: 1.0 / 60.0,
+                        frame_index: frame as u64,
+                    }),
+                )?;
+                let output = runtime.render(window_id)?;
+                let runtime_elapsed = started.elapsed();
+                let started = std::time::Instant::now();
+                renderer.render(&output.frame)?;
+                let renderer_elapsed = started.elapsed();
+                if frame >= 20 {
+                    runtime_ms += runtime_elapsed.as_secs_f64() * 1000.0;
+                    renderer_ms += renderer_elapsed.as_secs_f64() * 1000.0;
+                    let stats = renderer.last_frame_stats(window_id).unwrap();
+                    packets += stats.retained_packet_build_count;
+                    paths += stats.retained_packet_path_command_count;
+                    text += stats.retained_packet_text_command_count;
+                }
+            }
+            println!(
+                "NODE_ANIMATION nodes=384 animated_edges={animated_edges} frames={FRAMES} runtime_avg_ms={:.3} renderer_avg_ms={:.3} packet_build_avg={:.1} rebuilt_paths_avg={:.1} rebuilt_text_avg={:.1}",
+                runtime_ms / FRAMES as f64,
+                renderer_ms / FRAMES as f64,
+                packets as f64 / FRAMES as f64,
+                paths as f64 / FRAMES as f64,
+                text as f64 / FRAMES as f64
+            );
+            assert_eq!(paths, 0, "particle frames must reuse static curve paths");
+            assert_eq!(text, 0, "particle frames must reuse node labels");
+        }
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "diagnostic benchmark for retained node graph runtime and GPU zoom frames"]
     fn retained_node_graph_gpu_zoom_current_status_benchmark() -> Result<()> {
         const COLUMNS: usize = 24;

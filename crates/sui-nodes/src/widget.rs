@@ -1,13 +1,15 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet},
+    rc::Rc,
     sync::Arc,
 };
 
 use sui_core::{
-    Color, Event, InvalidationKind, KeyState, Path, Point, PointerButton, PointerEvent,
-    PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction, SemanticsActionRequest,
-    SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId,
+    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
+    PointerButton, PointerEvent, PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WakeEvent,
+    WidgetId,
 };
 use sui_layout::Constraints;
 use sui_runtime::{
@@ -459,6 +461,74 @@ struct EdgeWorldCache {
     retained_edges: Arc<HashSet<EdgeId>>,
 }
 
+#[derive(PartialEq)]
+struct EdgeAnimationCacheKey {
+    nodes_revision: u64,
+    edges_revision: u64,
+    viewport: Viewport,
+    bounds: Rect,
+    color: Color,
+    selected_color: Color,
+    hovered: Option<EdgeId>,
+    focused: Option<EdgeId>,
+}
+
+struct AnimatedEdge {
+    path: EdgeAnimationPath,
+    speed: f32,
+    color: Color,
+}
+
+#[derive(Default)]
+struct EdgeAnimationState {
+    time: f64,
+    key: Option<EdgeAnimationCacheKey>,
+    edges: Vec<AnimatedEdge>,
+}
+
+/// The graph owns scheduling and geometry updates; only this layer repaints
+/// during steady animation, leaving nodes, labels, and edge strokes retained.
+struct EdgeAnimationLayer(Rc<RefCell<EdgeAnimationState>>);
+
+impl Widget for EdgeAnimationLayer {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::ZERO)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let animation = self.0.borrow();
+        ctx.push_clip_rect(ctx.bounds());
+        for edge in &animation.edges {
+            for particle in 0..3 {
+                let t = edge_particle_phase(animation.time, edge.speed, particle);
+                let point = edge.path.point_at(t);
+                // A circular rounded rect uses the renderer's analytic primitive
+                // instead of uploading a new curve path for each moving dot.
+                ctx.fill_rrect(
+                    Rect::new(point.x - 2.4, point.y - 2.4, 4.8, 4.8),
+                    [2.4; 4],
+                    edge.color,
+                );
+            }
+        }
+        ctx.pop_clip();
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            ..LayerOptions::default()
+        }
+    }
+
+    fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
+        Some(StackSurfaceOptions {
+            hit_test: false,
+            ..StackSurfaceOptions::default()
+        })
+    }
+}
+
 impl Interaction {
     fn pointer_id(&self) -> u64 {
         match self {
@@ -494,7 +564,8 @@ pub struct NodeGraph<N = (), E = ()> {
     hovered_edge: Option<EdgeId>,
     hovered_handle: Option<(NodeId, HandleId, HandleKind)>,
     focused_element: Option<FocusedElement>,
-    edge_animation_time: f64,
+    edge_animation: Rc<RefCell<EdgeAnimationState>>,
+    edge_animation_layer: WidgetPod,
     viewport_transition_running: bool,
     last_primary_down: Option<(f64, Point)>,
     active_touches: BTreeMap<u64, Point>,
@@ -526,6 +597,7 @@ where
 {
     pub fn new(name: impl Into<String>, state: NodeGraphState<N, E>) -> Self {
         let name = name.into();
+        let edge_animation = Rc::new(RefCell::new(EdgeAnimationState::default()));
         Self {
             name,
             state,
@@ -540,7 +612,8 @@ where
             hovered_edge: None,
             hovered_handle: None,
             focused_element: None,
-            edge_animation_time: 0.0,
+            edge_animation_layer: WidgetPod::new(EdgeAnimationLayer(Rc::clone(&edge_animation))),
+            edge_animation,
             viewport_transition_running: false,
             last_primary_down: None,
             active_touches: BTreeMap::new(),
@@ -1008,6 +1081,68 @@ where
             });
         }
         Some(retained)
+    }
+
+    fn prepare_edge_animation(
+        &self,
+        snapshot: &GraphSnapshot<N, E>,
+        bounds: Rect,
+        appearance: ResolvedAppearance,
+        focused_edge: Option<&EdgeId>,
+    ) {
+        let mut animation = self.edge_animation.borrow_mut();
+        if self.edge_painter.is_some() {
+            animation.edges.clear();
+            animation.key = None;
+            return;
+        }
+        let key = EdgeAnimationCacheKey {
+            nodes_revision: snapshot.revisions.nodes,
+            edges_revision: snapshot.revisions.edges,
+            viewport: snapshot.viewport,
+            bounds,
+            color: appearance.edge,
+            selected_color: appearance.edge_selected,
+            hovered: self.hovered_edge.clone(),
+            focused: focused_edge.cloned(),
+        };
+        if animation.key.as_ref() == Some(&key) {
+            return;
+        }
+        animation.edges = self
+            .visible_edge_indices
+            .iter()
+            .filter_map(|index| {
+                let edge = snapshot.graph.edges.get(*index)?;
+                if !edge.animated || edge.hidden {
+                    return None;
+                }
+                let geometry = edge_geometry(&snapshot.graph, edge, snapshot.viewport, bounds)?;
+                // The spatial query includes an interaction margin; do not animate
+                // edges that cannot contribute any pixels to the clipped viewport.
+                if geometry
+                    .path
+                    .bounds()
+                    .inflate(2.4, 2.4)
+                    .intersection(bounds)
+                    .is_none()
+                {
+                    return None;
+                }
+                Some(AnimatedEdge {
+                    path: EdgeAnimationPath::new(&geometry.path),
+                    speed: edge.animation_speed,
+                    color: if edge.selected || focused_edge == Some(&edge.id) {
+                        appearance.edge_selected
+                    } else if self.hovered_edge.as_ref() == Some(&edge.id) {
+                        appearance.edge_selected.with_alpha(0.72)
+                    } else {
+                        appearance.edge
+                    },
+                })
+            })
+            .collect();
+        animation.key = Some(key);
     }
 }
 
@@ -2086,16 +2221,29 @@ where
                     }
                     self.request_update(ctx);
                 }
-                if snapshot
-                    .graph
-                    .edges
-                    .iter()
-                    .any(|edge| edge.animated && !edge.hidden)
+                if self.edge_painter.is_some()
+                    && self.visible_edge_indices.iter().any(|index| {
+                        snapshot
+                            .graph
+                            .edges
+                            .get(*index)
+                            .is_some_and(|edge| edge.animated && !edge.hidden)
+                    })
                 {
+                    // Custom painters own the complete edge appearance and may
+                    // animate it themselves, so preserve their repaint contract.
+                    ctx.request_paint();
+                    ctx.request_animation_frame();
+                }
+                let mut animation = self.edge_animation.borrow_mut();
+                if !animation.edges.is_empty() {
                     // Wrap each particle after applying its edge's speed. Wrapping
                     // the shared clock resets fractional-speed edges every second.
-                    self.edge_animation_time += delta.max(0.0);
-                    ctx.request_paint();
+                    animation.time += delta.max(0.0);
+                    ctx.request(InvalidationRequest::new(
+                        InvalidationTarget::Widget(self.edge_animation_layer.id()),
+                        InvalidationKind::Paint,
+                    ));
                     ctx.request_animation_frame();
                 }
             }
@@ -2242,6 +2390,8 @@ where
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let snapshot = self.state.snapshot();
+        self.edge_animation_layer
+            .measure(ctx, Constraints::tight(Size::ZERO));
         self.world_layer_active = self.edge_painter.is_none()
             && self.config.retain_edge_world
             && (self.config.retained_edge_world_min..=self.config.retained_edge_world_max)
@@ -2304,6 +2454,7 @@ where
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.edge_animation_layer.arrange(ctx, bounds);
         self.state.set_viewport_size(bounds.size);
         if !self.arranged_once && self.config.fit_view_on_init {
             self.state.fit_view(bounds.size, self.config.fit_view);
@@ -2408,12 +2559,13 @@ where
             entry.pod.arrange_transformed(ctx, child_bounds, transform);
         }
         self.active_node_widgets = next_active_node_widgets;
-        if snapshot
-            .graph
-            .edges
-            .iter()
-            .any(|edge| edge.animated && !edge.hidden)
-        {
+        if self.visible_edge_indices.iter().any(|index| {
+            snapshot
+                .graph
+                .edges
+                .get(*index)
+                .is_some_and(|edge| edge.animated && !edge.hidden)
+        }) {
             ctx.request_animation_frame();
         }
         if snapshot.viewport_transition.is_some() {
@@ -2479,9 +2631,12 @@ where
                 painter: self.edge_painter.as_deref(),
                 edges_reconnectable: self.config.edges_reconnectable,
                 focused_edge,
-                animation_time: self.edge_animation_time,
             },
         );
+        self.prepare_edge_animation(&snapshot, bounds, appearance, focused_edge);
+        if !self.edge_animation.borrow().edges.is_empty() {
+            self.edge_animation_layer.paint(ctx);
+        }
         paint_connection(
             ctx,
             self.interaction.as_ref(),
@@ -2664,6 +2819,7 @@ where
         if self.world_layer_active {
             visitor.visit(&self.world_layer);
         }
+        visitor.visit(&self.edge_animation_layer);
         if self.node_world_layer_active[1] {
             visitor.visit(&self.node_world_layers[1]);
         }
@@ -2677,6 +2833,7 @@ where
         if self.world_layer_active {
             visitor.visit(&mut self.world_layer);
         }
+        visitor.visit(&mut self.edge_animation_layer);
         if self.node_world_layer_active[1] {
             visitor.visit(&mut self.node_world_layers[1]);
         }
@@ -4003,7 +4160,6 @@ struct EdgePaintOptions<'a, E> {
     painter: Option<&'a EdgePaintFn<E>>,
     edges_reconnectable: bool,
     focused_edge: Option<&'a EdgeId>,
-    animation_time: f64,
 }
 
 fn edge_is_retained_world_candidate<E>(
@@ -4013,7 +4169,6 @@ fn edge_is_retained_world_candidate<E>(
 ) -> bool {
     !edge.hidden
         && !edge.selected
-        && !edge.animated
         && edge.label.is_none()
         && hovered_edge != Some(&edge.id)
         && focused_edge != Some(&edge.id)
@@ -4034,7 +4189,6 @@ fn paint_edges<N, E>(
         painter,
         edges_reconnectable,
         focused_edge,
-        animation_time,
     } = options;
     for index in indices {
         let Some(edge) = snapshot.graph.edges.get(*index) else {
@@ -4081,13 +4235,6 @@ fn paint_edges<N, E>(
             1.5
         };
         ctx.stroke(geometry.path.clone(), color, StrokeStyle::new(width));
-        if edge.animated {
-            let motion_path = EdgeAnimationPath::new(&geometry.path);
-            for particle in 0..3 {
-                let t = edge_particle_phase(animation_time, edge.animation_speed, particle);
-                ctx.fill(Path::circle(motion_path.point_at(t), 2.4), color);
-            }
-        }
         if edge.selected && edges_reconnectable {
             if edge.reconnectable.allows(HandleKind::Source) {
                 ctx.fill(Path::circle(geometry.source, 5.5), appearance.background);
@@ -6434,8 +6581,7 @@ mod tests {
             let mut particles = Vec::new();
             let mut collect = |scene: &Scene| {
                 for command in scene.commands() {
-                    if let SceneCommand::FillPath { path, .. } = command {
-                        let bounds = path.bounds();
+                    if let SceneCommand::FillRoundedRect { rect: bounds, .. } = command {
                         if (bounds.width() - 4.8).abs() < 0.001
                             && (bounds.height() - 4.8).abs() < 0.001
                         {
@@ -6460,6 +6606,144 @@ mod tests {
             advance > 0.0 && advance < 10.0,
             "particle jumped by {advance}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn animation_frames_reuse_graph_paint_and_particle_geometry() -> sui_core::Result<()> {
+        let mut model = graph();
+        model.edges[0].animated = true;
+        let state = NodeGraphState::new(model.nodes, model.edges).unwrap();
+        let paints = Rc::new(Cell::new(0));
+        let count = Rc::clone(&paints);
+        let graph = NodeGraph::new("Animated graph", state).node_painter(move |ctx, _, paint| {
+            count.set(count.get() + 1);
+            ctx.fill_rect(paint.bounds, Color::WHITE);
+        });
+        let animation = Rc::clone(&graph.edge_animation);
+        let layer_id = graph.edge_animation_layer.id();
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+        runtime.render(window_id)?;
+        let initial_paints = paints.get();
+        assert!(initial_paints > 0);
+        let samples = animation.borrow().edges[0].path.samples.as_ptr();
+        for frame in 1..=120 {
+            runtime.handle_event(
+                window_id,
+                Event::Wake(WakeEvent::AnimationFrame {
+                    time: frame as f64 / 60.0,
+                    delta: 1.0 / 60.0,
+                    frame_index: frame,
+                }),
+            )?;
+            let output = runtime.render(window_id)?;
+            assert_eq!(
+                paints.get(),
+                initial_paints,
+                "animation repainted stationary nodes"
+            );
+            assert_eq!(animation.borrow().edges[0].path.samples.as_ptr(), samples);
+            let mut particle_count = 0;
+            output.frame.scene.visit_layers(&mut |layer| {
+                if layer.descriptor.owner == layer_id {
+                    particle_count += layer
+                        .scene
+                        .commands()
+                        .iter()
+                        .filter(|command| matches!(command, SceneCommand::FillRoundedRect { .. }))
+                        .count();
+                }
+            });
+            assert_eq!(particle_count, 3);
+        }
+        assert!((animation.borrow().time - 2.0).abs() < 0.00001);
+        Ok(())
+    }
+
+    #[test]
+    fn animation_cache_tracks_edits_viewport_and_visibility() -> sui_core::Result<()> {
+        let mut model = graph();
+        model.edges[0].animated = true;
+        let state = NodeGraphState::new(model.nodes, model.edges).unwrap();
+        let graph = NodeGraph::new("Animated graph", state.clone());
+        let selected_color = graph
+            .appearance
+            .resolve(&graph.resolved_theme())
+            .edge_selected;
+        let animation = Rc::clone(&graph.edge_animation);
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+        runtime.render(window_id)?;
+        let initial_source = animation.borrow().edges[0].path.point_at(0.0);
+        state.set_viewport(Viewport::new(40.0, 20.0, 1.0));
+        runtime.render(window_id)?;
+        assert_eq!(
+            animation.borrow().edges[0].path.point_at(0.0),
+            initial_source + Vector::new(40.0, 20.0)
+        );
+        state
+            .update_node(&NodeId::from("source"), |node| node.position.x += 30.0)
+            .unwrap();
+        state
+            .update_edge(&EdgeId::from("edge"), |edge| {
+                edge.animation_speed = 0.25;
+                edge.selected = true;
+            })
+            .unwrap();
+        runtime.render(window_id)?;
+        {
+            let animation = animation.borrow();
+            assert_eq!(
+                animation.edges[0].path.point_at(0.0),
+                initial_source + Vector::new(70.0, 20.0)
+            );
+            assert_eq!(animation.edges[0].speed, 0.25);
+            assert_eq!(animation.edges[0].color, selected_color);
+        }
+        state.set_viewport(Viewport::new(100_000.0, 100_000.0, 1.0));
+        runtime.render(window_id)?;
+        assert!(animation.borrow().edges.is_empty());
+        // Consume the outstanding wake. An entirely offscreen graph must not
+        // schedule any more animation work until its viewport changes.
+        for (id, event) in runtime.drain_ready_events() {
+            runtime.handle_event(id, event)?;
+        }
+        assert!(runtime.next_wakeup_time(window_id)?.is_none());
+        state.set_viewport(Viewport::default());
+        runtime.render(window_id)?;
+        assert_eq!(animation.borrow().edges.len(), 1);
+        assert!(runtime.next_wakeup_time(window_id)?.is_some());
+        state
+            .update_edge(&EdgeId::from("edge"), |edge| edge.animated = false)
+            .unwrap();
+        runtime.render(window_id)?;
+        assert!(animation.borrow().edges.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn animated_custom_edge_painters_keep_receiving_frames() -> sui_core::Result<()> {
+        let mut model = graph();
+        model.edges[0].animated = true;
+        let state = NodeGraphState::new(model.nodes, model.edges).unwrap();
+        let paints = Rc::new(Cell::new(0));
+        let count = Rc::clone(&paints);
+        let graph = NodeGraph::new("Custom animated graph", state)
+            .edge_painter(move |_, _, _| count.set(count.get() + 1));
+        let animation = Rc::clone(&graph.edge_animation);
+        let (mut runtime, window_id) = build_runtime_with_graph(graph);
+        runtime.render(window_id)?;
+        let before = paints.get();
+        runtime.handle_event(
+            window_id,
+            Event::Wake(WakeEvent::AnimationFrame {
+                time: 0.02,
+                delta: 0.02,
+                frame_index: 1,
+            }),
+        )?;
+        runtime.render(window_id)?;
+        assert!(paints.get() > before);
+        assert!(animation.borrow().edges.is_empty());
         Ok(())
     }
 
