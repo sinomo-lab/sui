@@ -75,12 +75,6 @@ settings fixed when comparing changes. For a separate development-overhead
 comparison, run with `WGPU_DEBUG=0` and `WGPU_VALIDATION=0`; this does not turn the
 test binary into a release build. The output records those settings and adapter.
 
-An initial run on Windows/RTX 3090/DirectX 12, with those two flags disabled,
-measured 0.38 ms median paused and 1.38 ms median / 1.67 ms p95 animated. Animated
-frames averaged 0.45 ms in layout/arrange, including 0.34 ms of text work, with
-about 79 size-only requests per frame and no post-warmup glyph-metric misses.
-These figures are a local baseline, not a performance requirement.
-
 ## On-screen desktop measurements
 
 Run the same content through the normal desktop host, with a visible window and
@@ -106,15 +100,6 @@ enabled after native-window registration so VSync wait is correctly identified.
 Some layout work executes inside the redraw callback before `Runtime::render`;
 the separate measure/arrange phase can therefore be empty even while text reflows.
 
-An on-screen run on the same RTX 3090/DX12 machine used a 1280 x 720 logical
-viewport, 1920 x 1080 physical pixels (150% scaling), and native HDR output:
-
-| Backend settings | Host cadence | Work median | Work p95 |
-|---|---:|---:|---:|
-| Normal development defaults | 120 FPS | 1.98 ms | 2.42 ms |
-| Native debug/validation disabled | 120 FPS | 1.60 ms | 1.90 ms |
-
-Total frame time was about 8.10 ms median, with 6.37–6.76 ms average surface wait.
-That wait is pacing, not CPU layout work. Cadence is measured at host presentation
-return, not at physical scanout. The native viewport, DPI, clipping, and HDR path
-differ from the headless benchmark, so the two are not an exact A/B comparison.
+Cadence is measured at host presentation return, not at physical scanout.
+Keep native viewport, DPI, clipping, and HDR settings consistent when comparing
+runs; headless and desktop measurements are not an exact A/B comparison.

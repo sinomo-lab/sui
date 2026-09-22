@@ -1,8 +1,5 @@
 # SUI Rendering Architecture
 
-For measured cache, batching, and submission costs, see the
-[renderer pipeline performance review](renderer-pipeline-review.md).
-
 ## Current Renderer Contract
 
 The renderer boundary is:
@@ -195,29 +192,6 @@ The renderer publishes metrics including:
 Those metrics are surfaced by `sinomo-ui-platform`, shown by the widget-book overlay, and available to tests and debugging tools.
 
 The current live diagnostics also pair renderer metrics with runtime animation counters, so the widget book can distinguish animation frames that repainted content from frames that only updated retained transform or opacity state.
-
-## Current Benchmark Snapshot
-
-In this environment, the live desktop benchmark tests need a real display server, so the current-status snapshot below was captured with the headless widget-book diagnostic benchmarks in `crates/sui-demo/src/widget_book/mod.rs`.
-
-Current headless scroll snapshot:
-
-- full widget-book scroll surface
-  - avg frame time: `3.036 ms` (`329.3 fps`)
-  - p95 frame time: `4.186 ms`
-  - avg visible layers: `20.62`
-  - avg direct packets: `11.83`
-  - avg packet rebuilds: `9.00`
-  - avg repaint boundaries / scene layers: `6.88` / `6.88`
-- overlay-free gallery-only scroll surface
-  - avg frame time: `1.871 ms` (`534.4 fps`)
-  - p95 frame time: `2.944 ms`
-  - avg visible layers: `14.62`
-  - avg direct packets: `9.83`
-  - avg packet rebuilds: `8.00`
-  - avg repaint boundaries / scene layers: `4.88` / `4.88`
-
-These numbers are not a replacement for real desktop benchmarking on a machine with an active display server, but they provide a stable current-status snapshot of retained traversal, rebuild, and layer-cardinality cost after the explicit-boundary transition work.
 
 ## Current Constraints
 

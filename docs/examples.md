@@ -103,6 +103,11 @@ fitted text bubbles, pause/play controls, and a manual width slider. See the
 [shrinkwrap benchmark guide](shrinkwrap-benchmark.md) for the deterministic
 layout/text/animation profile and per-frame CSV captures.
 
+Open the `Editorial engine` card for responsive newspaper columns with text
+flowing around moving, draggable circles, a drop cap, and a pull quote. See the
+[editorial benchmark guide](editorial-benchmark.md) for controls, the demo-local
+line-width adapter, correctness checks, screenshots, and CPU frame profiling.
+
 The default demo build includes the comprehensive node-graph workspace. Open
 the `Node graphs` card after running:
 

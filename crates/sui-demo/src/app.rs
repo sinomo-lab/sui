@@ -45,6 +45,7 @@ use crate::command_demo::{
 #[cfg(test)]
 use crate::drag_drop_demo::DRAG_DROP_DEMO_SCROLL_NAME;
 use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme};
+use crate::editorial_demo::{EDITORIAL_TAB_LABEL, build_editorial_demo_with_theme};
 #[cfg(test)]
 use crate::layout_demo::LAYOUT_DEMO_SCROLL_NAME;
 use crate::layout_demo::{LAYOUT_TAB_LABEL, build_layout_demo_with_theme};
@@ -1958,6 +1959,13 @@ fn build_dev_demo_entries(
             |theme| build_shrinkwrap_demo_with_theme(theme)
         ),
         themed_demo!(
+            EDITORIAL_TAB_LABEL,
+            "Responsive columns and text flowing around moving, draggable obstacles.",
+            IconGlyph::FitView,
+            Color::rgba(0.72, 0.55, 0.28, 1.0),
+            |theme| build_editorial_demo_with_theme(theme)
+        ),
+        themed_demo!(
             TEXT_RENDERING_COMPARISON_TAB_LABEL,
             "Side-by-side text rendering comparison surface.",
             IconGlyph::FitView,
@@ -2050,6 +2058,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "commands" | "command-routing" | "application-commands" => Some(COMMAND_DEMO_TAB_LABEL),
         "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
         "shrinkwrap" | "shrinkwrap-chat" => Some(SHRINKWRAP_TAB_LABEL),
+        "editorial" | "editorial-engine" => Some(EDITORIAL_TAB_LABEL),
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
