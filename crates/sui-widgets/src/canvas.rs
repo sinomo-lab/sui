@@ -3730,7 +3730,19 @@ pub fn paint_canvas_grid(
             let position = transform.transform_point(Point::new(x as f32 * step, y as f32 * step));
             match style {
                 CanvasGridStyle::Dots => {
-                    ctx.fill(Path::circle(position, mark_size), grid_color);
+                    // Grid dots are circles, not arbitrary curves. Analytic
+                    // rounded rectangles batch together and avoid allocating,
+                    // hashing, and preparing a separate path for every mark.
+                    ctx.fill_rrect(
+                        Rect::new(
+                            position.x - mark_size,
+                            position.y - mark_size,
+                            mark_size * 2.0,
+                            mark_size * 2.0,
+                        ),
+                        [mark_size; 4],
+                        grid_color,
+                    );
                 }
                 CanvasGridStyle::Cross => {
                     let mut cross = PathBuilder::new();
@@ -4618,6 +4630,64 @@ mod tests {
             "vertical ruler tall label visual center {actual_visual_center} did not match tick {expected_tick_y}; text rect {:?}",
             text.rect
         );
+    }
+
+    #[test]
+    fn dotted_grid_uses_analytic_circles_at_stable_screen_size() {
+        struct GridProbe(CanvasViewport);
+        impl Widget for GridProbe {
+            fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+                constraints.clamp(Size::new(240.0, 160.0))
+            }
+
+            fn paint(&self, ctx: &mut PaintCtx) {
+                super::paint_canvas_grid(
+                    ctx,
+                    self.0,
+                    ctx.bounds(),
+                    Point::ZERO,
+                    24.0,
+                    super::CanvasGridStyle::Dots,
+                    Color::WHITE,
+                );
+            }
+        }
+
+        for zoom in [0.25, 1.0, 2.0] {
+            let viewport = CanvasViewport::new().zoom(zoom).pan(Vector::new(7.0, 11.0));
+            let output = render(GridProbe(viewport));
+            let bounds = Rect::from_origin_size(Point::ZERO, output.frame.viewport);
+            let origin = viewport
+                .transform(bounds, Point::ZERO)
+                .transform_point(Point::ZERO);
+            let mut dots = 0;
+            let mut found_origin = false;
+            output
+                .frame
+                .scene
+                .visit_commands(&mut |command| match command {
+                    SceneCommand::FillRoundedRect {
+                        rect, radii, brush, ..
+                    } => {
+                        assert_eq!(rect.size, Size::new(2.5, 2.5));
+                        assert_eq!(*radii, [1.25; 4]);
+                        assert_eq!(*brush, Brush::Solid(Color::WHITE));
+                        let center = Point::new(rect.x() + 1.25, rect.y() + 1.25);
+                        found_origin |= (center.x - origin.x).abs() < 0.001
+                            && (center.y - origin.y).abs() < 0.001;
+                        dots += 1;
+                    }
+                    SceneCommand::FillPath { .. } | SceneCommand::StrokePath { .. } => {
+                        panic!("grid dots must not create curve paths");
+                    }
+                    _ => {}
+                });
+            assert!((1..=4096).contains(&dots));
+            assert!(
+                found_origin,
+                "panning and zooming must preserve the grid origin"
+            );
+        }
     }
 
     #[test]

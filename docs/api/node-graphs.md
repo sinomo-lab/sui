@@ -287,6 +287,23 @@ remeasure retained widgets.
 The edge-world diagnostic compares direct and retained rendering for 1,024
 edges and reports runtime, renderer, packet-build, and path-command costs.
 
+To profile the actual five-node example, including its custom widgets and demo
+shell, run this PowerShell command:
+
+```powershell
+$env:SUI_PROFILE_WIDGET_TIMINGS = '1'
+cargo test -p sinomo-ui-demo --features sui-runtime/layout-diagnostics --lib small_node_demo_paint_profile -- --ignored --nocapture
+```
+
+This diagnostic uses a 1440 x 900 viewport and compares scheduled animation,
+explicit graph invalidation, full-window repaint, and alternating wheel zoom.
+It checks that animation wakes are delivered and that explicit invalidation
+actually paints the graph. Reported widget timings include descendants; do not
+sum ancestor and child times. Renderer timings measure offscreen CPU work and
+submission, not GPU execution time or native presentation cadence. Grid dots
+use analytic circle primitives to avoid constructing and processing a separate
+curve path for every background mark.
+
 The GPU diagnostic also reports retained packet construction, analytic-path,
 batching, upload, encoding, and queue timings. Set `SUI_NODE_BENCH_PROFILE=1`
 and `SUI_PROFILE_WIDGET_TIMINGS=1` to include detailed runtime phase and widget

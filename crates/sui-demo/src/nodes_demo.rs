@@ -1099,6 +1099,173 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "diagnostic profiling of the actual small node graph demo"]
+    fn small_node_demo_paint_profile() -> Result<()> {
+        use std::collections::BTreeMap;
+        use std::time::Instant;
+        const FRAMES: usize = 90;
+        const REPAINT: sui::CommandKey<sui::WidgetId> =
+            sui::CommandKey::new("nodes.profile.repaint");
+        let document = comprehensive_document();
+        let mut runtime = crate::app::build_dev_application_with_initial_demo_and_render_options(
+            Some(NODES_TAB_LABEL),
+            sui::WindowRenderOptions::new(true, 1.0),
+        )
+        .on_command(REPAINT, |ctx, id| {
+            ctx.request(sui::InvalidationRequest::new(
+                sui::InvalidationTarget::Widget(*id),
+                sui::InvalidationKind::Paint,
+            ));
+        })
+        .build()?;
+        let window_id = runtime.window_ids()[0];
+        sui::set_window_scene_statistics_detail_mode(
+            window_id,
+            sui::SceneStatisticsDetailMode::Detailed,
+        );
+        runtime.handle_event(
+            window_id,
+            Event::Window(sui::WindowEvent::Resized(Size::new(1440.0, 900.0))),
+        )?;
+        let initial = runtime.render(window_id)?;
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&initial.frame)?;
+        println!(
+            "SMALL_NODE_DEMO nodes={} edges={} widgets={} size=1440x900",
+            document.nodes.len(),
+            document.edges.len(),
+            initial.diagnostics.widget_count
+        );
+        assert!(
+            initial
+                .semantics
+                .iter()
+                .any(|node| node.name.as_deref() == Some(NODES_MAIN_GRAPH_NAME))
+        );
+        let main_graph = initial
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(NODES_MAIN_GRAPH_NAME))
+            .unwrap();
+        let graph_id = main_graph.id;
+        let graph_corner = Point::new(main_graph.bounds.x() + 16.0, main_graph.bounds.y() + 16.0);
+        println!(
+            "SMALL_NODE_GRAPH bounds={:?} value={:?}",
+            main_graph.bounds, main_graph.value
+        );
+        let mut frame_time = 0.0;
+        for mode in ["animation", "graph-repaint", "full-repaint", "zoom"] {
+            let mut totals = BTreeMap::<String, f64>::new();
+            let mut widgets = BTreeMap::<String, f64>::new();
+            let mut samples = Vec::new();
+            for frame in 0..FRAMES + 20 {
+                // Use real scheduled wakes so the graph (nested in the demo
+                // shell) receives the same target-only events as on desktop.
+                // Keep offscreen submissions paced; an unbounded loop measures
+                // GPU queue backpressure as well as painting work.
+                std::thread::sleep(std::time::Duration::from_millis(17));
+                frame_time += 1.0 / 60.0;
+                runtime.tick(frame_time);
+                let events = runtime.drain_ready_events();
+                let started = Instant::now();
+                for (id, event) in events {
+                    runtime.handle_event(id, event)?;
+                }
+                runtime
+                    .handle_event(window_id, Event::Window(sui::WindowEvent::RedrawRequested))?;
+                if mode == "zoom" {
+                    let mut wheel =
+                        sui::PointerEvent::new(sui::PointerEventKind::Scroll, graph_corner);
+                    wheel.scroll_delta = Some(sui::ScrollDelta::Pixels(sui::Vector::new(
+                        0.0,
+                        if frame % 2 == 0 { 3.0 } else { -3.0 },
+                    )));
+                    runtime.handle_event(window_id, Event::Pointer(wheel))?;
+                } else if mode != "animation" {
+                    let target = if mode == "graph-repaint" {
+                        graph_id
+                    } else {
+                        runtime.widget_graph(window_id)?.root
+                    };
+                    runtime.command_sender().send_application(REPAINT, target);
+                    runtime.process_commands();
+                }
+                let output = runtime.render(window_id)?;
+                let runtime_ms = started.elapsed().as_secs_f64() * 1000.0;
+                let started = Instant::now();
+                renderer.render(&output.frame)?;
+                let renderer_ms = started.elapsed().as_secs_f64() * 1000.0;
+                if frame < 20 {
+                    continue;
+                }
+                samples.push(runtime_ms + renderer_ms);
+                *totals.entry("runtime_ms".into()).or_default() += runtime_ms;
+                *totals.entry("renderer_ms".into()).or_default() += renderer_ms;
+                *totals.entry("animation_wakes".into()).or_default() +=
+                    output.diagnostics.animation_frame_wake_count as f64;
+                for phase in &output.diagnostics.phase_timings {
+                    *totals
+                        .entry(format!("runtime_{}_ms", phase.phase.label()))
+                        .or_default() += phase.duration_ms;
+                }
+                for timing in &output.diagnostics.widget_timings {
+                    if timing.phase.label() == "Paint" {
+                        *widgets.entry(timing.widget_name.to_string()).or_default() +=
+                            timing.duration_ms;
+                    }
+                }
+                let stats = renderer.last_frame_stats(window_id).unwrap();
+                for (name, value) in [
+                    ("traversal_us", stats.retained_scene_traversal_time_us),
+                    ("packet_build_us", stats.retained_packet_build_time_us),
+                    ("path_us", stats.retained_packet_path_command_time_us),
+                    ("text_us", stats.retained_packet_text_command_time_us),
+                    ("resources_us", stats.resource_collection_time_us),
+                    ("bind_groups_us", stats.bind_group_prepare_time_us),
+                    ("batch_us", stats.batch_prepare_time_us),
+                    ("upload_us", stats.gpu_upload_time_us),
+                    ("encode_us", stats.pass_encode_time_us),
+                    ("submit_us", stats.queue_submit_time_us),
+                    ("draws", stats.draw_count as u64),
+                    (
+                        "path_misses",
+                        stats.analytic_path_bind_group_miss_count as u64,
+                    ),
+                    (
+                        "path_upload_bytes",
+                        stats.analytic_path_bind_group_upload_bytes,
+                    ),
+                    ("packet_builds", stats.retained_packet_build_count as u64),
+                ] {
+                    *totals.entry(name.into()).or_default() += value as f64;
+                }
+            }
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "SMALL_NODE_DEMO mode={mode} p50_ms={:.3} p95_ms={:.3} max_ms={:.3}",
+                samples[FRAMES / 2],
+                samples[FRAMES * 95 / 100],
+                samples[FRAMES - 1]
+            );
+            assert_eq!(totals["animation_wakes"], FRAMES as f64);
+            if mode == "graph-repaint" && std::env::var_os("SUI_PROFILE_WIDGET_TIMINGS").is_some() {
+                assert!(widgets.iter().any(|(name, duration)| {
+                    name.contains("sui_nodes::widget::NodeGraph<") && *duration > 0.0
+                }));
+            }
+            for (name, value) in totals {
+                println!("  {name}={:.3}", value / FRAMES as f64);
+            }
+            let mut widgets = widgets.into_iter().collect::<Vec<_>>();
+            widgets.sort_by(|a, b| b.1.total_cmp(&a.1));
+            for (name, value) in widgets.into_iter().take(15) {
+                println!("  paint_widget_avg_ms={:.3} {name}", value / FRAMES as f64);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "diagnostic benchmark for node graph animation runtime and GPU work"]
     fn node_graph_animation_gpu_benchmark() -> Result<()> {
         const FRAMES: usize = 120;
