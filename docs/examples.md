@@ -98,6 +98,11 @@ Open the native demo:
 cargo run -p sinomo-ui-demo
 ```
 
+Open the `Shrinkwrap` card for a single animated-width conversation with tightly
+fitted text bubbles, pause/play controls, and a manual width slider. See the
+[shrinkwrap benchmark guide](shrinkwrap-benchmark.md) for the deterministic
+layout/text/animation profile and per-frame CSV captures.
+
 The default demo build includes the comprehensive node-graph workspace. Open
 the `Node graphs` card after running:
 

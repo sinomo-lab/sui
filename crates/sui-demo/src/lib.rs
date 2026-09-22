@@ -9,6 +9,7 @@ mod markdown_demo;
 #[cfg(feature = "nodes")]
 mod nodes_demo;
 mod paint_demo;
+mod shrinkwrap_demo;
 mod theme_editor_demo;
 mod vector_demo;
 pub mod widget_book;
@@ -16,6 +17,18 @@ pub mod widget_book;
 #[cfg(not(target_arch = "wasm32"))]
 use app::{DesktopAutomationMode, build_dev_application_with_automation};
 pub use app::{build_dev_application, build_dev_application_with_widget_book_bounds};
+
+/// Standalone animated-width conversation used by the desktop profiling example.
+pub fn build_shrinkwrap_application() -> Application {
+    Application::new().window(
+        sui::WindowBuilder::new()
+            .title("Shrinkwrap desktop profile")
+            .initial_size(sui::Size::new(1280.0, 720.0))
+            .root(shrinkwrap_demo::build_shrinkwrap_demo_with_theme(
+                std::rc::Rc::new(sui::DefaultTheme::default),
+            )),
+    )
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::env;

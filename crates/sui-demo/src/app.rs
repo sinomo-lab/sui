@@ -62,6 +62,7 @@ use crate::nodes_demo::{
 #[cfg(feature = "nodes")]
 use crate::nodes_demo::{NODES_TAB_LABEL, build_nodes_demo_with_theme};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
+use crate::shrinkwrap_demo::{SHRINKWRAP_TAB_LABEL, build_shrinkwrap_demo_with_theme};
 #[cfg(test)]
 use crate::theme_editor_demo::{
     THEME_COLOR_PICKER_NAME, THEME_EDITOR_CONTROLS_SCROLL_NAME, THEME_EDITOR_PREVIEW_SCROLL_NAME,
@@ -1950,6 +1951,13 @@ fn build_dev_demo_entries(
             |theme| build_retained_text_benchmark_with_theme(theme)
         ),
         themed_demo!(
+            SHRINKWRAP_TAB_LABEL,
+            "Animated container width, text wrapping, and tightly fitted chat bubbles.",
+            IconGlyph::FitView,
+            Color::rgba(0.20, 0.62, 0.54, 1.0),
+            |theme| build_shrinkwrap_demo_with_theme(theme)
+        ),
+        themed_demo!(
             TEXT_RENDERING_COMPARISON_TAB_LABEL,
             "Side-by-side text rendering comparison surface.",
             IconGlyph::FitView,
@@ -2041,6 +2049,7 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "animation" | "animations" | "animation-demo" => Some(ANIMATION_DEMO_TAB_LABEL),
         "commands" | "command-routing" | "application-commands" => Some(COMMAND_DEMO_TAB_LABEL),
         "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
+        "shrinkwrap" | "shrinkwrap-chat" => Some(SHRINKWRAP_TAB_LABEL),
         "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
         "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
         "text-editing" => Some(TEXT_EDITING_TAB_LABEL),

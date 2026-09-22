@@ -35,6 +35,10 @@ required-features = ["native"]
 name = "trace_frames"
 required-features = ["native"]
 
+[[example]]
+name = "shrinkwrap_live"
+required-features = ["native"]
+
 [[bin]]
 name = "sui-demo-artifacts"
 path = "src/artifacts.rs"
