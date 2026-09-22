@@ -142,3 +142,37 @@ fn retained_pipeline_granularity_profile() {
         }
     }
 }
+
+#[test]
+#[ignore = "CPU snapshot-cache overhead under continuous motion; run serially"]
+fn snapshot_continuous_motion_profile() {
+    use crate::retained::RetainedCompositorState;
+    use crate::text_engine::TextEngine;
+    let base = grid_frame(WindowId::new(9082), false);
+    for enabled in [false, true, true, false] {
+        let mut compositor = RetainedCompositorState::default();
+        compositor.snapshot_cache_enabled = enabled;
+        let mut engine = TextEngine::new().unwrap();
+        let mut samples = Vec::new();
+        for index in 0..220 {
+            let mut frame = base.clone();
+            frame
+                .scene
+                .translate(sui_core::Vector::new(index as f32 * 0.1, 0.0));
+            engine.begin_frame();
+            let start = Instant::now();
+            let submission = compositor
+                .prepare_frame_submission(&frame, &mut engine, 0.0)
+                .unwrap();
+            std::hint::black_box(submission);
+            if index >= 20 {
+                samples.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        samples.sort_by(f64::total_cmp);
+        println!(
+            "SNAPSHOT_MOTION enabled={enabled} p50_ms={:.3} p95_ms={:.3}",
+            samples[100], samples[190]
+        );
+    }
+}

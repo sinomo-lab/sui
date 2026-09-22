@@ -677,7 +677,7 @@ pub enum SceneCommand {
 
 #[derive(Clone, Default)]
 pub struct Scene {
-    commands: Vec<SceneCommand>,
+    commands: Arc<Vec<SceneCommand>>,
     bounds: SceneBoundsSummary,
 }
 
@@ -703,18 +703,18 @@ impl Scene {
 
     pub fn push(&mut self, command: SceneCommand) {
         self.bounds.push(&command);
-        self.commands.push(command);
+        Arc::make_mut(&mut self.commands).push(command);
     }
 
-    pub fn append(&mut self, mut scene: Scene) {
+    pub fn append(&mut self, scene: Scene) {
         if self.bounds.state.is_balanced() && scene.bounds.state.is_balanced() {
             self.bounds.extend(&scene.bounds);
         } else {
-            for command in &scene.commands {
+            for command in scene.commands.iter() {
                 self.bounds.push(command);
             }
         }
-        self.commands.append(&mut scene.commands);
+        Arc::make_mut(&mut self.commands).append(&mut Arc::unwrap_or_clone(scene.commands));
     }
 
     /// Append a retained scene without allocating an intermediate command vector.
@@ -722,15 +722,19 @@ impl Scene {
         if self.bounds.state.is_balanced() && scene.bounds.state.is_balanced() {
             self.bounds.extend(&scene.bounds);
         } else {
-            for command in &scene.commands {
+            for command in scene.commands.iter() {
                 self.bounds.push(command);
             }
         }
-        self.commands.extend(scene.commands.iter().cloned());
+        Arc::make_mut(&mut self.commands).extend(scene.commands.iter().cloned());
     }
 
     pub fn clear(&mut self) {
-        self.commands.clear();
+        if let Some(commands) = Arc::get_mut(&mut self.commands) {
+            commands.clear();
+        } else {
+            self.commands = Arc::default();
+        }
         self.bounds = SceneBoundsSummary::default();
     }
 
@@ -738,8 +742,14 @@ impl Scene {
         &self.commands
     }
 
+    /// Whether two immutable snapshots share the same command storage.
+    /// Any mutation detaches shared storage before changing commands.
+    pub fn shares_commands_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.commands, &other.commands)
+    }
+
     pub fn visit_commands(&self, visitor: &mut dyn FnMut(&SceneCommand)) {
-        for command in &self.commands {
+        for command in self.commands.iter() {
             visitor(command);
             if let SceneCommand::Layer(layer) = command {
                 layer.scene.visit_commands(visitor);
@@ -748,7 +758,7 @@ impl Scene {
     }
 
     pub fn visit_layers(&self, visitor: &mut dyn FnMut(&SceneLayer)) {
-        for command in &self.commands {
+        for command in self.commands.iter() {
             if let SceneCommand::Layer(layer) = command {
                 visitor(layer);
                 layer.scene.visit_layers(visitor);
@@ -757,7 +767,7 @@ impl Scene {
     }
 
     pub fn visit_layers_mut(&mut self, visitor: &mut dyn FnMut(&mut SceneLayer)) {
-        for command in &mut self.commands {
+        for command in Arc::make_mut(&mut self.commands) {
             if let SceneCommand::Layer(layer) = command {
                 visitor(layer);
                 if layer
@@ -783,7 +793,7 @@ impl Scene {
 
     pub fn replace_layer(&mut self, widget_id: WidgetId, replacement: SceneLayer) -> bool {
         let mut replaced = false;
-        for command in &mut self.commands {
+        for command in Arc::make_mut(&mut self.commands) {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     *command = SceneCommand::Layer(replacement);
@@ -811,7 +821,7 @@ impl Scene {
         if delta == Vector::ZERO {
             return;
         }
-        for command in &mut self.commands {
+        for command in Arc::make_mut(&mut self.commands) {
             translate_command(command, delta);
         }
         self.rebuild_bounds();
@@ -819,7 +829,7 @@ impl Scene {
 
     pub fn translate_layer(&mut self, widget_id: WidgetId, delta: Vector) -> bool {
         let mut translated = false;
-        for command in &mut self.commands {
+        for command in Arc::make_mut(&mut self.commands) {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     layer.translate(delta);
@@ -848,7 +858,7 @@ impl Scene {
         descriptor: SceneLayerDescriptor,
     ) -> bool {
         let mut replaced = false;
-        for command in &mut self.commands {
+        for command in Arc::make_mut(&mut self.commands) {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     layer.descriptor = descriptor;
@@ -874,7 +884,7 @@ impl Scene {
     }
 
     pub fn layer_scene(&self, widget_id: WidgetId) -> Option<&Scene> {
-        for command in &self.commands {
+        for command in self.commands.iter() {
             match command {
                 SceneCommand::Layer(layer) if layer.widget_id() == widget_id => {
                     return Some(&layer.scene);
@@ -907,7 +917,7 @@ impl Scene {
         stack_layers.sort_by_key(|(index, layer)| (layer.descriptor.stack_order, *index));
 
         let mut sorted_layers = stack_layers.into_iter().map(|(_, layer)| layer);
-        for command in &mut self.commands {
+        for command in Arc::make_mut(&mut self.commands) {
             if let SceneCommand::Layer(layer) = command {
                 if layer
                     .scene
@@ -1836,6 +1846,46 @@ mod tests {
 
         assert_eq!(command_count, 3);
         assert!(saw_nested_fill);
+    }
+
+    #[test]
+    fn scene_clones_share_storage_and_detach_all_mutations() {
+        let child_id = WidgetId::new(501);
+        let mut child = Scene::new();
+        child.push(SceneCommand::FillRect {
+            rect: Rect::new(2.0, 3.0, 10.0, 12.0),
+            brush: Color::WHITE.into(),
+        });
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::new(
+            child_id,
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+            child,
+        )));
+        let expected_commands = scene.commands().to_vec();
+        let expected_bounds = scene.paint_bounds();
+        for mutation in 0..7 {
+            let mut edited = scene.clone();
+            assert!(edited.shares_commands_with(&scene));
+            match mutation {
+                0 => edited.push(SceneCommand::Clear(Color::BLACK)),
+                1 => edited.append(scene.clone()),
+                2 => edited.append_ref(&scene),
+                3 => edited.clear(),
+                4 => edited.translate(Vector::new(9.0, 4.0)),
+                5 => {
+                    assert!(edited.translate_layer(child_id, Vector::new(9.0, 4.0)));
+                }
+                _ => {
+                    edited.visit_layers_mut(&mut |layer| layer.descriptor.properties.opacity = 0.5)
+                }
+            }
+            assert!(!edited.shares_commands_with(&scene));
+            assert_eq!(scene.commands(), expected_commands);
+            assert_eq!(scene.paint_bounds(), expected_bounds);
+            assert_bounds_summary_matches_commands(&edited);
+            assert_bounds_summary_matches_commands(&scene);
+        }
     }
 
     #[test]

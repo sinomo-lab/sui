@@ -94,6 +94,8 @@ pub struct RendererFrameStats {
     pub retained_state_update_time_us: u64,
     pub composition_time_us: u64,
     pub retained_scene_traversal_time_us: u64,
+    pub snapshot_commands_replayed: usize,
+    pub snapshot_commands_reused: usize,
     pub retained_packet_build_time_us: u64,
     pub retained_packet_build_count: usize,
     pub retained_packet_rebuilds: RetainedPacketRebuildStats,
@@ -201,6 +203,8 @@ impl RendererFrameStats {
             retained_state_update_time_us: 0,
             composition_time_us: 0,
             retained_scene_traversal_time_us: 0,
+            snapshot_commands_replayed: 0,
+            snapshot_commands_reused: 0,
             retained_packet_build_time_us: 0,
             retained_packet_build_count: 0,
             retained_packet_rebuilds: RetainedPacketRebuildStats::default(),
@@ -242,6 +246,8 @@ impl RendererFrameStats {
     }
 
     pub(crate) fn with_compositor_stats(mut self, stats: RetainedCompositorFrameStats) -> Self {
+        self.snapshot_commands_replayed = stats.snapshot_commands_replayed;
+        self.snapshot_commands_reused = stats.snapshot_commands_reused;
         self.visible_layer_count = stats.visible_layers;
         self.direct_packet_count = stats.direct_packets;
         self.retained_state_update_time_us = (stats.state_update_time_ms * 1000.0).round() as u64;

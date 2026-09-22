@@ -1250,6 +1250,8 @@ mod tests {
                         "prepared_builds",
                         stats.prepared_fragment_build_count as u64,
                     ),
+                    ("snapshot_replayed", stats.snapshot_commands_replayed as u64),
+                    ("snapshot_reused", stats.snapshot_commands_reused as u64),
                     ("vertex_upload_bytes", stats.uploaded_vertex_bytes),
                     (
                         "path_misses",

@@ -2,14 +2,15 @@
 
 Measured on 2026-09-22 against `aadf658`, with diagnostic-test additions. This
 review identifies optimization candidates. The measurements in sections 1–3
-describe that baseline; the implementation update below records subsequent work.
+describe that baseline; the implementation updates below record subsequent work.
 
 ## Implementation update: composed and prepared fragment reuse
 
 The first implementation caches composed geometry and prepared GPU passes by
 immutable packet identity plus presentation and resource-slot dependencies.
-Exact content/state equality also bypasses repeated packet hashing. Snapshot
-traversal and shared-arena batching remain future work.
+Exact content/state equality also bypasses repeated packet hashing. That version
+still performed full snapshot traversal; the next update adds span reuse.
+Shared-arena batching remains future work.
 
 Paired before/after/after/before runs of the same small-demo workload, with
 `WGPU_DEBUG=0` and `WGPU_VALIDATION=0` for both binaries, measured:
@@ -33,6 +34,47 @@ overlap between revisions, so no zoom speedup is established.
 Validation includes the 230 previously active renderer tests and two new
 pixel-comparison tests covering cache hits, localized edits, translation,
 opacity, clipping, DPI changes, removal, and analytic-path arena remapping.
+
+## Implementation update: snapshot spans and shared scene storage
+
+The next implementation reuses direct-command spans between child layers,
+including their packet snapshots, terminal traversal state, and property nodes.
+Inputs include exact command values, inherited state, scope nesting, and node-ID
+allocation checkpoints. Mismatches replay current commands through the normal
+path. Layer headers and span comparisons still run, and tree maps are assembled
+each frame; the optimization avoids reinterpreting unchanged drawing commands.
+
+`Scene` clones now share command storage and detach on mutation. This reduces
+frame/snapshot copying while preserving independent published scene values.
+Removed spans are evicted. Frequently changing large spans refresh a stored
+candidate at most once per eight misses, bounding cache-maintenance overhead;
+visible updates are always processed immediately.
+
+A before/after/after/before comparison against `75d4435`, using the same
+1440 x 900 demo and `WGPU_DEBUG=0`, `WGPU_VALIDATION=0`, measured:
+
+| Cost | Before | After |
+|---|---:|---:|
+| Full-repaint frame median | 2.22–2.30 ms | 1.71–1.72 ms |
+| Renderer average | 1.45–1.46 ms | 0.99–1.00 ms |
+| Runtime average | 0.80–0.84 ms | 0.75–0.76 ms |
+| Snapshot traversal average | 0.526–0.532 ms | 0.102–0.103 ms |
+
+Animated frames replay nine commands (including layer headers) and reuse 1,718.
+Prepared-fragment reuse remains 92 hits and one build. A separate pair under
+normal development backend flags measured 3.43 ms before and 3.00 ms after for
+full repaint.
+
+The alternating wheel-zoom probe improved from 4.81–4.87 ms to 4.57–4.63 ms,
+partly because it revisits cached positions. A separate CPU-only continuously
+moving 1,024-dot scene measured 0.711–0.719 ms without snapshot caching and
+0.720–0.728 ms with caching. That small miss-path cost should not be confused
+with a general continuous-zoom speedup.
+
+Validation: 235 active renderer tests, 15 scene tests, and 24 runtime paint tests
+passed. New tests cover animated-leaf locality, uncached pixel equivalence after
+ancestor/property-node changes, cache eviction, reuse after motion settles, and
+copy-on-write isolation across scene mutation paths.
 
 ## Measurement setup
 
@@ -156,6 +198,7 @@ Run the probes serially in PowerShell:
 $env:SUI_PROFILE_WIDGET_TIMINGS = '1'
 cargo test -p sinomo-ui-demo --features sui-runtime/layout-diagnostics --lib small_node_demo_paint_profile -- --ignored --nocapture
 cargo test -p sinomo-ui-render-wgpu --lib retained_pipeline_granularity_profile -- --ignored --nocapture --test-threads=1
+cargo test -p sinomo-ui-render-wgpu --lib snapshot_continuous_motion_profile -- --ignored --nocapture --test-threads=1
 ```
 
 For the separate backend-flag comparison, set `WGPU_DEBUG=0` and

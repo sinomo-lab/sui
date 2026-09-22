@@ -83,6 +83,8 @@ pub(crate) struct RetainedCompositorFrameStats {
     pub(crate) state_update_time_ms: f64,
     pub(crate) composition_time_ms: f64,
     pub(crate) scene_traversal_time_ms: f64,
+    pub(crate) snapshot_commands_replayed: usize,
+    pub(crate) snapshot_commands_reused: usize,
     pub(crate) packet_build_count: usize,
     pub(crate) packet_build_time_ms: f64,
     pub(crate) packet_rebuilds: RetainedPacketRebuildStats,
@@ -456,7 +458,7 @@ pub(crate) struct CompositorSnapshot {
     pub(crate) layers: HashMap<SceneLayerId, LayerSnapshot>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CompositionTraversalState {
     pub(crate) current_transform: Transform,
     pub(crate) text_background: crate::text_background::TextBackground,
@@ -468,6 +470,36 @@ pub(crate) struct CompositionTraversalState {
     pub(crate) clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
     pub(crate) effect_node: EffectNodeId,
     pub(crate) composed_layer_properties: LayerProperties,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SnapshotSpanInput {
+    state: CompositionTraversalState,
+    scopes: [usize; 3],
+    local_clips: Vec<bool>,
+    next_transform: u64,
+    next_clip: u64,
+    packet_start: usize,
+    packet_draw_limit: usize,
+    inherited_clip_count: usize,
+}
+
+/// A run of direct commands between child layers. Property-node allocation
+/// checkpoints are part of the input: replayed nodes can only occupy the same
+/// IDs with the same inherited state. A structural/context mismatch uses the
+/// normal traversal and refreshes the candidate; child layers remain independent.
+#[derive(Debug)]
+struct CachedSnapshotSpan {
+    commands: Arc<[SceneCommand]>,
+    input: SnapshotSpanInput,
+    end_state: CompositionTraversalState,
+    end_scopes: [usize; 3],
+    end_local_clips: Vec<bool>,
+    transforms: Vec<TransformNode>,
+    clips: Vec<ClipNode>,
+    packets: Vec<PacketSnapshot>,
+    last_used_snapshot: u64,
+    misses: u8,
 }
 
 impl Default for CompositionTraversalState {
@@ -542,6 +574,12 @@ pub(crate) struct RetainedCompositorState {
     // packets also carry transform stacks; layer-local transforms stay balanced
     // so normalization can remove the inherited transform without inversion.
     pub(crate) packet_draw_limit: usize,
+    snapshot_spans: HashMap<(CompositionContainerId, usize), CachedSnapshotSpan>,
+    snapshot_epoch: u64,
+    pub(crate) snapshot_commands_replayed: usize,
+    pub(crate) snapshot_commands_reused: usize,
+    #[cfg(test)]
+    pub(crate) snapshot_cache_enabled: bool,
 }
 
 impl Default for RetainedCompositorState {
@@ -564,11 +602,22 @@ impl Default for RetainedCompositorState {
             diagnostics_enabled: true,
             path_cache: PathMeshCache::default(),
             packet_draw_limit: 16,
+            snapshot_spans: HashMap::new(),
+            snapshot_epoch: 0,
+            snapshot_commands_replayed: 0,
+            snapshot_commands_reused: 0,
+            #[cfg(test)]
+            snapshot_cache_enabled: true,
         }
     }
 }
 
 impl RetainedCompositorState {
+    #[cfg(test)]
+    pub(crate) fn snapshot_cache_len(&self) -> usize {
+        self.snapshot_spans.len()
+    }
+
     pub(crate) fn set_diagnostics_enabled(&mut self, enabled: bool) {
         self.diagnostics_enabled = enabled;
         self.path_cache.set_diagnostics_enabled(enabled);
@@ -632,6 +681,8 @@ impl RetainedCompositorState {
         let mut frame_stats = RetainedCompositorFrameStats::default();
         let scene_traversal_started = self.diagnostics_enabled.then(Instant::now);
         let snapshot = self.build_snapshot(&frame.scene, text_engine.lcd_blending_supported)?;
+        frame_stats.snapshot_commands_replayed = self.snapshot_commands_replayed;
+        frame_stats.snapshot_commands_reused = self.snapshot_commands_reused;
         if let Some(started) = scene_traversal_started {
             frame_stats.scene_traversal_time_ms = started.elapsed().as_secs_f64() * 1000.0;
         }
@@ -675,6 +726,9 @@ impl RetainedCompositorState {
         lcd_blending_supported: bool,
     ) -> Result<CompositorSnapshot> {
         self.reset_property_trees();
+        self.snapshot_epoch = self.snapshot_epoch.wrapping_add(1);
+        self.snapshot_commands_replayed = 0;
+        self.snapshot_commands_reused = 0;
         let mut snapshot = CompositorSnapshot::default();
         snapshot.root = self.build_container_snapshot(
             CompositionContainerId::Root,
@@ -687,6 +741,8 @@ impl RetainedCompositorState {
             None,
             0,
         )?;
+        self.snapshot_spans
+            .retain(|_, span| span.last_used_snapshot == self.snapshot_epoch);
         Ok(snapshot)
     }
 
@@ -711,71 +767,127 @@ impl RetainedCompositorState {
         // back to layer-local geometry losslessly. Keep that scope intact.
         let mut local_clips_untransformed = Vec::new();
 
-        for command in scene.commands() {
-            match command {
-                SceneCommand::Layer(layer) => {
-                    flush_container_segment(
-                        container,
-                        &mut result,
-                        &mut normal_items,
-                        &mut overlay_items,
-                        &mut effect_items,
-                        &mut segment_scene,
-                        &mut segment_start,
-                        inherited_clip_count,
-                    );
+        let commands = scene.commands();
+        let mut cursor = 0;
+        while cursor < commands.len() {
+            if let SceneCommand::Layer(layer) = &commands[cursor] {
+                self.snapshot_commands_replayed += 1;
+                flush_container_segment(
+                    container,
+                    &mut result,
+                    &mut normal_items,
+                    &mut overlay_items,
+                    &mut effect_items,
+                    &mut segment_scene,
+                    &mut segment_start,
+                    inherited_clip_count,
+                );
 
-                    draws = 0;
-                    let mut child_state = state.clone();
-                    if !layer.descriptor.clip_to_ancestors {
-                        child_state.clip_stack.clear();
-                    }
-                    child_state.effect_node = self.push_effect_node(
-                        Some(state.effect_node),
-                        layer.descriptor.composition_mode,
-                    );
-                    let layer_clip = if layer.descriptor.composition_mode
-                        == sui_scene::LayerCompositionMode::Scroll
-                    {
-                        Some(
-                            layer
-                                .descriptor
-                                .presented_bounds()
-                                .translate(state.composed_layer_properties.translation),
-                        )
-                    } else if layer.descriptor.is_stack_surface {
-                        Some(
-                            layer
-                                .descriptor
-                                .presented_paint_bounds()
-                                .translate(state.composed_layer_properties.translation),
-                        )
-                    } else {
-                        None
-                    };
-                    if let Some(clip_rect) = layer_clip {
-                        let clip = ResolvedClipPrimitive::Rect(clip_rect);
-                        let parent = child_state
-                            .clip_stack
-                            .last()
-                            .map(|(_, node_id)| *node_id)
-                            .unwrap_or(ClipNodeId::ROOT);
-                        let node_id = self.push_clip_node(Some(parent), clip.clone());
-                        child_state.clip_stack.push((clip, node_id));
-                    }
-                    let phase = composition_phase_for_mode(layer.descriptor.composition_mode);
-                    let layer_snapshot =
-                        self.build_layer_snapshot(layer, parent_layer, child_state, snapshot)?;
-                    push_composition_item(
-                        phase,
-                        CompositionItem::Layer(layer.layer_id()),
-                        &mut normal_items,
-                        &mut overlay_items,
-                        &mut effect_items,
-                    );
-                    snapshot.layers.insert(layer.layer_id(), layer_snapshot);
+                draws = 0;
+                let mut child_state = state.clone();
+                if !layer.descriptor.clip_to_ancestors {
+                    child_state.clip_stack.clear();
                 }
-                _ => {
+                child_state.effect_node = self
+                    .push_effect_node(Some(state.effect_node), layer.descriptor.composition_mode);
+                let layer_clip = if layer.descriptor.composition_mode
+                    == sui_scene::LayerCompositionMode::Scroll
+                {
+                    Some(
+                        layer
+                            .descriptor
+                            .presented_bounds()
+                            .translate(state.composed_layer_properties.translation),
+                    )
+                } else if layer.descriptor.is_stack_surface {
+                    Some(
+                        layer
+                            .descriptor
+                            .presented_paint_bounds()
+                            .translate(state.composed_layer_properties.translation),
+                    )
+                } else {
+                    None
+                };
+                if let Some(clip_rect) = layer_clip {
+                    let clip = ResolvedClipPrimitive::Rect(clip_rect);
+                    let parent = child_state
+                        .clip_stack
+                        .last()
+                        .map(|(_, node_id)| *node_id)
+                        .unwrap_or(ClipNodeId::ROOT);
+                    let node_id = self.push_clip_node(Some(parent), clip.clone());
+                    child_state.clip_stack.push((clip, node_id));
+                }
+                let phase = composition_phase_for_mode(layer.descriptor.composition_mode);
+                let layer_snapshot =
+                    self.build_layer_snapshot(layer, parent_layer, child_state, snapshot)?;
+                push_composition_item(
+                    phase,
+                    CompositionItem::Layer(layer.layer_id()),
+                    &mut normal_items,
+                    &mut overlay_items,
+                    &mut effect_items,
+                );
+                snapshot.layers.insert(layer.layer_id(), layer_snapshot);
+                cursor += 1;
+            } else {
+                let start = cursor;
+                while cursor < commands.len() && !matches!(commands[cursor], SceneCommand::Layer(_))
+                {
+                    cursor += 1;
+                }
+                let span_commands = &commands[start..cursor];
+                let cache_id = (container, start);
+                let input = SnapshotSpanInput {
+                    state: state.clone(),
+                    scopes,
+                    local_clips: local_clips_untransformed.clone(),
+                    next_transform: self.next_transform_node,
+                    next_clip: self.next_clip_node,
+                    packet_start: result.packets.len(),
+                    packet_draw_limit: self.packet_draw_limit,
+                    inherited_clip_count,
+                };
+                let cache_enabled = {
+                    #[cfg(test)]
+                    {
+                        self.snapshot_cache_enabled
+                    }
+                    #[cfg(not(test))]
+                    {
+                        true
+                    }
+                };
+                if cache_enabled
+                    && let Some(cached) = self.snapshot_spans.get_mut(&cache_id)
+                    && cached.input == input
+                    && cached.commands.as_ref() == span_commands
+                {
+                    for node in &cached.transforms {
+                        self.transforms.insert(node.id, node.clone());
+                    }
+                    for node in &cached.clips {
+                        self.clips.insert(node.id, node.clone());
+                    }
+                    self.next_transform_node += cached.transforms.len() as u64;
+                    self.next_clip_node += cached.clips.len() as u64;
+                    state = cached.end_state.clone();
+                    scopes = cached.end_scopes;
+                    local_clips_untransformed = cached.end_local_clips.clone();
+                    for packet in &cached.packets {
+                        normal_items.push(CompositionItem::Packet(packet.id));
+                        result.packet_ids.push(packet.id);
+                        result.packets.push(packet.clone());
+                    }
+                    cached.last_used_snapshot = self.snapshot_epoch;
+                    cached.misses = 0;
+                    self.snapshot_commands_reused += span_commands.len();
+                    draws = 0;
+                    continue;
+                }
+                self.snapshot_commands_replayed += span_commands.len();
+                for command in span_commands {
                     if segment_start.is_none() {
                         segment_start = Some(state.resolved_state());
                     }
@@ -834,6 +946,57 @@ impl RetainedCompositorState {
                         );
                         draws = 0;
                     }
+                }
+
+                flush_container_segment(
+                    container,
+                    &mut result,
+                    &mut normal_items,
+                    &mut overlay_items,
+                    &mut effect_items,
+                    &mut segment_scene,
+                    &mut segment_start,
+                    inherited_clip_count,
+                );
+                draws = 0;
+                // Frequently changing large spans (for example a zooming grid)
+                // should not pay to save a new snapshot on every miss. Always
+                // render current commands; refresh the reuse candidate at most
+                // once per eight misses, or immediately for a new/small span.
+                let save_snapshot = if cache_enabled {
+                    if let Some(cached) = self.snapshot_spans.get_mut(&cache_id) {
+                        cached.last_used_snapshot = self.snapshot_epoch;
+                        cached.misses = cached.misses.saturating_add(1);
+                        span_commands.len() < 32 || cached.misses >= 8
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                };
+                if save_snapshot {
+                    let transforms = (input.next_transform..self.next_transform_node)
+                        .map(|id| self.transforms[&TransformNodeId(id)].clone())
+                        .collect();
+                    let clips = (input.next_clip..self.next_clip_node)
+                        .map(|id| self.clips[&ClipNodeId(id)].clone())
+                        .collect();
+                    let packets = result.packets[input.packet_start..].to_vec();
+                    self.snapshot_spans.insert(
+                        cache_id,
+                        CachedSnapshotSpan {
+                            commands: Arc::from(span_commands),
+                            input,
+                            end_state: state.clone(),
+                            end_scopes: scopes,
+                            end_local_clips: local_clips_untransformed.clone(),
+                            transforms,
+                            clips,
+                            packets,
+                            last_used_snapshot: self.snapshot_epoch,
+                            misses: 0,
+                        },
+                    );
                 }
             }
         }
@@ -1211,7 +1374,8 @@ impl RetainedCompositorState {
             || packet.coordinate_space != space
             || !packet.atlas_is_current(engine)
             || packet.initial_state != snapshot.initial_state
-            || packet.scene != snapshot.scene
+            || (!packet.scene.shares_commands_with(&snapshot.scene)
+                && packet.scene != snapshot.scene)
             || packet.raster_context != RasterContext::new(frame, feather_width)
         {
             return;
@@ -1255,7 +1419,8 @@ impl RetainedCompositorState {
             && packet.raster_context == raster_context
             && packet.atlas_is_current(text_engine)
             && packet.initial_state == snapshot.initial_state
-            && packet.scene == snapshot.scene
+            && (packet.scene.shares_commands_with(&snapshot.scene)
+                || packet.scene == snapshot.scene)
         {
             return Ok(());
         }

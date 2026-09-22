@@ -75,9 +75,25 @@ obsolete fragments or their window.
 
 `prepared_fragment_cache_hits` and `prepared_fragment_build_count` expose this
 reuse independently of raster packet rebuilds. They count submitted fragments;
-the logical packet count can also include culled or empty packets. Scene
-snapshot traversal is still performed each frame, and the default 16-command
-invalidation granularity is unchanged.
+the logical packet count can also include culled or empty packets. The default
+16-command invalidation granularity is unchanged.
+
+Scene command vectors are shared across read-only clones and detach on mutation.
+Snapshot construction caches direct-command spans between child layers. A hit
+reuses packet snapshots, terminal traversal state, and the span's property nodes.
+Reuse requires exact commands and incoming state, including scope nesting,
+inherited text backdrops, clipping/transforms, and property-node allocation IDs.
+Structural or inherited-state changes use normal traversal. Layer headers and
+span comparisons are still processed; this is not a constant-time whole-frame
+cache or a dependency on callers providing complete damage hints.
+
+Snapshot entries are retained only while their span is present. To bound extra
+work during continuous motion, an existing large span refreshes its candidate
+at most once per eight misses; new and small spans are saved immediately. Misses
+always render current commands. The policy can delay reuse after motion settles,
+but never delays visible updates. `snapshot_commands_replayed` includes layer
+headers and changed spans; `snapshot_commands_reused` counts commands represented
+by cached spans.
 
 One important caveat is that retained-compositor cost still depends directly on where the runtime chooses to emit `SceneLayer` boundaries. That makes the runtime's boundary policy a first-order renderer concern even though the renderer itself does not walk widget internals.
 

@@ -140,3 +140,111 @@ fn prepared_analytic_instances_refresh_after_arena_slot_remapping() {
     );
     assert_rgba_images_match(&expected, &renderer.capture_rgba(window).unwrap());
 }
+
+#[test]
+fn snapshot_spans_replay_only_the_animated_layer_and_release_removed_content() {
+    let window = WindowId::new(9220);
+    let owner = WidgetId::new(9221);
+    let mut renderer = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    reference
+        .compositors
+        .entry(window)
+        .or_default()
+        .snapshot_cache_enabled = false;
+    for index in 0..24 {
+        let mut frame = layered_frame(window, 0);
+        let mut particles = Scene::new();
+        for particle in 0..3 {
+            particles.push(SceneCommand::FillRoundedRect {
+                rect: Rect::new(10.0 + index as f32 + particle as f32 * 20.0, 50.0, 4.8, 4.8),
+                radii: [2.4; 4],
+                brush: Color::WHITE.into(),
+                border: None,
+                shadow: None,
+            });
+        }
+        frame
+            .scene
+            .push(SceneCommand::Layer(SceneLayer::from_descriptor(
+                SceneLayerDescriptor::new(
+                    SceneLayerId::from_widget(owner),
+                    owner,
+                    Rect::new(0.0, 0.0, 200.0, 140.0),
+                ),
+                particles,
+            )));
+        renderer.render(&frame).unwrap();
+        if index > 0 {
+            let stats = renderer.last_frame_stats(window).unwrap();
+            assert!(stats.snapshot_commands_reused >= 80);
+            assert!(
+                stats.snapshot_commands_replayed <= 6,
+                "stationary content was replayed: {stats:?}"
+            );
+            assert_eq!(stats.prepared_fragment_build_count, 1);
+        }
+        if index == 1 || index == 23 {
+            reference.render(&frame).unwrap();
+            assert_rgba_images_match(
+                &reference.capture_rgba(window).unwrap(),
+                &renderer.capture_rgba(window).unwrap(),
+            );
+        }
+        assert!(renderer.compositors[&window].snapshot_cache_len() <= 5);
+    }
+    renderer
+        .render(&SceneFrame::new(window, Size::new(200.0, 140.0)))
+        .unwrap();
+    assert_eq!(renderer.compositors[&window].snapshot_cache_len(), 0);
+}
+
+#[test]
+fn snapshot_span_fallback_matches_uncached_ancestor_changes_and_node_ids() {
+    let window = WindowId::new(9222);
+    let mut renderer = WgpuRenderer::new();
+    let mut reference = WgpuRenderer::new();
+    reference
+        .compositors
+        .entry(window)
+        .or_default()
+        .snapshot_cache_enabled = false;
+    for revision in [0, 0, 2, 3, 4, 5, 1, 0] {
+        let mut frame = layered_frame(window, revision);
+        let mut prefix = Scene::new();
+        // Changing the number of ancestors changes property-node allocation
+        // and must invalidate spans even when their own commands are identical.
+        if revision % 2 == 1 {
+            prefix.push(SceneCommand::PushTransform {
+                transform: sui_core::Transform::translation(0.5, 0.75),
+            });
+        }
+        prefix.append(frame.scene);
+        if revision % 2 == 1 {
+            prefix.push(SceneCommand::PopTransform);
+        }
+        frame.scene = prefix;
+        for _ in 0..2 {
+            renderer.render(&frame).unwrap();
+            reference.render(&frame).unwrap();
+            assert_rgba_images_match(
+                &reference.capture_rgba(window).unwrap(),
+                &renderer.capture_rgba(window).unwrap(),
+            );
+        }
+    }
+}
+
+#[test]
+fn snapshot_spans_resume_reuse_after_geometry_stops_changing() {
+    let window = WindowId::new(9224);
+    let mut renderer = WgpuRenderer::new();
+    renderer.render(&layered_frame(window, 0)).unwrap();
+    let changed = layered_frame(window, 1);
+    for _ in 0..10 {
+        renderer.render(&changed).unwrap();
+    }
+    let stats = renderer.last_frame_stats(window).unwrap();
+    assert!(stats.snapshot_commands_reused >= 80);
+    assert_eq!(stats.prepared_fragment_build_count, 0);
+}
