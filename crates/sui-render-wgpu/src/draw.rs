@@ -183,6 +183,7 @@ pub(crate) struct PreparedDrawBatch {
     pub(crate) vertices: PreparedVertices,
 }
 
+#[derive(Clone)]
 pub(crate) struct PreparedFragmentSubmission {
     pub(crate) passes: Vec<PreparedPassBatch>,
     pub(crate) solid_buffer: Option<wgpu::Buffer>,

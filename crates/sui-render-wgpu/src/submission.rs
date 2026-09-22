@@ -185,6 +185,8 @@ impl WgpuRenderer {
         let mut needs_stencil = false;
         let mut batch_prepare_time_us = 0u64;
         let mut gpu_upload_time_us = 0u64;
+        let mut prepared_fragment_cache_hits = 0;
+        let mut prepared_fragment_build_count = 0;
 
         let buffers = self
             .frame_resources
@@ -200,9 +202,47 @@ impl WgpuRenderer {
         let mut shadow_budget = crate::uploads::MAX_WINDOW_VERTEX_SHADOW_BYTES;
         for fragment in submission.fragments {
             let RetainedFrameFragment { id, draw_ops } = fragment;
+            let slots = analytic_path_resources
+                .as_ref()
+                .map(|resources| &resources.slots);
+            let buffers = self
+                .frame_resources
+                .fragments
+                .get_mut(&frame.window_id)
+                .expect("window buffers present")
+                .entry(id)
+                .or_default();
+            if let Some(cached) = &buffers.prepared
+                && cached.matches(&draw_ops, frame.viewport, framebuffer_size, slots)
+            {
+                if diagnostics_enabled {
+                    prepared_fragment_cache_hits += 1;
+                    draw_count += prepared_batch_counts(&cached.submission.passes).1;
+                }
+                needs_stencil |= cached
+                    .submission
+                    .passes
+                    .iter()
+                    .any(|pass| !pass.clip_paths.is_empty());
+                prepared_fragments.push(cached.submission.clone());
+                buffers.limit_shadows(&mut shadow_budget);
+                continue;
+            }
+            if diagnostics_enabled {
+                prepared_fragment_build_count += 1;
+            }
+            let analytic_slots = draw_ops
+                .analytic_paths
+                .values()
+                .filter_map(|path| {
+                    slots
+                        .and_then(|slots| slots.get(&path.resource_signature))
+                        .map(|slot| (path.resource_signature, *slot))
+                })
+                .collect();
             let batch_prepare_started = diagnostics_enabled.then(Instant::now);
             let prepared = prepare_frame_batches_with_analytic_slots(
-                draw_ops,
+                (*draw_ops).clone(),
                 frame.viewport,
                 framebuffer_size,
                 analytic_path_resources
@@ -243,7 +283,7 @@ impl WgpuRenderer {
                 .entry(id)
                 .or_default();
             let uploads = &mut self.frame_resources.uploads;
-            prepared_fragments.push(PreparedFragmentSubmission {
+            let prepared_submission = PreparedFragmentSubmission {
                 passes: prepared.passes,
                 solid_buffer: buffers.solid.upload(
                     &shared.device,
@@ -282,7 +322,15 @@ impl WgpuRenderer {
                     &prepared.text_instances,
                 ),
                 translation: Vector::ZERO,
+            };
+            buffers.prepared = Some(crate::uploads::PreparedFragmentCache {
+                source: draw_ops,
+                viewport: frame.viewport,
+                framebuffer_size,
+                analytic_slots,
+                submission: prepared_submission.clone(),
             });
+            prepared_fragments.push(prepared_submission);
             buffers.limit_shadows(&mut shadow_budget);
             if let Some(started) = gpu_upload_started {
                 gpu_upload_time_us += started.elapsed().as_micros() as u64;
@@ -336,6 +384,8 @@ impl WgpuRenderer {
         frame_stats.text_atlas_upload_bytes = text_atlas_upload_bytes;
         frame_stats.batch_prepare_time_us = batch_prepare_time_us;
         frame_stats.gpu_upload_time_us = gpu_upload_time_us;
+        frame_stats.prepared_fragment_cache_hits = prepared_fragment_cache_hits;
+        frame_stats.prepared_fragment_build_count = prepared_fragment_build_count;
         Ok(PreparedSceneSubmission {
             viewport: frame.viewport,
             framebuffer_size,

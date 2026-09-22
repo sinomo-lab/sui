@@ -1,5 +1,8 @@
 # SUI Rendering Architecture
 
+For measured cache, batching, and submission costs, see the
+[renderer pipeline performance review](renderer-pipeline-review.md).
+
 ## Current Renderer Contract
 
 The renderer boundary is:
@@ -54,6 +57,27 @@ In practice, each window keeps retained state for:
 - transform, clip, and effect nodes
 - retained packet data for direct draws
 - per-window GPU resources and submission stats
+
+Retained raster packets now own immutable draw data and cache their composed
+result by transform, clip stack, opacity, viewport, and surface size. Replacing
+a raster packet (including after text-atlas recycling) replaces this cache.
+Identical normalized content and raster context reuse the packet without
+rehashing it.
+
+Each visible fragment also caches prepared passes and GPU-buffer bindings.
+The immutable composed result's identity is its content generation. Unchanged
+generations skip vertex conversion, batch preparation, and CPU-shadow comparison;
+changed fragments still use subrange uploads. Preparation also checks viewport,
+framebuffer size, and referenced analytic-path slots, because arena compaction
+can move path data independently of its content. Resource binding refreshes
+continue each frame, including for external images. Caches are released with
+obsolete fragments or their window.
+
+`prepared_fragment_cache_hits` and `prepared_fragment_build_count` expose this
+reuse independently of raster packet rebuilds. They count submitted fragments;
+the logical packet count can also include culled or empty packets. Scene
+snapshot traversal is still performed each frame, and the default 16-command
+invalidation granularity is unchanged.
 
 One important caveat is that retained-compositor cost still depends directly on where the runtime chooses to emit `SceneLayer` boundaries. That makes the runtime's boundary policy a first-order renderer concern even though the renderer itself does not walk widget internals.
 

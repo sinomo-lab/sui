@@ -116,6 +116,35 @@ pub(crate) struct FragmentBuffers {
     pub(crate) extended: VertexBuffer,
     pub(crate) clip: VertexBuffer,
     pub(crate) text: VertexBuffer,
+    pub(crate) prepared: Option<PreparedFragmentCache>,
+}
+
+pub(crate) struct PreparedFragmentCache {
+    pub(crate) source: std::sync::Arc<crate::draw::DrawOpArena>,
+    pub(crate) viewport: sui_core::Size,
+    pub(crate) framebuffer_size: (u32, u32),
+    // Arena compaction may move a path without changing its geometry. Check
+    // only the slots referenced by this fragment before reusing GPU instances.
+    pub(crate) analytic_slots: Vec<(u64, u32)>,
+    pub(crate) submission: crate::draw::PreparedFragmentSubmission,
+}
+
+impl PreparedFragmentCache {
+    pub(crate) fn matches(
+        &self,
+        source: &std::sync::Arc<crate::draw::DrawOpArena>,
+        viewport: sui_core::Size,
+        framebuffer_size: (u32, u32),
+        slots: Option<&std::collections::HashMap<u64, u32>>,
+    ) -> bool {
+        std::sync::Arc::ptr_eq(&self.source, source)
+            && self.viewport == viewport
+            && self.framebuffer_size == framebuffer_size
+            && self
+                .analytic_slots
+                .iter()
+                .all(|(signature, slot)| slots.and_then(|slots| slots.get(signature)) == Some(slot))
+    }
 }
 
 impl FragmentBuffers {

@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::Arc;
 use sui_core::Color;
 use sui_core::ColorSpace;
 use sui_core::Path as ScenePath;
@@ -168,7 +169,22 @@ pub(crate) struct RetainedFrameSubmission {
 #[derive(Debug)]
 pub(crate) struct RetainedFrameFragment {
     pub(crate) id: RetainedPacketId,
-    pub(crate) draw_ops: DrawOpArena,
+    pub(crate) draw_ops: Arc<DrawOpArena>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CompositionKey {
+    transform: Transform,
+    clips: Vec<ResolvedClipPrimitive>,
+    opacity: f32,
+    viewport: Size,
+    surface_size: Size,
+}
+
+#[derive(Debug, Clone)]
+struct ComposedPacket {
+    key: CompositionKey,
+    draw_ops: Arc<DrawOpArena>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,10 +351,31 @@ pub(crate) struct RetainedDirectPacket {
     pub(crate) scene: Scene,
     pub(crate) initial_state: ResolvedRasterState,
     pub(crate) signature: u64,
+    raster_context: RasterContext,
     pub(crate) coordinate_space: PacketCoordinateSpace,
-    pub(crate) draw_ops: DrawOpArena,
+    pub(crate) draw_ops: Arc<DrawOpArena>,
+    // Replacing a raster packet also replaces its composition cache. The Arc
+    // identity of the immutable result acts as a generation for GPU preparation.
+    composed: std::cell::RefCell<Option<ComposedPacket>>,
     pub(crate) text_pages: u8,
     pub(crate) atlas_versions: [u64; crate::text::TEXT_ATLAS_MAX_PAGES],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RasterContext {
+    viewport: Size,
+    surface_size: Size,
+    feather_width_bits: u32,
+}
+
+impl RasterContext {
+    fn new(frame: &SceneFrame, feather_width: f32) -> Self {
+        Self {
+            viewport: frame.viewport,
+            surface_size: frame.surface_size,
+            feather_width_bits: feather_width.to_bits(),
+        }
+    }
 }
 
 impl RetainedDirectPacket {
@@ -569,12 +606,8 @@ impl RetainedCompositorState {
     ) -> Result<RetainedFrameSubmission> {
         let mut frame_stats = self.refresh_frame_state(frame, text_engine, feather_width)?;
         let composition_started = self.diagnostics_enabled.then(Instant::now);
-        let mut submission = self.compose_submission(frame.viewport, &mut frame_stats)?;
-        for fragment in &mut submission.fragments {
-            fragment
-                .draw_ops
-                .finalize_image_draws(frame.viewport, frame.surface_size);
-        }
+        let submission =
+            self.compose_submission(frame.viewport, frame.surface_size, &mut frame_stats)?;
         self.finish_frame(
             frame.viewport,
             frame.surface_size,
@@ -1179,14 +1212,7 @@ impl RetainedCompositorState {
             || !packet.atlas_is_current(engine)
             || packet.initial_state != snapshot.initial_state
             || packet.scene != snapshot.scene
-            || packet.signature
-                != packet_signature(
-                    &snapshot.scene,
-                    &snapshot.initial_state,
-                    frame.viewport,
-                    frame.surface_size,
-                    feather_width,
-                )
+            || packet.raster_context != RasterContext::new(frame, feather_width)
         {
             return;
         }
@@ -1221,6 +1247,18 @@ impl RetainedCompositorState {
         let normalize_time_ms = normalize_started
             .map(|started| started.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or(0.0);
+        let raster_context = RasterContext::new(frame, feather_width);
+        // Exact equality has already established all signature inputs. Reuse
+        // the immutable packet generation without hashing identical content.
+        if let Some(packet) = self.packets.get(&snapshot.id)
+            && packet.coordinate_space == coordinate_space
+            && packet.raster_context == raster_context
+            && packet.atlas_is_current(text_engine)
+            && packet.initial_state == snapshot.initial_state
+            && packet.scene == snapshot.scene
+        {
+            return Ok(());
+        }
         let signature_started = self.diagnostics_enabled.then(Instant::now);
         let signature = packet_signature(
             &snapshot.scene,
@@ -1313,6 +1351,7 @@ impl RetainedCompositorState {
                     scene: snapshot.scene,
                     initial_state: snapshot.initial_state,
                     signature,
+                    raster_context,
                     coordinate_space,
                     text_pages: draw_ops
                         .text_instances
@@ -1325,7 +1364,8 @@ impl RetainedCompositorState {
                             .get(page)
                             .map_or(0, |p| p.generation)
                     }),
-                    draw_ops,
+                    draw_ops: Arc::new(draw_ops),
+                    composed: Default::default(),
                 },
             );
         }
@@ -1353,6 +1393,7 @@ impl RetainedCompositorState {
     pub(crate) fn compose_submission(
         &self,
         viewport: Size,
+        surface_size: Size,
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<RetainedFrameSubmission> {
         let mut submission = RetainedFrameSubmission {
@@ -1368,6 +1409,7 @@ impl RetainedCompositorState {
                 phase,
                 &mut submission,
                 viewport,
+                surface_size,
                 stats,
             )?;
         }
@@ -1460,6 +1502,7 @@ impl RetainedCompositorState {
         phase: CompositionPhase,
         submission: &mut RetainedFrameSubmission,
         viewport: Size,
+        surface_size: Size,
         stats: &mut RetainedCompositorFrameStats,
     ) -> Result<()> {
         for item in items {
@@ -1473,50 +1516,70 @@ impl RetainedCompositorState {
                         {
                             continue;
                         }
-                        let mut current = DrawOpArena::default();
-                        match packet.coordinate_space {
-                            PacketCoordinateSpace::World => {
-                                current.append_fragment(&packet.draw_ops);
-                            }
-                            PacketCoordinateSpace::LayerLocal => {
-                                let (transform, clip_stack, opacity) = match packet.id.container {
-                                    CompositionContainerId::Root => {
-                                        (Transform::IDENTITY, Vec::new(), 1.0)
-                                    }
-                                    CompositionContainerId::Layer(layer_id) => self
-                                        .layers
-                                        .get(&layer_id)
-                                        .map(|layer| {
-                                            let origin = layer.descriptor.bounds.origin.to_vector()
-                                                + layer.composed_properties.translation;
-                                            let world = self
-                                                .transforms
-                                                .get(&layer.transform_node)
-                                                .map_or(Transform::IDENTITY, |node| node.world);
-                                            (
-                                                Transform::translation_vector(origin).then(world),
-                                                resolved_clip_primitives(
-                                                    layer.clip_node,
-                                                    &self.clips,
-                                                ),
-                                                layer.composed_properties.opacity,
-                                            )
-                                        })
-                                        .unwrap_or((Transform::IDENTITY, Vec::new(), 1.0)),
-                                };
+                        let (transform, clips, opacity) = match packet.coordinate_space {
+                            PacketCoordinateSpace::World => (Transform::IDENTITY, Vec::new(), 1.0),
+                            PacketCoordinateSpace::LayerLocal => match packet.id.container {
+                                CompositionContainerId::Root => {
+                                    (Transform::IDENTITY, Vec::new(), 1.0)
+                                }
+                                CompositionContainerId::Layer(layer_id) => self
+                                    .layers
+                                    .get(&layer_id)
+                                    .map(|layer| {
+                                        let origin = layer.descriptor.bounds.origin.to_vector()
+                                            + layer.composed_properties.translation;
+                                        let world = self
+                                            .transforms
+                                            .get(&layer.transform_node)
+                                            .map_or(Transform::IDENTITY, |node| node.world);
+                                        (
+                                            Transform::translation_vector(origin).then(world),
+                                            resolved_clip_primitives(layer.clip_node, &self.clips),
+                                            layer.composed_properties.opacity,
+                                        )
+                                    })
+                                    .unwrap_or((Transform::IDENTITY, Vec::new(), 1.0)),
+                            },
+                        };
+                        let key = CompositionKey {
+                            transform,
+                            clips,
+                            opacity,
+                            viewport,
+                            surface_size,
+                        };
+                        let mut cached = packet.composed.borrow_mut();
+                        if cached.as_ref().is_none_or(|cached| cached.key != key) {
+                            let mut current = if key.transform.is_identity()
+                                && key.clips.is_empty()
+                                && key.opacity == 1.0
+                            {
+                                Arc::clone(&packet.draw_ops)
+                            } else {
+                                let mut current = DrawOpArena::default();
                                 current.append_transformed_fragment(
                                     &packet.draw_ops,
-                                    transform,
-                                    opacity,
-                                    &clip_stack,
+                                    key.transform,
+                                    key.opacity,
+                                    &key.clips,
                                     viewport,
                                 )?;
+                                Arc::new(current)
+                            };
+                            if current.draw_ops.iter().any(|op| op.image.is_some()) {
+                                Arc::make_mut(&mut current)
+                                    .finalize_image_draws(viewport, surface_size);
                             }
+                            *cached = Some(ComposedPacket {
+                                key,
+                                draw_ops: current,
+                            });
                         }
+                        let current = &cached.as_ref().expect("composed packet cached").draw_ops;
                         if !current.draw_ops.is_empty() {
                             submission.fragments.push(RetainedFrameFragment {
                                 id: packet.id,
-                                draw_ops: current,
+                                draw_ops: Arc::clone(current),
                             });
                         }
                         stats.direct_packets += 1;
@@ -1530,6 +1593,7 @@ impl RetainedCompositorState {
                             phase,
                             submission,
                             viewport,
+                            surface_size,
                             stats,
                         )?;
                     }

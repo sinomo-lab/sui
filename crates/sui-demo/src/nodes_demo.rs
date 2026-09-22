@@ -1155,7 +1155,16 @@ mod tests {
             main_graph.bounds, main_graph.value
         );
         let mut frame_time = 0.0;
-        for mode in ["animation", "graph-repaint", "full-repaint", "zoom"] {
+        for mode in [
+            "unchanged",
+            "animation",
+            "graph-repaint",
+            "full-repaint",
+            "zoom",
+            "full-repaint-no-renderer-diagnostics",
+        ] {
+            renderer
+                .set_runtime_diagnostics_enabled(mode != "full-repaint-no-renderer-diagnostics");
             let mut totals = BTreeMap::<String, f64>::new();
             let mut widgets = BTreeMap::<String, f64>::new();
             let mut samples = Vec::new();
@@ -1166,8 +1175,12 @@ mod tests {
                 // GPU queue backpressure as well as painting work.
                 std::thread::sleep(std::time::Duration::from_millis(17));
                 frame_time += 1.0 / 60.0;
-                runtime.tick(frame_time);
-                let events = runtime.drain_ready_events();
+                let events = if mode == "unchanged" {
+                    Vec::new()
+                } else {
+                    runtime.tick(frame_time);
+                    runtime.drain_ready_events()
+                };
                 let started = Instant::now();
                 for (id, event) in events {
                     runtime.handle_event(id, event)?;
@@ -1182,7 +1195,7 @@ mod tests {
                         if frame % 2 == 0 { 3.0 } else { -3.0 },
                     )));
                     runtime.handle_event(window_id, Event::Pointer(wheel))?;
-                } else if mode != "animation" {
+                } else if mode != "animation" && mode != "unchanged" {
                     let target = if mode == "graph-repaint" {
                         graph_id
                     } else {
@@ -1231,6 +1244,13 @@ mod tests {
                     ("state_update_us", stats.retained_state_update_time_us),
                     ("composition_us", stats.composition_time_us),
                     ("draws", stats.draw_count as u64),
+                    ("direct_packets", stats.direct_packet_count as u64),
+                    ("prepared_hits", stats.prepared_fragment_cache_hits as u64),
+                    (
+                        "prepared_builds",
+                        stats.prepared_fragment_build_count as u64,
+                    ),
+                    ("vertex_upload_bytes", stats.uploaded_vertex_bytes),
                     (
                         "path_misses",
                         stats.analytic_path_bind_group_miss_count as u64,
@@ -1251,7 +1271,14 @@ mod tests {
                 samples[FRAMES * 95 / 100],
                 samples[FRAMES - 1]
             );
-            assert_eq!(totals["animation_wakes"], FRAMES as f64);
+            assert_eq!(
+                totals["animation_wakes"],
+                if mode == "unchanged" {
+                    0.0
+                } else {
+                    FRAMES as f64
+                }
+            );
             if mode == "graph-repaint" && std::env::var_os("SUI_PROFILE_WIDGET_TIMINGS").is_some() {
                 assert!(widgets.iter().any(|(name, duration)| {
                     name.contains("sui_nodes::widget::NodeGraph<") && *duration > 0.0
