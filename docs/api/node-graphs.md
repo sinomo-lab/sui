@@ -304,6 +304,12 @@ submission, not GPU execution time or native presentation cadence. Grid dots
 use analytic circle primitives to avoid constructing and processing a separate
 curve path for every background mark.
 
+The probe prints the GPU/backend and separates command finalization from total
+submission time (`command_finish_us` is included in `submit_us`). Retained-state
+updates and composition are also reported separately, so renderer overhead can
+be distinguished from widget paint time. Keep backend and validation settings
+the same when comparing revisions.
+
 The GPU diagnostic also reports retained packet construction, analytic-path,
 batching, upload, encoding, and queue timings. Set `SUI_NODE_BENCH_PROFILE=1`
 and `SUI_PROFILE_WIDGET_TIMINGS=1` to include detailed runtime phase and widget

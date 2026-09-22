@@ -892,7 +892,7 @@ pub(crate) fn encode_unclipped_pass_run(
         timestamp_writes: None,
         multiview_mask: None,
     });
-    let mut current_kind = None;
+    let mut state = RenderPassState::default();
     for batch in passes {
         encode_draws_for_pass(
             &mut render_pass,
@@ -911,7 +911,7 @@ pub(crate) fn encode_unclipped_pass_run(
             image_bind_groups,
             text_atlas_bind_group,
             analytic_path_resources,
-            &mut current_kind,
+            &mut state,
         )?;
     }
 
@@ -983,7 +983,7 @@ pub(crate) fn encode_clipped_pass(
         render_pass.draw(0..clip_path.vertices.len, 0..1);
     }
 
-    let mut current_kind = None;
+    let mut state = RenderPassState::default();
     encode_draws_for_pass(
         &mut render_pass,
         shared,
@@ -1001,7 +1001,7 @@ pub(crate) fn encode_clipped_pass(
         image_bind_groups,
         text_atlas_bind_group,
         analytic_path_resources,
-        &mut current_kind,
+        &mut state,
     )?;
 
     Ok(())
@@ -1021,6 +1021,16 @@ pub(crate) fn next_pass_load_op(cleared: &mut bool) -> wgpu::LoadOp<wgpu::Color>
     }
 }
 
+/// State shared by consecutive fragments in one GPU render pass. Start fresh
+/// after a pass boundary or stencil setup, which changes bindings externally.
+#[derive(Default)]
+pub(crate) struct RenderPassState {
+    kind: Option<PreparedDrawPipelineKind>,
+    translation: Option<Vector>,
+    scissor: Option<Option<ScissorRect>>,
+    shared_quad_bound: bool,
+}
+
 pub(crate) fn encode_draws_for_pass(
     render_pass: &mut wgpu::RenderPass<'_>,
     shared: &mut SharedRenderer,
@@ -1038,29 +1048,41 @@ pub(crate) fn encode_draws_for_pass(
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
-    current_kind: &mut Option<PreparedDrawPipelineKind>,
+    state: &mut RenderPassState,
 ) -> Result<()> {
-    let (viewport_x, viewport_y) =
-        translation_to_viewport_origin(translation, viewport, framebuffer_size);
-    render_pass.set_viewport(
-        viewport_x,
-        viewport_y,
-        framebuffer_size.0 as f32,
-        framebuffer_size.1 as f32,
-        0.0,
-        1.0,
-    );
+    if state.translation != Some(translation) {
+        let (viewport_x, viewport_y) =
+            translation_to_viewport_origin(translation, viewport, framebuffer_size);
+        render_pass.set_viewport(
+            viewport_x,
+            viewport_y,
+            framebuffer_size.0 as f32,
+            framebuffer_size.1 as f32,
+            0.0,
+            1.0,
+        );
+        state.translation = Some(translation);
+    }
+    if clipped {
+        render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
+    }
 
     for draw in &pass.draws {
-        match draw.clip_rect {
-            Some(scissor) => {
-                render_pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height)
+        if state.scissor != Some(draw.clip_rect) {
+            match draw.clip_rect {
+                Some(scissor) => render_pass.set_scissor_rect(
+                    scissor.x,
+                    scissor.y,
+                    scissor.width,
+                    scissor.height,
+                ),
+                None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
             }
-            None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
+            state.scissor = Some(draw.clip_rect);
         }
 
         let pipeline_kind = draw.kind.pipeline_kind();
-        if *current_kind != Some(pipeline_kind) {
+        if state.kind != Some(pipeline_kind) {
             let pipeline = match (pipeline_kind, clipped) {
                 (PreparedDrawPipelineKind::Solid, true) => shared.clipped_pipeline(target_format),
                 (PreparedDrawPipelineKind::Solid, false) => shared.pipeline(target_format),
@@ -1106,11 +1128,7 @@ pub(crate) fn encode_draws_for_pass(
                     .bind_group;
                 render_pass.set_bind_group(0, bind_group, &[]);
             }
-            *current_kind = Some(pipeline_kind);
-        }
-
-        if clipped {
-            render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
+            state.kind = Some(pipeline_kind);
         }
 
         match draw.kind {
@@ -1140,12 +1158,22 @@ pub(crate) fn encode_draws_for_pass(
             PreparedDrawKind::GradientRect => {}
         }
 
+        let uses_shared_quad = matches!(
+            draw.kind,
+            PreparedDrawKind::TextAtlas
+                | PreparedDrawKind::AnalyticPath { .. }
+                | PreparedDrawKind::RoundedRect
+                | PreparedDrawKind::GradientRect
+        );
+        if uses_shared_quad && !state.shared_quad_bound {
+            render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
+        }
+        state.shared_quad_bound = uses_shared_quad;
         let (vertex_range, instances) = match draw.kind {
             PreparedDrawKind::TextAtlas => {
                 let text_instance_buffer = text_instance_buffer.ok_or_else(|| {
                     Error::new("prepared render batch is missing a text instance buffer")
                 })?;
-                render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
                 render_pass.set_vertex_buffer(
                     1,
                     text_instance_buffer_slice(text_instance_buffer, draw.vertices),
@@ -1156,7 +1184,6 @@ pub(crate) fn encode_draws_for_pass(
                 let analytic_buffer = analytic_buffer.ok_or_else(|| {
                     Error::new("prepared render batch is missing an analytic instance buffer")
                 })?;
-                render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
                 render_pass.set_vertex_buffer(
                     1,
                     analytic_vertex_buffer_slice(analytic_buffer, draw.vertices),
@@ -1175,7 +1202,6 @@ pub(crate) fn encode_draws_for_pass(
                 let extended_buffer = extended_buffer.ok_or_else(|| {
                     Error::new("prepared render batch is missing an extended vertex buffer")
                 })?;
-                render_pass.set_vertex_buffer(0, shared.text_quad_buffer.slice(..));
                 render_pass.set_vertex_buffer(
                     1,
                     extended_vertex_buffer_slice(extended_buffer, draw.vertices),

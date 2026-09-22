@@ -1136,6 +1136,7 @@ mod tests {
             document.edges.len(),
             initial.diagnostics.widget_count
         );
+        println!("SMALL_NODE_ADAPTER {:?}", renderer.adapter_info());
         assert!(
             initial
                 .semantics
@@ -1226,6 +1227,9 @@ mod tests {
                     ("upload_us", stats.gpu_upload_time_us),
                     ("encode_us", stats.pass_encode_time_us),
                     ("submit_us", stats.queue_submit_time_us),
+                    ("command_finish_us", stats.command_finish_time_us),
+                    ("state_update_us", stats.retained_state_update_time_us),
+                    ("composition_us", stats.composition_time_us),
                     ("draws", stats.draw_count as u64),
                     (
                         "path_misses",

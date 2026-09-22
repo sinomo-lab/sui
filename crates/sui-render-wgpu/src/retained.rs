@@ -970,6 +970,15 @@ impl RetainedCompositorState {
         for layer in snapshot.layers.values() {
             let (origin, pixel_origin) = self.layer_packet_origins(layer);
             for packet in &layer.packets {
+                // Only retained text can hold atlas pages alive. Avoid cloning
+                // and normalizing every geometry packet for this prepass.
+                if self
+                    .packets
+                    .get(&packet.id)
+                    .is_none_or(|cached| cached.text_pages == 0)
+                {
+                    continue;
+                }
                 let normalized = normalize_packet_snapshot(
                     packet.clone(),
                     PacketCoordinateSpace::LayerLocal,
@@ -1768,7 +1777,21 @@ pub(crate) fn normalize_packet_snapshot(
     pixel_snap_origin: Vector,
     raster_scale_factor: f32,
 ) -> PacketSnapshot {
-    if coordinate_space == PacketCoordinateSpace::LayerLocal {
+    let has_text = snapshot.scene.commands().iter().any(|command| {
+        matches!(
+            command,
+            SceneCommand::DrawText(_)
+                | SceneCommand::DrawShapedText(_)
+                | SceneCommand::DrawShapedTextWindow(_)
+                | SceneCommand::Label { .. }
+        )
+    });
+    if !has_text {
+        // Discard unused backdrop metadata before a transform can copy its
+        // shared region list; geometry-only packets never sample it.
+        snapshot.initial_state.text_background = Default::default();
+    }
+    if has_text && coordinate_space == PacketCoordinateSpace::LayerLocal {
         let inverse = snapshot
             .initial_state
             .current_transform
@@ -1813,15 +1836,7 @@ pub(crate) fn normalize_packet_snapshot(
         snapshot.initial_state.pixel_snap_offset =
             physical_pixel_phase(pixel_snap_origin, raster_scale_factor);
     }
-    if !snapshot.scene.commands().iter().any(|command| {
-        matches!(
-            command,
-            SceneCommand::DrawText(_)
-                | SceneCommand::DrawShapedText(_)
-                | SceneCommand::DrawShapedTextWindow(_)
-                | SceneCommand::Label { .. }
-        )
-    }) {
+    if !has_text {
         // Text metadata must not invalidate retained geometry-only packets.
         snapshot.initial_state.text_background = Default::default();
         snapshot.initial_state.text_lcd_allowed = true;
