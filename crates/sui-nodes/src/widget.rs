@@ -494,7 +494,7 @@ pub struct NodeGraph<N = (), E = ()> {
     hovered_edge: Option<EdgeId>,
     hovered_handle: Option<(NodeId, HandleId, HandleKind)>,
     focused_element: Option<FocusedElement>,
-    edge_animation_time: f32,
+    edge_animation_time: f64,
     viewport_transition_running: bool,
     last_primary_down: Option<(f64, Point)>,
     active_touches: BTreeMap<u64, Point>,
@@ -2092,8 +2092,9 @@ where
                     .iter()
                     .any(|edge| edge.animated && !edge.hidden)
                 {
-                    self.edge_animation_time =
-                        (self.edge_animation_time + *delta as f32).rem_euclid(1.0);
+                    // Wrap each particle after applying its edge's speed. Wrapping
+                    // the shared clock resets fractional-speed edges every second.
+                    self.edge_animation_time += delta.max(0.0);
                     ctx.request_paint();
                     ctx.request_animation_frame();
                 }
@@ -3925,21 +3926,73 @@ fn edge_distance(geometry: &EdgeGeometry, point: Point) -> f32 {
     }
 }
 
-fn edge_point_at(geometry: &EdgeGeometry, t: f32) -> Point {
-    let t = t.clamp(0.0, 1.0);
-    match geometry.kind {
-        EdgeKind::Straight => lerp_point(geometry.source, geometry.target, t),
-        EdgeKind::Bezier | EdgeKind::SimpleBezier => cubic_point(
-            geometry.source,
-            geometry.control_1,
-            geometry.control_2,
-            geometry.target,
-            t,
-        ),
-        EdgeKind::Step | EdgeKind::SmoothStep => geometry.polyline.map_or_else(
-            || lerp_point(geometry.source, geometry.target, t),
-            |polyline| polyline.point_at(t),
-        ),
+fn edge_particle_phase(time: f64, speed: f32, particle: usize) -> f32 {
+    (time * f64::from(speed) + particle as f64 / 3.0).rem_euclid(1.0) as f32
+}
+
+/// A distance lookup shared by the particles on one edge. Sampling the drawn
+/// path also keeps particles on the rounded corners of SmoothStep edges.
+struct EdgeAnimationPath {
+    samples: Vec<(Point, f32)>,
+}
+
+impl EdgeAnimationPath {
+    fn new(path: &Path) -> Self {
+        use sui_core::PathElement;
+
+        const CURVE_STEPS: usize = 64;
+        let mut samples = Vec::new();
+        let mut current = Point::ZERO;
+        let mut length = 0.0;
+        for element in path.elements() {
+            let start = current;
+            let steps = match element {
+                PathElement::QuadTo { .. } | PathElement::CubicTo { .. } => CURVE_STEPS,
+                _ => 1,
+            };
+            for step in 1..=steps {
+                let t = step as f32 / steps as f32;
+                let point = match *element {
+                    PathElement::MoveTo(to) | PathElement::LineTo(to) => to,
+                    PathElement::QuadTo { ctrl, to } => {
+                        lerp_point(lerp_point(start, ctrl, t), lerp_point(ctrl, to, t), t)
+                    }
+                    PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                        cubic_point(start, ctrl1, ctrl2, to, t)
+                    }
+                    // Edge paths are open, with a single contour.
+                    PathElement::Close => continue,
+                };
+                if !matches!(element, PathElement::MoveTo(_)) {
+                    length += vector_length(point - current);
+                }
+                samples.push((point, length));
+                current = point;
+            }
+        }
+        Self { samples }
+    }
+
+    fn point_at(&self, t: f32) -> Point {
+        let Some(&(last, length)) = self.samples.last() else {
+            return Point::ZERO;
+        };
+        let distance = length * t.clamp(0.0, 1.0);
+        let index = self
+            .samples
+            .partition_point(|(_, length)| *length < distance);
+        if index == 0 {
+            return self.samples[0].0;
+        }
+        let Some(&(end, end_length)) = self.samples.get(index) else {
+            return last;
+        };
+        let (start, start_length) = self.samples[index - 1];
+        lerp_point(
+            start,
+            end,
+            (distance - start_length) / (end_length - start_length),
+        )
     }
 }
 
@@ -3950,7 +4003,7 @@ struct EdgePaintOptions<'a, E> {
     painter: Option<&'a EdgePaintFn<E>>,
     edges_reconnectable: bool,
     focused_edge: Option<&'a EdgeId>,
-    animation_time: f32,
+    animation_time: f64,
 }
 
 fn edge_is_retained_world_candidate<E>(
@@ -4029,9 +4082,10 @@ fn paint_edges<N, E>(
         };
         ctx.stroke(geometry.path.clone(), color, StrokeStyle::new(width));
         if edge.animated {
-            for offset in [0.0_f32, 0.333, 0.666] {
-                let t = (animation_time * edge.animation_speed + offset).rem_euclid(1.0);
-                ctx.fill(Path::circle(edge_point_at(&geometry, t), 2.4), color);
+            let motion_path = EdgeAnimationPath::new(&geometry.path);
+            for particle in 0..3 {
+                let t = edge_particle_phase(animation_time, edge.animation_speed, particle);
+                ctx.fill(Path::circle(motion_path.point_at(t), 2.4), color);
             }
         }
         if edge.selected && edges_reconnectable {
@@ -6291,6 +6345,121 @@ mod tests {
                 connection: Some(_)
             }
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn edge_particle_motion_is_continuous_across_seconds_and_long_sessions() {
+        for speed in [0.25, 0.75, 1.0, 1.25, 2.5] {
+            for time in [0.99, 1.99, 86_400.99, 31_536_000.99] {
+                for particle in 0..3 {
+                    let before = edge_particle_phase(time, speed, particle);
+                    let after = edge_particle_phase(time + 0.02, speed, particle);
+                    let advance = (after - before).rem_euclid(1.0);
+                    assert!((advance - 0.02 * speed).abs() < 0.00001);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn edge_particles_travel_equal_distances_on_uneven_beziers() {
+        // A straight cubic with very uneven parameter speed isolates the
+        // distance mapping from changes of direction along a curve.
+        let mut builder = Path::builder();
+        builder.move_to(Point::ZERO);
+        builder.cubic_to(
+            Point::new(1.0, 0.0),
+            Point::new(2.0, 0.0),
+            Point::new(300.0, 0.0),
+        );
+        let motion = EdgeAnimationPath::new(&builder.build());
+        for step in 0..=20 {
+            let point = motion.point_at(step as f32 / 20.0);
+            assert!((point.x - step as f32 * 15.0).abs() < 0.001);
+            assert_eq!(point.y, 0.0);
+        }
+    }
+
+    #[test]
+    fn edge_particles_follow_rounded_corners_and_degenerate_paths() {
+        let mut builder = Path::builder();
+        builder.move_to(Point::ZERO);
+        builder.line_to(Point::new(80.0, 0.0));
+        builder.quad_to(Point::new(100.0, 0.0), Point::new(100.0, 20.0));
+        builder.line_to(Point::new(100.0, 100.0));
+        let motion = EdgeAnimationPath::new(&builder.build());
+        let midpoint = motion.point_at(0.5);
+        assert!((midpoint.x - 95.0).abs() < 0.01);
+        assert!((midpoint.y - 5.0).abs() < 0.01);
+
+        let mut builder = Path::builder();
+        let point = Point::new(10.0, 20.0);
+        builder.move_to(point);
+        builder.line_to(point);
+        let motion = EdgeAnimationPath::new(&builder.build());
+        for t in [0.0, 0.5, 1.0] {
+            assert_eq!(motion.point_at(t), point);
+        }
+    }
+
+    #[test]
+    fn animated_edge_does_not_reset_at_one_second() -> sui_core::Result<()> {
+        let state = NodeGraphState::<(), ()>::new(
+            vec![
+                Node::new("a", Point::new(20.0, 40.0), ()),
+                Node::new("b", Point::new(540.0, 40.0), ()),
+            ],
+            vec![
+                Edge::new("edge", "a", "b", ())
+                    .kind(EdgeKind::Straight)
+                    .animated(true)
+                    .animation_speed(0.75),
+            ],
+        )
+        .unwrap();
+        let (mut runtime, window_id) = build_runtime(state);
+        runtime.render(window_id)?;
+        let mut positions = Vec::new();
+        for (frame_index, time, delta) in [(1, 0.99, 0.99), (2, 1.01, 0.02)] {
+            runtime.handle_event(
+                window_id,
+                Event::Wake(WakeEvent::AnimationFrame {
+                    time,
+                    delta,
+                    frame_index,
+                }),
+            )?;
+            let output = runtime.render(window_id)?;
+            let mut particles = Vec::new();
+            let mut collect = |scene: &Scene| {
+                for command in scene.commands() {
+                    if let SceneCommand::FillPath { path, .. } = command {
+                        let bounds = path.bounds();
+                        if (bounds.width() - 4.8).abs() < 0.001
+                            && (bounds.height() - 4.8).abs() < 0.001
+                        {
+                            particles.push(Point::new(
+                                bounds.x() + bounds.width() * 0.5,
+                                bounds.y() + bounds.height() * 0.5,
+                            ));
+                        }
+                    }
+                }
+            };
+            collect(&output.frame.scene);
+            output
+                .frame
+                .scene
+                .visit_layers(&mut |layer| collect(&layer.scene));
+            assert_eq!(particles.len(), 3);
+            positions.push(particles[0]);
+        }
+        let advance = positions[1].x - positions[0].x;
+        assert!(
+            advance > 0.0 && advance < 10.0,
+            "particle jumped by {advance}"
+        );
         Ok(())
     }
 
