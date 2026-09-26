@@ -83,3 +83,15 @@ Notes:
 - `compression-loader.js` is inactive when no compression manifest is present,
   so normal `trunk serve` development keeps using the original assets.
 - The watch config includes the `sinomo-ui-demo` package and the workspace root so edits in the Rust sources trigger rebuilds.
+
+Editorial browser regression check
+
+With a web demo running, exercise opening the Editorial engine, animated reflow,
+pause/play/reset, resize, and tab switching through SUI's semantic automation:
+
+  npm run web:smoke:editorial -- http://127.0.0.1:8080/
+
+Install the Playwright Chromium browser with `npx playwright install chromium`,
+or set `SUI_BROWSER_EXECUTABLE` to an installed Chromium executable. The check
+also accepts a deployed demo URL. It fails on browser panics or stopped motion;
+a Wasm compile check alone cannot detect unsupported runtime clock calls.

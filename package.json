@@ -7,7 +7,8 @@
   },
   "scripts": {
     "text:compare": "node tools/text-rendering-compare/compare.mjs",
-    "text:compare:test": "node --test tools/text-rendering-compare/ink-stats.test.mjs"
+    "text:compare:test": "node --test tools/text-rendering-compare/ink-stats.test.mjs",
+    "web:smoke:editorial": "node tools/web-smoke/editorial.mjs"
   },
   "devDependencies": {
     "pixelmatch": "7.2.0",

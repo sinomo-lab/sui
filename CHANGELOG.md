@@ -4,6 +4,12 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [Unreleased]
+
+- Fixed a browser panic when opening the Editorial engine demo by using a
+  WebAssembly-compatible monotonic clock for reflow timing. Added a browser
+  regression check covering animation, controls, resizing, and tab switching.
+
 ## [0.3.0] - 2026-09-26
 
 This release adds application and editor surfaces, improves text quality and
@@ -191,3 +197,4 @@ Initial public alpha release of the Rust workspace.
 [0.2.0]: https://github.com/sinomo-lab/sui/compare/v0.1.0...v0.2.0
 [0.2.1]: https://github.com/sinomo-lab/sui/compare/v0.2.0...v0.2.1
 [0.3.0]: https://github.com/sinomo-lab/sui/compare/v0.2.1...v0.3.0
+[Unreleased]: https://github.com/sinomo-lab/sui/compare/v0.3.0...HEAD

@@ -1,4 +1,6 @@
-use std::{ops::Range, time::Instant};
+use std::ops::Range;
+
+use web_time::Instant;
 
 use sui::{
     EventPhase, FontWeight, KeyState, PointerButton, PointerEventKind, SemanticsAction,
