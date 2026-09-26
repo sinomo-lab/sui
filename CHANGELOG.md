@@ -4,7 +4,7 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
-## [0.3.0]
+## [0.3.0] - 2026-09-26
 
 This release adds application and editor surfaces, improves text quality and
 retained rendering, and expands the source-built language bindings.
@@ -26,6 +26,13 @@ retained rendering, and expands the source-built language bindings.
 - Added provider-neutral image icons, bounded browser tabs, compact dialogs,
   and reserved scrollbar gutters.
 - Updated dependencies and bundled Lucide icons to 1.47.0.
+- Made the Shrinkwrap and Editorial text demos follow shared theme colors,
+  typography, and radii, including theme changes while paused and cached text
+  layouts at unchanged window sizes.
+- Added a size-focused web release profile and kept the demo within the existing
+  12 MiB uncompressed Wasm budget without removing features.
+- Restored Rust 1.90 compatibility, corrected offscreen demo-picker test
+  interactions, and resolved strict workspace Clippy findings.
 - Bundled complete Noto Sans Arabic and Hebrew fallback fonts for offline web
   and Android text, and corrected caret hit testing across right-to-left runs.
 - Restored corrupted Unicode, emoji, and IME sample text in the demo and its
