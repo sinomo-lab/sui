@@ -5,7 +5,9 @@ use sui::{
 };
 use sui_text::{PersistentTextLayout, TextDocument, TextLayoutRequest};
 
-use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style_when};
+use crate::app::{
+    DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style, demo_text_style_when,
+};
 
 pub(crate) const SHRINKWRAP_TAB_LABEL: &str = "Shrinkwrap";
 const CHAT_NAME: &str = "Animated shrinkwrap conversation";
@@ -157,7 +159,16 @@ fn build_demo(state: Signal<Motion>, theme: DevThemeReader) -> impl Widget {
                                 }),
                             FlexItem::new().basis_fraction(0.8).min_width(120.0),
                         )
-                        .with_item(Label::new("").text_from(readout), FlexItem::fixed(64.0)),
+                        .with_item(
+                            Label::new("")
+                                .text_from(readout)
+                                .style_when(demo_text_style_when(
+                                    &theme,
+                                    DemoTextRole::Metadata,
+                                    |theme| theme.palette.text_muted,
+                                )),
+                            FlexItem::fixed(64.0),
+                        ),
                 )
                 .with_child(Chat::new(state, Rc::clone(&theme)))
                 .with_child(
@@ -177,6 +188,7 @@ fn build_demo(state: Signal<Motion>, theme: DevThemeReader) -> impl Widget {
 }
 
 struct Chat {
+    theme: DevThemeReader,
     state: Signal<Motion>,
     bubbles: Vec<WidgetPod>,
     sizes: Vec<Size>,
@@ -198,9 +210,14 @@ impl Chat {
                     })
                 })
                 .collect(),
+            theme,
             sizes: Vec::new(),
             phone_size: Size::ZERO,
         }
+    }
+
+    fn header_height(&self) -> f32 {
+        (self.theme)().text.xs.line_height + FRAME_INSET * 2.0
     }
 
     fn phone_bounds(&self, bounds: Rect) -> Rect {
@@ -242,7 +259,8 @@ impl Widget for Chat {
                 )
             })
             .collect();
-        let height = 76.0
+        let height = self.header_height()
+            + FRAME_INSET
             + self.sizes.iter().map(|size| size.height).sum::<f32>()
             + GAP * self.sizes.len().saturating_sub(1) as f32;
         self.phone_size = Size::new(width, height);
@@ -258,7 +276,7 @@ impl Widget for Chat {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let phone = self.phone_bounds(bounds);
-        let mut y = phone.y() + 48.0;
+        let mut y = phone.y() + self.header_height();
         for ((bubble, size), (_, sent)) in self.bubbles.iter_mut().zip(&self.sizes).zip(MESSAGES) {
             let x = if *sent {
                 phone.max_x() - FRAME_INSET - size.width
@@ -272,21 +290,17 @@ impl Widget for Chat {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let phone = self.phone_bounds(ctx.bounds());
-        ctx.fill_rrect(phone, [26.0; 4], Color::rgba(0.075, 0.085, 0.11, 1.0));
+        let theme = (self.theme)();
+        ctx.fill_rrect(phone, [theme.radius._3xl; 4], theme.surfaces.window_subtle);
         ctx.draw_text(
             Rect::new(
-                phone.x() + 20.0,
-                phone.y() + 14.0,
-                (phone.width() - 40.0).max(0.0),
-                24.0,
+                phone.x() + FRAME_INSET,
+                phone.y() + FRAME_INSET,
+                (phone.width() - FRAME_INSET * 2.0).max(0.0),
+                theme.text.xs.line_height,
             ),
             "Today · 09:41",
-            TextStyle {
-                font_size: 12.0,
-                line_height: 18.0,
-                color: Color::rgba(0.63, 0.68, 0.76, 1.0),
-                ..TextStyle::default()
-            },
+            demo_text_style(theme, DemoTextRole::Metadata, theme.palette.text_muted),
         );
         ctx.push_clip_rect(phone);
         for bubble in &self.bubbles {
@@ -352,19 +366,21 @@ struct Bubble {
 impl Widget for Bubble {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let cap = (constraints.max.width - 2.0 * BUBBLE_PADDING).max(1.0);
-        let style = TextStyle {
-            font_size: 15.0,
-            line_height: 22.0,
-            color: Color::rgba(0.96, 0.97, 1.0, 1.0),
-            ..(self.theme)().body_text_style()
+        let theme = (self.theme)();
+        let color = if self.sent {
+            theme.palette.accent_text
+        } else {
+            theme.palette.text
         };
+        let style = demo_text_style(theme, DemoTextRole::Body, color);
+        let line_height = style.line_height;
         let document = TextDocument::from_plain_text(self.text, style);
         let request =
             |width| TextLayoutRequest::new(document.clone()).with_box_size(Size::new(width, 1.0));
         let (width, size) = shrink_width(cap, |width| {
             ctx.layout().measure_document_size(request(width))
         })
-        .unwrap_or((cap, Size::new(cap, 22.0)));
+        .unwrap_or((cap, Size::new(cap, line_height)));
         self.layout = ctx
             .layout()
             .layout_document_persistent(
@@ -380,15 +396,18 @@ impl Widget for Bubble {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = (self.theme)();
+        let round = theme.radius._2xl;
+        let tail = theme.radius.sm;
         let radii = if self.sent {
-            [16.0, 16.0, 4.0, 16.0]
+            [round, round, tail, round]
         } else {
-            [16.0, 16.0, 16.0, 4.0]
+            [round, round, round, tail]
         };
         let color = if self.sent {
-            Color::rgba(0.12, 0.35, 0.76, 1.0)
+            theme.palette.accent
         } else {
-            Color::rgba(0.17, 0.19, 0.24, 1.0)
+            theme.palette.surface_raised
         };
         ctx.fill_rrect(ctx.bounds(), radii, color);
         if let Some(layout) = &self.layout {
@@ -433,6 +452,80 @@ mod tests {
             Event::Window(WindowEvent::Resized(Size::new(960.0, 1100.0))),
         )?;
         Ok((runtime, window))
+    }
+
+    #[test]
+    fn shrinkwrap_restyles_bubbles_when_theme_changes_while_paused() -> sui::Result<()> {
+        use std::cell::RefCell;
+        let theme = Rc::new(RefCell::new(DefaultTheme::default()));
+        let reader = Rc::clone(&theme);
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().root(build_demo(
+                Signal::new(Motion {
+                    playing: false,
+                    ..Motion::default()
+                }),
+                Rc::new(move || *reader.borrow()),
+            )))
+            .build()?;
+        let window = runtime.window_ids()[0];
+        let mut custom = DefaultTheme::dark();
+        custom.text.base.size = 19.0;
+        custom.text.base.line_height = 30.0;
+        custom.palette.accent = custom.colors.success;
+        custom.palette.accent_text = custom.colors.success_content;
+        for next in [DefaultTheme::default(), DefaultTheme::dark(), custom] {
+            *theme.borrow_mut() = next;
+            runtime.handle_event(
+                window,
+                Event::Window(WindowEvent::Resized(Size::new(960.0, 1100.0))),
+            )?;
+            let output = runtime.render(window)?;
+            let mut styles = Vec::new();
+            let mut fills = Vec::new();
+            output
+                .frame
+                .scene
+                .visit_commands(&mut |command| match command {
+                    sui::SceneCommand::DrawShapedText(run) => {
+                        if let Some(layout) = run.resolve(&output.frame.text_layout_registry) {
+                            styles.push((layout.text().to_string(), layout.style().clone()));
+                        }
+                    }
+                    sui::SceneCommand::FillRoundedRect {
+                        brush: sui::Brush::Solid(color),
+                        ..
+                    } => fills.push(*color),
+                    _ => {}
+                });
+            for color in [
+                next.surfaces.window_subtle,
+                next.palette.accent,
+                next.palette.surface_raised,
+            ] {
+                assert!(
+                    fills.contains(&color),
+                    "missing themed conversation fill {color:?}"
+                );
+            }
+            for &(text, sent) in MESSAGES {
+                let (_, style) = styles
+                    .iter()
+                    .find(|(value, _)| value == text)
+                    .unwrap_or_else(|| panic!("missing bubble {text:?}"));
+                assert_eq!(
+                    style.color,
+                    if sent {
+                        next.palette.accent_text
+                    } else {
+                        next.palette.text
+                    }
+                );
+                assert_eq!(style.font_size, next.text.base.size);
+                assert_eq!(style.line_height, next.text.base.line_height);
+            }
+        }
+        Ok(())
     }
 
     #[test]

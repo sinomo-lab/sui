@@ -5,18 +5,17 @@ use sui::{
     SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Vector, WidgetId,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, prelude::*,
 };
-use sui_text::{FontFamilyStack, PersistentTextLayout, TextDocument, TextLayoutRequest};
+use sui_text::{PersistentTextLayout, TextDocument, TextLayoutRequest};
 
-use crate::app::{DevThemeReader, clone_dev_theme_reader};
+use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style};
 
 pub(crate) const EDITORIAL_TAB_LABEL: &str = "Editorial engine";
 const NAME: &str = "Editorial text flow";
+#[cfg(test)]
 const LINE_HEIGHT: f32 = 26.0;
 const MIN_SLOT: f32 = 54.0;
 const TITLE: &str = "Room for\nthe unexpected";
 const QUOTE: &str = "A good place leaves room for something unplanned.";
-const PAPER: Color = Color::rgba(0.89, 0.87, 0.82, 1.0);
-const GOLD: Color = Color::rgba(0.78, 0.64, 0.38, 1.0);
 
 // Original article copy; paragraphs bound the work performed by the rectangular
 // text-layout adapter below. This is a demo compositor, not an exclusion API.
@@ -40,7 +39,6 @@ struct Orb {
     position: Point,
     velocity: Vector,
     radius: f32,
-    color: Color,
     paused: bool,
     dragging: bool,
 }
@@ -53,34 +51,19 @@ struct Motion {
 
 impl Default for Motion {
     fn default() -> Self {
-        let orb = |x, y, vx, vy, radius, color| Orb {
+        let orb = |x, y, vx, vy, radius| Orb {
             position: Point::new(x, y),
             velocity: Vector::new(vx, vy),
             radius,
-            color,
             paused: false,
             dragging: false,
         };
         Self {
             playing: true,
             orbs: [
-                orb(0.25, 0.3, 22.0, 17.0, 66.0, GOLD),
-                orb(
-                    0.62,
-                    0.6,
-                    -19.0,
-                    14.0,
-                    78.0,
-                    Color::rgba(0.40, 0.60, 0.95, 1.0),
-                ),
-                orb(
-                    0.86,
-                    0.25,
-                    -14.0,
-                    -19.0,
-                    56.0,
-                    Color::rgba(0.84, 0.40, 0.53, 1.0),
-                ),
+                orb(0.25, 0.3, 22.0, 17.0, 66.0),
+                orb(0.62, 0.6, -19.0, 14.0, 78.0),
+                orb(0.86, 0.25, -14.0, -19.0, 56.0),
             ],
         }
     }
@@ -142,14 +125,20 @@ fn orb_circle(orb: Orb, body: Rect) -> Circle {
     }
 }
 
-fn line_slots(column: Rect, y: f32, circles: &[Circle], rectangles: &[Rect]) -> Vec<Range<f32>> {
+fn line_slots(
+    column: Rect,
+    y: f32,
+    line_height: f32,
+    circles: &[Circle],
+    rectangles: &[Rect],
+) -> Vec<Range<f32>> {
     let mut slots = vec![column.x()..column.max_x()];
     let mut blocked = Vec::new();
     for circle in circles {
         let distance = if circle.center.y < y - 4.0 {
             y - 4.0 - circle.center.y
-        } else if circle.center.y > y + LINE_HEIGHT + 4.0 {
-            circle.center.y - y - LINE_HEIGHT - 4.0
+        } else if circle.center.y > y + line_height + 4.0 {
+            circle.center.y - y - line_height - 4.0
         } else {
             0.0
         };
@@ -162,7 +151,7 @@ fn line_slots(column: Rect, y: f32, circles: &[Circle], rectangles: &[Rect]) -> 
         }
     }
     for rect in rectangles {
-        if rect.max_y() > y && rect.y() < y + LINE_HEIGHT {
+        if rect.max_y() > y && rect.y() < y + line_height {
             blocked.push(rect.x()..rect.max_x());
         }
     }
@@ -204,6 +193,7 @@ fn flow_article(
     circles: &[Circle],
     rectangles: &[Rect],
     previous: &[FlowLine],
+    line_height: f32,
     mut layout: impl FnMut(
         &str,
         f32,
@@ -222,9 +212,9 @@ fn flow_article(
     let mut lines = Vec::new();
     for column in columns {
         let mut y = column.y();
-        while y + LINE_HEIGHT <= column.max_y() && cursor.paragraph < ARTICLE.len() {
+        while y + line_height <= column.max_y() && cursor.paragraph < ARTICLE.len() {
             let mut paragraph_ended = false;
-            for slot in line_slots(*column, y, circles, rectangles) {
+            for slot in line_slots(*column, y, line_height, circles, rectangles) {
                 let text = &ARTICLE[cursor.paragraph][cursor.byte..];
                 let width = (slot.end - slot.start).floor().max(1.0);
                 let shaped = layout(
@@ -241,7 +231,7 @@ fn flow_article(
                 let start = cursor.byte;
                 cursor.byte += consumed;
                 lines.push(FlowLine {
-                    bounds: Rect::new(slot.start, y, width, LINE_HEIGHT),
+                    bounds: Rect::new(slot.start, y, width, line_height),
                     layout: shaped,
                     paragraph: cursor.paragraph,
                     consumed: start..cursor.byte,
@@ -253,22 +243,21 @@ fn flow_article(
                     break;
                 }
             }
-            y += LINE_HEIGHT + if paragraph_ended { 9.0 } else { 0.0 };
+            y += line_height + if paragraph_ended { 9.0 } else { 0.0 };
         }
     }
     Ok((lines, cursor))
 }
 
-fn serif(size: f32, line_height: f32, color: Color) -> TextStyle {
+fn editorial_text_style(
+    theme: DefaultTheme,
+    token: sui::ThemeTextToken,
+    color: Color,
+) -> TextStyle {
     TextStyle {
-        font_size: size,
-        line_height,
-        color,
-        font_families: Some(FontFamilyStack::new(
-            "Georgia",
-            &["Palatino Linotype", "ui-serif"],
-        )),
-        ..TextStyle::default()
+        font_size: token.size,
+        line_height: token.line_height,
+        ..theme.serif_text_style(color)
     }
 }
 
@@ -285,6 +274,7 @@ struct Drag {
 }
 
 struct Editorial {
+    theme: DevThemeReader,
     state: Signal<Motion>,
     controls: WidgetPod,
     controls_size: Size,
@@ -297,7 +287,7 @@ struct Editorial {
     drop_cap: Option<PersistentTextLayout>,
     quote: Option<PersistentTextLayout>,
     quote_bounds: Option<Rect>,
-    static_size: Option<Size>,
+    static_style: Option<(Size, DefaultTheme)>,
     lines: Vec<FlowLine>,
     cursor: Cursor,
     reflow_ms: f64,
@@ -342,6 +332,7 @@ impl Editorial {
                 FlexItem::fixed(80.0),
             );
         Self {
+            theme,
             state,
             controls: WidgetPod::new(controls),
             controls_size: Size::ZERO,
@@ -354,7 +345,7 @@ impl Editorial {
             drop_cap: None,
             quote: None,
             quote_bounds: None,
-            static_size: None,
+            static_style: None,
             lines: Vec::new(),
             cursor: Cursor::default(),
             reflow_ms: 0.0,
@@ -512,11 +503,18 @@ impl Widget for Editorial {
             Constraints::new(Size::ZERO, Size::new(width, f32::INFINITY)),
         );
         let started = Instant::now();
-        if self.static_size != Some(self.size) {
-            let font = (width * 0.068).clamp(24.0, 64.0);
+        let theme = (self.theme)();
+        let body_style = editorial_text_style(theme, theme.text.base, theme.palette.text);
+        let line_height = body_style.line_height;
+        if self.static_style != Some((self.size, theme)) {
+            let title_token = if width >= 800.0 {
+                theme.text._6xl
+            } else {
+                theme.text._3xl
+            };
             let style = TextStyle {
-                weight: FontWeight::BOLD,
-                ..serif(font, font * 1.05, PAPER)
+                weight: FontWeight::new(theme.font_weights.bold),
+                ..editorial_text_style(theme, title_token, theme.palette.text)
             };
             self.title = ctx
                 .layout()
@@ -532,11 +530,11 @@ impl Widget for Editorial {
                 .shape_text_persistent(
                     self.drop_cap.as_ref().map(|v| v.handle()),
                     "T",
-                    Size::new(100.0, 78.0),
-                    serif(68.0, 78.0, GOLD),
+                    Size::new(theme.text._6xl.size * 2.0, theme.text._6xl.line_height),
+                    editorial_text_style(theme, theme.text._6xl, theme.palette.accent),
                 )
                 .ok();
-            self.static_size = Some(self.size);
+            self.static_style = Some((self.size, theme));
         }
         let title_height = self
             .title
@@ -547,7 +545,8 @@ impl Widget for Editorial {
             margin,
             body_top,
             width,
-            (self.size.height - body_top - 48.0).max(0.0),
+            (self.size.height - body_top - theme.text.xs.line_height - theme.spacing * 4.0)
+                .max(0.0),
         );
         let count = if self.size.width >= 1080.0 {
             3
@@ -574,8 +573,14 @@ impl Widget for Editorial {
             .as_ref()
             .map_or(46.0, |layout| layout.measurement().bounds.width())
             + 12.0;
-        self.blocked_rects
-            .push(Rect::new(margin, body_top, cap_width, LINE_HEIGHT * 3.0));
+        self.blocked_rects.push(Rect::new(
+            margin,
+            body_top,
+            cap_width,
+            self.drop_cap
+                .as_ref()
+                .map_or(line_height * 3.0, |layout| layout.measurement().height),
+        ));
         self.quote_bounds = None;
         if count > 1 && self.body.height() > 260.0 {
             let quote_width = column_width * 0.68;
@@ -585,7 +590,7 @@ impl Widget for Editorial {
                     self.quote.as_ref().map(|v| v.handle()),
                     QUOTE,
                     Size::new((quote_width - 20.0).max(1.0), 1.0),
-                    serif(18.0, 25.0, GOLD),
+                    editorial_text_style(theme, theme.text.lg, theme.palette.text),
                 )
                 .ok();
             let height = self
@@ -614,14 +619,12 @@ impl Widget for Editorial {
             &self.circles,
             &self.blocked_rects,
             &self.lines,
+            line_height,
             |text, width, handle| {
                 ctx.layout().layout_document_persistent(
                     handle,
-                    TextLayoutRequest::new(TextDocument::from_plain_text(
-                        text,
-                        serif(17.0, LINE_HEIGHT, PAPER),
-                    ))
-                    .with_box_size(Size::new(width, LINE_HEIGHT)),
+                    TextLayoutRequest::new(TextDocument::from_plain_text(text, body_style.clone()))
+                        .with_box_size(Size::new(width, line_height)),
                 )
             },
         );
@@ -653,7 +656,8 @@ impl Widget for Editorial {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let offset = ctx.bounds().origin.to_vector();
-        ctx.fill_bounds(Color::rgba(0.045, 0.05, 0.065, 1.0));
+        let theme = (self.theme)();
+        ctx.fill_bounds(theme.palette.surface);
         self.controls.paint(ctx);
         ctx.push_clip_rect(ctx.bounds());
         if let Some(title) = &self.title {
@@ -667,7 +671,11 @@ impl Widget for Editorial {
         }
         let motion = self.state.get();
         for (index, circle) in self.circles.iter().enumerate() {
-            let color = motion.orbs[index].color;
+            let color = [
+                theme.colors.primary,
+                theme.colors.info,
+                theme.colors.secondary,
+            ][index];
             let alpha = if motion.orbs[index].paused || !motion.playing {
                 0.5
             } else {
@@ -705,21 +713,22 @@ impl Widget for Editorial {
         }
         if let (Some(rect), Some(quote)) = (self.quote_bounds, &self.quote) {
             let rect = rect.translate(offset);
-            ctx.fill_rect(rect, Color::rgba(0.065, 0.065, 0.075, 1.0));
+            ctx.fill_rect(rect, theme.surfaces.panel);
             ctx.fill_rect(
                 Rect::new(rect.x(), rect.y(), 2.0, rect.height()),
-                GOLD.with_alpha(0.6),
+                theme.palette.accent,
             );
             ctx.draw_persistent_text_layout(Point::new(rect.x() + 12.0, rect.y() + 10.0), quote);
         }
+        let status_height = theme.text.xs.line_height + theme.spacing * 2.0;
         ctx.fill_rect(
             Rect::new(
                 offset.x,
-                offset.y + self.size.height - 36.0,
+                offset.y + self.size.height - status_height,
                 self.size.width,
-                36.0,
+                status_height,
             ),
-            Color::rgba(0.035, 0.04, 0.05, 1.0),
+            theme.surfaces.window_subtle,
         );
         let mut status = format!(
             "{} columns · {} lines · Reflow {:.2} ms",
@@ -735,17 +744,12 @@ impl Widget for Editorial {
         ctx.draw_text(
             Rect::new(
                 offset.x + self.margin(),
-                offset.y + self.size.height - 27.0,
+                offset.y + self.size.height - status_height + theme.spacing,
                 (self.size.width - self.margin() * 2.0).max(1.0),
-                24.0,
+                theme.text.xs.line_height,
             ),
             status,
-            TextStyle {
-                font_size: 12.0,
-                line_height: 18.0,
-                color: GOLD,
-                ..TextStyle::default()
-            },
+            demo_text_style(theme, DemoTextRole::Metadata, theme.palette.text_muted),
         );
         ctx.pop_clip();
     }
@@ -820,6 +824,85 @@ mod tests {
     }
 
     #[test]
+    fn editorial_restyles_cached_text_when_theme_changes_without_resize() -> sui::Result<()> {
+        use std::{cell::RefCell, rc::Rc};
+        let theme = Rc::new(RefCell::new(DefaultTheme::default()));
+        let reader = Rc::clone(&theme);
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().root(Editorial::new(
+                Signal::new(Motion {
+                    playing: false,
+                    ..Motion::default()
+                }),
+                Rc::new(move || *reader.borrow()),
+            )))
+            .build()?;
+        let window = runtime.window_ids()[0];
+        let mut custom = DefaultTheme::dark();
+        custom.text.base.size = 20.0;
+        custom.text.base.line_height = 32.0;
+        custom.text._6xl.size = 56.0;
+        custom.palette.accent = custom.colors.success;
+        for next in [DefaultTheme::default(), DefaultTheme::dark(), custom] {
+            *theme.borrow_mut() = next;
+            runtime.handle_event(
+                window,
+                Event::Window(WindowEvent::Resized(Size::new(1200.0, 1000.0))),
+            )?;
+            let output = runtime.render(window)?;
+            let mut styles = Vec::new();
+            let mut surface = false;
+            output
+                .frame
+                .scene
+                .visit_commands(&mut |command| match command {
+                    sui::SceneCommand::DrawShapedText(run) => {
+                        if let Some(layout) = run.resolve(&output.frame.text_layout_registry) {
+                            styles.push((layout.text().to_string(), layout.style().clone()));
+                        }
+                    }
+                    sui::SceneCommand::DrawShapedTextWindow(run) => {
+                        if let Some(layout) = run.resolve(&output.frame.text_layout_registry) {
+                            styles.push((layout.text().to_string(), layout.style().clone()));
+                        }
+                    }
+                    sui::SceneCommand::FillRect {
+                        brush: sui::Brush::Solid(color),
+                        ..
+                    } => {
+                        surface |= *color == next.palette.surface;
+                    }
+                    _ => {}
+                });
+            assert!(
+                surface,
+                "page background must use the current surface token"
+            );
+            for (text, color, size) in [
+                (TITLE, next.palette.text, next.text._6xl.size),
+                ("T", next.palette.accent, next.text._6xl.size),
+                (QUOTE, next.palette.text, next.text.lg.size),
+                (&ARTICLE[0][1..], next.palette.text, next.text.base.size),
+            ] {
+                let (_, style) = styles
+                    .iter()
+                    .find(|(value, _)| value == text)
+                    .unwrap_or_else(|| panic!("missing shaped text {text:?}"));
+                assert_eq!(style.color, color);
+                assert_eq!(style.font_size, size);
+                assert_eq!(
+                    style.font_families,
+                    next.serif_text_style(color).font_families
+                );
+                if text == &ARTICLE[0][1..] {
+                    assert_eq!(style.line_height, next.text.base.line_height);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn editorial_slots_subtract_overlapping_obstacles() {
         let column = Rect::new(0.0, 0.0, 500.0, 500.0);
         let circles = [Circle {
@@ -827,20 +910,24 @@ mod tests {
             radius: 50.0,
         }];
         assert_eq!(
-            line_slots(column, 90.0, &circles, &[]),
+            line_slots(column, 90.0, LINE_HEIGHT, &circles, &[]),
             vec![0.0..188.0, 312.0..500.0]
         );
         assert_eq!(
             line_slots(
                 column,
                 90.0,
+                LINE_HEIGHT,
                 &circles,
                 &[Rect::new(300.0, 80.0, 140.0, 80.0)]
             ),
             vec![0.0..188.0, 440.0..500.0]
         );
-        assert!(line_slots(column, 90.0, &circles, &[column]).is_empty());
-        assert_eq!(line_slots(column, 200.0, &circles, &[]), vec![0.0..500.0]);
+        assert!(line_slots(column, 90.0, LINE_HEIGHT, &circles, &[column]).is_empty());
+        assert_eq!(
+            line_slots(column, 200.0, LINE_HEIGHT, &circles, &[]),
+            vec![0.0..500.0]
+        );
     }
 
     #[test]
@@ -855,18 +942,28 @@ mod tests {
                 center: Point::new(width * 0.5, 210.0),
                 radius: 36.0,
             }];
-            let (lines, end) =
-                flow_article(&columns, &circles, &[], &[], |text, width, handle| {
+            let (lines, end) = flow_article(
+                &columns,
+                &circles,
+                &[],
+                &[],
+                LINE_HEIGHT,
+                |text, width, handle| {
                     system.layout_document_persistent(
                         handle,
                         TextLayoutRequest::new(TextDocument::from_plain_text(
                             text,
-                            serif(17.0, LINE_HEIGHT, PAPER),
+                            TextStyle {
+                                line_height: LINE_HEIGHT,
+                                ..DefaultTheme::default()
+                                    .serif_text_style(DefaultTheme::default().palette.text)
+                            },
                         ))
                         .with_box_size(Size::new(width, LINE_HEIGHT)),
                         &fonts,
                     )
-                })?;
+                },
+            )?;
             let mut cursor = Cursor {
                 paragraph: 0,
                 byte: 1,
@@ -889,7 +986,7 @@ mod tests {
                     })
                     .unwrap();
                 assert!(
-                    line_slots(*column, line.bounds.y(), &circles, &[])
+                    line_slots(*column, line.bounds.y(), LINE_HEIGHT, &circles, &[])
                         .iter()
                         .any(
                             |slot| line.bounds.x() >= slot.start && line.bounds.max_x() <= slot.end
