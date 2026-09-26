@@ -13,8 +13,12 @@ Or from the workspace root:
 
 Production build
 
-  trunk build --config crates/sui-demo/web/Trunk.toml --release
+  trunk build --config crates/sui-demo/web/Trunk.toml --release --cargo-profile web-release --locked
   node crates/sui-demo/web/prepare-dist.mjs crates/sui-demo/web/dist
+
+The `web-release` profile optimizes for bundle size with thin LTO and one
+codegen unit. The Pages workflow uses the same profile and keeps a 12 MiB
+uncompressed Wasm budget. Native release builds retain their existing profile.
 
 Output goes to:
 

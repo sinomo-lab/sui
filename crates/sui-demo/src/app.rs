@@ -7877,11 +7877,32 @@ final_max_luminance={final_max_luminance}
     }
 
     fn open_dev_shell_demo(window: &TestWindow, title: &str) -> Result<()> {
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(title)
-            .click()?;
-        assert_dev_shell_active_tab(window, title)
+        // New stories can push cards below the picker viewport. Exercise the
+        // same scroll-and-click path a user needs instead of clicking clipped
+        // semantics bounds outside the scroll view.
+        for _ in 0..8 {
+            let snapshot = window.snapshot()?;
+            let card = find_named_node(&snapshot, SemanticsRole::Button, title);
+            let picker = find_named_node(
+                &snapshot,
+                SemanticsRole::ScrollView,
+                DEV_SHELL_PICKER_SCROLL_NAME,
+            );
+            let card_y = card.bounds.y() + card.bounds.height() * 0.5;
+            if card_y > picker.bounds.y() && card_y < picker.bounds.max_y() {
+                window
+                    .get_by_role(SemanticsRole::Button)
+                    .with_name(title)
+                    .click()?;
+                return assert_dev_shell_active_tab(window, title);
+            }
+            let picker_y = picker.bounds.y() + picker.bounds.height() * 0.5;
+            window
+                .get_by_role(SemanticsRole::ScrollView)
+                .with_name(DEV_SHELL_PICKER_SCROLL_NAME)
+                .scroll_pixels(Vector::new(0.0, picker_y - card_y))?;
+        }
+        panic!("demo card {title:?} did not scroll into the picker viewport");
     }
 
     fn open_dev_shell_settings(window: &TestWindow) -> Result<()> {
@@ -8540,11 +8561,7 @@ final_max_luminance={final_max_luminance}
             .get_by_role(SemanticsRole::Button)
             .with_name("Open demo")
             .click()?;
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(LAYOUT_TAB_LABEL)
-            .click()?;
-        assert_dev_shell_active_tab(&window, LAYOUT_TAB_LABEL)?;
+        open_dev_shell_demo(&window, LAYOUT_TAB_LABEL)?;
         app.advance_time(0.18)?;
 
         window

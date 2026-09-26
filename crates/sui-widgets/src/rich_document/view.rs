@@ -599,39 +599,40 @@ impl Widget for RichDocumentView {
             && ctx.phase() != EventPhase::Bubble
         {
             match pointer.kind {
-                PointerEventKind::Down
-                    if pointer.button == Some(PointerButton::Primary)
-                        && let Some(point) = self.point_at(pointer.position, true) =>
-                {
-                    let selection = self.state.selection();
-                    let anchor = if pointer.modifiers.shift {
-                        selection.anchor.unwrap_or(point)
-                    } else {
-                        point
-                    };
-                    self.dragging = true;
-                    self.drag_anchor = Some(anchor);
-                    self.pressed_inline = self.inline_at(point).map(|action| (point.block, action));
-                    self.update_selection(anchor, point);
-                    ctx.request_focus();
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
+                PointerEventKind::Down if pointer.button == Some(PointerButton::Primary) => {
+                    if let Some(point) = self.point_at(pointer.position, true) {
+                        let selection = self.state.selection();
+                        let anchor = if pointer.modifiers.shift {
+                            selection.anchor.unwrap_or(point)
+                        } else {
+                            point
+                        };
+                        self.dragging = true;
+                        self.drag_anchor = Some(anchor);
+                        self.pressed_inline =
+                            self.inline_at(point).map(|action| (point.block, action));
+                        self.update_selection(anchor, point);
+                        ctx.request_focus();
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                        ctx.set_handled();
+                    }
                 }
                 PointerEventKind::Move
-                    if self.dragging
-                        && pointer.buttons.contains(PointerButton::Primary)
-                        && let (Some(anchor), Some(focus)) =
-                            (self.drag_anchor, self.point_at(pointer.position, false)) =>
+                    if self.dragging && pointer.buttons.contains(PointerButton::Primary) =>
                 {
-                    if focus != anchor {
-                        self.pressed_inline = None;
+                    if let (Some(anchor), Some(focus)) =
+                        (self.drag_anchor, self.point_at(pointer.position, false))
+                    {
+                        if focus != anchor {
+                            self.pressed_inline = None;
+                        }
+                        self.update_selection(anchor, focus);
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                        ctx.set_handled();
                     }
-                    self.update_selection(anchor, focus);
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
                 }
                 PointerEventKind::Up
                     if self.dragging && pointer.button == Some(PointerButton::Primary) =>

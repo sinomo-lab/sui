@@ -7070,10 +7070,11 @@ mod tests {
                     if run
                         .resolve(output.frame.text_layout_registry.as_ref())
                         .filter(|layout| layout.text() == text)
-                        .is_some_and(|layout| !layout.text().is_empty())
-                        && let Some(rect) = stack.last() =>
+                        .is_some_and(|layout| !layout.text().is_empty()) =>
                 {
-                    clips.push(*rect);
+                    if let Some(rect) = stack.last() {
+                        clips.push(*rect);
+                    }
                 }
                 _ => {}
             });

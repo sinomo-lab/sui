@@ -512,7 +512,8 @@ impl TextEngine {
             let render_mode = if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
                 && (!self.lcd_blending_supported
                     || !state.text_lcd_allowed
-                    || !(glyph_color.alpha >= 1.0)
+                    || glyph_color.alpha.is_nan()
+                    || glyph_color.alpha < 1.0
                     || !crate::text_policy::is_sdr_color(glyph_color)
                     || !background
                         .is_some_and(|bg| bg.alpha >= 1.0 && crate::text_policy::is_sdr_color(bg))

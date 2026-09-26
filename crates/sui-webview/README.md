@@ -29,3 +29,17 @@ fn main() -> Result<()> {
 
 See `docs/api/webviews.md` in the SUI repository for platform limitations and
 the complete control/event example.
+
+## Linux build prerequisites
+
+Install WebKitGTK 4.1, including its development headers and pkg-config files.
+On Arch Linux, use `sudo pacman -S --needed webkit2gtk-4.1`; this also installs
+JavaScriptCore and the GTK dependencies. On Debian/Ubuntu, install
+`libwebkit2gtk-4.1-dev`. Cargo fetches the Rust bindings, while these native
+libraries come from the system package manager.
+
+Verify detection with:
+
+```sh
+pkg-config --modversion webkit2gtk-4.1 javascriptcoregtk-4.1
+```

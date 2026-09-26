@@ -4,13 +4,28 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
-## [0.2.1]
+## [0.3.0]
 
-This release refines interaction behavior and rendering consistency across
-widgets, overlays, demos, and accessibility surfaces.
+This release adds application and editor surfaces, improves text quality and
+retained rendering, and expands the source-built language bindings.
 
 ### Highlights
 
+- Added retained docking workspaces, editor cursor grabbing and raw mouse motion,
+  safe initial desktop window placement, and GPU interoperability contracts.
+- Expanded Python and JavaScript bindings for the newer Rust widget and editor
+  surfaces. These bindings remain source-built and are not registry publications.
+- Reused paragraph shaping and glyph measurements across layout widths, added
+  size-only text measurement, and reduced repeated Flex layout probes.
+- Retained widget output, scene fragments, renderer packets, GPU batches, and
+  shared scene command storage to reduce repeated frame preparation work.
+- Overlapped GPU preparation with CPU startup and added reproducible widget,
+  frame, shrinkwrap-conversation, and editorial-flow benchmarks.
+- Improved font hinting, transformed text rasterization, LCD coverage and atlas
+  sampling; isolated node-edge animation repaint work and analytic grid dots.
+- Added provider-neutral image icons, bounded browser tabs, compact dialogs,
+  and reserved scrollbar gutters.
+- Updated dependencies and bundled Lucide icons to 1.47.0.
 - Bundled complete Noto Sans Arabic and Hebrew fallback fonts for offline web
   and Android text, and corrected caret hit testing across right-to-left runs.
 - Restored corrupted Unicode, emoji, and IME sample text in the demo and its
@@ -61,6 +76,28 @@ widgets, overlays, demos, and accessibility surfaces.
   default-enabled `nodes` feature, covering controlled and uncontrolled graphs,
   retained node controls, every edge family, subflows, editing, indexing,
   semantics, and viewport telemetry.
+
+### Compatibility and release notes
+
+- Update SUI crate dependencies together from `0.2` to `0.3`. Lucide keeps its
+  independent `1.47.0` version and now depends on the `0.3` SUI family.
+- `Event::RawMouseMotion` and `WindowEvent::Moved` require handling in exhaustive
+  event matches. Public widget appearance/configuration structs gained fields,
+  including `ControlPalette::selection_border`; update explicit struct literals.
+- Rust 1.90 remains the minimum supported version.
+- Linux webview builds require the system WebKitGTK 4.1 development libraries;
+  the Rust bindings do not install the browser engine.
+- Browser support remains alpha and Android remains experimental. Native
+  webviews are an optional crate; Python wheels and Node addons are not part of
+  this Rust registry release.
+
+## [0.2.1]
+
+This release refines interaction behavior and rendering consistency across
+widgets, overlays, demos, and accessibility surfaces.
+
+### Highlights
+
 - Added configurable clipboard ownership and a shared editable-text controller
   for consistent text editing, selection, and copy behavior.
 - Added recursive context-menu submenus with collision-aware cascade placement
@@ -146,3 +183,4 @@ Initial public alpha release of the Rust workspace.
 [0.1.0]: https://github.com/sinomo-lab/sui/releases/tag/v0.1.0
 [0.2.0]: https://github.com/sinomo-lab/sui/compare/v0.1.0...v0.2.0
 [0.2.1]: https://github.com/sinomo-lab/sui/compare/v0.2.0...v0.2.1
+[0.3.0]: https://github.com/sinomo-lab/sui/compare/v0.2.1...v0.3.0

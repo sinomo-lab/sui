@@ -1120,15 +1120,11 @@ where
                 let geometry = edge_geometry(&snapshot.graph, edge, snapshot.viewport, bounds)?;
                 // The spatial query includes an interaction margin; do not animate
                 // edges that cannot contribute any pixels to the clipped viewport.
-                if geometry
+                geometry
                     .path
                     .bounds()
                     .inflate(2.4, 2.4)
-                    .intersection(bounds)
-                    .is_none()
-                {
-                    return None;
-                }
+                    .intersection(bounds)?;
                 Some(AnimatedEdge {
                     path: EdgeAnimationPath::new(&geometry.path),
                     speed: edge.animation_speed,
@@ -6581,15 +6577,14 @@ mod tests {
             let mut particles = Vec::new();
             let mut collect = |scene: &Scene| {
                 for command in scene.commands() {
-                    if let SceneCommand::FillRoundedRect { rect: bounds, .. } = command {
-                        if (bounds.width() - 4.8).abs() < 0.001
-                            && (bounds.height() - 4.8).abs() < 0.001
-                        {
-                            particles.push(Point::new(
-                                bounds.x() + bounds.width() * 0.5,
-                                bounds.y() + bounds.height() * 0.5,
-                            ));
-                        }
+                    if let SceneCommand::FillRoundedRect { rect: bounds, .. } = command
+                        && (bounds.width() - 4.8).abs() < 0.001
+                        && (bounds.height() - 4.8).abs() < 0.001
+                    {
+                        particles.push(Point::new(
+                            bounds.x() + bounds.width() * 0.5,
+                            bounds.y() + bounds.height() * 0.5,
+                        ));
                     }
                 }
             };

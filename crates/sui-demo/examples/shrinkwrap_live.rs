@@ -51,15 +51,15 @@ impl DesktopExtension for Probe {
             .presented_at
             .duration_since(samples.first_presented.unwrap())
             .as_secs_f64();
-        if (2.0..15.0).contains(&elapsed) {
-            if let Some(snapshot) = sui::window_performance_snapshot(frame.window_id) {
-                assert_eq!(snapshot.frame_index, frame.frame_index);
-                assert!(
-                    !snapshot.phase_timings.is_empty(),
-                    "native stage diagnostics were not collected"
-                );
-                samples.frames.push((frame.presented_at, snapshot));
-            }
+        if (2.0..15.0).contains(&elapsed)
+            && let Some(snapshot) = sui::window_performance_snapshot(frame.window_id)
+        {
+            assert_eq!(snapshot.frame_index, frame.frame_index);
+            assert!(
+                !snapshot.phase_timings.is_empty(),
+                "native stage diagnostics were not collected"
+            );
+            samples.frames.push((frame.presented_at, snapshot));
         }
         Ok(())
     }

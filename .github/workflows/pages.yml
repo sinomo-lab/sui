@@ -37,6 +37,7 @@ jobs:
           trunk build
           --config crates/sui-demo/web/Trunk.toml
           --release
+          --cargo-profile web-release
           --locked
           --filehash true
           --public-url "${{ steps.pages.outputs.base_path }}/"

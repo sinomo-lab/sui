@@ -165,11 +165,13 @@ impl TextBackground {
                 None
             },
         );
-        if inset > 0.0 && axis_aligned && rect.width() > inset * 2.0 && rect.height() > inset * 2.0
+        if inset > 0.0
+            && axis_aligned
+            && rect.width() > inset * 2.0
+            && rect.height() > inset * 2.0
+            && let Some(interior) = clipped(rect.inflate(-inset, -inset))
         {
-            if let Some(interior) = clipped(rect.inflate(-inset, -inset)) {
-                self.record(interior, color);
-            }
+            self.record(interior, color);
         }
     }
 }
