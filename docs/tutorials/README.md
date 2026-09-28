@@ -4,7 +4,7 @@ These tutorials teach the public Rust facade through complete examples that
 are compiled from `crates/sui/examples`.
 
 1. [Build your first SUI application](./quickstart.md) covers dependency
-   aliasing, windows, retained widgets, `Stack` and `Flex`, Mesh themes,
+   aliasing, windows, retained widgets, `Stack` and `Flex`, themes,
    callbacks, and headless construction.
 2. [Build a stateful form](./stateful-form.md) covers UI-thread application
    state, editable text, password and local date/time fields, dynamic readers,

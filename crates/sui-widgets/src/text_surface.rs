@@ -1844,11 +1844,11 @@ impl Widget for TextSurface {
         let base_background = if self.read_only {
             palette.surface
         } else {
-            mix_color(palette.control, palette.control_hover, hover_progress)
+            palette.field
         };
         let background = mix_color(base_background, palette.surface_focus, focus_progress);
         let border = mix_color(
-            mix_color(palette.border, palette.border_hover, hover_progress),
+            mix_color(palette.button_border, palette.border_hover, hover_progress),
             palette.border_focus,
             focus_progress,
         );
@@ -2304,8 +2304,7 @@ mod tests {
         let theme = DefaultTheme::default();
         let hover_duration = theme.motion.hover_duration();
         let focus_duration = theme.motion.focus_duration();
-        let expected_hover =
-            super::mix_color(theme.palette.control, theme.palette.control_hover, 1.0);
+        let expected_hover = theme.palette.border_hover;
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(220.0, 96.0))
@@ -2326,15 +2325,17 @@ mod tests {
 
         runtime.tick(hover_duration * 0.5);
         assert_eq!(handle_ready_events(&mut runtime), 1);
+        // The field well stays put; hover strengthens the outline.
         let mid_hover = runtime.render(window_id).expect("render should succeed");
-        let mid_hover_background = solid_fill_colors(&mid_hover)[0];
-        assert_ne!(mid_hover_background, theme.palette.control);
-        assert_ne!(mid_hover_background, expected_hover);
+        assert_eq!(solid_fill_colors(&mid_hover)[0], theme.palette.field);
+        let mid_hover_strokes = solid_stroke_colors(&mid_hover);
+        assert!(!mid_hover_strokes.contains(&theme.palette.button_border));
+        assert!(!mid_hover_strokes.contains(&expected_hover));
 
         runtime.tick(hover_duration);
         assert_eq!(handle_ready_events(&mut runtime), 1);
         let settled_hover = runtime.render(window_id).expect("render should succeed");
-        assert_eq!(solid_fill_colors(&settled_hover)[0], expected_hover);
+        assert!(solid_stroke_colors(&settled_hover).contains(&expected_hover));
 
         runtime
             .handle_event(
@@ -2380,7 +2381,7 @@ mod tests {
         let light = runtime.render(window_id).expect("render should succeed");
         assert_eq!(
             solid_fill_colors(&light)[0],
-            DefaultTheme::default().palette.control
+            DefaultTheme::default().palette.field
         );
 
         *theme.borrow_mut() = DefaultTheme::dark();
@@ -2394,7 +2395,7 @@ mod tests {
 
         assert_eq!(
             solid_fill_colors(&dark)[0],
-            DefaultTheme::dark().palette.control
+            DefaultTheme::dark().palette.field
         );
         assert_ne!(light.frame.scene, dark.frame.scene);
     }
@@ -2846,6 +2847,9 @@ mod tests {
     fn text_surface_caret_uses_theme_palette_color() {
         let mut theme = DefaultTheme::default();
         theme.palette.caret = Color::rgba(0.02, 0.18, 0.72, 1.0);
+        // A distinct on-accent color proves the caret never falls back to it
+        // (the default on-accent white also matches the white field well).
+        theme.palette.accent_text = Color::rgba(0.97, 0.91, 0.52, 1.0);
         let caret_color = theme.palette.caret;
         let accent_text = theme.palette.accent_text;
         let (mut runtime, window_id) = build_runtime(

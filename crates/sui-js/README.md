@@ -151,12 +151,19 @@ app.configureRendering({
 theme.setAccent(new sui.Color(0.2, 0.55, 1, 1));
 ```
 
-Use `theme.color(...)`/`setColor(...)` for source semantic colors and
+Use `theme.color(...)`/`setColor(...)` for source colors and
 `theme.number(...)`/`setNumber(...)` for spacing, radii, breakpoints, and
-motion durations. Derived control palettes and metrics are synchronized by the
-binding. Changing the primary/accent color affects explicit primary actions,
-links, thin indicators, selection borders, and decorative signals; selection
-fills, focus, fields, menus, and scroll chrome remain neutral.
+motion durations. Color tokens are the neutral ramp (`window`, `subtle`,
+`panel`, `overlay`, `control`, `button`, `field`, `border`, `border-strong`,
+`border-control`, `text`, `text-secondary`, `text-tertiary`, and their
+hover/active variants), brand and status colors (`primary`, `secondary`,
+`info`, `success`, `warning`, `danger`, each with an `on-*` content color),
+and the decorative hues (`red`, `orange`, `amber`, `green`, `teal`, `cyan`,
+`blue`, `violet`, `magenta`). Derived control palettes and metrics are
+synchronized by the binding. Changing the primary/accent color re-derives
+primary actions, checked controls, links, focus rings, thin indicators,
+selection borders, and glows; surfaces, selection fills, fields, menus, and
+scroll chrome remain neutral.
 
 When running directly from this checkout, replace `require("@sui/ui")` with
 `require(".")` from `crates/sui-js`, or

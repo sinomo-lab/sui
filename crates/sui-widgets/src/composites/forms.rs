@@ -1,4 +1,5 @@
 use crate::ControlMetrics;
+use crate::DecorativeHue;
 use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::SemanticTone;
@@ -54,6 +55,7 @@ pub struct ActionCard {
     pub(super) icon: Option<IconGlyph>,
     pub(super) tone: SemanticTone,
     pub(super) accent: Option<Color>,
+    pub(super) decorative: Option<DecorativeHue>,
     pub(super) padding: Option<Insets>,
     pub(super) min_width: Option<f32>,
     pub(super) min_height: Option<f32>,
@@ -80,6 +82,7 @@ impl ActionCard {
             icon: None,
             tone: SemanticTone::Accent,
             accent: None,
+            decorative: None,
             padding: None,
             min_width: None,
             min_height: None,
@@ -121,8 +124,18 @@ impl ActionCard {
         self
     }
 
+    /// A fixed accent color for the rail and icon tile.
     pub fn accent(mut self, accent: Color) -> Self {
         self.accent = Some(accent);
+        self.decorative = None;
+        self
+    }
+
+    /// A categorical accent resolved from the active theme's decorative
+    /// palette, so the card follows light, dark, and custom themes.
+    pub fn decorative(mut self, hue: DecorativeHue) -> Self {
+        self.decorative = Some(hue);
+        self.accent = None;
         self
     }
 
@@ -446,14 +459,27 @@ impl Widget for ActionCard {
         } else {
             0.0
         };
-        let accent = self
-            .accent
-            .unwrap_or_else(|| theme.semantic_tone_color(self.tone));
-        let mut background = mix_color(palette.control, palette.control_hover, hover);
-        background = mix_color(background, palette.control_active, press * 0.55);
+        let mut background = mix_color(palette.button, palette.button_hover, hover);
+        background = mix_color(background, palette.button_pressed, press * 0.55);
         if !enabled {
             background = mix_color(background, palette.surface, 0.68).with_alpha(0.82);
         }
+        // Rail, icon tile, and glyph colors: decorative and tone accents use
+        // their derived soft wash and legible ink; a fixed accent is mixed.
+        let (accent, icon_fill, icon_border, icon_ink) = match (self.accent, self.decorative) {
+            (Some(accent), _) => (
+                accent,
+                mix_color(background, accent, 0.14),
+                accent.with_alpha(0.42),
+                accent,
+            ),
+            (None, hue) => {
+                let roles = hue
+                    .map(|hue| theme.decorative.get(hue))
+                    .unwrap_or_else(|| theme.tone_roles(self.tone));
+                (roles.solid, roles.soft, roles.border, roles.text)
+            }
+        };
         let border = if !enabled {
             palette.border.with_alpha(0.55)
         } else if ctx.is_focused() {
@@ -499,7 +525,7 @@ impl Widget for ActionCard {
         );
         ctx.fill(
             rounded_rect_path(accent_rail, metrics.action_card_accent_width * 0.5),
-            accent.with_alpha(0.78),
+            accent,
         );
 
         if let Some(icon) = self.icon {
@@ -516,11 +542,15 @@ impl Widget for ActionCard {
             );
             ctx.fill(
                 rounded_rect_path(icon_box, metrics.corner_radius),
-                mix_color(background, accent, 0.14),
+                icon_fill,
             );
             ctx.stroke(
                 rounded_rect_path(icon_box, metrics.corner_radius),
-                accent.with_alpha(if enabled { 0.42 } else { 0.22 }),
+                if enabled {
+                    icon_border
+                } else {
+                    icon_border.with_alpha(0.5)
+                },
                 StrokeStyle::new(physical_pixels(ctx, 1.0)),
             );
             let icon_size = metrics
@@ -539,9 +569,9 @@ impl Widget for ActionCard {
                 icon,
                 icon_rect,
                 if enabled {
-                    accent
+                    icon_ink
                 } else {
-                    palette.text.with_alpha(0.34)
+                    palette.text_disabled
                 },
             );
         }

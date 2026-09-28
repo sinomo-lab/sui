@@ -13,6 +13,7 @@ use crate::composites::status::{
     SegmentedControlChange, SegmentedControlContextChange, segmented_control_item_id,
 };
 use crate::controls::draw_icon_glyph;
+use crate::paint_theme_shadow;
 use crate::text_align::paint_aligned_text;
 use std::sync::Arc;
 use sui_core::Event;
@@ -628,9 +629,8 @@ impl Widget for TabBar {
         let label_style = theme.text_style(palette.text_muted);
         let selected_label_style = theme.text_style(palette.text);
 
-        // Navigation tabs share one flat strip. Selection is communicated by the
-        // animated underline below rather than by a second, raised tile.
-        ctx.fill_rect(ctx.bounds(), palette.control);
+        // Navigation tabs sit directly on their surface above a hairline
+        // divider. Selection is communicated by the animated accent underline.
         let divider_height = physical_pixels(ctx, metrics.border_width);
         ctx.fill_rect(
             Rect::new(
@@ -639,7 +639,7 @@ impl Widget for TabBar {
                 ctx.bounds().width(),
                 divider_height,
             ),
-            palette.border.with_alpha(0.72),
+            palette.border,
         );
 
         let focus_progress = self.focus_animation.value;
@@ -1912,7 +1912,15 @@ impl Widget for SegmentedControl {
         };
         let radius = metrics.corner_radius;
 
-        ctx.fill(rounded_rect_path(ctx.bounds(), radius), palette.control);
+        // A recessed track holds a raised neutral thumb: white over a gray
+        // track in light themes, the lifted control face over the inset field
+        // well in dark themes.
+        let (track, thumb_fill) = if theme.surfaces.dark {
+            (palette.field, palette.button_hover)
+        } else {
+            (palette.control, palette.button)
+        };
+        ctx.fill(rounded_rect_path(ctx.bounds(), radius), track);
 
         let selected_thumb = if !self.segments.is_empty() {
             let from = self.selection_from.min(self.segments.len() - 1);
@@ -1925,13 +1933,15 @@ impl Widget for SegmentedControl {
                 Insets::all(2.0),
             );
             if let Some(thumb) = thumb {
+                let thumb_radius = (thumb.height() * 0.5).min(radius - 1.0).max(0.0);
+                paint_theme_shadow(ctx, thumb, [thumb_radius; 4], &theme.shadows.box_shadow.xs);
                 draw_control_shape(
                     ctx,
                     thumb,
-                    (thumb.height() * 0.5).min(radius),
+                    thumb_radius,
                     physical_pixels(ctx, metrics.border_width),
-                    palette.selection,
-                    palette.selection_border,
+                    thumb_fill,
+                    palette.border,
                 );
             }
             thumb
@@ -2503,9 +2513,17 @@ impl Widget for Tabs {
         let label_style = theme.text_style(palette.text_muted);
         let selected_label_style = theme.text_style(palette.text);
 
-        ctx.fill(
-            rounded_rect_path(header, metrics.corner_radius),
-            palette.control,
+        // Underline tabs sit on the surface above a hairline divider, like
+        // the navigation tab bar.
+        let divider_height = physical_pixels(ctx, metrics.border_width);
+        ctx.fill_rect(
+            Rect::new(
+                header.x(),
+                header.max_y() - divider_height,
+                header.width(),
+                divider_height,
+            ),
+            palette.border,
         );
 
         let focus_progress = self.focus_animation.value;
@@ -2519,14 +2537,10 @@ impl Widget for Tabs {
             let hover_amount = self.hover_amount_for(index);
             let press_amount = self.press_amount_for(index);
 
-            if let Some((background, border)) = tab_state_visuals(
-                &theme,
-                selected,
-                hovered,
-                pressed,
-                hover_amount,
-                press_amount,
-            ) {
+            // Underline tabs: the accent indicator carries selection.
+            if let Some((background, border)) =
+                tab_state_visuals(&theme, false, hovered, pressed, hover_amount, press_amount)
+            {
                 draw_control_shape(
                     ctx,
                     rect,

@@ -7339,7 +7339,17 @@ mod tests {
     {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(root);
-        let _ = runtime.render(window_id)?;
+        let unfocused = runtime.render(window_id)?;
+        // Content may legitimately stroke with the accent (the focus ring
+        // shares its hue), so compare against the unfocused frame instead of
+        // looking for the ring color.
+        let ring_strokes = |output: &RenderOutput| {
+            solid_stroke_colors(output)
+                .into_iter()
+                .filter(|color| *color == theme.palette.focus_ring)
+                .count()
+        };
+        let unfocused_ring_strokes = ring_strokes(&unfocused);
 
         runtime.handle_event(
             window_id,
@@ -7349,7 +7359,7 @@ mod tests {
         let focused = runtime.render(window_id)?;
         let focused_strokes = solid_stroke_colors(&focused);
         assert!(
-            !focused_strokes.contains(&theme.palette.focus_ring),
+            ring_strokes(&focused) <= unfocused_ring_strokes,
             "focused data containers should not paint a focus ring; strokes={focused_strokes:?}"
         );
         assert_eq!(

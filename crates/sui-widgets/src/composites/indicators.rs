@@ -662,13 +662,10 @@ pub fn paint_progress_bar(
     let metrics = theme.metrics;
     let palette = theme.palette;
     let (tone, _) = theme.semantic_tone_colors(tone);
-    draw_control_shape(
-        ctx,
-        rect,
-        metrics.corner_radius,
-        physical_pixels(ctx, metrics.border_width).min(rect.height() * 0.5),
-        palette.control,
-        palette.border,
+    // An unbordered recessed track under the tone-colored fill.
+    ctx.fill(
+        rounded_rect_path(rect, metrics.corner_radius),
+        palette.control_hover,
     );
 
     let fill = Rect::new(
@@ -1023,6 +1020,10 @@ pub(super) fn lerp_rect(from: Rect, to: Rect, progress: f32) -> Rect {
     )
 }
 
+/// State fills for tab-like items. Unselected items are ghosts that reveal a
+/// borderless neutral wash on hover and press; a selected browser-style tab
+/// is raised to the panel surface. Underline tabs pass `selected = false`
+/// and let their accent indicator carry selection.
 pub(super) fn tab_state_visuals(
     theme: &DefaultTheme,
     selected: bool,
@@ -1034,36 +1035,22 @@ pub(super) fn tab_state_visuals(
     let palette = theme.palette;
     let interaction = theme.interaction;
     if selected {
-        Some((palette.selection, palette.selection_border))
-    } else if pressed || press_amount > 0.0 {
-        Some((
-            mix_color(
-                if hover_amount > 0.0 {
-                    mix_color(
-                        palette.control,
-                        palette.control_hover,
-                        interaction.hover_blend * hover_amount,
-                    )
-                } else {
-                    palette.control
-                },
-                palette.control_active,
-                interaction.pressed_blend * press_amount,
-            ),
-            palette.border_hover,
-        ))
-    } else if hovered || hover_amount > 0.0 {
-        Some((
-            mix_color(
-                palette.control,
-                palette.control_hover,
-                interaction.hover_blend * hover_amount,
-            ),
-            palette.border_hover,
-        ))
-    } else {
-        None
+        return Some((palette.surface_raised, palette.border));
     }
+    if !(hovered || pressed || hover_amount > 0.0 || press_amount > 0.0) {
+        return None;
+    }
+    let hovered_fill = mix_color(
+        palette.control.with_alpha(0.0),
+        palette.control,
+        interaction.hover_blend * hover_amount,
+    );
+    let fill = mix_color(
+        hovered_fill,
+        palette.control_hover,
+        interaction.pressed_blend * press_amount,
+    );
+    Some((fill, Color::TRANSPARENT))
 }
 
 pub(super) fn draw_control_frame(

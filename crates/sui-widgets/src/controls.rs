@@ -1,7 +1,7 @@
 mod interaction;
 use crate::{
-    ControlMetrics, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar, ResolvedEffectStyle,
-    ResolvedHdrStyle, SemanticTone, ThemeColorScheme, WidgetColorRole, WidgetLuminanceRole,
+    ControlMetrics, ControlPalette, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar,
+    ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole, WidgetLuminanceRole,
     WidgetMaterialRole,
     editable_text::{
         CaretBlink, EditableTextController, EditableTextLineMode, TextChangeCallbacks,
@@ -617,6 +617,48 @@ fn choice_frame_visuals(
     }
 }
 
+/// Unselected choice indicators (checkbox, radio, switch track) sit on the
+/// field well behind a 3:1 control outline; selected indicators fill with the
+/// accent and the outline takes the fill color so no darker ring appears.
+fn choice_indicator_colors(
+    palette: &ControlPalette,
+    hover: f32,
+    press: f32,
+    selected: f32,
+) -> (Color, Color) {
+    let rest_fill = mix_color(palette.field, palette.button_hover, hover);
+    let rest_border = mix_color(palette.border_control, palette.text_muted, hover * 0.5);
+    let on = mix_color(
+        mix_color(palette.accent, palette.accent_hover, hover),
+        palette.accent_pressed,
+        press,
+    );
+    (
+        mix_color(rest_fill, on, selected),
+        mix_color(rest_border, on, selected),
+    )
+}
+
+/// Framed choice rows share the neutral button face and outline.
+fn framed_choice_colors(
+    palette: &ControlPalette,
+    hover: f32,
+    press: f32,
+    focus: f32,
+) -> (Color, Color) {
+    let background = mix_color(
+        mix_color(palette.button, palette.button_hover, hover),
+        palette.button_pressed,
+        press,
+    );
+    let border = mix_color(
+        mix_color(palette.button_border, palette.border_hover, hover),
+        palette.border_focus,
+        focus,
+    );
+    (background, border)
+}
+
 fn animated_translucent_wash(color: Color, progress: f32) -> Color {
     color.with_alpha(color.alpha * progress.clamp(0.0, 1.0))
 }
@@ -641,33 +683,24 @@ fn composite_translucent_wash(foreground: Color, background: Color) -> Color {
     )
 }
 
-fn field_background(
-    theme: &DefaultTheme,
-    read_only: bool,
-    hover_progress: f32,
-    focus_progress: f32,
-) -> Color {
+/// Outline of framed fields: the strong control border at rest, stronger on
+/// hover, and the neutral focus border beneath the accent focus ring.
+fn field_border(palette: &ControlPalette, hover: f32, focus: f32) -> Color {
+    mix_color(
+        mix_color(palette.button_border, palette.border_hover, hover),
+        palette.border_focus,
+        focus,
+    )
+}
+
+fn field_background(theme: &DefaultTheme, read_only: bool, focus_progress: f32) -> Color {
     let palette = theme.palette;
     let base = if read_only {
         palette.surface
     } else {
         palette.field
     };
-    let hover_target = if !read_only && theme.colors.scheme == ThemeColorScheme::Light {
-        palette.surface
-    } else {
-        base
-    };
-    let hovered = mix_color(
-        base,
-        hover_target,
-        hover_progress.clamp(0.0, 1.0) * theme.interaction.hover_blend,
-    );
-    mix_color(
-        hovered,
-        palette.surface_focus,
-        focus_progress.clamp(0.0, 1.0),
-    )
+    mix_color(base, palette.surface_focus, focus_progress.clamp(0.0, 1.0))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -697,60 +730,66 @@ fn semantic_button_visuals(
     } else {
         0.0
     };
-    let (solid, solid_text) = theme.semantic_tone_colors(tone);
-    let (soft, soft_text) = theme.semantic_tone_soft_colors(tone);
-    let ink = if tone == SemanticTone::Neutral {
-        palette.text
+    let roles = theme.tone_roles(tone);
+    let neutral = tone == SemanticTone::Neutral;
+    let wash = if neutral { palette.control } else { roles.soft };
+    let wash_pressed = if neutral {
+        palette.control_hover
     } else {
-        solid
+        mix_color(roles.soft, roles.solid, 0.16)
     };
-    let outline = if tone == SemanticTone::Neutral {
-        palette.border
-    } else {
-        solid.with_alpha(0.72)
-    };
+    let ink = if neutral { palette.text } else { roles.text };
 
     let (base, hovered, pressed, border, content) = match appearance {
-        ButtonAppearance::Filled => {
-            let hovered = if tone == SemanticTone::Accent {
-                palette.accent_hover
-            } else {
-                mix_color(solid, solid_text, 0.10)
-            };
-            let pressed = if tone == SemanticTone::Accent {
-                palette.accent_pressed
-            } else {
-                mix_color(solid, palette.text, 0.16)
-            };
-            (solid, hovered, pressed, solid, solid_text)
-        }
+        // Neutral filled and tonal buttons share the raised neutral face.
+        ButtonAppearance::Filled | ButtonAppearance::Tonal if neutral => (
+            roles.solid,
+            roles.hover,
+            roles.pressed,
+            mix_color(roles.border, palette.border_hover, hover),
+            roles.on_solid,
+        ),
+        ButtonAppearance::Filled => (
+            roles.solid,
+            roles.hover,
+            roles.pressed,
+            Color::TRANSPARENT,
+            roles.on_solid,
+        ),
         ButtonAppearance::Tonal => (
-            soft,
-            mix_color(soft, solid, 0.12),
-            mix_color(soft, solid, 0.24),
-            if tone == SemanticTone::Neutral {
-                palette.border
-            } else {
-                solid.with_alpha(0.30)
-            },
-            soft_text,
+            roles.soft,
+            mix_color(roles.soft, roles.solid, 0.12),
+            mix_color(roles.soft, roles.solid, 0.24),
+            roles.border,
+            roles.text,
         ),
         ButtonAppearance::Outline => (
             Color::TRANSPARENT,
-            soft,
-            mix_color(soft, solid, 0.16),
-            outline,
+            wash,
+            wash_pressed,
+            if neutral {
+                mix_color(roles.border, palette.border_hover, hover)
+            } else {
+                roles.border
+            },
             ink,
         ),
         ButtonAppearance::Ghost => (
             Color::TRANSPARENT,
-            soft,
-            mix_color(soft, solid, 0.16),
+            wash,
+            wash_pressed,
             Color::TRANSPARENT,
             ink,
         ),
     };
     let background = mix_color(mix_color(base, hovered, hover), pressed, press);
+    // Solid chromatic fills carry their own edge: the border tracks the fill
+    // so hover and press never reveal a darker ring.
+    let border = if appearance == ButtonAppearance::Filled && !neutral {
+        background
+    } else {
+        border
+    };
 
     if enabled {
         SemanticButtonVisuals {
@@ -770,9 +809,7 @@ fn semantic_button_visuals(
         SemanticButtonVisuals {
             background,
             border: border.with_alpha(interaction.disabled_content_opacity),
-            content: palette
-                .text_muted
-                .with_alpha(interaction.disabled_content_opacity),
+            content: palette.text_disabled,
         }
     }
 }
@@ -913,17 +950,17 @@ fn paint_icon_button_frame(
         let base_background = if selected {
             palette.selection
         } else {
-            palette.control
+            palette.button
         };
         let hover_background = if selected {
             mix_color(base_background, palette.control_hover, 0.35)
         } else {
-            palette.control_hover
+            palette.button_hover
         };
         let press_background = if selected {
             mix_color(base_background, palette.control_active, 0.45)
         } else {
-            palette.control_active
+            palette.button_pressed
         };
         let background = mix_color(
             mix_color(base_background, hover_background, hover_progress),
@@ -933,13 +970,9 @@ fn paint_icon_button_frame(
         let border_base = if !enabled {
             palette.border.with_alpha(0.55)
         } else if selected {
-            mix_color(
-                palette.selection_border,
-                palette.accent_border_hover,
-                hover_progress,
-            )
+            palette.selection_border
         } else {
-            mix_color(palette.border, palette.border_hover, hover_progress)
+            mix_color(palette.button_border, palette.border_hover, hover_progress)
         };
         let border = if enabled && !selected {
             mix_color(border_base, palette.border_focus, focus_progress)
@@ -952,9 +985,7 @@ fn paint_icon_button_frame(
             mix_color(background, palette.control, 0.72).with_alpha(interaction.disabled_opacity)
         };
         let icon_color = if !enabled {
-            palette
-                .text
-                .with_alpha(interaction.disabled_content_opacity)
+            palette.text_disabled
         } else {
             palette.text
         };
@@ -1636,22 +1667,8 @@ impl Button {
                 press_progress,
             )
         };
-        let border_base = if !enabled {
-            palette
-                .accent_border
-                .with_alpha(interaction.disabled_content_opacity)
-        } else {
-            mix_color(
-                palette.accent_border,
-                palette.accent_border_hover,
-                hover_progress,
-            )
-        };
-        let border = if enabled {
-            mix_color(border_base, palette.accent_border_focus, focus_progress)
-        } else {
-            border_base
-        };
+        // The solid accent fill is its own edge; focus is carried by the ring.
+        let border = background;
         let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
         let label_color = if enabled {
             apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift)
@@ -1697,20 +1714,7 @@ impl Button {
                 press_progress,
             )
         };
-        let hdr_border_base = if !enabled {
-            border
-        } else {
-            mix_color(
-                palette.accent_border,
-                palette.accent_border_hover,
-                hover_progress,
-            )
-        };
-        let hdr_border = if enabled {
-            mix_color(hdr_border_base, focus_style.color, focus_progress)
-        } else {
-            hdr_border_base
-        };
+        let hdr_border = hdr_background;
 
         ButtonVisuals {
             background: hdr_background,
@@ -1971,7 +1975,6 @@ struct CheckboxIndicatorVisual {
     hover_progress: f32,
     press_progress: f32,
     toggle_progress: f32,
-    focus_progress: f32,
 }
 
 pub fn paint_checkbox_indicator(
@@ -1988,7 +1991,6 @@ pub fn paint_checkbox_indicator(
             hover_progress: state.hovered as u8 as f32,
             press_progress: state.pressed as u8 as f32,
             toggle_progress: state.checked as u8 as f32,
-            focus_progress: state.focused as u8 as f32,
         },
     );
 }
@@ -2006,23 +2008,12 @@ fn paint_checkbox_indicator_visual(
     let palette = theme.palette;
     let metrics = theme.metrics;
     let interaction = theme.interaction;
-    let hover_blend = visual.hover_progress * interaction.hover_blend;
-    let press_blend = visual.press_progress * interaction.pressed_blend;
-    let indicator_background = mix_color(
-        mix_color(palette.control_active, palette.surface_focus, hover_blend),
-        mix_color(
-            mix_color(palette.accent, palette.accent_hover, hover_blend),
-            palette.accent_pressed,
-            press_blend,
-        ),
+    let (indicator_background, indicator_border) = choice_indicator_colors(
+        &palette,
+        visual.hover_progress * interaction.hover_blend,
+        visual.press_progress * interaction.pressed_blend,
         visual.toggle_progress,
     );
-    let border = mix_color(
-        mix_color(palette.border, palette.border_hover, visual.hover_progress),
-        palette.border_focus,
-        visual.focus_progress,
-    );
-    let indicator_border = mix_color(border, palette.accent_border_focus, visual.toggle_progress);
 
     draw_control_shape(
         ctx,
@@ -2327,20 +2318,8 @@ impl Widget for Checkbox {
         let press_progress = self.press_animation.value * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
-        let framed_background = mix_color(
-            mix_color(palette.control, palette.control_hover, hover_progress),
-            palette.control_active,
-            press_progress,
-        );
-        let framed_border = mix_color(
-            mix_color(
-                palette.border,
-                palette.border_hover,
-                self.hover_animation.value,
-            ),
-            palette.border_focus,
-            focus_progress,
-        );
+        let (framed_background, framed_border) =
+            framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
         let frame_visuals = choice_frame_visuals(
             &theme,
             self.appearance,
@@ -2376,7 +2355,6 @@ impl Widget for Checkbox {
                 hover_progress: self.hover_animation.value,
                 press_progress: self.press_animation.value,
                 toggle_progress,
-                focus_progress,
             },
         );
         paint_aligned_text(
@@ -2594,27 +2572,10 @@ impl Switch {
         let interaction = theme.interaction;
         let hover_t = self.hover_animation.value * interaction.hover_blend;
         let press_t = self.press_animation.value * interaction.pressed_blend;
-        let framed_background = mix_color(
-            mix_color(
-                palette.control,
-                palette.control_hover,
-                self.hover_animation.value,
-            ),
-            palette.control_active,
+        let (framed_background, framed_border) = framed_choice_colors(
+            &palette,
+            self.hover_animation.value,
             press_t,
-        );
-        let framed_background = if focused {
-            mix_color(framed_background, palette.surface_focus, 0.5)
-        } else {
-            framed_background
-        };
-        let framed_border = mix_color(
-            mix_color(
-                palette.border,
-                palette.border_hover,
-                self.hover_animation.value,
-            ),
-            palette.border_focus,
             focused as u8 as f32,
         );
         let frame_visuals = choice_frame_visuals(
@@ -2626,31 +2587,14 @@ impl Switch {
             press_t,
             focused as u8 as f32,
         );
-        let baseline_track_color = if on {
-            mix_color(
-                mix_color(palette.accent, palette.accent_hover, hover_t),
-                palette.accent_pressed,
-                press_t,
-            )
-        } else {
-            mix_color(palette.surface_focus, palette.control_active, hover_t)
-        };
-        let baseline_track_border = if on {
-            palette.accent_border
-        } else {
-            mix_color(
-                palette.border,
-                palette.border_hover,
-                self.hover_animation.value,
-            )
-        };
-        let thumb_color = if matches!(
-            theme.colors.scheme,
-            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
-        ) {
-            palette.text
-        } else {
+        let (baseline_track_color, baseline_track_border) =
+            choice_indicator_colors(&palette, hover_t, press_t, on as u8 as f32);
+        // Off: an outlined track with a control-outline thumb. On: the thumb
+        // takes the accent's content color.
+        let thumb_color = if on {
             palette.accent_text
+        } else {
+            mix_color(palette.border_control, palette.text_muted, hover_t * 0.5)
         };
         let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
         let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
@@ -2684,11 +2628,11 @@ impl Switch {
                 palette.accent_pressed,
                 press_t,
             ),
-            track_border: if focused {
-                indicator_style.color
-            } else {
-                palette.accent_border
-            },
+            track_border: mix_color(
+                mix_color(indicator_style.color, palette.accent_hover, hover_t),
+                palette.accent_pressed,
+                press_t,
+            ),
             thumb_color,
             label_color,
             label_peak_lift,
@@ -2839,20 +2783,8 @@ impl Widget for Switch {
         let toggle_progress = self.toggle_animation.value;
         let focus_progress = self.focus_animation.value;
 
-        let framed_background = mix_color(
-            mix_color(
-                mix_color(palette.control, palette.control_hover, hover_progress),
-                palette.surface_focus,
-                focus_progress,
-            ),
-            palette.control_active,
-            press_progress,
-        );
-        let framed_border = mix_color(
-            mix_color(palette.border, palette.border_hover, hover_progress),
-            palette.border_focus,
-            focus_progress,
-        );
+        let (framed_background, framed_border) =
+            framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
         let frame_visuals = choice_frame_visuals(
             &theme,
             self.appearance,
@@ -2919,9 +2851,20 @@ impl Widget for Switch {
             track_color,
             track_border,
         );
+        let thumb_color = if toggle_progress <= f32::EPSILON {
+            off_visuals.thumb_color
+        } else if (1.0 - toggle_progress) <= f32::EPSILON {
+            on_visuals.thumb_color
+        } else {
+            mix_color(
+                off_visuals.thumb_color,
+                on_visuals.thumb_color,
+                toggle_progress,
+            )
+        };
         ctx.fill(
             Path::circle(rect_center(thumb), thumb.width() * 0.5),
-            visuals.thumb_color,
+            thumb_color,
         );
         let text_style = TextStyle {
             color: visuals.label_color,
@@ -3264,20 +3207,8 @@ impl Widget for RadioButton {
         let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
         let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
-        let framed_background = mix_color(
-            mix_color(
-                mix_color(palette.control, palette.control_hover, hover_progress),
-                palette.surface_focus,
-                focus_progress,
-            ),
-            palette.control_active,
-            press_progress,
-        );
-        let framed_border = mix_color(
-            mix_color(palette.border, palette.border_hover, hover_progress),
-            palette.border_focus,
-            focus_progress,
-        );
+        let (framed_background, framed_border) =
+            framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
         let frame_visuals = choice_frame_visuals(
             &theme,
             self.appearance,
@@ -3302,25 +3233,15 @@ impl Widget for RadioButton {
             ),
         );
 
+        let (indicator_fill, indicator_border) =
+            choice_indicator_colors(&palette, hover_progress, press_progress, toggle_progress);
         ctx.fill(
             Path::circle(rect_center(indicator), indicator.width() * 0.5),
-            mix_color(
-                mix_color(
-                    palette.control_active,
-                    palette.surface_focus,
-                    hover_progress,
-                ),
-                mix_color(
-                    mix_color(palette.accent, palette.accent_hover, hover_progress),
-                    palette.accent_pressed,
-                    press_progress,
-                ),
-                toggle_progress,
-            ),
+            indicator_fill,
         );
         ctx.stroke(
             Path::circle(rect_center(indicator), (indicator.width() * 0.5) - 0.5),
-            mix_color(framed_border, palette.accent_border_focus, toggle_progress),
+            indicator_border,
             StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
         );
         if toggle_progress > 0.0 {
@@ -3788,25 +3709,11 @@ impl Widget for RadioGroup {
             let selection_progress = self.selection_progress_for(index);
             let hover_amount = hover_progress * interaction.hover_blend;
             let press_amount = press_progress * interaction.pressed_blend;
-            let background = mix_color(
-                mix_color(palette.control, palette.control_hover, hover_amount),
-                palette.control_active,
-                press_amount,
-            );
-            let border = mix_color(
-                mix_color(palette.border, palette.border_hover, hover_progress),
-                palette.accent_border,
-                selection_progress,
-            );
-            let indicator_fill = mix_color(
-                mix_color(palette.control_active, palette.surface_focus, hover_amount),
-                mix_color(
-                    mix_color(palette.accent, palette.accent_hover, hover_amount),
-                    palette.accent_pressed,
-                    press_amount,
-                ),
-                selection_progress,
-            );
+            let (background, row_border) =
+                framed_choice_colors(&palette, hover_amount, press_amount, 0.0);
+            let border = mix_color(row_border, palette.selection_border, selection_progress);
+            let (indicator_fill, indicator_border) =
+                choice_indicator_colors(&palette, hover_amount, press_amount, selection_progress);
 
             draw_control_shape(
                 ctx,
@@ -3822,7 +3729,7 @@ impl Widget for RadioGroup {
             );
             ctx.stroke(
                 Path::circle(rect_center(indicator), (indicator.width() * 0.5) - 0.5),
-                border,
+                indicator_border,
                 StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
             );
             if selection_progress > AnimatedScalar::EPSILON {
@@ -4227,25 +4134,13 @@ impl Widget for Slider {
         );
         let thumb = self.thumb_rect_for(ctx.bounds(), value);
 
-        draw_control_frame(
+        // Sliders sit directly on their surface: no well or frame, only the
+        // focus ring when focused.
+        draw_control_focus_ring(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            mix_color(
-                mix_color(
-                    palette.control,
-                    palette.control_hover,
-                    hover_progress.max(drag_progress),
-                ),
-                palette.surface_focus,
-                focus_progress,
-            ),
-            mix_color(
-                mix_color(palette.border, palette.border_hover, hover_progress),
-                palette.border_focus,
-                focus_progress,
-            ),
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -4267,11 +4162,6 @@ impl Widget for Slider {
                 palette.accent_pressed,
                 drag_progress,
             ),
-        );
-        ctx.stroke(
-            Path::circle(rect_center(thumb), (thumb.width() * 0.5) - 0.5),
-            palette.accent_border,
-            StrokeStyle::new(physical_pixels(ctx, metrics.border_width)),
         );
     }
 
@@ -4730,27 +4620,16 @@ impl Widget for NumberInput {
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
         let text_style = self.text_style();
         let buffer = self.display_buffer();
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
         let stepper_hover_progress = self.stepper_hover_animation.value * interaction.hover_blend;
         let press_progress = self.press_animation.value * interaction.pressed_blend;
         let focus_progress = self.focus_animation.value;
-        let base_background = mix_color(palette.control, palette.control_hover, hover_progress);
-
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
-            mix_color(base_background, palette.surface_focus, focus_progress),
-            mix_color(
-                mix_color(
-                    palette.border,
-                    palette.border_hover,
-                    self.hover_animation.value,
-                ),
-                palette.border_focus,
-                focus_progress,
-            ),
+            mix_color(palette.field, palette.surface_focus, focus_progress),
+            field_border(&palette, self.hover_animation.value, focus_progress),
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -5518,15 +5397,9 @@ impl Widget for TextArea {
         let content = inset_rect(ctx.bounds(), padding);
         let focus_progress = self.focus_animation.value;
 
-        // Light fields lift from their slightly recessed rest fill to the
-        // surface on hover. Focus then moves every scheme toward its soft
-        // accent well; dark and Void keep their established resting depth.
-        let background = field_background(
-            &theme,
-            self.read_only,
-            self.hover_animation.value,
-            focus_progress,
-        );
+        // Fields keep their well; hover strengthens the outline and focus adds
+        // the accent ring.
+        let background = field_background(&theme, self.read_only, focus_progress);
         if self.appearance == FieldAppearance::Framed {
             draw_control_frame(
                 ctx,
@@ -5534,15 +5407,7 @@ impl Widget for TextArea {
                 metrics.corner_radius,
                 metrics,
                 background,
-                mix_color(
-                    mix_color(
-                        palette.border,
-                        palette.border_hover,
-                        self.hover_animation.value,
-                    ),
-                    palette.border_focus,
-                    focus_progress,
-                ),
+                field_border(&palette, self.hover_animation.value, focus_progress),
                 (focus_progress > 0.0).then_some(
                     palette
                         .focus_ring
@@ -6564,25 +6429,21 @@ impl Widget for Select {
                 .max(0.0),
             header.height(),
         );
-        // Mesh selects are dressed fields: the closed control sits on the
-        // field token; hover/press keep the well and animate the border.
+        // Selects are dressed fields: the closed control sits on the field
+        // token; hover strengthens the outline and press dims the well.
         draw_control_frame(
             ctx,
             header,
             metrics.corner_radius,
             metrics,
             mix_color(
-                mix_color(palette.field, palette.control_active, press_progress * 0.5),
+                mix_color(palette.field, palette.button_pressed, press_progress * 0.5),
                 palette.surface_focus,
                 focus_progress,
             ),
-            mix_color(
-                mix_color(
-                    palette.border,
-                    palette.border_hover,
-                    self.hover_animation.value.max(hover_progress),
-                ),
-                palette.border_focus,
+            field_border(
+                &palette,
+                self.hover_animation.value.max(hover_progress),
                 focus_progress,
             ),
             (focus_progress > 0.0).then_some(
@@ -7349,24 +7210,10 @@ impl Widget for TextInput {
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let focus_progress = self.focus_animation.value;
-        // Light fields lift from their slightly recessed rest fill to the
-        // surface on hover. Focus then moves every scheme toward its soft
-        // accent well; dark and Void keep their established resting depth.
-        let background = field_background(
-            &theme,
-            self.read_only,
-            self.hover_animation.value,
-            focus_progress,
-        );
-        let border = mix_color(
-            mix_color(
-                palette.border,
-                palette.border_hover,
-                self.hover_animation.value,
-            ),
-            palette.border_focus,
-            focus_progress,
-        );
+        // Fields keep their well; hover strengthens the outline and focus adds
+        // the accent ring.
+        let background = field_background(&theme, self.read_only, focus_progress);
+        let border = field_border(&palette, self.hover_animation.value, focus_progress);
         let full_content_rect = inset_rect(ctx.bounds(), padding);
         let content_rect = self.text_content_rect(ctx.bounds());
         let display_text = self.visible_text();

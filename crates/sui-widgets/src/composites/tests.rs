@@ -272,7 +272,7 @@ fn segmented_control_selection_thumb_is_evenly_inset() {
     let mut selection_thumb = None;
     output.frame.scene.visit_commands(&mut |command| {
         if let SceneCommand::FillPath { path, brush } = command
-            && *brush == Brush::Solid(theme.palette.selection)
+            && *brush == Brush::Solid(theme.palette.button)
         {
             selection_thumb = Some(path.bounds());
         }
@@ -289,9 +289,14 @@ fn segmented_control_selection_thumb_is_evenly_inset() {
         "selection thumb should have a 2 px bottom inset: group={:?}, thumb={thumb:?}",
         group.bounds
     );
+    let fills = solid_fill_colors(&output);
     assert!(
-        !solid_fill_colors(&output).contains(&theme.palette.accent),
-        "segmented controls should use a filled selection thumb without a tab underline"
+        fills.contains(&theme.palette.control),
+        "segmented controls sit on a recessed track"
+    );
+    assert!(
+        !fills.contains(&theme.palette.accent),
+        "segmented controls should use a raised neutral thumb without a tab underline"
     );
 }
 
@@ -1649,7 +1654,7 @@ fn semantic_tones_drive_composite_status_colors() {
             .theme(theme)
             .tone(SemanticTone::Success),
     );
-    assert!(solid_fill_colors(&action_card).contains(&theme.palette.success.with_alpha(0.78)));
+    assert!(solid_fill_colors(&action_card).contains(&theme.palette.success));
 
     let status_bar = render(
         StatusBar::new()
@@ -5052,7 +5057,7 @@ fn tab_bar_exposes_selected_value() {
 }
 
 #[test]
-fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
+fn navigation_tab_bar_sits_on_the_surface_with_accent_underline() {
     let mut theme = DefaultTheme::default();
     theme.interaction.tab_selected_blend = 0.31;
     let selected_fill = theme.palette.selection;
@@ -5064,7 +5069,11 @@ fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
             .selected(1),
     );
     let tab_bar_fills = solid_fill_colors(&tab_bar);
-    assert!(tab_bar_fills.contains(&theme.palette.control));
+    assert!(
+        !tab_bar_fills.contains(&theme.palette.control),
+        "navigation tab bars should not paint a gray strip behind the tabs"
+    );
+    assert!(tab_bar_fills.contains(&theme.palette.border));
     assert!(tab_bar_fills.contains(&theme.palette.accent));
     assert!(
         !tab_bar_fills.contains(&selected_fill),
@@ -5102,8 +5111,8 @@ fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
         "unfocused selected tab bar chrome should not paint a focus ring"
     );
 
-    // Content-bearing `Tabs` keeps its existing selected-panel treatment;
-    // this test scopes the flat navigation grammar specifically to TabBar.
+    // Content-bearing `Tabs` shares the same underline grammar: no selected
+    // tile, only the accent indicator above a hairline divider.
     let tabs = render_isolated(
         Tabs::new("Main tabs")
             .theme(theme)
@@ -5111,7 +5120,9 @@ fn navigation_tab_bar_uses_flat_strip_and_accent_underline() {
             .tab("Design", crate::Label::new("Design"))
             .tab("Inspect", crate::Label::new("Inspect")),
     );
-    assert!(solid_fill_colors(&tabs).contains(&selected_fill));
+    let tabs_fills = solid_fill_colors(&tabs);
+    assert!(!tabs_fills.contains(&selected_fill));
+    assert!(tabs_fills.contains(&theme.palette.accent));
     assert!(
         !solid_stroke_colors(&tabs).contains(&theme.palette.border_focus),
         "selected tabs chrome should not use the focus border color"
@@ -5349,7 +5360,7 @@ fn selected_tab_labels_preserve_tall_measurements_and_exact_centering() {
 }
 
 #[test]
-fn tab_widgets_share_pressed_tab_border() -> Result<(), String> {
+fn tab_widgets_press_as_borderless_ghosts() -> Result<(), String> {
     let theme = DefaultTheme::default();
 
     let (mut runtime, window_id) = build_runtime(
@@ -5370,7 +5381,7 @@ fn tab_widgets_share_pressed_tab_border() -> Result<(), String> {
     let tab_bar = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
-    assert!(contains_approx_color(
+    assert!(!contains_approx_color(
         &solid_stroke_colors(&tab_bar),
         theme.palette.border_hover,
     ));
@@ -5394,7 +5405,7 @@ fn tab_widgets_share_pressed_tab_border() -> Result<(), String> {
     let tabs = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
-    assert!(contains_approx_color(
+    assert!(!contains_approx_color(
         &solid_stroke_colors(&tabs),
         theme.palette.border_hover,
     ));
@@ -5408,13 +5419,13 @@ fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
     let hover_duration = theme.motion.hover_duration();
     let press_duration = theme.motion.press_duration();
     let expected_hover = super::mix_color(
+        theme.palette.control.with_alpha(0.0),
         theme.palette.control,
-        theme.palette.control_hover,
         theme.interaction.hover_blend,
     );
     let expected_press = super::mix_color(
         expected_hover,
-        theme.palette.control_active,
+        theme.palette.control_hover,
         theme.interaction.pressed_blend,
     );
 

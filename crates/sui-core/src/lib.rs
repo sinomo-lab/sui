@@ -12,7 +12,7 @@ mod invalidation;
 mod semantics;
 
 pub use clipboard::{Clipboard, ClipboardBackend, LocalClipboardBackend};
-pub use color::{Color, ColorSpace};
+pub use color::{Color, ColorSpace, Oklch};
 pub use dpi::{DpiInfo, SafeAreaInsets};
 pub use drag::{
     DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview, DragScopeId,

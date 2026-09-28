@@ -78,6 +78,13 @@ pub enum WidgetColorRole {
     Danger,
 }
 
+/// Chromatic roles below this OKLCH chroma are treated as achromatic and get
+/// no wide-gamut variant.
+const WIDE_GAMUT_MIN_CHROMA: f32 = 0.04;
+/// How far wide-gamut variants extend a role's chroma beyond its sRGB value;
+/// the result is gamut-mapped into Display P3.
+const WIDE_GAMUT_CHROMA_BOOST: f32 = 1.15;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HdrColorRoles {
     pub surface: SemanticColorToken,
@@ -96,21 +103,22 @@ pub struct HdrColorRoles {
 
 impl HdrColorRoles {
     pub fn from_colors(colors: ThemeColors) -> Self {
+        let neutrals = colors.neutrals;
         let mut roles = Self {
-            surface: SemanticColorToken::from_sdr(colors.base_100),
-            surface_elevated: SemanticColorToken::from_sdr(colors.base_200),
-            surface_outline: SemanticColorToken::from_sdr(colors.base_300),
-            text: SemanticColorToken::from_sdr(colors.base_content),
-            text_muted: SemanticColorToken::from_sdr(colors.base_content.with_alpha(0.72)),
+            surface: SemanticColorToken::from_sdr(neutrals.window),
+            surface_elevated: SemanticColorToken::from_sdr(neutrals.panel),
+            surface_outline: SemanticColorToken::from_sdr(neutrals.border),
+            text: SemanticColorToken::from_sdr(neutrals.text),
+            text_muted: SemanticColorToken::from_sdr(neutrals.text_secondary),
             accent: SemanticColorToken::from_sdr(colors.primary),
-            accent_text: SemanticColorToken::from_sdr(colors.primary_content),
+            accent_text: SemanticColorToken::from_sdr(colors.on_primary),
             secondary: SemanticColorToken::from_sdr(colors.secondary),
             info: SemanticColorToken::from_sdr(colors.info),
             success: SemanticColorToken::from_sdr(colors.success),
             warning: SemanticColorToken::from_sdr(colors.warning),
-            danger: SemanticColorToken::from_sdr(colors.error),
+            danger: SemanticColorToken::from_sdr(colors.danger),
         };
-        roles.apply_mesh_display_variants(colors);
+        roles.apply_display_variants(colors);
         roles
     }
 
@@ -122,64 +130,49 @@ impl HdrColorRoles {
         *self = Self::from_colors(colors);
     }
 
-    fn apply_mesh_display_variants(&mut self, colors: ThemeColors) {
-        // The neutral preset intentionally remains achromatic across output
-        // modes. Its semantic status colors still use their SDR definitions,
-        // but its primary and secondary roles must not inherit SUI's cyan and
-        // violet wide-gamut variants merely because it shares the same light
-        // or dark scheme classification.
-        if matches!(colors.name, "neutral" | "neutral-dark") {
-            return;
+    /// Derive Display P3 variants for every chromatic role by extending its
+    /// OKLCH chroma into the wider gamut, and extended-range HDR variants for
+    /// the live-signal roles (accent and secondary). Achromatic roles — the
+    /// neutral presets' primary, for example — stay SDR-only.
+    fn apply_display_variants(&mut self, colors: ThemeColors) {
+        for token in [
+            &mut self.accent,
+            &mut self.secondary,
+            &mut self.info,
+            &mut self.success,
+            &mut self.warning,
+            &mut self.danger,
+        ] {
+            let oklch = token.sdr.to_oklch();
+            if oklch.chroma < WIDE_GAMUT_MIN_CHROMA {
+                continue;
+            }
+            *token = token.with_wide_gamut(
+                oklch
+                    .with_chroma(oklch.chroma * WIDE_GAMUT_CHROMA_BOOST)
+                    .to_display_p3(),
+            );
         }
 
-        match colors.scheme {
-            crate::theme::ThemeColorScheme::Light => {
-                self.accent = self
-                    .accent
-                    .with_wide_gamut(Color::display_p3(0.02, 0.47, 0.63, 1.0))
-                    .with_hdr(Color::linear_display_p3(0.03, 0.55, 0.78, 1.0));
-                self.secondary = self
-                    .secondary
-                    .with_wide_gamut(Color::display_p3(0.55, 0.48, 1.0, 1.0));
-                self.info = self
-                    .info
-                    .with_wide_gamut(Color::display_p3(0.14, 0.42, 1.0, 1.0));
+        let lift = match colors.scheme {
+            crate::theme::ThemeColorScheme::Light => 1.15,
+            crate::theme::ThemeColorScheme::Dark => 1.25,
+            crate::theme::ThemeColorScheme::HighContrast => 1.1,
+        };
+        for token in [&mut self.accent, &mut self.secondary] {
+            if token.wide_gamut.is_none() {
+                continue;
             }
-            crate::theme::ThemeColorScheme::Dark => {
-                self.accent = self
-                    .accent
-                    .with_wide_gamut(Color::display_p3(0.13, 0.84, 0.95, 1.0))
-                    .with_hdr(Color::linear_display_p3(0.16, 0.95, 1.10, 1.0));
-                self.accent_text = self
-                    .accent_text
-                    .with_wide_gamut(Color::display_p3(0.28, 0.86, 0.95, 1.0));
-                self.secondary = self
-                    .secondary
-                    .with_wide_gamut(Color::display_p3(0.55, 0.48, 1.0, 1.0))
-                    .with_hdr(Color::linear_display_p3(0.62, 0.54, 1.12, 1.0));
-                self.info = self
-                    .info
-                    .with_wide_gamut(Color::display_p3(0.42, 0.58, 1.0, 1.0));
-                self.warning = self
-                    .warning
-                    .with_wide_gamut(Color::display_p3(0.98, 0.67, 0.12, 1.0));
-                self.danger = self
-                    .danger
-                    .with_wide_gamut(Color::display_p3(0.94, 0.32, 0.35, 1.0));
-            }
-            crate::theme::ThemeColorScheme::HighContrast => {
-                self.accent = self
-                    .accent
-                    .with_wide_gamut(Color::display_p3(0.05, 0.79, 0.91, 1.0))
-                    .with_hdr(Color::linear_display_p3(0.07, 0.86, 0.98, 1.0));
-                self.accent_text = self
-                    .accent_text
-                    .with_wide_gamut(Color::display_p3(0.20, 0.81, 0.92, 1.0));
-                self.secondary = self
-                    .secondary
-                    .with_wide_gamut(Color::display_p3(0.55, 0.48, 1.0, 1.0))
-                    .with_hdr(Color::linear_display_p3(0.56, 0.49, 1.04, 1.0));
-            }
+            let oklch = token.sdr.to_oklch();
+            let linear = oklch
+                .with_chroma(oklch.chroma * WIDE_GAMUT_CHROMA_BOOST)
+                .to_linear_display_p3();
+            *token = token.with_hdr(Color::linear_display_p3(
+                linear.red * lift,
+                linear.green * lift,
+                linear.blue * lift,
+                linear.alpha,
+            ));
         }
     }
 
@@ -555,7 +548,7 @@ mod tests {
         resolve_widget_hdr_style,
     };
     use crate::theme::DefaultTheme;
-    use sui_core::Color;
+    use sui_core::{Color, ColorSpace};
 
     fn assert_copy_debug_eq<T: Copy + Debug + PartialEq>() {}
 
@@ -581,35 +574,32 @@ mod tests {
         let theme = DefaultTheme::default();
         let roles = HdrColorRoles::from_default_theme(theme);
 
-        assert_eq!(roles.surface.sdr, theme.colors.base_100);
-        assert_eq!(roles.surface_elevated.sdr, theme.colors.base_200);
-        assert_eq!(roles.text.sdr, theme.colors.base_content);
+        assert_eq!(roles.surface.sdr, theme.colors.neutrals.window);
+        assert_eq!(roles.surface_elevated.sdr, theme.colors.neutrals.panel);
+        assert_eq!(roles.text.sdr, theme.colors.neutrals.text);
         assert_eq!(roles.accent.sdr, theme.colors.primary);
-        assert_eq!(roles.accent_text.sdr, theme.colors.primary_content);
+        assert_eq!(roles.accent_text.sdr, theme.colors.on_primary);
         assert_eq!(roles.success.sdr, theme.colors.success);
         assert_eq!(roles.warning.sdr, theme.colors.warning);
-        assert_eq!(roles.danger.sdr, theme.colors.error);
+        assert_eq!(roles.danger.sdr, theme.colors.danger);
     }
 
     #[test]
-    fn mesh_theme_color_roles_include_p3_and_hdr_signal_variants() {
+    fn chromatic_roles_derive_p3_and_hdr_signal_variants() {
         let dark = DefaultTheme::dark();
         let roles = HdrColorRoles::from_default_theme(dark);
 
-        assert_eq!(
-            roles.accent.wide_gamut,
-            Some(Color::display_p3(0.13, 0.84, 0.95, 1.0))
-        );
-        assert_eq!(
-            roles.accent.hdr,
-            Some(Color::linear_display_p3(0.16, 0.95, 1.10, 1.0))
-        );
-        assert_eq!(
-            roles.secondary.hdr,
-            Some(Color::linear_display_p3(0.62, 0.54, 1.12, 1.0))
-        );
+        let accent_wide = roles.accent.wide_gamut.expect("accent P3 variant");
+        assert_eq!(accent_wide.space, ColorSpace::DisplayP3);
+        assert!(accent_wide.to_oklch().chroma > dark.colors.primary.to_oklch().chroma);
+        let accent_hdr = roles.accent.hdr.expect("accent HDR variant");
+        assert_eq!(accent_hdr.space, ColorSpace::LinearDisplayP3);
+        assert!(roles.secondary.hdr.is_some());
+        assert!(roles.danger.wide_gamut.is_some());
+        assert_eq!(roles.danger.hdr, None);
         assert_eq!(roles.surface.wide_gamut, None);
         assert_eq!(roles.surface.hdr, None);
+        assert_eq!(roles.accent_text.wide_gamut, None);
     }
 
     #[test]

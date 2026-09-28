@@ -33,51 +33,95 @@ assert!(standard.metrics.min_height <= touch.metrics.min_height);
 ```
 
 `sui()` is the explicit name for the default branded light preset and is
-equivalent to `light()`. Every built-in preset keeps structural surfaces,
-hover, pressed, selection, field focus, keyboard focus, scroll chrome, and
-ordinary active controls neutral. `neutral()` and `neutral_dark()` additionally
-make primary actions and live-signal decoration achromatic while retaining
-conventional semantic colors for informational, success, warning, and danger
-feedback. They are the standard starting points when a professional interface
-has no product color preference.
+equivalent to `light()`. The presets share one visual language: pure surfaces
+and vibrant decoration.
 
-`void()` is the true-black/OLED alias for `high_contrast()`. The older
-`with_density(ThemeDensity)` API remains public, but new interfaces should
-prefer `with_size(ControlSize)`: it scopes control geometry and typography
-without changing the independent text-size ramp.
+| Preset | Surfaces | Primary |
+| --- | --- | --- |
+| `light()` | Pure white and gray | SUI azure `#1762F4` |
+| `dark()` | Dark, with a faint constant blue tint | SUI azure `#1762F4` |
+| `void()` | True black; panels separated by borders | SUI azure `#1762F4` |
+| `neutral()` | Same as `light()` | Near-black |
+| `neutral_dark()` | Untinted twin of `dark()` | Near-white |
+
+Every preset keeps the same semantic status colors and the nine-hue
+decorative palette. `void()` is the true-black/OLED alias for
+`high_contrast()`. Built-in presets are derived once and cached, so calling
+them repeatedly is cheap.
+
+The older `with_density(ThemeDensity)` API remains public, but new interfaces
+should prefer `with_size(ControlSize)`: it scopes control geometry and
+typography without changing the independent text-size ramp.
+
+## Source colors and derived roles
+
+`ThemeColors` holds only source colors:
+
+- `neutrals: NeutralRamp`: every structural tier. These are `window`,
+  `subtle` (sidebars and chrome), `panel`, `overlay`, `control` (recessed
+  fills and tracks), `button` (the raised neutral face), `field`, four border
+  weights, and four text weights. `border_control` is the 3:1 outline of
+  unselected checkboxes, radios, and switches. `text_tertiary` stays at
+  4.5:1 or better on the panel.
+- `primary`/`on_primary` and `secondary`/`on_secondary`: brand and live-signal
+  colors.
+- `info`, `success`, `warning`, and `danger` with their `on_*` content colors.
+- `decorative: DecorativeColors`: nine categorical hues (red, orange, amber,
+  green, teal, cyan, blue, violet, magenta) with matched OKLCH lightness and
+  chroma.
+
+Everything widgets paint is derived from these values in OKLCH, so editing
+one source keeps its dependents consistent:
+
+- **Interaction states:** light themes darken on hover and press; dark
+  themes lighten on hover. Hue and chroma are preserved.
+- **Soft washes and outlines:** authored as translucency and flattened onto
+  the panel.
+- **Legible tone text:** adjusted in lightness until it reaches 4.5:1 on its
+  soft wash, or 6:1 in dark themes.
+- **Keyboard focus ring:** the primary, lightened if needed to stay visible
+  on the panel.
+- **Glows and HDR variants:** glows, Display P3 variants, and extended-range
+  HDR variants all come from the same sources.
+
+`DefaultTheme::tone_roles(tone)` returns the complete `ToneRoles` for a
+semantic tone. It covers solid, content, hover, pressed, soft, text, and
+border. `theme.decorative.get(DecorativeHue::Violet)` returns the same role
+set for a decorative hue, and `theme.decorative.categorical(index)` assigns
+hues to data categories in a stable order.
 
 ## Color-usage hierarchy
 
-The built-in widgets follow a neutral-first hierarchy designed for dense
-professional software:
+The built-in widgets follow one hierarchy designed for dense professional
+software:
 
-1. Window chrome, panels, fields, rows, menus, selected tiles, current-line
-   fills, and scrollbars use only neutral surface and ink roles.
-2. Hover and press move between adjacent neutral tiers. Selection fill uses
-   the dedicated neutral `palette.selection`; a narrow
-   `palette.selection_border` may carry the primary color without tinting the
-   selected surface.
-3. Focus uses a neutral strong border plus a distinct, higher-contrast neutral
-   ring. Carets use normal text ink.
-4. `colors.primary` and `palette.accent*` are sparse emphasis roles: explicit
-   primary actions, links, thin tab or row indicators, live/busy signals, and
-   decorative canvas defaults.
-5. Informational, success, warning, and danger colors communicate their own
-   semantics and are not replaced by the primary color.
+1. Window chrome, panels, fields, rows, menus, and scrollbars use only neutral
+   surface and ink roles. Light surfaces are achromatic.
+2. Ordinary buttons, select triggers, and segmented thumbs use the neutral
+   button face with a strong outline and full-strength ink. Hover and press
+   step through adjacent neutral tiers.
+3. Unselected choice controls show a 3:1 control outline on the field well.
+   Selected choices, primary actions, slider fills, tab underlines, progress,
+   and links use the primary color.
+4. Selection fills stay neutral (`palette.selection`); a narrow
+   `palette.selection_border` or indicator carries the primary color.
+5. Keyboard focus draws a primary-colored ring
+   (`palette.focus_ring`) outside a neutral `border_focus`.
+6. Status colors communicate only their own semantics. Decorative hues are
+   for categorical emphasis such as tags, avatars, node categories, and chart
+   series, never for status.
 
-Changing `colors.primary` therefore changes brand decoration, selection
-borders, and explicit accent components without recoloring the application
-background or routine interaction fills. Custom widgets should pair
-`palette.selection` with `selection_border`, and use `surface_focus`,
-`border_focus`, and `focus_ring` for focus rather than mixing surfaces with
-`palette.accent`.
+Custom widgets should pair `palette.selection` with `selection_border`, use
+`palette.button*` for neutral raised controls, `border_control` for
+unselected indicators, and `focus_ring` for focus.
 
-The demo theme editor exposes two deliberate layers: source colors and the
-common semantic role palette used as widget defaults. It does not expose
-widget-specific paint details as global theme tokens. Semantic-role edits are
-stored as explicit overrides and reapplied after source, spacing, radius, or
-typography changes; selecting a preset clears them. Alpha is editable for
-translucent roles such as hover and selection washes.
+The demo theme editor exposes two deliberate layers: source colors (neutral
+ramp, brand, status, and decorative) and the common semantic role palette
+used as widget defaults. It does not expose widget-specific paint details as
+global theme tokens. Semantic-role edits are stored as explicit overrides and
+reapplied after source, spacing, radius, or typography changes; selecting a
+preset clears them. Alpha is editable for translucent roles such as hover and
+selection washes.
 
 ## Widget-owned appearance
 
@@ -200,9 +244,11 @@ copying a `DefaultTheme` is intentional.
 
 The most frequently used `DefaultTheme` fields are:
 
-- `colors`: source semantic color scheme and base colors.
-- `palette`: control-facing text, field, border, focus, selection, accent, and
-  status colors.
+- `colors`: source colors: the neutral ramp, brand, status, and decorative
+  hues.
+- `palette`: derived control-facing text, field, button, border, focus,
+  selection, accent, and status roles.
+- `decorative`: derived roles for the nine decorative hues.
 - `surfaces`: window, panel, overlay, sidebar, canvas, and editor surfaces.
 - `metrics`: control heights, padding, row sizes, icon sizes, and related
   geometry.
@@ -212,7 +258,8 @@ The most frequently used `DefaultTheme` fields are:
 - `hdr`: HDR policy and material/luminance tokens.
 
 When changing source fields such as `colors`, call `sync_derived_fields()` so
-the derived palette, surfaces, shadows, and control metrics remain coherent:
+the derived palette, decorative roles, surfaces, shadows, glows, HDR variants,
+and control metrics remain coherent:
 
 ```rust
 use sui::prelude::*;

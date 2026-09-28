@@ -1006,7 +1006,7 @@ impl Widget for LivePerformanceRoot {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.clear(Color::rgba(0.95, 0.968, 0.985, 1.0));
+        ctx.clear(ThemeColors::light().neutrals.subtle);
         self.content.paint(ctx);
         if self.overlay_enabled() {
             self.performance_overlay.paint(ctx);
@@ -1784,26 +1784,28 @@ fn hdr_theme_lab_theme(mode: HdrThemeMode) -> DefaultTheme {
     let mut theme = DefaultTheme::dark();
     theme.hdr = HdrThemeTokens::from_default_theme(theme);
     theme.hdr.mode = mode;
-    theme.hdr.color_roles.surface = SemanticColorToken::from_sdr(theme.colors.base_100)
+    theme.hdr.color_roles.surface = SemanticColorToken::from_sdr(theme.colors.neutrals.window)
         .with_wide_gamut(Color::display_p3(0.13, 0.16, 0.23, 1.0))
         .with_hdr(Color::linear_display_p3(0.18, 0.21, 0.30, 1.0));
-    theme.hdr.color_roles.surface_elevated = SemanticColorToken::from_sdr(theme.colors.base_200)
-        .with_wide_gamut(Color::display_p3(0.16, 0.19, 0.28, 1.0))
-        .with_hdr(Color::linear_display_p3(0.24, 0.27, 0.38, 1.0));
-    theme.hdr.color_roles.surface_outline = SemanticColorToken::from_sdr(theme.colors.base_300)
-        .with_wide_gamut(Color::display_p3(0.33, 0.39, 0.50, 1.0))
-        .with_hdr(Color::linear_display_p3(0.42, 0.48, 0.62, 1.0));
-    theme.hdr.color_roles.text = SemanticColorToken::from_sdr(theme.colors.base_content)
+    theme.hdr.color_roles.surface_elevated =
+        SemanticColorToken::from_sdr(theme.colors.neutrals.panel)
+            .with_wide_gamut(Color::display_p3(0.16, 0.19, 0.28, 1.0))
+            .with_hdr(Color::linear_display_p3(0.24, 0.27, 0.38, 1.0));
+    theme.hdr.color_roles.surface_outline =
+        SemanticColorToken::from_sdr(theme.colors.neutrals.border)
+            .with_wide_gamut(Color::display_p3(0.33, 0.39, 0.50, 1.0))
+            .with_hdr(Color::linear_display_p3(0.42, 0.48, 0.62, 1.0));
+    theme.hdr.color_roles.text = SemanticColorToken::from_sdr(theme.colors.neutrals.text)
         .with_wide_gamut(Color::display_p3(0.92, 0.95, 0.99, 1.0))
         .with_hdr(Color::linear_display_p3(1.02, 1.04, 1.10, 1.0));
     theme.hdr.color_roles.text_muted =
-        SemanticColorToken::from_sdr(theme.colors.base_content.with_alpha(0.74))
+        SemanticColorToken::from_sdr(theme.colors.neutrals.text.with_alpha(0.74))
             .with_wide_gamut(Color::display_p3(0.75, 0.80, 0.89, 1.0))
             .with_hdr(Color::linear_display_p3(0.86, 0.90, 0.98, 1.0));
     theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.colors.primary)
         .with_wide_gamut(Color::display_p3(0.18, 0.74, 0.96, 1.0))
         .with_hdr(Color::linear_display_p3(0.78, 2.40, 3.20, 1.0));
-    theme.hdr.color_roles.accent_text = SemanticColorToken::from_sdr(theme.colors.primary_content)
+    theme.hdr.color_roles.accent_text = SemanticColorToken::from_sdr(theme.colors.on_primary)
         .with_wide_gamut(Color::display_p3(0.03, 0.08, 0.12, 1.0))
         .with_hdr(Color::linear_display_p3(0.10, 0.14, 0.20, 1.0));
     theme.hdr.color_roles.secondary = SemanticColorToken::from_sdr(theme.colors.secondary)
@@ -3141,7 +3143,13 @@ fn build_widget_book_gallery_with_theme_selection(
                                 .align_items(Alignment::Center)
                                 .align_content(FlexAlignContent::Start)
                                 .with_item(
-                                    Icon::new(IconGlyph::Search).label(ICON_LABEL).size(24.0),
+                                    Icon::new(IconGlyph::Search)
+                                        .label(ICON_LABEL)
+                                        .size(24.0)
+                                        .color_when({
+                                            let theme_reader = theme_reader.clone();
+                                            move || theme_reader().palette.text
+                                        }),
                                     FlexItem::fixed(24.0),
                                 )
                                 .with_item(
@@ -7678,7 +7686,7 @@ fn theme_preview_card(
                 .spacing(10.0)
                 .alignment(Alignment::Center)
                 .with_child(
-                    ColorSwatch::new(format!("{title} base swatch"), theme.colors.base_200)
+                    ColorSwatch::new(format!("{title} base swatch"), theme.colors.neutrals.panel)
                         .size(Size::new(58.0, 28.0)),
                 )
                 .with_child(

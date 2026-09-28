@@ -473,7 +473,7 @@ mod tests {
         custom.text.base.size = 19.0;
         custom.text.base.line_height = 30.0;
         custom.palette.accent = custom.colors.success;
-        custom.palette.accent_text = custom.colors.success_content;
+        custom.palette.accent_text = custom.colors.on_success;
         for next in [DefaultTheme::default(), DefaultTheme::dark(), custom] {
             *theme.borrow_mut() = next;
             runtime.handle_event(

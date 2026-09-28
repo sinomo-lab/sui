@@ -108,7 +108,7 @@ impl CanvasAppearance {
             self.axis_x.unwrap_or(
                 theme
                     .colors
-                    .error
+                    .danger
                     .with_alpha(if dark { 0.72 } else { 0.55 }),
             ),
             self.axis_y.unwrap_or(
@@ -156,7 +156,7 @@ impl PixelCanvasAppearance {
         let dark = theme.surfaces.dark;
         [
             self.background.unwrap_or(theme.palette.surface),
-            self.paper.unwrap_or(theme.palette.field),
+            self.paper.unwrap_or(theme.surfaces.pixel_canvas_paper),
             self.document_edge
                 .unwrap_or(
                     theme
@@ -4987,7 +4987,10 @@ mod tests {
 
     #[test]
     fn canvas_focus_ring_uses_theme_motion() {
-        let theme = DefaultTheme::default();
+        // Give the ring a color no other canvas chrome uses so the settled
+        // ring is distinguishable from accent-colored content.
+        let mut theme = DefaultTheme::default();
+        theme.palette.focus_ring = Color::rgba(0.91, 0.12, 0.55, 1.0);
         let focus_duration = theme.motion.focus_duration();
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()

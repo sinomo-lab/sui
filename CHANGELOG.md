@@ -6,6 +6,42 @@ Versioning, with the usual expectation that the API may change during the
 
 ## [Unreleased]
 
+### Breaking: refreshed default theme
+
+- Redesigned the built-in themes around pure surfaces and vibrant decoration.
+  SUI light uses achromatic white and gray surfaces; SUI dark keeps a faint,
+  constant blue tint on its surfaces; every SUI preset shares a new azure
+  primary (`#1762F4`) and violet secondary (`#7D4DE7`) instead of the former
+  petrol teal and scheme-specific cyan.
+- Replaced the daisyUI-style `ThemeColors` fields with a source model:
+  `neutrals: NeutralRamp` (window, subtle, panel, overlay, control, button,
+  field, border, and text tiers), `primary`/`on_primary`,
+  `secondary`/`on_secondary`, `info`, `success`, `warning`, and `danger`
+  (formerly `error`) with `on_*` content colors, and `decorative`. The
+  `base_*`, `*_content`, `accent`, and `neutral` fields were removed.
+- Every palette role is now derived from the source colors in OKLCH. Editing
+  `colors.primary` (or any status color) re-derives hover, pressed, soft,
+  border, legible text, focus, glow, and Display P3/HDR variants; built-in
+  role tables keyed by theme name are gone.
+- Added a nine-hue categorical palette (`DecorativeHue`, `DecorativeColors`,
+  `DecorativePalette`) with derived solid, soft, text, and border roles, plus
+  `DefaultTheme::tone_roles` and `ToneRoles` for complete per-tone role sets.
+- Added `palette.button*`, `palette.border_control`, `palette.text_disabled`,
+  and hover/pressed/border roles for every status tone. Keyboard focus rings
+  now follow the primary color; selection fills stay neutral.
+- Restyled built-in controls: ordinary buttons use a raised neutral face with
+  an outline and full-strength labels, filled buttons no longer draw a darker
+  ring, fields are white wells with a strong outline, unchecked checkboxes,
+  radios, and switches use a 3:1 control outline, sliders lose their frame,
+  tab bars drop their gray strip, and segmented controls use a raised thumb.
+- Added `Oklch`, `Color::oklch`, `Color::to_oklch`, and WCAG
+  `Color::contrast_ratio` to `sui-core`.
+- `ActionCard::decorative` resolves card accents from the active theme's
+  decorative palette; the demo launcher and chrome no longer hardcode colors.
+- Built-in presets are derived once and cached.
+
+### Fixes
+
 - Fixed a browser panic when opening the Editorial engine demo by using a
   WebAssembly-compatible monotonic clock for reflow timing. Added a browser
   regression check covering animation, controls, resizing, and tab switching.

@@ -1417,8 +1417,12 @@ fn button_appearance_and_tone_resolve_without_theme_remapping() {
         .resolved_visuals(false);
 
     assert_eq!(outline.background, Color::TRANSPARENT);
-    assert_eq!(outline.border, danger.with_alpha(0.72));
-    assert_eq!(outline.label_color, danger);
+    assert_eq!(outline.border, theme.palette.danger_border);
+    assert_eq!(outline.label_color, theme.palette.danger_soft_text);
+    assert_ne!(
+        outline.label_color, danger,
+        "outline ink stays legible on the panel"
+    );
 
     let tonal = Button::new("Retry")
         .theme(theme)
@@ -1438,10 +1442,13 @@ fn button_defaults_are_quiet_and_explicit_action_helpers_are_filled() {
     let ordinary = Button::new("More options").theme(theme);
     assert_eq!(ordinary.appearance, ButtonAppearance::Tonal);
     assert_eq!(ordinary.tone, SemanticTone::Neutral);
-    let (neutral_fill, neutral_text) = theme.semantic_tone_soft_colors(SemanticTone::Neutral);
     let ordinary_visuals = ordinary.resolved_visuals(false);
-    assert_eq!(ordinary_visuals.background, neutral_fill);
-    assert_eq!(ordinary_visuals.label_color, neutral_text);
+    assert_eq!(ordinary_visuals.background, theme.palette.button);
+    assert_eq!(ordinary_visuals.border, theme.palette.button_border);
+    assert_eq!(
+        ordinary_visuals.label_color, theme.palette.text,
+        "ordinary buttons use full-strength ink so they never read as disabled"
+    );
 
     let primary = Button::primary("Save").theme(theme);
     assert_eq!(primary.appearance, ButtonAppearance::Filled);
@@ -1490,8 +1497,12 @@ fn choice_controls_are_plain_by_default_and_framed_on_request() {
         render(RadioButton::new("Automatic").framed()),
     ] {
         assert!(
-            solid_fill_colors(&output).contains(&theme.palette.control),
-            "framed choice rows should preserve the control fill"
+            solid_fill_colors(&output).contains(&theme.palette.button),
+            "framed choice rows use the neutral button face"
+        );
+        assert!(
+            solid_stroke_colors(&output).contains(&theme.palette.button_border),
+            "framed choice rows use the neutral button outline"
         );
     }
 }
@@ -1551,7 +1562,10 @@ fn plain_choice_row_focus_wash_fades_without_black_rgb_flash() {
 
     assert!(mid.alpha > 0.0 && mid.alpha < settled.alpha);
     assert_color_approx_eq(mid.with_alpha(settled.alpha), settled);
-    assert!(mid.red > 0.1 && mid.green > 0.1 && mid.blue > 0.1);
+    assert!(
+        mid.red + mid.green + mid.blue > 0.3,
+        "the wash keeps its hue while fading instead of interpolating through black"
+    );
 }
 
 #[test]
@@ -1593,18 +1607,12 @@ fn bare_text_editors_leave_chrome_to_their_container() {
 }
 
 #[test]
-fn disabled_button_label_uses_disabled_muted_text() {
+fn disabled_button_label_uses_disabled_text() {
     let theme = DefaultTheme::default();
     let output = render(Button::new("Save").enabled(false).theme(theme));
     let text = text_run_for(&output, "Save");
 
-    assert_eq!(
-        text.style.color,
-        theme
-            .palette
-            .text_muted
-            .with_alpha(theme.interaction.disabled_content_opacity)
-    );
+    assert_eq!(text.style.color, theme.palette.text_disabled);
 }
 
 #[test]
@@ -2209,27 +2217,18 @@ fn text_input_hover_animation_uses_theme_motion() -> Result<()> {
     runtime.tick(hover_duration() * 0.5);
     assert_eq!(handle_ready_events(&mut runtime)?, 1);
     let mid = runtime.render(window_id)?;
-    // The light field well lifts toward the card surface while the border
-    // strengthens, without snapping either transition.
-    let mid_background = solid_fill_colors(&mid)[0];
-    assert_ne!(mid_background, theme.palette.field);
-    assert_ne!(mid_background, theme.palette.surface);
+    // The field well stays put while the outline strengthens without
+    // snapping.
+    assert_eq!(solid_fill_colors(&mid)[0], theme.palette.field);
     let mid_strokes = solid_stroke_colors(&mid);
-    assert!(!mid_strokes.contains(&theme.palette.border));
+    assert!(!mid_strokes.contains(&theme.palette.button_border));
     assert!(!mid_strokes.contains(&theme.palette.border_hover));
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
     assert_eq!(handle_ready_events(&mut runtime)?, 1);
     let end = runtime.render(window_id)?;
-    assert_eq!(
-        solid_fill_colors(&end)[0],
-        super::mix_color(
-            theme.palette.field,
-            theme.palette.surface,
-            theme.interaction.hover_blend,
-        )
-    );
+    assert_eq!(solid_fill_colors(&end)[0], theme.palette.field);
     assert!(solid_stroke_colors(&end).contains(&theme.palette.border_hover));
     assert_eq!(runtime.next_wakeup_time(window_id)?, None);
     Ok(())
@@ -2333,11 +2332,11 @@ fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_background = solid_fill_colors(&mid_hover)[0];
     let settled_hover_background = super::mix_color(
-        theme.palette.control,
-        theme.palette.control_hover,
+        theme.palette.button,
+        theme.palette.button_hover,
         theme.interaction.hover_blend,
     );
-    assert_ne!(mid_hover_background, theme.palette.control);
+    assert_ne!(mid_hover_background, theme.palette.button);
     assert_ne!(mid_hover_background, settled_hover_background);
 
     runtime.tick(hover_time);
@@ -2356,7 +2355,7 @@ fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
     let mid_press_background = solid_fill_colors(&mid_press)[0];
     let settled_press_background = super::mix_color(
         settled_hover_background,
-        theme.palette.control_active,
+        theme.palette.button_pressed,
         theme.interaction.pressed_blend,
     );
     assert_ne!(mid_press_background, settled_hover_background);
@@ -2527,16 +2526,16 @@ fn checkbox_focus_border_uses_theme_motion() -> Result<()> {
     assert!(handle_ready_events(&mut runtime)? >= 1);
     let mid_focus = runtime.render(window_id)?;
     assert!(
-        !solid_stroke_colors(&mid_focus).contains(&theme.palette.border_focus),
-        "checkbox focus border should not snap to the settled focus border color"
+        !solid_stroke_colors(&mid_focus).contains(&theme.palette.focus_ring),
+        "checkbox focus ring should not snap to the settled focus ring color"
     );
 
     runtime.tick(focus_duration());
     assert!(handle_ready_events(&mut runtime)? >= 1);
     let settled_focus = runtime.render(window_id)?;
     assert!(
-        solid_stroke_colors(&settled_focus).contains(&theme.palette.border_focus),
-        "checkbox focus border should settle to the theme focus border color"
+        solid_stroke_colors(&settled_focus).contains(&theme.palette.focus_ring),
+        "checkbox focus ring should settle to the theme focus ring color"
     );
     Ok(())
 }
@@ -2596,11 +2595,11 @@ fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_background = solid_fill_colors(&mid_hover)[0];
     let settled_hover_background = super::mix_color(
-        theme.palette.control,
-        theme.palette.control_hover,
+        theme.palette.button,
+        theme.palette.button_hover,
         theme.interaction.hover_blend,
     );
-    assert_ne!(mid_hover_background, theme.palette.control);
+    assert_ne!(mid_hover_background, theme.palette.button);
     assert_ne!(mid_hover_background, settled_hover_background);
 
     runtime.tick(hover_time);
@@ -2619,7 +2618,7 @@ fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
     let mid_press_background = solid_fill_colors(&mid_press)[0];
     let settled_press_background = super::mix_color(
         settled_hover_background,
-        theme.palette.control_active,
+        theme.palette.button_pressed,
         theme.interaction.pressed_blend,
     );
     assert_ne!(mid_press_background, settled_hover_background);
@@ -2741,11 +2740,11 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_background = solid_fill_colors(&mid_hover)[0];
     let settled_hover_background = super::mix_color(
-        theme.palette.control,
-        theme.palette.control_hover,
+        theme.palette.button,
+        theme.palette.button_hover,
         theme.interaction.hover_blend,
     );
-    assert_ne!(mid_hover_background, theme.palette.control);
+    assert_ne!(mid_hover_background, theme.palette.button);
     assert_ne!(mid_hover_background, settled_hover_background);
 
     runtime.tick(hover_time);
@@ -2763,7 +2762,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     let mid_press_background = solid_fill_colors(&mid_press)[0];
     let settled_press_background = super::mix_color(
         settled_hover_background,
-        theme.palette.control_active,
+        theme.palette.button_pressed,
         theme.interaction.pressed_blend,
     );
     assert_ne!(mid_press_background, settled_hover_background);
@@ -2782,16 +2781,28 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     runtime.tick(selection_start + (toggle_time * 0.5));
     assert!(handle_ready_events(&mut runtime)? >= 1);
     let mid_selection = runtime.render(window_id)?;
+    // The dot shares the white of the row face, so track it by its fading
+    // alpha rather than by color alone.
+    let dot_ink = theme.palette.accent_text;
+    let fading_dot = |fills: &[Color]| {
+        fills
+            .iter()
+            .any(|color| color.with_alpha(1.0) == dot_ink && color.alpha > 0.0 && color.alpha < 1.0)
+    };
+    let opaque_dots = |fills: &[Color]| fills.iter().filter(|color| **color == dot_ink).count();
+    let mid_fills = solid_fill_colors(&mid_selection);
     assert!(
-        !solid_fill_colors(&mid_selection).contains(&theme.palette.accent_text),
-        "radio group selection dot should not snap directly to the settled selected color"
+        fading_dot(&mid_fills),
+        "radio group selection dot should fade in rather than snap to the settled color"
     );
 
     runtime.tick(selection_start + toggle_time);
     assert!(handle_ready_events(&mut runtime)? >= 1);
     let selected = runtime.render(window_id)?;
+    let selected_fills = solid_fill_colors(&selected);
+    assert!(!fading_dot(&selected_fills));
     assert!(
-        solid_fill_colors(&selected).contains(&theme.palette.accent_text),
+        opaque_dots(&selected_fills) > opaque_dots(&mid_fills),
         "radio group selection dot should settle to the theme selected text color"
     );
     Ok(())
@@ -3834,7 +3845,7 @@ fn text_area_focus_ring_animation_progresses_without_losing_ime_rect() -> Result
     assert_eq!(handle_ready_events(&mut runtime)?, 1);
     let mid = runtime.render(window_id)?;
     assert!(mid.ime_composition_rect.is_some());
-    assert_ne!(solid_fill_colors(&initial), solid_fill_colors(&mid));
+    assert_ne!(solid_stroke_colors(&initial), solid_stroke_colors(&mid));
 
     Ok(())
 }
@@ -4359,30 +4370,27 @@ fn switch_label_visual_center_ignores_asymmetric_padding() {
 }
 
 #[test]
-fn switch_thumb_uses_foreground_in_dark_theme_variants() {
-    let light = DefaultTheme::default();
-    assert_eq!(
-        Switch::new("Wifi")
-            .theme(light)
-            .resolved_visuals(false)
-            .thumb_color,
-        light.palette.accent_text
-    );
+fn switch_thumb_follows_the_toggle_state_in_every_scheme() {
+    for theme in [
+        DefaultTheme::light(),
+        DefaultTheme::dark(),
+        DefaultTheme::high_contrast(),
+        DefaultTheme::neutral_dark(),
+    ] {
+        let on = Switch::new("Wifi")
+            .on(true)
+            .theme(theme)
+            .resolved_visuals(false);
+        assert_eq!(on.thumb_color, theme.palette.accent_text);
+        assert_eq!(on.track_color, theme.palette.accent);
 
-    for theme in [DefaultTheme::dark(), DefaultTheme::high_contrast()] {
-        for on in [false, true] {
-            assert_eq!(
-                Switch::new("Wifi")
-                    .on(on)
-                    .theme(theme)
-                    .resolved_visuals(false)
-                    .thumb_color,
-                theme.palette.text
-            );
-        }
+        let off = Switch::new("Wifi").theme(theme).resolved_visuals(false);
+        assert_eq!(off.thumb_color, theme.palette.border_control);
+        assert_eq!(off.track_border, theme.palette.border_control);
+        assert_eq!(off.track_color, theme.palette.field);
 
         let fills = solid_fill_colors(&render(Switch::new("Wifi").theme(theme)));
-        assert!(fills.contains(&theme.palette.text));
+        assert!(fills.contains(&theme.palette.border_control));
     }
 }
 

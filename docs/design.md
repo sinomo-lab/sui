@@ -105,16 +105,17 @@ The default style should balance three constraints:
 
 That leads to the following baseline rules for first-party widgets:
 
-- Use restrained neutral surfaces and interaction states with a small number of high-contrast accent colors. Selection, hover, pressed, focus, fields, menus, and scroll chrome stay neutral; brand color is reserved for explicit primary actions, links, thin indicators, and decorative or live-signal emphasis.
+- Use pure neutral surfaces with vibrant decoration. Light surfaces are achromatic; dark surfaces may carry one faint, constant tint. Selection fills, hover, pressed, fields, menus, and scroll chrome stay neutral. The brand color marks primary actions, selected choices, links, thin indicators, keyboard focus rings, and live signals. A matched nine-hue decorative palette covers categorical emphasis.
+- Derive every state and legibility role from source colors in a perceptual space (OKLCH) so that custom brand colors keep hover, soft, text, focus, and wide-gamut variants consistent, and every text role meets WCAG AA on its surface.
 - Use rounded geometry and subtle borders by default, but keep the radii restrained. Controls should read as intentionally designed surfaces, not raw rectangles or overly soft pills.
 - The default medium body token is `15px / 22px`; authored Small, Medium, and Large controls resolve to the shared `13px / 18px`, `15px / 22px`, and `17px / 25px` text-ramp tokens.
 - Interactive controls use `28px`, `32px`, and `40px` visible heights for Small, Medium, and Large, while preserving a separate `44px` touch target for direct input.
 - Small visual elements such as checkbox indicators or drag affordances must not become tiny click targets. The visible glyph may stay compact, but the interactive row or surrounding surface should provide the larger target.
 - Hover, pressed, and focused states should be distinct without relying on dramatic motion or heavy skeuomorphic shading. Focus visibility is mandatory and should survive both mouse and keyboard navigation.
-- Keyboard focus should use a distinct neutral ring rather than recoloring the whole control with the product accent. Selection should use a quiet neutral fill with an optional narrow accent border or indicator.
+- Keyboard focus should use a distinct brand-colored ring outside the control rather than recoloring the whole control. Selection should use a quiet neutral fill with an optional narrow accent border or indicator.
 - Text inputs should prioritize legibility and editing clarity: visible caret, readable placeholder styling, and strong focus treatment.
-- Buttons should default to a neutral tonal style so ordinary actions compose without competing for attention. Primary accent and destructive actions should be explicit through `Button::primary(...)`, `Button::danger(...)`, or the corresponding builders.
-- Checkbox, radio, and switch rows should remain visually plain at rest while preserving a generous hit target. Framed choice rows are an explicit appearance for inspector and settings surfaces rather than the universal default.
+- Buttons should default to a raised neutral face with an outline and full-strength labels, so ordinary actions compose without competing for attention and never read as disabled. Primary accent and destructive actions should be explicit through `Button::primary(...)`, `Button::danger(...)`, or the corresponding builders.
+- Checkbox, radio, and switch rows should remain visually plain at rest while preserving a generous hit target. Unselected indicators keep a 3:1 control outline so their boundary is always perceivable. Framed choice rows are an explicit appearance for inspector and settings surfaces rather than the universal default.
 - Shared themes define a compact semantic color language, not per-widget paint recipes. Specialized widgets own partial appearance objects, resolve unset fields from semantic theme roles, and allow applications or widget factories to override every specialized color without adopting SUI's default theme system.
 
 These defaults are not meant to replace a future inherited theming system. They are the baseline that makes SUI usable before global theme propagation exists, and they should therefore live in first-party widgets rather than in example code alone.

@@ -517,7 +517,7 @@ struct DevDemo {
     title: &'static str,
     description: &'static str,
     icon: IconGlyph,
-    accent: Color,
+    accent: DecorativeHue,
     child: Option<WidgetPod>,
     build_child: Option<Box<dyn FnOnce() -> WidgetPod>>,
 }
@@ -527,7 +527,7 @@ impl DevDemo {
         title: &'static str,
         description: &'static str,
         icon: IconGlyph,
-        accent: Color,
+        accent: DecorativeHue,
         build_child: F,
     ) -> Self
     where
@@ -604,7 +604,7 @@ impl DevBrowserShell {
                 ActionCard::new(demo.title, demo.description)
                     .theme_when(move || theme_state.theme())
                     .icon(demo.icon)
-                    .accent(demo.accent)
+                    .decorative(demo.accent)
                     .min_width(260.0)
                     .min_height(DEV_SHELL_PICKER_TILE_HEIGHT)
                     .on_press_with_ctx(move |ctx| {
@@ -889,16 +889,10 @@ impl DevBrowserShell {
         let bounds = ctx.bounds();
         let toolbar = Self::toolbar_rect(bounds);
         let palette = theme.palette;
-        let toolbar_background = if self.state.is_dark() {
-            Color::rgba(0.085, 0.105, 0.13, 1.0)
-        } else {
-            Color::rgba(0.95, 0.965, 0.985, 1.0)
-        };
-        ctx.fill_rect(toolbar, toolbar_background);
-        ctx.stroke_rect(
+        ctx.fill_rect(toolbar, theme.surfaces.window_subtle);
+        ctx.fill_rect(
             Rect::new(toolbar.x(), toolbar.max_y() - 1.0, toolbar.width(), 1.0),
-            palette.border.with_alpha(0.85),
-            StrokeStyle::new(1.0),
+            palette.border,
         );
     }
 
@@ -1400,18 +1394,16 @@ impl ThemeToggleButton {
     }
 
     fn track_color(scheme: ThemeColorScheme) -> Color {
-        match scheme {
-            ThemeColorScheme::Light => Color::rgba(0.97, 0.985, 1.0, 1.0),
-            ThemeColorScheme::Dark => Color::rgba(0.11, 0.15, 0.20, 1.0),
-            ThemeColorScheme::HighContrast => Color::rgba(0.0, 0.0, 0.0, 1.0),
-        }
+        ThemeColors::with_scheme(scheme).neutrals.control
     }
 
+    /// Sun, moon, and OLED knobs use the scheme's decorative palette.
     fn knob_color(scheme: ThemeColorScheme) -> Color {
+        let decorative = ThemeColors::with_scheme(scheme).decorative;
         match scheme {
-            ThemeColorScheme::Light => Color::rgba(0.98, 0.74, 0.24, 1.0),
-            ThemeColorScheme::Dark => Color::rgba(0.33, 0.74, 0.88, 1.0),
-            ThemeColorScheme::HighContrast => Color::rgba(0.0, 0.84, 1.0, 1.0),
+            ThemeColorScheme::Light => decorative.amber,
+            ThemeColorScheme::Dark => decorative.blue,
+            ThemeColorScheme::HighContrast => decorative.cyan,
         }
     }
 
@@ -1815,22 +1807,15 @@ impl Widget for FloatingSettingsWindow {
         );
 
         let title = Self::title_rect(bounds);
-        let title_fill = if self.state.is_dark() {
-            Color::rgba(0.12, 0.16, 0.21, 1.0)
-        } else {
-            Color::rgba(0.16, 0.20, 0.26, 1.0)
-        };
-        ctx.fill(top_rounded_rect_path(title, 8.0), title_fill);
-        ctx.stroke_rect(
+        ctx.fill(
+            top_rounded_rect_path(title, 8.0),
+            theme.surfaces.window_subtle,
+        );
+        ctx.fill_rect(
             Rect::new(title.x(), title.max_y(), title.width(), 1.0),
-            content_palette.border.with_alpha(0.6),
-            StrokeStyle::new(1.0),
+            content_palette.border,
         );
-        let title_style = demo_text_style(
-            theme,
-            DemoTextRole::CardTitle,
-            Color::rgba(0.96, 0.97, 0.99, 1.0),
-        );
+        let title_style = demo_text_style(theme, DemoTextRole::CardTitle, palette.text);
         paint_single_line_aligned_text(
             ctx,
             Rect::new(
@@ -1850,13 +1835,13 @@ impl Widget for FloatingSettingsWindow {
             ctx.fill(
                 Path::rounded_rect(close, 6.0),
                 if self.close_pressed {
-                    Color::rgba(1.0, 1.0, 1.0, 0.24)
+                    palette.control_hover
                 } else {
-                    Color::rgba(1.0, 1.0, 1.0, 0.14)
+                    palette.control
                 },
             );
         }
-        let close_color = Color::rgba(0.96, 0.97, 0.99, 1.0);
+        let close_color = palette.text_muted;
         ctx.stroke(close_icon_path(close), close_color, StrokeStyle::new(1.5));
 
         self.content.paint(ctx);
@@ -1920,112 +1905,112 @@ fn build_dev_demo_entries(
             WIDGET_BOOK_TAB_LABEL,
             "Catalog of controls, containers, media, and text surfaces.",
             IconGlyph::MoreHorizontal,
-            Color::rgba(0.16, 0.48, 0.86, 1.0),
+            DecorativeHue::Blue,
             |theme| build_widget_book_gallery_with_theme(default_widget_book_state(), theme)
         ),
         themed_demo!(
             THEMES_TAB_LABEL,
             "Theme previews and HDR theme mode comparisons.",
             IconGlyph::PaintBucket,
-            Color::rgba(0.62, 0.28, 0.78, 1.0),
+            DecorativeHue::Violet,
             |theme| build_theme_demo_surface_with_theme(default_widget_book_state(), theme)
         ),
         themed_demo!(
             THEME_EDITOR_TAB_LABEL,
             "Edit foundational theme tokens and preview every change in real time.",
             IconGlyph::PaintBucket,
-            Color::rgba(0.18, 0.54, 0.66, 1.0),
+            DecorativeHue::Magenta,
             |theme| build_theme_editor_demo_with_theme(theme)
         ),
         themed_demo!(
             ANIMATION_DEMO_TAB_LABEL,
             "Timeline playback, retained layer, repaint, editor, and overlay examples.",
             IconGlyph::Sparkles,
-            Color::rgba(0.18, 0.58, 0.74, 1.0),
+            DecorativeHue::Cyan,
             |theme| build_animation_demo_with_theme(theme)
         ),
         themed_demo!(
             RETAINED_TEXT_TAB_LABEL,
             "Retained text layout and redraw benchmark.",
             IconGlyph::Search,
-            Color::rgba(0.75, 0.42, 0.12, 1.0),
+            DecorativeHue::Orange,
             |theme| build_retained_text_benchmark_with_theme(theme)
         ),
         themed_demo!(
             SHRINKWRAP_TAB_LABEL,
             "Animated container width, text wrapping, and tightly fitted chat bubbles.",
             IconGlyph::FitView,
-            Color::rgba(0.20, 0.62, 0.54, 1.0),
+            DecorativeHue::Teal,
             |theme| build_shrinkwrap_demo_with_theme(theme)
         ),
         themed_demo!(
             EDITORIAL_TAB_LABEL,
             "Responsive columns and text flowing around moving, draggable obstacles.",
             IconGlyph::FitView,
-            Color::rgba(0.72, 0.55, 0.28, 1.0),
+            DecorativeHue::Amber,
             |theme| build_editorial_demo_with_theme(theme)
         ),
         themed_demo!(
             TEXT_RENDERING_COMPARISON_TAB_LABEL,
             "Side-by-side text rendering comparison surface.",
             IconGlyph::FitView,
-            Color::rgba(0.20, 0.50, 0.62, 1.0),
+            DecorativeHue::Blue,
             |theme| build_text_rendering_comparison_surface_with_theme(theme)
         ),
         themed_demo!(
             TEXT_VALIDATION_TAB_LABEL,
             "Validation surface for text metrics, alignment, and rasterization.",
             IconGlyph::ActualSize,
-            Color::rgba(0.68, 0.26, 0.32, 1.0),
+            DecorativeHue::Red,
             |theme| build_text_validation_surface_with_theme(theme)
         ),
         themed_demo!(
             TEXT_EDITING_TAB_LABEL,
             "Single-line and multi-line text editing demos.",
             IconGlyph::Restore,
-            Color::rgba(0.35, 0.38, 0.82, 1.0),
+            DecorativeHue::Violet,
             |theme| build_text_editing_benchmark_with_theme(theme)
         ),
         themed_demo!(
             MARKDOWN_RENDER_TAB_LABEL,
             "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
             IconGlyph::File,
-            Color::rgba(0.12, 0.48, 0.70, 1.0),
+            DecorativeHue::Green,
             |theme| build_markdown_render_demo_with_theme(theme)
         ),
         themed_demo!(
             HDR_VALIDATION_TAB_LABEL,
             "HDR, color-management, and tone-mapping validation surface.",
             IconGlyph::Maximize,
-            Color::rgba(0.82, 0.52, 0.10, 1.0),
+            DecorativeHue::Amber,
             |theme| build_color_validation_surface_with_theme(theme)
         ),
         themed_demo!(
             LAYOUT_TAB_LABEL,
             "Grid, intrinsic sizing, container queries, resizable panes, adaptive workspaces, and safe areas.",
             IconGlyph::Maximize,
-            Color::rgba(0.08, 0.58, 0.42, 1.0),
+            DecorativeHue::Teal,
             |theme| build_layout_demo_with_theme(theme)
         ),
         themed_demo!(
             DRAG_DROP_TAB_LABEL,
             "Internal drag-and-drop payloads, targets, scopes, and preview overlay.",
             IconGlyph::Send,
-            Color::rgba(0.20, 0.48, 0.78, 1.0),
+            DecorativeHue::Cyan,
             |theme| build_drag_drop_demo_with_theme(theme)
         ),
         themed_demo!(
             PAINT_TAB_LABEL,
             "Pixel canvas painting workspace with editor-style panels.",
             IconGlyph::Brush,
-            Color::rgba(0.80, 0.22, 0.44, 1.0),
+            DecorativeHue::Magenta,
             |theme| build_paint_demo_with_theme(theme)
         ),
         themed_demo!(
             VECTOR_EDITOR_TAB_LABEL,
             "Vector canvas drawing and editing demo.",
             IconGlyph::ChevronRight,
-            Color::rgba(0.12, 0.56, 0.76, 1.0),
+            DecorativeHue::Orange,
             |theme| build_vector_editor_demo_with_theme(theme)
         ),
         #[cfg(feature = "nodes")]
@@ -2033,7 +2018,7 @@ fn build_dev_demo_entries(
             NODES_TAB_LABEL,
             "Controlled and uncontrolled node editors with retained custom nodes, subflows, spatial indexing, resizing, reconnection, semantics, and advanced viewport behavior.",
             IconGlyph::ScreenShare,
-            Color::rgba(0.18, 0.58, 0.78, 1.0),
+            DecorativeHue::Green,
             |theme| build_nodes_demo_with_theme(theme)
         ),
         {
@@ -2042,7 +2027,7 @@ fn build_dev_demo_entries(
                 COMMAND_DEMO_TAB_LABEL,
                 "Typed window and application commands, multicast, worker delivery, and controller wakes.",
                 IconGlyph::Send,
-                Color::rgba(0.16, 0.52, 0.72, 1.0),
+                DecorativeHue::Red,
                 move || build_command_demo_with_theme(command_demo_state, theme),
             )
         },
@@ -3437,7 +3422,7 @@ mod tests {
             "Lazy demo",
             "Test lazy demo construction",
             IconGlyph::Add,
-            Color::BLACK,
+            DecorativeHue::Blue,
             move || {
                 factory_count.set(factory_count.get() + 1);
                 Label::new("Lazy content")
@@ -7476,8 +7461,10 @@ final_max_luminance={final_max_luminance}
             SemanticsRole::Button,
             crate::widget_book::PRIMARY_BUTTON_LABEL,
         );
+        // The primary azure is shared by every scheme, so probe the neutral
+        // surface just beside the button, which must follow the scheme.
         let probe = Rect::new(
-            primary_button.bounds.x() + 8.0,
+            primary_button.bounds.x() - 6.0,
             primary_button.bounds.y() + primary_button.bounds.height() * 0.5,
             1.0,
             1.0,
@@ -7494,7 +7481,7 @@ final_max_luminance={final_max_luminance}
 
         assert_ne!(
             light_pixel, dark_pixel,
-            "expected the widget book primary button surface to repaint after the theme switch toggles"
+            "expected the widget book surface beside the primary button to repaint after the theme switch toggles"
         );
         Ok(())
     }
@@ -8284,7 +8271,6 @@ final_max_luminance={final_max_luminance}
         let mut edited_theme = initial_theme;
         let primary = edited_theme.colors.primary;
         edited_theme.colors.primary = Color::rgba(value as f32, primary.green, primary.blue, 1.0);
-        edited_theme.colors.accent = edited_theme.colors.primary;
         edited_theme.sync_derived_fields();
 
         assert!(
@@ -8455,6 +8441,43 @@ final_max_luminance={final_max_luminance}
             scrolled_red.bounds.y(),
             after_red.bounds.y()
         );
+
+        // The source color list is long; scroll until the spacing slider is
+        // inside the controls viewport before dragging it.
+        let mut after = after;
+        for _ in 0..24 {
+            let spacing = theme_editor_slider(&after, THEME_SPACING_NAME);
+            let center = Point::new(
+                spacing.bounds.x() + spacing.bounds.width() * 0.5,
+                spacing.bounds.y() + spacing.bounds.height() * 0.5,
+            );
+            let controls = after
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.role == SemanticsRole::ScrollView
+                        && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
+                })
+                .expect("theme editor controls scroll view should exist")
+                .bounds;
+            if controls.inflate(0.0, -24.0).contains(center) {
+                break;
+            }
+            let mut scroll = PointerEvent::new(
+                PointerEventKind::Scroll,
+                Point::new(controls.x() + 24.0, controls.y() + 24.0),
+            );
+            scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(
+                0.0,
+                if center.y > controls.max_y() {
+                    -120.0
+                } else {
+                    120.0
+                },
+            )));
+            runtime.handle_event(window_id, Event::Pointer(scroll))?;
+            after = runtime.render(window_id)?;
+        }
 
         let scrolled_spacing = theme_editor_slider(&after, THEME_SPACING_NAME);
         let start = Point::new(

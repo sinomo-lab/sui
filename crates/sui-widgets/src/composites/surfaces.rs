@@ -644,7 +644,7 @@ impl Widget for FramedField {
         let invalid = self.is_invalid();
         let focused = self.is_focused(ctx.focused_widget_id());
         let interaction_border = mix_color(
-            theme.palette.border,
+            theme.palette.button_border,
             theme.palette.border_hover,
             self.hover_animation.value,
         );

@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use sui_core::Color;
 use sui_layout::Padding as Insets;
 use sui_text::{FontFamilyStack, TextStyle};
@@ -193,6 +195,13 @@ pub enum ThemeColorScheme {
     HighContrast,
 }
 
+impl ThemeColorScheme {
+    /// Whether content is drawn as light ink on dark surfaces.
+    pub const fn is_dark(self) -> bool {
+        matches!(self, Self::Dark | Self::HighContrast)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeDensity {
     Compact,
@@ -262,30 +271,288 @@ pub enum SemanticTone {
     Danger,
 }
 
+/// Every structural tier of a theme: surfaces, neutral fills, borders, and
+/// ink. Built-in themes author these directly so each preset can choose pure
+/// or subtly tinted neutrals; widgets never derive structure from the brand
+/// color.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NeutralRamp {
+    /// Application background behind panels.
+    pub window: Color,
+    /// Recessed chrome: sidebars, title bars, table headers.
+    pub subtle: Color,
+    /// Cards, panes, and other content surfaces.
+    pub panel: Color,
+    /// Floating surfaces: menus, popovers, dialogs, toasts.
+    pub overlay: Color,
+    /// Recessed neutral fill for tracks, tab strips, chips, and nested areas.
+    pub control: Color,
+    pub control_hover: Color,
+    pub control_active: Color,
+    /// Face of neutral buttons, select triggers, and raised segment thumbs.
+    pub button: Color,
+    pub button_hover: Color,
+    pub button_active: Color,
+    /// Text input well.
+    pub field: Color,
+    /// Hairlines inside components.
+    pub border_subtle: Color,
+    /// Default separators and container outlines.
+    pub border: Color,
+    /// Outlines of interactive controls such as buttons and fields.
+    pub border_strong: Color,
+    /// Outline of unselected checkboxes, radios, and switch tracks; at least
+    /// 3:1 against the panel so the control boundary stays perceivable.
+    pub border_control: Color,
+    pub text: Color,
+    pub text_secondary: Color,
+    /// Placeholder and tertiary metadata; at least 4.5:1 on the panel.
+    pub text_tertiary: Color,
+    pub text_disabled: Color,
+}
+
+impl NeutralRamp {
+    /// Pure achromatic light ramp shared by the SUI and neutral light presets.
+    pub fn light() -> Self {
+        Self {
+            window: Color::WHITE,
+            subtle: rgb8(250, 250, 250),
+            panel: Color::WHITE,
+            overlay: Color::WHITE,
+            control: rgb8(245, 245, 245),
+            control_hover: rgb8(235, 235, 235),
+            control_active: rgb8(224, 224, 224),
+            button: Color::WHITE,
+            button_hover: rgb8(245, 245, 245),
+            button_active: rgb8(235, 235, 235),
+            field: Color::WHITE,
+            border_subtle: rgb8(240, 240, 240),
+            border: rgb8(229, 229, 229),
+            border_strong: rgb8(212, 212, 212),
+            border_control: rgb8(140, 140, 140),
+            text: rgb8(23, 23, 23),
+            text_secondary: rgb8(82, 82, 82),
+            text_tertiary: rgb8(115, 115, 115),
+            text_disabled: rgb8(163, 163, 163),
+        }
+    }
+
+    /// SUI dark ramp: a constant, faint blue tint (OKLCH hue 258, chroma
+    /// ~0.016) over evenly spaced lightness steps.
+    pub fn dark() -> Self {
+        Self {
+            window: rgb8(9, 13, 20),
+            subtle: rgb8(13, 18, 25),
+            panel: rgb8(18, 23, 30),
+            overlay: rgb8(25, 30, 37),
+            control: rgb8(28, 33, 40),
+            control_hover: rgb8(37, 42, 50),
+            control_active: rgb8(43, 49, 57),
+            button: rgb8(28, 33, 40),
+            button_hover: rgb8(37, 42, 50),
+            button_active: rgb8(43, 49, 57),
+            field: rgb8(13, 18, 25),
+            border_subtle: rgb8(31, 37, 45),
+            border: rgb8(43, 50, 60),
+            border_strong: rgb8(59, 66, 76),
+            border_control: rgb8(108, 116, 127),
+            text: rgb8(238, 240, 243),
+            text_secondary: rgb8(185, 190, 198),
+            text_tertiary: rgb8(142, 148, 158),
+            text_disabled: rgb8(87, 93, 101),
+        }
+    }
+
+    /// Achromatic twin of [`Self::dark`] with identical lightness steps.
+    pub fn neutral_dark() -> Self {
+        Self {
+            window: rgb8(13, 13, 13),
+            subtle: rgb8(18, 18, 18),
+            panel: rgb8(23, 23, 23),
+            overlay: rgb8(30, 30, 30),
+            control: rgb8(33, 33, 33),
+            control_hover: rgb8(42, 42, 42),
+            control_active: rgb8(48, 48, 48),
+            button: rgb8(33, 33, 33),
+            button_hover: rgb8(42, 42, 42),
+            button_active: rgb8(48, 48, 48),
+            field: rgb8(18, 18, 18),
+            border_subtle: rgb8(36, 36, 36),
+            border: rgb8(49, 49, 49),
+            border_strong: rgb8(65, 65, 65),
+            border_control: rgb8(115, 115, 115),
+            text: rgb8(240, 240, 240),
+            text_secondary: rgb8(190, 190, 190),
+            text_tertiary: rgb8(148, 148, 148),
+            text_disabled: rgb8(92, 92, 92),
+        }
+    }
+
+    /// True-black OLED ramp: window, chrome, and panels stay black and are
+    /// separated by borders; only interactive fills lift off black, carrying
+    /// the same faint tint as [`Self::dark`]. Text is dimmed below pure white.
+    pub fn void() -> Self {
+        Self {
+            window: Color::BLACK,
+            subtle: Color::BLACK,
+            panel: Color::BLACK,
+            overlay: rgb8(12, 17, 24),
+            control: rgb8(15, 20, 27),
+            control_hover: rgb8(25, 30, 38),
+            control_active: rgb8(32, 38, 46),
+            button: rgb8(15, 20, 27),
+            button_hover: rgb8(25, 30, 38),
+            button_active: rgb8(32, 38, 46),
+            field: rgb8(7, 11, 18),
+            border_subtle: rgb8(21, 26, 33),
+            border: rgb8(36, 43, 52),
+            border_strong: rgb8(52, 59, 69),
+            border_control: rgb8(104, 111, 123),
+            text: rgb8(228, 230, 234),
+            text_secondary: rgb8(177, 182, 190),
+            text_tertiary: rgb8(137, 144, 153),
+            text_disabled: rgb8(82, 87, 95),
+        }
+    }
+}
+
+/// A decorative hue from [`DecorativeColors`]. Use decorative hues for
+/// categorical emphasis — tags, avatars, node categories, chart series —
+/// never for status: status keeps its semantic colors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DecorativeHue {
+    Red,
+    Orange,
+    Amber,
+    Green,
+    Teal,
+    Cyan,
+    Blue,
+    Violet,
+    Magenta,
+}
+
+impl DecorativeHue {
+    pub const ALL: [Self; 9] = [
+        Self::Red,
+        Self::Orange,
+        Self::Amber,
+        Self::Green,
+        Self::Teal,
+        Self::Cyan,
+        Self::Blue,
+        Self::Violet,
+        Self::Magenta,
+    ];
+}
+
+/// Vibrant categorical source colors with matched OKLCH lightness and
+/// chroma, so no hue shouts over another.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecorativeColors {
+    pub red: Color,
+    pub orange: Color,
+    pub amber: Color,
+    pub green: Color,
+    pub teal: Color,
+    pub cyan: Color,
+    pub blue: Color,
+    pub violet: Color,
+    pub magenta: Color,
+}
+
+impl DecorativeColors {
+    /// Light-surface decorative set. Every hue except amber reaches at least
+    /// 3:1 against white; derived text roles cover the rest.
+    pub fn light() -> Self {
+        Self {
+            red: rgb8(234, 60, 63),
+            orange: rgb8(215, 105, 0),
+            amber: rgb8(223, 156, 0),
+            green: rgb8(0, 158, 72),
+            teal: rgb8(0, 155, 139),
+            cyan: rgb8(0, 150, 175),
+            blue: rgb8(22, 122, 250),
+            violet: rgb8(135, 93, 240),
+            magenta: rgb8(196, 70, 189),
+        }
+    }
+
+    /// Dark-surface decorative set, lifted so every hue reads at least 6.5:1
+    /// on the dark panel.
+    pub fn dark() -> Self {
+        Self {
+            red: rgb8(255, 113, 107),
+            orange: rgb8(255, 138, 55),
+            amber: rgb8(252, 177, 0),
+            green: rgb8(55, 209, 108),
+            teal: rgb8(0, 208, 187),
+            cyan: rgb8(0, 201, 234),
+            blue: rgb8(104, 165, 255),
+            violet: rgb8(168, 143, 255),
+            magenta: rgb8(228, 114, 220),
+        }
+    }
+
+    pub fn get(&self, hue: DecorativeHue) -> Color {
+        match hue {
+            DecorativeHue::Red => self.red,
+            DecorativeHue::Orange => self.orange,
+            DecorativeHue::Amber => self.amber,
+            DecorativeHue::Green => self.green,
+            DecorativeHue::Teal => self.teal,
+            DecorativeHue::Cyan => self.cyan,
+            DecorativeHue::Blue => self.blue,
+            DecorativeHue::Violet => self.violet,
+            DecorativeHue::Magenta => self.magenta,
+        }
+    }
+
+    pub fn set(&mut self, hue: DecorativeHue, color: Color) {
+        match hue {
+            DecorativeHue::Red => self.red = color,
+            DecorativeHue::Orange => self.orange = color,
+            DecorativeHue::Amber => self.amber = color,
+            DecorativeHue::Green => self.green = color,
+            DecorativeHue::Teal => self.teal = color,
+            DecorativeHue::Cyan => self.cyan = color,
+            DecorativeHue::Blue => self.blue = color,
+            DecorativeHue::Violet => self.violet = color,
+            DecorativeHue::Magenta => self.magenta = color,
+        }
+    }
+}
+
+/// SUI azure: OKLCH(0.549 0.230 262), 5.1:1 against white labels.
+const SUI_AZURE: Color = Color::rgba(23.0 / 255.0, 98.0 / 255.0, 244.0 / 255.0, 1.0);
+/// SUI violet: OKLCH(0.560 0.220 292), the secondary signal color.
+const SUI_VIOLET: Color = Color::rgba(125.0 / 255.0, 77.0 / 255.0, 231.0 / 255.0, 1.0);
+
+/// The source colors of a theme. Everything widgets paint — control states,
+/// soft washes, legible tone text, focus, selection, and the HDR variants —
+/// is derived from these values, so editing any field (for example
+/// `primary`) keeps every dependent role consistent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeColors {
     pub name: &'static str,
     pub scheme: ThemeColorScheme,
-    pub base_100: Color,
-    pub base_200: Color,
-    pub base_300: Color,
-    pub base_content: Color,
+    pub neutrals: NeutralRamp,
+    /// Brand color: primary actions, links, checked controls, focus rings,
+    /// and thin selection indicators.
     pub primary: Color,
-    pub primary_content: Color,
+    pub on_primary: Color,
+    /// Secondary signal color for live and decorative emphasis.
     pub secondary: Color,
-    pub secondary_content: Color,
-    pub accent: Color,
-    pub accent_content: Color,
-    pub neutral: Color,
-    pub neutral_content: Color,
+    pub on_secondary: Color,
     pub info: Color,
-    pub info_content: Color,
+    pub on_info: Color,
     pub success: Color,
-    pub success_content: Color,
+    pub on_success: Color,
     pub warning: Color,
-    pub warning_content: Color,
-    pub error: Color,
-    pub error_content: Color,
+    pub on_warning: Color,
+    pub danger: Color,
+    pub on_danger: Color,
+    pub decorative: DecorativeColors,
 }
 
 impl ThemeColors {
@@ -296,145 +563,67 @@ impl ThemeColors {
         Self::light()
     }
 
+    /// Pure white and gray surfaces with the vibrant SUI azure accent.
     pub fn light() -> Self {
         Self {
             name: "light",
             scheme: ThemeColorScheme::Light,
-            base_100: rgb8(255, 255, 255),
-            base_200: rgb8(247, 248, 250),
-            base_300: rgb8(227, 232, 239),
-            base_content: rgb8(13, 18, 32),
-            primary: rgb8(8, 124, 164),
-            primary_content: Color::WHITE,
-            secondary: rgb8(143, 125, 248),
-            secondary_content: Color::WHITE,
-            accent: rgb8(8, 124, 164),
-            accent_content: Color::WHITE,
-            neutral: rgb8(73, 84, 107),
-            neutral_content: Color::WHITE,
-            info: rgb8(41, 112, 255),
-            info_content: Color::WHITE,
-            success: rgb8(22, 163, 74),
-            success_content: Color::WHITE,
-            warning: rgb8(220, 154, 16),
-            warning_content: rgb8(36, 22, 0),
-            error: rgb8(217, 45, 32),
-            error_content: Color::WHITE,
+            neutrals: NeutralRamp::light(),
+            ..Self::branded_sources()
         }
     }
 
-    /// Neutral black, white, and gray tokens for professional interfaces that
-    /// do not have an application-specific color preference.
-    ///
-    /// Status colors remain semantic so success, warning, danger, and
-    /// informational feedback do not lose meaning.
-    pub fn neutral() -> Self {
-        Self {
-            name: "neutral",
-            scheme: ThemeColorScheme::Light,
-            base_100: Color::WHITE,
-            base_200: rgb8(250, 250, 250),
-            base_300: rgb8(229, 229, 229),
-            base_content: rgb8(23, 23, 23),
-            primary: rgb8(23, 23, 23),
-            primary_content: Color::WHITE,
-            secondary: rgb8(64, 64, 64),
-            secondary_content: Color::WHITE,
-            accent: rgb8(23, 23, 23),
-            accent_content: Color::WHITE,
-            neutral: rgb8(38, 38, 38),
-            neutral_content: Color::WHITE,
-            info: rgb8(37, 99, 235),
-            info_content: Color::WHITE,
-            success: rgb8(21, 128, 61),
-            success_content: Color::WHITE,
-            warning: rgb8(180, 83, 9),
-            warning_content: Color::WHITE,
-            error: rgb8(185, 28, 28),
-            error_content: Color::WHITE,
-        }
-    }
-
-    /// Dark companion to [`Self::neutral`], using achromatic surfaces,
-    /// controls, focus, selection, and primary actions.
-    pub fn neutral_dark() -> Self {
-        Self {
-            name: "neutral-dark",
-            scheme: ThemeColorScheme::Dark,
-            base_100: rgb8(10, 10, 10),
-            base_200: rgb8(23, 23, 23),
-            base_300: rgb8(38, 38, 38),
-            base_content: rgb8(245, 245, 245),
-            primary: rgb8(245, 245, 245),
-            primary_content: rgb8(23, 23, 23),
-            secondary: rgb8(163, 163, 163),
-            secondary_content: rgb8(23, 23, 23),
-            accent: rgb8(245, 245, 245),
-            accent_content: rgb8(23, 23, 23),
-            neutral: rgb8(38, 38, 38),
-            neutral_content: rgb8(245, 245, 245),
-            info: rgb8(96, 165, 250),
-            info_content: rgb8(23, 37, 84),
-            success: rgb8(74, 222, 128),
-            success_content: rgb8(5, 46, 22),
-            warning: rgb8(251, 191, 36),
-            warning_content: rgb8(66, 32, 6),
-            error: rgb8(248, 113, 113),
-            error_content: rgb8(69, 10, 10),
-        }
-    }
-
+    /// Faintly blue-tinted dark surfaces with the same SUI azure accent as
+    /// the light preset.
     pub fn dark() -> Self {
         Self {
             name: "dark",
             scheme: ThemeColorScheme::Dark,
-            base_100: rgb8(11, 14, 19),
-            base_200: rgb8(18, 22, 31),
-            base_300: rgb8(29, 36, 49),
-            base_content: rgb8(231, 235, 244),
-            primary: rgb8(53, 210, 238),
-            primary_content: rgb8(5, 33, 41),
-            secondary: rgb8(143, 125, 248),
-            secondary_content: rgb8(16, 11, 36),
-            accent: rgb8(53, 210, 238),
-            accent_content: rgb8(5, 33, 41),
-            neutral: rgb8(23, 28, 39),
-            neutral_content: rgb8(231, 235, 244),
-            info: rgb8(109, 149, 245),
-            info_content: rgb8(7, 19, 48),
-            success: rgb8(52, 211, 116),
-            success_content: rgb8(2, 38, 20),
-            warning: rgb8(253, 176, 34),
-            warning_content: rgb8(40, 24, 0),
-            error: rgb8(241, 87, 92),
-            error_content: rgb8(42, 8, 8),
+            neutrals: NeutralRamp::dark(),
+            decorative: DecorativeColors::dark(),
+            ..Self::branded_sources()
         }
     }
 
+    /// True-black OLED companion to [`Self::dark`].
     pub fn high_contrast() -> Self {
         Self {
             name: "void",
             scheme: ThemeColorScheme::HighContrast,
-            base_100: Color::BLACK,
-            base_200: rgb8(11, 14, 20),
-            base_300: rgb8(19, 23, 34),
-            base_content: rgb8(223, 229, 240),
-            primary: rgb8(33, 199, 229),
-            primary_content: rgb8(3, 19, 24),
-            secondary: rgb8(143, 125, 248),
-            secondary_content: rgb8(16, 11, 36),
-            accent: rgb8(33, 199, 229),
-            accent_content: rgb8(3, 19, 24),
-            neutral: rgb8(11, 14, 20),
-            neutral_content: rgb8(223, 229, 240),
-            info: rgb8(100, 141, 240),
-            info_content: rgb8(5, 16, 42),
-            success: rgb8(46, 201, 108),
-            success_content: rgb8(1, 33, 16),
-            warning: rgb8(242, 169, 31),
-            warning_content: rgb8(38, 23, 0),
-            error: rgb8(233, 78, 83),
-            error_content: rgb8(36, 6, 6),
+            neutrals: NeutralRamp::void(),
+            decorative: DecorativeColors::dark(),
+            ..Self::branded_sources()
+        }
+    }
+
+    /// The SUI light ramp with an achromatic primary, for professional
+    /// interfaces that have no product color preference. Status and
+    /// decorative colors keep their meaning.
+    pub fn neutral() -> Self {
+        Self {
+            name: "neutral",
+            scheme: ThemeColorScheme::Light,
+            neutrals: NeutralRamp::light(),
+            primary: rgb8(23, 23, 23),
+            on_primary: Color::WHITE,
+            secondary: rgb8(82, 82, 82),
+            on_secondary: Color::WHITE,
+            ..Self::branded_sources()
+        }
+    }
+
+    /// Dark companion to [`Self::neutral`] on the achromatic dark ramp.
+    pub fn neutral_dark() -> Self {
+        Self {
+            name: "neutral-dark",
+            scheme: ThemeColorScheme::Dark,
+            neutrals: NeutralRamp::neutral_dark(),
+            primary: rgb8(240, 240, 240),
+            on_primary: rgb8(23, 23, 23),
+            secondary: rgb8(190, 190, 190),
+            on_secondary: rgb8(23, 23, 23),
+            decorative: DecorativeColors::dark(),
+            ..Self::branded_sources()
         }
     }
 
@@ -443,6 +632,30 @@ impl ThemeColors {
             ThemeColorScheme::Light => Self::light(),
             ThemeColorScheme::Dark => Self::dark(),
             ThemeColorScheme::HighContrast => Self::high_contrast(),
+        }
+    }
+
+    /// Brand, status, and decorative sources shared by every preset. Status
+    /// solids are identical across schemes; their soft washes and legible
+    /// text are derived per scheme.
+    fn branded_sources() -> Self {
+        Self {
+            name: "light",
+            scheme: ThemeColorScheme::Light,
+            neutrals: NeutralRamp::light(),
+            primary: SUI_AZURE,
+            on_primary: Color::WHITE,
+            secondary: SUI_VIOLET,
+            on_secondary: Color::WHITE,
+            info: rgb8(0, 166, 222),
+            on_info: rgb8(2, 42, 61),
+            success: rgb8(6, 168, 78),
+            on_success: rgb8(12, 46, 22),
+            warning: rgb8(244, 165, 0),
+            on_warning: rgb8(63, 37, 0),
+            danger: rgb8(220, 38, 39),
+            on_danger: Color::WHITE,
+            decorative: DecorativeColors::light(),
         }
     }
 }
@@ -895,34 +1108,25 @@ impl Default for ThemeShadows {
 }
 
 impl ThemeShadows {
-    /// Choose the elevation treatment for a complete built-in color palette.
+    /// Scheme-aware elevation: Light casts faint shadows tinted with the
+    /// theme's text ink, Dark casts deeper black shadows, and the true-black
+    /// OLED theme casts none at all — elevation there is drawn with borders.
     pub fn for_colors(colors: &ThemeColors) -> Self {
-        if is_neutral_theme(colors) && matches!(colors.scheme, ThemeColorScheme::Light) {
-            Self::neutral()
-        } else {
-            Self::for_scheme(colors.scheme)
-        }
-    }
-
-    /// Scheme-aware elevation per the Mesh design language: Light casts faint
-    /// ink-tinted shadows, Dark casts deeper black shadows, and the true-black
-    /// OLED theme casts none at all — elevation there is drawn with borders,
-    /// never shadows (`--sm-shadow-*: none` in Void).
-    pub fn for_scheme(scheme: ThemeColorScheme) -> Self {
-        match scheme {
-            ThemeColorScheme::Light => Self::light(),
+        match colors.scheme {
+            ThemeColorScheme::Light => Self::light_with_ink(colors.neutrals.text),
             ThemeColorScheme::Dark => Self::dark(),
             ThemeColorScheme::HighContrast => Self::none(),
         }
     }
 
-    /// Mesh Light ladder: `0 1px 2px 6%`, `0 2px 10px 8%`, `0 16px 40px 16%`
-    /// anchors interpolated across the scale, tinted with ink `#0d1220`.
+    /// Light ladder: `0 1px 2px 6%`, `0 2px 10px 8%`, `0 16px 40px 16%`
+    /// anchors interpolated across the scale, tinted with near-black ink.
     pub fn light() -> Self {
-        Self::light_with_ink(rgb8(13, 18, 32))
+        Self::light_with_ink(rgb8(23, 23, 23))
     }
 
-    fn light_with_ink(shadow_ink: Color) -> Self {
+    /// The light ladder cast with a custom shadow ink.
+    pub fn light_with_ink(shadow_ink: Color) -> Self {
         let ink = |alpha: f32| shadow_ink.with_alpha(alpha);
 
         Self {
@@ -968,12 +1172,6 @@ impl ThemeShadows {
                 ),
             },
         }
-    }
-
-    /// Neutral light elevation uses the same restrained geometry as the SUI
-    /// light theme with pure-black shadow ink.
-    pub fn neutral() -> Self {
-        Self::light_with_ink(Color::BLACK)
     }
 
     /// Mesh Dark ladder: `0 1px 2px 30%`, `0 4px 16px 40%`, `0 20px 48px 55%`
@@ -1078,58 +1276,33 @@ pub struct ThemeGlows {
 }
 
 impl ThemeGlows {
-    /// Choose glow tokens for a complete built-in color palette.
+    /// Glows follow the theme's primary and secondary colors: none in Light,
+    /// full halos in Dark, and damped halos in Void. Achromatic signal colors
+    /// (the neutral presets) glow at half strength so white halos stay quiet.
     pub fn for_colors(colors: &ThemeColors) -> Self {
-        if is_neutral_theme(colors) {
-            match colors.scheme {
-                ThemeColorScheme::Light => Self::none(),
-                ThemeColorScheme::Dark => Self::neutral_dark(),
-                ThemeColorScheme::HighContrast => Self::none(),
-            }
-        } else {
-            Self::for_scheme(colors.scheme)
-        }
-    }
-
-    pub fn for_scheme(scheme: ThemeColorScheme) -> Self {
-        match scheme {
-            ThemeColorScheme::Light => Self::none(),
-            ThemeColorScheme::Dark => Self {
-                accent: ThemeShadow::single(shadow_layer(
-                    0.0,
-                    0.0,
-                    16.0,
-                    0.0,
-                    rgb8(53, 210, 238).with_alpha(0.22),
-                    false,
-                )),
-                secondary: ThemeShadow::single(shadow_layer(
-                    0.0,
-                    0.0,
-                    18.0,
-                    0.0,
-                    rgb8(143, 125, 248).with_alpha(0.26),
-                    false,
-                )),
-            },
-            ThemeColorScheme::HighContrast => Self {
-                accent: ThemeShadow::single(shadow_layer(
-                    0.0,
-                    0.0,
-                    10.0,
-                    0.0,
-                    rgb8(33, 199, 229).with_alpha(0.14),
-                    false,
-                )),
-                secondary: ThemeShadow::single(shadow_layer(
-                    0.0,
-                    0.0,
-                    12.0,
-                    0.0,
-                    rgb8(143, 125, 248).with_alpha(0.16),
-                    false,
-                )),
-            },
+        let (blur, alpha) = match colors.scheme {
+            ThemeColorScheme::Light => return Self::none(),
+            ThemeColorScheme::Dark => (16.0, 0.24),
+            ThemeColorScheme::HighContrast => (10.0, 0.14),
+        };
+        let halo = |color: Color, blur: f32| {
+            let strength = if color.to_oklch().chroma < 0.04 {
+                0.5
+            } else {
+                1.0
+            };
+            ThemeShadow::single(shadow_layer(
+                0.0,
+                0.0,
+                blur,
+                0.0,
+                color.with_alpha(alpha * strength),
+                false,
+            ))
+        };
+        Self {
+            accent: halo(colors.primary, blur),
+            secondary: halo(colors.secondary, blur + 2.0),
         }
     }
 
@@ -1139,33 +1312,11 @@ impl ThemeGlows {
             secondary: ThemeShadow::empty(),
         }
     }
-
-    /// Subtle achromatic halos for live signals in the neutral dark preset.
-    pub fn neutral_dark() -> Self {
-        Self {
-            accent: ThemeShadow::single(shadow_layer(
-                0.0,
-                0.0,
-                12.0,
-                0.0,
-                rgb8(245, 245, 245).with_alpha(0.12),
-                false,
-            )),
-            secondary: ThemeShadow::single(shadow_layer(
-                0.0,
-                0.0,
-                14.0,
-                0.0,
-                rgb8(163, 163, 163).with_alpha(0.12),
-                false,
-            )),
-        }
-    }
 }
 
 impl Default for ThemeGlows {
     fn default() -> Self {
-        Self::for_scheme(ThemeColorScheme::Light)
+        Self::for_colors(&ThemeColors::default())
     }
 }
 
@@ -1226,206 +1377,119 @@ impl Default for ThemeAspectRatios {
     }
 }
 
-/// Exact semantic role values for built-in themes. The SUI design language
-/// specifies its light/dark/void roles directly, and the neutral preset uses
-/// its own grayscale role table. Custom [`ThemeColors`] continue to use the
-/// generic mix-based derivation.
+/// The derived role set for one chromatic source color: the solid fill and
+/// its interaction states, a soft wash, ink that stays legible on plain and
+/// soft surfaces, and a translucent-looking outline. Every value is opaque,
+/// flattened onto the theme panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct BuiltinColorRoles {
-    bg_subtle: Color,
-    surface: Color,
-    surface_2: Color,
-    surface_3: Color,
-    overlay: Color,
-    field: Color,
-    border: Color,
-    border_strong: Color,
-    border_subtle: Color,
-    text_2: Color,
-    text_3: Color,
-    text_disabled: Color,
-    text_invert: Color,
-    accent_hover: Color,
-    accent_text: Color,
-    accent_soft: Color,
-    accent_border: Color,
-    ok_text: Color,
-    ok_soft: Color,
-    warn_text: Color,
-    warn_soft: Color,
-    danger_text: Color,
-    danger_soft: Color,
-    danger_hover: Color,
-    info_text: Color,
-    info_soft: Color,
-    focus: Color,
-    selection: Color,
-    scrim: Color,
+pub struct ToneRoles {
+    pub solid: Color,
+    pub on_solid: Color,
+    pub hover: Color,
+    pub pressed: Color,
+    pub soft: Color,
+    pub text: Color,
+    pub border: Color,
 }
 
-/// Look up the exact role table for one of the built-in themes. Returns
-/// `None` for custom palettes, which fall back to derived roles.
-fn builtin_color_roles(colors: &ThemeColors) -> Option<BuiltinColorRoles> {
-    match (colors.name, colors.scheme) {
-        ("light", ThemeColorScheme::Light) => Some(BuiltinColorRoles {
-            bg_subtle: rgb8(247, 248, 250),
-            surface: rgb8(255, 255, 255),
-            surface_2: rgb8(243, 245, 248),
-            surface_3: rgb8(234, 238, 243),
-            overlay: rgb8(255, 255, 255),
-            // A quiet inset well against the white card surface. Interactive
-            // fields move only through neutral surface tiers; focus is
-            // communicated by neutral contrast instead of a brand wash.
-            field: rgb8(248, 250, 252),
-            border: rgb8(227, 232, 239),
-            border_strong: rgb8(205, 213, 224),
-            border_subtle: rgb8(238, 241, 246),
-            text_2: rgb8(73, 84, 107),
-            text_3: rgb8(104, 115, 144),
-            text_disabled: rgb8(163, 173, 194),
-            text_invert: rgb8(255, 255, 255),
-            accent_hover: rgb8(7, 109, 144),
-            accent_text: rgb8(8, 124, 164),
-            accent_soft: rgba8(8, 124, 164, 0.08),
-            accent_border: rgba8(8, 124, 164, 0.35),
-            ok_text: rgb8(21, 128, 61),
-            ok_soft: rgba8(22, 163, 74, 0.10),
-            warn_text: rgb8(154, 103, 0),
-            warn_soft: rgba8(154, 103, 0, 0.10),
-            danger_text: rgb8(217, 45, 32),
-            danger_soft: rgba8(217, 45, 32, 0.08),
-            danger_hover: rgb8(180, 35, 24),
-            info_text: rgb8(23, 92, 211),
-            info_soft: rgba8(41, 112, 255, 0.09),
-            focus: rgb8(73, 84, 107),
-            selection: rgba8(73, 84, 107, 0.12),
-            scrim: rgba8(9, 12, 20, 0.45),
-        }),
-        ("neutral", ThemeColorScheme::Light) => Some(BuiltinColorRoles {
-            bg_subtle: rgb8(250, 250, 250),
-            surface: Color::WHITE,
-            surface_2: rgb8(245, 245, 245),
-            surface_3: rgb8(229, 229, 229),
-            overlay: Color::WHITE,
-            field: rgb8(250, 250, 250),
-            border: rgb8(229, 229, 229),
-            border_strong: rgb8(212, 212, 212),
-            border_subtle: rgb8(240, 240, 240),
-            text_2: rgb8(82, 82, 82),
-            text_3: rgb8(115, 115, 115),
-            text_disabled: rgb8(163, 163, 163),
-            text_invert: Color::WHITE,
-            accent_hover: rgb8(38, 38, 38),
-            accent_text: rgb8(23, 23, 23),
-            accent_soft: rgba8(23, 23, 23, 0.06),
-            accent_border: rgba8(23, 23, 23, 0.28),
-            ok_text: rgb8(21, 128, 61),
-            ok_soft: rgba8(21, 128, 61, 0.10),
-            warn_text: rgb8(146, 64, 14),
-            warn_soft: rgba8(180, 83, 9, 0.10),
-            danger_text: rgb8(185, 28, 28),
-            danger_soft: rgba8(185, 28, 28, 0.08),
-            danger_hover: rgb8(153, 27, 27),
-            info_text: rgb8(29, 78, 216),
-            info_soft: rgba8(37, 99, 235, 0.09),
-            focus: rgb8(64, 64, 64),
-            selection: rgba8(23, 23, 23, 0.12),
-            scrim: Color::BLACK.with_alpha(0.45),
-        }),
-        ("neutral-dark", ThemeColorScheme::Dark) => Some(BuiltinColorRoles {
-            bg_subtle: rgb8(10, 10, 10),
-            surface: rgb8(23, 23, 23),
-            surface_2: rgb8(38, 38, 38),
-            surface_3: rgb8(51, 51, 51),
-            overlay: rgb8(31, 31, 31),
-            field: rgb8(18, 18, 18),
-            border: Color::WHITE.with_alpha(0.14),
-            border_strong: Color::WHITE.with_alpha(0.22),
-            border_subtle: Color::WHITE.with_alpha(0.08),
-            text_2: rgb8(212, 212, 212),
-            text_3: rgb8(163, 163, 163),
-            text_disabled: rgb8(115, 115, 115),
-            text_invert: rgb8(23, 23, 23),
-            accent_hover: Color::WHITE,
-            accent_text: rgb8(245, 245, 245),
-            accent_soft: Color::WHITE.with_alpha(0.10),
-            accent_border: Color::WHITE.with_alpha(0.28),
-            ok_text: rgb8(74, 222, 128),
-            ok_soft: rgba8(74, 222, 128, 0.12),
-            warn_text: rgb8(251, 191, 36),
-            warn_soft: rgba8(251, 191, 36, 0.12),
-            danger_text: rgb8(248, 113, 113),
-            danger_soft: rgba8(248, 113, 113, 0.12),
-            danger_hover: rgb8(252, 165, 165),
-            info_text: rgb8(147, 197, 253),
-            info_soft: rgba8(96, 165, 250, 0.12),
-            focus: rgb8(212, 212, 212),
-            selection: Color::WHITE.with_alpha(0.16),
-            scrim: Color::BLACK.with_alpha(0.65),
-        }),
-        ("dark", ThemeColorScheme::Dark) => Some(BuiltinColorRoles {
-            bg_subtle: rgb8(14, 18, 26),
-            surface: rgb8(18, 22, 31),
-            surface_2: rgb8(23, 28, 39),
-            surface_3: rgb8(29, 36, 49),
-            overlay: rgb8(22, 27, 38),
-            field: rgb8(15, 19, 27),
-            border: rgba8(151, 168, 199, 0.16),
-            border_strong: rgba8(151, 168, 199, 0.27),
-            border_subtle: rgba8(151, 168, 199, 0.09),
-            text_2: rgb8(166, 178, 200),
-            text_3: rgb8(124, 137, 163),
-            text_disabled: rgb8(81, 93, 117),
-            text_invert: rgb8(13, 18, 32),
-            accent_hover: rgb8(95, 224, 246),
-            accent_text: rgb8(83, 215, 240),
-            accent_soft: rgba8(53, 210, 238, 0.12),
-            accent_border: rgba8(53, 210, 238, 0.35),
-            ok_text: rgb8(74, 222, 128),
-            ok_soft: rgba8(74, 222, 128, 0.12),
-            warn_text: rgb8(253, 176, 34),
-            warn_soft: rgba8(253, 176, 34, 0.12),
-            danger_text: rgb8(249, 112, 102),
-            danger_soft: rgba8(249, 112, 102, 0.12),
-            danger_hover: rgb8(246, 121, 125),
-            info_text: rgb8(132, 169, 255),
-            info_soft: rgba8(132, 169, 255, 0.12),
-            focus: rgb8(166, 178, 200),
-            selection: rgba8(166, 178, 200, 0.14),
-            scrim: rgba8(2, 4, 8, 0.6),
-        }),
-        ("void", ThemeColorScheme::HighContrast) => Some(BuiltinColorRoles {
-            bg_subtle: Color::BLACK,
-            surface: Color::BLACK,
-            surface_2: rgb8(11, 14, 20),
-            surface_3: rgb8(19, 23, 34),
-            overlay: rgb8(10, 13, 19),
-            field: rgb8(11, 14, 20),
-            border: rgba8(158, 175, 205, 0.18),
-            border_strong: rgba8(158, 175, 205, 0.30),
-            border_subtle: rgba8(158, 175, 205, 0.10),
-            text_2: rgb8(153, 165, 188),
-            text_3: rgb8(117, 129, 154),
-            text_disabled: rgb8(72, 83, 107),
-            text_invert: rgb8(13, 18, 32),
-            accent_hover: rgb8(76, 212, 236),
-            accent_text: rgb8(64, 205, 232),
-            accent_soft: rgba8(33, 199, 229, 0.10),
-            accent_border: rgba8(33, 199, 229, 0.32),
-            ok_text: rgb8(64, 212, 122),
-            ok_soft: rgba8(64, 212, 122, 0.10),
-            warn_text: rgb8(242, 169, 31),
-            warn_soft: rgba8(242, 169, 31, 0.10),
-            danger_text: rgb8(244, 104, 94),
-            danger_soft: rgba8(244, 104, 94, 0.10),
-            danger_hover: rgb8(240, 104, 109),
-            info_text: rgb8(123, 162, 252),
-            info_soft: rgba8(123, 162, 252, 0.10),
-            focus: rgb8(223, 229, 240),
-            selection: rgba8(223, 229, 240, 0.18),
-            scrim: rgba8(0, 0, 0, 0.72),
-        }),
-        _ => None,
+impl ToneRoles {
+    /// Derive the role set in OKLCH so interaction states keep the source hue
+    /// and chroma. Light themes darken on hover (near-black sources lighten
+    /// instead); dark themes lighten on hover and darken when pressed.
+    pub fn derive(solid: Color, on_solid: Color, scheme: ThemeColorScheme, panel: Color) -> Self {
+        let dark = scheme.is_dark();
+        let lightness = solid.to_oklch().lightness;
+        let (hover, pressed) = if dark {
+            (shift_lightness(solid, 0.03), shift_lightness(solid, -0.035))
+        } else if lightness < 0.32 {
+            (shift_lightness(solid, 0.07), shift_lightness(solid, 0.12))
+        } else {
+            (
+                shift_lightness(solid, -0.045),
+                shift_lightness(solid, -0.09),
+            )
+        };
+        // Soft washes and outlines are authored as CSS-style translucency and
+        // flattened in encoded space; the renderer's linear blending would
+        // otherwise read them noticeably heavier.
+        let soft = solid.with_alpha(if dark { 0.16 } else { 0.10 }).over(panel);
+        let border = solid.with_alpha(if dark { 0.45 } else { 0.35 }).over(panel);
+        let text = with_min_contrast(solid, soft, if dark { 6.0 } else { 4.5 });
+
+        Self {
+            solid,
+            on_solid,
+            hover,
+            pressed,
+            soft,
+            text,
+            border,
+        }
+    }
+}
+
+/// Derived [`ToneRoles`] for every [`DecorativeHue`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecorativePalette {
+    pub red: ToneRoles,
+    pub orange: ToneRoles,
+    pub amber: ToneRoles,
+    pub green: ToneRoles,
+    pub teal: ToneRoles,
+    pub cyan: ToneRoles,
+    pub blue: ToneRoles,
+    pub violet: ToneRoles,
+    pub magenta: ToneRoles,
+}
+
+impl DecorativePalette {
+    pub fn from_colors(colors: &ThemeColors) -> Self {
+        let roles = |hue: DecorativeHue| {
+            let solid = colors.decorative.get(hue);
+            ToneRoles::derive(
+                solid,
+                readable_ink(solid),
+                colors.scheme,
+                colors.neutrals.panel,
+            )
+        };
+        Self {
+            red: roles(DecorativeHue::Red),
+            orange: roles(DecorativeHue::Orange),
+            amber: roles(DecorativeHue::Amber),
+            green: roles(DecorativeHue::Green),
+            teal: roles(DecorativeHue::Teal),
+            cyan: roles(DecorativeHue::Cyan),
+            blue: roles(DecorativeHue::Blue),
+            violet: roles(DecorativeHue::Violet),
+            magenta: roles(DecorativeHue::Magenta),
+        }
+    }
+
+    pub fn get(&self, hue: DecorativeHue) -> ToneRoles {
+        match hue {
+            DecorativeHue::Red => self.red,
+            DecorativeHue::Orange => self.orange,
+            DecorativeHue::Amber => self.amber,
+            DecorativeHue::Green => self.green,
+            DecorativeHue::Teal => self.teal,
+            DecorativeHue::Cyan => self.cyan,
+            DecorativeHue::Blue => self.blue,
+            DecorativeHue::Violet => self.violet,
+            DecorativeHue::Magenta => self.magenta,
+        }
+    }
+
+    /// Stable categorical assignment: the same index always maps to the same
+    /// hue, cycling through [`DecorativeHue::ALL`].
+    pub fn categorical(&self, index: usize) -> ToneRoles {
+        self.get(DecorativeHue::ALL[index % DecorativeHue::ALL.len()])
+    }
+}
+
+impl Default for DecorativePalette {
+    fn default() -> Self {
+        DefaultTheme::default().decorative
     }
 }
 
@@ -1434,14 +1498,20 @@ pub struct ControlPalette {
     pub text: Color,
     pub text_muted: Color,
     pub placeholder: Color,
+    pub text_disabled: Color,
     pub surface: Color,
     pub surface_raised: Color,
+    /// Recessed neutral fill: tracks, tab strips, chips, nested areas.
     pub control: Color,
     pub control_hover: Color,
     pub control_active: Color,
-    /// Inset field background for text inputs and editable surfaces
-    /// (`--sm-field-bg`). Distinct from `control`, the raised neutral fill
-    /// used by buttons and similar controls (`--sm-surface-2`).
+    /// Face of neutral buttons, select triggers, and raised segment thumbs.
+    pub button: Color,
+    pub button_hover: Color,
+    pub button_pressed: Color,
+    /// Resting outline of neutral buttons and framed fields.
+    pub button_border: Color,
+    /// Inset field background for text inputs and editable surfaces.
     pub field: Color,
     pub surface_hover: Color,
     pub surface_pressed: Color,
@@ -1449,12 +1519,16 @@ pub struct ControlPalette {
     pub border: Color,
     pub border_strong: Color,
     pub border_hover: Color,
+    /// Neutral border a focused control settles on beneath the accent ring.
     pub border_focus: Color,
-    /// The dedicated keyboard focus color (`--sm-focus`): a solid ring drawn
-    /// at `focus_ring_width` with `focus_ring_outset` offset.
+    /// Outline of unselected checkboxes, radios, and switch tracks (3:1).
+    pub border_control: Color,
+    /// Keyboard focus color: the primary, adjusted to stay visible on the
+    /// panel. Drawn as a ring at `focus_ring_width` with `focus_ring_outset`.
     pub focus: Color,
     pub focus_ring: Color,
     pub caret: Color,
+    /// Neutral selection fill for rows, tiles, and ranges.
     pub selection: Color,
     /// Accent-colored outline for selected tiles, segmented thumbs, and
     /// swatches. Selection fill remains neutral; this narrow border is the
@@ -1466,209 +1540,179 @@ pub struct ControlPalette {
     pub accent_border: Color,
     pub accent_border_hover: Color,
     pub accent_border_focus: Color,
+    /// Content color on a solid accent fill.
     pub accent_text: Color,
-    /// Translucent accent wash (`--sm-accent-soft`): explicit accent badges,
-    /// callouts, and decorative live signals. Selection and focus use their
-    /// dedicated neutral roles instead.
+    /// Soft accent wash for badges, callouts, and live signals.
     pub accent_soft: Color,
-    /// Accent-hued text that stays legible on plain and soft surfaces
-    /// (`--sm-accent-text` in Mesh terms; `accent_text` remains the
-    /// on-solid-accent content color).
+    /// Accent-hued ink legible on plain and soft surfaces: links and sparse
+    /// decorative emphasis.
     pub accent_soft_text: Color,
     pub info: Color,
     pub info_text: Color,
+    pub info_hover: Color,
+    pub info_pressed: Color,
+    pub info_border: Color,
     pub info_soft: Color,
     pub info_soft_text: Color,
     pub success: Color,
     pub success_text: Color,
+    pub success_hover: Color,
+    pub success_pressed: Color,
+    pub success_border: Color,
     pub success_soft: Color,
     pub success_soft_text: Color,
     pub warning: Color,
     pub warning_text: Color,
+    pub warning_hover: Color,
+    pub warning_pressed: Color,
+    pub warning_border: Color,
     pub warning_soft: Color,
     pub warning_soft_text: Color,
     pub danger: Color,
     pub danger_text: Color,
+    pub danger_hover: Color,
+    pub danger_pressed: Color,
+    pub danger_border: Color,
     pub danger_soft: Color,
     pub danger_soft_text: Color,
-    pub danger_hover: Color,
 }
 
 impl ControlPalette {
     pub fn from_colors(colors: &ThemeColors) -> Self {
-        let is_dark = matches!(
-            colors.scheme,
-            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
-        );
-        let roles = builtin_color_roles(colors);
-        let surface = colors.base_100;
-        let surface_raised = roles.map(|r| r.surface).unwrap_or(colors.base_200);
-        // Mesh authors its translucent tokens as CSS rgba values, which
-        // composite in encoded (gamma) space. The renderer blends in linear
-        // space — noticeably heavier — so translucent roles are flattened
-        // onto the card surface here with the CSS arithmetic.
-        let flatten = move |color: Color| color.over(surface_raised);
-        // Neutral raised control fill (buttons, chips): Mesh `--sm-surface-2`.
-        let control = roles.map(|r| r.surface_2).unwrap_or(colors.base_200);
-        let control_hover = roles
-            .map(|r| r.surface_3)
-            .unwrap_or_else(|| interactive_surface(control, colors.scheme, 0.035));
-        let control_active = roles
-            .map(|r| mix(r.surface_3, colors.base_content, 0.04))
-            .unwrap_or_else(|| interactive_surface(control, colors.scheme, 0.075));
-        let field = roles.map(|r| r.field).unwrap_or(control);
-        let text_muted = roles.map(|r| r.text_2).unwrap_or_else(|| {
-            mix(
-                colors.base_content,
-                surface,
-                if is_dark { 0.34 } else { 0.16 },
-            )
-        });
-        let placeholder = roles.map(|r| r.text_3).unwrap_or_else(|| {
-            mix(
-                colors.base_content,
-                surface,
-                if is_dark { 0.50 } else { 0.22 },
-            )
-        });
-        let border = roles.map(|r| flatten(r.border)).unwrap_or_else(|| {
-            if is_dark {
-                mix(colors.base_300, surface, 0.22)
-            } else {
-                colors.base_300
-            }
-        });
-        let border_strong = roles.map(|r| flatten(r.border_strong)).unwrap_or_else(|| {
-            mix(
-                colors.base_300,
-                colors.base_content,
-                if is_dark { 0.18 } else { 0.10 },
-            )
-        });
-        // Hovered controls strengthen their neutral border. Brand color never
-        // participates in structural interaction chrome.
-        let border_hover = roles
-            .map(|r| flatten(r.border_strong))
-            .unwrap_or(border_strong);
-        let focus = roles.map(|r| r.focus).unwrap_or_else(|| {
-            mix(
-                colors.base_content,
-                surface_raised,
-                if is_dark { 0.34 } else { 0.28 },
-            )
-        });
-        let border_focus = mix(border_strong, focus, if is_dark { 0.45 } else { 0.38 });
-        let selection = roles.map(|r| flatten(r.selection)).unwrap_or_else(|| {
-            mix(
-                surface_raised,
-                colors.base_content,
-                if is_dark { 0.14 } else { 0.08 },
-            )
-        });
-        let selection_border_alpha = match colors.name {
-            "neutral" | "neutral-dark" => 0.28,
-            "void" => 0.32,
-            _ => 0.35,
+        let dark = colors.scheme.is_dark();
+        let neutrals = colors.neutrals;
+        let panel = neutrals.panel;
+        let tone = |solid: Color, on_solid: Color| {
+            ToneRoles::derive(solid, on_solid, colors.scheme, panel)
         };
-        let selection_border = colors
-            .primary
-            .with_alpha(selection_border_alpha)
-            .over(surface_raised);
-        // Fallback derivations for soft washes and on-surface status text used
-        // by custom themes; built-ins take the exact Mesh values.
-        let soft_alpha = if is_dark { 0.12 } else { 0.10 };
-        let derived_soft = move |color: Color| color.with_alpha(soft_alpha).over(surface_raised);
-        let derived_soft_text = |color: Color| {
-            if is_dark {
-                mix(color, Color::WHITE, 0.22)
-            } else {
-                mix(color, Color::BLACK, 0.12)
-            }
-        };
+        let accent = tone(colors.primary, colors.on_primary);
+        let info = tone(colors.info, colors.on_info);
+        let success = tone(colors.success, colors.on_success);
+        let warning = tone(colors.warning, colors.on_warning);
+        let danger = tone(colors.danger, colors.on_danger);
+        let focus = with_min_contrast(colors.primary, panel, if dark { 4.5 } else { 3.0 });
 
         Self {
-            text: colors.base_content,
-            text_muted,
-            placeholder,
-            surface,
-            surface_raised,
-            control,
-            control_hover,
-            control_active,
-            field,
-            surface_hover: control_hover,
-            surface_pressed: control_active,
-            surface_focus: mix(field, control_hover, if is_dark { 0.55 } else { 0.65 }),
-            border,
-            border_strong,
-            border_hover,
-            border_focus,
+            text: neutrals.text,
+            text_muted: neutrals.text_secondary,
+            placeholder: neutrals.text_tertiary,
+            text_disabled: neutrals.text_disabled,
+            surface: neutrals.window,
+            surface_raised: panel,
+            control: neutrals.control,
+            control_hover: neutrals.control_hover,
+            control_active: neutrals.control_active,
+            button: neutrals.button,
+            button_hover: neutrals.button_hover,
+            button_pressed: neutrals.button_active,
+            button_border: neutrals.border_strong,
+            field: neutrals.field,
+            surface_hover: neutrals.control_hover,
+            surface_pressed: neutrals.control_active,
+            // Focused fields keep their well; the accent ring carries focus.
+            surface_focus: neutrals.field,
+            border: neutrals.border,
+            border_strong: neutrals.border_strong,
+            border_hover: mix(neutrals.border_strong, neutrals.border_control, 0.45),
+            border_focus: mix(neutrals.border_strong, neutrals.border_control, 0.65),
+            border_control: neutrals.border_control,
             focus,
             focus_ring: focus,
-            caret: colors.base_content,
-            selection,
-            selection_border,
-            accent: colors.primary,
-            accent_hover: roles
-                .map(|r| r.accent_hover)
-                .unwrap_or_else(|| interactive_variant(colors.primary, colors.scheme, 0.08)),
-            accent_pressed: interactive_variant(colors.primary, colors.scheme, 0.16),
-            accent_border: roles
-                .map(|r| flatten(r.accent_border))
-                .unwrap_or_else(|| interactive_variant(colors.primary, colors.scheme, 0.12)),
-            accent_border_hover: roles
-                .map(|r| flatten(r.accent_border))
-                .unwrap_or_else(|| interactive_variant(colors.primary, colors.scheme, 0.2)),
-            accent_border_focus: colors.primary,
-            accent_text: colors.primary_content,
-            accent_soft: roles
-                .map(|r| flatten(r.accent_soft))
-                .unwrap_or_else(|| derived_soft(colors.primary)),
-            accent_soft_text: roles
-                .map(|r| r.accent_text)
-                .unwrap_or_else(|| derived_soft_text(colors.primary)),
-            info: colors.info,
-            info_text: colors.info_content,
-            info_soft: roles
-                .map(|r| flatten(r.info_soft))
-                .unwrap_or_else(|| derived_soft(colors.info)),
-            info_soft_text: roles
-                .map(|r| r.info_text)
-                .unwrap_or_else(|| derived_soft_text(colors.info)),
-            success: colors.success,
-            success_text: colors.success_content,
-            success_soft: roles
-                .map(|r| flatten(r.ok_soft))
-                .unwrap_or_else(|| derived_soft(colors.success)),
-            success_soft_text: roles
-                .map(|r| r.ok_text)
-                .unwrap_or_else(|| derived_soft_text(colors.success)),
-            warning: colors.warning,
-            warning_text: colors.warning_content,
-            warning_soft: roles
-                .map(|r| flatten(r.warn_soft))
-                .unwrap_or_else(|| derived_soft(colors.warning)),
-            warning_soft_text: roles
-                .map(|r| r.warn_text)
-                .unwrap_or_else(|| derived_soft_text(colors.warning)),
-            danger: colors.error,
-            danger_text: colors.error_content,
-            danger_soft: roles
-                .map(|r| flatten(r.danger_soft))
-                .unwrap_or_else(|| derived_soft(colors.error)),
-            danger_soft_text: roles
-                .map(|r| r.danger_text)
-                .unwrap_or_else(|| derived_soft_text(colors.error)),
-            danger_hover: roles
-                .map(|r| r.danger_hover)
-                .unwrap_or_else(|| interactive_variant(colors.error, colors.scheme, 0.08)),
+            caret: neutrals.text,
+            selection: neutrals
+                .text
+                .with_alpha(if dark { 0.10 } else { 0.08 })
+                .over(panel),
+            selection_border: accent.border,
+            accent: accent.solid,
+            accent_hover: accent.hover,
+            accent_pressed: accent.pressed,
+            accent_border: accent.border,
+            accent_border_hover: mix(accent.border, accent.solid, 0.35),
+            accent_border_focus: accent.solid,
+            accent_text: accent.on_solid,
+            accent_soft: accent.soft,
+            accent_soft_text: accent.text,
+            info: info.solid,
+            info_text: info.on_solid,
+            info_hover: info.hover,
+            info_pressed: info.pressed,
+            info_border: info.border,
+            info_soft: info.soft,
+            info_soft_text: info.text,
+            success: success.solid,
+            success_text: success.on_solid,
+            success_hover: success.hover,
+            success_pressed: success.pressed,
+            success_border: success.border,
+            success_soft: success.soft,
+            success_soft_text: success.text,
+            warning: warning.solid,
+            warning_text: warning.on_solid,
+            warning_hover: warning.hover,
+            warning_pressed: warning.pressed,
+            warning_border: warning.border,
+            warning_soft: warning.soft,
+            warning_soft_text: warning.text,
+            danger: danger.solid,
+            danger_text: danger.on_solid,
+            danger_hover: danger.hover,
+            danger_pressed: danger.pressed,
+            danger_border: danger.border,
+            danger_soft: danger.soft,
+            danger_soft_text: danger.text,
         }
     }
 }
 
 impl Default for ControlPalette {
     fn default() -> Self {
-        Self::from_colors(&ThemeColors::default())
+        DefaultTheme::default().palette
+    }
+}
+
+/// Shift OKLCH lightness while keeping hue and chroma (gamut-mapped to sRGB).
+fn shift_lightness(color: Color, delta: f32) -> Color {
+    let oklch = color.to_oklch();
+    oklch
+        .with_lightness((oklch.lightness + delta).clamp(0.0, 1.0))
+        .to_srgb()
+        .with_alpha(color.alpha)
+}
+
+/// Move `color` along OKLCH lightness, away from `background`, until it
+/// reaches `target` contrast or the lightness range ends. Hue and chroma are
+/// preserved as far as the sRGB gamut allows.
+fn with_min_contrast(color: Color, background: Color, target: f32) -> Color {
+    if color.contrast_ratio(background) >= target {
+        return color;
+    }
+    let oklch = color.to_oklch();
+    let step = if background.relative_luminance() < 0.18 {
+        0.01
+    } else {
+        -0.01
+    };
+    let mut lightness = oklch.lightness;
+    let mut candidate = color;
+    while (0.0..=1.0).contains(&(lightness + step)) {
+        lightness += step;
+        candidate = oklch.with_lightness(lightness).to_srgb();
+        if candidate.contrast_ratio(background) >= target {
+            break;
+        }
+    }
+    candidate.with_alpha(color.alpha)
+}
+
+/// White or a deep same-hue ink, whichever reads better on `solid`.
+fn readable_ink(solid: Color) -> Color {
+    let hue = solid.to_oklch().hue;
+    let deep = Color::oklch(0.26, 0.06, hue);
+    if Color::WHITE.contrast_ratio(solid) >= deep.contrast_ratio(solid) {
+        Color::WHITE
+    } else {
+        deep
     }
 }
 
@@ -1772,18 +1816,13 @@ pub struct SurfacePalette {
 
 impl SurfacePalette {
     pub fn from_theme_parts(colors: &ThemeColors, controls: &ControlPalette) -> Self {
-        let dark = matches!(
-            colors.scheme,
-            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
-        );
-        let neutral = is_neutral_theme(colors);
-        let roles = builtin_color_roles(colors);
+        let dark = colors.scheme.is_dark();
+        let neutrals = colors.neutrals;
         let text_muted = controls.text_muted;
         let text_faint = controls.placeholder;
-        let window_subtle = roles
-            .map(|r| r.bg_subtle)
-            .unwrap_or_else(|| mix(controls.surface, controls.control, 0.4));
-        let overlay = roles.map(|r| r.overlay).unwrap_or(controls.surface_raised);
+        let window_subtle = neutrals.subtle;
+        let overlay = neutrals.overlay;
+        let shadow_ink = if dark { Color::BLACK } else { neutrals.text };
 
         Self {
             dark,
@@ -1800,20 +1839,12 @@ impl SurfacePalette {
             field: controls.field,
             border: controls.border,
             border_strong: controls.border_strong,
-            border_subtle: roles
-                .map(|r| r.border_subtle.over(controls.surface_raised))
-                .unwrap_or_else(|| mix(controls.border, controls.surface_raised, 0.44)),
+            border_subtle: neutrals.border_subtle,
             text: controls.text,
             text_muted,
             text_faint,
-            text_disabled: roles.map(|r| r.text_disabled).unwrap_or_else(|| {
-                mix(
-                    controls.text,
-                    controls.surface,
-                    if dark { 0.62 } else { 0.44 },
-                )
-            }),
-            text_invert: roles.map(|r| r.text_invert).unwrap_or(controls.surface),
+            text_disabled: neutrals.text_disabled,
+            text_invert: if dark { neutrals.window } else { Color::WHITE },
             accent: controls.accent,
             accent_hover: controls.accent_hover,
             on_accent: controls.accent_text,
@@ -1824,36 +1855,28 @@ impl SurfacePalette {
             hover: controls.text.with_alpha(if dark { 0.06 } else { 0.045 }),
             selected: controls.selection,
             selected_border: controls.selection_border,
-            overlay_scrim: roles
-                .map(|r| r.scrim)
-                .unwrap_or_else(|| Color::rgba(0.06, 0.08, 0.12, if dark { 0.38 } else { 0.24 })),
-            // Mesh tooltips are quiet floating surfaces, not inverted bubbles:
+            overlay_scrim: match colors.scheme {
+                ThemeColorScheme::Light => neutrals.text.with_alpha(0.40),
+                ThemeColorScheme::Dark => mix(neutrals.window, Color::BLACK, 0.5).with_alpha(0.64),
+                ThemeColorScheme::HighContrast => Color::BLACK.with_alpha(0.72),
+            },
+            // Tooltips are quiet floating surfaces, not inverted bubbles:
             // overlay fill, strong border, secondary ink.
             tooltip: overlay,
             tooltip_border: controls.border_strong,
             tooltip_text: text_muted,
             canvas: controls.surface,
             canvas_grid: controls.border.with_alpha(if dark { 0.30 } else { 0.18 }),
-            canvas_axis_x: colors.error.with_alpha(if dark { 0.72 } else { 0.55 }),
+            canvas_axis_x: colors.danger.with_alpha(if dark { 0.72 } else { 0.55 }),
             canvas_axis_y: colors.success.with_alpha(if dark { 0.72 } else { 0.55 }),
             pixel_canvas_paper: if dark {
                 mix(controls.surface_raised, controls.text, 0.10)
-            } else if neutral {
-                rgb8(250, 250, 250)
             } else {
-                Color::rgba(0.975, 0.980, 0.988, 1.0)
+                window_subtle
             },
             pixel_canvas_document_edge: controls.text.with_alpha(if dark { 0.82 } else { 0.72 }),
-            pixel_canvas_shadow_near: if neutral {
-                Color::BLACK.with_alpha(if dark { 0.30 } else { 0.16 })
-            } else {
-                Color::rgba(0.05, 0.07, 0.10, if dark { 0.30 } else { 0.16 })
-            },
-            pixel_canvas_shadow_far: if neutral {
-                Color::BLACK.with_alpha(if dark { 0.18 } else { 0.08 })
-            } else {
-                Color::rgba(0.05, 0.07, 0.10, if dark { 0.18 } else { 0.08 })
-            },
+            pixel_canvas_shadow_near: shadow_ink.with_alpha(if dark { 0.30 } else { 0.16 }),
+            pixel_canvas_shadow_far: shadow_ink.with_alpha(if dark { 0.18 } else { 0.08 }),
             pixel_canvas_grid: controls.text.with_alpha(if dark { 0.32 } else { 0.28 }),
             canvas_ruler: controls.surface_raised,
             canvas_ruler_border: controls.border.with_alpha(0.78),
@@ -1861,17 +1884,13 @@ impl SurfacePalette {
             canvas_ruler_text: controls.text.with_alpha(0.76),
             checkerboard_light: if dark {
                 mix(controls.surface_raised, controls.text, 0.18)
-            } else if neutral {
-                rgb8(250, 250, 250)
             } else {
-                Color::rgba(0.980, 0.980, 0.990, 1.0)
+                window_subtle
             },
             checkerboard_dark: if dark {
                 mix(controls.surface_raised, controls.text, 0.10)
-            } else if neutral {
-                rgb8(229, 229, 229)
             } else {
-                Color::rgba(0.900, 0.920, 0.950, 1.0)
+                neutrals.border
             },
             color_picker_chrome_border: controls.text.with_alpha(if dark { 0.24 } else { 0.18 }),
             color_picker_plane_border: controls.text.with_alpha(if dark { 0.22 } else { 0.16 }),
@@ -1887,7 +1906,7 @@ impl SurfacePalette {
             warn: colors.warning,
             warn_text: controls.warning_soft_text,
             warn_soft: controls.warning_soft,
-            bad: colors.error,
+            bad: colors.danger,
             bad_text: controls.danger_soft_text,
             bad_soft: controls.danger_soft,
             info: colors.info,
@@ -1899,9 +1918,7 @@ impl SurfacePalette {
 
 impl Default for SurfacePalette {
     fn default() -> Self {
-        let colors = ThemeColors::default();
-        let controls = ControlPalette::from_colors(&colors);
-        Self::from_theme_parts(&colors, &controls)
+        DefaultTheme::default().surfaces
     }
 }
 
@@ -3426,6 +3443,8 @@ pub struct DefaultTheme {
     pub hdr: HdrThemeTokens,
     pub palette: ControlPalette,
     pub surfaces: SurfacePalette,
+    /// Derived roles for the categorical decorative hues.
+    pub decorative: DecorativePalette,
     pub typography: ControlTypography,
     pub interaction: ControlStateMetrics,
     pub metrics: ControlMetrics,
@@ -3441,31 +3460,38 @@ impl DefaultTheme {
         Self::light()
     }
 
+    /// Pure white and gray surfaces with the vibrant SUI azure accent.
     pub fn light() -> Self {
-        Self::from_colors(ThemeColors::light())
+        static THEME: OnceLock<DefaultTheme> = OnceLock::new();
+        *THEME.get_or_init(|| Self::from_colors(ThemeColors::light()))
     }
 
     /// A neutral light theme for serious, professional interfaces without an
     /// application-specific color preference.
     pub fn neutral() -> Self {
-        Self::from_colors(ThemeColors::neutral())
+        static THEME: OnceLock<DefaultTheme> = OnceLock::new();
+        *THEME.get_or_init(|| Self::from_colors(ThemeColors::neutral()))
     }
 
     /// Dark companion to [`Self::neutral`].
     pub fn neutral_dark() -> Self {
-        Self::from_colors(ThemeColors::neutral_dark())
+        static THEME: OnceLock<DefaultTheme> = OnceLock::new();
+        *THEME.get_or_init(|| Self::from_colors(ThemeColors::neutral_dark()))
     }
 
+    /// Faintly blue-tinted dark surfaces with the SUI azure accent.
     pub fn dark() -> Self {
-        Self::from_colors(ThemeColors::dark())
+        static THEME: OnceLock<DefaultTheme> = OnceLock::new();
+        *THEME.get_or_init(|| Self::from_colors(ThemeColors::dark()))
     }
 
     pub fn high_contrast() -> Self {
-        Self::from_colors(ThemeColors::high_contrast())
+        static THEME: OnceLock<DefaultTheme> = OnceLock::new();
+        *THEME.get_or_init(|| Self::from_colors(ThemeColors::high_contrast()))
     }
 
-    /// The Mesh true-black OLED theme ("Void"): borders instead of shadows,
-    /// dimmed whites, damped glows. Alias for [`Self::high_contrast`].
+    /// The true-black OLED theme ("Void"): borders instead of shadows, dimmed
+    /// whites, damped glows. Alias for [`Self::high_contrast`].
     pub fn void() -> Self {
         Self::high_contrast()
     }
@@ -3482,6 +3508,8 @@ impl DefaultTheme {
         Self::default().with_size(ControlSize::Large)
     }
 
+    /// Build a theme from source colors, deriving every palette role. The
+    /// built-in presets cache their result; call this for custom palettes.
     pub fn from_colors(colors: ThemeColors) -> Self {
         let text = ThemeTextScale::default();
         let radius = ThemeRadii::default();
@@ -3490,6 +3518,7 @@ impl DefaultTheme {
         let hdr = HdrThemeTokens::from_colors(colors);
         let palette = ControlPalette::from_colors(&colors);
         let surfaces = SurfacePalette::from_theme_parts(&colors, &palette);
+        let decorative = DecorativePalette::from_colors(&colors);
 
         let mut theme = Self {
             fonts: ThemeFontFamilies::default(),
@@ -3513,6 +3542,7 @@ impl DefaultTheme {
             hdr,
             palette,
             surfaces,
+            decorative,
             typography: ControlTypography::for_density(&text, density),
             interaction: ControlStateMetrics::for_density(density),
             metrics: ControlMetrics::from_tokens(spacing, radius, density),
@@ -3574,6 +3604,7 @@ impl DefaultTheme {
         self.hdr.sync_semantic_defaults(self.colors);
         self.palette = ControlPalette::from_colors(&self.colors);
         self.surfaces = SurfacePalette::from_theme_parts(&self.colors, &self.palette);
+        self.decorative = DecorativePalette::from_colors(&self.colors);
         self.shadows = ThemeShadows::for_colors(&self.colors);
         self.glows = ThemeGlows::for_colors(&self.colors);
         self.sync_density_fields();
@@ -3605,12 +3636,75 @@ impl DefaultTheme {
 
     pub fn semantic_tone_colors(&self, tone: SemanticTone) -> (Color, Color) {
         match tone {
-            SemanticTone::Neutral => (self.palette.control, self.palette.text),
+            SemanticTone::Neutral => (self.palette.button, self.palette.text),
             SemanticTone::Accent => (self.palette.accent, self.palette.accent_text),
             SemanticTone::Info => (self.palette.info, self.palette.info_text),
             SemanticTone::Success => (self.palette.success, self.palette.success_text),
             SemanticTone::Warning => (self.palette.warning, self.palette.warning_text),
             SemanticTone::Danger => (self.palette.danger, self.palette.danger_text),
+        }
+    }
+
+    /// The complete role set for a semantic tone. `Neutral` resolves to the
+    /// neutral button face: white with an outline in light themes, a raised
+    /// fill in dark themes, always with full-strength ink.
+    pub fn tone_roles(&self, tone: SemanticTone) -> ToneRoles {
+        let palette = &self.palette;
+        match tone {
+            SemanticTone::Neutral => ToneRoles {
+                solid: palette.button,
+                on_solid: palette.text,
+                hover: palette.button_hover,
+                pressed: palette.button_pressed,
+                soft: palette.control,
+                text: palette.text,
+                border: palette.button_border,
+            },
+            SemanticTone::Accent => ToneRoles {
+                solid: palette.accent,
+                on_solid: palette.accent_text,
+                hover: palette.accent_hover,
+                pressed: palette.accent_pressed,
+                soft: palette.accent_soft,
+                text: palette.accent_soft_text,
+                border: palette.accent_border,
+            },
+            SemanticTone::Info => ToneRoles {
+                solid: palette.info,
+                on_solid: palette.info_text,
+                hover: palette.info_hover,
+                pressed: palette.info_pressed,
+                soft: palette.info_soft,
+                text: palette.info_soft_text,
+                border: palette.info_border,
+            },
+            SemanticTone::Success => ToneRoles {
+                solid: palette.success,
+                on_solid: palette.success_text,
+                hover: palette.success_hover,
+                pressed: palette.success_pressed,
+                soft: palette.success_soft,
+                text: palette.success_soft_text,
+                border: palette.success_border,
+            },
+            SemanticTone::Warning => ToneRoles {
+                solid: palette.warning,
+                on_solid: palette.warning_text,
+                hover: palette.warning_hover,
+                pressed: palette.warning_pressed,
+                soft: palette.warning_soft,
+                text: palette.warning_soft_text,
+                border: palette.warning_border,
+            },
+            SemanticTone::Danger => ToneRoles {
+                solid: palette.danger,
+                on_solid: palette.danger_text,
+                hover: palette.danger_hover,
+                pressed: palette.danger_pressed,
+                soft: palette.danger_soft,
+                text: palette.danger_soft_text,
+                border: palette.danger_border,
+            },
         }
     }
 
@@ -3622,15 +3716,13 @@ impl DefaultTheme {
         self.semantic_tone_colors(tone).1
     }
 
-    /// Professional soft pair for an explicitly semantic tone: a restrained
-    /// wash to fill with and semantic ink that stays legible on it.
-    /// status-hued ink that stays legible on it (`--sm-*-soft` / `--sm-*-text`).
-    /// Use for badges and callouts; selected rows use the neutral `selection`
-    /// role. The solid pair from
-    /// [`Self::semantic_tone_colors`] is for filled controls.
+    /// Soft pair for an explicitly semantic tone: a restrained wash to fill
+    /// with and tone-hued ink that stays legible on it. Use for badges and
+    /// callouts; selected rows use the neutral `selection` role. The solid
+    /// pair from [`Self::semantic_tone_colors`] is for filled controls.
     pub fn semantic_tone_soft_colors(&self, tone: SemanticTone) -> (Color, Color) {
         match tone {
-            SemanticTone::Neutral => (self.palette.control_hover, self.palette.text_muted),
+            SemanticTone::Neutral => (self.palette.control, self.palette.text_muted),
             SemanticTone::Accent => (self.palette.accent_soft, self.palette.accent_soft_text),
             SemanticTone::Info => (self.palette.info_soft, self.palette.info_soft_text),
             SemanticTone::Success => (self.palette.success_soft, self.palette.success_soft_text),
@@ -3671,20 +3763,6 @@ fn mix(from: Color, to: Color, amount: f32) -> Color {
     .clamped()
 }
 
-fn interactive_variant(color: Color, scheme: ThemeColorScheme, amount: f32) -> Color {
-    match scheme {
-        ThemeColorScheme::Light => mix(color, Color::BLACK, amount),
-        ThemeColorScheme::Dark | ThemeColorScheme::HighContrast => mix(color, Color::WHITE, amount),
-    }
-}
-
-fn interactive_surface(color: Color, scheme: ThemeColorScheme, amount: f32) -> Color {
-    match scheme {
-        ThemeColorScheme::Light => mix(color, Color::BLACK, amount),
-        ThemeColorScheme::Dark | ThemeColorScheme::HighContrast => mix(color, Color::WHITE, amount),
-    }
-}
-
 fn rgb8(red: u8, green: u8, blue: u8) -> Color {
     Color::rgba(
         f32::from(red) / 255.0,
@@ -3692,14 +3770,6 @@ fn rgb8(red: u8, green: u8, blue: u8) -> Color {
         f32::from(blue) / 255.0,
         1.0,
     )
-}
-
-fn rgba8(red: u8, green: u8, blue: u8, alpha: f32) -> Color {
-    rgb8(red, green, blue).with_alpha(alpha)
-}
-
-fn is_neutral_theme(colors: &ThemeColors) -> bool {
-    matches!(colors.name, "neutral" | "neutral-dark")
 }
 
 fn shadow_layer(
@@ -3723,8 +3793,8 @@ fn shadow_layer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Color, ControlSize, ControlTypography, DefaultTheme, SemanticTone, ThemeColorScheme,
-        ThemeColors, ThemeDensity, ThemeShadow, ThemeTextScale, rgb8, rgba8,
+        Color, ControlSize, ControlTypography, DecorativeHue, DefaultTheme, SemanticTone,
+        ThemeColorScheme, ThemeColors, ThemeDensity, ThemeShadow, ThemeTextScale, rgb8,
     };
     use crate::hdr_theme::HdrThemeMode;
 
@@ -4018,244 +4088,296 @@ mod tests {
         let theme = DefaultTheme::default();
 
         assert_eq!(theme.hdr.mode, HdrThemeMode::Disabled);
-        assert_eq!(theme.hdr.color_roles.surface.sdr, theme.colors.base_100);
+        assert_eq!(
+            theme.hdr.color_roles.surface.sdr,
+            theme.colors.neutrals.window
+        );
         assert_eq!(theme.hdr.color_roles.accent.sdr, theme.colors.primary);
         assert_eq!(
             theme.hdr.color_roles.accent_text.sdr,
-            theme.colors.primary_content
+            theme.colors.on_primary
         );
     }
 
-    #[test]
-    fn mesh_theme_colors_use_cyan_as_signal_accent_and_amber_as_warning() {
-        let light = ThemeColors::light();
-        assert_eq!(light.primary, rgb8(8, 124, 164));
-        assert_eq!(light.accent, light.primary);
-        assert_eq!(light.accent_content, light.primary_content);
-        assert_eq!(light.secondary, rgb8(143, 125, 248));
-        assert_eq!(light.warning, rgb8(220, 154, 16));
-
-        let dark = ThemeColors::dark();
-        assert_eq!(dark.primary, rgb8(53, 210, 238));
-        assert_eq!(dark.accent, dark.primary);
-        assert_eq!(dark.accent_content, dark.primary_content);
-        assert_eq!(dark.secondary, rgb8(143, 125, 248));
-        assert_eq!(dark.base_300, rgb8(29, 36, 49));
-        assert_eq!(dark.warning, rgb8(253, 176, 34));
-
-        let void = ThemeColors::high_contrast();
-        assert_eq!(void.primary, rgb8(33, 199, 229));
-        assert_eq!(void.accent, void.primary);
-        assert_eq!(void.accent_content, void.primary_content);
-        assert_eq!(void.base_100, Color::BLACK);
-        assert_eq!(void.base_300, rgb8(19, 23, 34));
-    }
-
-    #[test]
-    fn professional_interaction_roles_are_neutral_and_independent_from_brand_color() {
-        for theme in [
+    fn built_in_presets() -> [DefaultTheme; 5] {
+        [
             DefaultTheme::light(),
             DefaultTheme::dark(),
             DefaultTheme::void(),
+            DefaultTheme::neutral(),
+            DefaultTheme::neutral_dark(),
+        ]
+    }
+
+    fn assert_contrast(label: &str, foreground: Color, background: Color, minimum: f32) {
+        let ratio = foreground.contrast_ratio(background);
+        assert!(
+            ratio >= minimum,
+            "{label}: contrast {ratio:.2} is below {minimum} ({foreground:?} on {background:?})"
+        );
+    }
+
+    fn hue_distance(first: f32, second: f32) -> f32 {
+        let distance = (first - second).rem_euclid(360.0);
+        distance.min(360.0 - distance)
+    }
+
+    #[test]
+    fn sui_presets_share_the_azure_brand_across_schemes() {
+        let light = ThemeColors::light();
+        let dark = ThemeColors::dark();
+        let void = ThemeColors::high_contrast();
+
+        assert_eq!(light.primary, rgb8(23, 98, 244));
+        assert_eq!(light.on_primary, Color::WHITE);
+        assert_eq!(light.secondary, rgb8(125, 77, 231));
+        for colors in [dark, void] {
+            assert_eq!(colors.primary, light.primary);
+            assert_eq!(colors.secondary, light.secondary);
+            assert_eq!(colors.danger, light.danger);
+            assert_eq!(colors.success, light.success);
+            assert_eq!(colors.warning, light.warning);
+            assert_eq!(colors.info, light.info);
+        }
+        assert_eq!(void.neutrals.window, Color::BLACK);
+        assert_eq!(void.neutrals.panel, Color::BLACK);
+    }
+
+    #[test]
+    fn light_surfaces_are_pure_and_dark_surfaces_carry_a_constant_faint_tint() {
+        let light = ThemeColors::light().neutrals;
+        for color in [
+            light.window,
+            light.subtle,
+            light.panel,
+            light.control,
+            light.control_hover,
+            light.border,
+            light.border_strong,
+            light.border_control,
+            light.text,
+            light.text_secondary,
+            light.text_tertiary,
         ] {
-            assert_ne!(theme.palette.border_focus, theme.palette.border_strong);
-            assert_ne!(theme.palette.border_focus, theme.palette.focus);
-            assert_eq!(theme.palette.caret, theme.palette.text);
-            assert_ne!(theme.palette.focus, theme.palette.accent);
-            assert_ne!(theme.palette.selection, theme.palette.accent_soft);
-            assert_eq!(theme.palette.selection_border, theme.palette.accent_border);
-            assert_ne!(theme.palette.surface_focus, theme.palette.accent_soft);
-            assert_eq!(theme.surfaces.selected, theme.palette.selection);
-            assert_eq!(
-                theme.surfaces.selected_border,
-                theme.palette.selection_border
+            assert!(
+                color.to_oklch().chroma < 1.0e-3,
+                "light neutrals must be achromatic: {color:?}"
             );
         }
 
-        let mut custom = ThemeColors::light();
-        custom.name = "custom-professional";
-        custom.primary = Color::rgba(0.92, 0.08, 0.56, 1.0);
-        custom.primary_content = Color::WHITE;
-        let theme = DefaultTheme::from_colors(custom);
-        assert_eq!(theme.palette.accent, custom.primary);
-        assert_eq!(theme.palette.caret, custom.base_content);
-        assert_ne!(theme.palette.selection, custom.primary);
-        assert_eq!(
-            theme.palette.selection_border,
-            custom
-                .primary
-                .with_alpha(0.35)
-                .over(theme.palette.surface_raised)
+        let dark = ThemeColors::dark().neutrals;
+        for color in [
+            dark.window,
+            dark.subtle,
+            dark.panel,
+            dark.overlay,
+            dark.control,
+            dark.control_hover,
+            dark.border,
+        ] {
+            let oklch = color.to_oklch();
+            assert!(
+                (0.012..=0.022).contains(&oklch.chroma),
+                "dark surface tint drifted: {oklch:?}"
+            );
+            assert!(
+                (245.0..=270.0).contains(&oklch.hue),
+                "dark surfaces lean blue: {oklch:?}"
+            );
+        }
+        // Text reads white, not blue: the tint lives on the surfaces.
+        assert!(dark.text.to_oklch().chroma < 0.01);
+
+        let neutral_dark = ThemeColors::neutral_dark().neutrals;
+        assert!(neutral_dark.panel.to_oklch().chroma < 1.0e-3);
+        assert!(
+            (neutral_dark.panel.to_oklch().lightness - dark.panel.to_oklch().lightness).abs()
+                < 0.01,
+            "the neutral dark ramp is the untinted twin of the SUI dark ramp"
         );
-        assert_ne!(theme.palette.focus, custom.primary);
-        assert_ne!(theme.palette.surface_focus, custom.primary);
     }
 
     #[test]
-    fn neutral_themes_are_achromatic_professional_presets() {
+    fn built_in_presets_meet_contrast_floors() {
+        for theme in built_in_presets() {
+            let name = theme.colors.name;
+            let palette = theme.palette;
+            let panel = palette.surface_raised;
+
+            assert_contrast(name, palette.text, panel, 12.0);
+            assert_contrast(name, palette.text_muted, panel, 7.0);
+            assert_contrast(name, palette.placeholder, panel, 4.5);
+            assert_contrast(name, palette.placeholder, palette.surface, 4.5);
+            assert_contrast(name, palette.border_control, panel, 3.0);
+            assert_contrast(name, palette.focus_ring, panel, 3.0);
+            assert_contrast(name, palette.accent_text, palette.accent, 4.5);
+            assert_contrast(name, palette.danger_text, palette.danger, 4.5);
+            assert_contrast(name, palette.success_text, palette.success, 4.5);
+            assert_contrast(name, palette.warning_text, palette.warning, 4.5);
+            assert_contrast(name, palette.info_text, palette.info, 4.5);
+            for (soft, text) in [
+                (palette.accent_soft, palette.accent_soft_text),
+                (palette.info_soft, palette.info_soft_text),
+                (palette.success_soft, palette.success_soft_text),
+                (palette.warning_soft, palette.warning_soft_text),
+                (palette.danger_soft, palette.danger_soft_text),
+            ] {
+                assert_contrast(name, text, soft, 4.5);
+                assert_contrast(name, text, panel, 4.5);
+            }
+            for hue in DecorativeHue::ALL {
+                let roles = theme.decorative.get(hue);
+                assert_contrast(name, roles.text, roles.soft, 4.5);
+                // Mid-lightness decorative fills carry large labels only
+                // (avatars, counters); body-size labels use soft + text.
+                assert_contrast(name, roles.on_solid, roles.solid, 3.0);
+            }
+        }
+    }
+
+    #[test]
+    fn interaction_roles_are_neutral_while_focus_follows_the_brand() {
+        for theme in built_in_presets() {
+            let palette = theme.palette;
+            assert_eq!(palette.caret, palette.text);
+            assert!(palette.selection.to_oklch().chroma < 0.02);
+            assert_eq!(palette.selection_border, palette.accent_border);
+            assert_eq!(palette.surface_focus, palette.field);
+            assert_ne!(palette.border_focus, palette.border_strong);
+            assert_eq!(palette.focus, palette.focus_ring);
+            assert_eq!(theme.surfaces.selected, palette.selection);
+            assert_eq!(theme.surfaces.selected_border, palette.selection_border);
+            let focus_hue = palette.focus.to_oklch().hue;
+            let primary = theme.colors.primary.to_oklch();
+            if primary.chroma > 0.04 {
+                assert!(hue_distance(focus_hue, primary.hue) < 2.0);
+            }
+        }
+    }
+
+    #[test]
+    fn changing_primary_rederives_every_accent_role() {
+        let mut colors = ThemeColors::light();
+        colors.primary = Color::rgba(0.86, 0.12, 0.47, 1.0);
+        let theme = DefaultTheme::from_colors(colors);
+        let hue = colors.primary.to_oklch().hue;
+
+        assert_eq!(theme.palette.accent, colors.primary);
+        // Washes flattened in encoded space drift slightly in hue as they
+        // approach white, so they get a looser tolerance than solid roles.
+        for (role, tolerance) in [
+            (theme.palette.accent_hover, 3.0),
+            (theme.palette.accent_pressed, 3.0),
+            (theme.palette.accent_soft_text, 3.0),
+            (theme.palette.focus_ring, 3.0),
+            (theme.palette.accent_soft, 20.0),
+            (theme.palette.accent_border, 20.0),
+            (theme.palette.selection_border, 20.0),
+        ] {
+            let role_hue = role.to_oklch().hue;
+            assert!(
+                hue_distance(role_hue, hue) < tolerance,
+                "role {role:?} must follow the edited primary hue {hue}, got {role_hue}"
+            );
+        }
+        assert!(
+            theme.palette.accent_hover.to_oklch().lightness < colors.primary.to_oklch().lightness,
+            "light themes darken on hover"
+        );
+        let glow = DefaultTheme::from_colors(ThemeColors {
+            primary: colors.primary,
+            ..ThemeColors::dark()
+        })
+        .glows
+        .accent
+        .first
+        .expect("dark themes glow");
+        assert!(hue_distance(glow.color.to_oklch().hue, hue) < 3.0);
+    }
+
+    #[test]
+    fn neutral_presets_have_an_achromatic_brand_and_keep_semantic_colors() {
         let light = DefaultTheme::neutral();
-        let colors = light.colors;
-
-        assert_eq!(DefaultTheme::sui(), DefaultTheme::light());
-        assert_eq!(ThemeColors::sui(), ThemeColors::light());
-        assert_eq!(colors.name, "neutral");
-        assert_eq!(colors.scheme, ThemeColorScheme::Light);
-        assert_eq!(colors.primary, rgb8(23, 23, 23));
-        assert_eq!(colors.primary_content, Color::WHITE);
-        assert_eq!(colors.secondary, rgb8(64, 64, 64));
-        assert_eq!(colors.accent, colors.primary);
-        assert_eq!(light.palette.accent, colors.primary);
-        assert_eq!(light.palette.control, rgb8(245, 245, 245));
-        assert_eq!(light.palette.border, rgb8(229, 229, 229));
-        assert_eq!(light.palette.focus, rgb8(64, 64, 64));
-        assert_eq!(light.surfaces.window_subtle, rgb8(250, 250, 250));
-        assert_eq!(light.surfaces.checkerboard_dark, rgb8(229, 229, 229));
-        assert_eq!(light.hdr.color_roles.accent.wide_gamut, None);
-        assert_eq!(light.hdr.color_roles.accent.hdr, None);
-
-        let shadow = light
-            .shadows
-            .box_shadow
-            .xs
-            .first
-            .expect("neutral theme should retain restrained elevation");
-        assert_eq!(shadow.color.red, shadow.color.green);
-        assert_eq!(shadow.color.green, shadow.color.blue);
-
-        for color in [
-            colors.base_100,
-            colors.base_200,
-            colors.base_300,
-            colors.base_content,
-            colors.primary,
-            colors.secondary,
-            colors.accent,
-            light.palette.focus,
-            light.palette.selection,
-        ] {
-            assert_eq!(color.red, color.green);
-            assert_eq!(color.green, color.blue);
-        }
-
         let dark = DefaultTheme::neutral_dark();
-        let dark_colors = dark.colors;
-        assert_eq!(dark_colors.name, "neutral-dark");
-        assert_eq!(dark_colors.scheme, ThemeColorScheme::Dark);
-        assert_eq!(dark_colors.base_100, rgb8(10, 10, 10));
-        assert_eq!(dark_colors.base_content, rgb8(245, 245, 245));
-        assert_eq!(dark_colors.primary, rgb8(245, 245, 245));
-        assert_eq!(dark_colors.primary_content, rgb8(23, 23, 23));
-        assert_eq!(dark.palette.surface_raised, rgb8(23, 23, 23));
-        assert_eq!(dark.palette.control, rgb8(38, 38, 38));
-        assert_eq!(dark.palette.control_hover, rgb8(51, 51, 51));
-        assert_eq!(dark.palette.focus, rgb8(212, 212, 212));
-        assert_eq!(dark.surfaces.window_subtle, rgb8(10, 10, 10));
-        assert_eq!(dark.hdr.color_roles.accent.wide_gamut, None);
-        assert_eq!(dark.hdr.color_roles.accent.hdr, None);
 
-        let glow = dark
-            .glows
-            .accent
-            .first
-            .expect("neutral dark should retain a restrained live-signal glow");
-        assert_eq!(glow.color.red, glow.color.green);
-        assert_eq!(glow.color.green, glow.color.blue);
-
-        for color in [
-            dark_colors.base_100,
-            dark_colors.base_200,
-            dark_colors.base_300,
-            dark_colors.base_content,
-            dark_colors.primary,
-            dark_colors.secondary,
-            dark_colors.accent,
-            dark.palette.focus,
-            dark.palette.selection,
-        ] {
-            assert_eq!(color.red, color.green);
-            assert_eq!(color.green, color.blue);
+        assert_eq!(light.colors.name, "neutral");
+        assert_eq!(light.colors.neutrals, ThemeColors::light().neutrals);
+        assert_eq!(light.colors.primary, rgb8(23, 23, 23));
+        assert_eq!(dark.colors.name, "neutral-dark");
+        assert_eq!(dark.colors.primary, rgb8(240, 240, 240));
+        for theme in [light, dark] {
+            for color in [
+                theme.colors.primary,
+                theme.colors.secondary,
+                theme.palette.accent,
+                theme.palette.accent_hover,
+                theme.palette.focus,
+                theme.palette.selection,
+            ] {
+                assert!(color.to_oklch().chroma < 1.0e-3, "{color:?}");
+            }
+            assert_eq!(theme.colors.danger, ThemeColors::light().danger);
+            assert_eq!(theme.hdr.color_roles.accent.wide_gamut, None);
+            assert_eq!(theme.hdr.color_roles.accent.hdr, None);
+            assert!(theme.hdr.color_roles.danger.wide_gamut.is_some());
         }
+        // Light themes lighten a near-black primary on hover.
+        assert!(
+            light.palette.accent_hover.to_oklch().lightness
+                > light.palette.accent.to_oklch().lightness
+        );
+        let glow = dark.glows.accent.first.expect("neutral dark glows quietly");
+        assert!(glow.color.alpha < DefaultTheme::dark().glows.accent.first.unwrap().color.alpha);
     }
 
     #[test]
-    fn built_in_themes_use_professional_role_tokens() {
-        // Translucent Mesh tokens are flattened onto the card surface with
-        // CSS (gamma-space) compositing at theme build time, because the
-        // renderer blends in linear space (which reads far heavier).
+    fn neutral_buttons_use_the_raised_face_and_full_ink() {
         let light = DefaultTheme::light();
-        let light_surface = Color::WHITE;
-        assert_eq!(light.palette.border, rgb8(227, 232, 239));
-        assert_eq!(light.palette.border_strong, rgb8(205, 213, 224));
-        assert_eq!(light.palette.text_muted, rgb8(73, 84, 107));
-        assert_eq!(light.palette.placeholder, rgb8(104, 115, 144));
-        assert_eq!(light.palette.control, rgb8(243, 245, 248));
-        assert_eq!(light.palette.control_hover, rgb8(234, 238, 243));
-        assert_eq!(light.palette.field, rgb8(248, 250, 252));
-        assert_ne!(light.palette.field, light.palette.surface);
-        assert_eq!(light.palette.focus, rgb8(73, 84, 107));
         assert_eq!(
-            light.palette.selection,
-            rgba8(73, 84, 107, 0.12).over(light_surface)
+            light.semantic_tone_colors(SemanticTone::Neutral),
+            (light.palette.button, light.palette.text)
         );
-        assert_eq!(
-            light.palette.accent_soft,
-            rgba8(8, 124, 164, 0.08).over(light_surface)
+        assert_eq!(light.palette.button, Color::WHITE);
+        assert_eq!(light.palette.button_border, light.palette.border_strong);
+        assert!(
+            light.palette.button_hover.relative_luminance()
+                < light.palette.button.relative_luminance()
         );
-        assert_eq!(light.palette.accent_soft.alpha, 1.0);
-        assert_eq!(light.palette.accent_soft_text, rgb8(8, 124, 164));
-        assert_eq!(light.palette.warning_soft_text, rgb8(154, 103, 0));
-        assert_eq!(light.palette.danger_hover, rgb8(180, 35, 24));
-        assert_eq!(light.surfaces.window_subtle, rgb8(247, 248, 250));
-        assert_eq!(light.surfaces.sidebar, light.surfaces.window_subtle);
-        assert_eq!(light.surfaces.overlay, Color::WHITE);
+        assert!(
+            light.palette.button_pressed.relative_luminance()
+                < light.palette.button_hover.relative_luminance()
+        );
 
         let dark = DefaultTheme::dark();
-        let dark_surface = rgb8(18, 22, 31);
-        assert_eq!(
-            dark.palette.border,
-            rgba8(151, 168, 199, 0.16).over(dark_surface)
+        assert!(
+            dark.palette.button_hover.relative_luminance()
+                > dark.palette.button.relative_luminance()
         );
-        assert_eq!(
-            dark.palette.border_strong,
-            rgba8(151, 168, 199, 0.27).over(dark_surface)
-        );
-        assert_eq!(dark.palette.text_muted, rgb8(166, 178, 200));
-        assert_eq!(dark.palette.control, rgb8(23, 28, 39));
-        assert_eq!(dark.palette.control_hover, rgb8(29, 36, 49));
-        assert_eq!(dark.palette.field, rgb8(15, 19, 27));
-        assert_eq!(dark.palette.surface_raised, dark_surface);
-        assert_eq!(dark.palette.focus, rgb8(166, 178, 200));
-        assert_eq!(
-            dark.palette.selection,
-            rgba8(166, 178, 200, 0.14).over(dark_surface)
-        );
-        assert_eq!(dark.palette.accent_hover, rgb8(95, 224, 246));
-        assert_eq!(
-            dark.palette.success_soft,
-            rgba8(74, 222, 128, 0.12).over(dark_surface)
-        );
-        assert_eq!(dark.palette.success_soft_text, rgb8(74, 222, 128));
-        assert_eq!(dark.surfaces.window_subtle, rgb8(14, 18, 26));
-        assert_eq!(dark.surfaces.overlay, rgb8(22, 27, 38));
-        assert_eq!(
-            dark.surfaces.border_subtle,
-            rgba8(151, 168, 199, 0.09).over(dark_surface)
-        );
-        assert_eq!(dark.surfaces.text_disabled, rgb8(81, 93, 117));
-        assert_eq!(dark.surfaces.text_invert, rgb8(13, 18, 32));
+    }
 
-        let void = DefaultTheme::void();
-        assert_eq!(
-            void.palette.border,
-            rgba8(158, 175, 205, 0.18).over(Color::BLACK)
-        );
-        assert_eq!(void.palette.field, rgb8(11, 14, 20));
-        assert_eq!(void.palette.focus, rgb8(223, 229, 240));
-        assert_eq!(void.surfaces.window_subtle, Color::BLACK);
-        assert_eq!(void.surfaces.overlay, rgb8(10, 13, 19));
-        // The scrim stays translucent: it is a true overlay above arbitrary
-        // content, not a token that can be flattened ahead of time.
-        assert_eq!(void.surfaces.overlay_scrim, rgba8(0, 0, 0, 0.72));
+    #[test]
+    fn decorative_palette_derives_roles_for_every_hue() {
+        let theme = DefaultTheme::light();
+        let mut hues = Vec::new();
+        for hue in DecorativeHue::ALL {
+            let roles = theme.decorative.get(hue);
+            assert_eq!(roles.solid, theme.colors.decorative.get(hue));
+            assert!(
+                roles.solid.to_oklch().chroma > 0.10,
+                "{hue:?} must be vibrant"
+            );
+            hues.push(roles.solid.to_oklch().hue);
+        }
+        for (index, first) in hues.iter().enumerate() {
+            for second in &hues[index + 1..] {
+                assert!(
+                    hue_distance(*first, *second) > 15.0,
+                    "decorative hues must stay distinct"
+                );
+            }
+        }
+        assert_eq!(theme.decorative.categorical(0), theme.decorative.red);
+        assert_eq!(theme.decorative.categorical(10), theme.decorative.orange);
     }
 
     #[test]
@@ -4357,9 +4479,15 @@ mod tests {
         let light = DefaultTheme::light();
         let dark = DefaultTheme::dark();
 
-        assert_eq!(light.hdr.color_roles.surface.sdr, light.colors.base_100);
-        assert_eq!(light.hdr.color_roles.text.sdr, light.colors.base_content);
-        assert_eq!(dark.hdr.color_roles.surface.sdr, dark.colors.base_100);
+        assert_eq!(
+            light.hdr.color_roles.surface.sdr,
+            light.colors.neutrals.window
+        );
+        assert_eq!(light.hdr.color_roles.text.sdr, light.colors.neutrals.text);
+        assert_eq!(
+            dark.hdr.color_roles.surface.sdr,
+            dark.colors.neutrals.window
+        );
         assert_eq!(dark.hdr.color_roles.accent.sdr, dark.colors.primary);
     }
 
@@ -4375,7 +4503,7 @@ mod tests {
         theme.sync_derived_fields();
 
         assert_eq!(theme.palette.accent, Color::rgba(0.2, 0.3, 0.4, 1.0));
-        assert_eq!(theme.palette.caret, theme.colors.base_content);
+        assert_eq!(theme.palette.caret, theme.colors.neutrals.text);
         assert_eq!(theme.surfaces.accent, theme.palette.accent);
         assert_eq!(theme.surfaces.window, theme.palette.surface);
         // Mesh tooltips are quiet floating surfaces: overlay fill, secondary ink.
@@ -4406,13 +4534,13 @@ mod tests {
         let theme = DefaultTheme::default();
 
         assert_eq!(theme.palette.info, theme.colors.info);
-        assert_eq!(theme.palette.info_text, theme.colors.info_content);
+        assert_eq!(theme.palette.info_text, theme.colors.on_info);
         assert_eq!(theme.palette.success, theme.colors.success);
-        assert_eq!(theme.palette.success_text, theme.colors.success_content);
+        assert_eq!(theme.palette.success_text, theme.colors.on_success);
         assert_eq!(theme.palette.warning, theme.colors.warning);
-        assert_eq!(theme.palette.warning_text, theme.colors.warning_content);
-        assert_eq!(theme.palette.danger, theme.colors.error);
-        assert_eq!(theme.palette.danger_text, theme.colors.error_content);
+        assert_eq!(theme.palette.warning_text, theme.colors.on_warning);
+        assert_eq!(theme.palette.danger, theme.colors.danger);
+        assert_eq!(theme.palette.danger_text, theme.colors.on_danger);
         assert_eq!(
             theme.semantic_tone_colors(SemanticTone::Warning),
             (theme.palette.warning, theme.palette.warning_text)
@@ -4436,19 +4564,23 @@ mod tests {
         theme.hdr.color_roles.accent.wide_gamut = Some(stale_wide_gamut);
         theme.hdr.color_roles.accent.hdr = Some(stale_hdr);
         theme.colors = ThemeColors::dark();
-        theme.colors.base_100 = Color::rgba(0.96, 0.97, 0.98, 1.0);
+        theme.colors.neutrals.window = Color::rgba(0.96, 0.97, 0.98, 1.0);
         theme.sync_derived_fields();
 
-        assert_eq!(theme.hdr.color_roles.surface.sdr, theme.colors.base_100);
-        assert_eq!(theme.hdr.color_roles.accent.sdr, theme.colors.primary);
+        let accent = theme.hdr.color_roles.accent;
         assert_eq!(
-            theme.hdr.color_roles.accent.wide_gamut,
-            Some(Color::display_p3(0.13, 0.84, 0.95, 1.0))
+            theme.hdr.color_roles.surface.sdr,
+            theme.colors.neutrals.window
         );
-        assert_eq!(
-            theme.hdr.color_roles.accent.hdr,
-            Some(Color::linear_display_p3(0.16, 0.95, 1.10, 1.0))
-        );
+        assert_eq!(accent.sdr, theme.colors.primary);
+        let wide = accent
+            .wide_gamut
+            .expect("chromatic accent has a P3 variant");
+        assert_ne!(wide, stale_wide_gamut);
+        assert!(wide.to_oklch().chroma > theme.colors.primary.to_oklch().chroma);
+        assert!(hue_distance(wide.to_oklch().hue, theme.colors.primary.to_oklch().hue) < 2.0);
+        let hdr = accent.hdr.expect("the accent is a live-signal role");
+        assert!(hdr.to_linear_srgb().blue > wide.to_linear_srgb().blue);
     }
 
     #[test]
@@ -4457,14 +4589,14 @@ mod tests {
 
         assert_eq!(theme.colors.scheme, ThemeColorScheme::Dark);
         assert_eq!(theme.colors.name, "dark");
-        assert_ne!(theme.colors.base_100, Color::BLACK);
-        assert_eq!(theme.palette.surface, theme.colors.base_100);
+        assert_ne!(theme.colors.neutrals.window, Color::BLACK);
+        assert_eq!(theme.palette.surface, theme.colors.neutrals.window);
         assert_ne!(theme.palette.surface_raised, Color::BLACK);
-        assert_eq!(theme.palette.text, theme.colors.base_content);
+        assert_eq!(theme.palette.text, theme.colors.neutrals.text);
         assert_ne!(theme.palette.text, Color::WHITE);
-        assert_eq!(theme.palette.caret, theme.colors.base_content);
+        assert_eq!(theme.palette.caret, theme.colors.neutrals.text);
         assert_eq!(theme.palette.accent, theme.colors.primary);
-        assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
+        assert_eq!(theme.palette.accent_text, theme.colors.on_primary);
         assert_eq!(theme.surfaces.window, theme.palette.surface);
         assert_eq!(theme.surfaces.panel, theme.palette.surface_raised);
         assert_eq!(theme.surfaces.border, theme.palette.border);
@@ -4478,7 +4610,7 @@ mod tests {
 
         assert_eq!(theme.colors.scheme, ThemeColorScheme::HighContrast);
         assert_eq!(theme.colors.name, "void");
-        assert_eq!(theme.palette.surface, theme.colors.base_100);
+        assert_eq!(theme.palette.surface, theme.colors.neutrals.window);
         assert_eq!(theme.palette.surface, Color::BLACK);
         assert_eq!(theme.surfaces.window, Color::BLACK);
         // The Void OLED contract keeps cards true black — the border is the
@@ -4491,7 +4623,7 @@ mod tests {
         assert_ne!(theme.palette.control_hover, Color::BLACK);
         assert_ne!(theme.palette.control_active, Color::BLACK);
         assert_ne!(theme.palette.surface_focus, Color::BLACK);
-        assert_eq!(theme.palette.text, theme.colors.base_content);
+        assert_eq!(theme.palette.text, theme.colors.neutrals.text);
         assert_eq!(
             theme.metrics.border_width,
             DefaultTheme::default().metrics.border_width

@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use sui::Color;
 use sui::ControlSize;
 use sui::DefaultTheme;
+use sui::ThemeColors;
 
 /// Live, thread-safe handle to SUI's built-in theme tokens.
 ///
@@ -44,7 +45,6 @@ impl BindingTheme {
     pub fn set_accent(&self, color: Color) {
         let mut theme = self.snapshot();
         theme.colors.primary = color;
-        theme.colors.accent = color;
         theme.sync_derived_fields();
         self.publish(theme);
     }
@@ -69,57 +69,13 @@ impl BindingTheme {
     }
 
     pub fn color(&self, name: &str) -> Result<Color, String> {
-        let colors = self.snapshot().colors;
-        match normalized_option_name(name).as_str() {
-            "base100" | "background" => Ok(colors.base_100),
-            "base200" | "surface" => Ok(colors.base_200),
-            "base300" | "border" => Ok(colors.base_300),
-            "basecontent" | "foreground" | "text" => Ok(colors.base_content),
-            "primary" => Ok(colors.primary),
-            "primarycontent" => Ok(colors.primary_content),
-            "secondary" => Ok(colors.secondary),
-            "secondarycontent" => Ok(colors.secondary_content),
-            "accent" => Ok(colors.accent),
-            "accentcontent" => Ok(colors.accent_content),
-            "neutral" => Ok(colors.neutral),
-            "neutralcontent" => Ok(colors.neutral_content),
-            "info" => Ok(colors.info),
-            "infocontent" => Ok(colors.info_content),
-            "success" => Ok(colors.success),
-            "successcontent" => Ok(colors.success_content),
-            "warning" => Ok(colors.warning),
-            "warningcontent" => Ok(colors.warning_content),
-            "error" | "danger" => Ok(colors.error),
-            "errorcontent" | "dangercontent" => Ok(colors.error_content),
-            _ => Err(format!("unknown theme color token '{name}'")),
-        }
+        let mut colors = self.snapshot().colors;
+        theme_color_slot(&mut colors, name).map(|slot| *slot)
     }
 
     pub fn set_color(&self, name: &str, color: Color) -> Result<(), String> {
         let mut theme = self.snapshot();
-        match normalized_option_name(name).as_str() {
-            "base100" | "background" => theme.colors.base_100 = color,
-            "base200" | "surface" => theme.colors.base_200 = color,
-            "base300" | "border" => theme.colors.base_300 = color,
-            "basecontent" | "foreground" | "text" => theme.colors.base_content = color,
-            "primary" => theme.colors.primary = color,
-            "primarycontent" => theme.colors.primary_content = color,
-            "secondary" => theme.colors.secondary = color,
-            "secondarycontent" => theme.colors.secondary_content = color,
-            "accent" => theme.colors.accent = color,
-            "accentcontent" => theme.colors.accent_content = color,
-            "neutral" => theme.colors.neutral = color,
-            "neutralcontent" => theme.colors.neutral_content = color,
-            "info" => theme.colors.info = color,
-            "infocontent" => theme.colors.info_content = color,
-            "success" => theme.colors.success = color,
-            "successcontent" => theme.colors.success_content = color,
-            "warning" => theme.colors.warning = color,
-            "warningcontent" => theme.colors.warning_content = color,
-            "error" | "danger" => theme.colors.error = color,
-            "errorcontent" | "dangercontent" => theme.colors.error_content = color,
-            _ => return Err(format!("unknown theme color token '{name}'")),
-        }
+        *theme_color_slot(&mut theme.colors, name)? = color;
         theme.sync_derived_fields();
         self.publish(theme);
         Ok(())
@@ -194,6 +150,56 @@ impl BindingTheme {
     pub(crate) fn publish_immediate(&self, value: DefaultTheme) {
         *recover_lock(&self.inner.value) = value;
     }
+}
+
+/// Resolve a source color token name (case- and separator-insensitive).
+fn theme_color_slot<'a>(colors: &'a mut ThemeColors, name: &str) -> Result<&'a mut Color, String> {
+    let neutrals = &mut colors.neutrals;
+    let decorative = &mut colors.decorative;
+    let slot = match normalized_option_name(name).as_str() {
+        "window" | "background" => &mut neutrals.window,
+        "subtle" => &mut neutrals.subtle,
+        "panel" | "surface" => &mut neutrals.panel,
+        "overlay" => &mut neutrals.overlay,
+        "control" => &mut neutrals.control,
+        "controlhover" => &mut neutrals.control_hover,
+        "controlactive" => &mut neutrals.control_active,
+        "button" => &mut neutrals.button,
+        "buttonhover" => &mut neutrals.button_hover,
+        "buttonactive" => &mut neutrals.button_active,
+        "field" => &mut neutrals.field,
+        "bordersubtle" => &mut neutrals.border_subtle,
+        "border" => &mut neutrals.border,
+        "borderstrong" => &mut neutrals.border_strong,
+        "bordercontrol" => &mut neutrals.border_control,
+        "text" | "foreground" => &mut neutrals.text,
+        "textsecondary" => &mut neutrals.text_secondary,
+        "texttertiary" => &mut neutrals.text_tertiary,
+        "textdisabled" => &mut neutrals.text_disabled,
+        "primary" | "accent" => &mut colors.primary,
+        "onprimary" | "onaccent" => &mut colors.on_primary,
+        "secondary" => &mut colors.secondary,
+        "onsecondary" => &mut colors.on_secondary,
+        "info" => &mut colors.info,
+        "oninfo" => &mut colors.on_info,
+        "success" => &mut colors.success,
+        "onsuccess" => &mut colors.on_success,
+        "warning" => &mut colors.warning,
+        "onwarning" => &mut colors.on_warning,
+        "danger" | "error" => &mut colors.danger,
+        "ondanger" | "onerror" => &mut colors.on_danger,
+        "red" => &mut decorative.red,
+        "orange" => &mut decorative.orange,
+        "amber" => &mut decorative.amber,
+        "green" => &mut decorative.green,
+        "teal" => &mut decorative.teal,
+        "cyan" => &mut decorative.cyan,
+        "blue" => &mut decorative.blue,
+        "violet" => &mut decorative.violet,
+        "magenta" => &mut decorative.magenta,
+        _ => return Err(format!("unknown theme color token '{name}'")),
+    };
+    Ok(slot)
 }
 
 pub(crate) fn binding_theme_preset(name: &str) -> Result<DefaultTheme, String> {

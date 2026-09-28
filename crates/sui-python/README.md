@@ -164,12 +164,19 @@ theme.set_accent(sui.Color.rgba(0.2, 0.55, 1.0, 1.0))
 running.drain()
 ```
 
-Use `theme.color(...)`/`set_color(...)` for source semantic colors and
+Use `theme.color(...)`/`set_color(...)` for source colors and
 `theme.number(...)`/`set_number(...)` for spacing, radii, breakpoints, and
-motion durations. Derived control palettes and metrics are synchronized by the
-binding. Changing the primary/accent color affects explicit primary actions,
-links, thin indicators, selection borders, and decorative signals; selection
-fills, focus, fields, menus, and scroll chrome remain neutral.
+motion durations. Color tokens are the neutral ramp (`window`, `subtle`,
+`panel`, `overlay`, `control`, `button`, `field`, `border`, `border-strong`,
+`border-control`, `text`, `text-secondary`, `text-tertiary`, and their
+hover/active variants), brand and status colors (`primary`, `secondary`,
+`info`, `success`, `warning`, `danger`, each with an `on-*` content color),
+and the decorative hues (`red`, `orange`, `amber`, `green`, `teal`, `cyan`,
+`blue`, `violet`, `magenta`). Derived control palettes and metrics are
+synchronized by the binding. Changing the primary/accent color re-derives
+primary actions, checked controls, links, focus rings, thin indicators,
+selection borders, and glows; surfaces, selection fills, fields, menus, and
+scroll chrome remain neutral.
 
 `App.run()` blocks until the desktop application exits. Use
 `App.run_with_handle(callback)` when startup code needs the thread-safe

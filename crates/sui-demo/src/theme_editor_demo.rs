@@ -122,7 +122,7 @@ impl ThemeColorGroup {
 }
 
 macro_rules! define_theme_color_variables {
-    ($( $variant:ident => $group:ident, $label:literal, $root:ident.$field:ident; )+) => {
+    ($( $variant:ident => $group:ident, $label:literal, $($path:ident).+; )+) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         enum ThemeColorVariable {
             $( $variant, )+
@@ -145,14 +145,14 @@ macro_rules! define_theme_color_variables {
 
             fn color(self, theme: &DefaultTheme) -> Color {
                 match self {
-                    $( Self::$variant => theme.$root.$field, )+
+                    $( Self::$variant => theme.$($path).+, )+
                 }
             }
 
             fn set_color(self, theme: &mut DefaultTheme, color: Color) {
                 let color = color.clamped();
                 match self {
-                    $( Self::$variant => theme.$root.$field = color, )+
+                    $( Self::$variant => theme.$($path).+ = color, )+
                 }
             }
         }
@@ -160,35 +160,60 @@ macro_rules! define_theme_color_variables {
 }
 
 define_theme_color_variables! {
-    Base100 => Source, "Base 100", colors.base_100;
-    Base200 => Source, "Base 200", colors.base_200;
-    Base300 => Source, "Base 300", colors.base_300;
-    BaseContent => Source, "Base content", colors.base_content;
     Primary => Source, "Primary", colors.primary;
-    PrimaryContent => Source, "On primary", colors.primary_content;
+    OnPrimary => Source, "On primary", colors.on_primary;
     Secondary => Source, "Secondary", colors.secondary;
-    SecondaryContent => Source, "On secondary", colors.secondary_content;
-    Accent => Source, "Accent", colors.accent;
-    AccentContent => Source, "On accent", colors.accent_content;
-    Neutral => Source, "Neutral", colors.neutral;
-    NeutralContent => Source, "On neutral", colors.neutral_content;
+    OnSecondary => Source, "On secondary", colors.on_secondary;
     Info => Source, "Info", colors.info;
-    InfoContent => Source, "On info", colors.info_content;
+    OnInfo => Source, "On info", colors.on_info;
     Success => Source, "Success", colors.success;
-    SuccessContent => Source, "On success", colors.success_content;
+    OnSuccess => Source, "On success", colors.on_success;
     Warning => Source, "Warning", colors.warning;
-    WarningContent => Source, "On warning", colors.warning_content;
-    Error => Source, "Error", colors.error;
-    ErrorContent => Source, "On error", colors.error_content;
+    OnWarning => Source, "On warning", colors.on_warning;
+    Danger => Source, "Danger", colors.danger;
+    OnDanger => Source, "On danger", colors.on_danger;
+    Window => Source, "Window", colors.neutrals.window;
+    Subtle => Source, "Subtle", colors.neutrals.subtle;
+    Panel => Source, "Panel", colors.neutrals.panel;
+    Overlay => Source, "Overlay", colors.neutrals.overlay;
+    NeutralControl => Source, "Control", colors.neutrals.control;
+    NeutralControlHover => Source, "Control hover", colors.neutrals.control_hover;
+    NeutralControlActive => Source, "Control active", colors.neutrals.control_active;
+    NeutralButton => Source, "Button", colors.neutrals.button;
+    NeutralButtonHover => Source, "Button hover", colors.neutrals.button_hover;
+    NeutralButtonActive => Source, "Button active", colors.neutrals.button_active;
+    NeutralField => Source, "Field", colors.neutrals.field;
+    NeutralBorderSubtle => Source, "Border subtle", colors.neutrals.border_subtle;
+    NeutralBorder => Source, "Border", colors.neutrals.border;
+    NeutralBorderStrong => Source, "Border strong", colors.neutrals.border_strong;
+    NeutralBorderControl => Source, "Control outline", colors.neutrals.border_control;
+    NeutralText => Source, "Text", colors.neutrals.text;
+    NeutralTextSecondary => Source, "Text secondary", colors.neutrals.text_secondary;
+    NeutralTextTertiary => Source, "Text tertiary", colors.neutrals.text_tertiary;
+    NeutralTextDisabled => Source, "Text disabled", colors.neutrals.text_disabled;
+    DecorativeRed => Source, "Decorative red", colors.decorative.red;
+    DecorativeOrange => Source, "Decorative orange", colors.decorative.orange;
+    DecorativeAmber => Source, "Decorative amber", colors.decorative.amber;
+    DecorativeGreen => Source, "Decorative green", colors.decorative.green;
+    DecorativeTeal => Source, "Decorative teal", colors.decorative.teal;
+    DecorativeCyan => Source, "Decorative cyan", colors.decorative.cyan;
+    DecorativeBlue => Source, "Decorative blue", colors.decorative.blue;
+    DecorativeViolet => Source, "Decorative violet", colors.decorative.violet;
+    DecorativeMagenta => Source, "Decorative magenta", colors.decorative.magenta;
 
     ControlText => Controls, "Text", palette.text;
     ControlTextMuted => Controls, "Text muted", palette.text_muted;
     ControlPlaceholder => Controls, "Placeholder", palette.placeholder;
+    ControlTextDisabled => Controls, "Text disabled", palette.text_disabled;
     ControlSurface => Controls, "Surface", palette.surface;
     ControlSurfaceRaised => Controls, "Surface raised", palette.surface_raised;
     ControlFill => Controls, "Control", palette.control;
     ControlHover => Controls, "Control hover", palette.control_hover;
     ControlActive => Controls, "Control active", palette.control_active;
+    ControlButton => Controls, "Button", palette.button;
+    ControlButtonHover => Controls, "Button hover", palette.button_hover;
+    ControlButtonPressed => Controls, "Button pressed", palette.button_pressed;
+    ControlButtonBorder => Controls, "Button border", palette.button_border;
     ControlField => Controls, "Field", palette.field;
     ControlSurfaceHover => Controls, "Surface hover", palette.surface_hover;
     ControlSurfacePressed => Controls, "Surface pressed", palette.surface_pressed;
@@ -197,6 +222,7 @@ define_theme_color_variables! {
     ControlBorderStrong => Controls, "Border strong", palette.border_strong;
     ControlBorderHover => Controls, "Border hover", palette.border_hover;
     ControlBorderFocus => Controls, "Border focus", palette.border_focus;
+    ControlBorderControl => Controls, "Control outline", palette.border_control;
     ControlFocus => Controls, "Focus", palette.focus;
     ControlFocusRing => Controls, "Focus ring", palette.focus_ring;
     ControlCaret => Controls, "Caret", palette.caret;
@@ -1247,13 +1273,13 @@ mod tests {
     #[test]
     fn color_edits_refresh_derived_palette_without_overwriting_content_pairs() {
         let state = ThemeEditorState::new();
-        let original_content = state.theme().colors.primary_content;
+        let original_content = state.theme().colors.on_primary;
         state.select_color_variable(ThemeColorVariable::Primary);
         state.set_selected_color(Color::rgba(0.95, 0.85, 0.20, 1.0));
 
         let theme = state.theme();
         assert_eq!(theme.palette.accent, theme.colors.primary);
-        assert_eq!(theme.colors.primary_content, original_content);
+        assert_eq!(theme.colors.on_primary, original_content);
         assert_eq!(theme.palette.accent_text, original_content);
         assert_eq!(
             theme.palette.selection_border,
@@ -1264,14 +1290,11 @@ mod tests {
                 .over(theme.palette.surface_raised)
         );
 
-        state.select_color_variable(ThemeColorVariable::PrimaryContent);
+        state.select_color_variable(ThemeColorVariable::OnPrimary);
         state.set_selected_color(Color::rgba(0.12, 0.16, 0.22, 1.0));
         let theme = state.theme();
-        assert_eq!(
-            theme.colors.primary_content,
-            Color::rgba(0.12, 0.16, 0.22, 1.0)
-        );
-        assert_eq!(theme.palette.accent_text, theme.colors.primary_content);
+        assert_eq!(theme.colors.on_primary, Color::rgba(0.12, 0.16, 0.22, 1.0));
+        assert_eq!(theme.palette.accent_text, theme.colors.on_primary);
     }
 
     #[test]
@@ -1307,9 +1330,10 @@ mod tests {
 
     #[test]
     fn color_variable_inventory_covers_every_current_theme_layer() {
-        assert_eq!(ThemeColorVariable::ALL.len(), 67);
-        assert_eq!(ThemeColorGroup::Source.variables().count(), 20);
-        assert_eq!(ThemeColorGroup::Controls.variables().count(), 47);
+        assert_eq!(ThemeColorVariable::ALL.len(), 93);
+        // 19 neutral tiers, 12 brand and status colors, 9 decorative hues.
+        assert_eq!(ThemeColorGroup::Source.variables().count(), 40);
+        assert_eq!(ThemeColorGroup::Controls.variables().count(), 53);
     }
 
     #[test]

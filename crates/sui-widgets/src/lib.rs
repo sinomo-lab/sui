@@ -141,12 +141,13 @@ pub use text_surface::{
 };
 pub use theme::{
     ControlMetrics, ControlPalette, ControlSize, ControlStateMetrics, ControlTypography,
-    DefaultTheme, SemanticTone, SurfacePalette, ThemeAspectRatios, ThemeBlurScale,
-    ThemeBoxShadowScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
-    ThemeDensity, ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-    ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
-    ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale, ThemeTextToken,
-    ThemeTracking, paint_theme_shadow,
+    DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme, NeutralRamp, SemanticTone,
+    SurfacePalette, ThemeAspectRatios, ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints,
+    ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity, ThemeDropShadowScale,
+    ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeInsetShadowScale, ThemeLeading,
+    ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows,
+    ThemeTextScale, ThemeTextShadowScale, ThemeTextToken, ThemeTracking, ToneRoles,
+    paint_theme_shadow,
 };
 pub use workspace::{
     AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, ConstraintOrientation, ConstraintQuery,

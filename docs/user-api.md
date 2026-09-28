@@ -50,7 +50,7 @@ embedding, tests, and tooling, but they carry more integration responsibility.
 | Stream Markdown or structured results | [Rich documents](./api/rich-documents.md) |
 | Edit text, passwords, or date/time values | [Input and editing](./api/input-and-editing.md) |
 | Handle events or update shared state | [State, events, and async](./api/state-events-and-async.md) |
-| Apply Mesh themes or register assets | [Themes and resources](./api/themes-and-resources.md) |
+| Apply themes or register assets | [Themes and resources](./api/themes-and-resources.md) |
 | Implement `Widget` directly | [Custom widgets](./api/custom-widgets.md) |
 | Automate UI and verify accessibility | [Testing and accessibility](./api/testing-and-accessibility.md) |
 | Select desktop, web, or mobile features | [Platforms and features](./api/platforms-and-features.md) |
