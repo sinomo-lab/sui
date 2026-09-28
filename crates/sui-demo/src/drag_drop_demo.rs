@@ -284,7 +284,9 @@ pub(crate) fn build_drag_drop_demo_with_theme(theme_reader: DevThemeReader) -> i
         scope,
         Background::new(
             theme_reader().palette.surface,
-            ScrollView::vertical(Padding::all(18.0, content)).name(DRAG_DROP_DEMO_SCROLL_NAME),
+            ScrollView::vertical(Padding::all(18.0, content))
+                .name(DRAG_DROP_DEMO_SCROLL_NAME)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
         )
         .brush_when(dev_theme_color(&theme_reader, |theme| {
             theme.palette.surface

@@ -662,7 +662,11 @@ fn build_paint_document_bar(
                 |theme| theme.palette.text,
             )),
         )
-        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            Separator::vertical()
+                .length(18.0)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
+        )
         .with_child(
             Label::new(format!(
                 "{} x {} px",
@@ -679,7 +683,11 @@ fn build_paint_document_bar(
             DemoTextRole::Metadata,
             |theme| theme.palette.text_muted,
         )))
-        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            Separator::vertical()
+                .length(18.0)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
+        )
         .with_child(
             paint_command_group(PAINT_DOCUMENT_VIEW_COMMANDS_NAME, &theme_reader)
                 .padding(Insets::all(2.0))

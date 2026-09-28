@@ -55,6 +55,47 @@ use sui_scene::StrokeStyle;
 use sui_text::TextMeasurement;
 use sui_text::TextStyle;
 
+/// A theme source shared between a surface and the action buttons it builds.
+/// Actions read the surface's current theme through it, so they follow
+/// `theme(...)` and `theme_when(...)` regardless of builder call order and
+/// keep following live theme switches.
+#[derive(Clone)]
+pub(super) struct SharedTheme(Rc<RefCell<SharedThemeSource>>);
+
+enum SharedThemeSource {
+    Fixed(Box<DefaultTheme>),
+    Live(Box<dyn Fn() -> DefaultTheme>),
+}
+
+impl SharedTheme {
+    pub(super) fn new() -> Self {
+        Self(Rc::new(RefCell::new(SharedThemeSource::Fixed(
+            Box::default(),
+        ))))
+    }
+
+    pub(super) fn set(&self, theme: DefaultTheme) {
+        *self.0.borrow_mut() = SharedThemeSource::Fixed(Box::new(theme));
+    }
+
+    pub(super) fn set_reader(&self, reader: impl Fn() -> DefaultTheme + 'static) {
+        *self.0.borrow_mut() = SharedThemeSource::Live(Box::new(reader));
+    }
+
+    pub(super) fn resolve(&self) -> DefaultTheme {
+        match &*self.0.borrow() {
+            SharedThemeSource::Fixed(theme) => **theme,
+            SharedThemeSource::Live(reader) => reader(),
+        }
+    }
+
+    /// A reader for child widgets that always resolves the current source.
+    pub(super) fn reader(&self) -> impl Fn() -> DefaultTheme + 'static {
+        let shared = self.clone();
+        move || shared.resolve()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct DialogFocusState {
     pub(super) theme: DefaultTheme,
@@ -135,7 +176,7 @@ impl Widget for DialogFocusSurface {
 }
 
 pub struct Dialog {
-    pub(super) theme: Box<DefaultTheme>,
+    pub(super) theme: SharedTheme,
     pub(super) title: String,
     pub(super) description: Option<String>,
     pub(super) shown: bool,
@@ -165,7 +206,7 @@ impl Dialog {
     {
         let focus_state = Rc::new(RefCell::new(DialogFocusState::new()));
         Self {
-            theme: Box::new(DefaultTheme::default()),
+            theme: SharedTheme::new(),
             title: title.into(),
             description: None,
             shown: true,
@@ -189,9 +230,23 @@ impl Dialog {
         }
     }
 
-    pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = Box::new(theme);
+    pub fn theme(self, theme: DefaultTheme) -> Self {
+        self.theme.set(theme);
         self
+    }
+
+    /// Resolve the theme on every layout and paint, including for the
+    /// dialog's built-in action buttons.
+    pub fn theme_when<F>(self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme.set_reader(theme);
+        self
+    }
+
+    pub(super) fn resolved_theme(&self) -> DefaultTheme {
+        self.theme.resolve()
     }
 
     pub fn description(mut self, description: impl Into<String>) -> Self {
@@ -231,7 +286,7 @@ impl Dialog {
     }
 
     pub fn max_width(mut self, max_width: f32) -> Self {
-        self.max_width = Some(max_width.max(self.theme.metrics.dialog_min_width));
+        self.max_width = Some(max_width.max(self.resolved_theme().metrics.dialog_min_width));
         self
     }
 
@@ -260,8 +315,9 @@ impl Dialog {
         F: FnMut() + 'static,
     {
         self.actions.push(
-            Button::new(label.into())
-                .min_width(self.theme.metrics.dialog_action_min_width)
+            Button::primary(label.into())
+                .theme_when(self.theme.reader())
+                .min_width(self.resolved_theme().metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
@@ -273,7 +329,8 @@ impl Dialog {
     {
         self.actions.push(
             Button::new(label.into())
-                .min_width(self.theme.metrics.dialog_action_min_width)
+                .theme_when(self.theme.reader())
+                .min_width(self.resolved_theme().metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
@@ -281,11 +338,12 @@ impl Dialog {
 
     pub(super) fn resolved_max_width(&self) -> f32 {
         self.max_width
-            .unwrap_or(self.theme.metrics.dialog_max_width)
+            .unwrap_or(self.resolved_theme().metrics.dialog_max_width)
     }
 
     pub(super) fn title_style(&self) -> TextStyle {
-        text_token_style(&self.theme, self.theme.text.lg, self.theme.palette.text)
+        let theme = self.resolved_theme();
+        text_token_style(&theme, theme.text.lg, theme.palette.text)
     }
 
     pub(super) fn dismiss(&mut self) {
@@ -299,7 +357,7 @@ impl Dialog {
             return;
         }
         self.entrance_started = true;
-        let motion = self.theme.motion;
+        let motion = self.resolved_theme().motion;
         if self.reveal.set_target(
             1.0,
             ctx.current_time(),
@@ -425,11 +483,12 @@ impl Widget for Dialog {
                 420.0
             },
         ));
-        let metrics = self.theme.metrics;
+        let theme = self.resolved_theme();
+        let metrics = theme.metrics;
         let outer_margin = metrics.dialog_outer_margin;
         let padding = metrics.dialog_padding;
         let title_style = self.title_style();
-        let description_style = self.theme.placeholder_text_style();
+        let description_style = theme.placeholder_text_style();
         self.title_measurement = Some(measure_text(ctx, &self.title, &title_style));
         self.description_measurement = self
             .description
@@ -503,7 +562,7 @@ impl Widget for Dialog {
         self.body_frame = Rect::new(padding.left, body_top, body_size.width, body_size.height);
         {
             let mut focus = self.focus_state.borrow_mut();
-            focus.theme = *self.theme;
+            focus.theme = theme;
             focus.shown = true;
             focus.frame = self.dialog_frame;
             focus.animation = self.focus_animation;
@@ -523,9 +582,10 @@ impl Widget for Dialog {
         self.focus_state.borrow_mut().frame = dialog;
         self.focus_surface.arrange(ctx, dialog);
         let title_line_height = self.title_style().line_height;
+        let theme = self.resolved_theme();
         if let Some(action) = &mut self.header_action {
             let size = action.child().measured_size();
-            let padding = self.theme.metrics.dialog_padding;
+            let padding = theme.metrics.dialog_padding;
             let title_height = self
                 .title_measurement
                 .map(|measurement| measurement.height.max(title_line_height))
@@ -552,7 +612,7 @@ impl Widget for Dialog {
         );
 
         if !self.actions.is_empty() {
-            let metrics = self.theme.metrics;
+            let metrics = theme.metrics;
             let padding = metrics.dialog_padding;
             let action_gap = metrics.dialog_action_gap;
             let footer_width = self
@@ -584,13 +644,14 @@ impl Widget for Dialog {
         }
 
         let dialog = self.dialog_frame.translate(ctx.bounds().origin.to_vector());
+        let theme = self.resolved_theme();
 
         if self.modal {
-            ctx.fill_bounds(self.theme.surfaces.overlay_scrim);
+            ctx.fill_bounds(theme.surfaces.overlay_scrim);
         }
 
-        let metrics = self.theme.metrics;
-        let palette = self.theme.palette;
+        let metrics = theme.metrics;
+        let palette = theme.palette;
         // Prominent elevation shadow behind the dialog surface, drawn over the
         // (optional) modal backdrop and before the surface fill.
         let surface_radius = metrics.corner_radius + 3.0;
@@ -598,7 +659,7 @@ impl Widget for Dialog {
             ctx,
             dialog,
             [surface_radius; 4],
-            &self.theme.shadows.box_shadow.xl,
+            &theme.shadows.box_shadow.xl,
         );
         draw_control_frame(
             ctx,
@@ -611,7 +672,7 @@ impl Widget for Dialog {
         );
 
         let title_style = self.title_style();
-        let description_style = self.theme.placeholder_text_style();
+        let description_style = theme.placeholder_text_style();
         let padding = metrics.dialog_padding;
         let text_x = dialog.x() + padding.left;
         let text_y = dialog.y() + padding.top;
@@ -696,7 +757,7 @@ impl Widget for Dialog {
         } else {
             Vector::new(
                 0.0,
-                self.theme.metrics.popover_reveal_offset * (1.0 - self.reveal.value),
+                self.resolved_theme().metrics.popover_reveal_offset * (1.0 - self.reveal.value),
             )
         };
         LayerProperties::new(self.reveal.value, translation)
@@ -750,12 +811,8 @@ impl Widget for Dialog {
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
         let was_presented = self.focus_animation.is_presented();
-        set_focus_animation_target(
-            &mut self.focus_animation,
-            focused as u8 as f32,
-            &self.theme,
-            ctx,
-        );
+        let theme = self.resolved_theme();
+        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         self.focus_state.borrow_mut().animation = self.focus_animation;
         request_child_invalidation(
             ctx,
@@ -958,8 +1015,7 @@ impl Default for SheetState {
 /// elevation, motion, focus, and semantic contracts while using a horizontal
 /// reveal appropriate to a drawer.
 pub struct SideSheet {
-    pub(super) theme: Box<DefaultTheme>,
-    pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) theme: SharedTheme,
     pub(super) title: String,
     pub(super) description: Option<String>,
     pub(super) shown: bool,
@@ -991,8 +1047,7 @@ impl SideSheet {
         W: Widget + 'static,
     {
         Self {
-            theme: Box::new(DefaultTheme::default()),
-            theme_reader: None,
+            theme: SharedTheme::new(),
             title: title.into(),
             description: None,
             shown: true,
@@ -1019,17 +1074,16 @@ impl SideSheet {
         }
     }
 
-    pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = Box::new(theme);
-        self.theme_reader = None;
+    pub fn theme(self, theme: DefaultTheme) -> Self {
+        self.theme.set(theme);
         self
     }
 
-    pub fn theme_when<F>(mut self, theme: F) -> Self
+    pub fn theme_when<F>(self, theme: F) -> Self
     where
         F: Fn() -> DefaultTheme + 'static,
     {
-        self.theme_reader = Some(Box::new(theme));
+        self.theme.set_reader(theme);
         self
     }
 
@@ -1117,8 +1171,8 @@ impl SideSheet {
     {
         let theme = self.resolved_theme();
         self.actions.push(
-            Button::new(label)
-                .theme(theme)
+            Button::primary(label)
+                .theme_when(self.theme.reader())
                 .min_width(theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
@@ -1132,7 +1186,7 @@ impl SideSheet {
         let theme = self.resolved_theme();
         self.actions.push(
             Button::new(label)
-                .theme(theme)
+                .theme_when(self.theme.reader())
                 .appearance(ButtonAppearance::Outline)
                 .tone(SemanticTone::Neutral)
                 .min_width(theme.metrics.dialog_action_min_width)
@@ -1150,10 +1204,7 @@ impl SideSheet {
     }
 
     pub(super) fn resolved_theme(&self) -> DefaultTheme {
-        self.theme_reader
-            .as_ref()
-            .map(|theme| theme())
-            .unwrap_or(*self.theme)
+        self.theme.resolve()
     }
 
     pub(super) fn resolved_width(&self, viewport_width: f32, theme: &DefaultTheme) -> f32 {

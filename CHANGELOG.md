@@ -39,9 +39,19 @@ Versioning, with the usual expectation that the API may change during the
 - `ActionCard::decorative` resolves card accents from the active theme's
   decorative palette; the demo launcher and chrome no longer hardcode colors.
 - Built-in presets are derived once and cached.
+- `Dialog::primary_action` and `SideSheet::primary_action` now build filled
+  primary buttons. Dialog and side-sheet action buttons follow the surface's
+  theme regardless of builder order and across live theme switches; added
+  `Dialog::theme_when` and `ResponsiveSidebar::theme_when`.
 
 ### Fixes
 
+- The demo's Themes page sizes each row of preview cards to its tallest card,
+  so wrapped descriptions no longer squash the color swatches.
+- Demo widgets that ignored the live theme now follow it, including the widget
+  book dialog preview, toolbar separators and swatches, layout examples, and
+  editor toolbar separators, so nothing renders with light-theme colors in dark
+  mode.
 - Fixed a browser panic when opening the Editorial engine demo by using a
   WebAssembly-compatible monotonic clock for reflow timing. Added a browser
   regression check covering animation, controls, resizing, and tab switching.

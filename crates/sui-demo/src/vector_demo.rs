@@ -899,7 +899,11 @@ fn build_vector_document_bar(
                 |theme| theme.palette.text,
             )),
         )
-        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            Separator::vertical()
+                .length(18.0)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
+        )
         .with_child(
             Label::new(format!(
                 "{:.0} x {:.0} px",
@@ -918,7 +922,11 @@ fn build_vector_document_bar(
                 |theme| theme.palette.text_muted,
             )),
         )
-        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            Separator::vertical()
+                .length(18.0)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
+        )
         .with_child(
             Label::new("1 artboard / 3 objects").style_when(demo_text_style_when(
                 &theme_reader,
@@ -926,7 +934,11 @@ fn build_vector_document_bar(
                 |theme| theme.palette.text_muted,
             )),
         )
-        .with_child(Separator::vertical().length(18.0))
+        .with_child(
+            Separator::vertical()
+                .length(18.0)
+                .theme_when(clone_dev_theme_reader(&theme_reader)),
+        )
         .with_child(
             vector_command_group("Vector view commands", &theme_reader)
                 .with_child(

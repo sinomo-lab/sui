@@ -1069,6 +1069,83 @@ fn dialog_title_and_description_visual_centers_match_header_slots() {
 }
 
 #[test]
+fn dialog_and_side_sheet_actions_follow_the_surface_theme_in_any_builder_order() {
+    let light = DefaultTheme::light();
+    let dark = DefaultTheme::dark();
+
+    // The theme arrives after the actions were added; the actions must still
+    // paint with it rather than the default light theme.
+    let dialog = render(
+        Dialog::new("Export", crate::Label::new("Export settings"))
+            .secondary_action("Cancel", || {})
+            .primary_action("Apply", || {})
+            .theme(dark),
+    );
+    let fills = solid_fill_colors(&dialog);
+    assert!(
+        fills.contains(&dark.palette.button),
+        "secondary action uses the dark face"
+    );
+    assert!(
+        fills.contains(&dark.palette.accent),
+        "primary action is a filled accent button"
+    );
+    assert!(
+        !fills.contains(&light.palette.button),
+        "no action may fall back to the light button face"
+    );
+
+    let side_sheet = render(
+        SideSheet::new("Inspector", crate::Label::new("Sheet body"))
+            .width(360.0)
+            .primary_action("Apply", || {})
+            .theme(dark),
+    );
+    assert!(solid_fill_colors(&side_sheet).contains(&dark.palette.accent));
+    assert!(!solid_fill_colors(&side_sheet).contains(&light.palette.button));
+}
+
+#[test]
+fn dialog_actions_follow_live_theme_switches() -> Result<(), String> {
+    let light = DefaultTheme::light();
+    let dark = DefaultTheme::dark();
+    let current = Rc::new(Cell::new(false));
+    let reader = Rc::clone(&current);
+    let (mut runtime, window_id) = build_runtime(
+        Dialog::new("Export", crate::Label::new("Export settings"))
+            .theme_when(move || {
+                if reader.get() {
+                    DefaultTheme::dark()
+                } else {
+                    DefaultTheme::light()
+                }
+            })
+            .secondary_action("Cancel", || {}),
+    );
+
+    let before = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    assert!(solid_fill_colors(&before).contains(&light.palette.button));
+
+    current.set(true);
+    runtime
+        .handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(640.0, 420.0))),
+        )
+        .map_err(|error| error.to_string())?;
+    let after = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let fills = solid_fill_colors(&after);
+    assert!(fills.contains(&dark.palette.button));
+    assert!(fills.contains(&dark.palette.surface_raised));
+    assert!(!fills.contains(&light.palette.button));
+    Ok(())
+}
+
+#[test]
 fn dialog_and_side_sheet_titles_follow_the_lg_theme_token() {
     let mut theme = DefaultTheme::default();
     theme.text.lg = ThemeTextToken {

@@ -314,8 +314,33 @@ fn build_constraint_query_example(theme_reader: DevThemeReader) -> impl Widget {
     )
 }
 
+/// A pane filled with a live theme role, so it follows theme switches after
+/// the demo is built.
+fn live_fill<W>(
+    theme_reader: &DevThemeReader,
+    role: fn(&DefaultTheme) -> Color,
+    child: W,
+) -> Background
+where
+    W: Widget + 'static,
+{
+    let reader = Rc::clone(theme_reader);
+    Background::new(role(&theme_reader()), child).brush_when(move || role(&reader()))
+}
+
+fn live_label(theme_reader: &DevThemeReader, text: &str) -> Label {
+    Label::new(text).style_when(demo_text_style_when(
+        theme_reader,
+        DemoTextRole::Body,
+        |theme| theme.palette.text,
+    ))
+}
+
+fn live_button(theme_reader: &DevThemeReader, label: &str) -> Button {
+    Button::new(label).theme_when(clone_dev_theme_reader(theme_reader))
+}
+
 fn build_adaptive_workspace_example(theme_reader: DevThemeReader) -> impl Widget {
-    let theme = theme_reader();
     let sidebar_state = ResponsiveSidebarState::new();
     sidebar_state.open_overlay();
     let toggle_state = sidebar_state.clone();
@@ -324,33 +349,38 @@ fn build_adaptive_workspace_example(theme_reader: DevThemeReader) -> impl Widget
         Stack::vertical()
             .spacing(8.0)
             .alignment(Alignment::Stretch)
-            .with_child(Button::new("Toggle rail / inline").on_press(move || {
-                toggle_state.toggle_expanded();
-            }))
+            .with_child(
+                live_button(&theme_reader, "Toggle rail / inline").on_press(move || {
+                    toggle_state.toggle_expanded();
+                }),
+            )
             .with_child(
                 SizedBox::new().height(168.0).with_child(
                     ResponsiveSidebar::new(
-                        Background::new(
-                            theme.palette.control,
+                        live_fill(
+                            &theme_reader,
+                            |theme| theme.palette.control,
                             Padding::all(
                                 12.0,
                                 Stack::vertical()
                                     .spacing(8.0)
                                     .alignment(Alignment::Stretch)
-                                    .with_child(Label::new("Files"))
-                                    .with_child(Button::new("src"))
-                                    .with_child(Button::new("docs")),
+                                    .with_child(live_label(&theme_reader, "Files"))
+                                    .with_child(live_button(&theme_reader, "src"))
+                                    .with_child(live_button(&theme_reader, "docs")),
                             ),
                         ),
-                        Background::new(
-                            theme.palette.surface_raised,
-                            Align::center(Label::new(
+                        live_fill(
+                            &theme_reader,
+                            |theme| theme.palette.surface_raised,
+                            Align::center(live_label(
+                                &theme_reader,
                                 "Stable content pane\nOverlay  ·  Rail  ·  Inline",
                             )),
                         ),
                     )
                     .name("Responsive workspace preview")
-                    .theme(theme)
+                    .theme_when(clone_dev_theme_reader(&theme_reader))
                     .breakpoints(AdaptiveBreakpoints::new(520.0, 760.0))
                     .state(sidebar_state)
                     .split_state(SplitState::pixels(180.0))
@@ -363,21 +393,22 @@ fn build_adaptive_workspace_example(theme_reader: DevThemeReader) -> impl Widget
 }
 
 fn build_split_pane_example(theme_reader: DevThemeReader) -> impl Widget {
-    let theme = theme_reader();
     demo_frame(
         SizedBox::new().height(150.0).with_child(
             SplitView::horizontal(
-                Background::new(
-                    theme.palette.control,
-                    Align::center(Label::new("Persisted pane")),
+                live_fill(
+                    &theme_reader,
+                    |theme| theme.palette.control,
+                    Align::center(live_label(&theme_reader, "Persisted pane")),
                 ),
-                Background::new(
-                    theme.palette.surface_raised,
-                    Align::center(Label::new("Flexible content")),
+                live_fill(
+                    &theme_reader,
+                    |theme| theme.palette.surface_raised,
+                    Align::center(live_label(&theme_reader, "Flexible content")),
                 ),
             )
             .name("Resizable split pane preview")
-            .theme(theme)
+            .theme_when(clone_dev_theme_reader(&theme_reader))
             .state(SplitState::pixels(210.0))
             .min_first(120.0)
             .min_second(180.0),
@@ -387,7 +418,6 @@ fn build_split_pane_example(theme_reader: DevThemeReader) -> impl Widget {
 }
 
 fn build_master_detail_example(theme_reader: DevThemeReader) -> impl Widget {
-    let theme = theme_reader();
     let navigation = MasterDetailState::default();
     let show_detail = navigation.clone();
     let show_master = navigation.clone();
@@ -395,30 +425,36 @@ fn build_master_detail_example(theme_reader: DevThemeReader) -> impl Widget {
     demo_frame(
         SizedBox::new().height(176.0).with_child(
             MasterDetail::new(
-                Background::new(
-                    theme.palette.control,
+                live_fill(
+                    &theme_reader,
+                    |theme| theme.palette.control,
                     Padding::all(
                         12.0,
                         Stack::vertical()
                             .spacing(8.0)
                             .alignment(Alignment::Stretch)
-                            .with_child(Label::new("Documents"))
-                            .with_child(Button::new("Open release notes").on_press(move || {
-                                show_detail.show_detail();
-                            })),
+                            .with_child(live_label(&theme_reader, "Documents"))
+                            .with_child(live_button(&theme_reader, "Open release notes").on_press(
+                                move || {
+                                    show_detail.show_detail();
+                                },
+                            )),
                     ),
                 ),
-                Background::new(
-                    theme.palette.surface_raised,
+                live_fill(
+                    &theme_reader,
+                    |theme| theme.palette.surface_raised,
                     Padding::all(
                         12.0,
                         Stack::vertical()
                             .spacing(8.0)
                             .alignment(Alignment::Stretch)
-                            .with_child(Label::new("Release notes detail"))
-                            .with_child(Button::new("Back to documents").on_press(move || {
-                                show_master.show_master();
-                            })),
+                            .with_child(live_label(&theme_reader, "Release notes detail"))
+                            .with_child(live_button(&theme_reader, "Back to documents").on_press(
+                                move || {
+                                    show_master.show_master();
+                                },
+                            )),
                     ),
                 ),
             )
@@ -437,11 +473,11 @@ fn build_wrapping_toolbar_example(theme_reader: DevThemeReader) -> impl Widget {
             .wrapping()
             .line_spacing(8.0)
             .divider(false)
-            .with_child(Button::primary("Run"))
-            .with_child(Button::new("Format"))
-            .with_child(Button::new("Inspect"))
-            .with_child(Button::new("Share"))
-            .with_child(Button::new("More actions")),
+            .with_child(Button::primary("Run").theme_when(clone_dev_theme_reader(&theme_reader)))
+            .with_child(live_button(&theme_reader, "Format"))
+            .with_child(live_button(&theme_reader, "Inspect"))
+            .with_child(live_button(&theme_reader, "Share"))
+            .with_child(live_button(&theme_reader, "More actions")),
         theme_reader,
     )
 }

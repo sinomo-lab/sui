@@ -283,7 +283,8 @@ pub struct NeutralRamp {
     pub subtle: Color,
     /// Cards, panes, and other content surfaces.
     pub panel: Color,
-    /// Floating surfaces: menus, popovers, dialogs, toasts.
+    /// Floating chrome that lifts off the panel, such as tooltips. Menus,
+    /// popovers, and dialogs paint the panel tier with a border and shadow.
     pub overlay: Color,
     /// Recessed neutral fill for tracks, tab strips, chips, and nested areas.
     pub control: Color,

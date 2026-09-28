@@ -864,7 +864,7 @@ fn build_light_theme_preview_reference_app(card_width: f32) -> Result<TestApp> {
                         24.0,
                         SizedBox::new()
                             .width(card_width)
-                            .height(super::ThemePreviewGrid::CARD_HEIGHT)
+                            .height(super::ThemePreviewGrid::MIN_CARD_HEIGHT)
                             .with_child(super::NamedSection::new(
                                 LIGHT_THEME_PREVIEW_CARD_NAME,
                                 theme_preview_card(
@@ -2518,6 +2518,62 @@ fn widget_book_theme_preview_grid_exposes_all_builtin_themes() -> Result<()> {
     assert!(card_bounds[1].x() < card_bounds[2].x());
     assert!(card_bounds[3].y() > card_bounds[0].y());
     assert_eq!(card_bounds[3].y(), card_bounds[4].y());
+
+    Ok(())
+}
+
+#[test]
+fn widget_book_theme_preview_cards_fit_wrapped_descriptions() -> Result<()> {
+    let app = build_default_theme_demo_app()?;
+    let window = app.main_window()?;
+
+    scroll_to_story_target(&window, StoryCase::ThemePreview, 2)?;
+    let snapshot = window.snapshot()?;
+    let node_bounds = |role: SemanticsRole, name: &str| {
+        snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == role && node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("missing {role:?} {name}"))
+            .bounds
+    };
+
+    // The neutral cards have the longest descriptions, which wrap onto a
+    // second line; their swatches must keep full size inside the card.
+    for (card_name, title) in [
+        (LIGHT_THEME_PREVIEW_CARD_NAME, "SUI light"),
+        (NEUTRAL_THEME_PREVIEW_CARD_NAME, "Neutral light"),
+        (DARK_THEME_PREVIEW_CARD_NAME, "SUI dark"),
+        (NEUTRAL_DARK_THEME_PREVIEW_CARD_NAME, "Neutral dark"),
+        (TRUE_BLACK_THEME_PREVIEW_CARD_NAME, "SUI true black"),
+    ] {
+        let card = node_bounds(SemanticsRole::GenericContainer, card_name);
+        for swatch_kind in ["base", "primary", "secondary"] {
+            let swatch = node_bounds(
+                SemanticsRole::ColorSwatch,
+                &format!("{title} {swatch_kind} swatch"),
+            );
+            assert!(
+                (swatch.height() - 28.0).abs() < 0.5,
+                "{title} {swatch_kind} swatch was squashed to {swatch:?}"
+            );
+            assert!(
+                swatch.max_y() <= card.max_y() + 0.5,
+                "{title} {swatch_kind} swatch {swatch:?} overflows its card {card:?}"
+            );
+        }
+    }
+
+    // Cards in the same row still share one height.
+    let first_row = [
+        LIGHT_THEME_PREVIEW_CARD_NAME,
+        NEUTRAL_THEME_PREVIEW_CARD_NAME,
+        DARK_THEME_PREVIEW_CARD_NAME,
+    ]
+    .map(|name| node_bounds(SemanticsRole::GenericContainer, name).height());
+    assert_eq!(first_row[0], first_row[1]);
+    assert_eq!(first_row[1], first_row[2]);
 
     Ok(())
 }

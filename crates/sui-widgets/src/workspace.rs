@@ -502,6 +502,7 @@ pub enum ResponsiveSidebarMode {
 /// constraints and a collapsible rail or inline pane in wider constraints.
 pub struct ResponsiveSidebar {
     theme: DefaultTheme,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: Option<String>,
     breakpoints: AdaptiveBreakpoints,
     state: ResponsiveSidebarState,
@@ -532,6 +533,7 @@ impl ResponsiveSidebar {
         let split_state = SplitState::pixels(280.0);
         Self {
             theme: DefaultTheme::default(),
+            theme_reader: None,
             name: None,
             breakpoints: AdaptiveBreakpoints::default(),
             state: ResponsiveSidebarState::new(),
@@ -554,7 +556,25 @@ impl ResponsiveSidebar {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = theme;
+        self.theme_reader = None;
         self
+    }
+
+    /// Resolve the theme on every paint so the overlay scrim follows live
+    /// theme switches.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(self.theme)
     }
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
@@ -758,7 +778,7 @@ impl Widget for ResponsiveSidebar {
     fn paint(&self, ctx: &mut PaintCtx) {
         self.content.paint(ctx);
         if self.mode == ResponsiveSidebarMode::OverlayOpen {
-            ctx.fill_bounds(self.theme.surfaces.overlay_scrim);
+            ctx.fill_bounds(self.resolved_theme().surfaces.overlay_scrim);
         }
         if self.sidebar_visible() {
             self.sidebar.paint(ctx);

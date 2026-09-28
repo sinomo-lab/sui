@@ -1470,27 +1470,26 @@ impl Widget for TwoAxisScrollPane {
 }
 
 impl ProjectSettingsPreview {
-    fn new(state: Rc<RefCell<WidgetBookState>>) -> Self {
+    fn new(state: Rc<RefCell<WidgetBookState>>, theme_reader: WidgetBookThemeReader) -> Self {
+        let body_label =
+            |text: &str| demo_label(&theme_reader, text, DemoTextRole::Body, DemoTextColor::Text);
         Self {
-            trigger: SingleChild::new(Button::new(DIALOG_TRIGGER_LABEL).min_width(220.0)),
+            trigger: SingleChild::new(
+                Button::new(DIALOG_TRIGGER_LABEL)
+                    .theme_when(clone_widget_book_theme_reader(&theme_reader))
+                    .min_width(220.0),
+            ),
             dialog: SingleChild::new(
                 Dialog::new(
                     DIALOG_TITLE,
                     Stack::vertical()
                         .spacing(10.0)
                         .alignment(Alignment::Stretch)
-                        .with_child(
-                            Label::new("Autosave every 90 seconds").theme(DefaultTheme::default()),
-                        )
-                        .with_child(
-                            Label::new("Export color profile: Display P3")
-                                .theme(DefaultTheme::default()),
-                        )
-                        .with_child(
-                            Label::new("Scratch disk: fast-local-ssd")
-                                .theme(DefaultTheme::default()),
-                        ),
+                        .with_child(body_label("Autosave every 90 seconds"))
+                        .with_child(body_label("Export color profile: Display P3"))
+                        .with_child(body_label("Scratch disk: fast-local-ssd")),
                 )
+                .theme_when(clone_widget_book_theme_reader(&theme_reader))
                 .description(
                     "Compact dialog framing for confirmations, settings, and import/export flows.",
                 )
@@ -1611,11 +1610,14 @@ impl Widget for ProjectSettingsPreview {
 
 struct ThemePreviewGrid {
     cards: WidgetChildren,
+    /// Natural card heights from the last measure pass. Rows size to their
+    /// tallest card so wrapped descriptions never squeeze card content.
+    card_heights: Vec<f32>,
 }
 
 impl ThemePreviewGrid {
     const GAP: f32 = 16.0;
-    const CARD_HEIGHT: f32 = 248.0;
+    const MIN_CARD_HEIGHT: f32 = 248.0;
 
     fn new() -> Self {
         let mut cards = WidgetChildren::with_capacity(5);
@@ -1661,7 +1663,10 @@ impl ThemePreviewGrid {
                 theme_preview_card(theme, title, action_label, input_label),
             ));
         }
-        Self { cards }
+        Self {
+            cards,
+            card_heights: Vec::new(),
+        }
     }
 
     fn columns_for_width(width: f32) -> usize {
@@ -1678,9 +1683,23 @@ impl ThemePreviewGrid {
         ((width - Self::GAP * columns.saturating_sub(1) as f32).max(0.0) / columns as f32).max(0.0)
     }
 
+    /// Height of each row: the tallest card in it, never below the minimum.
+    fn row_heights(&self, columns: usize) -> Vec<f32> {
+        (0..self.cards.len())
+            .step_by(columns.max(1))
+            .map(|start| {
+                self.card_heights
+                    .iter()
+                    .skip(start)
+                    .take(columns.max(1))
+                    .fold(Self::MIN_CARD_HEIGHT, |height, card| height.max(*card))
+            })
+            .collect()
+    }
+
     fn content_height(&self, columns: usize) -> f32 {
-        let rows = self.cards.len().div_ceil(columns) as f32;
-        rows * Self::CARD_HEIGHT + (rows - 1.0).max(0.0) * Self::GAP
+        let rows = self.row_heights(columns);
+        rows.iter().sum::<f32>() + rows.len().saturating_sub(1) as f32 * Self::GAP
     }
 }
 
@@ -1693,29 +1712,44 @@ impl Widget for ThemePreviewGrid {
         };
         let columns = Self::columns_for_width(width);
         let column_width = Self::column_width(width, columns);
-        let card_constraints = Constraints::tight(Size::new(column_width, Self::CARD_HEIGHT));
-        for index in 0..self.cards.len() {
-            self.cards.measure_child(index, ctx, card_constraints);
-        }
+        // Fix the width but let each card report its natural height.
+        let card_constraints = Constraints::new(
+            Size::new(column_width, Self::MIN_CARD_HEIGHT),
+            Size::new(column_width, f32::INFINITY),
+        );
+        self.card_heights = (0..self.cards.len())
+            .map(|index| {
+                self.cards
+                    .measure_child(index, ctx, card_constraints)
+                    .height
+            })
+            .collect();
         constraints.clamp(Size::new(width, self.content_height(columns)))
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         let columns = Self::columns_for_width(bounds.width());
         let column_width = Self::column_width(bounds.width(), columns);
-        for index in 0..self.cards.len() {
-            let column = index % columns;
-            let row = index / columns;
-            self.cards.arrange_child(
-                index,
-                ctx,
-                Rect::new(
-                    bounds.x() + column as f32 * (column_width + Self::GAP),
-                    bounds.y() + row as f32 * (Self::CARD_HEIGHT + Self::GAP),
-                    column_width,
-                    Self::CARD_HEIGHT,
-                ),
-            );
+        let row_heights = self.row_heights(columns);
+        let mut row_y = bounds.y();
+        for (row, row_height) in row_heights.iter().copied().enumerate() {
+            for column in 0..columns {
+                let index = row * columns + column;
+                if index >= self.cards.len() {
+                    break;
+                }
+                self.cards.arrange_child(
+                    index,
+                    ctx,
+                    Rect::new(
+                        bounds.x() + column as f32 * (column_width + Self::GAP),
+                        row_y,
+                        column_width,
+                        row_height,
+                    ),
+                );
+            }
+            row_y += row_height + Self::GAP;
         }
     }
 
@@ -1941,7 +1975,8 @@ fn hdr_theme_lab_card(
                         )
                         .with_child(
                             ColorSwatch::new(swatch_name, indicator_color)
-                                .size(Size::new(64.0, 28.0)),
+                                .size(Size::new(64.0, 28.0))
+                                .theme(theme),
                         )
                         .with_child(MaximumWidth::new(
                             520.0,
@@ -3175,7 +3210,8 @@ fn build_widget_book_gallery_with_theme_selection(
                         .with_child(SizedBox::new().width(260.0).with_child(
                             Separator::horizontal()
                                 .name(TOOLBAR_SEPARATOR_NAME)
-                                .inset(12.0),
+                                .inset(12.0)
+                                .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                         )),
                 )),
             ))
@@ -3552,7 +3588,10 @@ fn build_widget_book_gallery_with_theme_selection(
                     )
                     .with_child(
                         SizedBox::new().width(560.0).with_child(
-                            ProjectSettingsPreview::new(dialog_state),
+                            ProjectSettingsPreview::new(
+                                dialog_state,
+                                Rc::clone(&theme_reader),
+                            ),
                         ),
                     ),
             ))
@@ -5512,7 +5551,8 @@ fn build_canvas_and_media_gallery_with_theme(theme_reader: WidgetBookThemeReader
                                         "Canvas accent swatch",
                                         Color::rgba(0.12, 0.55, 0.88, 1.0),
                                     )
-                                    .size(Size::new(54.0, 30.0)),
+                                    .size(Size::new(54.0, 30.0))
+                                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                                 )
                                 .with_child(
                                     Image::new(WIDGET_BOOK_IMAGE_HANDLE)
@@ -5554,11 +5594,13 @@ fn build_color_and_imagery_story_with_theme(theme_reader: WidgetBookThemeReader)
                     .alignment(Alignment::Center)
                     .with_child(
                         ColorSwatch::new(COLOR_SWATCH_NAME, Color::rgba(0.12, 0.55, 0.88, 1.0))
-                            .size(Size::new(64.0, 36.0)),
+                            .size(Size::new(64.0, 36.0))
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                     )
                     .with_child(
                         ColorSwatch::new("Shadow swatch", Color::rgba(0.08, 0.10, 0.14, 0.84))
-                            .size(Size::new(64.0, 36.0)),
+                            .size(Size::new(64.0, 36.0))
+                            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
                     )
                     .with_child(demo_label(
                         &theme_reader,
@@ -6099,7 +6141,11 @@ fn build_color_validation_swatch_with_theme(
         Stack::vertical()
             .spacing(8.0)
             .alignment(Alignment::Center)
-            .with_child(ColorSwatch::new(name, color).size(Size::new(132.0, 56.0)))
+            .with_child(
+                ColorSwatch::new(name, color)
+                    .size(Size::new(132.0, 56.0))
+                    .theme_when(clone_widget_book_theme_reader(&theme_reader)),
+            )
             .with_child(demo_label(
                 &theme_reader,
                 name,
@@ -6453,6 +6499,7 @@ pub fn build_text_validation_surface_with_theme(
             .with_child(content),
     ))
     .name(TEXT_VALIDATION_SCROLL_NAME)
+    .theme_when(clone_widget_book_theme_reader(&theme_reader))
 }
 
 fn build_text_validation_probe_card_with_theme(
@@ -6536,7 +6583,8 @@ pub fn build_text_editing_benchmark_with_theme(theme_reader: WidgetBookThemeRead
             .name(TEXT_EDITING_BENCHMARK_SPLIT_NAME)
             .ratio(0.54)
             .min_first(420.0)
-            .min_second(360.0),
+            .min_second(360.0)
+            .theme_when(clone_widget_book_theme_reader(&theme_reader)),
     )
 }
 
