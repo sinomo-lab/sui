@@ -16,15 +16,15 @@ use sui_render_wgpu::{
     DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
     DebugSdrVisualization,
 };
-use sui_testing::{
-    Screenshot, TestApp, TestWindow, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
-    write_hdr_avif, write_hdr_exr,
-};
+use sui_testing::{Screenshot, TestApp, TestWindow};
 
 use super::registry::{Story, stories};
 use super::shell::RAIL_SCROLL_NAME;
 use super::{
     WIDGET_BOOK_SEARCH_NAME, WIDGET_BOOK_THEME_SWITCH_NAME, build_widget_book_application,
+};
+use crate::hdr_validation::report::{
+    final_output_sdr_white, output_diagnostics_report, write_capture_bundle,
 };
 use crate::theme_demo::build_theme_demo_application;
 use crate::validation::{COLOR_VALIDATION_VIEW_TITLE, build_color_validation_application};
@@ -233,94 +233,30 @@ fn write_hdr_validation_artifacts(output_root: &Path) -> Result<()> {
         "HDR-configured color validation surface with HDR debug captures.",
     )?;
 
-    let artifact = window.capture_debug_frame(DebugCaptureRequest {
-        stage: DebugCaptureStage::HdrIntermediate,
-        encoding: DebugCaptureEncoding::Exr,
-        sdr_visualization: DebugSdrVisualization::ToneMappedColor,
-    })?;
-    let DebugCaptureArtifact::HdrLinearRgbaF32(image) = artifact else {
+    let capture = |stage| {
+        window.capture_debug_frame(DebugCaptureRequest {
+            stage,
+            encoding: DebugCaptureEncoding::Exr,
+            sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+        })
+    };
+    let DebugCaptureArtifact::HdrLinearRgbaF32(image) =
+        capture(DebugCaptureStage::HdrIntermediate)?
+    else {
         return Err(Error::new(
             "HDR artifact capture did not produce an HDR intermediate frame",
         ));
     };
-
-    write_hdr_exr(&image, hdr_dir.join("hdr-intermediate.exr"))?;
-    write_hdr_avif(&image, hdr_dir.join("hdr-intermediate.avif"), 1.0)?;
-    hdr_luminance_heatmap(&image)?.write_png(hdr_dir.join("luminance-map.png"))?;
-    hdr_headroom_heatmap(&image, 1.0)?.write_png(hdr_dir.join("headroom-map.png"))?;
-    hdr_clip_mask(&image, 1.0)?.write_png(hdr_dir.join("clip-mask.png"))?;
-
-    let max_channel = image
-        .pixels()
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max);
-    let max_luminance = image
-        .pixels()
-        .chunks_exact(4)
-        .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
-        .fold(f32::NEG_INFINITY, f32::max);
-
-    let diagnostics_text = if let Some(diagnostics) = window_output_diagnostics(window.id()) {
-        format!(
-            "view={COLOR_VALIDATION_VIEW_TITLE}\nrequested_color_management_mode={:?}\nrequested_output_primaries={:?}\nrequested_dynamic_range_mode={:?}\nrequested_tone_mapping_mode={:?}\nrequested_sdr_content_brightness_nits={:.0}\nsupports_hdr={}\nnative_hdr_presentation_supported={}\npreferred_dynamic_range={:?}\nactive_output_strategy={:?}\nnotes={}\n",
-            diagnostics.requested_color_management_mode,
-            diagnostics.requested_output_primaries,
-            diagnostics.requested_dynamic_range_mode,
-            diagnostics.requested_tone_mapping_mode,
-            diagnostics.requested_sdr_content_brightness_nits,
-            diagnostics.display_capabilities.supports_hdr,
-            diagnostics
-                .display_capabilities
-                .native_hdr_presentation_supported,
-            diagnostics.display_capabilities.preferred_dynamic_range,
-            diagnostics.active_output_strategy,
-            diagnostics.display_capabilities.notes,
-        )
-    } else {
-        format!("view={COLOR_VALIDATION_VIEW_TITLE}\noutput_diagnostics=unavailable\n")
-    };
-    write_text(hdr_dir.join("output-diagnostics.txt"), &diagnostics_text)?;
-
-    let final_artifact = window.capture_debug_frame(DebugCaptureRequest {
-        stage: DebugCaptureStage::FinalComposed,
-        encoding: DebugCaptureEncoding::Exr,
-        sdr_visualization: DebugSdrVisualization::ToneMappedColor,
-    })?;
-    let (final_artifact_kind, final_max_channel, final_max_luminance) = match final_artifact {
-        DebugCaptureArtifact::HdrLinearRgbaF32(final_image) => {
-            write_hdr_exr(&final_image, hdr_dir.join("final-composed.exr"))?;
-            write_hdr_avif(&final_image, hdr_dir.join("final-composed.avif"), 1.0)?;
-            let max_channel = final_image
-                .pixels()
-                .iter()
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let max_luminance = final_image
-                .pixels()
-                .chunks_exact(4)
-                .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
-                .fold(f32::NEG_INFINITY, f32::max);
-            ("hdr", max_channel, max_luminance)
-        }
-        DebugCaptureArtifact::SdrRgba8(final_image) => {
-            Screenshot::new(
-                final_image.width(),
-                final_image.height(),
-                final_image.into_pixels(),
-            )?
-            .write_png(hdr_dir.join("final-composed.png"))?;
-            ("sdr", 1.0, 1.0)
-        }
-    };
-
-    write_text(
-        hdr_dir.join("capture-metrics.txt"),
-        &format!(
-            "intermediate_max_channel={max_channel}\nintermediate_max_luminance={max_luminance}\nfinal_artifact_kind={final_artifact_kind}\nfinal_max_channel={final_max_channel}\nfinal_max_luminance={final_max_luminance}\n"
-        ),
+    let final_output = capture(DebugCaptureStage::FinalComposed)?;
+    let diagnostics = window_output_diagnostics(window.id());
+    write_capture_bundle(
+        &hdr_dir,
+        &image,
+        &final_output,
+        final_output_sdr_white(diagnostics.as_ref()),
+        &output_diagnostics_report(COLOR_VALIDATION_VIEW_TITLE, diagnostics.as_ref()),
+        true,
     )?;
-
     Ok(())
 }
 

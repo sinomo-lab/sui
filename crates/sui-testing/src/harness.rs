@@ -15,8 +15,9 @@ use sui_core::{
 };
 use sui_platform::{
     AccessibilitySnapshot, HeadlessPlatform, WindowOutputDiagnostics,
-    detect_window_display_capabilities, publish_frame_performance,
-    publish_window_output_diagnostics, resolve_sdr_content_brightness_nits,
+    detect_window_display_capabilities, has_pending_window_debug_captures,
+    publish_frame_performance, publish_window_output_diagnostics,
+    resolve_sdr_content_brightness_nits, service_window_debug_captures,
 };
 use sui_render_wgpu::{
     ColorManagementMode, DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions,
@@ -973,7 +974,7 @@ impl LiveHarnessApp {
     }
 
     fn request_redraw_if_needed(&mut self, window_id: WindowId) -> Result<()> {
-        if !self.runtime.needs_render(window_id)? {
+        if !self.runtime.needs_render(window_id)? && !has_pending_window_debug_captures(window_id) {
             return Ok(());
         }
 
@@ -1202,6 +1203,11 @@ impl LiveHarnessApp {
                     &self.renderer,
                     renderer_time_ms,
                 );
+            }
+
+            // Captures the app asked for, from the frame just drawn.
+            for token in service_window_debug_captures(&mut self.renderer, window_id) {
+                self.runtime.wake_async(window_id, token)?;
             }
         }
 

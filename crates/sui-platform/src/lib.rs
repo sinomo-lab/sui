@@ -4,6 +4,7 @@ mod accessibility;
 #[cfg(target_os = "android")]
 #[allow(unsafe_code)]
 mod android_clipboard;
+mod debug_capture;
 mod desktop;
 mod display_capabilities;
 mod file_dialog;
@@ -40,6 +41,10 @@ pub(crate) use accessibility::AccessibilityBridge;
 pub use accessibility::{
     AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget,
     AccessibilitySnapshot, validate_accessibility_snapshot,
+};
+pub use debug_capture::{
+    DebugCaptureTicket, has_pending_window_debug_captures, request_window_debug_capture,
+    service_window_debug_captures, take_window_debug_capture,
 };
 #[cfg(target_os = "android")]
 pub use desktop::AndroidApp;
@@ -145,6 +150,27 @@ pub(crate) fn map_window_color_management(
 pub(crate) fn clear_window_performance(window_id: WindowId) {
     clear_window_performance_snapshot(window_id);
     clear_window_output_diagnostics(window_id);
+    debug_capture::clear_window_debug_captures(window_id);
+}
+
+/// Capture `window_id`'s last frame for the app. Browsers cannot read frames
+/// back synchronously, so captures are native-only.
+pub(crate) fn capture_window_for_app(
+    renderer: &mut WgpuRenderer,
+    window_id: WindowId,
+    request: sui_render_wgpu::DebugCaptureRequest,
+) -> sui_core::Result<sui_render_wgpu::DebugCaptureArtifact> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        renderer.capture_last_frame_debug(window_id, request)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (renderer, window_id, request);
+        Err(sui_core::Error::new(
+            "debug captures are not available in the browser, which cannot read frames back synchronously",
+        ))
+    }
 }
 
 fn retained_packet_rebuild_diagnostics(

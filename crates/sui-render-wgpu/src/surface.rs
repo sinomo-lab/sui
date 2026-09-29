@@ -122,6 +122,10 @@ impl WgpuRenderer {
             self.submit_frame_encoder(encoder, &mut frame_stats);
             frame_stats
         } else {
+            self.shared
+                .as_mut()
+                .expect("renderer shared state initialized")
+                .sdr_fit = crate::output::SdrFit::for_tone_mapping(tone_mapping);
             self.submit_prepared_scene(prepared, format, &view)?
         };
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;

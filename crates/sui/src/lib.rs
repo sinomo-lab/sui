@@ -89,11 +89,12 @@ pub use sui_platform::AndroidApp;
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
     AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget,
-    AccessibilitySnapshot, DesktopAutomationAction, DesktopAutomationConfig, DesktopExtension,
-    DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter, FileDialogFuture,
-    FileDialogMode, FileDialogRequest, FileDialogSelection, FileDialogService, HeadlessPlatform,
-    NativeFileDialogs, PlatformFile, PlatformWindow, Waker, WindowOutputDiagnostics,
-    show_file_dialog, validate_accessibility_snapshot, window_output_diagnostics,
+    AccessibilitySnapshot, DebugCaptureTicket, DesktopAutomationAction, DesktopAutomationConfig,
+    DesktopExtension, DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter,
+    FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection, FileDialogService,
+    HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker,
+    WindowOutputDiagnostics, request_window_debug_capture, show_file_dialog,
+    take_window_debug_capture, validate_accessibility_snapshot, window_output_diagnostics,
 };
 pub use sui_reactive::{
     Change as ObservableChange, Observable, Observer, Selector, Signal, SourceId, Subscription,
@@ -101,8 +102,11 @@ pub use sui_reactive::{
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
-    RendererCapabilities, RendererInterop, StemDarkening, TextCoveragePolicy, TextHinting,
-    WgpuExternalTextureContext, WgpuExternalTextureRegistry, WgpuRenderer,
+    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+    DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, HdrRgbaImage,
+    OutputStrategy, RendererCapabilities, RendererInterop, RequestedToneMappingMode, RgbaImage,
+    StemDarkening, TextCoveragePolicy, TextHinting, WgpuExternalTextureContext,
+    WgpuExternalTextureRegistry, WgpuRenderer, fit_to_sdr,
 };
 pub use sui_runtime::{
     AnimateCtx, Application as RuntimeApplication, ArrangeCtx, AsyncTaskInspectorSnapshot,

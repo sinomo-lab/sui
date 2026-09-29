@@ -102,12 +102,88 @@ pub enum RequestedColorManagementMode {
     PreferHdr,
 }
 
+/// How extended-range colors fit an SDR output. Colors within SDR range
+/// pass through unchanged in every mode, so SDR content looks as authored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RequestedToneMappingMode {
+    /// `Clamp` on SDR outputs; native HDR outputs present extended range.
     #[default]
     Automatic,
+    /// Clip highlights while keeping their hue: the brightest channel lands
+    /// at SDR white and the others keep their ratio to it.
     Clamp,
+    /// Clip highlights like `Clamp`, then turn the energy above SDR white
+    /// toward white along a Reinhard curve, so brighter highlights still read
+    /// brighter.
     Reinhard,
+}
+
+/// Fit a linear color to the SDR range as `mode` does on an SDR output. The
+/// same function runs on the GPU; this is it for inspection and tests.
+pub fn fit_to_sdr(color: [f32; 3], mode: RequestedToneMappingMode) -> [f32; 3] {
+    SdrFit::for_tone_mapping(mode).apply(color)
+}
+
+/// How a pipeline fits colors to its target (see `shaders/sdr_fit.wgsl`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) enum SdrFit {
+    /// Keep extended range: float targets and native HDR output.
+    None,
+    #[default]
+    Clip,
+    RollOff,
+}
+
+impl SdrFit {
+    pub(crate) const fn for_tone_mapping(mode: RequestedToneMappingMode) -> Self {
+        match mode {
+            RequestedToneMappingMode::Automatic | RequestedToneMappingMode::Clamp => Self::Clip,
+            RequestedToneMappingMode::Reinhard => Self::RollOff,
+        }
+    }
+
+    /// The fit an output transform applies for `strategy`.
+    pub(crate) const fn for_output(
+        strategy: OutputStrategy,
+        mode: RequestedToneMappingMode,
+    ) -> Self {
+        match strategy {
+            OutputStrategy::HdrNativeSurface { .. } => Self::None,
+            _ => Self::for_tone_mapping(mode),
+        }
+    }
+
+    pub(crate) const fn shader_value(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Clip => 1,
+            Self::RollOff => 2,
+        }
+    }
+
+    pub(crate) fn apply(self, color: [f32; 3]) -> [f32; 3] {
+        let peak = color[0].max(color[1]).max(color[2]);
+        if self == Self::None || peak <= 1.0 {
+            return color;
+        }
+        let hue = color.map(|channel| channel / peak);
+        match self {
+            Self::RollOff => {
+                let toward_white = 1.0 - 1.0 / peak;
+                hue.map(|channel| channel + (1.0 - channel) * toward_white)
+            }
+            _ => hue,
+        }
+    }
+}
+
+/// Whether draws into `format` keep extended-range values, so they need no
+/// fit before the output transform.
+pub(crate) fn target_keeps_extended_range(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+    )
 }
 
 pub const DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS: f32 = 203.0;
@@ -315,6 +391,10 @@ impl WgpuRenderer {
             self.submit_frame_encoder(encoder, &mut frame_stats);
             Ok(frame_stats)
         } else {
+            self.shared
+                .as_mut()
+                .expect("renderer shared state initialized")
+                .sdr_fit = SdrFit::for_tone_mapping(requested_tone_mapping);
             self.submit_prepared_scene(prepared, final_format, &final_view)
         }
     }
@@ -503,14 +583,8 @@ impl WgpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<()> {
         let prepare_started = self.runtime_diagnostics_enabled.then(Instant::now);
-        let resolved_tone_mapping = match strategy {
-            OutputStrategy::HdrNativeSurface { .. } => 0,
-            _ => match requested_tone_mapping {
-                RequestedToneMappingMode::Automatic => 1,
-                RequestedToneMappingMode::Clamp => 1,
-                RequestedToneMappingMode::Reinhard => 2,
-            },
-        };
+        let resolved_tone_mapping =
+            SdrFit::for_output(strategy, requested_tone_mapping).shader_value();
         let shared = self
             .shared
             .as_mut()
@@ -722,29 +796,13 @@ pub(crate) fn apply_output_transform_for_testing(
         color[3],
     ];
 
-    let transformed = match strategy {
-        OutputStrategy::HdrNativeSurface { .. } => [scaled[0], scaled[1], scaled[2], scaled[3]],
-        _ => match mode {
-            RequestedToneMappingMode::Automatic => match strategy {
-                OutputStrategy::SdrSurface { .. }
-                | OutputStrategy::WideGamutSurface { .. }
-                | OutputStrategy::HdrIntermediateThenToneMap { .. } => {
-                    tone_map_linear_color(scaled, RequestedToneMappingMode::Clamp)
-                }
-                OutputStrategy::HdrNativeSurface { .. } => unreachable!(),
-            },
-            RequestedToneMappingMode::Clamp => {
-                tone_map_linear_color(scaled, RequestedToneMappingMode::Clamp)
-            }
-            RequestedToneMappingMode::Reinhard => {
-                tone_map_linear_color(scaled, RequestedToneMappingMode::Reinhard)
-            }
-        },
-    };
-
-    let [red, green, blue] =
-        linear_srgb_to_output_primaries([transformed[0], transformed[1], transformed[2]], strategy);
-    [red, green, blue, transformed[3]]
+    let fit = SdrFit::for_output(strategy, mode);
+    let mut output = linear_srgb_to_output_primaries([scaled[0], scaled[1], scaled[2]], strategy);
+    if fit != SdrFit::None {
+        output = output.map(|channel| channel.max(0.0));
+    }
+    let [red, green, blue] = fit.apply(output);
+    [red, green, blue, scaled[3].clamp(0.0, 1.0)]
 }
 
 #[cfg(test)]
@@ -760,26 +818,6 @@ pub(crate) fn linear_srgb_to_output_primaries(
             (0.017_082_63 * color[0]) + (0.072_397_43 * color[1]) + (0.910_519_96 * color[2]),
         ],
     }
-}
-
-#[cfg(test)]
-pub(crate) fn tone_map_linear_color(color: [f32; 4], mode: RequestedToneMappingMode) -> [f32; 4] {
-    let transform = |channel: f32| match mode {
-        RequestedToneMappingMode::Automatic | RequestedToneMappingMode::Clamp => {
-            channel.clamp(0.0, 1.0)
-        }
-        RequestedToneMappingMode::Reinhard => {
-            let channel = channel.max(0.0);
-            channel / (1.0 + channel)
-        }
-    };
-
-    [
-        transform(color[0]),
-        transform(color[1]),
-        transform(color[2]),
-        color[3].clamp(0.0, 1.0),
-    ]
 }
 
 pub(crate) fn requested_output_primaries(

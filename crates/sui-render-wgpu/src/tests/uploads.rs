@@ -294,8 +294,9 @@ fn output_resources_reuse_bindings_but_update_color_policy_and_resized_source() 
     );
     let captured = renderer.capture_rgba(window).unwrap();
     let pixel = &captured.pixels()[0..4];
+    // Reinhard turns the red highlight's extra energy toward white.
     assert!(
-        pixel[0] < 255 && pixel[0] > 200,
+        pixel[0] == 255 && pixel[1] < 255 && pixel[1] > 200,
         "tone mapping must update the reused uniform: {pixel:?}"
     );
 

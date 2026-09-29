@@ -149,12 +149,13 @@ pub(crate) fn hdr_image_to_sdr_rgba(
             DebugSdrVisualization::ToneMappedColor => {
                 // Native HDR final targets store SDR white above 1.0. Divide that
                 // headroom back out, convert the output primaries to linear sRGB,
-                // then clamp during sRGB encoding. SDR-authored sRGB colors round
-                // back to their original PNG bytes; HDR values overflow to white.
+                // then fit highlights as an SDR output would, keeping their hue.
+                // SDR-authored sRGB colors round back to their original PNG bytes.
+                let fitted = crate::output::SdrFit::Clip.apply(normalized);
                 pixels.extend_from_slice(&[
-                    linear_to_srgb_capture_u8(normalized[0]),
-                    linear_to_srgb_capture_u8(normalized[1]),
-                    linear_to_srgb_capture_u8(normalized[2]),
+                    linear_to_srgb_capture_u8(fitted[0]),
+                    linear_to_srgb_capture_u8(fitted[1]),
+                    linear_to_srgb_capture_u8(fitted[2]),
                     linear_alpha_to_capture_u8(rgba[3]),
                 ]);
             }

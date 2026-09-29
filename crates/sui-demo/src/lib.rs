@@ -7,6 +7,7 @@ mod command_demo;
 mod demo_support;
 mod drag_drop_demo;
 mod editorial_demo;
+mod hdr_validation;
 mod layout_demo;
 pub mod live_performance;
 mod markdown_demo;

@@ -6,13 +6,19 @@ use std::{
 use crate::benchmarks::{
     build_retained_text_benchmark_with_theme, build_text_editing_benchmark_with_theme,
 };
+#[cfg(test)]
+use crate::hdr_validation::controls::USE_SYSTEM_SDR_BRIGHTNESS_LABEL;
+use crate::hdr_validation::controls::{
+    self as output_controls, COLOR_MANAGEMENT_MODE_NAME, DYNAMIC_RANGE_MODE_NAME,
+    OUTPUT_PRIMARIES_NAME, SDR_CONTENT_BRIGHTNESS_NAME, TONE_MAPPING_MODE_NAME,
+};
+use crate::hdr_validation::{OutputOptions, build_hdr_validation_surface};
 use crate::live_performance::LivePerformanceRoot;
 use crate::theme_demo::{
     build_theme_demo_surface_with_theme, hdr_theme_lab_mode, set_hdr_theme_lab_mode,
 };
 use crate::validation::{
-    build_color_validation_surface_with_theme, build_text_rendering_comparison_surface_with_theme,
-    build_text_validation_surface_with_theme,
+    build_text_rendering_comparison_surface_with_theme, build_text_validation_surface_with_theme,
 };
 #[cfg(test)]
 use crate::widget_book::build_widget_book_gallery;
@@ -21,9 +27,8 @@ use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
     TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
-    WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
-    WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
+    WidgetPodVisitor, WindowEvent, WindowId, WindowOutputDiagnostics, WindowRenderOptions,
+    WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, default_sui_logo_image,
     paint_aligned_text, paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
 };
 
@@ -120,23 +125,12 @@ const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
 const DEMO_TEXT_HINTING_MAX_PPEM_LIMIT: f32 = 96.0;
 const DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM: f32 = 18.0;
 const DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT: f32 = 0.08;
-const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
-const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
-const DYNAMIC_RANGE_MODE_NAME: &str = "Dynamic range";
-const TONE_MAPPING_MODE_NAME: &str = "Tone mapping";
-const SDR_CONTENT_BRIGHTNESS_NAME: &str = "SDR content brightness";
-const USE_SYSTEM_SDR_BRIGHTNESS_LABEL: &str = "Use system SDR brightness";
 const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
 const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
 const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
 const SETTINGS_SCROLL_NAME: &str = "Settings controls";
 #[cfg(test)]
 const SETTINGS_SCROLL_BAR_NAME: &str = "Settings controls vertical scroll bar";
-const COLOR_MANAGEMENT_MODE_OPTIONS: [&str; 4] =
-    ["Automatic", "Force SDR", "Prefer wide gamut", "Prefer HDR"];
-const OUTPUT_PRIMARIES_OPTIONS: [&str; 3] = ["Automatic", "sRGB", "Display P3"];
-const DYNAMIC_RANGE_MODE_OPTIONS: [&str; 3] = ["Automatic", "SDR", "HDR"];
-const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
 const TEXT_COVERAGE_POLICY_OPTIONS: [&str; 5] = [
     "Perceptual",
     "Linear",
@@ -626,12 +620,15 @@ impl DevBrowserShell {
         let tab_scroll_to_end = Rc::new(Cell::new(false));
         let theme_reader = state.theme_reader();
         let command_demo_state = CommandDemoState::new();
+        // Settings and the HDR validation page edit the same output options.
+        let output_options = OutputOptions::shared(Rc::new(RefCell::new(render_options)));
         let demos = build_dev_demo_entries(
             Rc::clone(&theme_reader),
             command_demo_state.clone(),
             DevAppTheme {
                 state: state.clone(),
             },
+            output_options.clone(),
         );
         if let Some(index) =
             initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
@@ -773,7 +770,7 @@ impl DevBrowserShell {
             settings_window: SingleChild::new(FloatingSettingsWindow::new(
                 state.clone(),
                 build_render_settings_tab_with_options(
-                    render_options,
+                    output_options,
                     Rc::clone(&theme_reader),
                     state,
                 ),
@@ -1949,6 +1946,7 @@ fn build_dev_demo_entries(
     theme_reader: DevThemeReader,
     command_demo_state: CommandDemoState,
     app_theme: DevAppTheme,
+    output_options: OutputOptions,
 ) -> Vec<DevDemo> {
     macro_rules! themed_demo {
         ($title:expr, $description:expr, $icon:expr, $accent:expr, |$theme:ident| $child:expr) => {{
@@ -2037,10 +2035,10 @@ fn build_dev_demo_entries(
         ),
         themed_demo!(
             HDR_VALIDATION_TAB_LABEL,
-            "HDR, color-management, and tone-mapping validation surface.",
+            "Headroom, highlight fitting, wide gamut, and banding probes, with output controls and capture.",
             IconGlyph::Maximize,
             DecorativeHue::Amber,
-            |theme| build_color_validation_surface_with_theme(theme)
+            |theme| build_hdr_validation_surface(theme, output_options)
         ),
         themed_demo!(
             LAYOUT_TAB_LABEL,
@@ -2284,76 +2282,6 @@ fn update_text_coverage_policy_selection(state: &mut WindowRenderOptions, index:
     };
 }
 
-fn color_management_mode_selected_index(mode: WindowColorManagementMode) -> usize {
-    match mode {
-        WindowColorManagementMode::Automatic => 0,
-        WindowColorManagementMode::ForceSdr => 1,
-        WindowColorManagementMode::PreferWideGamut => 2,
-        WindowColorManagementMode::PreferHdr => 3,
-    }
-}
-
-fn update_color_management_mode_selection(state: &mut WindowRenderOptions, index: usize) {
-    state.color_management_mode = match index {
-        0 => WindowColorManagementMode::Automatic,
-        1 => WindowColorManagementMode::ForceSdr,
-        2 => WindowColorManagementMode::PreferWideGamut,
-        3 => WindowColorManagementMode::PreferHdr,
-        _ => state.color_management_mode,
-    };
-}
-
-fn output_primaries_selected_index(primaries: WindowOutputColorPrimaries) -> usize {
-    match primaries {
-        WindowOutputColorPrimaries::Automatic => 0,
-        WindowOutputColorPrimaries::Srgb => 1,
-        WindowOutputColorPrimaries::DisplayP3 => 2,
-    }
-}
-
-fn update_output_primaries_selection(state: &mut WindowRenderOptions, index: usize) {
-    state.output_color_primaries = match index {
-        0 => WindowOutputColorPrimaries::Automatic,
-        1 => WindowOutputColorPrimaries::Srgb,
-        2 => WindowOutputColorPrimaries::DisplayP3,
-        _ => state.output_color_primaries,
-    };
-}
-
-fn dynamic_range_mode_selected_index(mode: WindowDynamicRangeMode) -> usize {
-    match mode {
-        WindowDynamicRangeMode::Automatic => 0,
-        WindowDynamicRangeMode::StandardDynamicRange => 1,
-        WindowDynamicRangeMode::HighDynamicRange => 2,
-    }
-}
-
-fn update_dynamic_range_mode_selection(state: &mut WindowRenderOptions, index: usize) {
-    state.dynamic_range_mode = match index {
-        0 => WindowDynamicRangeMode::Automatic,
-        1 => WindowDynamicRangeMode::StandardDynamicRange,
-        2 => WindowDynamicRangeMode::HighDynamicRange,
-        _ => state.dynamic_range_mode,
-    };
-}
-
-fn tone_mapping_mode_selected_index(mode: WindowToneMappingMode) -> usize {
-    match mode {
-        WindowToneMappingMode::Automatic => 0,
-        WindowToneMappingMode::Clamp => 1,
-        WindowToneMappingMode::Reinhard => 2,
-    }
-}
-
-fn update_tone_mapping_mode_selection(state: &mut WindowRenderOptions, index: usize) {
-    state.tone_mapping_mode = match index {
-        0 => WindowToneMappingMode::Automatic,
-        1 => WindowToneMappingMode::Clamp,
-        2 => WindowToneMappingMode::Reinhard,
-        _ => state.tone_mapping_mode,
-    };
-}
-
 fn hdr_theme_mode_label(mode: HdrThemeMode) -> &'static str {
     match mode {
         HdrThemeMode::Disabled => "Disabled (SDR baseline)",
@@ -2391,7 +2319,7 @@ fn output_policy_label(strategy_debug: &str) -> &'static str {
     }
 }
 
-fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
+pub(crate) fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
     let source = if diagnostics.use_system_sdr_content_brightness
         && diagnostics.system_sdr_content_brightness_nits.is_some()
     {
@@ -2784,26 +2712,34 @@ impl Widget for SdrContentBrightnessStatus {
 struct RenderSettingsTab {
     content: SingleChild,
     state: Rc<RefCell<WindowRenderOptions>>,
+    output_options: OutputOptions,
     applied: Option<WindowRenderOptions>,
     last_hdr_theme_mode: HdrThemeMode,
 }
 
+/// The options a window renders with when none are set: the renderer's own
+/// defaults.
+pub(crate) fn default_render_options() -> WindowRenderOptions {
+    let renderer = WgpuRenderer::new();
+    WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
+        .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
+        .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
+            renderer.text_coverage_policy(),
+        ))
+}
+
 impl RenderSettingsTab {
     fn default_options() -> WindowRenderOptions {
-        let renderer = WgpuRenderer::new();
-        WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
-            .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
-            .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
-                renderer.text_coverage_policy(),
-            ))
+        default_render_options()
     }
 
     fn with_initial_options(
-        initial: WindowRenderOptions,
+        output_options: OutputOptions,
         theme_reader: DevThemeReader,
         shell_state: DevShellState,
     ) -> Self {
-        let state = Rc::new(RefCell::new(initial));
+        let state = output_options.state();
+        let initial = *state.borrow();
         let performance_overlay_state = shell_state.clone();
         let toggle_state = Rc::clone(&state);
         let width_state = Rc::clone(&state);
@@ -2815,12 +2751,6 @@ impl RenderSettingsTab {
         let stem_darkening_toggle_state = Rc::clone(&state);
         let stem_darkening_amount_state = Rc::clone(&state);
         let stem_darkening_max_ppem_state = Rc::clone(&state);
-        let color_management_state = Rc::clone(&state);
-        let output_primaries_state = Rc::clone(&state);
-        let dynamic_range_state = Rc::clone(&state);
-        let tone_mapping_state = Rc::clone(&state);
-        let sdr_content_brightness_state = Rc::clone(&state);
-        let system_sdr_content_brightness_state = Rc::clone(&state);
         let current_hdr_theme_mode = hdr_theme_lab_mode();
 
         let content = ScrollView::vertical(Padding::all(
@@ -3051,53 +2981,25 @@ impl RenderSettingsTab {
                         Rc::clone(&theme_reader),
                         COLOR_MANAGEMENT_MODE_NAME,
                         280.0,
-                        Select::new(COLOR_MANAGEMENT_MODE_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .options(COLOR_MANAGEMENT_MODE_OPTIONS)
-                            .selected(color_management_mode_selected_index(initial.color_management_mode))
-                            .on_change(move |index, _| {
-                                let mut state = color_management_state.borrow_mut();
-                                update_color_management_mode_selection(&mut state, index);
-                            }),
+                        output_controls::color_management_select(&theme_reader, &output_options),
                     ))
                     .with_child(labeled_settings_control(
                         Rc::clone(&theme_reader),
                         OUTPUT_PRIMARIES_NAME,
                         240.0,
-                        Select::new(OUTPUT_PRIMARIES_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .options(OUTPUT_PRIMARIES_OPTIONS)
-                            .selected(output_primaries_selected_index(initial.output_color_primaries))
-                            .on_change(move |index, _| {
-                                let mut state = output_primaries_state.borrow_mut();
-                                update_output_primaries_selection(&mut state, index);
-                            }),
+                        output_controls::output_primaries_select(&theme_reader, &output_options),
                     ))
                     .with_child(labeled_settings_control(
                         Rc::clone(&theme_reader),
                         DYNAMIC_RANGE_MODE_NAME,
                         240.0,
-                        Select::new(DYNAMIC_RANGE_MODE_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .options(DYNAMIC_RANGE_MODE_OPTIONS)
-                            .selected(dynamic_range_mode_selected_index(initial.dynamic_range_mode))
-                            .on_change(move |index, _| {
-                                let mut state = dynamic_range_state.borrow_mut();
-                                update_dynamic_range_mode_selection(&mut state, index);
-                            }),
+                        output_controls::dynamic_range_select(&theme_reader, &output_options),
                     ))
                     .with_child(labeled_settings_control(
                         Rc::clone(&theme_reader),
                         TONE_MAPPING_MODE_NAME,
                         240.0,
-                        Select::new(TONE_MAPPING_MODE_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .options(TONE_MAPPING_MODE_OPTIONS)
-                            .selected(tone_mapping_mode_selected_index(initial.tone_mapping_mode))
-                            .on_change(move |index, _| {
-                                let mut state = tone_mapping_state.borrow_mut();
-                                update_tone_mapping_mode_selection(&mut state, index);
-                            }),
+                        output_controls::tone_mapping_select(&theme_reader, &output_options),
                     ))
                     .with_child(labeled_settings_control(
                         Rc::clone(&theme_reader),
@@ -3107,29 +3009,15 @@ impl RenderSettingsTab {
                             .spacing(8.0)
                             .alignment(Alignment::Start)
                             .with_child(SizedBox::new().width(220.0).with_child(
-                                NumberInput::new(SDR_CONTENT_BRIGHTNESS_NAME)
-                                    .theme_when(clone_dev_theme_reader(&theme_reader))
-                                    .range(48.0, 1000.0)
-                                    .step(1.0)
-                                    .precision(0)
-                                    .value(initial.sdr_content_brightness_nits as f64)
-                                    .on_change(move |value| {
-                                        sdr_content_brightness_state
-                                            .borrow_mut()
-                                            .sdr_content_brightness_nits =
-                                            value.clamp(48.0, 1000.0) as f32;
-                                    }),
+                                output_controls::sdr_content_brightness_input(
+                                    &theme_reader,
+                                    &output_options,
+                                ),
                             ))
-                            .with_child(
-                                Checkbox::new(USE_SYSTEM_SDR_BRIGHTNESS_LABEL)
-                                    .theme_when(clone_dev_theme_reader(&theme_reader))
-                                    .checked(initial.use_system_sdr_content_brightness)
-                                    .on_toggle(move |checked| {
-                                        system_sdr_content_brightness_state
-                                            .borrow_mut()
-                                            .use_system_sdr_content_brightness = checked;
-                                    }),
-                            )
+                            .with_child(output_controls::system_sdr_brightness_checkbox(
+                                &theme_reader,
+                                &output_options,
+                            ))
                             .with_child(SdrContentBrightnessStatus::new(Rc::clone(&theme_reader))),
                     ))
                     .with_child(labeled_settings_control(
@@ -3163,12 +3051,14 @@ impl RenderSettingsTab {
         Self {
             content: SingleChild::new(content),
             state,
+            output_options,
             applied: None,
             last_hdr_theme_mode: current_hdr_theme_mode,
         }
     }
 
     fn sync_render_options(&mut self, ctx: &mut EventCtx, rerender: bool) {
+        self.output_options.bind_window(ctx.window_id());
         let options = self.state.borrow().clamped();
         if self.applied == Some(options) {
             return;
@@ -3229,7 +3119,7 @@ impl Widget for RenderSettingsTab {
 }
 
 fn build_render_settings_tab_with_options(
-    options: WindowRenderOptions,
+    options: OutputOptions,
     theme_reader: DevThemeReader,
     shell_state: DevShellState,
 ) -> impl Widget {
@@ -4121,6 +4011,50 @@ mod tests {
             .with_name(crate::validation::COLOR_VALIDATION_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
+    fn hdr_validation_page_and_settings_edit_the_same_output_options() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, HDR_VALIDATION_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::ComboBox)
+            .with_name(TONE_MAPPING_MODE_NAME)
+            .click()?;
+        // Automatic, then Clamp, then Reinhard.
+        window.focused().press("ArrowDown")?;
+        window.focused().press("ArrowDown")?;
+        window.focused().press("Enter")?;
+        window.run_until_idle()?;
+        assert_eq!(
+            sui::window_render_options(window.id()).map(|options| options.tone_mapping_mode),
+            Some(WindowToneMappingMode::Reinhard)
+        );
+
+        open_dev_shell_settings(&window)?;
+        let snapshot = window.snapshot()?;
+        let tone_mapping_selects = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.role == SemanticsRole::ComboBox
+                    && node.name.as_deref() == Some(TONE_MAPPING_MODE_NAME)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tone_mapping_selects.len(),
+            2,
+            "expected the page's and Settings' tone mapping selects"
+        );
+        for select in tone_mapping_selects {
+            assert_eq!(
+                select.value,
+                Some(SemanticsValue::Text("Reinhard".to_string()))
+            );
+        }
         Ok(())
     }
 

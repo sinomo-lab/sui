@@ -29,8 +29,7 @@ fn gaussian_box_coverage(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>, sigma: f32) -
     let s = max(sigma, 1e-3); let d = sd_round_box(p, b, r); let edge = 1.4142136 * s;
     return 1.0 - smoothstep(-edge, edge, d);
 }
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_shade(in: VsOut) -> vec4<f32> {
     let half = max(in.p0.xy, vec2<f32>(0.0));
     let mode = in.p0.z; let feather = in.p0.w;
     let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
@@ -58,4 +57,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(rgb / a, a);
     }
     return vec4<f32>(in.color.rgb, in.color.a * fill_cov);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fit_straight(fs_shade(in));
 }

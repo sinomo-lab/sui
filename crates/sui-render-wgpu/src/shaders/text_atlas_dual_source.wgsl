@@ -1,6 +1,4 @@
 
-enable dual_source_blending;
-
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
@@ -142,8 +140,7 @@ fn lcd_perceptual_coverage(
     return select(coverage,vec3<f32>(1.0),c >= vec3<f32>(1.0));
 }
 
-@fragment
-fn fs_main(in: VsOut) -> FragmentOutput {
+fn fs_shade(in: VsOut) -> FragmentOutput {
     // Atlas bounds are integer texels. Recover them from packed UNORM16 values
     // before interpolation, so packing error cannot blur pixel-aligned text.
     let atlas_size = vec2<f32>(textureDimensions(text_atlas_texture));
@@ -183,4 +180,11 @@ fn fs_main(in: VsOut) -> FragmentOutput {
 
     let coverage = apply_text_coverage(sampled.a, in.metadata.z, in.metadata.w);
     return dual_source(in.color.rgb, vec3<f32>(coverage * in.color.a));
+}
+
+@fragment
+fn fs_main(in: VsOut) -> FragmentOutput {
+    var out = fs_shade(in);
+    out.foreground = vec4<f32>(fit_to_sdr(out.foreground.rgb, SDR_FIT), out.foreground.a);
+    return out;
 }

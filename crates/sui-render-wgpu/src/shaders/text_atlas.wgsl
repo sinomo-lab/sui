@@ -83,8 +83,7 @@ fn apply_text_coverage(coverage: f32, policy: f32, parameter: f32) -> f32 {
     return c;
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_shade(in: VsOut) -> vec4<f32> {
     // Atlas bounds are integer texels. Recover them from packed UNORM16 values
     // before interpolation, so packing error cannot blur pixel-aligned text.
     let atlas_size = vec2<f32>(textureDimensions(text_atlas_texture));
@@ -117,4 +116,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let coverage = apply_text_coverage(sampled.a, in.metadata.z, in.metadata.w);
     let alpha = in.color.a * coverage;
     return vec4<f32>(in.color.rgb * alpha, alpha);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fit_premultiplied(fs_shade(in));
 }

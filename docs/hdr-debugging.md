@@ -6,6 +6,46 @@ requiring the review machine to have an HDR display. This guide documents the
 current pipeline; the remaining native-platform work is tracked separately in
 the [HDR output roadmap](./plans/hdr-wide-gamut-display-proposal.md).
 
+## Check the output in the demo
+
+Open **HDR validation** from the demo picker (`cargo run -p sinomo-ui-demo`;
+in the web build, the `demo=hdr-validation` query parameter opens it). The page
+starts with a verdict naming the window's
+output (SDR, wide-gamut SDR, or native HDR with its headroom above SDR white)
+and the output controls, which edit the same options as Settings. Each probe
+below says what it should look like on the current output:
+
+- **Brightness headroom**: a ramp and a white ladder up to 16× SDR white, with
+  the display's reported peak marked. HDR output keeps brightening up to the
+  peak; SDR output shows everything from 1× up as the same white.
+- **Highlight fitting**: each output channel of an orange as it brightens, and
+  a grid of saturated colors whose cells are split into a half the GPU fits and
+  a half fitted on the CPU with `fit_to_sdr`. The halves should match on every
+  output; a seam means the GPU fits differently.
+- **Wide gamut**: Display P3 tiles whose left half is clipped to sRGB. The
+  halves differ only where the output reaches past sRGB.
+- **Gradients and banding**, and **HDR in UI**, which shows the same controls
+  under each HDR theme mode.
+- **Capture and report** captures both stages of the next frame, writes the
+  bundle described below under `target/ui-artifacts/sui-demo/hdr-validation`,
+  and copies a report for bug reports.
+
+## How SDR outputs fit highlights
+
+SDR outputs cannot show light above SDR white, so the renderer fits it. Colors
+within SDR range always pass through unchanged.
+
+| Tone mapping | Above SDR white |
+| --- | --- |
+| `Clamp` (and `Automatic` on SDR outputs) | Scaled until the brightest channel reaches SDR white, keeping the hue |
+| `Reinhard` | Scaled the same way, then turned toward white by `1 - 1/peak`, so brighter highlights read brighter |
+
+Native HDR output sends extended range as is. Fitting happens after converting
+to the output's primaries, so Display P3 colors on a P3 output are fitted as P3
+colors. Wide-gamut colors arrive with negative channels in the working space
+(extended linear sRGB); scRGB outputs keep them, and other outputs clip them
+after the conversion.
+
 ## Generate the standard bundle
 
 From the workspace root:
@@ -24,7 +64,9 @@ configuration:
 - luminance, headroom, and clipping PNG visualizations;
 - a text snapshot of the requested policy, detected display capabilities, and
   active renderer output strategy;
-- numeric maximum-channel and luminance measurements.
+- maximum-channel and luminance measurements and the share of pixels above SDR
+  white. Final-stage values are relative to SDR white in that image
+  (`final_sdr_white`): native HDR finals are scRGB, where 1.0 is 80 nits.
 
 AVIF encoding is intentionally high quality and is usually the slowest part of
 the command. Use EXR and PNG while iterating if you write a focused capture
@@ -97,6 +139,56 @@ fn capture_hdr() -> Result<()> {
 The `sinomo-ui-testing` helpers create parent directories automatically. The `1.0`
 reference in this example means scene-linear SDR white; use the same reference
 white convention as the render options under test.
+
+## Capture from the running app
+
+An app can capture its own window. Ask for a capture with a wake token from
+the widget's event context; after the next redraw the platform makes it and
+wakes the widget, which collects it:
+
+```rust,no_run
+use sui::prelude::*;
+use sui::{
+    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+    DebugCaptureTicket, PointerEventKind, WakeEvent, request_window_debug_capture,
+    take_window_debug_capture,
+};
+
+struct CaptureOnClick {
+    ticket: Option<DebugCaptureTicket>,
+}
+
+impl Widget for CaptureOnClick {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Up => {
+                let wake = ctx.register_async_wakeup();
+                let request = DebugCaptureRequest {
+                    stage: DebugCaptureStage::HdrIntermediate,
+                    encoding: DebugCaptureEncoding::Exr,
+                    ..Default::default()
+                };
+                self.ticket =
+                    Some(request_window_debug_capture(ctx.window_id(), request, Some(wake)));
+                ctx.request_paint();
+            }
+            Event::Wake(WakeEvent::Async { .. }) => {
+                let result = self.ticket.take().and_then(take_window_debug_capture);
+                if let Some(Ok(DebugCaptureArtifact::HdrLinearRgbaF32(image))) = result {
+                    println!("captured {} x {}", image.width(), image.height());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+```
+
+Wake events go only to the widget that registered the token. Captures are
+native-only; in a browser the result is an error. A host that runs its own
+event loop keeps redrawing while `has_pending_window_debug_captures` and calls
+`service_window_debug_captures` after each redraw, delivering the returned
+tokens with `Runtime::wake_async`.
 
 ## Read the visualizations
 

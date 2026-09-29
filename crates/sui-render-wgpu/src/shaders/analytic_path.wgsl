@@ -66,8 +66,7 @@ fn segment_distance(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     return length(point - (a + (ab * t)));
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_shade(in: VsOut) -> vec4<f32> {
     // Derivatives must be evaluated before path-indexed storage-buffer access introduces
     // potentially non-uniform control flow. The larger scene-space pixel axis gives a stable
     // one-physical-pixel coverage transition without the sqrt(2) over-blur of combining axes.
@@ -131,4 +130,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fit_straight(fs_shade(in));
 }

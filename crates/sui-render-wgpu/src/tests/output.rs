@@ -18,10 +18,10 @@ use crate::output::RequestedDynamicRangeMode;
 use crate::output::RequestedOutputColorPrimaries;
 use crate::output::RequestedToneMappingMode;
 use crate::output::apply_output_transform_for_testing;
+use crate::output::fit_to_sdr;
 use crate::output::output_transform_requires_intermediate;
 use crate::output::select_output_strategy;
 use crate::output::shader_color;
-use crate::output::tone_map_linear_color;
 use crate::tests::support::{
     RGBA_CHANNEL_TOLERANCE, assert_rgba_channels_near, assert_rgba_pixel_near,
     assert_rgba_pixels_near,
@@ -161,9 +161,16 @@ pub(crate) fn sdr_png_capture_transform_preserves_srgb_bytes_regardless_of_sdr_b
         10_000.0,
         None,
     );
+    // Clipping keeps the highlight's hue: the channels keep their ratios.
     assert_eq!(crate::capture::linear_to_srgb_capture_u8(clipped[0]), 255);
-    assert_eq!(crate::capture::linear_to_srgb_capture_u8(clipped[1]), 255);
-    assert_eq!(crate::capture::linear_to_srgb_capture_u8(clipped[2]), 188);
+    assert_eq!(
+        crate::capture::linear_to_srgb_capture_u8(clipped[1]),
+        crate::capture::linear_to_srgb_capture_u8(0.5)
+    );
+    assert_eq!(
+        crate::capture::linear_to_srgb_capture_u8(clipped[2]),
+        crate::capture::linear_to_srgb_capture_u8(0.125)
+    );
 }
 
 #[test]
@@ -205,8 +212,8 @@ pub(crate) fn sdr_png_capture_readback_preserves_srgb_bytes_and_clips_hdr() {
         8,
         [
             255,
-            255,
             crate::capture::linear_to_srgb_capture_u8(0.5),
+            crate::capture::linear_to_srgb_capture_u8(0.125),
             255,
         ],
         RGBA_CHANNEL_TOLERANCE,
@@ -624,20 +631,30 @@ pub(crate) fn wide_gamut_output_transform_runs_even_for_srgb_surface_formats() {
 }
 
 #[test]
-pub(crate) fn reinhard_tone_mapping_compresses_extended_linear_values() {
-    let transformed =
-        tone_map_linear_color([4.0, 1.0, 0.5, 1.0], RequestedToneMappingMode::Reinhard);
-
-    assert!(transformed[0] < 1.0);
-    assert!(transformed[0] > transformed[1]);
-    assert_eq!(transformed[3], 1.0);
+pub(crate) fn reinhard_keeps_sdr_content_and_turns_highlights_toward_white() {
+    assert_eq!(
+        fit_to_sdr([0.5, 0.2, 0.1], RequestedToneMappingMode::Reinhard),
+        [0.5, 0.2, 0.1]
+    );
+    let highlight = fit_to_sdr([4.0, 1.0, 0.5], RequestedToneMappingMode::Reinhard);
+    assert_eq!(highlight[0], 1.0);
+    assert!((highlight[1] - 0.8125).abs() < 1e-6, "{highlight:?}");
+    assert!((highlight[2] - 0.78125).abs() < 1e-6, "{highlight:?}");
+    // Brighter highlights come out brighter.
+    let brighter = fit_to_sdr([8.0, 2.0, 1.0], RequestedToneMappingMode::Reinhard);
+    assert!(brighter[1] > highlight[1] && brighter[2] > highlight[2]);
 }
 
 #[test]
-pub(crate) fn clamp_tone_mapping_limits_linear_values_to_sdr_range() {
-    let transformed = tone_map_linear_color([2.5, 1.25, 0.5, 1.0], RequestedToneMappingMode::Clamp);
-
-    assert_eq!(transformed, [1.0, 1.0, 0.5, 1.0]);
+pub(crate) fn clamp_tone_mapping_keeps_the_hue_of_clipped_highlights() {
+    assert_eq!(
+        fit_to_sdr([2.5, 1.25, 0.5], RequestedToneMappingMode::Clamp),
+        [1.0, 0.5, 0.2]
+    );
+    assert_eq!(
+        fit_to_sdr([0.9, 0.5, 0.2], RequestedToneMappingMode::Clamp),
+        [0.9, 0.5, 0.2]
+    );
 }
 
 #[test]
@@ -728,6 +745,71 @@ pub(crate) fn output_transform_maps_linear_srgb_to_display_p3_canvas_primaries()
 }
 
 #[test]
+pub(crate) fn output_transform_keeps_display_p3_colors_on_wide_gamut_outputs() {
+    // Display P3 green lies outside sRGB: in the working space its red and
+    // blue channels are negative. They must survive until the conversion to
+    // the output's primaries, or P3 displays show plain sRGB green.
+    let p3_green = shader_color(Color::display_p3(0.0, 1.0, 0.0, 1.0));
+    assert!(p3_green[0] < -0.2 && p3_green[2] < -0.05);
+
+    let wide_gamut = apply_output_transform_for_testing(
+        p3_green,
+        OutputStrategy::WideGamutSurface {
+            format: wgpu::TextureFormat::Rgba16Float,
+            primaries: DisplayColorPrimaries::DisplayP3,
+        },
+        RequestedToneMappingMode::Automatic,
+        80.0,
+        None,
+    );
+    assert!(
+        wide_gamut[0].abs() < 0.001,
+        "P3 red channel: {}",
+        wide_gamut[0]
+    );
+    assert!(
+        (wide_gamut[1] - 1.0).abs() < 0.001,
+        "P3 green channel: {}",
+        wide_gamut[1]
+    );
+    assert!(
+        wide_gamut[2].abs() < 0.001,
+        "P3 blue channel: {}",
+        wide_gamut[2]
+    );
+
+    // scRGB carries the color as the same negative channels.
+    let sc_rgb = apply_output_transform_for_testing(
+        p3_green,
+        OutputStrategy::HdrNativeSurface {
+            format: wgpu::TextureFormat::Rgba16Float,
+            primaries: DisplayColorPrimaries::Srgb,
+            transfer: DisplayTransferFunction::LinearExtended,
+        },
+        RequestedToneMappingMode::Automatic,
+        80.0,
+        None,
+    );
+    for channel in 0..3 {
+        assert!((sc_rgb[channel] - p3_green[channel]).abs() < 0.0001);
+    }
+
+    // An sRGB output cannot show it, so it clips to the sRGB gamut edge.
+    let srgb = apply_output_transform_for_testing(
+        p3_green,
+        OutputStrategy::SdrSurface {
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        },
+        RequestedToneMappingMode::Automatic,
+        80.0,
+        None,
+    );
+    assert_eq!(srgb[0], 0.0);
+    assert!((srgb[1] - 1.0).abs() < 0.001);
+    assert_eq!(srgb[2], 0.0);
+}
+
+#[test]
 pub(crate) fn hdr_tone_mapped_output_preserves_sdr_reference_white_by_default() {
     let transformed = apply_output_transform_for_testing(
         [1.0, 1.0, 1.0, 1.0],
@@ -748,7 +830,7 @@ pub(crate) fn hdr_tone_mapped_output_preserves_sdr_reference_white_by_default() 
 }
 
 #[test]
-pub(crate) fn hdr_tone_mapped_output_keeps_reinhard_as_explicit_opt_in() {
+pub(crate) fn reinhard_leaves_sdr_reference_white_at_white() {
     let transformed = apply_output_transform_for_testing(
         [1.0, 1.0, 1.0, 1.0],
         OutputStrategy::HdrIntermediateThenToneMap {
@@ -761,7 +843,7 @@ pub(crate) fn hdr_tone_mapped_output_keeps_reinhard_as_explicit_opt_in() {
         None,
     );
 
-    let expected = 0.5;
+    let expected = 1.0;
     assert!((transformed[0] - expected).abs() < 0.0001);
     assert!((transformed[1] - expected).abs() < 0.0001);
     assert!((transformed[2] - expected).abs() < 0.0001);
@@ -829,4 +911,184 @@ pub(crate) fn color_text_atlas_shader_outputs_sampled_premultiplied_alpha() {
     assert!((premultiplied[1] - linear[1] * 0.375).abs() < 0.0001);
     assert!((premultiplied[2] - linear[2] * 0.375).abs() < 0.0001);
     assert!((premultiplied[3] - 0.375).abs() < 0.0001);
+}
+
+/// Draw `color` straight into an 8-bit sRGB target, as a window with an sRGB
+/// surface does, and read back its center pixel.
+fn draw_directly_into_srgb_target(color: Color, fit: crate::output::SdrFit) -> [u8; 4] {
+    let window_id = WindowId::new(4630);
+    let viewport = Size::new(8.0, 8.0);
+    let mut scene = Scene::new();
+    scene.push(SceneCommand::FillRect {
+        rect: Rect::new(0.0, 0.0, 8.0, 8.0),
+        brush: color.into(),
+    });
+    let frame = SceneFrame {
+        window_id,
+        viewport,
+        surface_size: viewport,
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    };
+    let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+    let mut renderer = WgpuRenderer::new();
+    renderer.ensure_shared(None).unwrap();
+    let view = renderer
+        .ensure_offscreen_target(window_id, (8, 8), format)
+        .unwrap();
+    renderer.shared.as_mut().unwrap().sdr_fit = fit;
+    let prepared = renderer.prepare_scene_submission(&frame).unwrap();
+    renderer
+        .submit_prepared_scene(prepared, format, &view)
+        .unwrap();
+    let image = renderer.capture_rgba(window_id).unwrap();
+    let offset = ((4 * 8 + 4) * 4) as usize;
+    image.pixels()[offset..offset + 4].try_into().unwrap()
+}
+
+#[test]
+pub(crate) fn scene_pipelines_fit_highlights_drawn_straight_into_sdr_targets() {
+    let orange = Color::linear_rgba(4.0, 2.0, 0.5, 1.0);
+    let u8_of = crate::capture::linear_to_srgb_capture_u8;
+
+    // Clip keeps the hue instead of clamping each channel (which would turn
+    // the orange yellow).
+    let clipped = draw_directly_into_srgb_target(orange, crate::output::SdrFit::Clip);
+    assert_rgba_channels_near(
+        &clipped,
+        [255, u8_of(0.5), u8_of(0.125), 255],
+        RGBA_CHANNEL_TOLERANCE,
+    );
+
+    let rolled = draw_directly_into_srgb_target(orange, crate::output::SdrFit::RollOff);
+    let expected = fit_to_sdr([4.0, 2.0, 0.5], RequestedToneMappingMode::Reinhard);
+    assert_rgba_channels_near(
+        &rolled,
+        [255, u8_of(expected[1]), u8_of(expected[2]), 255],
+        RGBA_CHANNEL_TOLERANCE,
+    );
+
+    // Colors within SDR range are drawn as authored in both.
+    let sdr = Color::srgba(66.0 / 255.0, 42.0 / 255.0, 213.0 / 255.0, 1.0);
+    for fit in [crate::output::SdrFit::Clip, crate::output::SdrFit::RollOff] {
+        assert_rgba_channels_near(
+            &draw_directly_into_srgb_target(sdr, fit),
+            [66, 42, 213, 255],
+            RGBA_CHANNEL_TOLERANCE,
+        );
+    }
+}
+
+/// Draw `color` into the HDR intermediate and run the real output transform
+/// for `strategy` into a float target, returning the transformed pixel.
+fn transform_on_gpu(
+    color: Color,
+    strategy: OutputStrategy,
+    mode: RequestedToneMappingMode,
+) -> [f32; 4] {
+    let window_id = WindowId::new(4640);
+    let size = (8, 8);
+    let mut scene = Scene::new();
+    scene.push(SceneCommand::FillRect {
+        rect: Rect::new(0.0, 0.0, 8.0, 8.0),
+        brush: color.into(),
+    });
+    let frame = SceneFrame {
+        window_id,
+        viewport: Size::new(8.0, 8.0),
+        surface_size: Size::new(8.0, 8.0),
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    };
+    let final_format = wgpu::TextureFormat::Rgba16Float;
+    let mut renderer = WgpuRenderer::new();
+    renderer.ensure_shared(None).unwrap();
+    let final_view = renderer
+        .ensure_offscreen_target(window_id, size, final_format)
+        .unwrap();
+    let intermediate_view = renderer
+        .ensure_intermediate_target(window_id, size)
+        .unwrap();
+    let intermediate_format = renderer.intermediate_targets[&window_id].format;
+    let prepared = renderer.prepare_scene_submission(&frame).unwrap();
+    let mut encoder = renderer.frame_encoder();
+    let mut stats = renderer
+        .encode_prepared_scene(
+            prepared,
+            intermediate_format,
+            &intermediate_view,
+            &mut encoder,
+        )
+        .unwrap();
+    renderer
+        .encode_output_transform_pass(
+            window_id,
+            &intermediate_view,
+            &final_view,
+            final_format,
+            strategy,
+            mode,
+            80.0,
+            None,
+            &mut stats,
+            &mut encoder,
+        )
+        .unwrap();
+    renderer.submit_frame_encoder(encoder, &mut stats);
+    let image = renderer.capture_hdr_offscreen_rgba_f32(window_id).unwrap();
+    let offset = (4 * 8 + 4) * 4;
+    image.pixels()[offset..offset + 4].try_into().unwrap()
+}
+
+#[test]
+pub(crate) fn output_transform_shader_keeps_wide_gamut_and_fits_highlights() {
+    let near = |actual: [f32; 4], expected: [f32; 3], what: &str| {
+        for channel in 0..3 {
+            assert!(
+                (actual[channel] - expected[channel]).abs() < 0.01,
+                "{what}: got {actual:?}, expected {expected:?}"
+            );
+        }
+    };
+    let wide_gamut = OutputStrategy::WideGamutSurface {
+        format: wgpu::TextureFormat::Rgba16Float,
+        primaries: DisplayColorPrimaries::DisplayP3,
+    };
+
+    near(
+        transform_on_gpu(
+            Color::display_p3(0.0, 1.0, 0.0, 1.0),
+            wide_gamut,
+            RequestedToneMappingMode::Automatic,
+        ),
+        [0.0, 1.0, 0.0],
+        "Display P3 green on a P3 output",
+    );
+
+    let orange = Color::linear_rgba(4.0, 2.0, 0.5, 1.0);
+    let srgb_output = OutputStrategy::HdrIntermediateThenToneMap {
+        intermediate_format: wgpu::TextureFormat::Rgba16Float,
+        surface_format: wgpu::TextureFormat::Rgba16Float,
+        primaries: DisplayColorPrimaries::Srgb,
+    };
+    for mode in [
+        RequestedToneMappingMode::Clamp,
+        RequestedToneMappingMode::Reinhard,
+    ] {
+        near(
+            transform_on_gpu(orange, srgb_output, mode),
+            fit_to_sdr([4.0, 2.0, 0.5], mode),
+            &format!("orange highlight with {mode:?}"),
+        );
+    }
 }

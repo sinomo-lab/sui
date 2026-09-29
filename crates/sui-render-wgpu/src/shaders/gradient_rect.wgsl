@@ -23,8 +23,7 @@ fn sd_round_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
     let q = abs(p) - b + vec2<f32>(rr, rr);
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - rr;
 }
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_shade(in: VsOut) -> vec4<f32> {
     let half = max(in.p0.xy, vec2<f32>(0.0));
     let feather = in.p0.w;
     let radii = clamp(in.radii, vec4<f32>(0.0), vec4<f32>(min(half.x, half.y)));
@@ -50,4 +49,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let col = mix(in.stop0, in.stop1, u);
     return vec4<f32>(col.rgb, col.a * fill_cov);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fit_straight(fs_shade(in));
 }

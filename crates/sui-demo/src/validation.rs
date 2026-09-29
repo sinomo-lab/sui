@@ -1,4 +1,5 @@
-//! Text rendering, text editing, and HDR color validation surfaces.
+//! Text rendering and text editing validation surfaces. The HDR and color
+//! validation page lives in `hdr_validation`; it is re-exported here.
 
 #![forbid(unsafe_code)]
 
@@ -11,10 +12,15 @@ use crate::app::{
     DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style, dev_theme_color,
 };
 use crate::demo_support::*;
+pub use crate::hdr_validation::{
+    COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME, COLOR_VALIDATION_SCROLL_NAME,
+    COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME, COLOR_VALIDATION_VIEW_TITLE,
+    build_color_validation_application, build_color_validation_surface,
+    build_color_validation_surface_with_theme,
+};
 use crate::live_performance::LivePerformanceRoot;
 
 pub const TEXT_RENDERING_COMPARISON_TITLE: &str = "SUI Text Rendering Comparison";
-pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
 pub const TEXT_VALIDATION_VIEW_TITLE: &str = "SUI Text Validation";
 pub const TEXT_RENDERING_COMPARISON_SCROLL_NAME: &str = "Text rendering comparison scroll";
 pub const TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME: &str =
@@ -22,11 +28,6 @@ pub const TEXT_RENDERING_COMPARISON_VERTICAL_SCROLL_BAR_NAME: &str =
 
 pub const TEXT_RENDERING_COMPARISON_HORIZONTAL_SCROLL_BAR_NAME: &str =
     "Text rendering comparison horizontal scroll bar";
-
-pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
-pub const COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME: &str = "Color validation vertical scroll bar";
-pub const COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME: &str =
-    "Color validation horizontal scroll bar";
 
 pub const TEXT_VALIDATION_SCROLL_NAME: &str = "Text validation scroll";
 pub const TEXT_VALIDATION_EDITOR_NAME: &str = "Validation editor";
@@ -220,278 +221,6 @@ pub fn build_text_rendering_comparison_application() -> Application {
             ),
         ))
         .into_application()
-}
-
-pub fn build_color_validation_surface() -> impl Widget {
-    build_color_validation_surface_with_theme(default_theme_reader())
-}
-
-pub fn build_color_validation_surface_with_theme(theme_reader: DevThemeReader) -> impl Widget {
-    const COLOR_VALIDATION_MIN_CONTENT_WIDTH: f32 = 780.0;
-    const COLOR_VALIDATION_SWATCH_MIN_WIDTH: f32 = 150.0;
-
-    let scroll_state = ScrollState::new();
-    let content = MinimumWidth::new(
-        COLOR_VALIDATION_MIN_CONTENT_WIDTH,
-        Padding::all(
-        24.0,
-        Stack::vertical()
-            .spacing(18.0)
-            .alignment(Alignment::Stretch)
-            .with_child(panel_with_theme(
-                Rc::clone(&theme_reader),
-                "HDR brightness and clipping probes",
-                "Start here when checking HDR. These rows show whether values above SDR reference white stay visually distinct. On SDR or clamp-heavy paths, the brighter swatches may collapse together. On HDR-capable paths, higher steps should remain separable and retain highlight structure.",
-                Stack::vertical()
-                    .spacing(16.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(build_color_validation_quad_row_with_theme(
-                        Rc::clone(&theme_reader),
-                        "HDR white ladder",
-                        "Reference white is 1.0. Higher linear-light steps intentionally exceed SDR range. If 2.0, 4.0, and 8.0 all look identical, the path is clipping or tone mapping aggressively.",
-                        [
-                            ("Reference white 1.0", Color::linear_rgba(1.0, 1.0, 1.0, 1.0)),
-                            ("Highlight white 2.0", Color::linear_rgba(2.0, 2.0, 2.0, 1.0)),
-                            ("Highlight white 4.0", Color::linear_rgba(4.0, 4.0, 4.0, 1.0)),
-                            ("Highlight white 8.0", Color::linear_rgba(8.0, 8.0, 8.0, 1.0)),
-                        ],
-                        COLOR_VALIDATION_SWATCH_MIN_WIDTH,
-                    ))
-                    .with_child(build_color_validation_quad_row_with_theme(
-                        Rc::clone(&theme_reader),
-                        "HDR color highlight ladder",
-                        "Colored highlights help catch cases where luminance is preserved but saturation shifts unexpectedly. Compare how orange and cyan energy above 1.0 behaves relative to SDR-bright controls.",
-                        [
-                            ("Orange highlight 1.0", Color::linear_rgba(1.0, 0.55, 0.18, 1.0)),
-                            ("Orange highlight 2.0", Color::linear_rgba(2.0, 1.1, 0.36, 1.0)),
-                            ("Cyan highlight 1.0", Color::linear_rgba(0.20, 0.80, 1.0, 1.0)),
-                            ("Cyan highlight 2.0", Color::linear_rgba(0.40, 1.60, 2.0, 1.0)),
-                        ],
-                        COLOR_VALIDATION_SWATCH_MIN_WIDTH,
-                    ))
-                    .with_child(build_color_validation_row_with_theme(
-                        Rc::clone(&theme_reader),
-                        "SDR clipping reference",
-                        "This pair makes SDR clipping easy to spot. If the boosted sample looks no brighter than the baseline, the path is still constrained to SDR output at this stage.",
-                        [
-                            ("SDR white baseline", Color::linear_rgba(1.0, 1.0, 1.0, 1.0)),
-                            ("SDR clipped white 2.0", Color::linear_rgba(2.0, 2.0, 2.0, 1.0)),
-                        ],
-                        COLOR_VALIDATION_SWATCH_MIN_WIDTH,
-                    )),
-            ))
-            .with_child(panel_with_theme(
-                Rc::clone(&theme_reader),
-                "Wide-gamut reference swatches",
-                "Use these after the HDR ladder. This surface validates that sRGB and Display-P3 colors stay distinct in the renderer's linear working space before final display output.",
-                Stack::vertical()
-                    .spacing(16.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(build_color_validation_row_with_theme(
-                        Rc::clone(&theme_reader),
-                        "Red primary",
-                        "Display-P3 red should preserve its native primaries instead of being treated as an sRGB red with only transfer decoding.",
-                        [
-                            ("sRGB reference red", Color::rgba(1.0, 0.0, 0.0, 1.0)),
-                            ("Display P3 reference red", Color::display_p3(1.0, 0.0, 0.0, 1.0)),
-                        ],
-                        COLOR_VALIDATION_SWATCH_MIN_WIDTH,
-                    ))
-                    .with_child(build_color_validation_row_with_theme(
-                        Rc::clone(&theme_reader),
-                        "Green primary",
-                        "The Display-P3 green sample intentionally lives outside the sRGB gamut. Compare it against the clipped sRGB control when checking wide-gamut correctness.",
-                        [
-                            ("sRGB clipped lime", Color::rgba(0.0, 1.0, 0.0, 1.0)),
-                            ("Display P3 vivid lime", Color::display_p3(0.0, 1.0, 0.0, 1.0)),
-                        ],
-                        COLOR_VALIDATION_SWATCH_MIN_WIDTH,
-                    ))
-                    .with_child(build_color_validation_row_with_theme(
-                        Rc::clone(&theme_reader),
-                        "Cyan accent mix",
-                        "A mixed-color sample helps catch cases where Display-P3 is incorrectly reduced to transfer decoding only. The P3 version should retain a more vivid cyan accent on wide-gamut outputs.",
-                        [
-                            ("sRGB accent cyan", Color::rgba(0.0, 0.78, 1.0, 1.0)),
-                            ("Display P3 accent cyan", Color::display_p3(0.0, 0.78, 1.0, 1.0)),
-                        ],
-                        COLOR_VALIDATION_SWATCH_MIN_WIDTH,
-                    )),
-            )),
-    ));
-
-    TwoAxisScrollPane::new(
-        scroll_state.clone(),
-        ScrollView::both(content)
-            .state(scroll_state.clone())
-            .overlay_scroll_bars(false)
-            .overflow_x(Overflow::Auto)
-            .overflow_y(Overflow::Auto)
-            .name(COLOR_VALIDATION_SCROLL_NAME),
-        ScrollBar::vertical(scroll_state.clone())
-            .name(COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME)
-            .theme_when(clone_dev_theme_reader(&theme_reader)),
-        ScrollBar::horizontal(scroll_state)
-            .name(COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME)
-            .theme_when(clone_dev_theme_reader(&theme_reader)),
-    )
-}
-
-pub fn build_color_validation_application() -> Application {
-    App::new()
-        .window(Window::new(COLOR_VALIDATION_VIEW_TITLE).root(
-            LivePerformanceRoot::new(
-                COLOR_VALIDATION_VIEW_TITLE,
-                "Reference surface for validating wide-gamut color handling, HDR brightness separation, and SDR clipping behavior while native HDR support lands in phases.",
-                build_color_validation_surface(),
-            ),
-        ))
-        .into_application()
-}
-
-pub(crate) fn build_color_validation_row_with_theme(
-    theme_reader: DevThemeReader,
-    title: &'static str,
-    description: &'static str,
-    swatches: [(&'static str, Color); 2],
-    swatch_min_width: f32,
-) -> impl Widget {
-    let initial_theme = theme_reader();
-    NamedSection::new(
-        title,
-        Background::new(
-            initial_theme.palette.surface_raised,
-            Padding::all(
-                18.0,
-                Stack::vertical()
-                    .spacing(12.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(demo_label(
-                        &theme_reader,
-                        title,
-                        DemoTextRole::Emphasis,
-                        DemoTextColor::Text,
-                    ))
-                    .with_child(demo_label(
-                        &theme_reader,
-                        description,
-                        DemoTextRole::Body,
-                        DemoTextColor::Muted,
-                    ))
-                    .with_child(
-                        Stack::horizontal()
-                            .spacing(18.0)
-                            .alignment(Alignment::Center)
-                            .with_child(build_color_validation_swatch_with_theme(
-                                Rc::clone(&theme_reader),
-                                swatches[0].0,
-                                swatches[0].1,
-                                swatch_min_width,
-                            ))
-                            .with_child(build_color_validation_swatch_with_theme(
-                                Rc::clone(&theme_reader),
-                                swatches[1].0,
-                                swatches[1].1,
-                                swatch_min_width,
-                            )),
-                    ),
-            ),
-        )
-        .brush_when(dev_theme_color(&theme_reader, |theme| {
-            theme.palette.surface_raised
-        })),
-    )
-}
-
-pub(crate) fn build_color_validation_quad_row_with_theme(
-    theme_reader: DevThemeReader,
-    title: &'static str,
-    description: &'static str,
-    swatches: [(&'static str, Color); 4],
-    swatch_min_width: f32,
-) -> impl Widget {
-    let initial_theme = theme_reader();
-    NamedSection::new(
-        title,
-        Background::new(
-            initial_theme.palette.surface_raised,
-            Padding::all(
-                18.0,
-                Stack::vertical()
-                    .spacing(12.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(demo_label(
-                        &theme_reader,
-                        title,
-                        DemoTextRole::Emphasis,
-                        DemoTextColor::Text,
-                    ))
-                    .with_child(demo_label(
-                        &theme_reader,
-                        description,
-                        DemoTextRole::Body,
-                        DemoTextColor::Muted,
-                    ))
-                    .with_child(
-                        Stack::horizontal()
-                            .spacing(18.0)
-                            .alignment(Alignment::Center)
-                            .with_child(build_color_validation_swatch_with_theme(
-                                Rc::clone(&theme_reader),
-                                swatches[0].0,
-                                swatches[0].1,
-                                swatch_min_width,
-                            ))
-                            .with_child(build_color_validation_swatch_with_theme(
-                                Rc::clone(&theme_reader),
-                                swatches[1].0,
-                                swatches[1].1,
-                                swatch_min_width,
-                            ))
-                            .with_child(build_color_validation_swatch_with_theme(
-                                Rc::clone(&theme_reader),
-                                swatches[2].0,
-                                swatches[2].1,
-                                swatch_min_width,
-                            ))
-                            .with_child(build_color_validation_swatch_with_theme(
-                                Rc::clone(&theme_reader),
-                                swatches[3].0,
-                                swatches[3].1,
-                                swatch_min_width,
-                            )),
-                    ),
-            ),
-        )
-        .brush_when(dev_theme_color(&theme_reader, |theme| {
-            theme.palette.surface_raised
-        })),
-    )
-}
-
-pub(crate) fn build_color_validation_swatch_with_theme(
-    theme_reader: DevThemeReader,
-    name: &'static str,
-    color: Color,
-    min_width: f32,
-) -> impl Widget {
-    MinimumWidth::new(
-        min_width,
-        Stack::vertical()
-            .spacing(8.0)
-            .alignment(Alignment::Center)
-            .with_child(
-                ColorSwatch::new(name, color)
-                    .size(Size::new(132.0, 56.0))
-                    .theme_when(clone_dev_theme_reader(&theme_reader)),
-            )
-            .with_child(demo_label(
-                &theme_reader,
-                name,
-                DemoTextRole::Supporting,
-                DemoTextColor::Text,
-            )),
-    )
 }
 
 pub(crate) fn build_text_rendering_mode_card_with_theme(

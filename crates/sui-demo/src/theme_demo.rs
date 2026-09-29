@@ -349,6 +349,26 @@ pub(crate) fn hdr_theme_lab_theme(mode: HdrThemeMode) -> DefaultTheme {
     theme
 }
 
+/// The accent an emissive indicator resolves to in `theme`, lifted as far
+/// as its HDR mode allows.
+pub(crate) fn hdr_theme_lab_indicator_color(theme: &DefaultTheme) -> Color {
+    let indicator_style = resolve_widget_hdr_style(
+        &theme.hdr,
+        WidgetColorRole::Accent,
+        WidgetLuminanceRole::EmissiveIndicator,
+        WidgetMaterialRole::Flat,
+        None,
+    );
+    let lift = indicator_style.peak_lift;
+    Color::new(
+        indicator_style.color.space,
+        indicator_style.color.red.clamp(0.0, lift),
+        indicator_style.color.green.clamp(0.0, lift),
+        indicator_style.color.blue.clamp(0.0, lift),
+        indicator_style.color.alpha,
+    )
+}
+
 pub(crate) fn hdr_theme_lab_card(
     section_name: impl Into<String>,
     mode: HdrThemeMode,
@@ -359,29 +379,7 @@ pub(crate) fn hdr_theme_lab_card(
     let prefix = prefix.into();
     let lead_text = lead_text.into();
     let theme = hdr_theme_lab_theme(mode);
-    let indicator_style = resolve_widget_hdr_style(
-        &theme.hdr,
-        WidgetColorRole::Accent,
-        WidgetLuminanceRole::EmissiveIndicator,
-        WidgetMaterialRole::Flat,
-        None,
-    );
-    let indicator_color = Color::new(
-        indicator_style.color.space,
-        indicator_style
-            .color
-            .red
-            .clamp(0.0, indicator_style.peak_lift),
-        indicator_style
-            .color
-            .green
-            .clamp(0.0, indicator_style.peak_lift),
-        indicator_style
-            .color
-            .blue
-            .clamp(0.0, indicator_style.peak_lift),
-        indicator_style.color.alpha,
-    );
+    let indicator_color = hdr_theme_lab_indicator_color(&theme);
     let button_label = format!("{prefix} sample action");
     let switch_label = format!("{prefix} sample live indicator");
     let popover_name = format!("{prefix} attention popover");
@@ -781,7 +779,7 @@ pub(crate) struct ThemePreviewCardFrame {
 }
 
 impl ThemePreviewCardFrame {
-    fn new<W>(theme: DefaultTheme, child: W) -> Self
+    pub(crate) fn new<W>(theme: DefaultTheme, child: W) -> Self
     where
         W: Widget + 'static,
     {

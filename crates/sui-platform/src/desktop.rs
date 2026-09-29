@@ -1149,7 +1149,8 @@ impl DesktopApp {
             .get(&window_id)
             .is_some_and(|window| window.frame_pacing == FramePacing::Display)
             && self.runtime.has_pending_animation_frames(window_id)?;
-        if !self.runtime.needs_render(window_id)? && !keep_presenting && !animating {
+        let capturing = crate::has_pending_window_debug_captures(window_id);
+        if !self.runtime.needs_render(window_id)? && !keep_presenting && !animating && !capturing {
             return Ok(());
         }
 
@@ -1317,6 +1318,7 @@ impl DesktopApp {
             }
 
             self.render_window_if_needed(window_id, event_time_ms)?;
+            self.service_debug_captures(window_id)?;
             // Chain continuous presentation from WM_PAINT/RedrawRequested;
             // AboutToWait alone cannot sustain it during an OS modal loop.
             self.request_redraw_if_needed(window_id)?;
@@ -1358,6 +1360,15 @@ impl DesktopApp {
             .window
             .set_cursor_visible(desired.visible || !window.focused);
         window.applied_cursor_revision = desired.revision;
+        Ok(())
+    }
+
+    /// Make the captures the app asked for from the frame just presented,
+    /// then wake the widgets waiting for them.
+    fn service_debug_captures(&mut self, window_id: WindowId) -> Result<()> {
+        for token in crate::service_window_debug_captures(&mut self.renderer, window_id) {
+            self.runtime.wake_async(window_id, token)?;
+        }
         Ok(())
     }
 

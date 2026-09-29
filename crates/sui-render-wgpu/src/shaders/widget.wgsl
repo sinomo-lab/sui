@@ -103,8 +103,7 @@ fn hdr_slider_to_value(t: f32, max_value: f32) -> f32 {
     return pow(max(max_value, 1.0001), (t - 0.5) / 0.5);
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_shade(in: VsOut) -> vec4<f32> {
     let kind = u32(in.metadata.x + 0.5);
     let space = in.metadata.y;
     let u = clamp(in.uv.x, 0.0, 1.0);
@@ -164,4 +163,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return fit_straight(fs_shade(in));
 }

@@ -274,6 +274,64 @@ Versioning, with the usual expectation that the API may change during the
   theme" applies it to the whole demo app, including the widget book's App
   theme; the dev shell's theme toggle shows "Custom" until it is used again.
 
+### HDR output and validation
+
+- Breaking: tone mapping now keeps hue and leaves SDR content alone. `Clamp`
+  clips a highlight by scaling it until its brightest channel reaches SDR
+  white, instead of clamping each channel (which turned bright orange yellow
+  and bright blue cyan). `Reinhard` clips the same way, then turns the energy
+  above SDR white toward white, so brighter highlights still read brighter;
+  colors within SDR range pass through unchanged, where the old curve dimmed
+  SDR white to half. Both apply in the output transform and, through a
+  pipeline constant, when scenes draw straight into an sRGB surface, which
+  previously clamped each channel in hardware.
+- Display P3 colors now reach wide-gamut and scRGB outputs. The output
+  transform clipped negative channels before converting to the output's
+  primaries, so P3 colors collapsed to their sRGB counterparts on P3 displays
+  and in native HDR. Colors are now clipped only after conversion, and only
+  for outputs that cannot carry them; extended sRGB encoding mirrors negative
+  channels.
+- Added `fit_to_sdr`, the tone mapping math as the GPU runs it, to
+  `sinomo-ui-render-wgpu` and the `sui` facade.
+- Apps can capture their own window: `request_window_debug_capture` asks for a
+  stage of the next frame, the platform makes it after redrawing and wakes the
+  requesting widget, and `take_window_debug_capture` hands out the artifact.
+  Captures are native-only; browsers report an error. Hosts that run their own
+  event loop call `service_window_debug_captures` after each redraw and keep
+  redrawing while `has_pending_window_debug_captures`; the live test harness
+  does.
+- The `sui` facade re-exports `DebugCaptureRequest`, `DebugCaptureStage`,
+  `DebugCaptureEncoding`, `DebugSdrVisualization`, `DebugCaptureArtifact`,
+  `DebugCaptureTicket`, `HdrRgbaImage`, `RgbaImage`, `OutputStrategy`,
+  `DisplayCapabilities`, `DisplayColorPrimaries`, and
+  `RequestedToneMappingMode`.
+- Added `Checkbox::checked_when` for check state that other controls can also
+  change.
+
+### Redesigned HDR validation demo
+
+- The HDR validation page is one scroll of probes, each saying what it should
+  look like on the window's current output: a verdict naming the output
+  (SDR, wide-gamut SDR, or native HDR with its headroom above SDR white); a
+  headroom ramp and white ladder with the display's peak marked; a plot of
+  each channel as a highlight brightens, with hue grids whose halves are fitted
+  on the GPU and the CPU and should match; Display P3 tiles split against
+  their sRGB-clipped selves beside a chromaticity diagram; gradient ramps for
+  banding; and the same controls under each HDR theme mode.
+- The page carries the window's output controls. They edit the same options
+  as Settings, so each shows what the other changed, and the probes follow
+  the output as soon as a frame is presented with the new options.
+- "Capture frame" records the scene before output conversion and the final
+  output, writes them as EXR with luminance, headroom, and clip maps and the
+  diagnostics report under `target/ui-artifacts/sui-demo/hdr-validation`, and
+  shows measurements and thumbnails. "Copy report" copies the diagnostics and
+  the last capture's measurements for bug reports.
+- `sui-demo-artifacts` writes its HDR bundle with the same code. Its
+  `output-diagnostics.txt` now includes the display's reported luminance and
+  SDR white, and `capture-metrics.txt` the share of pixels above SDR white and
+  final-stage values relative to SDR white (native HDR finals are scRGB, where
+  SDR white is its brightness over 80 nits).
+
 ### Fixes
 
 - A progress bar's value label now uses the tone's content color over the fill

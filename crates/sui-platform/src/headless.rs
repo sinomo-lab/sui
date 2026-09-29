@@ -261,7 +261,11 @@ impl HeadlessPlatform {
         let now_ms = self.current_time() * 1000.0;
 
         for window in &mut self.windows {
-            if !window.open || window.redraw_requested || !runtime.needs_render(window.id)? {
+            let capturing = crate::has_pending_window_debug_captures(window.id);
+            if !window.open
+                || window.redraw_requested
+                || (!runtime.needs_render(window.id)? && !capturing)
+            {
                 continue;
             }
 
@@ -439,6 +443,10 @@ impl HeadlessPlatform {
                 self.windows[window_index]
                     .accessibility
                     .update(window_id, output.semantics);
+            }
+
+            for token in crate::service_window_debug_captures(&mut self.renderer, window_id) {
+                runtime.wake_async(window_id, token)?;
             }
         }
 
@@ -756,6 +764,82 @@ mod tests {
         assert!(platform.pump(&mut runtime)?);
         assert_eq!(counters.borrow().paints, 3);
 
+        Ok(())
+    }
+
+    /// Paints an overbright orange and, on request, captures its window.
+    struct CaptureProbe {
+        ticket: Rc<RefCell<Option<crate::DebugCaptureTicket>>>,
+        artifact: Rc<RefCell<Option<Result<sui_render_wgpu::DebugCaptureArtifact>>>>,
+    }
+
+    impl Widget for CaptureProbe {
+        fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+            match event {
+                Event::Custom(custom) if custom.kind == "capture" => {
+                    let wake = ctx.register_async_wakeup();
+                    let request = sui_render_wgpu::DebugCaptureRequest {
+                        stage: sui_render_wgpu::DebugCaptureStage::HdrIntermediate,
+                        encoding: sui_render_wgpu::DebugCaptureEncoding::Exr,
+                        ..Default::default()
+                    };
+                    *self.ticket.borrow_mut() = Some(crate::request_window_debug_capture(
+                        ctx.window_id(),
+                        request,
+                        Some(wake),
+                    ));
+                }
+                Event::Wake(WakeEvent::Async { .. }) => {
+                    if let Some(ticket) = *self.ticket.borrow() {
+                        *self.artifact.borrow_mut() = crate::take_window_debug_capture(ticket);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(64.0, 32.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::linear_rgba(4.0, 2.0, 0.5, 1.0));
+        }
+    }
+
+    #[test]
+    fn apps_can_capture_their_window_after_a_redraw() -> Result<()> {
+        let ticket = Rc::new(RefCell::new(None));
+        let artifact = Rc::new(RefCell::new(None));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Capture").root(CaptureProbe {
+                ticket: Rc::clone(&ticket),
+                artifact: Rc::clone(&artifact),
+            }))
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        let mut platform = HeadlessPlatform::new();
+        let _ = platform.run(&mut runtime)?;
+
+        platform.dispatch_event(
+            &runtime,
+            window_id,
+            Event::Custom(CustomEvent::new("capture")),
+        )?;
+        let _ = platform.run(&mut runtime)?;
+
+        let result = artifact
+            .borrow_mut()
+            .take()
+            .expect("the capture was delivered");
+        let sui_render_wgpu::DebugCaptureArtifact::HdrLinearRgbaF32(image) = result? else {
+            panic!("an HDR intermediate capture is linear floating point");
+        };
+        let brightest = image.pixels().iter().copied().fold(0.0_f32, f32::max);
+        assert!(
+            brightest > 3.9,
+            "the capture keeps extended range: {brightest}"
+        );
         Ok(())
     }
 

@@ -1,6 +1,9 @@
 use super::*;
 use std::time::{Duration, Instant};
-use sui::{FramePhase, PointerEvent, SceneStatisticsDetailMode, WindowPerformanceSnapshot};
+use sui::{
+    FramePhase, PointerEvent, SceneStatisticsDetailMode, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowPerformanceSnapshot,
+};
 
 #[test]
 #[ignore = "diagnostic reproduction for drag-and-drop tab frame cadence"]

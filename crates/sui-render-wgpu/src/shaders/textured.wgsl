@@ -24,7 +24,11 @@ fn vs_main(
     return out;
 }
 
+fn fs_shade(in: VsOut) -> vec4<f32> {
+    return textureSample(image_texture, image_sampler, in.tex_coords) * in.color;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(image_texture, image_sampler, in.tex_coords) * in.color;
+    return fit_straight(fs_shade(in));
 }

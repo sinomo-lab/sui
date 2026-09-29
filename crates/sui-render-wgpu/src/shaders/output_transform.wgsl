@@ -32,19 +32,20 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
     return out;
 }
 
-fn tone_map(color: vec3<f32>) -> vec3<f32> {
-    let scaled = max(color, vec3<f32>(0.0)) * output_uniform.sdr_content_scale;
-    switch output_uniform.tone_mapping_mode {
-        case 0u: {
-            return scaled;
-        }
-        case 2u: {
-            return scaled / (vec3<f32>(1.0) + scaled);
-        }
-        default: {
-            return clamp(scaled, vec3<f32>(0.0), vec3<f32>(1.0));
-        }
+fn scale_sdr_content(color: vec3<f32>) -> vec3<f32> {
+    return color * output_uniform.sdr_content_scale;
+}
+
+// The working space is extended linear sRGB, so wide-gamut colors arrive
+// with negative channels. Outputs that keep extended range (fit mode 0, such
+// as scRGB) carry colors outside their primaries the same way; the others
+// clip them to the gamut edge. Clip only after converting to the output's
+// primaries, or Display P3 colors collapse to sRGB on P3 displays.
+fn clip_to_output_gamut(color: vec3<f32>) -> vec3<f32> {
+    if output_uniform.tone_mapping_mode == 0u {
+        return color;
     }
+    return max(color, vec3<f32>(0.0));
 }
 
 fn linear_srgb_to_output_primaries(color: vec3<f32>) -> vec3<f32> {
@@ -58,12 +59,13 @@ fn linear_srgb_to_output_primaries(color: vec3<f32>) -> vec3<f32> {
     return color;
 }
 
+// Extended sRGB: negative channels encode as the mirror of positive ones.
 fn linear_to_srgb_channel(channel: f32) -> f32 {
-    let value = max(channel, 0.0);
+    let value = abs(channel);
     if value <= 0.0031308 {
-        return value * 12.92;
+        return channel * 12.92;
     }
-    return (1.055 * pow(value, 1.0 / 2.4)) - 0.055;
+    return sign(channel) * ((1.055 * pow(value, 1.0 / 2.4)) - 0.055);
 }
 
 fn encode_for_output(color: vec3<f32>) -> vec3<f32> {
@@ -84,7 +86,10 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let coords = clamp(vec2<i32>(position.xy), vec2<i32>(0), max_coord);
     let color = textureLoad(scene_texture, coords, 0);
     return vec4<f32>(
-        encode_for_output(linear_srgb_to_output_primaries(tone_map(color.rgb))),
+        encode_for_output(fit_to_sdr(
+            clip_to_output_gamut(linear_srgb_to_output_primaries(scale_sdr_content(color.rgb))),
+            output_uniform.tone_mapping_mode,
+        )),
         clamp(color.a, 0.0, 1.0),
     );
 }

@@ -1956,6 +1956,7 @@ pub struct Checkbox {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     checked: bool,
+    checked_reader: Option<Box<dyn Fn() -> bool>>,
     appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -2076,6 +2077,7 @@ impl Checkbox {
             theme_reader: None,
             label: label.into(),
             checked: false,
+            checked_reader: None,
             appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
@@ -2099,8 +2101,36 @@ impl Checkbox {
         self
     }
 
+    /// Show whatever `checked` returns, for state that other controls can
+    /// change too. Toggling still calls `on_toggle` with the new value.
+    pub fn checked_when<F>(mut self, checked: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        let current = checked();
+        self.checked_reader = Some(Box::new(checked));
+        self.checked(current)
+    }
+
+    fn current_checked(&self) -> bool {
+        self.checked_reader
+            .as_ref()
+            .map_or(self.checked, |checked| checked())
+    }
+
+    /// Adopt a value changed elsewhere, without animating.
+    fn sync_checked(&mut self) -> bool {
+        let current = self.current_checked();
+        if current == self.checked {
+            return false;
+        }
+        self.checked = current;
+        self.toggle_animation.jump_to(current as u8 as f32);
+        true
+    }
+
     pub fn is_checked(&self) -> bool {
-        self.checked
+        self.current_checked()
     }
 
     /// Selects whether the complete checkbox row is plain or framed.
@@ -2173,7 +2203,7 @@ impl Checkbox {
     }
 
     fn toggle(&mut self) {
-        self.checked = !self.checked;
+        self.checked = !self.current_checked();
         if let Some(on_toggle) = &mut self.on_toggle {
             on_toggle(self.checked);
         }
@@ -2237,6 +2267,10 @@ impl Checkbox {
 
 impl Widget for Checkbox {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.sync_checked() {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -2358,7 +2392,13 @@ impl Widget for Checkbox {
         let gap = self.resolved_gap();
         let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
         let press_progress = self.press_value(ctx) * interaction.pressed_blend;
-        let toggle_progress = self.toggle_animation.get(ctx);
+        // A value changed elsewhere shows at once, before events catch up.
+        let checked = self.current_checked();
+        let toggle_progress = if checked == (self.toggle_animation.target() > 0.5) {
+            self.toggle_animation.get(ctx)
+        } else {
+            checked as u8 as f32
+        };
         let focus_progress = self.focus_value(ctx);
         let (framed_background, framed_border) =
             framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
@@ -2414,7 +2454,7 @@ impl Widget for Checkbox {
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.state.checked = Some(if self.checked {
+        node.state.checked = Some(if self.current_checked() {
             ToggleState::Checked
         } else {
             ToggleState::Unchecked

@@ -174,6 +174,7 @@ impl SharedRenderer {
             device,
             queue,
             pipelines: HashMap::new(),
+            sdr_fit: crate::output::SdrFit::default(),
             image_bind_group_layout,
             text_atlas_array_bind_group_layout,
             analytic_path_bind_group_layout,

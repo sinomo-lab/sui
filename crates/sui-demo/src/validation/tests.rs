@@ -270,7 +270,7 @@ fn text_validation_scroll_repaints_visible_content() -> Result<()> {
 }
 
 #[test]
-fn color_validation_surface_exposes_wide_gamut_reference_swatches() {
+fn color_validation_surface_exposes_its_reference_swatches() {
     let mut runtime =
         build_color_validation_runtime().expect("color validation runtime should build");
     let window_id = runtime.window_ids()[0];
@@ -292,22 +292,19 @@ fn color_validation_surface_exposes_wide_gamut_reference_swatches() {
     }));
 
     for swatch_name in [
-        "sRGB reference red",
-        "Display P3 reference red",
-        "sRGB clipped lime",
-        "Display P3 vivid lime",
-        "sRGB accent cyan",
-        "Display P3 accent cyan",
-        "Reference white 1.0",
-        "Highlight white 2.0",
-        "Highlight white 4.0",
-        "Highlight white 8.0",
-        "Orange highlight 1.0",
-        "Orange highlight 2.0",
-        "Cyan highlight 1.0",
-        "Cyan highlight 2.0",
-        "SDR white baseline",
-        "SDR clipped white 2.0",
+        "sRGB clipped red",
+        "Display P3 red",
+        "sRGB clipped green",
+        "Display P3 green",
+        "sRGB clipped cyan",
+        "Display P3 cyan",
+        "White 1×",
+        "White 2×",
+        "White 4×",
+        "White 8×",
+        "White 16×",
+        "White 0.9×",
+        "White 1.05×",
     ] {
         assert!(semantics.iter().any(|node| {
             node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)
@@ -316,7 +313,7 @@ fn color_validation_surface_exposes_wide_gamut_reference_swatches() {
 }
 
 #[test]
-fn color_validation_surface_keeps_swatch_labels_readable_when_narrow() {
+fn color_validation_surface_keeps_swatches_and_text_readable_when_narrow() {
     let mut runtime = build_narrow_color_validation_runtime()
         .expect("narrow color validation runtime should build");
     let window_id = runtime.window_ids()[0];
@@ -348,13 +345,13 @@ fn color_validation_surface_keeps_swatch_labels_readable_when_narrow() {
                 && node.name.as_deref() == Some(super::COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME)
         })
         .expect("vertical color validation scroll bar should be present");
-    let cyan_label = output
+    let brightest_swatch = output
         .semantics
         .iter()
         .find(|node| {
-            node.role == SemanticsRole::Text && node.name.as_deref() == Some("Cyan highlight 2.0")
+            node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some("White 16×")
         })
-        .expect("final HDR color label should be present");
+        .expect("the brightest ladder swatch should be present");
     let hdr_description = output
         .semantics
         .iter()
@@ -363,9 +360,9 @@ fn color_validation_surface_keeps_swatch_labels_readable_when_narrow() {
                 && node
                     .name
                     .as_deref()
-                    .is_some_and(|name| name.starts_with("Colored highlights help catch cases"))
+                    .is_some_and(|name| name.starts_with("White from a quarter of SDR white"))
         })
-        .expect("HDR color description should be present");
+        .expect("the headroom description should be present");
 
     let horizontal_max = match horizontal_scroll_bar.value {
         Some(SemanticsValue::Range { max, .. }) => max,
@@ -380,10 +377,11 @@ fn color_validation_surface_keeps_swatch_labels_readable_when_narrow() {
     assert!(vertical_max > 0.0);
     assert!(horizontal_scroll_bar.bounds.y() >= scroll.bounds.max_y());
     assert!(vertical_scroll_bar.bounds.x() >= scroll.bounds.max_x());
-    assert!(cyan_label.bounds.width() >= 80.0);
-    assert!(cyan_label.bounds.height() <= 40.0);
+    // The page keeps its width and scrolls instead of squeezing probes.
+    assert!(brightest_swatch.bounds.width() >= 80.0);
+    assert!(brightest_swatch.bounds.height() >= 40.0);
     assert!(hdr_description.bounds.height() > 20.0);
-    assert!(hdr_description.bounds.width() < 900.0);
+    assert!(hdr_description.bounds.width() < 1000.0);
 }
 
 #[test]
