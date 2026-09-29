@@ -1,6 +1,8 @@
 use super::*;
 use std::time::Instant;
-use sui::{FramePhase, PointerEvent, Runtime, SceneStatisticsDetailMode};
+use sui::{
+    FramePhase, PointerEvent, Runtime, SceneStatisticsDetailMode, WgpuRenderer, WindowEvent,
+};
 
 fn picker_cards(nodes: &[SemanticsNode]) -> [SemanticsNode; 2] {
     [WIDGET_BOOK_TAB_LABEL, THEMES_TAB_LABEL].map(|name| {

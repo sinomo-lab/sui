@@ -2,10 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::{
-    rc::Rc,
-    sync::{OnceLock, RwLock},
-};
+use std::{rc::Rc, sync::OnceLock};
 
 use sui::prelude::*;
 use sui::{
@@ -42,21 +39,19 @@ pub const DARK_PREVIEW_INPUT_LABEL: &str = "Dark preview query";
 pub const NEUTRAL_DARK_PREVIEW_INPUT_LABEL: &str = "Neutral dark preview query";
 pub const TRUE_BLACK_PREVIEW_INPUT_LABEL: &str = "True black preview query";
 
-pub(crate) fn hdr_theme_lab_mode_store() -> &'static RwLock<HdrThemeMode> {
-    static STORE: OnceLock<RwLock<HdrThemeMode>> = OnceLock::new();
-    STORE.get_or_init(|| RwLock::new(HdrThemeMode::Disabled))
+/// The HDR theme mode the demo's widgets preview, as a signal to observe.
+pub(crate) fn hdr_theme_lab_mode_signal() -> Signal<HdrThemeMode> {
+    static MODE: OnceLock<Signal<HdrThemeMode>> = OnceLock::new();
+    MODE.get_or_init(|| Signal::named("HDR theme mode", HdrThemeMode::Disabled))
+        .clone()
 }
 
 pub fn hdr_theme_lab_mode() -> HdrThemeMode {
-    *hdr_theme_lab_mode_store()
-        .read()
-        .expect("widget-book HDR theme mode lock should not be poisoned")
+    hdr_theme_lab_mode_signal().get()
 }
 
 pub fn set_hdr_theme_lab_mode(mode: HdrThemeMode) {
-    *hdr_theme_lab_mode_store()
-        .write()
-        .expect("widget-book HDR theme mode lock should not be poisoned") = mode;
+    hdr_theme_lab_mode_signal().set(mode);
 }
 
 pub fn build_theme_demo_application() -> Application {

@@ -470,6 +470,7 @@ impl Runtime {
         let font_registry = Arc::clone(self.resources.fonts());
         let image_registry = Arc::clone(self.resources.images());
         let window = self.window_mut(window_id)?;
+        window.repaint_for_render_options();
         window.drain_reactive_invalidations();
         Ok(window.render(text_system, font_registry, image_registry))
     }
@@ -1049,6 +1050,9 @@ pub struct WidgetNodeSnapshot {
     pub is_stack_host: bool,
     pub is_stack_surface: bool,
     pub hit_test: bool,
+    /// Whether points inside the widget that none of its children take hit
+    /// the widget itself (see [`Widget::hit_test_self`]).
+    pub hit_test_self: bool,
     pub stack_order_policy: StackOrderPolicy,
     pub accepts_focus: bool,
     pub focused: bool,
@@ -1312,6 +1316,8 @@ struct WindowState {
     invalidation_history: VecDeque<InvalidationTraceSample>,
     widget_rebuild_history: VecDeque<WidgetRebuildSample>,
     last_render_diagnostics: RenderDiagnostics,
+    /// The render options the last frame was painted with.
+    painted_render_options: Option<WindowRenderOptions>,
 }
 
 impl WindowState {
@@ -1392,7 +1398,24 @@ impl WindowState {
             invalidation_history: VecDeque::new(),
             widget_rebuild_history: VecDeque::new(),
             last_render_diagnostics: RenderDiagnostics::default(),
+            painted_render_options: None,
         }
+    }
+
+    /// Paint the whole window again when its render options changed since
+    /// the last frame: widgets read some of them, like optical text
+    /// centering, while painting.
+    fn repaint_for_render_options(&mut self) {
+        let options = window_render_options(self.id);
+        if options == self.painted_render_options {
+            return;
+        }
+        self.painted_render_options = options;
+        self.schedule.mark(InvalidationKind::Paint);
+        self.pending_invalidations.push(InvalidationRequest::new(
+            InvalidationTarget::Window(self.id),
+            InvalidationKind::Paint,
+        ));
     }
 
     fn drain_reactive_invalidations(&mut self) {
@@ -1471,7 +1494,10 @@ impl WindowState {
     }
 
     fn needs_render(&self) -> bool {
-        self.last_frame.is_none() || self.schedule.needs_render() || self.reactive_hub.has_pending()
+        self.last_frame.is_none()
+            || self.schedule.needs_render()
+            || self.reactive_hub.has_pending()
+            || window_render_options(self.id) != self.painted_render_options
     }
 
     fn handle_event(
@@ -5382,6 +5408,7 @@ impl WidgetGraph {
                 is_stack_host,
                 is_stack_surface,
                 hit_test,
+                hit_test_self: pod.current_hit_test_self(),
                 stack_order_policy: resolved_policy,
                 accepts_focus: !inert && pod.accepts_focus(),
                 focused: Some(id) == focused_widget,
@@ -5425,7 +5452,7 @@ impl WidgetGraph {
                 }
             }
 
-            return Some(widget_id);
+            return node.hit_test_self.then_some(widget_id);
         }
 
         for child_id in node.children.iter().rev() {
@@ -5434,7 +5461,7 @@ impl WidgetGraph {
             }
         }
 
-        Some(widget_id)
+        node.hit_test_self.then_some(widget_id)
     }
 }
 

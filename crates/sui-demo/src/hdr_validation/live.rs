@@ -131,6 +131,24 @@ impl OutputSummary {
         self.wide_gamut
     }
 
+    /// A few words on what the output is.
+    pub(crate) fn label(self) -> String {
+        let gamut = if self.wide_gamut { ", wide gamut" } else { "" };
+        match self.kind {
+            OutputKind::Sdr => "SDR, sRGB".to_string(),
+            OutputKind::WideGamut => {
+                format!("Wide-gamut SDR, {}", primaries_name(self.primaries))
+            }
+            OutputKind::ToneMappedHdr => {
+                format!("HDR tone mapped to SDR, {}", primaries_name(self.primaries))
+            }
+            OutputKind::NativeHdr => match self.headroom {
+                Some(headroom) => format!("Native HDR, up to {headroom:.1}× SDR white{gamut}"),
+                None => format!("Native HDR{gamut}"),
+            },
+        }
+    }
+
     /// One sentence on what the output is and does with highlights.
     pub(crate) fn headline(self) -> String {
         let highlights = match self.fit {
@@ -256,6 +274,29 @@ pub(crate) mod expect {
             }
         })
     }
+}
+
+/// The SDR content brightness in use, where it comes from, and both values
+/// it could come from.
+pub(crate) fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
+    let source = if diagnostics.use_system_sdr_content_brightness
+        && diagnostics.system_sdr_content_brightness_nits.is_some()
+    {
+        "system"
+    } else if diagnostics.use_system_sdr_content_brightness {
+        "manual fallback"
+    } else {
+        "manual"
+    };
+    let system = diagnostics
+        .system_sdr_content_brightness_nits
+        .map(|nits| format!("{nits:.0} nits"))
+        .unwrap_or_else(|| "unavailable".to_string());
+    format!(
+        "SDR content brightness: {:.0} nits ({source}; system {system}, manual {:.0} nits)",
+        diagnostics.requested_sdr_content_brightness_nits,
+        diagnostics.configured_sdr_content_brightness_nits,
+    )
 }
 
 fn primaries_name(primaries: DisplayColorPrimaries) -> &'static str {

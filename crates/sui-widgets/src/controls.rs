@@ -2476,6 +2476,7 @@ pub struct Switch {
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
     on: bool,
+    on_reader: Option<Box<dyn Fn() -> bool>>,
     appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -2510,6 +2511,7 @@ impl Switch {
             theme_reader: None,
             label: label.into(),
             on: false,
+            on_reader: None,
             appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
@@ -2532,8 +2534,34 @@ impl Switch {
         self
     }
 
+    /// Show whatever `on` returns, for state that other controls can change
+    /// too. Toggling still calls `on_toggle` with the new value.
+    pub fn on_when<F>(mut self, on: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        let current = on();
+        self.on_reader = Some(Box::new(on));
+        self.on(current)
+    }
+
+    fn current_on(&self) -> bool {
+        self.on_reader.as_ref().map_or(self.on, |on| on())
+    }
+
+    /// Adopt a value changed elsewhere, without animating.
+    fn sync_on(&mut self) -> bool {
+        let current = self.current_on();
+        if current == self.on {
+            return false;
+        }
+        self.on = current;
+        self.toggle_animation.jump_to(current as u8 as f32);
+        true
+    }
+
     pub fn is_on(&self) -> bool {
-        self.on
+        self.current_on()
     }
 
     /// Selects whether the complete switch row is plain or framed.
@@ -2624,7 +2652,7 @@ impl Switch {
     }
 
     fn toggle(&mut self) {
-        self.on = !self.on;
+        self.on = !self.current_on();
         if let Some(on_toggle) = &mut self.on_toggle {
             on_toggle(self.on);
         }
@@ -2730,7 +2758,7 @@ impl Switch {
 
     #[cfg(test)]
     fn resolved_visuals(&self, focused: bool) -> SwitchVisuals {
-        self.resolved_visuals_for_state(self.on, focused, &0.0, None)
+        self.resolved_visuals_for_state(self.current_on(), focused, &0.0, None)
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
@@ -2748,6 +2776,10 @@ impl Switch {
 
 impl Widget for Switch {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.sync_on() {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -2872,12 +2904,19 @@ impl Widget for Switch {
         let label_rect = switch_label_rect(ctx.bounds(), padding, metrics, gap);
         let focused = ctx.is_focused() || self.preview.is_focused();
         let output = ctx.output_color_range();
-        let visuals = self.resolved_visuals_for_state(self.on, focused, &0.0, output);
+        let visuals = self.resolved_visuals_for_state(self.current_on(), focused, &0.0, output);
         let off_visuals = self.resolved_visuals_for_state(false, focused, ctx, output);
         let on_visuals = self.resolved_visuals_for_state(true, focused, ctx, output);
         let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
         let press_progress = self.press_value(ctx) * interaction.pressed_blend;
-        let toggle_progress = self.toggle_animation.get(ctx);
+        // A value changed elsewhere shows at once, even before the switch
+        // next handles an event and adopts it.
+        let on = self.current_on();
+        let toggle_progress = if on == self.on {
+            self.toggle_animation.get(ctx)
+        } else {
+            on as u8 as f32
+        };
         let focus_progress = self.focus_value(ctx);
 
         let (framed_background, framed_border) =
@@ -2975,7 +3014,7 @@ impl Widget for Switch {
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.state.checked = Some(if self.on {
+        node.state.checked = Some(if self.current_on() {
             ToggleState::Checked
         } else {
             ToggleState::Unchecked

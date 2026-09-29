@@ -2,7 +2,7 @@ use super::*;
 use std::time::{Duration, Instant};
 use sui::{
     FramePhase, PointerEvent, SceneStatisticsDetailMode, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowPerformanceSnapshot,
+    WindowDynamicRangeMode, WindowEvent, WindowPerformanceSnapshot, window_output_diagnostics,
 };
 
 #[test]
@@ -10,7 +10,7 @@ use sui::{
 fn drag_drop_frame_pacing_benchmark() -> Result<()> {
     let app = sui_testing::TestApp::new_with_options(
         || {
-            let options = RenderSettingsTab::default_options()
+            let options = default_render_options()
                 .with_color_management_mode(WindowColorManagementMode::PreferHdr)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange);
             let shell = DevBrowserShell::new(options);
@@ -150,7 +150,7 @@ fn drag_drop_frame_pacing_benchmark() -> Result<()> {
 fn picker_frame_pacing_vsync_hdr_benchmark() -> Result<()> {
     let app = sui_testing::TestApp::new_with_options(
         || {
-            let options = RenderSettingsTab::default_options()
+            let options = default_render_options()
                 .with_color_management_mode(WindowColorManagementMode::PreferHdr)
                 .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange);
             let shell = DevBrowserShell::new(options);

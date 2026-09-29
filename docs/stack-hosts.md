@@ -103,6 +103,8 @@ WidgetGraphSnapshot also includes stack_hosts, which provides host-level surface
 
 For host nodes, hit testing is ordered by host-local surface order before non-surface child traversal. This allows host-managed z order to drive pointer targeting directly.
 
+A widget whose `hit_test_self` returns `false` only hits through its children: points inside it that no child takes reach what is behind it. A transparent `FloatingWorkspace` uses it to float views over other content.
+
 ### Ordering invalidation path
 
 InvalidationKind includes Ordering and frame scheduling tracks ordering work separately from content paint work.

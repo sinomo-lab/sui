@@ -467,6 +467,33 @@ tear-off windows are not part of `DockWorkspace`. `FloatingWorkspace` remains
 available for simpler independent overlays that do not need dock/reparent
 behavior.
 
+A transparent `FloatingWorkspace` floats its views over other content, such as
+a settings panel over a document: it paints no background, and points outside
+every view reach what is behind it. A closable view has a close button in its
+title bar and closes on Escape; closing hides it, and
+`FloatingWorkspaceState::set_view_visible` shows it again:
+
+```rust
+use sui::prelude::*;
+
+let state = FloatingWorkspaceState::new();
+let settings = state.add_view(
+    FloatingViewConfig::new("Settings", Rect::new(420.0, 72.0, 460.0, 620.0))
+        .visible(false)
+        .closable(true),
+);
+let overlay = FloatingWorkspace::new(state.clone())
+    .transparent(true)
+    .with_registered_view(settings, settings_panel);
+
+// Later, from a menu command:
+state.set_view_visible(settings, true);
+state.bring_to_front(settings);
+```
+
+A view fits its content to its size. Content taller than the view, like a long
+form, scrolls itself in a `ScrollView`.
+
 ## Zoomable Canvas Widgets
 
 `Canvas` can retain an ordinary SUI widget subtree in world coordinates. The

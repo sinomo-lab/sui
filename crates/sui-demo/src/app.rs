@@ -6,17 +6,12 @@ use std::{
 use crate::benchmarks::{
     build_retained_text_benchmark_with_theme, build_text_editing_benchmark_with_theme,
 };
-#[cfg(test)]
-use crate::hdr_validation::controls::USE_SYSTEM_SDR_BRIGHTNESS_LABEL;
-use crate::hdr_validation::controls::{
-    self as output_controls, COLOR_MANAGEMENT_MODE_NAME, DYNAMIC_RANGE_MODE_NAME,
-    OUTPUT_PRIMARIES_NAME, SDR_CONTENT_BRIGHTNESS_NAME, TONE_MAPPING_MODE_NAME,
-};
-use crate::hdr_validation::{OutputOptions, build_hdr_validation_surface};
+use crate::hdr_validation::build_hdr_validation_surface;
 use crate::live_performance::LivePerformanceRoot;
-use crate::theme_demo::{
-    build_theme_demo_surface_with_theme, hdr_theme_lab_mode, set_hdr_theme_lab_mode,
+use crate::settings::{
+    RenderOptions, SETTINGS_TITLE, SettingsHost, default_render_options, settings_view,
 };
+use crate::theme_demo::{build_theme_demo_surface_with_theme, set_hdr_theme_lab_mode};
 use crate::validation::{
     build_text_rendering_comparison_surface_with_theme, build_text_validation_surface_with_theme,
 };
@@ -26,11 +21,8 @@ use crate::widget_book::{build_widget_book_gallery_with_theme, register_widget_b
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowEvent, WindowId, WindowOutputDiagnostics, WindowRenderOptions,
-    WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, default_sui_logo_image,
-    paint_text, paint_text_line, prelude::*, window_output_diagnostics,
-    window_output_diagnostics_signal,
+    ToggleState, Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowRenderOptions,
+    default_sui_logo_image, paint_text_line, prelude::*,
 };
 
 #[cfg(test)]
@@ -111,40 +103,6 @@ const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
 const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
 const MARKDOWN_RENDER_TAB_LABEL: &str = "Rich documents";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
-const SETTINGS_TAB_LABEL: &str = "Settings";
-const LIVE_PERFORMANCE_OVERLAY_LABEL: &str = "Show live performance overlay";
-const FEATHERING_TOGGLE_LABEL: &str = "Enable renderer feathering";
-const FEATHER_WIDTH_NAME: &str = "Feather width";
-const OPTICAL_TEXT_CENTERING_TOGGLE_LABEL: &str = "Enable optical vertical text centering";
-const TEXT_HINTING_TOGGLE_LABEL: &str = "Enable slight small-text hinting";
-const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
-const TEXT_COVERAGE_POLICY_NAME: &str = "Text coverage policy";
-const TEXT_COVERAGE_GAMMA_NAME: &str = "Text coverage gamma";
-const STEM_DARKENING_TOGGLE_LABEL: &str = "Enable small-text stem darkening";
-const STEM_DARKENING_AMOUNT_NAME: &str = "Stem darkening amount";
-const STEM_DARKENING_MAX_PPEM_NAME: &str = "Stem darkening max ppem";
-const DEMO_TEXT_HINTING_MAX_PPEM_LIMIT: f32 = 96.0;
-const DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM: f32 = 18.0;
-const DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT: f32 = 0.08;
-const HDR_THEME_MODE_NAME: &str = "HDR theme mode";
-const OUTPUT_DIAGNOSTICS_TITLE: &str = "Output diagnostics";
-const HDR_THEME_INSPECTION_TITLE: &str = "HDR theme mode inspection";
-const SETTINGS_SCROLL_NAME: &str = "Settings controls";
-#[cfg(test)]
-const SETTINGS_SCROLL_BAR_NAME: &str = "Settings controls vertical scroll bar";
-const TEXT_COVERAGE_POLICY_OPTIONS: [&str; 5] = [
-    "Perceptual",
-    "Linear",
-    "Gamma",
-    "Coverage boost",
-    "2c - c^2",
-];
-const HDR_THEME_MODE_OPTIONS: [&str; 4] = [
-    "Disabled (SDR baseline)",
-    "Wide-gamut only",
-    "Constrained HDR",
-    "Full HDR",
-];
 const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
 const DEV_SHELL_LOGO_BUTTON_SIZE: f32 = 32.0;
 pub(crate) const DEV_SHELL_LOGO_IMAGE_HANDLE: ImageHandle = ImageHandle::new(0x5355_4900_0000_0001);
@@ -165,14 +123,10 @@ const DEV_SHELL_PICKER_CARD_FOCUS_INSET: f32 = 4.0;
 const DEV_SHELL_PICKER_SCROLL_NAME: &str = "Demo picker";
 #[cfg(test)]
 const DEV_SHELL_PICKER_SCROLL_BAR_NAME: &str = "Demo picker vertical scroll bar";
-const DEV_SHELL_SETTINGS_TITLE_HEIGHT: f32 = 38.0;
-const DEV_SHELL_SETTINGS_RESIZE_HANDLE: f32 = 18.0;
-const DEV_SHELL_MIN_SETTINGS_WIDTH: f32 = 320.0;
-const DEV_SHELL_MIN_SETTINGS_HEIGHT: f32 = 260.0;
-const DEV_SHELL_DEFAULT_SETTINGS_WIDTH: f32 = 460.0;
-const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
-const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
-const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
+/// Where Settings first opens, in window coordinates; it stays inside the
+/// content area below the toolbar.
+const DEV_SHELL_DEFAULT_SETTINGS_BOUNDS: Rect = Rect::new(420.0, 72.0, 460.0, 620.0);
+const DEV_SHELL_MIN_SETTINGS_SIZE: Size = Size::new(340.0, 260.0);
 pub(crate) const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
 const DEV_SHELL_PICKER_TITLE: &str = "SUI Demo";
 
@@ -365,6 +319,9 @@ impl DevAppTheme {
 #[derive(Clone)]
 struct DevShellState {
     inner: Rc<RefCell<DevShellStateInner>>,
+    /// Settings floats over the content, as the only view of this workspace.
+    settings_workspace: FloatingWorkspaceState,
+    settings_view: u64,
 }
 
 struct DevShellStateInner {
@@ -377,13 +334,17 @@ struct DevShellStateInner {
     /// than the built-in theme for `theme_scheme`.
     custom_theme: bool,
     performance_overlay_visible: bool,
-    settings_visible: bool,
-    settings_bounds: Rect,
-    settings_host_bounds: Rect,
 }
 
 impl DevShellState {
     fn new() -> Self {
+        let settings_workspace = FloatingWorkspaceState::new();
+        let settings_view = settings_workspace.add_view(
+            FloatingViewConfig::new(SETTINGS_TITLE, DEV_SHELL_DEFAULT_SETTINGS_BOUNDS)
+                .min_size(DEV_SHELL_MIN_SETTINGS_SIZE)
+                .visible(false)
+                .closable(true),
+        );
         Self {
             inner: Rc::new(RefCell::new(DevShellStateInner {
                 open_tabs: Vec::new(),
@@ -393,15 +354,9 @@ impl DevShellState {
                 theme: dev_theme_for_scheme(ThemeColorScheme::Light),
                 custom_theme: false,
                 performance_overlay_visible: false,
-                settings_visible: false,
-                settings_bounds: Rect::new(
-                    DEV_SHELL_DEFAULT_SETTINGS_X,
-                    DEV_SHELL_DEFAULT_SETTINGS_Y,
-                    DEV_SHELL_DEFAULT_SETTINGS_WIDTH,
-                    DEV_SHELL_DEFAULT_SETTINGS_HEIGHT,
-                ),
-                settings_host_bounds: Rect::ZERO,
             })),
+            settings_workspace,
+            settings_view,
         }
     }
 
@@ -421,13 +376,6 @@ impl DevShellState {
 
     fn theme_scheme(&self) -> ThemeColorScheme {
         self.inner.borrow().theme_scheme
-    }
-
-    fn is_dark(&self) -> bool {
-        matches!(
-            self.inner.borrow().theme_scheme,
-            ThemeColorScheme::Dark | ThemeColorScheme::HighContrast
-        )
     }
 
     fn cycle_theme(&self) -> ThemeColorScheme {
@@ -517,33 +465,15 @@ impl DevShellState {
     }
 
     fn show_settings(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.settings_visible = true;
-        inner.settings_bounds =
-            clamp_dev_shell_settings_bounds(inner.settings_host_bounds, inner.settings_bounds);
-    }
-
-    fn hide_settings(&self) {
-        self.inner.borrow_mut().settings_visible = false;
+        self.settings_workspace
+            .set_view_visible(self.settings_view, true);
+        self.settings_workspace.bring_to_front(self.settings_view);
     }
 
     fn settings_visible(&self) -> bool {
-        self.inner.borrow().settings_visible
-    }
-
-    fn settings_bounds(&self) -> Rect {
-        self.inner.borrow().settings_bounds
-    }
-
-    fn set_settings_bounds(&self, bounds: Rect) {
-        let mut inner = self.inner.borrow_mut();
-        inner.settings_bounds = clamp_dev_shell_settings_bounds(inner.settings_host_bounds, bounds);
-    }
-
-    fn set_settings_host_bounds(&self, bounds: Rect) {
-        let mut inner = self.inner.borrow_mut();
-        inner.settings_host_bounds = bounds;
-        inner.settings_bounds = clamp_dev_shell_settings_bounds(bounds, inner.settings_bounds);
+        self.settings_workspace
+            .snapshot(self.settings_view)
+            .is_some_and(|view| view.visible)
     }
 }
 
@@ -605,7 +535,8 @@ struct DevBrowserShell {
     main_menu: SingleChild,
     plus_button: SingleChild,
     theme_toggle: SingleChild,
-    settings_window: SingleChild,
+    /// A transparent floating workspace over the content, holding Settings.
+    settings: SingleChild,
     content_bounds: Rect,
 }
 
@@ -621,15 +552,15 @@ impl DevBrowserShell {
         let tab_scroll_to_end = Rc::new(Cell::new(false));
         let theme_reader = state.theme_reader();
         let command_demo_state = CommandDemoState::new();
-        // Settings and the HDR validation page edit the same output options.
-        let output_options = OutputOptions::shared(Rc::new(RefCell::new(render_options)));
+        // Settings and the HDR validation page edit the same options.
+        let options = RenderOptions::shared(render_options);
         let demos = build_dev_demo_entries(
             Rc::clone(&theme_reader),
             command_demo_state.clone(),
             DevAppTheme {
                 state: state.clone(),
             },
-            output_options.clone(),
+            options.clone(),
         );
         if let Some(index) =
             initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
@@ -637,6 +568,15 @@ impl DevBrowserShell {
             state.open_demo(index);
         }
         let demo_titles = demos.iter().map(|demo| demo.title).collect::<Vec<_>>();
+        let settings = Self::settings_workspace(
+            &state,
+            &theme_reader,
+            options,
+            demos
+                .iter()
+                .position(|demo| demo.title == HDR_VALIDATION_TAB_LABEL),
+            Rc::clone(&tab_scroll_to_end),
+        );
 
         let mut demo_buttons = WidgetChildren::with_capacity(demos.len());
         for (index, demo) in demos.iter().enumerate() {
@@ -768,16 +708,48 @@ impl DevBrowserShell {
             main_menu: SingleChild::new(main_menu),
             plus_button: SingleChild::new(plus_button),
             theme_toggle: SingleChild::new(ThemeToggleButton::new(state.clone())),
-            settings_window: SingleChild::new(FloatingSettingsWindow::new(
-                state.clone(),
-                build_render_settings_tab_with_options(
-                    output_options,
-                    Rc::clone(&theme_reader),
-                    state,
-                ),
-            )),
+            settings: SingleChild::new(settings),
             content_bounds: Rect::ZERO,
         }
+    }
+
+    /// Settings, floating over the content. It opens the HDR validation
+    /// page, the demo at `hdr_validation`, as a tab.
+    fn settings_workspace(
+        state: &DevShellState,
+        theme_reader: &DevThemeReader,
+        options: RenderOptions,
+        hdr_validation: Option<usize>,
+        tab_scroll_to_end: Rc<Cell<bool>>,
+    ) -> FloatingWorkspace {
+        let overlay_state = state.clone();
+        let show_overlay_state = state.clone();
+        let open_state = state.clone();
+        let host = SettingsHost {
+            performance_overlay_visible: Rc::new(move || {
+                overlay_state.performance_overlay_visible()
+            }),
+            show_performance_overlay: Rc::new(move |visible| {
+                show_overlay_state.set_performance_overlay_visible(visible);
+            }),
+            open_hdr_validation: Rc::new(move |ctx| {
+                let Some(index) = hdr_validation else {
+                    return;
+                };
+                if !open_state.open_tabs().contains(&index) {
+                    tab_scroll_to_end.set(true);
+                }
+                open_state.open_demo(index);
+                request_window_refresh(ctx, true);
+            }),
+        };
+        FloatingWorkspace::new(state.settings_workspace.clone())
+            .theme_when(clone_dev_theme_reader(theme_reader))
+            .transparent(true)
+            .with_registered_view(
+                state.settings_view,
+                settings_view(options, theme_reader, host),
+            )
     }
 
     fn performance_overlay_reader(&self) -> Rc<dyn Fn() -> bool> {
@@ -1157,9 +1129,7 @@ impl Widget for DevBrowserShell {
         }
 
         if self.state.settings_visible() {
-            let settings_bounds = self.state.settings_bounds();
-            self.settings_window
-                .measure(ctx, Constraints::tight(settings_bounds.size));
+            self.settings.measure(ctx, content_constraints);
         }
 
         root_size
@@ -1188,7 +1158,6 @@ impl Widget for DevBrowserShell {
             bounds.width(),
             (bounds.height() - DEV_SHELL_TOOLBAR_HEIGHT).max(0.0),
         );
-        self.state.set_settings_host_bounds(self.content_bounds);
 
         if self.state.picker_visible() {
             let grid = Self::picker_grid_rect(self.content_bounds);
@@ -1206,8 +1175,7 @@ impl Widget for DevBrowserShell {
         }
 
         if self.state.settings_visible() {
-            self.settings_window
-                .arrange(ctx, self.state.settings_bounds());
+            self.settings.arrange(ctx, self.content_bounds);
         }
     }
 
@@ -1235,7 +1203,9 @@ impl Widget for DevBrowserShell {
         }
         self.plus_button.paint(ctx);
         self.theme_toggle.paint(ctx);
-        self.settings_window.paint(ctx);
+        if self.state.settings_visible() {
+            self.settings.paint(ctx);
+        }
         self.main_menu.paint(ctx);
     }
 
@@ -1264,7 +1234,9 @@ impl Widget for DevBrowserShell {
         {
             child.semantics(ctx);
         }
-        self.settings_window.semantics(ctx);
+        if self.state.settings_visible() {
+            self.settings.semantics(ctx);
+        }
         self.main_menu.semantics(ctx);
     }
 
@@ -1286,7 +1258,7 @@ impl Widget for DevBrowserShell {
         self.plus_button.visit_children(visitor);
         self.theme_toggle.visit_children(visitor);
         if self.state.settings_visible() {
-            self.settings_window.visit_children(visitor);
+            self.settings.visit_children(visitor);
         }
         self.main_menu.visit_children(visitor);
     }
@@ -1305,7 +1277,7 @@ impl Widget for DevBrowserShell {
         self.plus_button.visit_children_mut(visitor);
         self.theme_toggle.visit_children_mut(visitor);
         if self.state.settings_visible() {
-            self.settings_window.visit_children_mut(visitor);
+            self.settings.visit_children_mut(visitor);
         }
         self.main_menu.visit_children_mut(visitor);
     }
@@ -1636,314 +1608,11 @@ impl Widget for ThemeToggleButton {
     }
 }
 
-#[derive(Clone, Copy)]
-enum FloatingSettingsGestureKind {
-    Move,
-    Resize,
-}
-
-struct FloatingSettingsGesture {
-    pointer_id: u64,
-    kind: FloatingSettingsGestureKind,
-    pointer_origin: Point,
-    initial_bounds: Rect,
-}
-
-struct FloatingSettingsWindow {
-    state: DevShellState,
-    content: SingleChild,
-    gesture: Option<FloatingSettingsGesture>,
-    close_pressed: bool,
-    close_hovered: bool,
-}
-
-impl FloatingSettingsWindow {
-    fn new<W>(state: DevShellState, content: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        Self {
-            state,
-            content: SingleChild::new(content),
-            gesture: None,
-            close_pressed: false,
-            close_hovered: false,
-        }
-    }
-
-    fn title_rect(bounds: Rect) -> Rect {
-        Rect::new(
-            bounds.x(),
-            bounds.y(),
-            bounds.width(),
-            DEV_SHELL_SETTINGS_TITLE_HEIGHT.min(bounds.height()),
-        )
-    }
-
-    fn content_rect(bounds: Rect) -> Rect {
-        Rect::new(
-            bounds.x() + 1.0,
-            bounds.y() + DEV_SHELL_SETTINGS_TITLE_HEIGHT,
-            (bounds.width() - 2.0).max(0.0),
-            (bounds.height() - DEV_SHELL_SETTINGS_TITLE_HEIGHT - 1.0).max(0.0),
-        )
-    }
-
-    fn close_rect(bounds: Rect) -> Rect {
-        Rect::new(bounds.max_x() - 34.0, bounds.y() + 4.0, 30.0, 30.0)
-    }
-
-    fn resize_rect(bounds: Rect) -> Rect {
-        Rect::new(
-            bounds.max_x() - DEV_SHELL_SETTINGS_RESIZE_HANDLE,
-            bounds.max_y() - DEV_SHELL_SETTINGS_RESIZE_HANDLE,
-            DEV_SHELL_SETTINGS_RESIZE_HANDLE,
-            DEV_SHELL_SETTINGS_RESIZE_HANDLE,
-        )
-    }
-
-    fn update_gesture(&mut self, ctx: &mut EventCtx, position: Point) {
-        let Some(gesture) = self.gesture.as_ref() else {
-            return;
-        };
-        let delta = position - gesture.pointer_origin;
-        let next = match gesture.kind {
-            FloatingSettingsGestureKind::Move => Rect::new(
-                gesture.initial_bounds.x() + delta.x,
-                gesture.initial_bounds.y() + delta.y,
-                gesture.initial_bounds.width(),
-                gesture.initial_bounds.height(),
-            ),
-            FloatingSettingsGestureKind::Resize => Rect::new(
-                gesture.initial_bounds.x(),
-                gesture.initial_bounds.y(),
-                gesture.initial_bounds.width() + delta.x,
-                gesture.initial_bounds.height() + delta.y,
-            ),
-        };
-        self.state.set_settings_bounds(next);
-        request_window_refresh(ctx, true);
-    }
-}
-
-impl Widget for FloatingSettingsWindow {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Move
-                    && self
-                        .gesture
-                        .as_ref()
-                        .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id) =>
-            {
-                self.update_gesture(ctx, pointer.position);
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = Self::close_rect(ctx.bounds()).contains(pointer.position);
-                if self.close_hovered != hovered {
-                    self.close_hovered = hovered;
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                let bounds = ctx.bounds();
-                if Self::close_rect(bounds).contains(pointer.position) {
-                    self.close_pressed = true;
-                    self.close_hovered = true;
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_focus();
-                    ctx.request_paint();
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                } else if Self::resize_rect(bounds).contains(pointer.position) {
-                    self.gesture = Some(FloatingSettingsGesture {
-                        pointer_id: pointer.pointer_id,
-                        kind: FloatingSettingsGestureKind::Resize,
-                        pointer_origin: pointer.position,
-                        initial_bounds: bounds,
-                    });
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_focus();
-                    ctx.set_handled();
-                } else if Self::title_rect(bounds).contains(pointer.position) {
-                    self.gesture = Some(FloatingSettingsGesture {
-                        pointer_id: pointer.pointer_id,
-                        kind: FloatingSettingsGestureKind::Move,
-                        pointer_origin: pointer.position,
-                        initial_bounds: bounds,
-                    });
-                    ctx.request_pointer_capture(pointer.pointer_id);
-                    ctx.request_focus();
-                    ctx.set_handled();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary) =>
-            {
-                let captured = self
-                    .gesture
-                    .as_ref()
-                    .is_some_and(|gesture| gesture.pointer_id == pointer.pointer_id)
-                    || self.close_pressed;
-                if !captured {
-                    return;
-                }
-                if self.close_pressed && Self::close_rect(ctx.bounds()).contains(pointer.position) {
-                    self.state.hide_settings();
-                }
-                self.gesture = None;
-                self.close_pressed = false;
-                self.close_hovered = Self::close_rect(ctx.bounds()).contains(pointer.position);
-                ctx.release_pointer_capture(pointer.pointer_id);
-                request_window_refresh(ctx, true);
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.gesture.is_some() || self.close_pressed {
-                    self.gesture = None;
-                    self.close_pressed = false;
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    request_window_refresh(ctx, true);
-                    ctx.set_handled();
-                }
-            }
-            Event::Keyboard(key)
-                if key.state == KeyState::Pressed && ctx.is_focused() && key.key == "Escape" =>
-            {
-                self.state.hide_settings();
-                request_window_refresh(ctx, true);
-                ctx.set_handled();
-            }
-            _ => {}
-        }
-    }
-
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let size = constraints.clamp(self.state.settings_bounds().size);
-        let content = Self::content_rect(Rect::from_origin_size(Point::ZERO, size));
-        self.content.measure(ctx, Constraints::tight(content.size));
-        size
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.content.arrange(ctx, Self::content_rect(bounds));
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        if !self.state.settings_visible() {
-            return;
-        }
-        let theme = self.state.theme();
-        let palette = theme.palette;
-        let content_palette = palette;
-        let bounds = ctx.bounds();
-        if bounds.is_empty() {
-            return;
-        }
-        ctx.fill(Path::rounded_rect(bounds, 8.0), content_palette.surface);
-        ctx.stroke(
-            Path::rounded_rect(bounds, 8.0),
-            if self.state.is_dark() {
-                palette.border.with_alpha(0.92)
-            } else {
-                content_palette.border.with_alpha(0.92)
-            },
-            StrokeStyle::new(1.0),
-        );
-
-        let title = Self::title_rect(bounds);
-        ctx.fill(
-            top_rounded_rect_path(title, 8.0),
-            theme.surfaces.window_subtle,
-        );
-        ctx.fill_rect(
-            Rect::new(title.x(), title.max_y(), title.width(), 1.0),
-            content_palette.border,
-        );
-        let title_style = demo_text_style(theme, DemoTextRole::CardTitle, palette.text);
-        paint_text_line(
-            ctx,
-            Rect::new(
-                title.x() + 14.0,
-                title.y(),
-                title.width() - 54.0,
-                title.height(),
-            ),
-            SETTINGS_TAB_LABEL,
-            &title_style,
-            TextAlign::Start,
-        );
-
-        let close = Self::close_rect(bounds);
-        if self.close_hovered || self.close_pressed {
-            ctx.fill(
-                Path::rounded_rect(close, 6.0),
-                if self.close_pressed {
-                    palette.control_hover
-                } else {
-                    palette.control
-                },
-            );
-        }
-        let close_color = palette.text_muted;
-        ctx.stroke(close_icon_path(close), close_color, StrokeStyle::new(1.5));
-
-        self.content.paint(ctx);
-
-        let handle = Self::resize_rect(bounds);
-        let handle_color = content_palette.border.with_alpha(0.82);
-        ctx.stroke(
-            diagonal_handle_path(handle, 10.0, 1.0),
-            handle_color,
-            StrokeStyle::new(1.4),
-        );
-        ctx.stroke(
-            diagonal_handle_path(handle, 6.0, 5.0),
-            handle_color.with_alpha(0.72),
-            StrokeStyle::new(1.4),
-        );
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        if !self.state.settings_visible() {
-            return;
-        }
-        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Window, ctx.bounds());
-        node.name = Some(SETTINGS_TAB_LABEL.to_string());
-        node.state.focused = ctx.is_focused();
-        node.actions = vec![SemanticsAction::Focus];
-        ctx.push(node);
-        self.content.semantics(ctx);
-    }
-
-    fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        if self.state.settings_visible() {
-            self.content.visit_children(visitor);
-        }
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        if self.state.settings_visible() {
-            self.content.visit_children_mut(visitor);
-        }
-    }
-}
-
 fn build_dev_demo_entries(
     theme_reader: DevThemeReader,
     command_demo_state: CommandDemoState,
     app_theme: DevAppTheme,
-    output_options: OutputOptions,
+    options: RenderOptions,
 ) -> Vec<DevDemo> {
     macro_rules! themed_demo {
         ($title:expr, $description:expr, $icon:expr, $accent:expr, |$theme:ident| $child:expr) => {{
@@ -2035,7 +1704,7 @@ fn build_dev_demo_entries(
             "Headroom, highlight fitting, wide gamut, and banding probes, with output controls and capture.",
             IconGlyph::Maximize,
             DecorativeHue::Amber,
-            |theme| build_hdr_validation_surface(theme, output_options)
+            |theme| build_hdr_validation_surface(theme, options)
         ),
         themed_demo!(
             LAYOUT_TAB_LABEL,
@@ -2112,84 +1781,6 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
     }
 }
 
-fn clamp_dev_shell_settings_bounds(host: Rect, bounds: Rect) -> Rect {
-    if host.is_empty() {
-        return Rect::new(
-            bounds.x(),
-            bounds.y(),
-            bounds.width().max(DEV_SHELL_MIN_SETTINGS_WIDTH),
-            bounds.height().max(DEV_SHELL_MIN_SETTINGS_HEIGHT),
-        );
-    }
-    let width = bounds.width().clamp(
-        DEV_SHELL_MIN_SETTINGS_WIDTH.min(host.width()),
-        host.width().max(1.0),
-    );
-    let height = bounds.height().clamp(
-        DEV_SHELL_MIN_SETTINGS_HEIGHT.min(host.height()),
-        host.height().max(1.0),
-    );
-    let min_visible_width = width.min(64.0);
-    let min_visible_height = DEV_SHELL_SETTINGS_TITLE_HEIGHT.min(height);
-    let max_x = (host.max_x() - min_visible_width).max(host.x());
-    let max_y = (host.max_y() - min_visible_height).max(host.y());
-    Rect::new(
-        bounds.x().clamp(host.x(), max_x),
-        bounds.y().clamp(host.y(), max_y),
-        width,
-        height,
-    )
-}
-
-fn close_icon_path(bounds: Rect) -> Path {
-    let mut path = PathBuilder::new();
-    let inset = bounds.width().min(bounds.height()) * 0.34;
-    path.move_to(Point::new(bounds.x() + inset, bounds.y() + inset));
-    path.line_to(Point::new(bounds.max_x() - inset, bounds.max_y() - inset));
-    path.move_to(Point::new(bounds.max_x() - inset, bounds.y() + inset));
-    path.line_to(Point::new(bounds.x() + inset, bounds.max_y() - inset));
-    path.build()
-}
-
-fn diagonal_handle_path(bounds: Rect, inset: f32, offset: f32) -> Path {
-    let mut path = PathBuilder::new();
-    path.move_to(Point::new(bounds.max_x() - inset, bounds.max_y() - offset));
-    path.line_to(Point::new(bounds.max_x() - offset, bounds.max_y() - inset));
-    path.build()
-}
-
-fn top_rounded_rect_path(bounds: Rect, radius: f32) -> Path {
-    let radius = radius
-        .max(0.0)
-        .min(bounds.width() * 0.5)
-        .min(bounds.height());
-    let kappa = 0.552_284_8;
-    let x0 = bounds.x();
-    let y0 = bounds.y();
-    let x1 = bounds.max_x();
-    let y1 = bounds.max_y();
-    let r = radius;
-    let c = r * kappa;
-    let mut path = PathBuilder::new();
-    path.move_to(Point::new(x0 + r, y0));
-    path.line_to(Point::new(x1 - r, y0));
-    path.cubic_to(
-        Point::new(x1 - r + c, y0),
-        Point::new(x1, y0 + r - c),
-        Point::new(x1, y0 + r),
-    );
-    path.line_to(Point::new(x1, y1));
-    path.line_to(Point::new(x0, y1));
-    path.line_to(Point::new(x0, y0 + r));
-    path.cubic_to(
-        Point::new(x0, y0 + r - c),
-        Point::new(x0 + r - c, y0),
-        Point::new(x0 + r, y0),
-    );
-    path.close();
-    path.build()
-}
-
 pub(crate) fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool) {
     ctx.request(InvalidationRequest::new(
         InvalidationTarget::Window(ctx.window_id()),
@@ -2223,918 +1814,6 @@ fn scroll_dev_tab_strip(state: &ScrollState, direction: f32, ctx: &mut EventCtx)
     if state.set_offset(Vector::new(target_x, 0.0)) {
         request_window_refresh(ctx, false);
     }
-}
-
-fn window_text_hinting_from_renderer(hinting: TextHinting) -> WindowTextHinting {
-    match hinting.normalized() {
-        TextHinting::None => WindowTextHinting::None,
-        TextHinting::Slight { max_ppem } => WindowTextHinting::Slight { max_ppem },
-    }
-}
-
-fn window_text_coverage_policy_from_renderer(
-    policy: TextCoveragePolicy,
-) -> WindowTextCoveragePolicy {
-    match policy.normalized() {
-        TextCoveragePolicy::Perceptual | TextCoveragePolicy::PerceptualLuminance { .. } => {
-            WindowTextCoveragePolicy::Perceptual
-        }
-        TextCoveragePolicy::Linear => WindowTextCoveragePolicy::Linear,
-        TextCoveragePolicy::Gamma(gamma) => WindowTextCoveragePolicy::Gamma(gamma),
-        TextCoveragePolicy::CoverageBoost(amount) => {
-            WindowTextCoveragePolicy::CoverageBoost(amount)
-        }
-        TextCoveragePolicy::TwoCoverageMinusCoverageSq => {
-            WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq
-        }
-    }
-}
-
-fn text_coverage_policy_selected_index(policy: WindowTextCoveragePolicy) -> usize {
-    match policy.normalized() {
-        WindowTextCoveragePolicy::Perceptual => 0,
-        WindowTextCoveragePolicy::Linear => 1,
-        WindowTextCoveragePolicy::Gamma(_) => 2,
-        WindowTextCoveragePolicy::CoverageBoost(_) => 3,
-        WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => 4,
-    }
-}
-
-fn update_text_coverage_policy_selection(state: &mut WindowRenderOptions, index: usize) {
-    state.text_coverage_policy = match index {
-        0 => WindowTextCoveragePolicy::Perceptual,
-        1 => WindowTextCoveragePolicy::Linear,
-        2 => WindowTextCoveragePolicy::Gamma(match state.text_coverage_policy.normalized() {
-            WindowTextCoveragePolicy::Gamma(gamma) => gamma,
-            _ => 1.6,
-        }),
-        3 => {
-            WindowTextCoveragePolicy::CoverageBoost(match state.text_coverage_policy.normalized() {
-                WindowTextCoveragePolicy::CoverageBoost(amount) => amount,
-                _ => 0.75,
-            })
-        }
-        4 => WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq,
-        _ => state.text_coverage_policy,
-    };
-}
-
-fn hdr_theme_mode_label(mode: HdrThemeMode) -> &'static str {
-    match mode {
-        HdrThemeMode::Disabled => "Disabled (SDR baseline)",
-        HdrThemeMode::WideGamutOnly => "Wide-gamut only",
-        HdrThemeMode::ConstrainedHdr => "Constrained HDR",
-        HdrThemeMode::FullHdr => "Full HDR",
-    }
-}
-
-fn hdr_theme_mode_selected_index(mode: HdrThemeMode) -> usize {
-    match mode {
-        HdrThemeMode::Disabled => 0,
-        HdrThemeMode::WideGamutOnly => 1,
-        HdrThemeMode::ConstrainedHdr => 2,
-        HdrThemeMode::FullHdr => 3,
-    }
-}
-
-fn hdr_theme_mode_from_index(index: usize) -> HdrThemeMode {
-    match index {
-        1 => HdrThemeMode::WideGamutOnly,
-        2 => HdrThemeMode::ConstrainedHdr,
-        3 => HdrThemeMode::FullHdr,
-        _ => HdrThemeMode::Disabled,
-    }
-}
-
-fn output_policy_label(strategy_debug: &str) -> &'static str {
-    if strategy_debug.starts_with("Hdr") {
-        "HDR"
-    } else if strategy_debug.starts_with("WideGamut") {
-        "Wide gamut"
-    } else {
-        "SDR"
-    }
-}
-
-/// The window's output diagnostics, measuring the widget again whenever a
-/// presented frame changes them.
-fn observe_output_diagnostics(ctx: &MeasureCtx) -> Option<WindowOutputDiagnostics> {
-    ctx.observe(&window_output_diagnostics_signal(ctx.window_id()))
-}
-
-pub(crate) fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
-    let source = if diagnostics.use_system_sdr_content_brightness
-        && diagnostics.system_sdr_content_brightness_nits.is_some()
-    {
-        "system"
-    } else if diagnostics.use_system_sdr_content_brightness {
-        "manual fallback"
-    } else {
-        "manual"
-    };
-    let system = diagnostics
-        .system_sdr_content_brightness_nits
-        .map(|nits| format!("{nits:.0} nits"))
-        .unwrap_or_else(|| "unavailable".to_string());
-    format!(
-        "SDR content brightness: {:.0} nits ({source}; system {system}, manual {:.0} nits)",
-        diagnostics.requested_sdr_content_brightness_nits,
-        diagnostics.configured_sdr_content_brightness_nits,
-    )
-}
-
-fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
-    let current_mode = hdr_theme_lab_mode();
-    let mut lines = vec![format!(
-        "Current theme mode: {}",
-        hdr_theme_mode_label(current_mode)
-    )];
-
-    if let Some(diagnostics) = window_output_diagnostics(window_id) {
-        let strategy_debug = format!("{:?}", diagnostics.active_output_strategy);
-        lines.push(format!(
-            "Window output policy: {}",
-            output_policy_label(&strategy_debug)
-        ));
-        lines.push(format!(
-            "Requested presentation: {:?} / {:?}",
-            diagnostics.requested_color_management_mode, diagnostics.requested_dynamic_range_mode
-        ));
-        lines.push(sdr_content_brightness_line(&diagnostics));
-        lines.push(format!("Active strategy: {strategy_debug}"));
-    } else {
-        lines.push("Window output policy: waiting for first presented frame".to_string());
-        lines.push("Requested presentation: waiting for output diagnostics".to_string());
-    }
-
-    lines
-}
-
-fn output_diagnostics_lines(diagnostics: Option<&WindowOutputDiagnostics>) -> Vec<String> {
-    let Some(diagnostics) = diagnostics else {
-        return vec!["Waiting for first presented frame…".to_string()];
-    };
-
-    vec![
-        format!(
-            "Requested mode: {:?}",
-            diagnostics.requested_color_management_mode
-        ),
-        format!(
-            "Requested primaries: {:?}",
-            diagnostics.requested_output_primaries
-        ),
-        format!(
-            "Requested dynamic range: {:?}",
-            diagnostics.requested_dynamic_range_mode
-        ),
-        format!(
-            "Requested tone mapping: {:?}",
-            diagnostics.requested_tone_mapping_mode
-        ),
-        sdr_content_brightness_line(diagnostics),
-        format!(
-            "Detected primaries: {:?}",
-            diagnostics.display_capabilities.preferred_primaries
-        ),
-        format!(
-            "Detected dynamic range: {:?}",
-            diagnostics.display_capabilities.preferred_dynamic_range
-        ),
-        format!(
-            "Wide gamut: {} | HDR: {} | Native HDR: {}",
-            diagnostics.display_capabilities.supports_wide_gamut,
-            diagnostics.display_capabilities.supports_hdr,
-            diagnostics
-                .display_capabilities
-                .native_hdr_presentation_supported,
-        ),
-        format!("Active strategy: {:?}", diagnostics.active_output_strategy),
-        diagnostics.display_capabilities.notes.clone(),
-    ]
-}
-
-pub(crate) fn labeled_settings_control<W>(
-    theme_reader: DevThemeReader,
-    label: &'static str,
-    width: f32,
-    control: W,
-) -> impl Widget
-where
-    W: Widget + 'static,
-{
-    PropertyRow::new(label, control)
-        .theme_when(clone_dev_theme_reader(&theme_reader))
-        .control_width(width)
-}
-
-const SETTINGS_PANEL_MAX_WIDTH: f32 = 640.0;
-const SETTINGS_PANEL_PADDING_X: f32 = 14.0;
-const SETTINGS_PANEL_PADDING_TOP: f32 = 12.0;
-const SETTINGS_PANEL_PADDING_BOTTOM: f32 = 12.0;
-const SETTINGS_PANEL_TITLE_GAP: f32 = 10.0;
-const SETTINGS_PANEL_LINE_GAP: f32 = 3.0;
-
-fn settings_panel_width(max_width: f32) -> f32 {
-    if max_width.is_finite() {
-        max_width.clamp(0.0, SETTINGS_PANEL_MAX_WIDTH)
-    } else {
-        SETTINGS_PANEL_MAX_WIDTH
-    }
-}
-
-fn settings_panel_title_style(theme: DefaultTheme) -> TextStyle {
-    demo_text_style(theme, DemoTextRole::CardTitle, theme.palette.text)
-}
-
-fn settings_panel_body_style(theme: DefaultTheme) -> TextStyle {
-    demo_text_style(
-        theme,
-        DemoTextRole::Metadata,
-        theme.palette.text.with_alpha(0.9),
-    )
-}
-
-fn settings_wrapped_text_height(
-    ctx: &MeasureCtx,
-    text: &str,
-    style: &TextStyle,
-    width: f32,
-) -> f32 {
-    Paragraph::new(ctx, text, style, TextAlign::Start, width)
-        .size()
-        .height
-        .max(style.line_height)
-}
-
-/// A settings panel's lines, each wrapped to the panel's text width.
-fn settings_panel_paragraphs(
-    shaper: &(impl TextShaper + ?Sized),
-    lines: &[String],
-    text_width: f32,
-    style: &TextStyle,
-) -> Vec<Paragraph> {
-    lines
-        .iter()
-        .map(|line| Paragraph::new(shaper, line.as_str(), style, TextAlign::Start, text_width))
-        .collect()
-}
-
-fn settings_panel_text_width(width: f32) -> f32 {
-    (width - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0)
-}
-
-fn settings_panel_height(
-    ctx: &MeasureCtx,
-    lines: &[String],
-    width: f32,
-    title_style: &TextStyle,
-    body_style: &TextStyle,
-) -> f32 {
-    let paragraphs =
-        settings_panel_paragraphs(ctx, lines, settings_panel_text_width(width), body_style);
-    let body_height = paragraphs
-        .iter()
-        .map(|paragraph| paragraph.size().height.max(body_style.line_height))
-        .sum::<f32>()
-        + SETTINGS_PANEL_LINE_GAP * paragraphs.len().saturating_sub(1) as f32;
-
-    SETTINGS_PANEL_PADDING_TOP
-        + title_style.line_height
-        + SETTINGS_PANEL_TITLE_GAP
-        + body_height
-        + SETTINGS_PANEL_PADDING_BOTTOM
-}
-
-fn paint_settings_panel(ctx: &mut PaintCtx, title: &str, lines: &[String], theme: DefaultTheme) {
-    let palette = theme.palette;
-    let bounds = ctx.bounds();
-    ctx.fill_rect(bounds, palette.surface.with_alpha(0.35));
-    ctx.stroke_rect(
-        bounds,
-        palette.border.with_alpha(0.85),
-        StrokeStyle::default(),
-    );
-
-    let text_x = bounds.x() + SETTINGS_PANEL_PADDING_X;
-    let text_width = settings_panel_text_width(bounds.width());
-    let title_style = settings_panel_title_style(theme);
-    let body_style = settings_panel_body_style(theme);
-
-    ctx.push_clip_rect(bounds);
-    paint_text_line(
-        ctx,
-        Rect::new(
-            text_x,
-            bounds.y() + SETTINGS_PANEL_PADDING_TOP,
-            text_width,
-            title_style.line_height,
-        ),
-        title,
-        &title_style,
-        TextAlign::Start,
-    );
-
-    let mut y = bounds.y()
-        + SETTINGS_PANEL_PADDING_TOP
-        + title_style.line_height
-        + SETTINGS_PANEL_TITLE_GAP;
-    for paragraph in settings_panel_paragraphs(ctx, lines, text_width, &body_style) {
-        let height = paragraph.size().height.max(body_style.line_height);
-        paragraph.paint(
-            ctx,
-            Rect::new(text_x, y, text_width, height),
-            VerticalAlign::Top,
-        );
-        y += height + SETTINGS_PANEL_LINE_GAP;
-    }
-    ctx.pop_clip();
-}
-
-struct HdrThemeInspectionPanel {
-    theme_reader: DevThemeReader,
-}
-
-impl HdrThemeInspectionPanel {
-    fn new(theme_reader: DevThemeReader) -> Self {
-        Self { theme_reader }
-    }
-
-    fn theme(&self) -> DefaultTheme {
-        (self.theme_reader)()
-    }
-}
-
-impl Widget for HdrThemeInspectionPanel {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        observe_output_diagnostics(ctx);
-        let theme = self.theme();
-        let width = settings_panel_width(constraints.max.width);
-        let lines = hdr_theme_inspection_lines(ctx.window_id());
-        let height = settings_panel_height(
-            ctx,
-            &lines,
-            width,
-            &settings_panel_title_style(theme),
-            &settings_panel_body_style(theme),
-        );
-        constraints.clamp(Size::new(width, height))
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.theme();
-        let lines = hdr_theme_inspection_lines(ctx.window_id());
-        paint_settings_panel(ctx, HDR_THEME_INSPECTION_TITLE, &lines, theme);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(
-            ctx.widget_id(),
-            SemanticsRole::GenericContainer,
-            ctx.bounds(),
-        );
-        node.name = Some(HDR_THEME_INSPECTION_TITLE.to_string());
-        node.description = Some(hdr_theme_inspection_lines(ctx.window_id()).join("\n"));
-        ctx.push(node);
-    }
-}
-
-/// The window's output diagnostics, as of the last presented frame.
-struct OutputDiagnosticsPanel {
-    theme_reader: DevThemeReader,
-    /// Taken when measured, so painting and semantics match the layout.
-    lines: Vec<String>,
-}
-
-impl OutputDiagnosticsPanel {
-    fn new(theme_reader: DevThemeReader) -> Self {
-        Self {
-            theme_reader,
-            lines: Vec::new(),
-        }
-    }
-
-    fn theme(&self) -> DefaultTheme {
-        (self.theme_reader)()
-    }
-}
-
-impl Widget for OutputDiagnosticsPanel {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.lines = output_diagnostics_lines(observe_output_diagnostics(ctx).as_ref());
-        let theme = self.theme();
-        let width = settings_panel_width(constraints.max.width);
-        let height = settings_panel_height(
-            ctx,
-            &self.lines,
-            width,
-            &settings_panel_title_style(theme),
-            &settings_panel_body_style(theme),
-        );
-        constraints.clamp(Size::new(width, height))
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.theme();
-        paint_settings_panel(ctx, OUTPUT_DIAGNOSTICS_TITLE, &self.lines, theme);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let mut node = SemanticsNode::new(
-            ctx.widget_id(),
-            SemanticsRole::GenericContainer,
-            ctx.bounds(),
-        );
-        node.name = Some(OUTPUT_DIAGNOSTICS_TITLE.to_string());
-        node.description = Some(self.lines.join("\n"));
-        ctx.push(node);
-    }
-}
-
-/// The SDR content brightness in use, as of the last presented frame.
-struct SdrContentBrightnessStatus {
-    theme_reader: DevThemeReader,
-    /// Taken when measured, so painting and semantics match the layout.
-    text: Option<String>,
-}
-
-impl SdrContentBrightnessStatus {
-    fn new(theme_reader: DevThemeReader) -> Self {
-        Self {
-            theme_reader,
-            text: None,
-        }
-    }
-
-    fn theme(&self) -> DefaultTheme {
-        (self.theme_reader)()
-    }
-
-    fn text(&self) -> &str {
-        self.text
-            .as_deref()
-            .unwrap_or("SDR content brightness: waiting for first frame")
-    }
-}
-
-impl Widget for SdrContentBrightnessStatus {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.text = observe_output_diagnostics(ctx)
-            .map(|diagnostics| sdr_content_brightness_line(&diagnostics));
-        let text = self.text().to_string();
-        let theme = self.theme();
-        let style = demo_text_style(
-            theme,
-            DemoTextRole::Metadata,
-            theme.palette.text.with_alpha(0.78),
-        );
-        let width = if constraints.max.width.is_finite() {
-            constraints.max.width.clamp(0.0, 420.0)
-        } else {
-            420.0
-        };
-        let height = settings_wrapped_text_height(ctx, &text, &style, width).max(34.0);
-        constraints.clamp(Size::new(width, height))
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.theme();
-        let style = demo_text_style(
-            theme,
-            DemoTextRole::Metadata,
-            theme.palette.text.with_alpha(0.78),
-        );
-        paint_text(ctx, ctx.bounds(), self.text(), &style, TextAlign::Start);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let description = self.text().to_string();
-        let mut node = SemanticsNode::new(
-            ctx.widget_id(),
-            SemanticsRole::GenericContainer,
-            ctx.bounds(),
-        );
-        node.name = Some(SDR_CONTENT_BRIGHTNESS_NAME.to_string());
-        node.description = Some(description);
-        ctx.push(node);
-    }
-}
-
-struct RenderSettingsTab {
-    content: SingleChild,
-    state: Rc<RefCell<WindowRenderOptions>>,
-    output_options: OutputOptions,
-    applied: Option<WindowRenderOptions>,
-    last_hdr_theme_mode: HdrThemeMode,
-}
-
-/// The options a window renders with when none are set: the renderer's own
-/// defaults.
-pub(crate) fn default_render_options() -> WindowRenderOptions {
-    let renderer = WgpuRenderer::new();
-    WindowRenderOptions::new(renderer.feathering_enabled(), renderer.feather_width())
-        .with_text_hinting(window_text_hinting_from_renderer(renderer.text_hinting()))
-        .with_text_coverage_policy(window_text_coverage_policy_from_renderer(
-            renderer.text_coverage_policy(),
-        ))
-}
-
-impl RenderSettingsTab {
-    fn default_options() -> WindowRenderOptions {
-        default_render_options()
-    }
-
-    fn with_initial_options(
-        output_options: OutputOptions,
-        theme_reader: DevThemeReader,
-        shell_state: DevShellState,
-    ) -> Self {
-        let state = output_options.state();
-        let initial = *state.borrow();
-        let performance_overlay_state = shell_state.clone();
-        let toggle_state = Rc::clone(&state);
-        let width_state = Rc::clone(&state);
-        let text_centering_state = Rc::clone(&state);
-        let hinting_toggle_state = Rc::clone(&state);
-        let hinting_max_ppem_state = Rc::clone(&state);
-        let text_coverage_policy_state = Rc::clone(&state);
-        let text_coverage_gamma_state = Rc::clone(&state);
-        let stem_darkening_toggle_state = Rc::clone(&state);
-        let stem_darkening_amount_state = Rc::clone(&state);
-        let stem_darkening_max_ppem_state = Rc::clone(&state);
-        let current_hdr_theme_mode = hdr_theme_lab_mode();
-
-        let content = ScrollView::vertical(Padding::all(
-                28.0,
-                Stack::vertical()
-                    .spacing(18.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(
-                        Label::new("Renderer settings")
-                            .style_when(demo_text_style_when(
-                                &theme_reader,
-                                DemoTextRole::PageTitle,
-                                |theme| theme.palette.text,
-                            )),
-                    )
-                    .with_child(
-                        Label::new(
-                            "These controls update the active window's runtime presentation on the next redraw.",
-                        )
-                        .style_when(demo_text_style_when(
-                            &theme_reader,
-                            DemoTextRole::Supporting,
-                            |theme| theme.palette.text_muted,
-                        )),
-                    )
-                    .with_child(
-                        Checkbox::new(LIVE_PERFORMANCE_OVERLAY_LABEL)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .checked(shell_state.performance_overlay_visible())
-                            .on_toggle(move |checked| {
-                                performance_overlay_state
-                                    .set_performance_overlay_visible(checked);
-                            }),
-                    )
-                    .with_child(
-                        Checkbox::new(FEATHERING_TOGGLE_LABEL)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .checked(initial.feathering_enabled)
-                            .on_toggle(move |checked| {
-                                toggle_state.borrow_mut().feathering_enabled = checked;
-                            }),
-                    )
-                    .with_child(
-                        Checkbox::new(OPTICAL_TEXT_CENTERING_TOGGLE_LABEL)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .checked(initial.optical_vertical_text_alignment_enabled)
-                            .on_toggle(move |checked| {
-                                text_centering_state
-                                    .borrow_mut()
-                                    .optical_vertical_text_alignment_enabled = checked;
-                            }),
-                    )
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        FEATHER_WIDTH_NAME,
-                        220.0,
-                        NumberInput::new(FEATHER_WIDTH_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .range(0.0, 8.0)
-                            .step(0.05)
-                            .precision(2)
-                            .value(initial.feather_width as f64)
-                            .on_change(move |value| {
-                                width_state.borrow_mut().feather_width = value.max(0.0) as f32;
-                            }),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        TEXT_COVERAGE_POLICY_NAME,
-                        240.0,
-                        Select::new(TEXT_COVERAGE_POLICY_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .options(TEXT_COVERAGE_POLICY_OPTIONS)
-                            .selected(text_coverage_policy_selected_index(
-                                initial.text_coverage_policy,
-                            ))
-                            .on_change(move |index, _| {
-                                let mut state = text_coverage_policy_state.borrow_mut();
-                                update_text_coverage_policy_selection(&mut state, index);
-                            }),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        TEXT_COVERAGE_GAMMA_NAME,
-                        220.0,
-                        NumberInput::new(TEXT_COVERAGE_GAMMA_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .range(0.25, 4.0)
-                            .step(0.05)
-                            .precision(2)
-                            .value(match initial.text_coverage_policy.normalized() {
-                                WindowTextCoveragePolicy::Gamma(gamma) => gamma as f64,
-                                _ => 1.6,
-                            })
-                            .on_change(move |value| {
-                                text_coverage_gamma_state.borrow_mut().text_coverage_policy =
-                                    WindowTextCoveragePolicy::Gamma(value.clamp(0.25, 4.0) as f32);
-                            }),
-                    ))
-                    .with_child(
-                        Checkbox::new(TEXT_HINTING_TOGGLE_LABEL)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .checked(!matches!(initial.text_hinting, WindowTextHinting::None))
-                            .on_toggle(move |checked| {
-                                let mut state = hinting_toggle_state.borrow_mut();
-                                state.text_hinting = if checked {
-                                    match state.text_hinting.normalized() {
-                                        WindowTextHinting::Slight { max_ppem } => {
-                                            WindowTextHinting::Slight { max_ppem }
-                                        }
-                                        WindowTextHinting::None => {
-                                            WindowTextHinting::Slight {
-                                                max_ppem: DEMO_TEXT_HINTING_MAX_PPEM_LIMIT,
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    WindowTextHinting::None
-                                };
-                            }),
-                    )
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        TEXT_HINTING_MAX_PPEM_NAME,
-                        220.0,
-                        NumberInput::new(TEXT_HINTING_MAX_PPEM_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .range(1.0, DEMO_TEXT_HINTING_MAX_PPEM_LIMIT as f64)
-                            .step(0.5)
-                            .precision(1)
-                            .value(match initial.text_hinting.normalized() {
-                                WindowTextHinting::Slight { max_ppem } => max_ppem as f64,
-                                WindowTextHinting::None => DEMO_TEXT_HINTING_MAX_PPEM_LIMIT as f64,
-                            })
-                            .on_change(move |value| {
-                                let max_ppem =
-                                    value.clamp(1.0, DEMO_TEXT_HINTING_MAX_PPEM_LIMIT as f64) as f32;
-                                hinting_max_ppem_state.borrow_mut().text_hinting =
-                                    WindowTextHinting::Slight { max_ppem };
-                            }),
-                    ))
-                    .with_child(
-                        Checkbox::new(STEM_DARKENING_TOGGLE_LABEL)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .checked(!matches!(initial.stem_darkening, WindowStemDarkening::None))
-                            .on_toggle(move |checked| {
-                                let mut state = stem_darkening_toggle_state.borrow_mut();
-                                state.stem_darkening = if checked {
-                                    match state.stem_darkening.normalized() {
-                                        WindowStemDarkening::Enabled { max_ppem, amount } => {
-                                            WindowStemDarkening::Enabled { max_ppem, amount }
-                                        }
-                                        WindowStemDarkening::None => {
-                                            WindowStemDarkening::Enabled {
-                                                max_ppem: DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM,
-                                                amount: DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT,
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    WindowStemDarkening::None
-                                };
-                            }),
-                    )
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        STEM_DARKENING_AMOUNT_NAME,
-                        220.0,
-                        NumberInput::new(STEM_DARKENING_AMOUNT_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .range(0.0, 1.0)
-                            .step(0.01)
-                            .precision(2)
-                            .value(match initial.stem_darkening.normalized() {
-                                WindowStemDarkening::Enabled { amount, .. } => amount as f64,
-                                WindowStemDarkening::None => {
-                                    DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT as f64
-                                }
-                            })
-                            .on_change(move |value| {
-                                let amount = value.clamp(0.0, 1.0) as f32;
-                                let max_ppem = match stem_darkening_amount_state
-                                    .borrow()
-                                    .stem_darkening
-                                    .normalized()
-                                {
-                                    WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem,
-                                    WindowStemDarkening::None => {
-                                        DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM
-                                    }
-                                };
-                                stem_darkening_amount_state.borrow_mut().stem_darkening =
-                                    WindowStemDarkening::Enabled { max_ppem, amount };
-                            }),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        STEM_DARKENING_MAX_PPEM_NAME,
-                        220.0,
-                        NumberInput::new(STEM_DARKENING_MAX_PPEM_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .range(1.0, 64.0)
-                            .step(0.5)
-                            .precision(1)
-                            .value(match initial.stem_darkening.normalized() {
-                                WindowStemDarkening::Enabled { max_ppem, .. } => max_ppem as f64,
-                                WindowStemDarkening::None => {
-                                    DEMO_SMALL_TEXT_STEM_DARKENING_MAX_PPEM as f64
-                                }
-                            })
-                            .on_change(move |value| {
-                                let max_ppem = value.clamp(1.0, 64.0) as f32;
-                                let amount = match stem_darkening_max_ppem_state
-                                    .borrow()
-                                    .stem_darkening
-                                    .normalized()
-                                {
-                                    WindowStemDarkening::Enabled { amount, .. } => amount,
-                                    WindowStemDarkening::None => {
-                                        DEMO_SMALL_TEXT_STEM_DARKENING_AMOUNT
-                                    }
-                                };
-                                stem_darkening_max_ppem_state.borrow_mut().stem_darkening =
-                                    WindowStemDarkening::Enabled { max_ppem, amount };
-                            }),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        COLOR_MANAGEMENT_MODE_NAME,
-                        280.0,
-                        output_controls::color_management_select(&theme_reader, &output_options),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        OUTPUT_PRIMARIES_NAME,
-                        240.0,
-                        output_controls::output_primaries_select(&theme_reader, &output_options),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        DYNAMIC_RANGE_MODE_NAME,
-                        240.0,
-                        output_controls::dynamic_range_select(&theme_reader, &output_options),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        TONE_MAPPING_MODE_NAME,
-                        240.0,
-                        output_controls::tone_mapping_select(&theme_reader, &output_options),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        SDR_CONTENT_BRIGHTNESS_NAME,
-                        420.0,
-                        Stack::vertical()
-                            .spacing(8.0)
-                            .alignment(Alignment::Start)
-                            .with_child(SizedBox::new().width(220.0).with_child(
-                                output_controls::sdr_content_brightness_input(
-                                    &theme_reader,
-                                    &output_options,
-                                ),
-                            ))
-                            .with_child(output_controls::system_sdr_brightness_checkbox(
-                                &theme_reader,
-                                &output_options,
-                            ))
-                            .with_child(SdrContentBrightnessStatus::new(Rc::clone(&theme_reader))),
-                    ))
-                    .with_child(labeled_settings_control(
-                        Rc::clone(&theme_reader),
-                        HDR_THEME_MODE_NAME,
-                        280.0,
-                        Select::new(HDR_THEME_MODE_NAME)
-                            .theme_when(clone_dev_theme_reader(&theme_reader))
-                            .options(HDR_THEME_MODE_OPTIONS)
-                            .selected(hdr_theme_mode_selected_index(current_hdr_theme_mode))
-                            .on_change(move |index, _| {
-                                set_hdr_theme_lab_mode(hdr_theme_mode_from_index(index));
-                            }),
-                    ))
-                    .with_child(HdrThemeInspectionPanel::new(Rc::clone(&theme_reader)))
-                    .with_child(OutputDiagnosticsPanel::new(Rc::clone(&theme_reader)))
-                    .with_child(
-                        Label::new(
-                            "Optical centering uses cap height when available and a softened descent bias for Latin UI labels. Atlas glyphs are always snapped to physical pixels; fractional glyph phase is handled by quarter-pixel raster variants. The default perceptual text coverage policy applies a luminance-aware coverage curve to atlas and fallback glyph coverage; changing the gamma input selects and updates the Gamma policy. Slight hinting biases small-text rasterization below the configured ppem threshold. Stem darkening slightly boosts thin small-text coverage below its threshold. Phase 2 controls choose the preferred color-management policy, the HDR theme selector drives the shared widget-book preview mode, and the inspection panels show the detected monitor/output path after each redraw.",
-                        )
-                        .style_when(demo_text_style_when(
-                            &theme_reader,
-                            DemoTextRole::Supporting,
-                            |theme| theme.palette.text_muted,
-                        )),
-                    ),
-            ))
-            .name(SETTINGS_SCROLL_NAME)
-            .theme_when(clone_dev_theme_reader(&theme_reader));
-
-        Self {
-            content: SingleChild::new(content),
-            state,
-            output_options,
-            applied: None,
-            last_hdr_theme_mode: current_hdr_theme_mode,
-        }
-    }
-
-    fn sync_render_options(&mut self, ctx: &mut EventCtx, rerender: bool) {
-        self.output_options.bind_window(ctx.window_id());
-        let options = self.state.borrow().clamped();
-        if self.applied == Some(options) {
-            return;
-        }
-
-        set_window_render_options(ctx.window_id(), options);
-        self.applied = Some(options);
-
-        if rerender {
-            ctx.request(InvalidationRequest::new(
-                InvalidationTarget::Window(ctx.window_id()),
-                InvalidationKind::Paint,
-            ));
-        }
-    }
-}
-
-impl Widget for RenderSettingsTab {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        let current_hdr_theme_mode = hdr_theme_lab_mode();
-        if current_hdr_theme_mode != self.last_hdr_theme_mode {
-            self.last_hdr_theme_mode = current_hdr_theme_mode;
-            ctx.request_paint();
-            ctx.request_semantics();
-        }
-
-        let rerender = !matches!(event, Event::Window(WindowEvent::RedrawRequested))
-            && ctx.phase() != sui::EventPhase::Capture;
-
-        if rerender || matches!(event, Event::Window(WindowEvent::RedrawRequested)) {
-            self.sync_render_options(ctx, rerender);
-        }
-    }
-
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.content.measure(ctx, constraints)
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.content.arrange(ctx, bounds);
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-    }
-}
-
-fn build_render_settings_tab_with_options(
-    options: OutputOptions,
-    theme_reader: DevThemeReader,
-    shell_state: DevShellState,
-) -> impl Widget {
-    RenderSettingsTab::with_initial_options(options, theme_reader, shell_state)
 }
 
 pub(crate) fn build_dev_application_with_widget_book_bounds_and_render_options(
@@ -3268,7 +1947,7 @@ fn register_dev_web_fallback_fonts(resources: &mut sui::ResourceRegistry<'_>) {
 pub fn build_dev_application_with_widget_book_bounds(widget_book_bounds: Rect) -> Application {
     build_dev_application_with_widget_book_bounds_and_render_options(
         widget_book_bounds,
-        RenderSettingsTab::default_options(),
+        default_render_options(),
     )
 }
 
@@ -3280,10 +1959,7 @@ pub fn build_dev_application() -> Application {
 pub fn build_dev_application_with_automation(
     automation: Option<DesktopAutomationMode>,
 ) -> Application {
-    build_dev_application_with_render_options_and_automation(
-        RenderSettingsTab::default_options(),
-        automation,
-    )
+    build_dev_application_with_render_options_and_automation(default_render_options(), automation)
 }
 
 #[cfg(test)]
@@ -3322,21 +1998,30 @@ mod tests {
         Brush, Event, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
         PointerEventKind, Rect, RenderOutput, Result, Runtime, SceneCommand,
         SceneStatisticsDetailMode, ScrollDelta, SemanticsNode, SemanticsRole, StackOrderPolicy,
-        Vector, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent,
+        Vector, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
         WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
-        WindowToneMappingMode, set_window_scene_statistics_detail_mode,
-        window_performance_snapshot, window_scene_statistics_detail_mode,
+        WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode,
+        set_window_scene_statistics_detail_mode, window_performance_snapshot,
+        window_scene_statistics_detail_mode,
     };
     use sui_render_wgpu::{
         DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
-        DebugSdrVisualization,
+        DebugSdrVisualization, DisplayCapabilities,
     };
     use sui_testing::{
         Screenshot, TestApp, TestWindow, WindowSnapshot, hdr_clip_mask, hdr_headroom_heatmap,
         hdr_luminance_heatmap, write_hdr_exr,
     };
 
+    use crate::settings::controls::*;
+    use crate::settings::{
+        DEVELOPER_SECTION_NAME, DISPLAY_SECTION_NAME, HDR_THEME_ROW_NAME,
+        OPEN_HDR_VALIDATION_LABEL, OUTPUT_ROW_NAME, PERFORMANCE_OVERLAY_LABEL, RESET_LABEL,
+        SDR_WHITE_ROW_NAME, SETTINGS_SCROLL_NAME, SHAPES_SECTION_NAME, TEXT_SECTION_NAME,
+    };
+
     const FRONTING_TEST_TITLE: &str = "Fronting test";
+    const SETTINGS_SCROLL_BAR_NAME: &str = "Settings controls vertical scroll bar";
 
     #[test]
     fn dev_demo_builds_its_widget_once_on_first_use() {
@@ -3425,12 +2110,12 @@ mod tests {
 
     #[test]
     fn dev_demo_defaults_use_perceptual_text_coverage() {
-        let options = RenderSettingsTab::default_options();
+        let options = default_render_options();
 
         assert!(matches!(
             options.text_hinting.normalized(),
             WindowTextHinting::Slight { max_ppem }
-                if (max_ppem - DEMO_TEXT_HINTING_MAX_PPEM_LIMIT).abs() < f32::EPSILON
+                if (max_ppem - TEXT_HINTING_MAX_PPEM_LIMIT).abs() < f32::EPSILON
         ));
         assert_eq!(
             options.stem_darkening.normalized(),
@@ -3940,7 +2625,7 @@ mod tests {
 
         let before_snapshot = window.snapshot()?;
         let settings_view =
-            find_named_node(&before_snapshot, SemanticsRole::Window, SETTINGS_TAB_LABEL);
+            find_named_node(&before_snapshot, SemanticsRole::Window, SETTINGS_TITLE);
         let settings_scroll = find_named_node(
             &before_snapshot,
             SemanticsRole::ScrollView,
@@ -3963,7 +2648,7 @@ mod tests {
         );
         let scroll = window
             .get_by_role(SemanticsRole::Window)
-            .with_name(SETTINGS_TAB_LABEL)
+            .with_name(SETTINGS_TITLE)
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(SETTINGS_SCROLL_NAME);
 
@@ -4026,43 +2711,23 @@ mod tests {
     }
 
     #[test]
-    fn output_diagnostics_panel_follows_the_presented_output() -> Result<()> {
-        let app = TestApp::new(|| {
-            Application::new().window(WindowBuilder::new().title(OUTPUT_DIAGNOSTICS_TITLE).root(
-                OutputDiagnosticsPanel::new(crate::demo_support::default_theme_reader()),
-            ))
-        })?;
+    fn settings_summary_follows_the_presented_output() -> Result<()> {
+        let app = TestApp::builder(|| build_dev_application().build())
+            .display_capabilities(DisplayCapabilities::hdr(1000.0, 250.0))
+            .launch()?;
         let window = app.main_window()?;
-        let description = |window: &TestWindow| -> Result<String> {
-            Ok(window
-                .snapshot()?
-                .accessibility
-                .nodes
-                .iter()
-                .find(|node| node.name.as_deref() == Some(OUTPUT_DIAGNOSTICS_TITLE))
-                .and_then(|node| node.description.clone())
-                .expect("the output diagnostics panel is exposed"))
-        };
-        window.run_until_idle()?;
-        assert!(
-            description(&window)?.contains("Requested tone mapping:"),
-            "the panel shows the first presented frame"
-        );
+        open_dev_shell_settings(&window)?;
+        let row = |name| semantic_text_value(&window, SemanticsRole::GenericContainer, name);
 
-        // Nothing but the output changes; the panel follows the next frame.
-        let options = sui::window_render_options(window.id())
-            .unwrap_or_else(default_render_options)
-            .with_tone_mapping_mode(WindowToneMappingMode::Reinhard);
-        sui::set_window_render_options(window.id(), options);
-        window
-            .locator(sui_testing::Selector::root())
-            .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
-        window.run_until_idle()?;
-        let description = description(&window)?;
-        assert!(
-            description.contains("Requested tone mapping: Reinhard"),
-            "{description}"
-        );
+        let output = row(OUTPUT_ROW_NAME);
+        assert!(output.starts_with("Native HDR"), "{output}");
+        let sdr_white = row(SDR_WHITE_ROW_NAME);
+        assert!(sdr_white.ends_with("nits, from the system"), "{sdr_white}");
+        assert!(!row(HDR_THEME_ROW_NAME).is_empty());
+
+        // Nothing but the output changes; the rows follow the next frame.
+        choose_in_settings(&window, COLOR_MANAGEMENT_MODE_NAME, 1)?;
+        assert_eq!(row(OUTPUT_ROW_NAME), "SDR, sRGB");
         Ok(())
     }
 
@@ -4758,7 +3423,7 @@ mod tests {
     #[test]
     fn paint_workspace_exposes_canvas_and_inspector_controls() {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -5103,7 +3768,7 @@ mod tests {
     fn paint_workspace_theme_toggle_repaints_chrome_but_keeps_paper_color() -> Result<()> {
         let app = TestApp::new(|| {
             finish_dev_application(DevBrowserShell::with_initial_demo(
-                RenderSettingsTab::default_options(),
+                default_render_options(),
                 Some(PAINT_TAB_LABEL),
             ))
             .build()
@@ -5186,7 +3851,7 @@ mod tests {
     #[test]
     fn paint_workspace_layer_list_updates_selected_layer_status() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -5383,7 +4048,7 @@ mod tests {
     #[test]
     fn paint_workspace_layer_visibility_toggle_updates_semantics() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -5754,7 +4419,7 @@ mod tests {
     #[test]
     fn paint_workspace_layer_lock_toggle_updates_semantics() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -5940,7 +4605,7 @@ mod tests {
     #[test]
     fn paint_workspace_layer_opacity_updates_layer_detail() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6019,7 +4684,7 @@ mod tests {
     #[test]
     fn paint_workspace_layer_blend_mode_updates_layer_detail() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6098,7 +4763,7 @@ mod tests {
     #[test]
     fn paint_workspace_brush_size_preset_updates_canvas_state() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6178,7 +4843,7 @@ mod tests {
     #[test]
     fn paint_workspace_color_preset_updates_brush_color() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6322,7 +4987,7 @@ mod tests {
     #[test]
     fn paint_workspace_tool_buttons_update_selected_tool() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6409,7 +5074,7 @@ mod tests {
     #[test]
     fn paint_workspace_fill_and_pan_tools_swap_property_panes() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6651,7 +5316,7 @@ mod tests {
     #[test]
     fn paint_workspace_clear_button_records_undoable_canvas_change() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6750,7 +5415,7 @@ mod tests {
     #[test]
     fn paint_workspace_blend_mode_select_updates_canvas_state() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -6840,7 +5505,7 @@ mod tests {
     #[test]
     fn paint_workspace_brush_shape_select_updates_canvas_state() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(PAINT_TAB_LABEL),
         ))
         .build()
@@ -7015,7 +5680,7 @@ mod tests {
         hdr_headroom_heatmap(&image, 1.0)?.write_png(artifact_dir.join("headroom-map.png"))?;
         hdr_clip_mask(&image, 1.0)?.write_png(artifact_dir.join("clip-mask.png"))?;
 
-        let diagnostics = window_output_diagnostics(window.id())
+        let diagnostics = sui::window_output_diagnostics(window.id())
             .expect("output diagnostics should be published for visible HDR debug capture");
         std::fs::write(
             artifact_dir.join("output-diagnostics.txt"),
@@ -7163,16 +5828,27 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn settings_view_exposes_visible_labels_for_render_selectors() -> Result<()> {
+    fn settings_groups_every_render_option() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
-        let snapshot = window.snapshot()?;
-        let semantics = &snapshot.accessibility.nodes;
+        let named = |name: &str| -> Result<bool> {
+            Ok(window
+                .snapshot()?
+                .accessibility
+                .nodes
+                .iter()
+                .any(|node| node.name.as_deref() == Some(name)))
+        };
 
-        for label in [
-            TEXT_COVERAGE_POLICY_NAME,
-            TEXT_COVERAGE_GAMMA_NAME,
+        for name in [
+            DISPLAY_SECTION_NAME,
+            TEXT_SECTION_NAME,
+            SHAPES_SECTION_NAME,
+            DEVELOPER_SECTION_NAME,
+            OUTPUT_ROW_NAME,
+            SDR_WHITE_ROW_NAME,
+            HDR_THEME_ROW_NAME,
             COLOR_MANAGEMENT_MODE_NAME,
             OUTPUT_PRIMARIES_NAME,
             DYNAMIC_RANGE_MODE_NAME,
@@ -7180,15 +5856,37 @@ final_max_luminance={final_max_luminance}
             SDR_CONTENT_BRIGHTNESS_NAME,
             USE_SYSTEM_SDR_BRIGHTNESS_LABEL,
             HDR_THEME_MODE_NAME,
-            LIVE_PERFORMANCE_OVERLAY_LABEL,
+            OPEN_HDR_VALIDATION_LABEL,
+            TEXT_COVERAGE_POLICY_NAME,
+            TEXT_HINTING_LABEL,
+            TEXT_HINTING_MAX_PPEM_NAME,
+            STEM_DARKENING_LABEL,
+            OPTICAL_CENTERING_LABEL,
+            FEATHERING_LABEL,
+            PERFORMANCE_OVERLAY_LABEL,
+            RESET_LABEL,
+        ] {
+            assert!(named(name)?, "Settings shows {name:?}");
+        }
+
+        // Settings that only matter with another one show with it.
+        for name in [
+            TEXT_COVERAGE_GAMMA_NAME,
+            STEM_DARKENING_AMOUNT_NAME,
+            STEM_DARKENING_MAX_PPEM_NAME,
         ] {
             assert!(
-                semantics
-                    .iter()
-                    .any(|node| node.name.as_deref() == Some(label)),
-                "expected semantics tree to expose settings control {label:?}"
+                !named(name)?,
+                "{name:?} waits for the setting it depends on"
             );
         }
+        // Perceptual, then Linear, then Gamma.
+        choose_in_settings(&window, TEXT_COVERAGE_POLICY_NAME, 2)?;
+        assert!(named(TEXT_COVERAGE_GAMMA_NAME)?);
+        assert!(matches!(
+            sui::window_render_options(window.id()).map(|options| options.text_coverage_policy),
+            Some(WindowTextCoveragePolicy::Gamma(_))
+        ));
         Ok(())
     }
 
@@ -7201,31 +5899,28 @@ final_max_luminance={final_max_luminance}
             SceneStatisticsDetailMode::Lightweight,
         );
         open_dev_shell_settings(&window)?;
-
-        let before_snapshot = window.snapshot()?;
+        let overlay_shown = |window: &TestWindow| -> Result<bool> {
+            Ok(window.snapshot()?.accessibility.nodes.iter().any(|node| {
+                node.role == SemanticsRole::GenericContainer
+                    && node.name.as_deref() == Some("Live performance overlay")
+            }))
+        };
         assert!(
-            before_snapshot.accessibility.nodes.iter().all(|node| {
-                node.role != SemanticsRole::GenericContainer
-                    || node.name.as_deref() != Some("Live performance overlay")
-            }),
+            !overlay_shown(&window)?,
             "live performance overlay should be hidden by default"
         );
 
-        window
-            .get_by_role(SemanticsRole::CheckBox)
-            .with_name(LIVE_PERFORMANCE_OVERLAY_LABEL)
-            .click()?;
+        reveal_in_settings(&window, SemanticsRole::Switch, PERFORMANCE_OVERLAY_LABEL)?;
+        let switch = window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name(PERFORMANCE_OVERLAY_LABEL);
+        switch.click()?;
         window
             .root()
             .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
-
-        let enabled_snapshot = window.snapshot()?;
         assert!(
-            enabled_snapshot.accessibility.nodes.iter().any(|node| {
-                node.role == SemanticsRole::GenericContainer
-                    && node.name.as_deref() == Some("Live performance overlay")
-            }),
-            "settings checkbox should show the live performance overlay"
+            overlay_shown(&window)?,
+            "the settings switch should show the live performance overlay"
         );
         assert_eq!(
             window_scene_statistics_detail_mode(window.id()),
@@ -7233,21 +5928,13 @@ final_max_luminance={final_max_luminance}
             "visible live performance overlay should enable detailed frame diagnostics"
         );
 
-        window
-            .get_by_role(SemanticsRole::CheckBox)
-            .with_name(LIVE_PERFORMANCE_OVERLAY_LABEL)
-            .click()?;
+        switch.click()?;
         window
             .root()
             .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
-
-        let disabled_snapshot = window.snapshot()?;
         assert!(
-            disabled_snapshot.accessibility.nodes.iter().all(|node| {
-                node.role != SemanticsRole::GenericContainer
-                    || node.name.as_deref() != Some("Live performance overlay")
-            }),
-            "settings checkbox should hide the live performance overlay"
+            !overlay_shown(&window)?,
+            "the settings switch should hide the live performance overlay"
         );
         assert_eq!(
             window_scene_statistics_detail_mode(window.id()),
@@ -7258,23 +5945,36 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn settings_output_diagnostics_panel_grows_for_wrapped_text() -> Result<()> {
+    fn settings_reset_restores_the_defaults() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
-        let _ = window.capture_screenshot()?;
-        let snapshot = window.snapshot()?;
-        let diagnostics = find_named_node(
-            &snapshot,
-            SemanticsRole::GenericContainer,
-            OUTPUT_DIAGNOSTICS_TITLE,
-        );
 
-        assert!(
-            diagnostics.bounds.height() > 200.0,
-            "output diagnostics should grow beyond the old fixed height when wrapped diagnostic lines are present; bounds={:?}",
-            diagnostics.bounds
+        reveal_in_settings(&window, SemanticsRole::Switch, STEM_DARKENING_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name(STEM_DARKENING_LABEL)
+            .click()?;
+        assert!(matches!(
+            sui::window_render_options(window.id()).map(|options| options.stem_darkening),
+            Some(WindowStemDarkening::Enabled { .. })
+        ));
+
+        reveal_in_settings(&window, SemanticsRole::Button, RESET_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name(RESET_LABEL)
+            .click()?;
+        assert_eq!(
+            sui::window_render_options(window.id()),
+            Some(default_render_options().clamped())
         );
+        let stem_darkening = find_named_node(
+            &window.snapshot()?,
+            SemanticsRole::Switch,
+            STEM_DARKENING_LABEL,
+        );
+        assert_eq!(stem_darkening.state.checked, Some(ToggleState::Unchecked));
         Ok(())
     }
 
@@ -7283,13 +5983,17 @@ final_max_luminance={final_max_luminance}
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
+        reveal_in_settings(&window, SemanticsRole::SpinBox, SDR_CONTENT_BRIGHTNESS_NAME)?;
 
         let light_snapshot = window.snapshot()?;
-        let feather_width =
-            find_named_node(&light_snapshot, SemanticsRole::SpinBox, FEATHER_WIDTH_NAME);
+        let brightness = find_named_node(
+            &light_snapshot,
+            SemanticsRole::SpinBox,
+            SDR_CONTENT_BRIGHTNESS_NAME,
+        );
         let probe = Rect::new(
-            feather_width.bounds.x() + 8.0,
-            feather_width.bounds.y() + feather_width.bounds.height() * 0.5,
+            brightness.bounds.x() + 8.0,
+            brightness.bounds.y() + brightness.bounds.height() * 0.5,
             1.0,
             1.0,
         );
@@ -7405,32 +6109,16 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn settings_view_exposes_hdr_theme_mode_controls() -> Result<()> {
+    fn settings_hdr_theme_row_shows_the_mode_widgets_preview() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
-        let snapshot = window.snapshot()?;
-        let semantics = &snapshot.accessibility.nodes;
 
-        assert!(
-            semantics
-                .iter()
-                .any(|node| { node.name.as_deref() == Some(HDR_THEME_MODE_NAME) })
-        );
-
-        let inspection = semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::GenericContainer
-                    && node.name.as_deref() == Some(HDR_THEME_INSPECTION_TITLE)
-            })
-            .expect("HDR theme inspection semantics node should be present");
-        let description = inspection
-            .description
-            .as_deref()
-            .expect("HDR theme inspection semantics description should be present");
-        assert!(description.contains("Current theme mode: Disabled (SDR baseline)"));
-        assert!(description.contains("Window output policy:"));
+        let mode = crate::theme_demo::hdr_theme_lab_mode();
+        let select = semantic_text_value(&window, SemanticsRole::ComboBox, HDR_THEME_MODE_NAME);
+        assert_eq!(select, hdr_theme_mode_label(mode));
+        let row = semantic_text_value(&window, SemanticsRole::GenericContainer, HDR_THEME_ROW_NAME);
+        assert!(row.starts_with(hdr_theme_mode_label(mode)), "{row}");
         Ok(())
     }
 
@@ -7810,6 +6498,50 @@ final_max_luminance={final_max_luminance}
         panic!("demo card {title:?} did not scroll into the picker viewport");
     }
 
+    /// Scroll Settings until the control `name` is in view.
+    fn reveal_in_settings(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
+        let scroll = window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(SETTINGS_SCROLL_NAME);
+        let visible = |snapshot: &WindowSnapshot| {
+            let nodes = &snapshot.accessibility.nodes;
+            let control = nodes
+                .iter()
+                .find(|node| node.role == role && node.name.as_deref() == Some(name));
+            let viewport = nodes.iter().find(|node| {
+                node.role == SemanticsRole::ScrollView
+                    && node.name.as_deref() == Some(SETTINGS_SCROLL_NAME)
+            });
+            control.zip(viewport).is_some_and(|(control, viewport)| {
+                visible_area_ratio(control.bounds, viewport.bounds) >= 0.99
+            })
+        };
+        for _ in 0..40 {
+            if visible(&window.snapshot()?) {
+                return Ok(());
+            }
+            scroll.scroll_pixels(Vector::new(0.0, -80.0))?;
+        }
+        Err(sui::Error::new(format!(
+            "failed to scroll {role:?} named {name:?} into Settings"
+        )))
+    }
+
+    /// Choose the option `steps_down` below the current one in the Settings
+    /// select `name`.
+    fn choose_in_settings(window: &TestWindow, name: &str, steps_down: usize) -> Result<()> {
+        reveal_in_settings(window, SemanticsRole::ComboBox, name)?;
+        window
+            .get_by_role(SemanticsRole::ComboBox)
+            .with_name(name)
+            .click()?;
+        for _ in 0..steps_down {
+            window.focused().press("ArrowDown")?;
+        }
+        window.focused().press("Enter")?;
+        window.run_until_idle()
+    }
+
     fn open_dev_shell_settings(window: &TestWindow) -> Result<()> {
         window
             .get_by_role(SemanticsRole::Button)
@@ -7817,11 +6549,11 @@ final_max_luminance={final_max_luminance}
             .click()?;
         window
             .get_by_role(SemanticsRole::MenuItem)
-            .with_name(SETTINGS_TAB_LABEL)
+            .with_name(SETTINGS_TITLE)
             .click()?;
         window
             .get_by_role(SemanticsRole::Window)
-            .with_name(SETTINGS_TAB_LABEL)
+            .with_name(SETTINGS_TITLE)
             .expect()
             .to_be_visible()
     }
@@ -8483,7 +7215,7 @@ final_max_luminance={final_max_luminance}
         }
 
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(VECTOR_EDITOR_TAB_LABEL),
         ))
         .build()
@@ -8606,7 +7338,7 @@ final_max_luminance={final_max_luminance}
         let app = TestApp::new(|| {
             build_dev_application_with_initial_demo_and_render_options(
                 Some(COMMAND_DEMO_TAB_LABEL),
-                RenderSettingsTab::default_options(),
+                default_render_options(),
             )
             .build()
         })?;
@@ -8671,7 +7403,7 @@ final_max_luminance={final_max_luminance}
     #[test]
     fn vector_editor_objects_list_drag_reorders_objects() -> Result<()> {
         let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
+            default_render_options(),
             Some(VECTOR_EDITOR_TAB_LABEL),
         ))
         .build()

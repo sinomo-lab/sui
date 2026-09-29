@@ -175,6 +175,9 @@ owned, and refer to them from scene content through stable image handles.
 window. Runtime-level helpers can inspect or change per-window options after
 construction. The option model includes text coverage and hinting, dynamic
 range, color primaries, tone mapping, and output color-management policy.
+Changing a window's options with `set_window_render_options` repaints the whole
+window on its next frame, so widgets that read an option while painting, like
+optical text centering, follow it.
 
 Capabilities vary by adapter, surface, display, operating system, and browser.
 An option expresses requested policy; use renderer and window diagnostics to

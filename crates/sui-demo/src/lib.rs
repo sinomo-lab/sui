@@ -14,6 +14,7 @@ mod markdown_demo;
 #[cfg(feature = "nodes")]
 mod nodes_demo;
 mod paint_demo;
+mod settings;
 mod shrinkwrap_demo;
 #[cfg(test)]
 mod test_support;

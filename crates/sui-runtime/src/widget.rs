@@ -275,6 +275,14 @@ pub trait Widget {
         false
     }
 
+    /// Whether points inside this widget that none of its children take hit
+    /// the widget itself. Containers laid over other content, like a layer of
+    /// floating views, return `false` so those points reach what is behind
+    /// them.
+    fn hit_test_self(&self) -> bool {
+        true
+    }
+
     fn focus_changed(&mut self, _ctx: &mut EventCtx, _focused: bool) {}
 
     /// Visit this widget's logical children.
@@ -2098,6 +2106,10 @@ impl WidgetPod {
 
     pub(crate) fn current_stack_surface_options(&self) -> Option<StackSurfaceOptions> {
         self.widget.stack_surface_options()
+    }
+
+    pub(crate) fn current_hit_test_self(&self) -> bool {
+        self.widget.hit_test_self()
     }
 
     pub(crate) fn current_overlay_options(&self) -> Option<OverlayOptions> {

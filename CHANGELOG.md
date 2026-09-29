@@ -368,6 +368,36 @@ Versioning, with the usual expectation that the API may change during the
   does, and resetting it no longer clears every other window's render options
   and diagnostics in the process.
 
+### Redesigned Settings
+
+- The demo's Settings groups every render option into Display, Text, Shapes,
+  and Developer sections, under three rows summing up the window's output:
+  what it presents, its SDR white, and the HDR theme mode widgets preview,
+  including when the output limits it. Settings that only matter with another
+  one, like the hinting size limit, show with it. Reset to defaults puts the
+  options back.
+- Settings is a closable view of a transparent `FloatingWorkspace` over the
+  demo instead of its own floating window, and every control writes through
+  the same options the HDR validation page edits, which now shows the HDR
+  theme mode too. The hand-drawn diagnostics panels and the notes paragraph
+  are gone; the HDR validation page keeps the full output details.
+- `FloatingWorkspace::transparent` floats its views over other content: it
+  paints no background, and points outside every view reach what is behind
+  it. `FloatingViewConfig::closable` gives a view a close button in its title
+  bar and closes it on Escape.
+- `Widget::hit_test_self` lets a container hit only through its children, so
+  points it covers but no child takes reach what is behind it.
+- Changing a window's render options repaints the whole window on its next
+  frame. Widgets that read an option while painting, like optical text
+  centering, used to keep their old paint until something else invalidated
+  them.
+- `Switch::on_when` shows state that other controls can change too, like
+  `Checkbox::checked_when`.
+- `OutputColorRange`, `window_output_color_range`, and
+  `window_output_color_range_signal` are exported from `sui`.
+- `FloatingViewConfig` and `FloatingViewSnapshot` have a new `closable` field,
+  so code building them with struct literals needs it.
+
 ### Breaking: text painting helpers
 
 - Replaced `paint_aligned_text` with `paint_text` and

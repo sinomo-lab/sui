@@ -9,7 +9,6 @@
 #![forbid(unsafe_code)]
 
 mod capture;
-pub(crate) mod controls;
 mod live;
 mod probes;
 pub(crate) mod report;
@@ -19,24 +18,22 @@ mod ui_modes;
 mod tests;
 
 use sui::prelude::*;
-use sui::{GridTrack, Rect, WidgetPodMutVisitor, WidgetPodVisitor, WindowOutputDiagnostics};
+use sui::{GridTrack, WindowOutputDiagnostics};
 
 #[cfg(test)]
 use capture::{CAPTURE_BUTTON_LABEL, CAPTURE_STATUS_NAME, COPY_REPORT_BUTTON_LABEL};
-pub(crate) use controls::OutputOptions;
-use live::{LiveText, OutputSummary, WAITING_FOR_OUTPUT, expect};
+pub(crate) use live::OutputSummary;
+use live::{LiveText, WAITING_FOR_OUTPUT, expect, sdr_content_brightness_line};
 #[cfg(test)]
 use probes::{
     CHROMATICITY_NAME, GAMUT_TILES_NAME, HEADROOM_RAMP_NAME, HIGHLIGHT_CURVE_NAME, HUE_GRID_NAME,
     RAMPS_NAME,
 };
 
-use crate::app::{
-    DemoTextRole, DevThemeReader, clone_dev_theme_reader, labeled_settings_control,
-    sdr_content_brightness_line,
-};
+use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader};
 use crate::demo_support::*;
 use crate::live_performance::LivePerformanceRoot;
+use crate::settings::{RenderOptions, RenderOptionsScope, controls};
 
 pub const COLOR_VALIDATION_VIEW_TITLE: &str = "SUI HDR and Color Validation";
 pub const COLOR_VALIDATION_SCROLL_NAME: &str = "Color validation scroll";
@@ -59,7 +56,7 @@ pub fn build_color_validation_surface() -> impl Widget {
 }
 
 pub fn build_color_validation_surface_with_theme(theme_reader: DevThemeReader) -> impl Widget {
-    build_hdr_validation_surface(theme_reader, OutputOptions::from_window())
+    build_hdr_validation_surface(theme_reader, RenderOptions::from_window())
 }
 
 pub fn build_color_validation_application() -> Application {
@@ -77,7 +74,7 @@ pub fn build_color_validation_application() -> Application {
 /// The page, editing `options`.
 pub(crate) fn build_hdr_validation_surface(
     theme_reader: DevThemeReader,
-    options: OutputOptions,
+    options: RenderOptions,
 ) -> impl Widget {
     let scroll_state = ScrollState::new();
     let content = MinimumWidth::new(
@@ -97,9 +94,9 @@ pub(crate) fn build_hdr_validation_surface(
         ),
     );
 
-    HdrValidationPage {
+    RenderOptionsScope::new(
         options,
-        content: SingleChild::new(TwoAxisScrollPane::new(
+        TwoAxisScrollPane::new(
             scroll_state.clone(),
             ScrollView::both(content)
                 .state(scroll_state.clone())
@@ -113,41 +110,8 @@ pub(crate) fn build_hdr_validation_surface(
             ScrollBar::horizontal(scroll_state)
                 .name(COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME)
                 .theme_when(clone_dev_theme_reader(&theme_reader)),
-        )),
-    }
-}
-
-/// Hosts the page and binds its output options to the page's window.
-struct HdrValidationPage {
-    options: OutputOptions,
-    content: SingleChild,
-}
-
-impl Widget for HdrValidationPage {
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.options.bind_window(ctx.window_id());
-        self.content.measure(ctx, constraints)
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.content.arrange(ctx, bounds);
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.content.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.content.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.content.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.content.visit_children_mut(visitor);
-    }
+        ),
+    )
 }
 
 fn section<W>(
@@ -203,58 +167,55 @@ fn output_details(diagnostics: Option<&WindowOutputDiagnostics>) -> String {
     )
 }
 
-fn output_section(theme_reader: &DevThemeReader, options: &OutputOptions) -> impl Widget + use<> {
-    let row = |label| (std::rc::Rc::clone(theme_reader), label, CONTROL_WIDTH);
+/// `control` under its `label`, in the output section's grid.
+fn control_row<W>(theme_reader: &DevThemeReader, label: &'static str, control: W) -> PropertyRow
+where
+    W: Widget + 'static,
+{
+    controls::labeled_control(theme_reader, label, CONTROL_WIDTH, control)
+}
+
+fn output_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> impl Widget + use<> {
     let controls = Grid::new([GridTrack::Fraction(1.0), GridTrack::Fraction(1.0)])
-        .rows([GridTrack::Auto, GridTrack::Auto, GridTrack::Auto])
+        .rows([
+            GridTrack::Auto,
+            GridTrack::Auto,
+            GridTrack::Auto,
+            GridTrack::Auto,
+        ])
         .column_gap(24.0)
         .row_gap(8.0)
-        .with_child({
-            let (theme, label, width) = row(controls::COLOR_MANAGEMENT_MODE_NAME);
-            labeled_settings_control(
-                theme,
-                label,
-                width,
-                controls::color_management_select(theme_reader, options),
-            )
-        })
-        .with_child({
-            let (theme, label, width) = row(controls::OUTPUT_PRIMARIES_NAME);
-            labeled_settings_control(
-                theme,
-                label,
-                width,
-                controls::output_primaries_select(theme_reader, options),
-            )
-        })
-        .with_child({
-            let (theme, label, width) = row(controls::DYNAMIC_RANGE_MODE_NAME);
-            labeled_settings_control(
-                theme,
-                label,
-                width,
-                controls::dynamic_range_select(theme_reader, options),
-            )
-        })
-        .with_child({
-            let (theme, label, width) = row(controls::TONE_MAPPING_MODE_NAME);
-            labeled_settings_control(
-                theme,
-                label,
-                width,
-                controls::tone_mapping_select(theme_reader, options),
-            )
-        })
-        .with_child({
-            let (theme, label, width) = row(controls::SDR_CONTENT_BRIGHTNESS_NAME);
-            labeled_settings_control(
-                theme,
-                label,
-                width,
-                controls::sdr_content_brightness_input(theme_reader, options),
-            )
-        })
-        .with_child(controls::system_sdr_brightness_checkbox(
+        .with_child(control_row(
+            theme_reader,
+            controls::COLOR_MANAGEMENT_MODE_NAME,
+            controls::color_management_select(theme_reader, options),
+        ))
+        .with_child(control_row(
+            theme_reader,
+            controls::OUTPUT_PRIMARIES_NAME,
+            controls::output_primaries_select(theme_reader, options),
+        ))
+        .with_child(control_row(
+            theme_reader,
+            controls::DYNAMIC_RANGE_MODE_NAME,
+            controls::dynamic_range_select(theme_reader, options),
+        ))
+        .with_child(control_row(
+            theme_reader,
+            controls::TONE_MAPPING_MODE_NAME,
+            controls::tone_mapping_select(theme_reader, options),
+        ))
+        .with_child(control_row(
+            theme_reader,
+            controls::SDR_CONTENT_BRIGHTNESS_NAME,
+            controls::sdr_content_brightness_input(theme_reader, options),
+        ))
+        .with_child(control_row(
+            theme_reader,
+            controls::HDR_THEME_MODE_NAME,
+            controls::hdr_theme_mode_select(theme_reader),
+        ))
+        .with_child(controls::system_sdr_brightness_switch(
             theme_reader,
             options,
         ));
@@ -262,7 +223,7 @@ fn output_section(theme_reader: &DevThemeReader, options: &OutputOptions) -> imp
     section(
         theme_reader,
         OUTPUT_SECTION_NAME,
-        "What this window's output does with light above SDR white and with colors outside sRGB. These controls change it for this window; Settings edits the same options.",
+        "What this window's output does with light above SDR white and with colors outside sRGB. These controls change it for this window, and the HDR theme mode widgets preview; Settings edits the same options.",
         body()
             .alignment(Alignment::Stretch)
             .with_child(NamedSection::new(

@@ -122,12 +122,21 @@ fn page_lays_out_every_section_probe_and_control() -> Result<()> {
         controls::OUTPUT_PRIMARIES_NAME,
         controls::DYNAMIC_RANGE_MODE_NAME,
         controls::TONE_MAPPING_MODE_NAME,
+        controls::HDR_THEME_MODE_NAME,
     ] {
         assert!(
             has(SemanticsRole::ComboBox, select),
             "missing control {select:?}"
         );
     }
+    assert!(has(
+        SemanticsRole::SpinBox,
+        controls::SDR_CONTENT_BRIGHTNESS_NAME
+    ));
+    assert!(has(
+        SemanticsRole::Switch,
+        controls::USE_SYSTEM_SDR_BRIGHTNESS_LABEL
+    ));
     assert!(has(SemanticsRole::Button, CAPTURE_BUTTON_LABEL));
     assert!(has(SemanticsRole::Button, COPY_REPORT_BUTTON_LABEL));
     Ok(())

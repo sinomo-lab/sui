@@ -3082,6 +3082,121 @@ fn non_hit_test_stack_surface_allows_underlying_pointer_target() {
     assert_eq!(*pointer_downs.borrow(), 1);
 }
 
+/// A layer over its whole parent holding one leaf, letting every other point
+/// through.
+struct PassThroughLayer {
+    child: SingleChild,
+}
+
+impl Widget for PassThroughLayer {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child
+            .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+        constraints.max
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(
+            ctx,
+            Rect::new(bounds.x() + 180.0, bounds.y() + 24.0, 120.0, 40.0),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn hit_test_self(&self) -> bool {
+        false
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+/// A leaf with a pass-through layer laid over it.
+struct PassThroughLayerRoot {
+    children: WidgetChildren,
+}
+
+impl Widget for PassThroughLayerRoot {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let size = constraints.clamp(Size::new(320.0, 180.0));
+        self.children
+            .measure_child(0, ctx, Constraints::tight(Size::new(120.0, 40.0)));
+        self.children
+            .measure_child(1, ctx, Constraints::tight(size));
+        size
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.children.arrange_child(
+            0,
+            ctx,
+            Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+        );
+        self.children.arrange_child(1, ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.children.paint(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
+#[test]
+fn points_a_container_does_not_take_reach_what_is_behind_it() {
+    let behind = Rc::new(RefCell::new(0));
+    let in_layer = Rc::new(RefCell::new(0));
+    let mut children = WidgetChildren::with_capacity(2);
+    children.push(PointerCountingLeaf {
+        pointer_downs: Rc::clone(&behind),
+    });
+    children.push(PassThroughLayer {
+        child: SingleChild::new(PointerCountingLeaf {
+            pointer_downs: Rc::clone(&in_layer),
+        }),
+    });
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Pass-through layer")
+                .root(PassThroughLayerRoot { children }),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    runtime.render(window_id).unwrap();
+    let mut press = |position| {
+        let mut down = PointerEvent::new(PointerEventKind::Down, position);
+        down.pointer_id = 1;
+        down.button = Some(PointerButton::Primary);
+        down.buttons = PointerButtons::new(1);
+        runtime
+            .handle_event(window_id, Event::Pointer(down))
+            .unwrap();
+    };
+
+    // Under the layer, where none of its children are.
+    press(Point::new(48.0, 36.0));
+    assert_eq!((*behind.borrow(), *in_layer.borrow()), (1, 0));
+    // On the layer's child.
+    press(Point::new(200.0, 36.0));
+    assert_eq!((*behind.borrow(), *in_layer.borrow()), (1, 1));
+}
+
 #[test]
 fn hit_test_stack_surface_targets_deepest_child() {
     let pointer_downs = Rc::new(RefCell::new(0));
@@ -5462,6 +5577,56 @@ fn transformed_widget_subtree_current_status_benchmark() {
         shared_average / flat_average.max(0.001),
         shared_average / transform_average.max(0.001),
     );
+}
+
+/// Records whether the window's options enable feathering each time it
+/// paints, reusing its output until invalidated.
+struct RenderOptionsReader {
+    painted_feathering: Rc<Cell<Option<bool>>>,
+}
+
+impl Widget for RenderOptionsReader {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(40.0, 40.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let feathering = window_render_options(ctx.window_id())
+            .is_some_and(|options| options.feathering_enabled);
+        self.painted_feathering.set(Some(feathering));
+        ctx.fill_bounds(Color::BLACK);
+    }
+
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn changing_render_options_repaints_the_window() {
+    let painted_feathering = Rc::new(Cell::new(None));
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Render options")
+                .root(RenderOptionsReader {
+                    painted_feathering: Rc::clone(&painted_feathering),
+                }),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    set_window_render_options(window_id, WindowRenderOptions::new(false, 1.0));
+    runtime.render(window_id).unwrap();
+    assert_eq!(painted_feathering.get(), Some(false));
+    assert!(!runtime.needs_render(window_id).unwrap());
+
+    // Nothing but the options changes.
+    set_window_render_options(window_id, WindowRenderOptions::new(true, 1.0));
+    assert!(runtime.needs_render(window_id).unwrap());
+    runtime.render(window_id).unwrap();
+    assert_eq!(painted_feathering.get(), Some(true));
+    runtime.remove_window(window_id).unwrap();
 }
 
 #[test]

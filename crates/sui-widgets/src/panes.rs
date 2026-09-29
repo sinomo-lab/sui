@@ -19,9 +19,9 @@ use sui_runtime::{
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
 use crate::{
-    DefaultTheme,
+    ButtonAppearance, DefaultTheme, IconButton, IconGlyph,
     containers::{ScrollBar, ScrollState, ScrollView},
-    text_align::paint_text,
+    text_align::paint_text_line,
 };
 
 /// Widget state progress the runtime animates (see [`Progress`]).
@@ -153,6 +153,9 @@ pub struct FloatingViewConfig {
     pub bounds: Rect,
     pub min_size: Size,
     pub visible: bool,
+    /// Whether the view has a close button in its title bar, and closes on
+    /// Escape. Closing hides the view.
+    pub closable: bool,
 }
 
 impl FloatingViewConfig {
@@ -162,7 +165,15 @@ impl FloatingViewConfig {
             bounds,
             min_size: Size::new(220.0, 160.0),
             visible: true,
+            closable: false,
         }
+    }
+
+    /// Give the view a close button, and close it on Escape. Closing hides
+    /// the view; show it again with [`FloatingWorkspaceState::set_view_visible`].
+    pub fn closable(mut self, closable: bool) -> Self {
+        self.closable = closable;
+        self
     }
 
     pub fn min_size(mut self, min_size: Size) -> Self {
@@ -184,6 +195,7 @@ pub struct FloatingViewSnapshot {
     pub min_size: Size,
     pub visible: bool,
     pub maximized: bool,
+    pub closable: bool,
     pub surface_widget_id: Option<WidgetId>,
 }
 
@@ -194,6 +206,7 @@ struct FloatingViewState {
     bounds: Rect,
     min_size: Size,
     visible: bool,
+    closable: bool,
     surface_widget_id: Option<WidgetId>,
 }
 
@@ -235,6 +248,7 @@ impl FloatingWorkspaceState {
                 config.min_size.height.max(120.0),
             ),
             visible: config.visible,
+            closable: config.closable,
             surface_widget_id: None,
         });
         inner.z_order.push(id);
@@ -253,6 +267,7 @@ impl FloatingWorkspaceState {
                 min_size: view.min_size,
                 visible: view.visible,
                 maximized: inner.maximized_view == Some(view.id),
+                closable: view.closable,
                 surface_widget_id: view.surface_widget_id,
             })
             .collect()
@@ -271,6 +286,7 @@ impl FloatingWorkspaceState {
                 min_size: view.min_size,
                 visible: view.visible,
                 maximized: inner.maximized_view == Some(view.id),
+                closable: view.closable,
                 surface_widget_id: view.surface_widget_id,
             })
     }
@@ -440,6 +456,7 @@ pub struct FloatingWorkspace {
     state: FloatingWorkspaceState,
     views: Vec<FloatingWorkspaceEntry>,
     gesture: Option<FloatingWorkspaceGesture>,
+    transparent: bool,
 }
 
 impl FloatingWorkspace {
@@ -451,7 +468,15 @@ impl FloatingWorkspace {
             state,
             views: Vec::new(),
             gesture: None,
+            transparent: false,
         }
+    }
+
+    /// Lay the views over whatever is behind the workspace: it paints no
+    /// background, and points outside every view reach what is behind it.
+    pub fn transparent(mut self, transparent: bool) -> Self {
+        self.transparent = transparent;
+        self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -563,6 +588,16 @@ impl FloatingWorkspace {
                     return Some(FloatingWorkspaceHit {
                         view_id: view.id,
                         region: FloatingWorkspaceHitRegion::ResizeHandle,
+                    });
+                }
+
+                if !view.maximized
+                    && view.closable
+                    && floating_view_close_button_rect(&theme, bounds).contains(position)
+                {
+                    return Some(FloatingWorkspaceHit {
+                        view_id: view.id,
+                        region: FloatingWorkspaceHitRegion::CloseButton,
                     });
                 }
 
@@ -711,6 +746,18 @@ impl Widget for FloatingWorkspace {
                 let Some(view) = self.state.snapshot(hit.view_id) else {
                     return;
                 };
+                // A closable view takes focus from its frame, so Escape
+                // closes it.
+                if view.closable
+                    && matches!(
+                        hit.region,
+                        FloatingWorkspaceHitRegion::TitleBar
+                            | FloatingWorkspaceHitRegion::ResizeHandle
+                    )
+                    && let Some(surface) = view.surface_widget_id
+                {
+                    ctx.request_focus_for(surface);
+                }
                 let theme = self.resolved_theme();
                 let bounds = resolved_floating_view_bounds(&theme, ctx.bounds(), &view);
                 match hit.region {
@@ -737,7 +784,7 @@ impl Widget for FloatingWorkspace {
                         ctx.request_pointer_capture(pointer.pointer_id);
                         ctx.set_handled();
                     }
-                    FloatingWorkspaceHitRegion::Body => {}
+                    FloatingWorkspaceHitRegion::CloseButton | FloatingWorkspaceHitRegion::Body => {}
                 }
             }
             _ => {}
@@ -797,16 +844,18 @@ impl Widget for FloatingWorkspace {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
-        let palette = theme.palette;
-        ctx.fill_bounds(palette.control);
-        ctx.fill_rect(
-            ctx.bounds().inflate(
-                -theme.metrics.floating_workspace_margin,
-                -theme.metrics.floating_workspace_margin,
-            ),
-            palette.surface_raised.with_alpha(0.72),
-        );
+        if !self.transparent {
+            let theme = self.resolved_theme();
+            let palette = theme.palette;
+            ctx.fill_bounds(palette.control);
+            ctx.fill_rect(
+                ctx.bounds().inflate(
+                    -theme.metrics.floating_workspace_margin,
+                    -theme.metrics.floating_workspace_margin,
+                ),
+                palette.surface_raised.with_alpha(0.72),
+            );
+        }
 
         for view_id in self.active_view_ids() {
             if let Some(entry) = self.entry(view_id) {
@@ -819,6 +868,10 @@ impl Widget for FloatingWorkspace {
         Some(StackHostOptions {
             order_policy: StackOrderPolicy::FocusFronted,
         })
+    }
+
+    fn hit_test_self(&self) -> bool {
+        !self.transparent
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -862,6 +915,7 @@ struct FloatingWorkspaceHit {
 
 enum FloatingWorkspaceHitRegion {
     TitleBar,
+    CloseButton,
     ResizeHandle,
     Body,
 }
@@ -872,6 +926,8 @@ struct FloatingViewSurface {
     state: FloatingWorkspaceState,
     view_id: u64,
     host: SingleChild,
+    /// The close button of a closable view.
+    close: Option<SingleChild>,
 }
 
 impl FloatingViewSurface {
@@ -885,6 +941,19 @@ impl FloatingViewSurface {
     where
         W: Widget + 'static,
     {
+        let close = state
+            .snapshot(view_id)
+            .filter(|view| view.closable)
+            .map(|view| {
+                let close_state = state.clone();
+                let button = IconButton::new(IconGlyph::Close, format!("Close {}", view.title))
+                    .appearance(ButtonAppearance::Ghost)
+                    .on_press_with_ctx(move |ctx| close_view(&close_state, view_id, ctx));
+                SingleChild::new(match theme_reader.clone() {
+                    Some(theme_reader) => button.theme_when(move || theme_reader()),
+                    None => button.theme(theme),
+                })
+            });
         Self {
             theme: Box::new(theme),
             theme_reader: theme_reader.clone(),
@@ -897,7 +966,16 @@ impl FloatingViewSurface {
                 view_id,
                 child,
             )),
+            close,
         }
+    }
+
+    fn shows_close_button(&self) -> bool {
+        self.close.is_some()
+            && self
+                .state
+                .snapshot(self.view_id)
+                .is_some_and(|view| !view.maximized)
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -909,12 +987,44 @@ impl FloatingViewSurface {
 }
 
 impl Widget for FloatingViewSurface {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Keyboard(key) = event
+            && self.close.is_some()
+            && ctx.phase() != EventPhase::Capture
+            && key.state == KeyState::Pressed
+            && key.key == "Escape"
+        {
+            close_view(&self.state, self.view_id, ctx);
+            ctx.set_handled();
+        }
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.host.measure(ctx, constraints)
+        let size = self.host.measure(ctx, constraints);
+        if self.shows_close_button() {
+            let button = floating_view_close_button_rect(
+                &self.resolved_theme(),
+                Rect::from_origin_size(Point::ZERO, constraints.max),
+            );
+            if let Some(close) = &mut self.close {
+                close.measure(ctx, Constraints::tight(button.size));
+            }
+        }
+        size
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.host.arrange(ctx, bounds);
+        if self.shows_close_button() {
+            let button = floating_view_close_button_rect(&self.resolved_theme(), bounds);
+            if let Some(close) = &mut self.close {
+                close.arrange(ctx, button);
+            }
+        }
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.close.is_some()
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -932,16 +1042,26 @@ impl Widget for FloatingViewSurface {
             let title_bar = floating_view_title_bar_rect(&theme, ctx.bounds());
             ctx.fill_rect(title_bar, palette.control_active);
             let title_padding = metrics.floating_view_title_padding;
+            let text_end = if view.closable {
+                floating_view_close_button_rect(&theme, ctx.bounds()).x()
+            } else {
+                title_bar.max_x() - title_padding.right
+            };
             let text_slot = Rect::new(
                 title_bar.x() + title_padding.left,
                 title_bar.y() + title_padding.top,
-                (title_bar.width() - title_padding.left - title_padding.right).max(0.0),
+                (text_end - title_bar.x() - title_padding.left).max(0.0),
                 (title_bar.height() - title_padding.top - title_padding.bottom).max(0.0),
             );
             let title_style = theme.text_style(palette.text);
             ctx.push_clip_rect(text_slot);
-            paint_text(ctx, text_slot, &view.title, &title_style, TextAlign::Start);
+            paint_text_line(ctx, text_slot, &view.title, &title_style, TextAlign::Start);
             ctx.pop_clip();
+            if self.shows_close_button()
+                && let Some(close) = &self.close
+            {
+                close.paint(ctx);
+            }
         }
         self.host.paint(ctx);
         if !view.maximized {
@@ -977,17 +1097,49 @@ impl Widget for FloatingViewSurface {
         if let Some(view) = self.state.snapshot(self.view_id) {
             let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Window, ctx.bounds());
             node.name = Some(view.title);
+            node.state.focused = ctx.is_focused();
             ctx.push(node);
+        }
+        if self.shows_close_button()
+            && let Some(close) = &self.close
+        {
+            close.semantics(ctx);
         }
         self.host.semantics(ctx);
     }
 
     fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
         self.host.visit_children(visitor);
+        if self.shows_close_button()
+            && let Some(close) = &self.close
+        {
+            close.visit_children(visitor);
+        }
     }
 
     fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        let shows_close_button = self.shows_close_button();
         self.host.visit_children_mut(visitor);
+        if shows_close_button && let Some(close) = &mut self.close {
+            close.visit_children_mut(visitor);
+        }
+    }
+}
+
+/// Hide a closable view, and lay the window out again without it.
+fn close_view(state: &FloatingWorkspaceState, view_id: u64, ctx: &mut EventCtx) {
+    if !state.set_view_visible(view_id, false) {
+        return;
+    }
+    let window = InvalidationTarget::Window(ctx.window_id());
+    for kind in [
+        InvalidationKind::Measure,
+        InvalidationKind::Ordering,
+        InvalidationKind::Paint,
+        InvalidationKind::HitTest,
+        InvalidationKind::Semantics,
+    ] {
+        ctx.request(InvalidationRequest::new(window, kind));
     }
 }
 
@@ -2275,6 +2427,23 @@ fn floating_view_content_rect(theme: &DefaultTheme, bounds: Rect, maximized: boo
     )
 }
 
+/// The close button of a closable view, at the end of its title bar.
+fn floating_view_close_button_rect(theme: &DefaultTheme, bounds: Rect) -> Rect {
+    let title_bar = floating_view_title_bar_rect(theme, bounds);
+    let inset = theme
+        .metrics
+        .floating_view_title_padding
+        .top
+        .min(title_bar.height() * 0.25);
+    let size = (title_bar.height() - inset * 2.0).max(0.0);
+    Rect::new(
+        title_bar.max_x() - inset - size,
+        title_bar.y() + inset,
+        size,
+        size,
+    )
+}
+
 fn floating_view_resize_handle_rect(theme: &DefaultTheme, bounds: Rect) -> Rect {
     let size = theme.metrics.floating_view_resize_handle_size;
     Rect::new(bounds.max_x() - size, bounds.max_y() - size, size, size)
@@ -2359,11 +2528,14 @@ fn request_widget_refresh(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     use super::{
         FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState, SplitExtent,
-        SplitPaneSide, SplitState, SplitStateSnapshot, SplitView,
+        SplitPaneSide, SplitState, SplitStateSnapshot, SplitView, floating_view_title_bar_rect,
     };
     use crate::DefaultTheme;
     use crate::containers::SizedBox;
@@ -2375,8 +2547,9 @@ mod tests {
     use sui_layout::{Axis, Constraints};
     use sui_render_wgpu::{RgbaImage, WgpuRenderer};
     use sui_runtime::{
-        Application, EventCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime, SemanticsCtx,
-        StackOrderPolicy, Widget, WindowBuilder,
+        Application, ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, RenderOutput, Runtime,
+        SemanticsCtx, SingleChild, StackOrderPolicy, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
+        WindowBuilder,
     };
     use sui_scene::{Brush, SceneCommand, SceneLayerUpdateKind};
     use sui_text::{FontRegistry, TextSystem};
@@ -3177,6 +3350,172 @@ mod tests {
                 .iter()
                 .any(|update| update.kind == SceneLayerUpdateKind::Ordering)
         );
+        Ok(())
+    }
+
+    /// Lays `front` over `back`, both filling its bounds.
+    struct Layered {
+        back: SingleChild,
+        front: SingleChild,
+    }
+
+    impl Widget for Layered {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            self.back.measure(ctx, Constraints::tight(constraints.max));
+            self.front.measure(ctx, Constraints::tight(constraints.max));
+            constraints.max
+        }
+
+        fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+            self.back.arrange(ctx, bounds);
+            self.front.arrange(ctx, bounds);
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            self.back.paint(ctx);
+            self.front.paint(ctx);
+        }
+
+        fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+            self.back.visit_children(visitor);
+            self.front.visit_children(visitor);
+        }
+
+        fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+            self.back.visit_children_mut(visitor);
+            self.front.visit_children_mut(visitor);
+        }
+    }
+
+    fn rect_center(rect: Rect) -> Point {
+        Point::new(
+            rect.x() + rect.width() * 0.5,
+            rect.y() + rect.height() * 0.5,
+        )
+    }
+
+    fn click(runtime: &mut Runtime, window_id: sui_core::WindowId, at: Point) -> Result<()> {
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Down, at, true))?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, at, false))?;
+        Ok(())
+    }
+
+    fn has_window_named(runtime: &mut Runtime, window_id: sui_core::WindowId, name: &str) -> bool {
+        runtime.render(window_id).expect("window renders");
+        runtime
+            .semantics(window_id)
+            .expect("window semantics")
+            .iter()
+            .any(|node| node.role == SemanticsRole::Window && node.name.as_deref() == Some(name))
+    }
+
+    #[test]
+    fn transparent_workspaces_let_points_outside_their_views_through() -> Result<()> {
+        let presses = Rc::new(Cell::new(0));
+        let behind_presses = Rc::clone(&presses);
+        let mut workspace = FloatingWorkspace::new(FloatingWorkspaceState::new()).transparent(true);
+        workspace.push_view(
+            FloatingViewConfig::new("Tools", Rect::new(200.0, 16.0, 180.0, 140.0)),
+            SizedBox::new().width(180.0).height(140.0),
+        );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(420.0)
+                .height(260.0)
+                .with_child(Layered {
+                    back: SingleChild::new(
+                        crate::Button::new("Behind")
+                            .on_press(move || behind_presses.set(behind_presses.get() + 1)),
+                    ),
+                    front: SingleChild::new(workspace),
+                }),
+        );
+
+        let output = runtime.render(window_id)?;
+        let workspace_background = DefaultTheme::default().palette.control;
+        let mut painted_background = false;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRect { rect, brush } = command {
+                painted_background |= rect.size == Size::new(420.0, 260.0)
+                    && *brush == Brush::Solid(workspace_background);
+            }
+        });
+        assert!(
+            !painted_background,
+            "a transparent workspace paints no background"
+        );
+
+        click(&mut runtime, window_id, Point::new(40.0, 40.0))?;
+        assert_eq!(
+            presses.get(),
+            1,
+            "a point outside every view reaches what is behind"
+        );
+        click(&mut runtime, window_id, Point::new(260.0, 120.0))?;
+        assert_eq!(presses.get(), 1, "a view takes the points inside it");
+        Ok(())
+    }
+
+    #[test]
+    fn closable_views_close_from_their_button_and_on_escape() -> Result<()> {
+        let state = FloatingWorkspaceState::new();
+        let mut workspace = FloatingWorkspace::new(state.clone());
+        let view_id = workspace.push_view(
+            FloatingViewConfig::new("Tools", Rect::new(16.0, 16.0, 240.0, 170.0)).closable(true),
+            SizedBox::new().width(240.0).height(170.0),
+        );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(420.0)
+                .height(260.0)
+                .with_child(workspace),
+        );
+        assert!(has_window_named(&mut runtime, window_id, "Tools"));
+
+        let close = runtime
+            .semantics(window_id)?
+            .iter()
+            .find(|node| {
+                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Close Tools")
+            })
+            .map(|node| node.bounds)
+            .expect("a closable view has a close button");
+        let title_bar = floating_view_title_bar_rect(
+            &DefaultTheme::default(),
+            Rect::new(16.0, 16.0, 240.0, 170.0),
+        );
+        assert!(
+            title_bar.contains(rect_center(close)),
+            "the close button is in the title bar"
+        );
+        click(&mut runtime, window_id, rect_center(close))?;
+        assert!(!state.snapshot(view_id).expect("view state").visible);
+        assert!(!has_window_named(&mut runtime, window_id, "Tools"));
+
+        // Shown again, pressing its title bar focuses it, and Escape closes it.
+        state.set_view_visible(view_id, true);
+        runtime.handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(420.0, 260.0))),
+        )?;
+        assert!(has_window_named(&mut runtime, window_id, "Tools"));
+        click(
+            &mut runtime,
+            window_id,
+            Point::new(40.0, rect_center(title_bar).y),
+        )?;
+        assert_eq!(
+            runtime.focused_widget(window_id)?,
+            state
+                .snapshot(view_id)
+                .and_then(|view| view.surface_widget_id)
+        );
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Escape", KeyState::Pressed)),
+        )?;
+        assert!(!state.snapshot(view_id).expect("view state").visible);
+        assert!(!has_window_named(&mut runtime, window_id, "Tools"));
         Ok(())
     }
 

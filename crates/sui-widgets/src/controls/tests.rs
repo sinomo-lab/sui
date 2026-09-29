@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use super::{
     Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, ChoiceAppearance,
@@ -17,8 +20,8 @@ use crate::{
 use sui_core::{
     Color, CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
     PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
-    SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue, Size, Vector,
-    WidgetId, WindowEvent,
+    SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue, Size, ToggleState,
+    Vector, WidgetId, WindowEvent,
 };
 use sui_layout::{Alignment, Constraints, Padding as TestPadding};
 use sui_reactive::Signal;
@@ -5942,6 +5945,58 @@ fn select_selected_when_reads_external_selection() -> Result<()> {
         select.value,
         Some(SemanticsValue::Text("Choose mode".to_string()))
     );
+    Ok(())
+}
+
+#[test]
+fn switch_on_when_follows_external_state_and_toggles_it() -> Result<()> {
+    let on = Rc::new(Cell::new(true));
+    let reader = Rc::clone(&on);
+    let writer = Rc::clone(&on);
+    let (mut runtime, window_id) = build_runtime(
+        Switch::new("Hinting")
+            .on_when(move || reader.get())
+            .on_toggle(move |value| writer.set(value)),
+    );
+    let checked = |runtime: &mut Runtime| -> Result<Option<ToggleState>> {
+        let output = runtime.render(window_id)?;
+        Ok(output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Switch)
+            .and_then(|node| node.state.checked))
+    };
+    assert_eq!(checked(&mut runtime)?, Some(ToggleState::Checked));
+
+    // Changed elsewhere.
+    on.set(false);
+    runtime.handle_event(
+        window_id,
+        Event::Window(WindowEvent::Resized(Size::new(320.0, 80.0))),
+    )?;
+    assert_eq!(checked(&mut runtime)?, Some(ToggleState::Unchecked));
+
+    // Toggled from the state it shows.
+    let switch = runtime
+        .semantics(window_id)?
+        .iter()
+        .find(|node| node.role == SemanticsRole::Switch)
+        .map(|node| node.bounds)
+        .expect("switch semantics present");
+    let center = Point::new(
+        switch.x() + switch.width() * 0.5,
+        switch.y() + switch.height() * 0.5,
+    );
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Down, center, true),
+    )?;
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Up, center, false),
+    )?;
+    assert!(on.get(), "toggling an off switch turns the state on");
+    assert_eq!(checked(&mut runtime)?, Some(ToggleState::Checked));
     Ok(())
 }
 
