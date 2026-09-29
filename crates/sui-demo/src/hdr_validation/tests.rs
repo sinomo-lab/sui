@@ -1,6 +1,7 @@
 use sui::{
-    Color, DisplayCapabilities, DisplayColorPrimaries, OutputStrategy, Result, SemanticsRole,
-    SemanticsValue, WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
+    Application, Color, DefaultTheme, DisplayCapabilities, DisplayColorPrimaries, OutputStrategy,
+    Result, SemanticsRole, SemanticsValue, Size, SizedBox, WindowBuilder,
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
     WindowOutputDiagnostics, WindowRenderOptions, WindowToneMappingMode, window_render_options,
 };
 use sui_render_wgpu::DynamicRangeMode;
@@ -10,6 +11,7 @@ use super::live::{HighlightFit, OutputKind};
 use super::probes::{clipped_to_srgb, fitted_on_cpu};
 use super::report::LightMetrics;
 use super::*;
+use crate::test_support::*;
 
 /// The page on a simulated `display`, so tests never depend on this
 /// machine's screens.
@@ -391,4 +393,196 @@ fn light_metrics_measure_headroom_use() {
 
     let report = report::output_diagnostics_report("view", None);
     assert_eq!(report, "view=view\noutput_diagnostics=unavailable\n");
+}
+
+fn build_color_validation_runtime() -> Result<sui::Runtime> {
+    build_color_validation_application().build()
+}
+
+fn build_narrow_color_validation_runtime() -> Result<sui::Runtime> {
+    Application::new()
+        .window(
+            WindowBuilder::new()
+                .title(COLOR_VALIDATION_VIEW_TITLE)
+                .root(
+                    SizedBox::new()
+                        .size(Size::new(430.0, 320.0))
+                        .with_child(build_color_validation_surface()),
+                ),
+        )
+        .build()
+}
+
+#[test]
+fn color_validation_surface_exposes_its_reference_swatches() {
+    let mut runtime =
+        build_color_validation_runtime().expect("color validation runtime should build");
+    let window_id = runtime.window_ids()[0];
+    runtime
+        .render(window_id)
+        .expect("color validation surface should render");
+
+    let semantics = runtime
+        .semantics(window_id)
+        .expect("color validation semantics should exist");
+
+    assert!(semantics.iter().any(|node| {
+        node.role == SemanticsRole::Window
+            && node.name.as_deref() == Some(COLOR_VALIDATION_VIEW_TITLE)
+    }));
+    assert!(semantics.iter().any(|node| {
+        node.role == SemanticsRole::ScrollView
+            && node.name.as_deref() == Some(COLOR_VALIDATION_SCROLL_NAME)
+    }));
+
+    for swatch_name in [
+        "sRGB clipped red",
+        "Display P3 red",
+        "sRGB clipped green",
+        "Display P3 green",
+        "sRGB clipped cyan",
+        "Display P3 cyan",
+        "White 1×",
+        "White 2×",
+        "White 4×",
+        "White 8×",
+        "White 16×",
+        "Near white 0.9×",
+        "Near white 1.05×",
+    ] {
+        assert!(semantics.iter().any(|node| {
+            node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)
+        }));
+    }
+}
+
+#[test]
+fn color_validation_surface_keeps_swatches_and_text_readable_when_narrow() {
+    let mut runtime = build_narrow_color_validation_runtime()
+        .expect("narrow color validation runtime should build");
+    let window_id = runtime.window_ids()[0];
+    let output = runtime
+        .render(window_id)
+        .expect("narrow color validation surface should render");
+
+    let scroll = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::ScrollView
+                && node.name.as_deref() == Some(COLOR_VALIDATION_SCROLL_NAME)
+        })
+        .expect("color validation scroll view should be present");
+    let horizontal_scroll_bar = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Slider
+                && node.name.as_deref() == Some(COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME)
+        })
+        .expect("horizontal color validation scroll bar should be present");
+    let vertical_scroll_bar = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Slider
+                && node.name.as_deref() == Some(COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME)
+        })
+        .expect("vertical color validation scroll bar should be present");
+    let brightest_swatch = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some("White 16×")
+        })
+        .expect("the brightest ladder swatch should be present");
+    let hdr_description = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Text
+                && node
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with("White from a quarter of SDR white"))
+        })
+        .expect("the headroom description should be present");
+
+    let horizontal_max = match horizontal_scroll_bar.value {
+        Some(SemanticsValue::Range { max, .. }) => max,
+        _ => 0.0,
+    };
+    let vertical_max = match vertical_scroll_bar.value {
+        Some(SemanticsValue::Range { max, .. }) => max,
+        _ => 0.0,
+    };
+
+    assert!(horizontal_max > 0.0);
+    assert!(vertical_max > 0.0);
+    assert!(horizontal_scroll_bar.bounds.y() >= scroll.bounds.max_y());
+    assert!(vertical_scroll_bar.bounds.x() >= scroll.bounds.max_x());
+    // The page keeps its width and scrolls instead of squeezing probes.
+    assert!(brightest_swatch.bounds.width() >= 80.0);
+    assert!(brightest_swatch.bounds.height() >= 40.0);
+    assert!(hdr_description.bounds.height() > 20.0);
+    assert!(hdr_description.bounds.width() < 1000.0);
+}
+
+#[test]
+fn color_validation_scroll_bars_use_themed_metrics() {
+    let theme = DefaultTheme::touch();
+    let output = render_widget_with_size(
+        COLOR_VALIDATION_VIEW_TITLE,
+        Size::new(430.0, 320.0),
+        build_color_validation_surface_with_theme(theme_reader(theme)),
+    );
+    let horizontal_scroll_bar = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Slider
+                && node.name.as_deref() == Some(COLOR_VALIDATION_HORIZONTAL_SCROLL_BAR_NAME)
+        })
+        .expect("horizontal color validation scroll bar should be present");
+    let vertical_scroll_bar = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Slider
+                && node.name.as_deref() == Some(COLOR_VALIDATION_VERTICAL_SCROLL_BAR_NAME)
+        })
+        .expect("vertical color validation scroll bar should be present");
+
+    assert_eq!(
+        vertical_scroll_bar.bounds.width(),
+        theme.metrics.scroll_bar_thickness
+    );
+    assert_eq!(
+        horizontal_scroll_bar.bounds.height(),
+        theme.metrics.scroll_bar_thickness
+    );
+}
+
+#[test]
+fn color_validation_surface_omits_live_performance_overlay() {
+    let mut runtime =
+        build_color_validation_runtime().expect("color validation runtime should build");
+    let window_id = runtime.window_ids()[0];
+    runtime
+        .render(window_id)
+        .expect("color validation surface should render");
+
+    let semantics = runtime
+        .semantics(window_id)
+        .expect("color validation semantics should exist");
+    assert_semantics_omit_live_performance_overlay(semantics);
+}
+
+#[test]
+fn color_validation_repaints_when_the_theme_reader_changes() -> Result<()> {
+    assert_widget_repaints_after_theme_change(
+        COLOR_VALIDATION_VIEW_TITLE,
+        Size::new(520.0, 360.0),
+        build_color_validation_surface_with_theme,
+    )
 }

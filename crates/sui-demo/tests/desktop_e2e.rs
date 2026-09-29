@@ -20,9 +20,10 @@ use sui::{
 };
 use sui_demo_app::benchmarks::{
     RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,
-    TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
-    TEXT_EDITING_BENCHMARK_TITLE, build_retained_text_benchmark_application,
-    build_text_editing_benchmark_application,
+    build_retained_text_benchmark_application,
+};
+use sui_demo_app::text_editor::{
+    TEXT_EDITOR_NAME, TEXT_EDITOR_VIEW_TITLE, build_text_editor_application,
 };
 use sui_demo_app::widget_book::{
     build_widget_book_application, build_widget_book_gallery, register_widget_book_images,
@@ -3250,13 +3251,10 @@ fn run_text_editing_benchmark() -> Result<()> {
     ];
     const SELECTION_STEPS: usize = 8;
     const EDITOR_SCROLL_FRAMES: usize = 18;
-    const SYNTAX_SCROLL_FRAMES: usize = 28;
     const SCROLL_STEP_PX: f32 = -34.0;
 
-    let harness = DesktopHarness::launch_with_vsync(
-        || build_text_editing_benchmark_application().build(),
-        false,
-    )?;
+    let harness =
+        DesktopHarness::launch_with_vsync(|| build_text_editor_application().build(), false)?;
     let window_id = harness.main_window_id();
 
     set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
@@ -3266,15 +3264,9 @@ fn run_text_editing_benchmark() -> Result<()> {
     let editor = find_node(
         &initial_snapshot,
         SemanticsRole::TextInput,
-        TEXT_EDITING_BENCHMARK_EDITOR_NAME,
-    );
-    let syntax_scroll = find_node(
-        &initial_snapshot,
-        SemanticsRole::TextInput,
-        TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
+        TEXT_EDITOR_NAME,
     );
     let editor_point = node_center(editor.bounds);
-    let syntax_point = node_center(syntax_scroll.bounds);
     let mut previous_frame_index = initial_snapshot
         .performance
         .as_ref()
@@ -3334,10 +3326,12 @@ fn run_text_editing_benchmark() -> Result<()> {
         record_frame("typing", step)?;
     }
 
+    // Drag down a line a step, so every step changes the selection even
+    // where lines are short or empty.
     let selection_start = Point::new(editor.bounds.x() + 92.0, editor.bounds.y() + 64.0);
     let selection_end = Point::new(
         editor.bounds.x() + editor.bounds.width() - 84.0,
-        editor.bounds.y() + 64.0,
+        editor.bounds.y() + 64.0 + SELECTION_STEPS as f32 * 40.0,
     );
     move_cursor(&harness, window_id, selection_start)?;
     harness.dispatch(
@@ -3374,17 +3368,6 @@ fn run_text_editing_benchmark() -> Result<()> {
             },
         )?;
         record_frame("editor scroll", step)?;
-    }
-
-    move_cursor(&harness, window_id, syntax_point)?;
-    for step in 0..SYNTAX_SCROLL_FRAMES {
-        harness.dispatch(
-            window_id,
-            HostInputEvent::MouseWheel {
-                delta: ScrollKind::Pixels(Vector::new(0.0, SCROLL_STEP_PX)),
-            },
-        )?;
-        record_frame("syntax scroll", step)?;
     }
 
     let benchmark_elapsed_ms = benchmark_started.elapsed().as_secs_f64() * 1000.0;
@@ -3440,15 +3423,10 @@ fn run_text_editing_benchmark() -> Result<()> {
         .max()
         .unwrap_or(0);
 
-    assert_eq!(initial_snapshot.title, TEXT_EDITING_BENCHMARK_TITLE);
+    assert_eq!(initial_snapshot.title, TEXT_EDITOR_VIEW_TITLE);
     assert_eq!(
         valid_count,
-        IME_PREEDIT_UPDATES.len()
-            + 1
-            + EDIT_COMMITS.len()
-            + SELECTION_STEPS
-            + EDITOR_SCROLL_FRAMES
-            + SYNTAX_SCROLL_FRAMES,
+        IME_PREEDIT_UPDATES.len() + 1 + EDIT_COMMITS.len() + SELECTION_STEPS + EDITOR_SCROLL_FRAMES,
     );
 
     println!("\n=== Text Editing Benchmark ===");

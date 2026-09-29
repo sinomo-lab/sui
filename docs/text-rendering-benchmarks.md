@@ -69,7 +69,7 @@ Expected signals:
 
 ### 3. Text Editing Interaction Benchmark
 
-Purpose: verify editor-style workloads where text is typed, selected, scrolled, and rendered with style overlays.
+Purpose: verify editor-style workloads on the Text editor page, where highlighted code is typed, composed with an input method, selected, and scrolled.
 
 Run:
 
@@ -103,15 +103,15 @@ Open:
 
 ```text
 http://127.0.0.1:8080/?benchmark=retained-text&warmup=60&frames=180
-http://127.0.0.1:8080/?benchmark=text-editing&warmup=60&frames=180
-http://127.0.0.1:8080/?benchmark=text-comparison&warmup=30&frames=120
+http://127.0.0.1:8080/?benchmark=text-editor&warmup=60&frames=180
+http://127.0.0.1:8080/?benchmark=text-rendering&warmup=30&frames=120
 ```
 
 Primary metrics:
 
 - browser-reported frame timing
 - canvas mode and color-management mode
-- whether text-comparison visibly changes between linear, perceptual, LCD, and stem-darkened policy cards
+- whether the text-rendering comparison visibly changes between linear, perceptual, LCD, and stem-darkened policies
 
 ## Quality Benchmarks
 

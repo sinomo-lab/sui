@@ -138,53 +138,59 @@ fn text_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> Panel
     section(
         theme_reader,
         TEXT_SECTION_NAME,
-        rows()
-            .with_child(with_details(
-                row(
-                    theme_reader,
-                    TEXT_COVERAGE_POLICY_NAME,
-                    text_coverage_policy_select(theme_reader, options, Place::Settings),
-                ),
-                options.flag(
-                    "Text coverage follows a gamma curve",
-                    uses_text_coverage_gamma,
-                ),
-                rows().with_child(row(
-                    theme_reader,
-                    TEXT_COVERAGE_GAMMA_NAME,
-                    text_coverage_gamma_input(theme_reader, options, Place::Settings),
-                )),
-            ))
-            .with_child(with_details(
-                text_hinting_switch(theme_reader, options, Place::Settings),
-                options.flag("Text hinting is on", uses_text_hinting),
-                rows().with_child(row(
-                    theme_reader,
-                    TEXT_HINTING_MAX_PPEM_NAME,
-                    text_hinting_max_ppem_input(theme_reader, options, Place::Settings),
-                )),
-            ))
-            .with_child(with_details(
-                stem_darkening_switch(theme_reader, options, Place::Settings),
-                options.flag("Stem darkening is on", uses_stem_darkening),
-                rows()
-                    .with_child(row(
-                        theme_reader,
-                        STEM_DARKENING_AMOUNT_NAME,
-                        stem_darkening_amount_input(theme_reader, options, Place::Settings),
-                    ))
-                    .with_child(row(
-                        theme_reader,
-                        STEM_DARKENING_MAX_PPEM_NAME,
-                        stem_darkening_max_ppem_input(theme_reader, options, Place::Settings),
-                    )),
-            ))
-            .with_child(optical_centering_switch(
-                theme_reader,
-                options,
-                Place::Settings,
-            )),
+        text_controls(theme_reader, options, Place::Settings),
     )
+}
+
+/// The window's text settings, as Settings shows them and the Text rendering
+/// page does beside its samples.
+pub(crate) fn text_controls(
+    theme_reader: &DevThemeReader,
+    options: &RenderOptions,
+    place: Place,
+) -> Stack {
+    rows()
+        .with_child(with_details(
+            row(
+                theme_reader,
+                TEXT_COVERAGE_POLICY_NAME,
+                text_coverage_policy_select(theme_reader, options, place),
+            ),
+            options.flag(
+                "Text coverage follows a gamma curve",
+                uses_text_coverage_gamma,
+            ),
+            rows().with_child(row(
+                theme_reader,
+                TEXT_COVERAGE_GAMMA_NAME,
+                text_coverage_gamma_input(theme_reader, options, place),
+            )),
+        ))
+        .with_child(with_details(
+            text_hinting_switch(theme_reader, options, place),
+            options.flag("Text hinting is on", uses_text_hinting),
+            rows().with_child(row(
+                theme_reader,
+                TEXT_HINTING_MAX_PPEM_NAME,
+                text_hinting_max_ppem_input(theme_reader, options, place),
+            )),
+        ))
+        .with_child(with_details(
+            stem_darkening_switch(theme_reader, options, place),
+            options.flag("Stem darkening is on", uses_stem_darkening),
+            rows()
+                .with_child(row(
+                    theme_reader,
+                    STEM_DARKENING_AMOUNT_NAME,
+                    stem_darkening_amount_input(theme_reader, options, place),
+                ))
+                .with_child(row(
+                    theme_reader,
+                    STEM_DARKENING_MAX_PPEM_NAME,
+                    stem_darkening_max_ppem_input(theme_reader, options, place),
+                )),
+        ))
+        .with_child(optical_centering_switch(theme_reader, options, place))
 }
 
 fn shapes_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> PanelSection {

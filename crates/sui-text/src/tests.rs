@@ -941,6 +941,46 @@ fn explicit_rtl_paragraph_places_caret_progression_from_the_right() {
 }
 
 #[test]
+fn explicit_direction_aligns_paragraphs_by_their_start_and_end_edges() {
+    let system = TextSystem::new();
+    let line_rect = |text: &str, direction: TextDirection, align: crate::TextAlign| {
+        let document = TextDocument {
+            paragraphs: vec![TextParagraph {
+                style: TextParagraphStyle {
+                    direction,
+                    align,
+                    ..Default::default()
+                },
+                spans: vec![TextSpan::new(text, TextStyle::new(Color::WHITE))],
+            }],
+        };
+        system
+            .layout_document(
+                TextLayoutRequest::new(document).with_box_size(Size::new(400.0, 40.0)),
+                &FontRegistry::new(),
+            )
+            .unwrap()
+            .lines()[0]
+            .rect
+    };
+    // Hebrew reads right to left by itself; English is embedded in the
+    // right-to-left paragraph.
+    for text in ["שלום עולם", "hello world"] {
+        let start = line_rect(text, TextDirection::RightToLeft, crate::TextAlign::Start);
+        assert!(start.x() > 200.0, "{text}: {start:?} starts at the right");
+        let end = line_rect(text, TextDirection::RightToLeft, crate::TextAlign::End);
+        assert!(end.max_x() < 200.0, "{text}: {end:?} ends at the left");
+        let start = line_rect(text, TextDirection::LeftToRight, crate::TextAlign::Start);
+        assert!(
+            start.max_x() < 200.0,
+            "{text}: {start:?} starts at the left"
+        );
+        let end = line_rect(text, TextDirection::LeftToRight, crate::TextAlign::End);
+        assert!(end.x() > 200.0, "{text}: {end:?} ends at the right");
+    }
+}
+
+#[test]
 fn wrapped_selection_geometry_spans_multiple_lines() {
     let system = TextSystem::new();
     let layout = system
@@ -1107,4 +1147,15 @@ fn unbounded_box_dimensions_size_the_box_to_the_text() {
             .iter()
             .all(|glyph| glyph.origin_x.is_finite() && glyph.origin_y.is_finite())
     );
+}
+
+#[test]
+fn resolved_faces_name_their_family() {
+    let face = crate::ResolvedTextFace::from_bytes(
+        std::sync::Arc::from(crate::BUNDLED_NOTO_SANS_REGULAR_FONT),
+        0,
+    );
+    assert_eq!(face.family_name().as_deref(), Some("Noto Sans"));
+    let not_a_font = crate::ResolvedTextFace::from_bytes(std::sync::Arc::from(&[0_u8; 4][..]), 0);
+    assert_eq!(not_a_font.family_name(), None);
 }

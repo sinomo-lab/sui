@@ -1115,14 +1115,20 @@ fn map_wrap(wrap: TextWrap) -> Wrap {
     }
 }
 
+/// Cosmic's `Start` and `End` follow the direction it detects from the
+/// text, so a paragraph given a direction is aligned by its edges instead.
 fn map_align(align: crate::model::TextAlign, direction: TextDirection) -> Option<Align> {
     match align {
         crate::model::TextAlign::Start => match direction {
             TextDirection::LeftToRight => Some(Align::Left),
-            TextDirection::RightToLeft => Some(Align::End),
+            TextDirection::RightToLeft => Some(Align::Right),
             TextDirection::Auto => None,
         },
-        crate::model::TextAlign::End => Some(Align::End),
+        crate::model::TextAlign::End => match direction {
+            TextDirection::LeftToRight => Some(Align::Right),
+            TextDirection::RightToLeft => Some(Align::Left),
+            TextDirection::Auto => Some(Align::End),
+        },
         crate::model::TextAlign::Left => Some(Align::Left),
         crate::model::TextAlign::Right => Some(Align::Right),
         crate::model::TextAlign::Center => Some(Align::Center),

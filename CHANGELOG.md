@@ -420,6 +420,51 @@ Versioning, with the usual expectation that the API may change during the
   apart from its label. The near-white swatches on the page are named "Near
   white", no longer repeating the ladder's "White 1×".
 
+### Redesigned text demos
+
+- The demo's four text pages are now three, grouped with the other text
+  demos in the picker:
+  - Text rendering carries the window's text settings, the same controls as
+    Settings, above samples from 10 to 20 px on light, dark, and colored
+    backgrounds drawn with them. Two render policies are shown side by side,
+    with a magnifier that captures the window and shows a corner of each
+    sample pixel for pixel. Probes for stem darkening, hinting, coverage on
+    dark backgrounds, subpixel positions, and optical centering each say what
+    should differ, and every per-text policy is listed with the code that
+    sets it.
+  - Scripts and shaping lays out samples of nine scripts with the fonts this
+    system has and checks each: no glyph missing, Arabic letters joining,
+    Hebrew points and a Devanagari conjunct forming one cluster, and an emoji
+    family staying one cluster. Each row names the fonts that drew it. The
+    page also shows mixed-direction text with its runs underlined by
+    direction, line breaking at a width you choose, and a font's vertical
+    metrics.
+  - Text editor opens highlighted code, mixed-direction prose, input method
+    practice, and a 20,000-line document, with wrap and direction controls
+    and an inspector for the caret, the selection, the input method's
+    composition, the lines on screen, and the size.
+- Retained text is no longer in the picker; it remains a benchmark. The web
+  presets are now `text-rendering` and `text-editor`; `text-comparison` and
+  `text-editing` still open them, as do the old `demo=` names.
+- `TextSurface::status` keeps a `Signal<TextSurfaceStatus>` up to date with
+  the caret's line and column, the selection, the text an input method is
+  composing, the lines on screen, and the text's size. `set_wrap`,
+  `set_direction`, and `set_selection` change a surface in place. Ctrl+Home
+  and Ctrl+End (Cmd on macOS) move to the start and end of the text, and
+  select with Shift.
+- `TextSurface` lays text out in its direction when it has no style spans;
+  the direction was ignored. Wrapped text with style spans is laid out as one
+  paragraph per line; it was one paragraph with line breaks inside, and drew
+  nothing. Unwrapped lines start at the left edge in either direction, as in
+  code editors; right-to-left lines were aligned to the far edge of a
+  million-pixel box, off screen. The current line's band follows the caret
+  when lines wrap.
+- Paragraphs given a direction are aligned by that direction's edges. A
+  right-to-left paragraph of Hebrew or Arabic started at the left edge,
+  because its alignment followed the direction detected from its text.
+- `ResolvedTextFace::family_name` reads a face's family from its name table.
+  `ImageSampling` and `ImagePixelSnap` are exported from `sui`.
+
 ### Breaking: text painting helpers
 
 - Replaced `paint_aligned_text` with `paint_text` and

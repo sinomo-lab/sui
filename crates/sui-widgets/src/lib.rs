@@ -144,7 +144,8 @@ pub use text_align::{
 };
 pub use text_command::{TEXT_COMMAND, TextCommand};
 pub use text_surface::{
-    TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,
+    TextSurface, TextSurfaceOverlayKind, TextSurfaceStatus, TextSurfaceStyleOverlay,
+    TextSurfaceStyleSpan,
 };
 pub use theme::{
     ControlMetrics, ControlPalette, ControlSize, ControlStateMetrics, ControlTypography,

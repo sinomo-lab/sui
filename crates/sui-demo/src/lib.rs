@@ -18,9 +18,11 @@ mod settings;
 mod shrinkwrap_demo;
 #[cfg(test)]
 mod test_support;
+pub mod text_editor;
+pub mod text_rendering;
+pub mod text_shaping;
 pub mod theme_demo;
 mod theme_editor;
-pub mod validation;
 mod vector_demo;
 pub mod widget_book;
 
@@ -49,12 +51,10 @@ use std::{
     time::Duration,
 };
 
-use crate::benchmarks::{
-    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
-};
-use crate::validation::{
-    build_color_validation_application, build_text_rendering_comparison_application,
-};
+use crate::benchmarks::build_retained_text_benchmark_application;
+use crate::hdr_validation::build_color_validation_application;
+use crate::text_editor::build_text_editor_application;
+use crate::text_rendering::build_text_rendering_application;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::widget_book::GALLERY_SCROLL_NAME;
 use crate::widget_book::build_widget_book_application;
@@ -2622,8 +2622,8 @@ fn tui_action_point(node: &SemanticsNode) -> Point {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WebBenchmarkKind {
     RetainedText,
-    TextEditing,
-    TextComparison,
+    TextEditor,
+    TextRendering,
     ColorValidation,
     WidgetBook,
     DevWorkspace,
@@ -2720,9 +2720,9 @@ fn parse_web_launch_mode(query: &str) -> WebLaunchMode {
             "benchmark" => {
                 mode.benchmark = match value {
                     "retained-text" => Some(WebBenchmarkKind::RetainedText),
-                    "text-editing" => Some(WebBenchmarkKind::TextEditing),
-                    "text-comparison" | "comparison-surface" => {
-                        Some(WebBenchmarkKind::TextComparison)
+                    "text-editor" | "text-editing" => Some(WebBenchmarkKind::TextEditor),
+                    "text-rendering" | "text-comparison" | "comparison-surface" => {
+                        Some(WebBenchmarkKind::TextRendering)
                     }
                     "color-validation" | "wide-gamut-validation" => {
                         Some(WebBenchmarkKind::ColorValidation)
@@ -2844,8 +2844,8 @@ struct WebCanvasCapture {
 fn web_benchmark_slug(benchmark: Option<WebBenchmarkKind>) -> &'static str {
     match benchmark {
         Some(WebBenchmarkKind::RetainedText) => "retained-text",
-        Some(WebBenchmarkKind::TextEditing) => "text-editing",
-        Some(WebBenchmarkKind::TextComparison) => "text-comparison",
+        Some(WebBenchmarkKind::TextEditor) => "text-editor",
+        Some(WebBenchmarkKind::TextRendering) => "text-rendering",
         Some(WebBenchmarkKind::ColorValidation) => "color-validation",
         Some(WebBenchmarkKind::WidgetBook) => "widget-book",
         Some(WebBenchmarkKind::DevWorkspace) | None => "dev",
@@ -3053,8 +3053,8 @@ fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
     let render_options = web_window_render_options(mode);
     let application = match mode.benchmark {
         Some(WebBenchmarkKind::RetainedText) => build_retained_text_benchmark_application(),
-        Some(WebBenchmarkKind::TextEditing) => build_text_editing_benchmark_application(),
-        Some(WebBenchmarkKind::TextComparison) => build_text_rendering_comparison_application(),
+        Some(WebBenchmarkKind::TextEditor) => build_text_editor_application(),
+        Some(WebBenchmarkKind::TextRendering) => build_text_rendering_application(),
         Some(WebBenchmarkKind::ColorValidation) => build_color_validation_application(),
         Some(WebBenchmarkKind::WidgetBook) => build_widget_book_application(),
         Some(WebBenchmarkKind::DevWorkspace) | None => {
@@ -3406,17 +3406,25 @@ mod tests {
     }
 
     #[test]
-    fn parses_text_comparison_web_benchmark_mode() {
-        let mode = parse_web_launch_mode("benchmark=text-comparison&frames=240&warmup=30");
-        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::TextComparison));
+    fn parses_text_rendering_web_benchmark_mode() {
+        let mode = parse_web_launch_mode("benchmark=text-rendering&frames=240&warmup=30");
+        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::TextRendering));
         assert_eq!(mode.frames, 240);
         assert_eq!(mode.warmup_frames, 30);
     }
 
     #[test]
-    fn parses_comparison_surface_alias() {
-        let mode = parse_web_launch_mode("benchmark=comparison-surface");
-        assert_eq!(mode.benchmark, Some(WebBenchmarkKind::TextComparison));
+    fn parses_old_text_page_aliases() {
+        for (query, benchmark) in [
+            (
+                "benchmark=comparison-surface",
+                WebBenchmarkKind::TextRendering,
+            ),
+            ("benchmark=text-comparison", WebBenchmarkKind::TextRendering),
+            ("benchmark=text-editing", WebBenchmarkKind::TextEditor),
+        ] {
+            assert_eq!(parse_web_launch_mode(query).benchmark, Some(benchmark));
+        }
     }
 
     #[test]

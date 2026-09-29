@@ -20,11 +20,6 @@ pub(crate) fn default_theme_reader() -> DevThemeReader {
     Rc::new(move || theme)
 }
 
-pub(crate) fn mono_text_style(token: ThemeTextToken, color: Color) -> TextStyle {
-    let theme = DefaultTheme::default();
-    theme_mono_text_style(theme, token, color)
-}
-
 pub(crate) fn theme_mono_text_style(
     theme: DefaultTheme,
     token: ThemeTextToken,
@@ -580,104 +575,6 @@ where
             theme.palette.surface
         })),
     )
-}
-
-pub(crate) struct StoryCard {
-    theme: Box<DefaultTheme>,
-    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
-    padding: Insets,
-    child: SingleChild,
-}
-
-impl StoryCard {
-    pub(crate) fn new<W>(child: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        Self {
-            theme: Box::new(DefaultTheme::default()),
-            theme_reader: None,
-            padding: Insets::all(14.0),
-            child: SingleChild::new(child),
-        }
-    }
-
-    pub(crate) fn theme_when<F>(mut self, theme: F) -> Self
-    where
-        F: Fn() -> DefaultTheme + 'static,
-    {
-        self.theme_reader = Some(Box::new(theme));
-        self
-    }
-
-    pub(crate) fn resolved_theme(&self) -> DefaultTheme {
-        self.theme_reader
-            .as_ref()
-            .map(|theme| theme())
-            .unwrap_or(*self.theme)
-    }
-}
-
-impl Widget for StoryCard {
-    fn event(&mut self, _ctx: &mut EventCtx, _event: &Event) {}
-
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let child_constraints = Constraints::new(
-            Size::new(
-                (constraints.min.width - self.padding.left - self.padding.right).max(0.0),
-                (constraints.min.height - self.padding.top - self.padding.bottom).max(0.0),
-            ),
-            Size::new(
-                (constraints.max.width - self.padding.left - self.padding.right).max(0.0),
-                (constraints.max.height - self.padding.top - self.padding.bottom).max(0.0),
-            ),
-        );
-        let child_size = self.child.measure(ctx, child_constraints);
-        constraints.clamp(Size::new(
-            child_size.width + self.padding.left + self.padding.right,
-            child_size.height + self.padding.top + self.padding.bottom,
-        ))
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let measured = self.child.child().measured_size();
-        let child_bounds = Rect::new(
-            bounds.x() + self.padding.left,
-            bounds.y() + self.padding.top,
-            (bounds.width() - self.padding.left - self.padding.right)
-                .max(0.0)
-                .min(measured.width),
-            (bounds.height() - self.padding.top - self.padding.bottom)
-                .max(0.0)
-                .min(measured.height),
-        );
-        self.child.arrange(ctx, child_bounds);
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
-        let palette = theme.palette;
-        let bounds = ctx.bounds();
-        ctx.fill(Path::rounded_rect(bounds, 8.0), palette.surface_raised);
-        ctx.stroke(
-            Path::rounded_rect(bounds, 8.0),
-            palette.border,
-            StrokeStyle::new(1.0),
-        );
-        self.child.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.child.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.child.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.child.visit_children_mut(visitor);
-    }
 }
 
 pub(crate) struct CenteredContentWidth {

@@ -6,6 +6,7 @@ use sui_core::{
     SemanticsValue, Size, Vector, WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
+use sui_reactive::Signal;
 use sui_runtime::{
     Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, Widget,
@@ -120,6 +121,26 @@ impl TextSurfaceRangeIndex {
     }
 }
 
+/// Where editing stands in a [`TextSurface`], for an inspector or a status
+/// bar (see [`TextSurface::status`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextSurfaceStatus {
+    /// The caret's line and column, both from 1. Columns count characters.
+    pub caret_line: usize,
+    pub caret_column: usize,
+    /// The selected text's byte range, empty when nothing is selected.
+    pub selection: Range<usize>,
+    /// How many characters are selected.
+    pub selected_chars: usize,
+    /// The text an input method is composing, until it is committed.
+    pub composition: Option<String>,
+    /// The document lines on screen, from 0.
+    pub visible_lines: Range<usize>,
+    pub line_count: usize,
+    /// The text's length in bytes.
+    pub text_len: usize,
+}
+
 pub struct TextSurface {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -154,6 +175,11 @@ pub struct TextSurface {
     line_layout_revision: u64,
     line_layout_style_revision: u64,
     on_change: Option<Box<dyn FnMut(String)>>,
+    status: Option<Signal<TextSurfaceStatus>>,
+    /// The height lines are shown in, as of the last measure.
+    viewport_height: f32,
+    /// Scroll the caret into view at the next measure.
+    reveal_caret: bool,
 }
 
 impl TextSurface {
@@ -192,6 +218,9 @@ impl TextSurface {
             line_layout_revision: u64::MAX,
             line_layout_style_revision: u64::MAX,
             on_change: None,
+            status: None,
+            viewport_height: 0.0,
+            reveal_caret: false,
         }
     }
 
@@ -240,18 +269,37 @@ impl TextSurface {
     }
 
     pub fn wrap(mut self, wrap: TextWrap) -> Self {
+        self.set_wrap(wrap);
+        self
+    }
+
+    /// Wrap lines to the surface's width, or not. Callers measure the
+    /// surface again afterwards.
+    pub fn set_wrap(&mut self, wrap: TextWrap) {
         self.wrap = wrap;
         if self.wrap != TextWrap::NoWrap {
             let scroll_y = self.editor.scroll_y();
             self.editor.set_scroll(0.0, scroll_y);
         }
         self.invalidate_line_layouts();
-        self
     }
 
     pub fn direction(mut self, direction: TextDirection) -> Self {
+        self.set_direction(direction);
+        self
+    }
+
+    /// Lay the text out in `direction`. Callers measure the surface again
+    /// afterwards.
+    pub fn set_direction(&mut self, direction: TextDirection) {
         self.direction = direction;
         self.invalidate_line_layouts();
+    }
+
+    /// Keep `status` up to date with the caret, the selection, the text an
+    /// input method is composing, and the lines on screen.
+    pub fn status(mut self, status: Signal<TextSurfaceStatus>) -> Self {
+        self.status = Some(status);
         self
     }
 
@@ -350,6 +398,16 @@ impl TextSurface {
         self.invalidate_line_layouts();
     }
 
+    /// Select from `anchor` to `focus`, byte offsets snapped to grapheme
+    /// boundaries, or place the caret when they are equal. The caret is
+    /// scrolled into view at the next layout.
+    pub fn set_selection(&mut self, anchor: usize, focus: usize) {
+        let _ = self
+            .editor
+            .execute(EditorCommand::SetSelection { anchor, focus });
+        self.reveal_caret = true;
+    }
+
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(String) + 'static,
@@ -363,6 +421,558 @@ impl TextSurface {
             .as_ref()
             .map(|theme| theme())
             .unwrap_or(*self.theme)
+    }
+
+    /// Publish where editing stands to the status signal, if any.
+    fn publish_status(&self) {
+        let Some(status) = &self.status else {
+            return;
+        };
+        let document = self.editor.document();
+        let text = document.text();
+        let caret = self.editor.selection().focus.utf8_offset.min(text.len());
+        let caret_line = document.line_index_for_offset(caret);
+        let line_start = document.line_range(caret_line).start.min(caret);
+        let selection = self.editor.selection_range();
+        status.set(TextSurfaceStatus {
+            caret_line: caret_line + 1,
+            caret_column: text[line_start..caret].chars().count() + 1,
+            selected_chars: text
+                .get(selection.clone())
+                .map_or(0, |selected| selected.chars().count()),
+            selection,
+            composition: self
+                .editor
+                .composition()
+                .map(|composition| composition.text.clone()),
+            visible_lines: self.visible_document_lines(),
+            line_count: document.line_count(),
+            text_len: text.len(),
+        });
+    }
+
+    /// The document lines on screen, whether lines wrap or not.
+    fn visible_document_lines(&self) -> Range<usize> {
+        let visible = self.visible_line_range(self.viewport_height);
+        if self.has_line_layout_cache() {
+            return visible;
+        }
+        let Some(layout) = self.layout.as_ref() else {
+            return 0..0;
+        };
+        let document = self.editor.document();
+        let line_at = |visual: usize| {
+            layout
+                .lines()
+                .get(visual)
+                .map(|line| document.line_index_for_offset(line.byte_range.start))
+        };
+        match (
+            line_at(visible.start),
+            visible.end.checked_sub(1).and_then(line_at),
+        ) {
+            (Some(first), Some(last)) => first..last + 1,
+            _ => 0..0,
+        }
+    }
+
+    fn handle_event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
+                let hovered = ctx.bounds().contains(pointer.position);
+                self.update_hovered(hovered, ctx);
+                if self.dragging_selection
+                    && ctx.phase() != EventPhase::Capture
+                    && pointer.buttons.contains(PointerButton::Primary)
+                    && let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position)
+                {
+                    let anchor = self.editor.selection().anchor.utf8_offset;
+                    let result = self.editor.execute(EditorCommand::SetSelection {
+                        anchor,
+                        focus: cursor.utf8_offset,
+                    });
+                    self.apply_editor_result(ctx, result);
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                self.update_hovered(true, ctx);
+                let clear_result = self.editor.execute(EditorCommand::ClearComposition);
+                self.apply_editor_result(ctx, clear_result);
+                if let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position) {
+                    let command = if pointer.modifiers.shift {
+                        EditorCommand::SetSelection {
+                            anchor: self.editor.selection().anchor.utf8_offset,
+                            focus: cursor.utf8_offset,
+                        }
+                    } else {
+                        EditorCommand::MoveTo {
+                            offset: cursor.utf8_offset,
+                            extend: false,
+                        }
+                    };
+                    let result = self.editor.execute(command);
+                    self.apply_editor_result(ctx, result);
+                }
+                self.dragging_selection = true;
+                ctx.request_focus();
+                ctx.request_pointer_capture(pointer.pointer_id);
+                self.request_after_overlay_change(ctx);
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Up
+                    && pointer.button == Some(PointerButton::Primary)
+                    && self.dragging_selection =>
+            {
+                self.dragging_selection = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
+                if self.dragging_selection {
+                    self.dragging_selection = false;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                    ctx.request_paint();
+                    ctx.set_handled();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Secondary)
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                // Focus on right-click (keeping the selection intact) so
+                // follow-up clipboard commands land here. Deliberately not
+                // handled: wrapping context menus react to the same press.
+                self.update_hovered(true, ctx);
+                if !ctx.is_focused() {
+                    ctx.request_focus();
+                    self.request_after_overlay_change(ctx);
+                    ctx.request_semantics();
+                }
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Scroll
+                    && ctx.phase() != EventPhase::Capture
+                    && ctx.bounds().contains(pointer.position) =>
+            {
+                let delta = pointer
+                    .scroll_delta
+                    .map(scroll_delta_to_offset)
+                    .unwrap_or(pointer.delta);
+                if self.scroll_by(ctx.bounds(), Vector::new(-delta.x, -delta.y)) {
+                    self.request_view_refresh(ctx);
+                    ctx.request_semantics();
+                    ctx.set_handled();
+                }
+            }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                if let Some(commands) = self.editor.semantics_commands(
+                    ctx,
+                    &semantics.action,
+                    self.read_only,
+                    EditableTextLineMode::MultiLine,
+                ) {
+                    for command in commands {
+                        self.execute_editor_command(ctx, command);
+                    }
+                }
+            }
+            Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() && !self.read_only => {
+                self.execute_editor_command(ctx, EditorCommand::StartComposition);
+            }
+            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range })
+                if ctx.is_focused() && !self.read_only =>
+            {
+                self.execute_editor_command(
+                    ctx,
+                    EditorCommand::UpdateComposition {
+                        text: text.clone(),
+                        cursor_range: cursor_range.clone(),
+                    },
+                );
+            }
+            Event::Ime(ImeEvent::CompositionCommit { text })
+                if ctx.is_focused() && !self.read_only =>
+            {
+                self.execute_editor_command(ctx, EditorCommand::CommitComposition(text.clone()));
+            }
+            Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() && !self.read_only => {
+                self.execute_editor_command(ctx, EditorCommand::EndComposition);
+            }
+            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
+                let result = match key.key.as_str() {
+                    "ArrowUp" => Some(self.move_vertical(
+                        -1,
+                        key.modifiers.shift,
+                        self.content_viewport_size(ctx.bounds()).height,
+                    )),
+                    "ArrowDown" => Some(self.move_vertical(
+                        1,
+                        key.modifiers.shift,
+                        self.content_viewport_size(ctx.bounds()).height,
+                    )),
+                    "Home" | "End" if key.modifiers.control || key.modifiers.meta => {
+                        let offset = if key.key == "Home" {
+                            0
+                        } else {
+                            self.editor.document().len()
+                        };
+                        Some(self.editor.execute(EditorCommand::MoveTo {
+                            offset,
+                            extend: key.modifiers.shift,
+                        }))
+                    }
+                    "Home" => Some(self.move_line_boundary(true, key.modifiers.shift)),
+                    "End" => Some(self.move_line_boundary(false, key.modifiers.shift)),
+                    "PageUp" => {
+                        let line_height = self.line_height().max(1.0);
+                        let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
+                            .floor()
+                            .max(1.0) as isize;
+                        Some(self.move_vertical(
+                            -delta,
+                            key.modifiers.shift,
+                            self.content_viewport_size(ctx.bounds()).height,
+                        ))
+                    }
+                    "PageDown" => {
+                        let line_height = self.line_height().max(1.0);
+                        let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
+                            .floor()
+                            .max(1.0) as isize;
+                        Some(self.move_vertical(
+                            delta,
+                            key.modifiers.shift,
+                            self.content_viewport_size(ctx.bounds()).height,
+                        ))
+                    }
+                    _ => self
+                        .editor
+                        .keyboard_command(ctx, key, self.read_only, EditableTextLineMode::MultiLine)
+                        .map(|command| self.editor.execute(command)),
+                };
+                if let Some(result) = result {
+                    self.apply_editor_result(ctx, result);
+                }
+            }
+            Event::Window(WindowEvent::Focused(false)) => {
+                let result = self.editor.execute(EditorCommand::ClearComposition);
+                self.apply_editor_result(ctx, result);
+            }
+            _ => {}
+        }
+    }
+
+    fn measure_surface(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let padding = self.resolved_padding();
+        let min_size = self.resolved_min_size();
+        let available_width = if constraints.max.width.is_finite() {
+            (constraints.max.width - padding.left - padding.right).max(0.0)
+        } else {
+            (min_size.width - padding.left - padding.right).max(0.0)
+        };
+
+        let composition_active = self.editor.composition().is_some();
+        let line_style = self.display_text_style();
+        let line_box_size = Size::new(
+            self.layout_box_width(available_width),
+            line_style.line_height.max(1.0),
+        );
+        let viewport_height = if constraints.max.height.is_finite() {
+            (constraints.max.height - padding.top - padding.bottom).max(0.0)
+        } else {
+            (min_size.height - padding.top - padding.bottom).max(line_style.line_height)
+        };
+        self.viewport_height = viewport_height;
+        let cache_lines_individually = self.wrap == TextWrap::NoWrap;
+        let mut line_layout_failed = false;
+
+        if !composition_active {
+            let document = self.editor.document();
+            let line_count = document.line_count();
+            if cache_lines_individually && line_count > 1 {
+                let can_reuse_lines = self.line_layout_revision != u64::MAX
+                    && self.line_layout_box_size == Some(line_box_size)
+                    && self.line_layout_style.as_ref() == Some(&line_style)
+                    && self.line_layout_style_revision == self.style_revision
+                    && self.line_layouts.len() == line_count
+                    && self.line_offsets.len() == line_count
+                    && self.line_lengths.len() == line_count;
+
+                if !can_reuse_lines {
+                    self.line_layouts = vec![None; line_count];
+                    self.line_offsets.clear();
+                    self.line_lengths.clear();
+                    self.line_offsets.reserve(line_count);
+                    self.line_lengths.reserve(line_count);
+                    for index in 0..line_count {
+                        let line_range = document.line_range(index);
+                        self.line_offsets.push(line_range.start);
+                        self.line_lengths.push(line_range.len());
+                    }
+                } else {
+                    Self::refresh_reusable_document_line_metadata(
+                        document,
+                        &mut self.line_layouts,
+                        &mut self.line_offsets,
+                        &mut self.line_lengths,
+                    );
+                }
+
+                let visible_lines = self.prefetched_line_range(viewport_height);
+                let caret_line =
+                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
+                lines_to_shape.extend(visible_lines);
+                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
+                    lines_to_shape.push(caret_line);
+                }
+
+                for index in lines_to_shape {
+                    if self.line_layouts[index].is_some() {
+                        continue;
+                    }
+                    let line_range = document.line_range(index);
+                    match self.shape_line_layout(
+                        ctx,
+                        None,
+                        document.line_text(index),
+                        line_range,
+                        line_box_size,
+                        line_style.clone(),
+                    ) {
+                        Ok(layout) => self.line_layouts[index] = Some(layout),
+                        Err(_) => {
+                            line_layout_failed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !line_layout_failed {
+                    self.line_layout_box_size = Some(line_box_size);
+                    self.line_layout_style = Some(line_style.clone());
+                    self.line_layout_revision = document.revision();
+                    self.line_layout_style_revision = self.style_revision;
+                    self.layout = None;
+                    self.editor.clear_document_dirty();
+                }
+            } else {
+                self.line_layouts.clear();
+                self.line_offsets.clear();
+                self.line_lengths.clear();
+                self.line_layout_box_size = None;
+                self.line_layout_style = None;
+                self.line_layout_revision = u64::MAX;
+                self.line_layout_style_revision = u64::MAX;
+            }
+        } else {
+            let single_line_composition = self.single_line_composition_display_line();
+            if cache_lines_individually
+                && self.editor.document().line_count() > 1
+                && let Some((composition_line, composition_line_text)) = single_line_composition
+            {
+                self.reconcile_single_line_composition_layouts(
+                    composition_line,
+                    composition_line_text.len(),
+                    line_box_size,
+                    &line_style,
+                );
+
+                let visible_lines = self.prefetched_line_range(viewport_height);
+                let caret_line =
+                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                let line_count = self.editor.document().line_count();
+                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
+                lines_to_shape.extend(visible_lines);
+                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
+                    lines_to_shape.push(caret_line);
+                }
+
+                for index in lines_to_shape {
+                    if self.line_layouts[index].is_some() {
+                        continue;
+                    }
+                    let line_range = if index == composition_line {
+                        self.line_offsets[index]
+                            ..self.line_offsets[index] + self.line_lengths[index]
+                    } else {
+                        self.editor.document().line_range(index)
+                    };
+                    let line_text = if index == composition_line {
+                        composition_line_text.as_str()
+                    } else {
+                        self.editor.document().line_text(index)
+                    };
+                    match self.shape_line_layout(
+                        ctx,
+                        None,
+                        line_text,
+                        line_range,
+                        line_box_size,
+                        line_style.clone(),
+                    ) {
+                        Ok(layout) => self.line_layouts[index] = Some(layout),
+                        Err(_) => {
+                            line_layout_failed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !line_layout_failed {
+                    self.line_layout_box_size = Some(line_box_size);
+                    self.line_layout_style = Some(line_style.clone());
+                    self.line_layout_revision = u64::MAX;
+                    self.line_layout_style_revision = self.style_revision;
+                    self.layout = None;
+                }
+            } else {
+                let display_text = self.display_text();
+                let (line_texts, line_offsets, line_lengths) =
+                    split_lines_with_offsets(&display_text);
+                if cache_lines_individually && line_texts.len() > 1 {
+                    self.reconcile_composition_line_layouts(
+                        &line_texts,
+                        line_offsets,
+                        line_lengths,
+                        line_box_size,
+                        &line_style,
+                    );
+
+                    let visible_lines = self.prefetched_line_range(viewport_height);
+                    let caret_line =
+                        self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+                    let mut lines_to_shape =
+                        Vec::with_capacity(visible_lines.len().saturating_add(1));
+                    lines_to_shape.extend(visible_lines);
+                    if caret_line < line_texts.len() && !lines_to_shape.contains(&caret_line) {
+                        lines_to_shape.push(caret_line);
+                    }
+
+                    for index in lines_to_shape {
+                        if self.line_layouts[index].is_some() {
+                            continue;
+                        }
+                        let line_range = self.line_offsets[index]
+                            ..self.line_offsets[index] + self.line_lengths[index];
+                        match self.shape_line_layout(
+                            ctx,
+                            None,
+                            &line_texts[index],
+                            line_range,
+                            line_box_size,
+                            line_style.clone(),
+                        ) {
+                            Ok(layout) => self.line_layouts[index] = Some(layout),
+                            Err(_) => {
+                                line_layout_failed = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !line_layout_failed {
+                        self.line_layout_box_size = Some(line_box_size);
+                        self.line_layout_style = Some(line_style.clone());
+                        self.line_layout_revision = u64::MAX;
+                        self.line_layout_style_revision = self.style_revision;
+                        self.layout = None;
+                    }
+                } else {
+                    self.line_layouts.clear();
+                    self.line_offsets.clear();
+                    self.line_lengths.clear();
+                    self.line_layout_box_size = None;
+                    self.line_layout_style = None;
+                    self.line_layout_revision = u64::MAX;
+                    self.line_layout_style_revision = u64::MAX;
+                }
+            }
+        }
+
+        if line_layout_failed {
+            self.line_layouts.clear();
+            self.line_offsets.clear();
+            self.line_lengths.clear();
+            self.line_layout_box_size = None;
+            self.line_layout_style = None;
+            self.line_layout_revision = u64::MAX;
+            self.line_layout_style_revision = u64::MAX;
+        }
+
+        self.layout = if !self.has_line_layout_cache() {
+            let display_text = self.display_text();
+            let handle = self.layout.as_ref().map(|layout| layout.handle());
+            let box_size = self.layout_box_size(available_width);
+            self.shape_line_layout(
+                ctx,
+                handle,
+                &display_text,
+                0..display_text.len(),
+                box_size,
+                line_style,
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        let mut natural_content_size = if self.has_line_layout_cache() {
+            self.multi_line_content_size()
+        } else {
+            self.layout
+                .as_ref()
+                .map(layout_content_size)
+                .unwrap_or(Size::new(min_size.width, min_size.height))
+        };
+        if self.should_show_placeholder() {
+            let placeholder_style = self.placeholder_text_style();
+            if let Ok(measurement) = ctx
+                .layout()
+                .measure_text(self.placeholder.clone(), placeholder_style.clone())
+            {
+                natural_content_size.width = natural_content_size.width.max(measurement.width);
+                natural_content_size.height = natural_content_size
+                    .height
+                    .max(measurement.height.max(placeholder_style.line_height));
+            }
+        }
+        let natural = Size::new(
+            natural_content_size.width + padding.left + padding.right,
+            natural_content_size.height + padding.top + padding.bottom,
+        );
+
+        let desired = Size::new(
+            if constraints.max.width.is_finite() {
+                constraints.max.width
+            } else {
+                natural.width.max(min_size.width)
+            },
+            if constraints.max.height.is_finite() {
+                constraints.max.height
+            } else {
+                natural.height.max(min_size.height)
+            },
+        );
+        let size = constraints.clamp(Size::new(
+            desired.width.max(min_size.width),
+            desired.height.max(min_size.height),
+        ));
+
+        let _ = self.clamp_scroll_to_bounds(
+            self.content_viewport_size(Rect::from_origin_size(Point::ZERO, size)),
+        );
+        size
     }
 
     fn resolved_text_style(&self) -> TextStyle {
@@ -827,6 +1437,9 @@ impl TextSurface {
         result
     }
 
+    /// Lay out `line_text`, which starts at `line_range.start` in the
+    /// document, as one paragraph per line with the surface's direction,
+    /// wrapping, and style spans.
     fn shape_line_layout(
         &self,
         ctx: &mut MeasureCtx,
@@ -836,25 +1449,35 @@ impl TextSurface {
         line_box_size: Size,
         base_style: TextStyle,
     ) -> sui_core::Result<PersistentTextLayout> {
-        if self.style_spans.is_empty() && self.style_overlays.is_empty() {
-            return ctx.layout().shape_text_persistent(
-                handle,
-                line_text.to_string(),
-                line_box_size,
-                base_style,
-            );
+        // Unwrapped lines have no right edge to start from, so they start at
+        // the left as in code editors; the direction still orders their runs.
+        let align = if self.wrap == TextWrap::NoWrap {
+            TextAlign::Left
+        } else {
+            TextAlign::Start
+        };
+        let styled = !self.style_spans.is_empty() || !self.style_overlays.is_empty();
+        let mut paragraphs = Vec::new();
+        let mut start = line_range.start;
+        for segment in line_text.split('\n') {
+            let mut paragraph = if styled {
+                TextParagraph::from_spans(self.line_text_spans(
+                    segment,
+                    start..start + segment.len(),
+                    base_style.clone(),
+                ))
+            } else {
+                TextParagraph::new(segment, base_style.clone())
+            };
+            paragraph.style.direction = self.direction;
+            paragraph.style.wrap = self.wrap;
+            paragraph.style.align = align;
+            paragraphs.push(paragraph);
+            start += segment.len() + 1;
         }
-
-        let spans = self.line_text_spans(line_text, line_range, base_style);
-        let mut paragraph = TextParagraph::from_spans(spans);
-        paragraph.style.direction = self.direction;
-        paragraph.style.wrap = self.wrap;
         ctx.layout().layout_document_persistent(
             handle,
-            TextLayoutRequest::new(TextDocument {
-                paragraphs: vec![paragraph],
-            })
-            .with_box_size(line_box_size),
+            TextLayoutRequest::new(TextDocument { paragraphs }).with_box_size(line_box_size),
         )
     }
 
@@ -1314,188 +1937,8 @@ impl TextSurface {
 
 impl Widget for TextSurface {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        match event {
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                let hovered = ctx.bounds().contains(pointer.position);
-                self.update_hovered(hovered, ctx);
-                if self.dragging_selection
-                    && ctx.phase() != EventPhase::Capture
-                    && pointer.buttons.contains(PointerButton::Primary)
-                    && let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position)
-                {
-                    let anchor = self.editor.selection().anchor.utf8_offset;
-                    let result = self.editor.execute(EditorCommand::SetSelection {
-                        anchor,
-                        focus: cursor.utf8_offset,
-                    });
-                    self.apply_editor_result(ctx, result);
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Primary)
-                    && ctx.phase() != EventPhase::Capture
-                    && ctx.bounds().contains(pointer.position) =>
-            {
-                self.update_hovered(true, ctx);
-                let clear_result = self.editor.execute(EditorCommand::ClearComposition);
-                self.apply_editor_result(ctx, clear_result);
-                if let Some(cursor) = self.point_to_cursor(ctx.bounds(), pointer.position) {
-                    let command = if pointer.modifiers.shift {
-                        EditorCommand::SetSelection {
-                            anchor: self.editor.selection().anchor.utf8_offset,
-                            focus: cursor.utf8_offset,
-                        }
-                    } else {
-                        EditorCommand::MoveTo {
-                            offset: cursor.utf8_offset,
-                            extend: false,
-                        }
-                    };
-                    let result = self.editor.execute(command);
-                    self.apply_editor_result(ctx, result);
-                }
-                self.dragging_selection = true;
-                ctx.request_focus();
-                ctx.request_pointer_capture(pointer.pointer_id);
-                self.request_after_overlay_change(ctx);
-                ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Up
-                    && pointer.button == Some(PointerButton::Primary)
-                    && self.dragging_selection =>
-            {
-                self.dragging_selection = false;
-                ctx.release_pointer_capture(pointer.pointer_id);
-                ctx.request_paint();
-                ctx.set_handled();
-            }
-            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Cancel => {
-                if self.dragging_selection {
-                    self.dragging_selection = false;
-                    ctx.release_pointer_capture(pointer.pointer_id);
-                    ctx.request_paint();
-                    ctx.set_handled();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Down
-                    && pointer.button == Some(PointerButton::Secondary)
-                    && ctx.phase() != EventPhase::Capture
-                    && ctx.bounds().contains(pointer.position) =>
-            {
-                // Focus on right-click (keeping the selection intact) so
-                // follow-up clipboard commands land here. Deliberately not
-                // handled: wrapping context menus react to the same press.
-                self.update_hovered(true, ctx);
-                if !ctx.is_focused() {
-                    ctx.request_focus();
-                    self.request_after_overlay_change(ctx);
-                    ctx.request_semantics();
-                }
-            }
-            Event::Pointer(pointer)
-                if pointer.kind == PointerEventKind::Scroll
-                    && ctx.phase() != EventPhase::Capture
-                    && ctx.bounds().contains(pointer.position) =>
-            {
-                let delta = pointer
-                    .scroll_delta
-                    .map(scroll_delta_to_offset)
-                    .unwrap_or(pointer.delta);
-                if self.scroll_by(ctx.bounds(), Vector::new(-delta.x, -delta.y)) {
-                    self.request_view_refresh(ctx);
-                    ctx.request_semantics();
-                    ctx.set_handled();
-                }
-            }
-            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
-                if let Some(commands) = self.editor.semantics_commands(
-                    ctx,
-                    &semantics.action,
-                    self.read_only,
-                    EditableTextLineMode::MultiLine,
-                ) {
-                    for command in commands {
-                        self.execute_editor_command(ctx, command);
-                    }
-                }
-            }
-            Event::Ime(ImeEvent::CompositionStart) if ctx.is_focused() && !self.read_only => {
-                self.execute_editor_command(ctx, EditorCommand::StartComposition);
-            }
-            Event::Ime(ImeEvent::CompositionUpdate { text, cursor_range })
-                if ctx.is_focused() && !self.read_only =>
-            {
-                self.execute_editor_command(
-                    ctx,
-                    EditorCommand::UpdateComposition {
-                        text: text.clone(),
-                        cursor_range: cursor_range.clone(),
-                    },
-                );
-            }
-            Event::Ime(ImeEvent::CompositionCommit { text })
-                if ctx.is_focused() && !self.read_only =>
-            {
-                self.execute_editor_command(ctx, EditorCommand::CommitComposition(text.clone()));
-            }
-            Event::Ime(ImeEvent::CompositionEnd) if ctx.is_focused() && !self.read_only => {
-                self.execute_editor_command(ctx, EditorCommand::EndComposition);
-            }
-            Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
-                let result = match key.key.as_str() {
-                    "ArrowUp" => Some(self.move_vertical(
-                        -1,
-                        key.modifiers.shift,
-                        self.content_viewport_size(ctx.bounds()).height,
-                    )),
-                    "ArrowDown" => Some(self.move_vertical(
-                        1,
-                        key.modifiers.shift,
-                        self.content_viewport_size(ctx.bounds()).height,
-                    )),
-                    "Home" => Some(self.move_line_boundary(true, key.modifiers.shift)),
-                    "End" => Some(self.move_line_boundary(false, key.modifiers.shift)),
-                    "PageUp" => {
-                        let line_height = self.line_height().max(1.0);
-                        let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
-                            .floor()
-                            .max(1.0) as isize;
-                        Some(self.move_vertical(
-                            -delta,
-                            key.modifiers.shift,
-                            self.content_viewport_size(ctx.bounds()).height,
-                        ))
-                    }
-                    "PageDown" => {
-                        let line_height = self.line_height().max(1.0);
-                        let delta = (self.content_viewport_size(ctx.bounds()).height / line_height)
-                            .floor()
-                            .max(1.0) as isize;
-                        Some(self.move_vertical(
-                            delta,
-                            key.modifiers.shift,
-                            self.content_viewport_size(ctx.bounds()).height,
-                        ))
-                    }
-                    _ => self
-                        .editor
-                        .keyboard_command(ctx, key, self.read_only, EditableTextLineMode::MultiLine)
-                        .map(|command| self.editor.execute(command)),
-                };
-                if let Some(result) = result {
-                    self.apply_editor_result(ctx, result);
-                }
-            }
-            Event::Window(WindowEvent::Focused(false)) => {
-                let result = self.editor.execute(EditorCommand::ClearComposition);
-                self.apply_editor_result(ctx, result);
-            }
-            _ => {}
-        }
+        self.handle_event(ctx, event);
+        self.publish_status();
     }
 
     fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
@@ -1509,310 +1952,11 @@ impl Widget for TextSurface {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let padding = self.resolved_padding();
-        let min_size = self.resolved_min_size();
-        let available_width = if constraints.max.width.is_finite() {
-            (constraints.max.width - padding.left - padding.right).max(0.0)
-        } else {
-            (min_size.width - padding.left - padding.right).max(0.0)
-        };
-
-        let composition_active = self.editor.composition().is_some();
-        let line_style = self.display_text_style();
-        let line_box_size = Size::new(
-            self.layout_box_width(available_width),
-            line_style.line_height.max(1.0),
-        );
-        let viewport_height = if constraints.max.height.is_finite() {
-            (constraints.max.height - padding.top - padding.bottom).max(0.0)
-        } else {
-            (min_size.height - padding.top - padding.bottom).max(line_style.line_height)
-        };
-        let cache_lines_individually = self.wrap == TextWrap::NoWrap;
-        let mut line_layout_failed = false;
-
-        if !composition_active {
-            let document = self.editor.document();
-            let line_count = document.line_count();
-            if cache_lines_individually && line_count > 1 {
-                let can_reuse_lines = self.line_layout_revision != u64::MAX
-                    && self.line_layout_box_size == Some(line_box_size)
-                    && self.line_layout_style.as_ref() == Some(&line_style)
-                    && self.line_layout_style_revision == self.style_revision
-                    && self.line_layouts.len() == line_count
-                    && self.line_offsets.len() == line_count
-                    && self.line_lengths.len() == line_count;
-
-                if !can_reuse_lines {
-                    self.line_layouts = vec![None; line_count];
-                    self.line_offsets.clear();
-                    self.line_lengths.clear();
-                    self.line_offsets.reserve(line_count);
-                    self.line_lengths.reserve(line_count);
-                    for index in 0..line_count {
-                        let line_range = document.line_range(index);
-                        self.line_offsets.push(line_range.start);
-                        self.line_lengths.push(line_range.len());
-                    }
-                } else {
-                    Self::refresh_reusable_document_line_metadata(
-                        document,
-                        &mut self.line_layouts,
-                        &mut self.line_offsets,
-                        &mut self.line_lengths,
-                    );
-                }
-
-                let visible_lines = self.prefetched_line_range(viewport_height);
-                let caret_line =
-                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
-                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
-                lines_to_shape.extend(visible_lines);
-                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
-                    lines_to_shape.push(caret_line);
-                }
-
-                for index in lines_to_shape {
-                    if self.line_layouts[index].is_some() {
-                        continue;
-                    }
-                    let line_range = document.line_range(index);
-                    match self.shape_line_layout(
-                        ctx,
-                        None,
-                        document.line_text(index),
-                        line_range,
-                        line_box_size,
-                        line_style.clone(),
-                    ) {
-                        Ok(layout) => self.line_layouts[index] = Some(layout),
-                        Err(_) => {
-                            line_layout_failed = true;
-                            break;
-                        }
-                    }
-                }
-
-                if !line_layout_failed {
-                    self.line_layout_box_size = Some(line_box_size);
-                    self.line_layout_style = Some(line_style.clone());
-                    self.line_layout_revision = document.revision();
-                    self.line_layout_style_revision = self.style_revision;
-                    self.layout = None;
-                    self.editor.clear_document_dirty();
-                }
-            } else {
-                self.line_layouts.clear();
-                self.line_offsets.clear();
-                self.line_lengths.clear();
-                self.line_layout_box_size = None;
-                self.line_layout_style = None;
-                self.line_layout_revision = u64::MAX;
-                self.line_layout_style_revision = u64::MAX;
-            }
-        } else {
-            let single_line_composition = self.single_line_composition_display_line();
-            if cache_lines_individually
-                && self.editor.document().line_count() > 1
-                && let Some((composition_line, composition_line_text)) = single_line_composition
-            {
-                self.reconcile_single_line_composition_layouts(
-                    composition_line,
-                    composition_line_text.len(),
-                    line_box_size,
-                    &line_style,
-                );
-
-                let visible_lines = self.prefetched_line_range(viewport_height);
-                let caret_line =
-                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
-                let line_count = self.editor.document().line_count();
-                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
-                lines_to_shape.extend(visible_lines);
-                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
-                    lines_to_shape.push(caret_line);
-                }
-
-                for index in lines_to_shape {
-                    if self.line_layouts[index].is_some() {
-                        continue;
-                    }
-                    let line_range = if index == composition_line {
-                        self.line_offsets[index]
-                            ..self.line_offsets[index] + self.line_lengths[index]
-                    } else {
-                        self.editor.document().line_range(index)
-                    };
-                    let line_text = if index == composition_line {
-                        composition_line_text.as_str()
-                    } else {
-                        self.editor.document().line_text(index)
-                    };
-                    match self.shape_line_layout(
-                        ctx,
-                        None,
-                        line_text,
-                        line_range,
-                        line_box_size,
-                        line_style.clone(),
-                    ) {
-                        Ok(layout) => self.line_layouts[index] = Some(layout),
-                        Err(_) => {
-                            line_layout_failed = true;
-                            break;
-                        }
-                    }
-                }
-
-                if !line_layout_failed {
-                    self.line_layout_box_size = Some(line_box_size);
-                    self.line_layout_style = Some(line_style.clone());
-                    self.line_layout_revision = u64::MAX;
-                    self.line_layout_style_revision = self.style_revision;
-                    self.layout = None;
-                }
-            } else {
-                let display_text = self.display_text();
-                let (line_texts, line_offsets, line_lengths) =
-                    split_lines_with_offsets(&display_text);
-                if cache_lines_individually && line_texts.len() > 1 {
-                    self.reconcile_composition_line_layouts(
-                        &line_texts,
-                        line_offsets,
-                        line_lengths,
-                        line_box_size,
-                        &line_style,
-                    );
-
-                    let visible_lines = self.prefetched_line_range(viewport_height);
-                    let caret_line =
-                        self.line_index_for_offset(self.display_selection().focus.utf8_offset);
-                    let mut lines_to_shape =
-                        Vec::with_capacity(visible_lines.len().saturating_add(1));
-                    lines_to_shape.extend(visible_lines);
-                    if caret_line < line_texts.len() && !lines_to_shape.contains(&caret_line) {
-                        lines_to_shape.push(caret_line);
-                    }
-
-                    for index in lines_to_shape {
-                        if self.line_layouts[index].is_some() {
-                            continue;
-                        }
-                        let line_range = self.line_offsets[index]
-                            ..self.line_offsets[index] + self.line_lengths[index];
-                        match self.shape_line_layout(
-                            ctx,
-                            None,
-                            &line_texts[index],
-                            line_range,
-                            line_box_size,
-                            line_style.clone(),
-                        ) {
-                            Ok(layout) => self.line_layouts[index] = Some(layout),
-                            Err(_) => {
-                                line_layout_failed = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if !line_layout_failed {
-                        self.line_layout_box_size = Some(line_box_size);
-                        self.line_layout_style = Some(line_style.clone());
-                        self.line_layout_revision = u64::MAX;
-                        self.line_layout_style_revision = self.style_revision;
-                        self.layout = None;
-                    }
-                } else {
-                    self.line_layouts.clear();
-                    self.line_offsets.clear();
-                    self.line_lengths.clear();
-                    self.line_layout_box_size = None;
-                    self.line_layout_style = None;
-                    self.line_layout_revision = u64::MAX;
-                    self.line_layout_style_revision = u64::MAX;
-                }
-            }
+        let size = self.measure_surface(ctx, constraints);
+        if std::mem::take(&mut self.reveal_caret) {
+            let _ = self.ensure_caret_visible(Rect::new(0.0, 0.0, size.width, size.height));
         }
-
-        if line_layout_failed {
-            self.line_layouts.clear();
-            self.line_offsets.clear();
-            self.line_lengths.clear();
-            self.line_layout_box_size = None;
-            self.line_layout_style = None;
-            self.line_layout_revision = u64::MAX;
-            self.line_layout_style_revision = u64::MAX;
-        }
-
-        self.layout = if !self.has_line_layout_cache() {
-            let display_text = self.display_text();
-            let handle = self.layout.as_ref().map(|layout| layout.handle());
-            let box_size = self.layout_box_size(available_width);
-            if self.style_spans.is_empty() && self.style_overlays.is_empty() {
-                ctx.layout()
-                    .shape_text_persistent(handle, display_text, box_size, line_style)
-                    .ok()
-            } else {
-                self.shape_line_layout(
-                    ctx,
-                    handle,
-                    &display_text,
-                    0..display_text.len(),
-                    box_size,
-                    line_style,
-                )
-                .ok()
-            }
-        } else {
-            None
-        };
-
-        let mut natural_content_size = if self.has_line_layout_cache() {
-            self.multi_line_content_size()
-        } else {
-            self.layout
-                .as_ref()
-                .map(layout_content_size)
-                .unwrap_or(Size::new(min_size.width, min_size.height))
-        };
-        if self.should_show_placeholder() {
-            let placeholder_style = self.placeholder_text_style();
-            if let Ok(measurement) = ctx
-                .layout()
-                .measure_text(self.placeholder.clone(), placeholder_style.clone())
-            {
-                natural_content_size.width = natural_content_size.width.max(measurement.width);
-                natural_content_size.height = natural_content_size
-                    .height
-                    .max(measurement.height.max(placeholder_style.line_height));
-            }
-        }
-        let natural = Size::new(
-            natural_content_size.width + padding.left + padding.right,
-            natural_content_size.height + padding.top + padding.bottom,
-        );
-
-        let desired = Size::new(
-            if constraints.max.width.is_finite() {
-                constraints.max.width
-            } else {
-                natural.width.max(min_size.width)
-            },
-            if constraints.max.height.is_finite() {
-                constraints.max.height
-            } else {
-                natural.height.max(min_size.height)
-            },
-        );
-        let size = constraints.clamp(Size::new(
-            desired.width.max(min_size.width),
-            desired.height.max(min_size.height),
-        ));
-
-        let _ = self.clamp_scroll_to_bounds(
-            self.content_viewport_size(Rect::from_origin_size(Point::ZERO, size)),
-        );
+        self.publish_status();
         size
     }
 
@@ -1870,12 +2014,13 @@ impl Widget for TextSurface {
         ctx.push_clip_rect(content);
 
         if selection_rects.is_empty() {
-            let line_rect = Rect::new(
-                content.x(),
-                origin.y + current_line_index as f32 * slot_height,
-                content.width(),
-                slot_height,
-            );
+            // Wrapped text has no fixed line slots: the caret's line is where
+            // the caret is.
+            let line_y = match current_caret {
+                Some(caret) if !self.has_line_layout_cache() => caret.y(),
+                _ => current_line_index as f32 * slot_height,
+            };
+            let line_rect = Rect::new(content.x(), origin.y + line_y, content.width(), slot_height);
             ctx.fill(
                 Path::rounded_rect(line_rect, 0.0),
                 palette.text.with_alpha(match theme.colors.scheme {
@@ -2823,6 +2968,171 @@ mod tests {
         assert_eq!(selection.selected_text().as_deref(), Some("alpha\nbeta"));
         assert_eq!(runtime.clipboard().text().as_deref(), Some("app-owned"));
         assert!(!node.actions.contains(&SemanticsAction::Copy));
+    }
+
+    #[test]
+    fn text_surface_status_follows_the_caret_selection_and_composition() {
+        let text = "alpha\nbeta\ngamma";
+        let status = sui_reactive::Signal::new(super::TextSurfaceStatus::default());
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 120.0))
+                .with_child(
+                    TextSurface::new("Editor")
+                        .value(text)
+                        .status(status.clone()),
+                ),
+        );
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        let initial = status.get();
+        assert_eq!(initial.line_count, 3);
+        assert_eq!(initial.text_len, text.len());
+        assert_eq!(initial.visible_lines, 0..3);
+
+        // Select everything: the caret ends on the last line.
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("a"))
+            .expect("select all should succeed");
+        let selected = status.get();
+        assert_eq!(selected.selection, 0..text.len());
+        assert_eq!(selected.selected_chars, text.chars().count());
+        assert_eq!((selected.caret_line, selected.caret_column), (3, 6));
+
+        runtime
+            .handle_event(window_id, Event::Ime(ImeEvent::CompositionStart))
+            .expect("composition start should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                Event::Ime(ImeEvent::CompositionUpdate {
+                    text: "世界".to_string(),
+                    cursor_range: None,
+                }),
+            )
+            .expect("composition update should succeed");
+        assert_eq!(status.get().composition.as_deref(), Some("世界"));
+    }
+
+    /// The rectangles of the runs drawn in `output`, in their layouts.
+    fn laid_out_runs(output: &RenderOutput) -> Vec<Rect> {
+        shaped_text_commands(output)
+            .iter()
+            .filter_map(|text| text.resolve(output.frame.text_layout_registry.as_ref()))
+            .flat_map(|layout| layout.runs().iter().map(|run| run.rect).collect::<Vec<_>>())
+            .collect()
+    }
+
+    #[test]
+    fn text_surface_lays_text_out_in_its_direction() {
+        let span = TextSurfaceStyleSpan {
+            range: 0..1,
+            style: TextStyle::default(),
+        };
+        for spans in [Vec::new(), vec![span]] {
+            for wrap in [TextWrap::Word, TextWrap::NoWrap] {
+                let (mut runtime, window_id) = build_runtime(
+                    crate::SizedBox::new()
+                        .size(Size::new(320.0, 120.0))
+                        .with_child(
+                            TextSurface::new("Editor")
+                                .value("abc\ndef")
+                                .wrap(wrap)
+                                .direction(TextDirection::RightToLeft)
+                                .style_spans(spans.clone()),
+                        ),
+                );
+                let output = runtime.render(window_id).expect("render should succeed");
+                let runs = laid_out_runs(&output);
+                assert!(!runs.is_empty(), "{wrap:?}");
+                for run in runs {
+                    if wrap == TextWrap::NoWrap {
+                        // Unwrapped lines have no right edge, so they start
+                        // at the left.
+                        assert!(run.max_x() < 160.0, "{wrap:?}, {spans:?}: {run:?}");
+                    } else {
+                        assert!(run.x() > 160.0, "{wrap:?}, {spans:?}: {run:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_surface_wraps_styled_text_line_by_line() {
+        let text = "alpha\nbeta\ngamma";
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 120.0))
+                .with_child(
+                    TextSurface::new("Editor")
+                        .value(text)
+                        .wrap(TextWrap::Word)
+                        .style_spans(vec![TextSurfaceStyleSpan {
+                            range: 6..10,
+                            style: TextStyle::default(),
+                        }]),
+                ),
+        );
+        let output = runtime.render(window_id).expect("render should succeed");
+        let layouts = shaped_text_commands(&output)
+            .iter()
+            .filter_map(|text| text.resolve(output.frame.text_layout_registry.as_ref()))
+            .collect::<Vec<_>>();
+        assert_eq!(layouts.len(), 1);
+        assert_eq!(layouts[0].text(), text);
+        assert_eq!(layouts[0].lines().len(), 3);
+    }
+
+    #[test]
+    fn text_surface_selects_from_code_and_moves_to_the_document_ends() {
+        let text = "one\ntwo\nthree";
+        let status = sui_reactive::Signal::new(super::TextSurfaceStatus::default());
+        let mut surface = TextSurface::new("Editor")
+            .value(text)
+            .status(status.clone());
+        surface.set_selection(4, 7);
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 120.0))
+                .with_child(surface),
+        );
+        runtime
+            .render(window_id)
+            .expect("initial render should succeed");
+        assert_eq!(status.get().selection, 4..7);
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("End"))
+            .expect("moving to the end should succeed");
+        let end = status.get();
+        assert_eq!((end.caret_line, end.caret_column), (3, 6));
+        runtime
+            .handle_event(window_id, command_key_event("Home"))
+            .expect("moving to the start should succeed");
+        let start = status.get();
+        assert_eq!((start.caret_line, start.caret_column), (1, 1));
+
+        let mut select_to_end = KeyboardEvent::new("End", KeyState::Pressed);
+        select_to_end.modifiers.control = true;
+        select_to_end.modifiers.shift = true;
+        runtime
+            .handle_event(window_id, Event::Keyboard(select_to_end))
+            .expect("selecting to the end should succeed");
+        assert_eq!(status.get().selection, 0..text.len());
     }
 
     #[test]

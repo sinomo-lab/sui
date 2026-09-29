@@ -197,9 +197,13 @@ command only if shaping fails.
 logs, previews, and other multiline content that needs scrolling plus styled
 ranges. Its public configuration includes:
 
-- `value`, `current_value`, `set_value`, and `on_change`;
+- `value`, `current_value`, `set_value`, `set_selection`, and `on_change`;
 - `placeholder`, `read_only`, padding, and minimum size;
-- `wrap` and `direction`;
+- `wrap` and `direction`, and `set_wrap` and `set_direction` to change them
+  in place;
+- `status`, a `Signal<TextSurfaceStatus>` kept up to date with the caret's
+  line and column, the selection, the text an input method is composing, the
+  lines on screen, and the text's size, for an inspector or a status bar;
 - `style_spans` for durable attributed ranges;
 - `style_overlays` for syntax, diagnostics, search matches, current-line
   styling, preview styling, or an application-defined overlay kind;
@@ -211,8 +215,11 @@ affected line coverage after edits, and shapes only the visible window plus
 the caret line. Scrolling therefore does not require shaping every line.
 
 For wrapped text and smaller documents, the surface retains one persistent
-layout and submits a `DrawShapedTextWindow` for the visible lines. In both
-modes it clips to the viewport. Selection rectangles, current-line fill,
+layout, with a paragraph per line, and submits a `DrawShapedTextWindow` for
+the visible lines. In both modes it clips to the viewport. Wrapped lines
+start at the start edge of the surface's direction; unwrapped lines have no
+right edge to align to, so they start at the left in either direction, as in
+code editors, and the direction orders their runs. Selection rectangles, current-line fill,
 caret, and IME composition position are painted separately from the text
 instances, so caret and selection changes do not rewrite the document text.
 
@@ -367,13 +374,15 @@ Run the focused correctness checks from the repository root:
 ```bash
 cargo test -p sinomo-ui-text
 cargo test -p sinomo-ui-widgets text_surface
-cargo test -p sinomo-ui-demo --lib validation::tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
-cargo test -p sinomo-ui-demo --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
-cargo test -p sinomo-ui-demo --lib tests::parses_comparison_surface_alias -- --exact
+cargo test -p sinomo-ui-demo --lib text_rendering:: text_shaping:: text_editor::
+cargo test -p sinomo-ui-demo --lib tests::parses_text_rendering_web_benchmark_mode -- --exact
+cargo test -p sinomo-ui-demo --lib tests::parses_old_text_page_aliases -- --exact
 ```
 
-For visual inspection, run the demo and open its text rendering comparison
-view:
+For visual inspection, run the demo and open its text pages: Text rendering
+compares render policies under a magnifier, Scripts and shaping checks each
+script on the current system, and Text editor exercises editing, input
+methods, and large documents:
 
 ```bash
 cargo run -p sinomo-ui-demo
@@ -389,15 +398,15 @@ Then open the focused presets:
 
 ```text
 http://127.0.0.1:8080/?benchmark=retained-text&warmup=60&frames=180
-http://127.0.0.1:8080/?benchmark=text-editing&warmup=60&frames=180
-http://127.0.0.1:8080/?benchmark=text-comparison&warmup=30&frames=120
+http://127.0.0.1:8080/?benchmark=text-editor&warmup=60&frames=180
+http://127.0.0.1:8080/?benchmark=text-rendering&warmup=30&frames=120
 ```
 
 Use [Text rendering benchmarks](text-rendering-benchmarks.md) for the ignored
 renderer microbenchmark, desktop interaction benchmark, DPR quality matrix,
 snapshot environment variables, expected signals, and reporting template.
-Compare performance runs on the same machine and commit; use the comparison
-surface and captures for perceptual review rather than treating changed-pixel
+Compare performance runs on the same machine and commit; use the Text
+rendering page's magnifier and captures for perceptual review rather than treating changed-pixel
 percentage as a complete quality score.
 
 ## Limitations

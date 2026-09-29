@@ -210,6 +210,21 @@ impl ResolvedTextFace {
     pub const fn face_index(&self) -> u32 {
         self.face_index
     }
+
+    /// The font's family name, preferring its typographic family, when the
+    /// font names one.
+    pub fn family_name(&self) -> Option<String> {
+        let face = ttf_parser::Face::parse(self.bytes(), self.face_index).ok()?;
+        let names = face.names();
+        let named = |id| {
+            names
+                .into_iter()
+                .filter(|name| name.name_id == id && name.is_unicode())
+                .find_map(|name| name.to_string())
+        };
+        named(ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
+            .or_else(|| named(ttf_parser::name_id::FAMILY))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

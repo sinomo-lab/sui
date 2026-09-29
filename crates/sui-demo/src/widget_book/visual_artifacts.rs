@@ -26,8 +26,8 @@ use super::{
 use crate::hdr_validation::report::{
     final_output_sdr_white, output_diagnostics_report, write_capture_bundle,
 };
+use crate::hdr_validation::{COLOR_VALIDATION_VIEW_TITLE, build_color_validation_application};
 use crate::theme_demo::build_theme_demo_application;
-use crate::validation::{COLOR_VALIDATION_VIEW_TITLE, build_color_validation_application};
 
 /// Window size for story captures: wide enough for the rail and every
 /// specimen grid, tall enough that most stories fit in one screenshot.

@@ -3,18 +3,15 @@ use std::{
     rc::Rc,
 };
 
-use crate::benchmarks::{
-    build_retained_text_benchmark_with_theme, build_text_editing_benchmark_with_theme,
-};
 use crate::hdr_validation::build_hdr_validation_surface;
 use crate::live_performance::LivePerformanceRoot;
 use crate::settings::{
     RenderOptions, SETTINGS_TITLE, SettingsHost, default_render_options, settings_view,
 };
+use crate::text_editor::build_text_editor_surface_with_theme;
+use crate::text_rendering::build_text_rendering_page;
+use crate::text_shaping::build_text_shaping_surface_with_theme;
 use crate::theme_demo::{build_theme_demo_surface_with_theme, set_hdr_theme_lab_mode};
-use crate::validation::{
-    build_text_rendering_comparison_surface_with_theme, build_text_validation_surface_with_theme,
-};
 #[cfg(test)]
 use crate::widget_book::build_widget_book_gallery;
 use crate::widget_book::{build_widget_book_gallery_with_theme, register_widget_book_images};
@@ -97,10 +94,9 @@ const DEV_WEB_FALLBACK_FONTS: &[(&str, &[u8])] = &[
 ];
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
 const THEMES_TAB_LABEL: &str = "Themes";
-const RETAINED_TEXT_TAB_LABEL: &str = "Retained text";
-const TEXT_RENDERING_COMPARISON_TAB_LABEL: &str = "Text comparison";
-const TEXT_VALIDATION_TAB_LABEL: &str = "Text validation";
-const TEXT_EDITING_TAB_LABEL: &str = "Text editing";
+const TEXT_RENDERING_TAB_LABEL: &str = "Text rendering";
+const TEXT_SHAPING_TAB_LABEL: &str = "Scripts and shaping";
+const TEXT_EDITOR_TAB_LABEL: &str = "Text editor";
 const MARKDOWN_RENDER_TAB_LABEL: &str = "Rich documents";
 const HDR_VALIDATION_TAB_LABEL: &str = "HDR validation";
 const DEV_SHELL_TOOLBAR_HEIGHT: f32 = 44.0;
@@ -1621,6 +1617,7 @@ fn build_dev_demo_entries(
         }};
     }
 
+    let text_options = options.clone();
     vec![
         themed_demo!(
             WIDGET_BOOK_TAB_LABEL,
@@ -1651,11 +1648,32 @@ fn build_dev_demo_entries(
             |theme| build_animation_demo_with_theme(theme)
         ),
         themed_demo!(
-            RETAINED_TEXT_TAB_LABEL,
-            "Retained text layout and redraw benchmark.",
+            TEXT_RENDERING_TAB_LABEL,
+            "The window's text settings, render policies compared under a magnifier, and what each setting should do.",
+            IconGlyph::ActualSize,
+            DecorativeHue::Blue,
+            |theme| build_text_rendering_page(theme, text_options)
+        ),
+        themed_demo!(
+            TEXT_SHAPING_TAB_LABEL,
+            "Samples of every script that check themselves on this system, mixed directions, line breaking, and metrics.",
             IconGlyph::Search,
-            DecorativeHue::Orange,
-            |theme| build_retained_text_benchmark_with_theme(theme)
+            DecorativeHue::Red,
+            |theme| build_text_shaping_surface_with_theme(theme)
+        ),
+        themed_demo!(
+            TEXT_EDITOR_TAB_LABEL,
+            "An editor with code, mixed-direction, input method, and large documents, and an inspector for the caret and selection.",
+            IconGlyph::Restore,
+            DecorativeHue::Violet,
+            |theme| build_text_editor_surface_with_theme(theme)
+        ),
+        themed_demo!(
+            MARKDOWN_RENDER_TAB_LABEL,
+            "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
+            IconGlyph::File,
+            DecorativeHue::Green,
+            |theme| build_markdown_render_demo_with_theme(theme)
         ),
         themed_demo!(
             SHRINKWRAP_TAB_LABEL,
@@ -1670,34 +1688,6 @@ fn build_dev_demo_entries(
             IconGlyph::FitView,
             DecorativeHue::Amber,
             |theme| build_editorial_demo_with_theme(theme)
-        ),
-        themed_demo!(
-            TEXT_RENDERING_COMPARISON_TAB_LABEL,
-            "Side-by-side text rendering comparison surface.",
-            IconGlyph::FitView,
-            DecorativeHue::Blue,
-            |theme| build_text_rendering_comparison_surface_with_theme(theme)
-        ),
-        themed_demo!(
-            TEXT_VALIDATION_TAB_LABEL,
-            "Validation surface for text metrics, alignment, and rasterization.",
-            IconGlyph::ActualSize,
-            DecorativeHue::Red,
-            |theme| build_text_validation_surface_with_theme(theme)
-        ),
-        themed_demo!(
-            TEXT_EDITING_TAB_LABEL,
-            "Single-line and multi-line text editing demos.",
-            IconGlyph::Restore,
-            DecorativeHue::Violet,
-            |theme| build_text_editing_benchmark_with_theme(theme)
-        ),
-        themed_demo!(
-            MARKDOWN_RENDER_TAB_LABEL,
-            "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
-            IconGlyph::File,
-            DecorativeHue::Green,
-            |theme| build_markdown_render_demo_with_theme(theme)
         ),
         themed_demo!(
             HDR_VALIDATION_TAB_LABEL,
@@ -1762,12 +1752,13 @@ pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
         "theme-editor" | "theme-edit" | "theme-builder" => Some(THEME_EDITOR_TAB_LABEL),
         "animation" | "animations" | "animation-demo" => Some(ANIMATION_DEMO_TAB_LABEL),
         "commands" | "command-routing" | "application-commands" => Some(COMMAND_DEMO_TAB_LABEL),
-        "retained-text" => Some(RETAINED_TEXT_TAB_LABEL),
         "shrinkwrap" | "shrinkwrap-chat" => Some(SHRINKWRAP_TAB_LABEL),
         "editorial" | "editorial-engine" => Some(EDITORIAL_TAB_LABEL),
-        "text-comparison" | "comparison-surface" => Some(TEXT_RENDERING_COMPARISON_TAB_LABEL),
-        "text-validation" => Some(TEXT_VALIDATION_TAB_LABEL),
-        "text-editing" => Some(TEXT_EDITING_TAB_LABEL),
+        "text-rendering" | "text-comparison" | "comparison-surface" => {
+            Some(TEXT_RENDERING_TAB_LABEL)
+        }
+        "scripts" | "shaping" | "text-shaping" | "text-validation" => Some(TEXT_SHAPING_TAB_LABEL),
+        "text-editor" | "text-editing" => Some(TEXT_EDITOR_TAB_LABEL),
         "markdown" | "markdown-render" | "markdown-renderer" | "rich-document"
         | "rich-documents" => Some(MARKDOWN_RENDER_TAB_LABEL),
         "hdr-validation" | "color-validation" => Some(HDR_VALIDATION_TAB_LABEL),
@@ -2704,7 +2695,7 @@ mod tests {
         open_dev_shell_demo(&window, HDR_VALIDATION_TAB_LABEL)?;
         window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(crate::validation::COLOR_VALIDATION_SCROLL_NAME)
+            .with_name(crate::hdr_validation::COLOR_VALIDATION_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
         Ok(())
@@ -5645,7 +5636,7 @@ mod tests {
             .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
             .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_no_vsync(move || {
-            crate::validation::build_color_validation_application()
+            crate::hdr_validation::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
         let window = app.main_window()?;
@@ -5785,13 +5776,13 @@ final_max_luminance={final_max_luminance}
             .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
             .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_no_vsync(move || {
-            crate::validation::build_color_validation_application()
+            crate::hdr_validation::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
         let window = app.main_window()?;
         let scroll = window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(crate::validation::COLOR_VALIDATION_SCROLL_NAME);
+            .with_name(crate::hdr_validation::COLOR_VALIDATION_SCROLL_NAME);
         scroll.scroll_pixels(Vector::new(0.0, -240.0))?;
 
         let artifact = window.capture_debug_frame(DebugCaptureRequest {
@@ -6688,15 +6679,29 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn dev_workspace_exposes_retained_text_benchmark_view() -> Result<()> {
+    fn retained_text_is_a_benchmark_not_a_demo() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(RETAINED_TEXT_TAB_LABEL)
-            .expect()
-            .to_be_visible()?;
-        open_dev_shell_demo(&window, RETAINED_TEXT_TAB_LABEL)?;
+        let snapshot = window.snapshot()?;
+        assert!(
+            snapshot
+                .accessibility
+                .nodes
+                .iter()
+                .all(|node| node.name.as_deref() != Some("Retained text")),
+            "the picker offers no retained text demo"
+        );
+        for title in [
+            TEXT_RENDERING_TAB_LABEL,
+            TEXT_SHAPING_TAB_LABEL,
+            TEXT_EDITOR_TAB_LABEL,
+        ] {
+            window
+                .get_by_role(SemanticsRole::Button)
+                .with_name(title)
+                .expect()
+                .to_be_visible()?;
+        }
         Ok(())
     }
 
