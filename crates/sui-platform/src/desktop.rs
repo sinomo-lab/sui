@@ -13,11 +13,10 @@ use sui_core::{
     PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
     RawMouseMotionEvent, Result, ScrollDelta, SemanticsRole, Size, Vector, WindowEvent, WindowId,
 };
-use sui_render_wgpu::{FeatheringOptions, WgpuExternalTextureRegistry, WgpuRenderer};
+use sui_render_wgpu::{WgpuExternalTextureRegistry, WgpuRenderer};
 use sui_runtime::{
     CommandSender, FramePacing, PresentationLatencyDiagnostics, Runtime,
-    WindowIcon as RuntimeWindowIcon, WindowPerformanceSnapshot, WindowRenderOptions,
-    window_performance_snapshot, window_render_options, window_scene_statistics_detail_mode,
+    WindowIcon as RuntimeWindowIcon, WindowPerformanceSnapshot, window_performance_snapshot,
 };
 use web_time::Instant;
 use winit::{
@@ -71,10 +70,8 @@ const WEB_APPLE_TOUCH_ICON_ID: &str = "sui-window-apple-touch-icon";
 
 use crate::frame_pacing::FrameCadence;
 use crate::{
-    AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
-    headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
-    map_window_text_coverage_policy, map_window_text_hinting, map_window_text_subpixel_order,
-    publish_window_output_diagnostics, resolve_sdr_content_brightness_nits,
+    AccessibilityBridge, PresentedFrame, detect_window_display_capabilities,
+    headless::PlatformWindow, present_window_frame,
 };
 
 #[cfg(target_os = "windows")]
@@ -1407,19 +1404,6 @@ impl DesktopApp {
             );
         }
 
-        let runtime_started = Instant::now();
-        let output = self.runtime.render(window_id)?;
-        // A render pass can rebuild the widget graph after reactive state
-        // removed the cursor owner. Apply the runtime's resulting reset even
-        // when no further input event arrives.
-        self.sync_window_cursor(window_id)?;
-        let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
-        let semantics = output.semantics.clone();
-        let renderer_started = Instant::now();
-        let diagnostics_enabled = window_scene_statistics_detail_mode(window_id).is_detailed();
-        self.renderer
-            .set_runtime_diagnostics_enabled(diagnostics_enabled);
-        let render_options = window_render_options(window_id);
         if self
             .windows
             .get(&window_id)
@@ -1430,71 +1414,18 @@ impl DesktopApp {
                 window.display_capabilities_dirty = false;
             }
         }
-        self.renderer
-            .set_runtime_feathering_override(render_options.map(|options| {
-                FeatheringOptions::new(options.feathering_enabled, options.feather_width)
-            }));
-        self.renderer.set_runtime_text_hinting_override(
-            render_options.map(|options| map_window_text_hinting(options.text_hinting)),
-        );
-        self.renderer.set_runtime_stem_darkening_override(
-            render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
-        );
-        self.renderer.set_runtime_text_coverage_policy_override(
-            render_options
-                .map(|options| map_window_text_coverage_policy(options.text_coverage_policy)),
-        );
-        self.renderer.set_runtime_text_subpixel_order_override(
-            render_options
-                .map(|options| map_window_text_subpixel_order(options.text_subpixel_order)),
-        );
-        let active_render_options =
-            render_options.unwrap_or_else(|| WindowRenderOptions::new(false, 0.0));
-        let display_capabilities_for_brightness = self
-            .renderer
-            .window_display_capabilities(window_id)
-            .unwrap_or_default();
-        let sdr_content_brightness_nits = resolve_sdr_content_brightness_nits(
-            active_render_options.sdr_content_brightness_nits,
-            active_render_options.use_system_sdr_content_brightness,
-            &display_capabilities_for_brightness,
-        );
-        self.renderer.set_window_color_management(
-            window_id,
-            map_window_color_management(
-                active_render_options.color_management_mode,
-                active_render_options.output_color_primaries,
-                active_render_options.dynamic_range_mode,
-                active_render_options.tone_mapping_mode,
-                sdr_content_brightness_nits,
-            ),
-        )?;
-        self.renderer.render(&output.frame)?;
-        let presented_at = (!self.extensions.is_empty()).then(Instant::now);
-        if let (Some(display_capabilities), Some(active_output_strategy)) = (
-            self.renderer.window_display_capabilities(window_id),
-            self.renderer.window_output_strategy(window_id),
-        ) {
-            let system_sdr_content_brightness_nits = display_capabilities.sdr_white_nits;
-            publish_window_output_diagnostics(
-                window_id,
-                WindowOutputDiagnostics {
-                    display_capabilities,
-                    requested_color_management_mode: active_render_options.color_management_mode,
-                    requested_output_primaries: active_render_options.output_color_primaries,
-                    requested_dynamic_range_mode: active_render_options.dynamic_range_mode,
-                    requested_tone_mapping_mode: active_render_options.tone_mapping_mode,
-                    requested_sdr_content_brightness_nits: sdr_content_brightness_nits,
-                    configured_sdr_content_brightness_nits: active_render_options
-                        .sdr_content_brightness_nits,
-                    system_sdr_content_brightness_nits,
-                    use_system_sdr_content_brightness: active_render_options
-                        .use_system_sdr_content_brightness,
-                    active_output_strategy,
-                },
-            );
-        }
-        let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+        let PresentedFrame {
+            output,
+            runtime_time_ms,
+            renderer_time_ms,
+            presented_at,
+        } = present_window_frame(&mut self.runtime, &mut self.renderer, window_id)?;
+        // A render pass can rebuild the widget graph after reactive state
+        // removed the cursor owner. Apply the runtime's resulting reset even
+        // when no further input event arrives.
+        self.sync_window_cursor(window_id)?;
+        let semantics = output.semantics.clone();
+        let presented_at = (!self.extensions.is_empty()).then_some(presented_at);
         let presented_at_ms = self.current_time_ms();
         if let Some(window) = self.windows.get(&window_id) {
             presentation_latency.event_to_present_ms = window

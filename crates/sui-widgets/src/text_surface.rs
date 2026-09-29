@@ -12,7 +12,7 @@ use sui_runtime::{
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 use sui_text::{
-    PersistentTextLayout, TextCursor, TextDirection, TextDocument, TextLayoutRequest,
+    PersistentTextLayout, TextAlign, TextCursor, TextDirection, TextDocument, TextLayoutRequest,
     TextParagraph, TextSelection, TextSpan, TextStyle, TextWrap,
 };
 
@@ -24,7 +24,7 @@ use crate::{
         clamp_to_grapheme_boundary, selection_range,
     },
     selection::{SelectionClipboardBehavior, SelectionScope},
-    text_align::paint_aligned_text,
+    text_align::paint_text,
     text_command::TextCommand,
 };
 
@@ -1901,13 +1901,12 @@ impl Widget for TextSurface {
                 content.width(),
                 slot_height.max(placeholder_style.line_height),
             );
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 placeholder_slot,
                 &self.placeholder,
                 &placeholder_style,
-                placeholder_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
         }
 

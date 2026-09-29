@@ -10,7 +10,7 @@ mod selector;
 mod snapshot;
 mod window;
 
-pub use app::{IntoTestRuntime, TestApp};
+pub use app::{IntoTestRuntime, TestApp, TestAppBuilder};
 pub use expect::Expectation;
 pub use locator::Locator;
 pub use screenshot::{
@@ -24,8 +24,8 @@ pub use window::TestWindow;
 pub mod prelude {
     pub use crate::{
         ArtifactBundle, Expectation, IntoTestRuntime, Locator, SceneSummary, Screenshot, Selector,
-        TestApp, TestWindow, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
-        write_hdr_avif, write_hdr_exr,
+        TestApp, TestAppBuilder, TestWindow, hdr_clip_mask, hdr_headroom_heatmap,
+        hdr_luminance_heatmap, write_hdr_avif, write_hdr_exr,
     };
 }
 

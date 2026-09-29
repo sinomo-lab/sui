@@ -9,8 +9,8 @@ use crate::ThemeTextToken;
 use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
-use crate::text_align::paint_aligned_text;
-use crate::text_align::paint_single_line_aligned_text;
+use crate::text_align::paint_text;
+use crate::text_align::paint_text_line;
 use sui_core::Color;
 use sui_core::Path;
 use sui_core::PathBuilder;
@@ -28,10 +28,10 @@ use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
 use sui_runtime::Widget;
 use sui_scene::StrokeStyle;
-use sui_text::FontFeature;
 use sui_text::FontWeight;
 use sui_text::TextMeasurement;
 use sui_text::TextStyle;
+use sui_text::{FontFeature, TextAlign};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CoverageDotsConfig {
@@ -132,14 +132,7 @@ pub fn paint_coverage_dots_with_config(
     }
     if config.show_label {
         let label_rect = Rect::new(x, rect.y(), (rect.max_x() - x).max(0.0), rect.height());
-        paint_single_line_aligned_text(
-            ctx,
-            label_rect,
-            &label,
-            &text_style,
-            text_style.line_height,
-            0.0,
-        );
+        paint_text_line(ctx, label_rect, &label, &text_style, TextAlign::Start);
     }
     ctx.pop_clip();
 }
@@ -735,14 +728,7 @@ impl Widget for ProgressBar {
                 };
                 let text_style = numeric_text_style(text_token_style(&theme, theme.text.sm, color));
                 ctx.push_clip_rect(clip);
-                paint_aligned_text(
-                    ctx,
-                    label_slot,
-                    &label,
-                    &text_style,
-                    text_style.line_height,
-                    0.5,
-                );
+                paint_text(ctx, label_slot, &label, &text_style, TextAlign::Center);
                 ctx.pop_clip();
             }
         }
@@ -873,14 +859,7 @@ impl Widget for Spinner {
                 ctx.bounds().height(),
             );
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
-                ctx,
-                text_slot,
-                label,
-                &text_style,
-                text_style.line_height,
-                0.0,
-            );
+            paint_text(ctx, text_slot, label, &text_style, TextAlign::Start);
             ctx.pop_clip();
         }
     }

@@ -15,11 +15,10 @@ use sui::{
     DebugCaptureStage, DebugCaptureTicket, DebugSdrVisualization, HdrRgbaImage, InvalidationKind,
     InvalidationRequest, InvalidationTarget, Rect, RegisteredImage, RequestedToneMappingMode,
     SemanticsNode, SemanticsRole, TextStyle, WakeEvent, WidgetId, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowId, fit_to_sdr, paint_single_line_aligned_text,
-    request_window_debug_capture, take_window_debug_capture, window_output_diagnostics,
+    WidgetPodVisitor, WindowId, fit_to_sdr, paint_text_line, request_window_debug_capture,
+    take_window_debug_capture, window_output_diagnostics,
 };
 
-use super::live::paint_paragraph;
 use super::report::{
     CaptureMetrics, LightMetrics, final_output_sdr_white, output_diagnostics_report,
 };
@@ -206,8 +205,8 @@ pub(crate) struct CapturePanel {
     theme_reader: DevThemeReader,
     state: Rc<PanelState>,
     buttons: SingleChild,
-    lines: Vec<String>,
-    line_heights: Vec<f32>,
+    /// The status lines, laid out when measured.
+    lines: Vec<Paragraph>,
 }
 
 impl CapturePanel {
@@ -239,7 +238,6 @@ impl CapturePanel {
             state,
             buttons: SingleChild::new(buttons),
             lines: Vec::new(),
-            line_heights: Vec::new(),
         }
     }
 
@@ -273,6 +271,11 @@ impl Thumbnail {
             size: Size::new(width as f32, height as f32),
         })
     }
+}
+
+/// The height a status line takes: at least one line.
+fn line_height(line: &Paragraph, style: &TextStyle) -> f32 {
+    line.size().height.max(style.line_height)
 }
 
 /// Nearest-neighbour samples of a `width` × `height` image scaled to fit
@@ -451,26 +454,16 @@ impl Widget for CapturePanel {
             Constraints::new(Size::ZERO, Size::new(width, f32::INFINITY)),
         );
         let style = self.text_style();
-        self.lines = self.state.status_lines();
-        self.line_heights = self
-            .lines
-            .iter()
-            .map(|line| {
-                ctx.layout()
-                    .shape_text(
-                        line.clone(),
-                        Size::new(width.max(1.0), f32::INFINITY),
-                        style.clone(),
-                    )
-                    .map(|layout| layout.measurement().height)
-                    .unwrap_or(style.line_height)
-                    .max(style.line_height)
-            })
+        self.lines = self
+            .state
+            .status_lines()
+            .into_iter()
+            .map(|line| Paragraph::new(ctx, line, &style, TextAlign::Start, width))
             .collect();
         let text_height = self
-            .line_heights
+            .lines
             .iter()
-            .map(|height| height + LINE_GAP)
+            .map(|line| line_height(line, &style) + LINE_GAP)
             .sum::<f32>();
         let thumbnail_height = self
             .thumbnail_sizes()
@@ -506,12 +499,13 @@ impl Widget for CapturePanel {
         let bounds = ctx.bounds();
         let style = self.text_style();
         let mut y = bounds.y() + self.buttons.child().measured_size().height + BLOCK_GAP;
-        for (line, height) in self.lines.iter().zip(&self.line_heights) {
-            paint_paragraph(
+        for line in &self.lines {
+            let height = line_height(line, &style);
+            line.paint_with_color(
                 ctx,
-                Rect::new(bounds.x(), y, bounds.width(), *height),
-                line,
-                style.clone(),
+                Rect::new(bounds.x(), y, bounds.width(), height),
+                VerticalAlign::Top,
+                style.color,
             );
             y += height + LINE_GAP;
         }
@@ -533,13 +527,12 @@ impl Widget for CapturePanel {
             ctx.draw_image(rect, handle);
             let theme = (self.theme_reader)();
             ctx.stroke_rect(rect, theme.palette.border, StrokeStyle::new(1.0));
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(x, rect.max_y() + LINE_GAP, slot_width, caption.line_height),
                 thumbnail.caption,
                 &caption,
-                caption.line_height,
-                0.0,
+                TextAlign::Start,
             );
             x += slot_width + BLOCK_GAP;
         }
@@ -552,7 +545,13 @@ impl Widget for CapturePanel {
             ctx.bounds(),
         );
         node.name = Some(CAPTURE_STATUS_NAME.to_string());
-        node.description = Some(self.lines.join("\n"));
+        node.description = Some(
+            self.lines
+                .iter()
+                .map(Paragraph::text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         ctx.push(node);
         self.buttons.semantics(ctx);
     }

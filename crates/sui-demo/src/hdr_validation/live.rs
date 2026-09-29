@@ -3,9 +3,8 @@
 
 use sui::prelude::*;
 use sui::{
-    DisplayColorPrimaries, OutputStrategy, Rect, RequestedToneMappingMode, SemanticsNode,
-    SemanticsRole, WindowOutputDiagnostics, WindowToneMappingMode,
-    window_output_diagnostics_signal,
+    DisplayColorPrimaries, OutputStrategy, RequestedToneMappingMode, SemanticsNode, SemanticsRole,
+    WindowOutputDiagnostics, WindowToneMappingMode, window_output_diagnostics_signal,
 };
 
 use crate::app::{DemoTextRole, DevThemeReader, demo_text_style};
@@ -251,10 +250,9 @@ pub(crate) mod expect {
             if summary.kind == OutputKind::NativeHdr {
                 "accents in the Constrained and Full HDR cards glow above SDR white, Full HDR the most; the SDR baseline and wide-gamut cards stay at SDR white.".to_string()
             } else if summary.shows_wide_gamut() {
-                "the cards differ in color, not brightness: accents above SDR white fit to it."
-                    .to_string()
+                "Constrained and Full HDR fall back to wide gamut, so the three cards after the SDR baseline match and differ from it in color only.".to_string()
             } else {
-                "the cards look nearly alike: accents above SDR white fit to it and wide-gamut colors clip to sRGB.".to_string()
+                "every card falls back to the SDR baseline and looks the same, because this output shows neither wide gamut nor HDR.".to_string()
             }
         })
     }
@@ -265,11 +263,6 @@ fn primaries_name(primaries: DisplayColorPrimaries) -> &'static str {
         DisplayColorPrimaries::Srgb => "sRGB",
         DisplayColorPrimaries::DisplayP3 => "Display P3",
     }
-}
-
-/// Paint `text` wrapped to `rect`'s width from its top-left corner.
-pub(crate) fn paint_paragraph(ctx: &mut PaintCtx, rect: Rect, text: &str, style: TextStyle) {
-    ctx.draw_text(rect, text.to_string(), style);
 }
 
 /// Text that depends on the window's output, rewritten as it changes.
@@ -284,7 +277,7 @@ pub(crate) struct LiveText {
     color: DemoTextColor,
     source: LiveTextSource,
     diagnostics: FollowedDiagnostics,
-    text: String,
+    paragraph: Paragraph,
 }
 
 impl LiveText {
@@ -300,7 +293,7 @@ impl LiveText {
             color,
             source: Box::new(source),
             diagnostics: FollowedDiagnostics::new(),
-            text: String::new(),
+            paragraph: Paragraph::default(),
         }
     }
 
@@ -317,33 +310,27 @@ impl LiveText {
 impl Widget for LiveText {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
-        self.text = (self.source)(self.diagnostics.get());
+        let text = (self.source)(self.diagnostics.get());
         let style = self.style();
         let width = if constraints.max.width.is_finite() {
             constraints.max.width
         } else {
             640.0
         };
-        let height = ctx
-            .layout()
-            .shape_text(
-                self.text.clone(),
-                Size::new(width.max(1.0), f32::INFINITY),
-                style.clone(),
-            )
-            .map(|layout| layout.measurement().height)
-            .unwrap_or(style.line_height)
-            .max(style.line_height);
+        self.paragraph = Paragraph::new(ctx, text, &style, TextAlign::Start, width);
+        let height = self.paragraph.size().height.max(style.line_height);
         constraints.clamp(Size::new(width, height))
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        paint_paragraph(ctx, ctx.bounds(), &self.text, self.style());
+        let color = self.style().color;
+        self.paragraph
+            .paint_with_color(ctx, ctx.bounds(), VerticalAlign::Top, color);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Text, ctx.bounds());
-        node.name = Some(self.text.clone());
+        node.name = Some(self.paragraph.text().to_string());
         ctx.push(node);
     }
 }

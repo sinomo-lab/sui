@@ -251,6 +251,36 @@ semantics still need stable IDs and correct parent relationships.
 - balanced clip and transform pushes/pops.
 - `draw_shader_rect` for scene-level shader content.
 
+For text in a rect, use the `sui-widgets` helpers rather than placing layouts
+by hand:
+
+- `paint_text_line(ctx, rect, text, &style, TextAlign::Start)` paints one line
+  that never wraps, centered vertically on its capital letters.
+- `paint_text(ctx, rect, text, &style, placement)` wraps text to the rect's
+  width. Pass a `TextAlign` to center it vertically, or a `TextPlacement` such
+  as `TextPlacement::TOP_START` for running text. Several lines are placed as a
+  block and each line is aligned on its own. A block taller than the rect
+  starts at its top; in a rect with room for one line, the first line sits
+  where it would on its own. Use `paint_text_line` for fields that show one
+  line, such as values and menu rows, so their text never wraps.
+- `Paragraph::new(ctx, text, &style, align, max_width)` lays text out once, in
+  `measure`, so `paint` draws exactly the lines whose size was reported:
+
+```rust,ignore
+fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+    self.paragraph =
+        Paragraph::new(ctx, &self.text, &self.style, TextAlign::Start, constraints.max.width);
+    constraints.clamp(self.paragraph.size())
+}
+
+fn paint(&self, ctx: &mut PaintCtx) {
+    self.paragraph.paint(ctx, ctx.bounds(), VerticalAlign::Top);
+}
+```
+
+Text laid out in a box with an infinite height starts at the top and is sized
+to its lines; an infinite width does not wrap.
+
 Use local widget bounds and logical pixels. The platform and renderer own DPI,
 surface formats, color management, and presentation. Keep clip, transform, and
 text-policy stacks balanced within the widget's paint call.

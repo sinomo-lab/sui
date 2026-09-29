@@ -116,9 +116,9 @@ pub struct WgpuRenderer {
     analytic_path_cache: HashMap<u64, CachedAnalyticPathGpu>,
     compositors: HashMap<WindowId, RetainedCompositorState>,
     surfaces: HashMap<WindowId, SurfaceState>,
-    /// Color management for windows rendered offscreen, which have no
-    /// surface to keep it.
-    offscreen_color_management: HashMap<WindowId, ColorManagementMode>,
+    /// Output settings for windows rendered offscreen, which have no surface
+    /// to keep them.
+    offscreen_outputs: HashMap<WindowId, output::OffscreenOutput>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     intermediate_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,

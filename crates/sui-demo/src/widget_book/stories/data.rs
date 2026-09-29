@@ -258,7 +258,7 @@ fn virtual_table(ctx: &StoryCtx) -> Vec<Section> {
                 (status_tone.1.to_string(), &status),
             ];
             for (rect, (text, style)) in row.column_rects.iter().zip(cells.iter()) {
-                paint_table_cell(ctx, *rect, text, style, 0.0);
+                paint_table_cell(ctx, *rect, text, style, TextAlign::Start);
             }
         })
         .theme(theme);

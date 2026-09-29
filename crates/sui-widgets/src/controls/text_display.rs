@@ -514,7 +514,7 @@ impl Widget for Label {
                         text.clone(),
                         style.clone(),
                     ))
-                    .with_box_size(Size::new(layout_width, 1.0)),
+                    .with_box_size(Size::new(layout_width, f32::INFINITY)),
                 )
                 .unwrap_or(measurement);
             if !wraps_to_constraint {
@@ -529,10 +529,7 @@ impl Widget for Label {
                 .shape_text_persistent(
                     self.layout.as_ref().map(|layout| layout.handle()),
                     text,
-                    Size::new(
-                        measured_width.max(1.0),
-                        measurement.height.max(style.line_height).max(1.0),
-                    ),
+                    Size::new(measured_width.max(1.0), f32::INFINITY),
                     style.clone(),
                 )
                 .ok();
@@ -551,40 +548,19 @@ impl Widget for Label {
         if self.single_line {
             let text = text.replace(['\r', '\n'], " ");
             ctx.push_clip_rect(ctx.bounds());
-            paint_single_line_aligned_text(
-                ctx,
-                ctx.bounds(),
-                &text,
-                &style,
-                style.line_height,
-                0.0,
-            );
+            paint_text_line(ctx, ctx.bounds(), &text, &style, TextAlign::Start);
             ctx.pop_clip();
             return;
         }
         if let Some(layout) = &self.layout {
-            let layout_bounds = layout.measurement().bounds;
-            let mut layout_rect = aligned_text_rect_for_layout_with_mode(
+            let origin = paragraph_origin(
                 ctx,
                 ctx.bounds(),
                 layout.layout(),
-                style.line_height,
                 0.0,
-                HorizontalTextAlignmentMode::Optical,
+                layout.layout().box_size().width,
+                VerticalAlign::Center,
             );
-            if layout.lines().len() > 1 {
-                let block_height = style
-                    .line_height
-                    .max(layout.measurement().height)
-                    .min(ctx.bounds().height());
-                layout_rect = Rect::new(
-                    layout_rect.x(),
-                    ctx.bounds().y() + ((ctx.bounds().height() - block_height).max(0.0) * 0.5),
-                    layout_rect.width(),
-                    block_height,
-                );
-            }
-            let origin = Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y());
             if let Some(range) = self.active_selection_range(ctx.widget_id(), text.len()) {
                 let theme = DefaultTheme::default();
                 for rect in layout.selection_rects(range) {
@@ -593,7 +569,7 @@ impl Widget for Label {
             }
             ctx.draw_persistent_text_layout(origin, layout);
         } else {
-            paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+            paint_text(ctx, ctx.bounds(), &text, &style, TextAlign::Start);
         }
     }
 
@@ -940,7 +916,7 @@ impl Widget for Link {
         let style = self.resolved_text_style(color);
         let bounds = ctx.bounds();
         ctx.push_clip_rect(bounds);
-        paint_single_line_aligned_text(ctx, bounds, &label, &style, style.line_height, 0.0);
+        paint_text_line(ctx, bounds, &label, &style, TextAlign::Start);
         ctx.pop_clip();
 
         let measured_width = self

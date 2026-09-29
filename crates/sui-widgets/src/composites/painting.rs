@@ -8,8 +8,8 @@ use crate::composites::indicators::{
 };
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::draw_icon_glyph;
-use crate::text_align::paint_aligned_text;
-use crate::text_align::paint_single_line_aligned_text;
+use crate::text_align::paint_text;
+use crate::text_align::paint_text_line;
 use sui_core::Color;
 use sui_core::Path;
 use sui_core::Rect;
@@ -168,35 +168,32 @@ pub fn paint_empty_state(
 
     let mut title_style = text_token_style(theme, theme.text.lg, theme.surfaces.text_muted);
     title_style.weight = FontWeight::SEMIBOLD;
-    paint_single_line_aligned_text(
+    paint_text_line(
         ctx,
         centered_text_slot(bounds, cy + 4.0, title_style.line_height),
         paint.title,
         &title_style,
-        title_style.line_height,
-        0.5,
+        TextAlign::Center,
     );
 
     let description_style = text_token_style(theme, theme.text.sm, theme.surfaces.text_faint);
-    paint_single_line_aligned_text(
+    paint_text_line(
         ctx,
         centered_text_slot(bounds, cy + 30.0, description_style.line_height),
         paint.description,
         &description_style,
-        description_style.line_height,
-        0.5,
+        TextAlign::Center,
     );
 
     if let Some(detail) = paint.detail {
         let mut detail_style = text_token_style(theme, theme.text.xs, theme.surfaces.text_muted);
         detail_style.weight = FontWeight::MEDIUM;
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             centered_text_slot(bounds, cy + 48.0, detail_style.line_height),
             detail,
             &detail_style,
-            detail_style.line_height,
-            0.5,
+            TextAlign::Center,
         );
     }
 }
@@ -421,14 +418,7 @@ pub fn paint_command_button(
     text_style.weight = FontWeight::SEMIBOLD;
     let text_style = numeric_text_style_if_numeric(label, text_style);
     ctx.push_clip_rect(label_rect);
-    paint_single_line_aligned_text(
-        ctx,
-        label_rect,
-        label,
-        &text_style,
-        text_style.line_height,
-        0.0,
-    );
+    paint_text_line(ctx, label_rect, label, &text_style, TextAlign::Start);
     ctx.pop_clip();
 }
 
@@ -789,14 +779,7 @@ pub fn paint_callout(
         title_style.weight = FontWeight::SEMIBOLD;
         let title_rect = Rect::new(text_rect.x(), text_rect.y(), text_rect.width(), title_line);
         ctx.push_clip_rect(title_rect);
-        paint_single_line_aligned_text(
-            ctx,
-            title_rect,
-            title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text_line(ctx, title_rect, title, &title_style, TextAlign::Start);
         ctx.pop_clip();
     }
 
@@ -972,28 +955,14 @@ pub fn paint_action_tile(
     if compact {
         let title_rect = Rect::new(text_x, rect.y(), text_width, rect.height());
         ctx.push_clip_rect(title_rect);
-        paint_aligned_text(
-            ctx,
-            title_rect,
-            title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, title_rect, title, &title_style, TextAlign::Start);
         ctx.pop_clip();
         return;
     }
 
     let title_rect = Rect::new(text_x, rect.y() + 8.0, text_width, title_style.line_height);
     ctx.push_clip_rect(title_rect);
-    paint_single_line_aligned_text(
-        ctx,
-        title_rect,
-        title,
-        &title_style,
-        title_style.line_height,
-        0.0,
-    );
+    paint_text_line(ctx, title_rect, title, &title_style, TextAlign::Start);
     ctx.pop_clip();
 
     if let Some(subtitle) = subtitle {
@@ -1004,13 +973,12 @@ pub fn paint_action_tile(
             subtitle_style.line_height,
         );
         ctx.push_clip_rect(subtitle_rect);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             subtitle_rect,
             subtitle,
             &subtitle_style,
-            subtitle_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         ctx.pop_clip();
     }
@@ -1318,14 +1286,7 @@ pub fn paint_code_panel(
         );
         if label_rect.width() > 0.0 {
             ctx.push_clip_rect(label_rect);
-            paint_single_line_aligned_text(
-                ctx,
-                label_rect,
-                label,
-                &label_style,
-                label_style.line_height,
-                0.0,
-            );
+            paint_text_line(ctx, label_rect, label, &label_style, TextAlign::Start);
             ctx.pop_clip();
         }
     }
@@ -1491,14 +1452,7 @@ pub fn paint_section_panel(
     );
     if title_rect.width() > 0.0 && !title.is_empty() {
         ctx.push_clip_rect(title_rect);
-        paint_single_line_aligned_text(
-            ctx,
-            title_rect,
-            title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text_line(ctx, title_rect, title, &title_style, TextAlign::Start);
         ctx.pop_clip();
     }
 

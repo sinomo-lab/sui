@@ -1054,3 +1054,57 @@ fn persistent_layout_registry_retains_only_active_handles() {
     assert!(registry.contains(first.handle()));
     assert!(!registry.contains(second.handle()));
 }
+
+#[test]
+fn unbounded_box_dimensions_size_the_box_to_the_text() {
+    let system = TextSystem::new();
+    let fonts = FontRegistry::new();
+    let style = TextStyle::new(Color::BLACK);
+    let text = "several words that wrap onto more than one line";
+
+    // An infinite height does not center the lines in an infinitely tall
+    // box: they start at the top, and the box is as tall as the text.
+    let unbounded = system
+        .shape_text(text, Size::new(120.0, f32::INFINITY), style.clone(), &fonts)
+        .unwrap();
+    assert!(unbounded.lines().len() > 1);
+    let height = unbounded.measurement().height;
+    assert!(height.is_finite() && height > 0.0);
+    assert_eq!(unbounded.box_size(), Size::new(120.0, height));
+    let first_line = &unbounded.lines()[0];
+    assert!(
+        first_line.baseline > 0.0 && first_line.baseline <= style.line_height,
+        "the first baseline sits in the first line box: {}",
+        first_line.baseline
+    );
+    assert!(
+        unbounded
+            .glyphs()
+            .iter()
+            .all(|glyph| glyph.origin_x.is_finite() && glyph.origin_y.is_finite())
+    );
+
+    // It lays out like a box exactly as tall as the text.
+    let fitted = system
+        .shape_text(text, Size::new(120.0, height), style.clone(), &fonts)
+        .unwrap();
+    assert_eq!(fitted.lines()[0].baseline, first_line.baseline);
+
+    // An infinite width does not wrap, even when centering.
+    let mut document = TextDocument::from_plain_text(text, style);
+    document.paragraphs[0].style.align = crate::TextAlign::Center;
+    let one_line = system
+        .layout_document(
+            TextLayoutRequest::new(document).with_box_size(Size::new(f32::INFINITY, f32::INFINITY)),
+            &fonts,
+        )
+        .unwrap();
+    assert_eq!(one_line.lines().len(), 1);
+    assert!(one_line.box_size().width.is_finite());
+    assert!(
+        one_line
+            .glyphs()
+            .iter()
+            .all(|glyph| glyph.origin_x.is_finite() && glyph.origin_y.is_finite())
+    );
+}

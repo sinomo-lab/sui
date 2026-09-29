@@ -13,9 +13,9 @@ use crate::{
     paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
     text_align::{
-        HorizontalTextAlignmentMode, aligned_text_rect_for_layout,
-        aligned_text_rect_for_layout_with_mode, aligned_text_rect_for_text, paint_aligned_text,
-        paint_single_line_aligned_text,
+        HorizontalTextAlignmentMode, VerticalAlign, aligned_text_rect_for_layout,
+        aligned_text_rect_for_layout_with_mode, aligned_text_rect_for_text, alignment_fraction,
+        paint_text, paint_text_line, paragraph_origin,
     },
     text_command::TextCommand,
 };
@@ -33,13 +33,14 @@ use sui_lucide::LucideIcon;
 use sui_reactive::Observable;
 use sui_runtime::{
     ArrangeCtx, Command, EventCtx, EventPhase, FrameClock, LayerOptions, MeasureCtx,
-    OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind,
-    OverlayOptions, PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions,
-    Widget, WidgetPodMutVisitor, WidgetPodVisitor,
+    OVERLAY_DISMISS_REQUEST, OutputColorRange, OverlayDismissPolicy, OverlayFocusBehavior,
+    OverlayKind, OverlayOptions, PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild,
+    StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
-    FontFeature, PersistentTextLayout, TextCursor, TextMeasurement, TextSelection, TextStyle,
+    FontFeature, PersistentTextLayout, TextAlign, TextCursor, TextMeasurement, TextSelection,
+    TextStyle,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1624,15 +1625,19 @@ impl Button {
     /// Visuals at rest (no hover or press in flight).
     #[cfg(test)]
     fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
-        self.resolved_visuals_with_focus_progress(focused as u8 as f32, &0.0)
+        self.resolved_visuals_with_focus_progress(focused as u8 as f32, &0.0, None)
     }
 
+    /// The button's colors, with HDR styling limited to what `output` can
+    /// show.
     fn resolved_visuals_with_focus_progress(
         &self,
         focus_progress: f32,
         clock: &impl FrameClock,
+        output: Option<OutputColorRange>,
     ) -> ButtonVisuals {
-        let theme = self.resolved_theme();
+        let mut theme = self.resolved_theme();
+        theme.hdr = theme.hdr.limited_to(output);
         let palette = theme.palette;
         let interaction = theme.interaction;
         let enabled = self.is_enabled();
@@ -1764,10 +1769,14 @@ impl Button {
         }
     }
 
-    fn button_content_rects(&self, bounds: Rect, padding: Insets) -> (Option<Rect>, Rect, f32) {
+    fn button_content_rects(
+        &self,
+        bounds: Rect,
+        padding: Insets,
+    ) -> (Option<Rect>, Rect, TextAlign) {
         let content = inset_rect(bounds, padding);
         let Some((icon_size, icon_gap)) = self.icon_extent() else {
-            return (None, content, 0.5);
+            return (None, content, TextAlign::Center);
         };
 
         let measurement = self.label_measurement;
@@ -1796,7 +1805,7 @@ impl Button {
             label_width,
             content.height(),
         );
-        (Some(icon_rect), label_base, 0.0)
+        (Some(icon_rect), label_base, TextAlign::Start)
     }
 }
 
@@ -1869,6 +1878,7 @@ impl Widget for Button {
                 .get(ctx)
                 .max(self.interaction.preview.focus()),
             ctx,
+            ctx.output_color_range(),
         );
         draw_control_frame(
             ctx,
@@ -1893,7 +1903,7 @@ impl Widget for Button {
                 label_slot,
                 layout.layout(),
                 text_style.line_height,
-                label_alignment,
+                alignment_fraction(label_alignment),
                 HorizontalTextAlignmentMode::Optical,
             );
             let layout_bounds = layout.measurement().bounds;
@@ -1909,14 +1919,7 @@ impl Widget for Button {
             color: visuals.label_color,
             ..text_style
         };
-        paint_aligned_text(
-            ctx,
-            label_slot,
-            &self.label,
-            &paint_style,
-            paint_style.line_height,
-            label_alignment,
-        );
+        paint_text(ctx, label_slot, &self.label, &paint_style, label_alignment);
         ctx.pop_clip();
     }
 
@@ -2439,14 +2442,7 @@ impl Widget for Checkbox {
                 toggle_progress,
             },
         );
-        paint_aligned_text(
-            ctx,
-            label_rect,
-            &self.label,
-            &text_style,
-            text_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, label_rect, &self.label, &text_style, TextAlign::Start);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2649,13 +2645,17 @@ impl Switch {
         }
     }
 
+    /// The switch's colors in state `on`, with HDR styling limited to what
+    /// `output` can show.
     fn resolved_visuals_for_state(
         &self,
         on: bool,
         focused: bool,
         clock: &impl FrameClock,
+        output: Option<OutputColorRange>,
     ) -> SwitchVisuals {
-        let theme = self.resolved_theme();
+        let mut theme = self.resolved_theme();
+        theme.hdr = theme.hdr.limited_to(output);
         let palette = theme.palette;
         let interaction = theme.interaction;
         let hover_t = self.hover_value(clock) * interaction.hover_blend;
@@ -2728,8 +2728,9 @@ impl Switch {
         }
     }
 
+    #[cfg(test)]
     fn resolved_visuals(&self, focused: bool) -> SwitchVisuals {
-        self.resolved_visuals_for_state(self.on, focused, &0.0)
+        self.resolved_visuals_for_state(self.on, focused, &0.0, None)
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
@@ -2869,17 +2870,11 @@ impl Widget for Switch {
         let gap = self.resolved_gap();
         let track = switch_track_rect(ctx.bounds(), padding, metrics);
         let label_rect = switch_label_rect(ctx.bounds(), padding, metrics, gap);
-        let visuals = self.resolved_visuals(ctx.is_focused() || self.preview.is_focused());
-        let off_visuals = self.resolved_visuals_for_state(
-            false,
-            ctx.is_focused() || self.preview.is_focused(),
-            ctx,
-        );
-        let on_visuals = self.resolved_visuals_for_state(
-            true,
-            ctx.is_focused() || self.preview.is_focused(),
-            ctx,
-        );
+        let focused = ctx.is_focused() || self.preview.is_focused();
+        let output = ctx.output_color_range();
+        let visuals = self.resolved_visuals_for_state(self.on, focused, &0.0, output);
+        let off_visuals = self.resolved_visuals_for_state(false, focused, ctx, output);
+        let on_visuals = self.resolved_visuals_for_state(true, focused, ctx, output);
         let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
         let press_progress = self.press_value(ctx) * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.get(ctx);
@@ -2972,14 +2967,7 @@ impl Widget for Switch {
             color: visuals.label_color,
             ..text_style
         };
-        paint_aligned_text(
-            ctx,
-            label_rect,
-            &self.label,
-            &text_style,
-            text_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, label_rect, &self.label, &text_style, TextAlign::Start);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -3362,14 +3350,7 @@ impl Widget for RadioButton {
                 palette.accent_text.with_alpha(toggle_progress),
             );
         }
-        paint_aligned_text(
-            ctx,
-            label_rect,
-            &self.label,
-            &text_style,
-            text_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, label_rect, &self.label, &text_style, TextAlign::Start);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -3819,14 +3800,7 @@ impl Widget for RadioGroup {
                 );
             }
             let text_style = theme.body_text_style();
-            paint_aligned_text(
-                ctx,
-                label_rect,
-                option,
-                &text_style,
-                text_style.line_height,
-                0.0,
-            );
+            paint_text(ctx, label_rect, option, &text_style, TextAlign::Start);
         }
     }
 
@@ -4716,14 +4690,7 @@ impl Widget for NumberInput {
             ),
         );
 
-        paint_aligned_text(
-            ctx,
-            content,
-            &buffer,
-            &text_style,
-            text_style.line_height,
-            1.0,
-        );
+        paint_text(ctx, content, &buffer, &text_style, TextAlign::End);
         ctx.stroke(
             line_path(
                 Point::new(stepper.x(), ctx.bounds().y() + 6.0),
@@ -5814,14 +5781,7 @@ impl Widget for SelectMenuSurface {
             }
             let text_slot = horizontal_text_inset_rect(row, metrics.text_input_padding);
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
-                ctx,
-                text_slot,
-                option,
-                &text_style,
-                text_style.line_height,
-                0.0,
-            );
+            paint_text(ctx, text_slot, option, &text_style, TextAlign::Start);
             ctx.pop_clip();
         }
         ctx.pop_clip();
@@ -6546,13 +6506,12 @@ impl Widget for Select {
             ),
         );
         ctx.push_clip_rect(text_slot);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             text_slot.translate(content_offset),
             &label,
             &text_style,
-            text_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         ctx.pop_clip();
         draw_icon_glyph(
@@ -7371,13 +7330,12 @@ impl Widget for TextInput {
             } else {
                 text_style.clone()
             };
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 content_rect,
                 &display_text,
                 &display_style,
-                display_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
         }
         ctx.pop_clip();

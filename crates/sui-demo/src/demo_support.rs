@@ -8,7 +8,7 @@ use std::rc::Rc;
 use sui::prelude::*;
 use sui::{
     Rect, SemanticsNode, SemanticsRole, TextStyle, ThemeTextToken, WidgetPodMutVisitor,
-    WidgetPodVisitor, paint_single_line_aligned_text,
+    WidgetPodVisitor, paint_text_line,
 };
 
 use crate::app::{
@@ -42,14 +42,14 @@ pub(crate) fn paint_table_cell(
     rect: Rect,
     text: &str,
     style: &TextStyle,
-    horizontal_alignment: f32,
+    align: TextAlign,
 ) {
     if rect.is_empty() {
         return;
     }
 
     ctx.push_clip_rect(rect);
-    paint_single_line_aligned_text(
+    paint_text_line(
         ctx,
         Rect::new(
             rect.x() + 8.0,
@@ -59,8 +59,7 @@ pub(crate) fn paint_table_cell(
         ),
         text,
         style,
-        style.line_height,
-        horizontal_alignment,
+        align,
     );
     ctx.pop_clip();
 }

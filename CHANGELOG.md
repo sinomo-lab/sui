@@ -342,6 +342,60 @@ Versioning, with the usual expectation that the API may change during the
   final-stage values relative to SDR white (native HDR finals are scRGB, where
   SDR white is its brightness over 80 nits).
 
+### HDR themes follow the output, and tests can simulate displays
+
+- HDR theme modes fall back to what the window's output can show: Constrained
+  and Full HDR to wide-gamut only on wide-gamut SDR outputs, and every mode to
+  the SDR baseline on sRGB outputs. HDR accents no longer reach SDR displays
+  as clipped, near-white fills with unreadable labels. The platform records
+  each window's `OutputColorRange` before rendering; widgets read it with
+  `PaintCtx::output_color_range`, which repaints them when it changes, and
+  apply it with `HdrThemeMode::limited_to` or `HdrThemeTokens::limited_to`.
+  Buttons, switches, and popovers do.
+- Windows rendered without a surface can be given a display with
+  `WgpuRenderer::set_window_display_capabilities`: they choose the output
+  strategy a surface on that display would, report it, and capture the final
+  output accordingly. `HeadlessPlatform::with_display_capabilities` renders
+  every window for a display, and the headless platform now reports its real
+  output strategy instead of always an SDR surface.
+- `TestApp::builder` configures a test app; its `display_capabilities` option
+  runs the app headless for a simulated display, so SDR, wide-gamut, and HDR
+  paths are testable on any machine. `DisplayCapabilities::sdr`,
+  `wide_gamut`, and `hdr` build common displays.
+- The desktop and headless platforms and the live test harness present frames
+  through one routine, `present_window_frame`, instead of three copies. The
+  live harness now applies a window's text rendering options like the app
+  does, and resetting it no longer clears every other window's render options
+  and diagnostics in the process.
+
+### Breaking: text painting helpers
+
+- Replaced `paint_aligned_text` with `paint_text` and
+  `paint_single_line_aligned_text` with `paint_text_line`. Both take a
+  `TextAlign` instead of a 0-to-1 fraction and no longer take a line height,
+  which only mattered when shaping failed. `paint_text` also takes a
+  `TextPlacement` to put text at the top or bottom of its rect.
+- `paint_text` places several lines as a block and aligns each line on its
+  own. The old function centered the first line's baseline, so wrapped text
+  hung below its rect, and centered lines were left-aligned as a group. A
+  single line is placed exactly as before, and so is the first line of text
+  that wraps in a rect with room for one line. A block taller than a larger
+  rect starts at its top.
+- The color picker's fields, menu rows, and slider values and the brush
+  preview's description paint one line that never wraps. They wrapped, and
+  showed only the first line, so a value too wide for its field could show
+  as a shorter number.
+- Added `Paragraph`, text laid out once to measure and then paint, with
+  `VerticalAlign` for where it goes in its rect and `TextShaper` so the
+  measure context, the paint context, and `LayoutContext` can all lay it out.
+- Text laid out in a box with an infinite height now starts at the top and is
+  sized to its lines. It was centered in the infinite box, so every glyph
+  landed at infinity and nothing was drawn. An infinite width no longer wraps
+  or aligns against infinity.
+- `Label` places multi-line text with the shared paragraph placement, and
+  table column alignments map to text alignment with
+  `TableColumnAlignment::text_align`.
+
 ### Breaking: painting cannot request invalidations
 
 - Removed `PaintCtx::request`, `request_paint`, `request_paint_rect`, and

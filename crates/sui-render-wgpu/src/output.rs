@@ -61,6 +61,67 @@ pub struct DisplayCapabilities {
     pub notes: String,
 }
 
+impl DisplayCapabilities {
+    /// An sRGB display that shows SDR only.
+    pub fn sdr() -> Self {
+        Self {
+            notes: "Simulated SDR display".to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// A Display P3 display that shows SDR only.
+    pub fn wide_gamut() -> Self {
+        Self {
+            supports_wide_gamut: true,
+            preferred_primaries: DisplayColorPrimaries::DisplayP3,
+            notes: "Simulated wide-gamut SDR display".to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// A wide-gamut display presenting HDR natively as scRGB, as Windows HDR
+    /// displays do, `peak_nits` bright with SDR white at `sdr_white_nits`.
+    pub fn hdr(peak_nits: f32, sdr_white_nits: f32) -> Self {
+        Self {
+            supports_wide_gamut: true,
+            supports_hdr: true,
+            preferred_primaries: DisplayColorPrimaries::Srgb,
+            preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+            max_luminance_nits: Some(peak_nits),
+            sdr_white_nits: Some(sdr_white_nits),
+            max_content_headroom: None,
+            native_hdr_presentation_supported: true,
+            notes: "Simulated HDR display".to_string(),
+        }
+    }
+}
+
+/// Output settings for a window rendered without a surface: it renders as if
+/// presenting to a display with these capabilities, so diagnostics and
+/// final-output captures follow the same strategy a real surface would.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OffscreenOutput {
+    pub(crate) display_capabilities: DisplayCapabilities,
+    pub(crate) color_management: ColorManagementMode,
+}
+
+impl OffscreenOutput {
+    /// The formats surfaces commonly offer: 8-bit sRGB and 16-bit float.
+    const SURFACE_FORMATS: [wgpu::TextureFormat; 2] = [
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        wgpu::TextureFormat::Rgba16Float,
+    ];
+
+    pub(crate) fn output_strategy(&self) -> OutputStrategy {
+        select_output_strategy(
+            &Self::SURFACE_FORMATS,
+            self.display_capabilities.clone(),
+            self.color_management,
+        )
+    }
+}
+
 impl Default for DisplayCapabilities {
     fn default() -> Self {
         Self {
@@ -350,14 +411,15 @@ impl WgpuRenderer {
     ) -> Result<RendererFrameStats> {
         self.ensure_shared(None)?;
 
-        let Some(surface_state) = self.surfaces.get(&frame.window_id) else {
+        let Some(strategy) = self.window_output_strategy(frame.window_id) else {
             return self.render_offscreen(frame, size);
         };
-        let strategy = surface_state.output_strategy;
-        let requested_tone_mapping = surface_state.color_management.tone_mapping;
-        let sdr_content_brightness_nits =
-            surface_state.color_management.sdr_content_brightness_nits;
-        let display_sdr_white_nits = surface_state.display_capabilities.sdr_white_nits;
+        let color_management = self.window_color_management(frame.window_id);
+        let requested_tone_mapping = color_management.tone_mapping;
+        let sdr_content_brightness_nits = color_management.sdr_content_brightness_nits;
+        let display_sdr_white_nits = self
+            .window_display_capabilities(frame.window_id)
+            .and_then(|capabilities| capabilities.sdr_white_nits);
         let final_format = strategy.surface_format();
         let final_view = self.ensure_offscreen_target(frame.window_id, size, final_format)?;
         let prepared = self.prepare_scene_submission(frame)?;

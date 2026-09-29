@@ -138,7 +138,10 @@ pub use selection::{
     SelectionChange, SelectionClipboardBehavior, SelectionEntry, SelectionIntent, SelectionOrder,
     SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
 };
-pub use text_align::{paint_aligned_text, paint_single_line_aligned_text, wrap_text_lines};
+pub use text_align::{
+    Paragraph, TextPlacement, TextShaper, VerticalAlign, paint_text, paint_text_line,
+    wrap_text_lines,
+};
 pub use text_command::{TEXT_COMMAND, TextCommand};
 pub use text_surface::{
     TextSurface, TextSurfaceOverlayKind, TextSurfaceStyleOverlay, TextSurfaceStyleSpan,

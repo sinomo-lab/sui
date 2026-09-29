@@ -2,6 +2,7 @@ use std::{
     cell::Cell,
     sync::{Arc, Mutex, MutexGuard},
 };
+use sui_text::TextAlign;
 
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
@@ -20,7 +21,7 @@ use sui_scene::{LayerCompositionMode, StrokeStyle};
 use crate::{
     DefaultTheme,
     containers::{ScrollBar, ScrollState, ScrollView},
-    text_align::paint_aligned_text,
+    text_align::paint_text,
 };
 
 /// Widget state progress the runtime animates (see [`Progress`]).
@@ -939,14 +940,7 @@ impl Widget for FloatingViewSurface {
             );
             let title_style = theme.text_style(palette.text);
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
-                ctx,
-                text_slot,
-                &view.title,
-                &title_style,
-                title_style.line_height,
-                0.0,
-            );
+            paint_text(ctx, text_slot, &view.title, &title_style, TextAlign::Start);
             ctx.pop_clip();
         }
         self.host.paint(ctx);

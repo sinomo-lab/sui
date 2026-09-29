@@ -3530,6 +3530,13 @@ impl PaintCtx {
         crate::motion_policy()
     }
 
+    /// What the window's output can show, or `None` before the platform has
+    /// said. Painting reads it as an observation, so the widget is painted
+    /// again when it changes.
+    pub fn output_color_range(&self) -> Option<crate::OutputColorRange> {
+        self.observe(&crate::window_output_color_range_signal(self.window_id))
+    }
+
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,

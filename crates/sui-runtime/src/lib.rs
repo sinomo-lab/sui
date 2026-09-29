@@ -8,6 +8,7 @@ mod logo;
 mod measure_cache;
 mod motion;
 mod output_cache;
+mod output_range;
 mod overlay;
 mod reactive;
 mod resources;
@@ -70,6 +71,10 @@ pub use motion::{
     AnimateCtx, FrameClock, FramePacing, Motion, app_motion_preference, motion_policy,
     motion_time_scale, reset_motion_settings, set_app_motion_preference, set_motion_time_scale,
     set_system_motion_preference, system_motion_preference,
+};
+pub use output_range::{
+    OutputColorRange, set_window_output_color_range, window_output_color_range,
+    window_output_color_range_signal,
 };
 pub use overlay::{
     OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayDismissReason, OverlayDismissRequest,

@@ -6,7 +6,7 @@
 use sui::prelude::*;
 use sui::{
     Border, KeyState, PointerButton, PointerEventKind, SemanticsAction, SemanticsActionRequest,
-    SemanticsNode, SemanticsRole, SemanticsValue, paint_single_line_aligned_text,
+    SemanticsNode, SemanticsRole, SemanticsValue, paint_text_line,
 };
 
 use super::contrast::{ContrastCheck, token_contrast};
@@ -121,13 +121,12 @@ impl TokenRow {
 
         let label_style = demo_text_style(*shell, DemoTextRole::Supporting, palette.text);
         ctx.push_clip_rect(label_rect);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             label_rect,
             &self.label(),
             &label_style,
-            label_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         ctx.pop_clip();
 
@@ -137,13 +136,12 @@ impl TokenRow {
         }
 
         let hex_style = demo_mono_text_style(*shell, DemoTextRole::Metadata, palette.text_muted);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             hex_rect,
             &hex(self.state.color(self.token)),
             &hex_style,
-            hex_style.line_height,
-            1.0,
+            TextAlign::End,
         );
 
         if let Some(check) = badge {
@@ -154,13 +152,12 @@ impl TokenRow {
             };
             ctx.fill_rrect(badge_rect, [badge_rect.height() * 0.5; 4], fill);
             let badge_style = demo_text_style(*shell, DemoTextRole::Metadata, ink);
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 badge_rect,
                 &check.badge(),
                 &badge_style,
-                badge_style.line_height,
-                0.5,
+                TextAlign::Center,
             );
         }
     }
@@ -194,7 +191,7 @@ impl TokenRow {
         );
         if fill.is_some() {
             let style = demo_text_style(*shell, DemoTextRole::Metadata, color);
-            paint_single_line_aligned_text(ctx, rect, "Aa", &style, style.line_height, 0.5);
+            paint_text_line(ctx, rect, "Aa", &style, TextAlign::Center);
         }
     }
 

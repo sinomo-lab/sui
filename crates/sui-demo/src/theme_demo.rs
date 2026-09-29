@@ -369,6 +369,48 @@ pub(crate) fn hdr_theme_lab_indicator_color(theme: &DefaultTheme) -> Color {
     )
 }
 
+/// A swatch of the accent an emissive indicator shows in `theme`, as far as
+/// the window's output lets the theme's HDR mode go.
+pub(crate) struct EmissiveIndicator {
+    name: String,
+    theme: DefaultTheme,
+    size: Size,
+}
+
+impl EmissiveIndicator {
+    pub(crate) fn new(name: impl Into<String>, theme: DefaultTheme) -> Self {
+        Self {
+            name: name.into(),
+            theme,
+            size: Size::new(64.0, 28.0),
+        }
+    }
+}
+
+impl Widget for EmissiveIndicator {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(self.size)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let mut theme = self.theme;
+        theme.hdr = theme.hdr.limited_to(ctx.output_color_range());
+        let bounds = ctx.bounds();
+        let radius = theme.metrics.corner_radius;
+        ctx.fill_rrect(bounds, [radius; 4], hdr_theme_lab_indicator_color(&theme));
+        let mut outline = PathBuilder::new();
+        outline.push_rounded_rect(bounds, radius);
+        ctx.stroke(outline.build(), theme.palette.border, StrokeStyle::new(1.0));
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node =
+            SemanticsNode::new(ctx.widget_id(), SemanticsRole::ColorSwatch, ctx.bounds());
+        node.name = Some(self.name.clone());
+        ctx.push(node);
+    }
+}
+
 pub(crate) fn hdr_theme_lab_card(
     section_name: impl Into<String>,
     mode: HdrThemeMode,
@@ -379,7 +421,6 @@ pub(crate) fn hdr_theme_lab_card(
     let prefix = prefix.into();
     let lead_text = lead_text.into();
     let theme = hdr_theme_lab_theme(mode);
-    let indicator_color = hdr_theme_lab_indicator_color(&theme);
     let button_label = format!("{prefix} sample action");
     let switch_label = format!("{prefix} sample live indicator");
     let popover_name = format!("{prefix} attention popover");
@@ -435,9 +476,7 @@ pub(crate) fn hdr_theme_lab_card(
                             ),
                         )
                         .with_child(
-                            ColorSwatch::new(swatch_name, indicator_color)
-                                .size(Size::new(64.0, 28.0))
-                                .theme(theme),
+                            EmissiveIndicator::new(swatch_name, theme),
                         )
                         .with_child(MaximumWidth::new(
                             520.0,

@@ -7,7 +7,7 @@ use sui::{GridTrack, HdrThemeMode};
 use crate::app::{DemoTextRole, demo_text_style};
 use crate::demo_support::NamedSection;
 use crate::theme_demo::{
-    ThemePreviewCardFrame, hdr_theme_lab_indicator_color, hdr_theme_lab_theme, hdr_theme_mode_title,
+    EmissiveIndicator, ThemePreviewCardFrame, hdr_theme_lab_theme, hdr_theme_mode_title,
 };
 
 pub(crate) const UI_MODES_NAME: &str = "HDR theme mode columns";
@@ -22,7 +22,6 @@ const MODES: [HdrThemeMode; 4] = [
 fn mode_card(mode: HdrThemeMode) -> impl Widget {
     let theme = hdr_theme_lab_theme(mode);
     let title = hdr_theme_mode_title(mode);
-    let indicator = hdr_theme_lab_indicator_color(&theme);
     ThemePreviewCardFrame::new(
         theme,
         Stack::vertical()
@@ -61,11 +60,10 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
                 Stack::horizontal()
                     .spacing(10.0)
                     .alignment(Alignment::Center)
-                    .with_child(
-                        ColorSwatch::new(format!("{title} emissive indicator"), indicator)
-                            .size(Size::new(64.0, 28.0))
-                            .theme(theme),
-                    )
+                    .with_child(EmissiveIndicator::new(
+                        format!("{title} emissive indicator"),
+                        theme,
+                    ))
                     .with_child(Label::new("Emissive indicator").style(demo_text_style(
                         theme,
                         DemoTextRole::Metadata,

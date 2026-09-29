@@ -69,6 +69,28 @@ After an action or while waiting on an expectation, the harness repeatedly:
 
 This is why tests should not use ad hoc sleeps. The harness already knows how to drive the real runtime to a stable state.
 
+`TestApp::new` runs the app live when a display is available and headless
+otherwise. Either way it presents frames through the same routine as the
+desktop platform, so render options, output diagnostics, and debug captures
+behave as they do in the app.
+
+### Simulate a display
+
+Output depends on the display: an HDR screen changes the output strategy, the
+diagnostics, final-output captures, and how HDR theme modes style widgets. To
+keep a test independent of the machine's screens, give the app a display:
+
+```rust,ignore
+let app = TestApp::builder(|| build_app())
+    .vsync(false)
+    .display_capabilities(DisplayCapabilities::hdr(1000.0, 250.0))
+    .launch()?;
+```
+
+The app then runs headless and renders exactly as it would for that display.
+`DisplayCapabilities::sdr()`, `wide_gamut()`, and `hdr(peak_nits,
+sdr_white_nits)` cover the common cases.
+
 ## Common Test Style
 
 The expected style is:

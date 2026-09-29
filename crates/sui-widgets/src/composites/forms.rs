@@ -11,8 +11,8 @@ use crate::composites::indicators::{
 use crate::composites::surfaces::SurfaceElevation;
 use crate::controls::draw_icon_glyph;
 use crate::paint_theme_shadow;
-use crate::text_align::paint_aligned_text;
-use crate::text_align::paint_single_line_aligned_text;
+use crate::text_align::paint_text;
+use crate::text_align::paint_text_line;
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::KeyState;
@@ -42,9 +42,9 @@ use sui_runtime::WidgetChildren;
 use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
 use sui_scene::StrokeStyle;
-use sui_text::FontWeight;
 use sui_text::TextMeasurement;
 use sui_text::TextStyle;
+use sui_text::{FontWeight, TextAlign};
 
 pub struct ActionCard {
     pub(super) theme: Box<DefaultTheme>,
@@ -619,13 +619,12 @@ impl Widget for ActionCard {
             .ok()
         };
         ctx.push_clip_rect(title_slot);
-        paint_aligned_text(
+        paint_text(
             ctx,
             title_slot,
             &self.title,
             &title_paint_style,
-            title_paint_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         ctx.pop_clip();
         ctx.push_clip_rect(description_slot);
@@ -648,13 +647,12 @@ impl Widget for ActionCard {
                 description_paint_style.color,
             );
         } else {
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 description_slot,
                 &self.description,
                 &description_paint_style,
-                description_paint_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
         }
         ctx.pop_clip();
@@ -1116,14 +1114,7 @@ impl Widget for PropertyRow {
             ),
         };
         ctx.push_clip_rect(label_rect);
-        paint_single_line_aligned_text(
-            ctx,
-            label_rect,
-            &self.label,
-            &label_style,
-            label_height,
-            0.0,
-        );
+        paint_text_line(ctx, label_rect, &self.label, &label_style, TextAlign::Start);
         ctx.pop_clip();
         self.child.paint(ctx);
     }
@@ -1259,7 +1250,7 @@ impl Widget for SectionLabel {
         let style = self.text_style(&theme);
         let text = self.display_text();
         ctx.push_clip_rect(ctx.bounds());
-        paint_single_line_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+        paint_text_line(ctx, ctx.bounds(), &text, &style, TextAlign::Start);
         ctx.pop_clip();
     }
 
@@ -1301,7 +1292,7 @@ pub fn paint_section_label(
     let style = section_label_text_style(theme, paint.color);
     let text = label.to_uppercase();
     ctx.push_clip_rect(rect);
-    paint_single_line_aligned_text(ctx, rect, &text, &style, style.line_height, 0.0);
+    paint_text_line(ctx, rect, &text, &style, TextAlign::Start);
     ctx.pop_clip();
 }
 
@@ -1320,7 +1311,7 @@ pub fn paint_section_label_detail(
         format!("{} · {detail}", label.to_uppercase())
     };
     ctx.push_clip_rect(rect);
-    paint_single_line_aligned_text(ctx, rect, &text, &style, style.line_height, 0.0);
+    paint_text_line(ctx, rect, &text, &style, TextAlign::Start);
     ctx.pop_clip();
 }
 
@@ -1479,24 +1470,22 @@ pub fn paint_detail_row_at(
     let clip = Rect::new(origin.x, origin.y, width, height);
 
     ctx.push_clip_rect(clip);
-    paint_aligned_text(
+    paint_text(
         ctx,
         Rect::new(origin.x, origin.y, width, label_style.line_height),
         &label.to_uppercase(),
         &label_style,
-        label_style.line_height,
-        0.0,
+        TextAlign::Start,
     );
 
     let mut y = origin.y + label_style.line_height + detail_row_label_value_gap(theme);
     for line in lines {
-        paint_aligned_text(
+        paint_text(
             ctx,
             Rect::new(origin.x, y, width, value_style.line_height),
             &line,
             &value_style,
-            value_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         y += value_style.line_height;
     }
@@ -2299,14 +2288,7 @@ impl Widget for FormSection {
         let text_y = content.y() + ((header_height - text_block_height) * 0.5).max(0.0);
         let title_slot = Rect::new(content.x(), text_y, text_width, title_height);
         ctx.push_clip_rect(title_slot);
-        paint_aligned_text(
-            ctx,
-            title_slot,
-            &self.title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, title_slot, &self.title, &title_style, TextAlign::Start);
         ctx.pop_clip();
         if let Some(description) = &self.description {
             let description_slot = Rect::new(
@@ -2316,13 +2298,12 @@ impl Widget for FormSection {
                 description_height,
             );
             ctx.push_clip_rect(description_slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 description_slot,
                 description,
                 &description_style,
-                description_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             ctx.pop_clip();
         }
@@ -2791,14 +2772,7 @@ impl Widget for PanelSection {
             );
         }
         ctx.push_clip_rect(title_slot);
-        paint_aligned_text(
-            ctx,
-            title_slot,
-            &self.title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, title_slot, &self.title, &title_style, TextAlign::Start);
         ctx.pop_clip();
         if let Some(action) = &self.header_action {
             action.paint(ctx);
@@ -3133,14 +3107,7 @@ impl Widget for DockPanel {
             palette.border,
         );
         ctx.push_clip_rect(title_slot);
-        paint_aligned_text(
-            ctx,
-            title_slot,
-            &self.title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, title_slot, &self.title, &title_style, TextAlign::Start);
         ctx.pop_clip();
 
         self.child.paint(ctx);

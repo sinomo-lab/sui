@@ -1428,6 +1428,7 @@ pub fn clear_window_performance_snapshot(window_id: WindowId) {
     detail_modes.remove(&window_id);
 
     clear_window_render_options(window_id);
+    crate::output_range::clear_window_output_color_range(window_id);
 }
 
 pub fn clear_window_performance_snapshots() {
@@ -1445,6 +1446,8 @@ pub fn clear_window_performance_snapshots() {
         .write()
         .expect("window render options store lock should not be poisoned");
     render_options.clear();
+    drop(render_options);
+    crate::output_range::clear_window_output_color_ranges();
 }
 
 fn window_performance_store() -> &'static RwLock<HashMap<WindowId, WindowPerformanceRecord>> {

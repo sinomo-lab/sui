@@ -2,20 +2,12 @@ use std::{collections::VecDeque, time::Instant};
 
 use sui_core::{AsyncWakeToken, Error, Event, Result, Size, WindowEvent, WindowId};
 use sui_render_wgpu::{
-    DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions, OutputStrategy, RgbaImage,
+    DebugCaptureArtifact, DebugCaptureRequest, DisplayCapabilities, RgbaImage,
     WgpuExternalTextureRegistry, WgpuRenderer,
 };
-use sui_runtime::{
-    PresentationLatencyDiagnostics, Runtime, WindowRenderOptions, window_render_options,
-    window_scene_statistics_detail_mode,
-};
+use sui_runtime::{PresentationLatencyDiagnostics, Runtime};
 
-use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, WindowOutputDiagnostics,
-    map_window_color_management, map_window_stem_darkening, map_window_text_coverage_policy,
-    map_window_text_hinting, map_window_text_subpixel_order, publish_window_output_diagnostics,
-    resolve_sdr_content_brightness_nits,
-};
+use crate::{AccessibilityBridge, AccessibilitySnapshot, PresentedFrame, present_window_frame};
 
 #[derive(Debug, Clone)]
 pub struct PlatformWindow {
@@ -30,6 +22,9 @@ pub struct HeadlessPlatform {
     windows: Vec<WindowState>,
     pending_events: VecDeque<QueuedEvent>,
     frame_clock: f64,
+    /// The display windows render for; see
+    /// [`with_display_capabilities`](Self::with_display_capabilities).
+    display_capabilities: Option<DisplayCapabilities>,
 }
 
 impl HeadlessPlatform {
@@ -42,6 +37,23 @@ impl HeadlessPlatform {
     pub fn with_feather_width(mut self, feather_width: f32) -> Self {
         self.set_feather_width(feather_width);
         self
+    }
+
+    /// Render windows as if they were on a display with `capabilities`.
+    /// Output strategies, diagnostics, final-output captures, and HDR theme
+    /// styling all follow it. Without it, windows render for an SDR display.
+    pub fn with_display_capabilities(mut self, capabilities: DisplayCapabilities) -> Self {
+        self.display_capabilities = Some(capabilities);
+        self
+    }
+
+    fn display_capabilities(&self) -> DisplayCapabilities {
+        self.display_capabilities
+            .clone()
+            .unwrap_or_else(|| DisplayCapabilities {
+                notes: "Headless offscreen renderer.".to_string(),
+                ..DisplayCapabilities::default()
+            })
     }
 
     pub fn with_feathering_enabled(mut self, enabled: bool) -> Self {
@@ -330,88 +342,14 @@ impl HeadlessPlatform {
                         .unwrap_or(0.0),
                 );
 
-                let runtime_started = Instant::now();
-                let output = runtime.render(window_id)?;
-                let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
-                let renderer_started = Instant::now();
-                let diagnostics_enabled =
-                    window_scene_statistics_detail_mode(window_id).is_detailed();
                 self.renderer
-                    .set_runtime_diagnostics_enabled(diagnostics_enabled);
-                let render_options = window_render_options(window_id);
-                self.renderer
-                    .set_runtime_feathering_override(render_options.map(|options| {
-                        FeatheringOptions::new(options.feathering_enabled, options.feather_width)
-                    }));
-                self.renderer.set_runtime_text_hinting_override(
-                    render_options.map(|options| map_window_text_hinting(options.text_hinting)),
-                );
-                self.renderer.set_runtime_stem_darkening_override(
-                    render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
-                );
-                self.renderer.set_runtime_text_coverage_policy_override(
-                    render_options.map(|options| {
-                        map_window_text_coverage_policy(options.text_coverage_policy)
-                    }),
-                );
-                self.renderer
-                    .set_runtime_text_subpixel_order_override(render_options.map(|options| {
-                        map_window_text_subpixel_order(options.text_subpixel_order)
-                    }));
-                let active_render_options =
-                    render_options.unwrap_or_else(|| WindowRenderOptions::new(false, 0.0));
-                let display_capabilities_for_brightness = self
-                    .renderer
-                    .window_display_capabilities(window_id)
-                    .unwrap_or_default();
-                let sdr_content_brightness_nits = resolve_sdr_content_brightness_nits(
-                    active_render_options.sdr_content_brightness_nits,
-                    active_render_options.use_system_sdr_content_brightness,
-                    &display_capabilities_for_brightness,
-                );
-                self.renderer.set_window_color_management(
-                    window_id,
-                    map_window_color_management(
-                        active_render_options.color_management_mode,
-                        active_render_options.output_color_primaries,
-                        active_render_options.dynamic_range_mode,
-                        active_render_options.tone_mapping_mode,
-                        sdr_content_brightness_nits,
-                    ),
-                )?;
-                self.renderer.render(&output.frame)?;
-                let mut display_capabilities = self
-                    .renderer
-                    .window_display_capabilities(window_id)
-                    .unwrap_or_default();
-                if !display_capabilities.notes.is_empty() {
-                    display_capabilities.notes.push(' ');
-                }
-                display_capabilities
-                    .notes
-                    .push_str("Headless offscreen renderer.");
-                let system_sdr_content_brightness_nits = display_capabilities.sdr_white_nits;
-                publish_window_output_diagnostics(
-                    window_id,
-                    WindowOutputDiagnostics {
-                        display_capabilities,
-                        requested_color_management_mode: active_render_options
-                            .color_management_mode,
-                        requested_output_primaries: active_render_options.output_color_primaries,
-                        requested_dynamic_range_mode: active_render_options.dynamic_range_mode,
-                        requested_tone_mapping_mode: active_render_options.tone_mapping_mode,
-                        requested_sdr_content_brightness_nits: sdr_content_brightness_nits,
-                        configured_sdr_content_brightness_nits: active_render_options
-                            .sdr_content_brightness_nits,
-                        system_sdr_content_brightness_nits,
-                        use_system_sdr_content_brightness: active_render_options
-                            .use_system_sdr_content_brightness,
-                        active_output_strategy: OutputStrategy::SdrSurface {
-                            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                        },
-                    },
-                );
-                let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+                    .set_window_display_capabilities(window_id, self.display_capabilities())?;
+                let PresentedFrame {
+                    output,
+                    runtime_time_ms,
+                    renderer_time_ms,
+                    ..
+                } = present_window_frame(runtime, &mut self.renderer, window_id)?;
                 let presented_at_ms = self.current_time() * 1000.0;
                 presentation_latency.event_to_present_ms = self.windows[window_index]
                     .last_non_redraw_event_at_ms
@@ -880,6 +818,91 @@ mod tests {
         assert_eq!(
             seen.borrow().last().copied().flatten(),
             Some(WindowToneMappingMode::Reinhard)
+        );
+        Ok(())
+    }
+
+    /// Paints its bounds SDR white.
+    struct White;
+
+    impl Widget for White {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(32.0, 16.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            ctx.fill_bounds(Color::WHITE);
+        }
+    }
+
+    fn white_window() -> Result<(Runtime, sui_core::WindowId)> {
+        let runtime = Application::new()
+            .window(WindowBuilder::new().title("Display").root(White))
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        Ok((runtime, window_id))
+    }
+
+    #[test]
+    fn headless_windows_render_for_the_display_they_are_given() -> Result<()> {
+        use sui_render_wgpu::{
+            DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+            DisplayCapabilities, OutputStrategy,
+        };
+        use sui_runtime::{OutputColorRange, window_output_color_range};
+
+        // Without a display, windows render for SDR.
+        let (mut runtime, window_id) = white_window()?;
+        let _ = HeadlessPlatform::new().run(&mut runtime)?;
+        let diagnostics = crate::window_output_diagnostics(window_id).expect("diagnostics");
+        assert!(matches!(
+            diagnostics.active_output_strategy,
+            OutputStrategy::SdrSurface { .. }
+        ));
+        assert_eq!(
+            window_output_color_range(window_id),
+            Some(OutputColorRange::Standard)
+        );
+
+        // On an HDR display they present extended range, report it, and
+        // capture the final output as scRGB with SDR white at its brightness.
+        let (mut runtime, window_id) = white_window()?;
+        let mut platform = HeadlessPlatform::new()
+            .with_display_capabilities(DisplayCapabilities::hdr(1000.0, 250.0));
+        let _ = platform.run(&mut runtime)?;
+        let diagnostics = crate::window_output_diagnostics(window_id).expect("diagnostics");
+        assert!(
+            matches!(
+                diagnostics.active_output_strategy,
+                OutputStrategy::HdrNativeSurface { .. }
+            ),
+            "{:?}",
+            diagnostics.active_output_strategy
+        );
+        assert_eq!(
+            diagnostics.display_capabilities.max_luminance_nits,
+            Some(1000.0)
+        );
+        assert_eq!(
+            window_output_color_range(window_id),
+            Some(OutputColorRange::HighDynamicRange)
+        );
+        let DebugCaptureArtifact::HdrLinearRgbaF32(image) = platform.capture_debug_frame(
+            window_id,
+            DebugCaptureRequest {
+                stage: DebugCaptureStage::FinalComposed,
+                encoding: DebugCaptureEncoding::Exr,
+                ..Default::default()
+            },
+        )?
+        else {
+            panic!("an HDR final output is linear floating point");
+        };
+        let white = diagnostics.requested_sdr_content_brightness_nits / 80.0;
+        assert!(
+            (image.pixels()[0] - white).abs() < 0.01,
+            "SDR white is {white} in scRGB, got {}",
+            image.pixels()[0]
         );
         Ok(())
     }

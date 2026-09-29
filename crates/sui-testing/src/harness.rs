@@ -14,21 +14,17 @@ use sui_core::{
     WindowEvent, WindowId,
 };
 use sui_platform::{
-    AccessibilitySnapshot, HeadlessPlatform, WindowOutputDiagnostics,
-    detect_window_display_capabilities, has_pending_window_debug_captures,
-    publish_frame_performance, publish_window_output_diagnostics,
-    resolve_sdr_content_brightness_nits, service_window_debug_captures,
+    AccessibilitySnapshot, HeadlessPlatform, PresentedFrame, clear_window_output_diagnostics,
+    detect_window_display_capabilities, has_pending_window_debug_captures, present_window_frame,
+    publish_frame_performance, service_window_debug_captures,
 };
 use sui_render_wgpu::{
-    ColorManagementMode, DebugCaptureArtifact, DebugCaptureRequest, FeatheringOptions,
-    RequestedColorManagementMode, RequestedDynamicRangeMode, RequestedOutputColorPrimaries,
-    RequestedToneMappingMode, WgpuExternalTextureRegistry, WgpuRenderer,
+    DebugCaptureArtifact, DebugCaptureRequest, DisplayCapabilities, WgpuExternalTextureRegistry,
+    WgpuRenderer,
 };
 use sui_runtime::{
     FocusState, PresentationLatencyDiagnostics, Runtime, WidgetGraphSnapshot,
-    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowPerformanceSnapshot, WindowToneMappingMode, clear_window_performance_snapshots,
-    window_performance_snapshot, window_render_options, window_scene_statistics_detail_mode,
+    WindowPerformanceSnapshot, clear_window_performance_snapshot, window_performance_snapshot,
 };
 use winit::{
     application::ApplicationHandler,
@@ -51,43 +47,6 @@ const LIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const LIVE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const HEADLESS_IDLE_TIMEOUT_CONTEXT: &str = "headless harness idle";
 const HEADLESS_PUMP_TIMEOUT_CONTEXT: &str = "headless harness frame pump";
-
-fn map_window_color_management_for_harness(
-    mode: WindowColorManagementMode,
-    primaries: WindowOutputColorPrimaries,
-    dynamic_range: WindowDynamicRangeMode,
-    tone_mapping: WindowToneMappingMode,
-    sdr_content_brightness_nits: f32,
-) -> ColorManagementMode {
-    ColorManagementMode {
-        mode: match mode {
-            WindowColorManagementMode::Automatic => RequestedColorManagementMode::Automatic,
-            WindowColorManagementMode::ForceSdr => RequestedColorManagementMode::ForceSdr,
-            WindowColorManagementMode::PreferWideGamut => {
-                RequestedColorManagementMode::PreferWideGamut
-            }
-            WindowColorManagementMode::PreferHdr => RequestedColorManagementMode::PreferHdr,
-        },
-        output_primaries: match primaries {
-            WindowOutputColorPrimaries::Automatic => RequestedOutputColorPrimaries::Automatic,
-            WindowOutputColorPrimaries::Srgb => RequestedOutputColorPrimaries::Srgb,
-            WindowOutputColorPrimaries::DisplayP3 => RequestedOutputColorPrimaries::DisplayP3,
-        },
-        dynamic_range: match dynamic_range {
-            WindowDynamicRangeMode::Automatic => RequestedDynamicRangeMode::Automatic,
-            WindowDynamicRangeMode::StandardDynamicRange => {
-                RequestedDynamicRangeMode::StandardDynamicRange
-            }
-            WindowDynamicRangeMode::HighDynamicRange => RequestedDynamicRangeMode::HighDynamicRange,
-        },
-        tone_mapping: match tone_mapping {
-            WindowToneMappingMode::Automatic => RequestedToneMappingMode::Automatic,
-            WindowToneMappingMode::Clamp => RequestedToneMappingMode::Clamp,
-            WindowToneMappingMode::Reinhard => RequestedToneMappingMode::Reinhard,
-        },
-        sdr_content_brightness_nits,
-    }
-}
 
 pub(crate) struct Harness {
     backend: HarnessBackend,
@@ -258,12 +217,31 @@ impl Harness {
         runtime: Runtime,
         default_timeout: f64,
     ) -> Result<Self> {
+        Self::new_headless_with_platform(runtime, HeadlessPlatform::new(), default_timeout)
+    }
+
+    /// A headless harness whose windows render for a display with
+    /// `capabilities`.
+    pub(crate) fn new_headless_with_display(
+        runtime: Runtime,
+        capabilities: DisplayCapabilities,
+        default_timeout: f64,
+    ) -> Result<Self> {
+        Self::new_headless_with_platform(
+            runtime,
+            HeadlessPlatform::new().with_display_capabilities(capabilities),
+            default_timeout,
+        )
+    }
+
+    fn new_headless_with_platform(
+        runtime: Runtime,
+        platform: HeadlessPlatform,
+        default_timeout: f64,
+    ) -> Result<Self> {
         sui_runtime::reset_motion_settings();
         let mut harness = Self {
-            backend: HarnessBackend::Headless(HeadlessHarness {
-                runtime,
-                platform: HeadlessPlatform::new(),
-            }),
+            backend: HarnessBackend::Headless(HeadlessHarness { runtime, platform }),
             default_timeout,
         };
         harness.run_until_idle()?;
@@ -780,6 +758,12 @@ impl LiveHarnessApp {
     }
 
     fn reset_runtime_state(&mut self) {
+        // Forget only this harness's windows: tests running alongside keep
+        // theirs in the same stores.
+        for window_id in self.runtime.window_ids() {
+            clear_window_performance_snapshot(window_id);
+            clear_window_output_diagnostics(window_id);
+        }
         for window_id in self.windows.keys().copied().collect::<Vec<_>>() {
             self.renderer.remove_window(window_id);
         }
@@ -790,7 +774,6 @@ impl LiveHarnessApp {
         self.started_at = Instant::now();
         self.frame_clock = 0.0;
         self.synchronous_flush_time = None;
-        clear_window_performance_snapshots();
     }
 
     fn take_last_error(&mut self) -> Result<()> {
@@ -1096,15 +1079,6 @@ impl LiveHarnessApp {
                     );
                 }
 
-                let runtime_started = Instant::now();
-                let output = self.runtime.render(window_id)?;
-                let runtime_time_ms = runtime_started.elapsed().as_secs_f64() * 1000.0;
-                let renderer_started = Instant::now();
-                let diagnostics_enabled =
-                    window_scene_statistics_detail_mode(window_id).is_detailed();
-                self.renderer
-                    .set_runtime_diagnostics_enabled(diagnostics_enabled);
-                let render_options = window_render_options(window_id);
                 let display_capabilities = self
                     .windows
                     .get(&window_id)
@@ -1112,63 +1086,12 @@ impl LiveHarnessApp {
                     .unwrap_or_default();
                 self.renderer
                     .set_window_display_capabilities(window_id, display_capabilities)?;
-                self.renderer
-                    .set_runtime_feathering_override(render_options.map(|options| {
-                        FeatheringOptions::new(options.feathering_enabled, options.feather_width)
-                    }));
-                let active_render_options = render_options
-                    .unwrap_or_else(|| sui_runtime::WindowRenderOptions::new(true, 1.0));
-                let display_capabilities_for_brightness = self
-                    .renderer
-                    .window_display_capabilities(window_id)
-                    .unwrap_or_default();
-                let sdr_content_brightness_nits = resolve_sdr_content_brightness_nits(
-                    active_render_options.sdr_content_brightness_nits,
-                    active_render_options.use_system_sdr_content_brightness,
-                    &display_capabilities_for_brightness,
-                );
-                self.renderer.set_window_color_management(
-                    window_id,
-                    map_window_color_management_for_harness(
-                        active_render_options.color_management_mode,
-                        active_render_options.output_color_primaries,
-                        active_render_options.dynamic_range_mode,
-                        active_render_options.tone_mapping_mode,
-                        sdr_content_brightness_nits,
-                    ),
-                )?;
-                self.renderer.render(&output.frame)?;
-                if let (Some(mut display_capabilities), Some(active_output_strategy)) = (
-                    self.renderer.window_display_capabilities(window_id),
-                    self.renderer.window_output_strategy(window_id),
-                ) {
-                    if let Some(formats) = self.renderer.window_surface_formats(window_id) {
-                        display_capabilities
-                            .notes
-                            .push_str(&format!(" Surface formats: {:?}.", formats));
-                    }
-                    let system_sdr_content_brightness_nits = display_capabilities.sdr_white_nits;
-                    publish_window_output_diagnostics(
-                        window_id,
-                        WindowOutputDiagnostics {
-                            display_capabilities,
-                            requested_color_management_mode: active_render_options
-                                .color_management_mode,
-                            requested_output_primaries: active_render_options
-                                .output_color_primaries,
-                            requested_dynamic_range_mode: active_render_options.dynamic_range_mode,
-                            requested_tone_mapping_mode: active_render_options.tone_mapping_mode,
-                            requested_sdr_content_brightness_nits: sdr_content_brightness_nits,
-                            configured_sdr_content_brightness_nits: active_render_options
-                                .sdr_content_brightness_nits,
-                            system_sdr_content_brightness_nits,
-                            use_system_sdr_content_brightness: active_render_options
-                                .use_system_sdr_content_brightness,
-                            active_output_strategy,
-                        },
-                    );
-                }
-                let renderer_time_ms = renderer_started.elapsed().as_secs_f64() * 1000.0;
+                let PresentedFrame {
+                    output,
+                    runtime_time_ms,
+                    renderer_time_ms,
+                    ..
+                } = present_window_frame(&mut self.runtime, &mut self.renderer, window_id)?;
                 let presented_at_ms = self.current_time_ms();
                 if let Some(window) = self.windows.get(&window_id) {
                     presentation_latency.event_to_present_ms = window

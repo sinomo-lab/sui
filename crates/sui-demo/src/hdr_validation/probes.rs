@@ -4,7 +4,7 @@
 use sui::prelude::*;
 use sui::{
     Brush, ColorSpace, DisplayColorPrimaries, GradientStop, Rect, SemanticsNode, SemanticsRole,
-    SemanticsValue, TextStyle, WidgetId, fit_to_sdr, paint_single_line_aligned_text,
+    SemanticsValue, TextStyle, WidgetId, fit_to_sdr, paint_text_line,
 };
 
 use super::live::{FollowedDiagnostics, HighlightFit, OutputSummary};
@@ -174,7 +174,7 @@ impl Widget for SwatchStrip {
                 outline,
                 StrokeStyle::new(2.0),
             );
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(
                     tile.x() - self.gap * 0.5,
@@ -184,8 +184,7 @@ impl Widget for SwatchStrip {
                 ),
                 label,
                 &style,
-                style.line_height,
-                0.5,
+                TextAlign::Center,
             );
         }
     }
@@ -232,6 +231,19 @@ impl HeadroomRamp {
         let (low, high) = Self::octave_span();
         let t = ((multiple.max(f32::MIN_POSITIVE).log2() - low) / (high - low)).clamp(0.0, 1.0);
         bar.x() + t * bar.width()
+    }
+}
+
+/// A slot `width` wide for a label under `x` on `bar`: centered on `x`, or
+/// against the end of the bar it would run past.
+fn label_under(bar: Rect, x: f32, width: f32) -> (f32, f32, TextAlign) {
+    let centered = x - width * 0.5;
+    if centered < bar.x() {
+        (bar.x(), width, TextAlign::Start)
+    } else if centered + width > bar.max_x() {
+        (bar.max_x() - width, width, TextAlign::End)
+    } else {
+        (centered, width, TextAlign::Center)
     }
 }
 
@@ -299,10 +311,8 @@ impl Widget for HeadroomRamp {
             } else {
                 multiple_label(multiple)
             };
-            let width = 96.0;
-            let left = (x - width * 0.5).clamp(bar.x(), (bar.max_x() - width).max(bar.x()));
-            let alignment = (x - left) / width;
-            paint_single_line_aligned_text(
+            let (left, width, align) = label_under(bar, x, 96.0);
+            paint_text_line(
                 ctx,
                 Rect::new(
                     left,
@@ -312,8 +322,7 @@ impl Widget for HeadroomRamp {
                 ),
                 &label,
                 &style,
-                style.line_height,
-                alignment.clamp(0.0, 1.0),
+                align,
             );
         }
 
@@ -328,9 +337,8 @@ impl Widget for HeadroomRamp {
                 Rect::new(x - 1.0, bar.y() - 2.0, 2.0, bar.height() + 4.0),
                 accent,
             );
-            let width = 200.0;
-            let left = (x - width * 0.5).clamp(bar.x(), (bar.max_x() - width).max(bar.x()));
-            paint_single_line_aligned_text(
+            let (left, width, align) = label_under(bar, x, 200.0);
+            paint_text_line(
                 ctx,
                 Rect::new(
                     left,
@@ -340,8 +348,7 @@ impl Widget for HeadroomRamp {
                 ),
                 &format!("display peak ≈ {headroom:.1}×"),
                 &style,
-                style.line_height,
-                ((x - left) / width).clamp(0.0, 1.0),
+                align,
             );
         }
     }
@@ -456,7 +463,7 @@ impl Widget for HighlightCurvePlot {
             Rect::new(plot.x(), white_y - 0.5, plot.width(), 1.0),
             theme.palette.border,
         );
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 bounds.x(),
@@ -466,11 +473,10 @@ impl Widget for HighlightCurvePlot {
             ),
             "1×",
             &style,
-            style.line_height,
-            1.0,
+            TextAlign::End,
         );
         if y_range > 1.5 {
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(
                     bounds.x(),
@@ -480,8 +486,7 @@ impl Widget for HighlightCurvePlot {
                 ),
                 &format!("{:.0}×", y_range / 1.05),
                 &style,
-                style.line_height,
-                1.0,
+                TextAlign::End,
             );
         }
 
@@ -524,7 +529,7 @@ impl Widget for HighlightCurvePlot {
             }
             ctx.stroke(path.build(), *color, StrokeStyle::new(2.0));
         }
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 plot.x(),
@@ -534,8 +539,7 @@ impl Widget for HighlightCurvePlot {
             ),
             "Input brightness, ⅛× to 16× (log scale). Thick: output channels. Faint: clamping each channel instead.",
             &style,
-            style.line_height,
-            0.0,
+            TextAlign::Start,
         );
 
         // The same sweep as colors: sent unfitted, and fitted on the CPU.
@@ -563,7 +567,7 @@ impl Widget for HighlightCurvePlot {
                     fill,
                 );
             }
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(
                     strip.x(),
@@ -573,8 +577,7 @@ impl Widget for HighlightCurvePlot {
                 ),
                 title,
                 &style,
-                style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             y = strip.max_y() + 2.0 + style.line_height + LABEL_GAP;
         }
@@ -645,18 +648,17 @@ impl Widget for HueFitGrid {
         for (column, multiple) in HUE_GRID_MULTIPLES.iter().enumerate() {
             let x =
                 bounds.x() + Self::ROW_LABEL_WIDTH + column as f32 * (Self::CELL.width + Self::GAP);
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(x, bounds.y(), Self::CELL.width, style.line_height),
                 &multiple_label(*multiple),
                 &style,
-                style.line_height,
-                0.5,
+                TextAlign::Center,
             );
         }
         for (row, (name, hue)) in HUE_GRID_HUES.iter().enumerate() {
             let y = top + row as f32 * (Self::CELL.height + Self::GAP);
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(
                     bounds.x(),
@@ -666,8 +668,7 @@ impl Widget for HueFitGrid {
                 ),
                 name,
                 &style,
-                Self::CELL.height,
-                0.0,
+                TextAlign::Start,
             );
             for (column, multiple) in HUE_GRID_MULTIPLES.iter().enumerate() {
                 let x = bounds.x()
@@ -786,7 +787,7 @@ impl Widget for GamutSplitTiles {
             // output; the only seam should be the gamut difference.
             ctx.fill_rect(tile, clipped_to_srgb(p3, summary));
             ctx.fill_rect(right, p3);
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(
                     tile.x(),
@@ -796,8 +797,7 @@ impl Widget for GamutSplitTiles {
                 ),
                 name,
                 &style,
-                style.line_height,
-                0.5,
+                TextAlign::Center,
             );
         }
     }
@@ -976,7 +976,7 @@ impl Widget for ChromaticityDiagram {
             }
         }
 
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 bounds.x(),
@@ -990,8 +990,7 @@ impl Widget for ChromaticityDiagram {
                 "Bold: sRGB, this output's gamut. Thin: Display P3."
             },
             &style,
-            style.line_height,
-            0.0,
+            TextAlign::Start,
         );
     }
 
@@ -1082,13 +1081,12 @@ impl Widget for GradientRamps {
         let outline = outline_color(&self.theme_reader);
         for (index, (label, fill)) in self.ramps.iter().enumerate() {
             let y = bounds.y() + index as f32 * (Self::RAMP_HEIGHT + Self::GAP);
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(bounds.x(), y, Self::LABEL_WIDTH - 12.0, Self::RAMP_HEIGHT),
                 label,
                 &style,
-                Self::RAMP_HEIGHT,
-                0.0,
+                TextAlign::Start,
             );
             let ramp = Rect::new(
                 bounds.x() + Self::LABEL_WIDTH,

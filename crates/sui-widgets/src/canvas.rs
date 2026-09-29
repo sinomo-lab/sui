@@ -16,9 +16,9 @@ use sui_runtime::{
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
-use sui_text::{FontFeature, TextMeasurement, TextStyle};
+use sui_text::{FontFeature, TextAlign, TextMeasurement, TextStyle};
 
-use crate::{DefaultTheme, text_align::paint_aligned_text};
+use crate::{DefaultTheme, text_align::paint_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const MIN_CANVAS_GRID_SCREEN_SPACING: f32 = 12.0;
@@ -3555,13 +3555,12 @@ fn paint_canvas_ruler_label(
 
     if measurement.width <= slot.width() {
         let width = measurement.width.min(slot.width()).max(0.0);
-        paint_aligned_text(
+        paint_text(
             ctx,
             Rect::new(slot.x(), slot.y(), width, slot.height()),
             &label,
             &style,
-            style.line_height,
-            0.0,
+            TextAlign::Start,
         );
     }
 }

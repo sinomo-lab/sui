@@ -10,6 +10,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
 };
+use sui_text::TextAlign;
 
 use sui_core::{
     Event, KeyState, Point, PointerButton, PointerEventKind, Rect, SemanticsAction,
@@ -23,7 +24,7 @@ use sui_runtime::{
 };
 use sui_scene::StrokeStyle;
 
-use crate::{DefaultTheme, text_align::paint_single_line_aligned_text};
+use crate::{DefaultTheme, text_align::paint_text_line};
 
 const MAX_DOCK_DEPTH: usize = 64;
 const MAX_DOCK_NODES: usize = 4_096;
@@ -1819,7 +1820,7 @@ impl DockWorkspace {
             });
             let text_rect = tab.bounds.inflate(-8.0, -2.0);
             ctx.push_clip_rect(text_rect);
-            paint_single_line_aligned_text(ctx, text_rect, label, &style, style.line_height, 0.0);
+            paint_text_line(ctx, text_rect, label, &style, TextAlign::Start);
             ctx.pop_clip();
         }
 
@@ -1865,7 +1866,7 @@ impl DockWorkspace {
         let style = theme.text_style(theme.palette.text);
         let text_bounds = inset_rect(bounds, 8.0);
         ctx.push_clip_rect(text_bounds);
-        paint_single_line_aligned_text(ctx, text_bounds, text, &style, style.line_height, 0.0);
+        paint_text_line(ctx, text_bounds, text, &style, TextAlign::Start);
         ctx.pop_clip();
     }
 }

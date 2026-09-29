@@ -12,8 +12,8 @@ use crate::composites::indicators::{
 };
 use crate::composites::painting::{EmptyStatePaint, paint_empty_state};
 use crate::controls::draw_icon_glyph;
-use crate::text_align::paint_aligned_text;
 use crate::text_align::paint_aligned_text_contained;
+use crate::text_align::paint_text;
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::KeyState;
@@ -41,8 +41,8 @@ use sui_runtime::WidgetPod;
 use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
 use sui_scene::StrokeStyle;
-use sui_text::TextMeasurement;
 use sui_text::TextStyle;
+use sui_text::{TextAlign, TextMeasurement};
 
 pub struct EmptyState {
     pub(super) theme: Box<DefaultTheme>,
@@ -686,13 +686,12 @@ impl Widget for PresetStrip {
                 ..style.clone()
             };
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 text_slot.translate(Vector::new(0.0, pressed_offset)),
                 preset,
                 &text_style,
-                text_style.line_height,
-                0.5,
+                TextAlign::Center,
             );
             ctx.pop_clip();
         }
@@ -1163,13 +1162,12 @@ impl Widget for StatusBar {
                 rect.height(),
             );
             ctx.push_clip_rect(content_rect);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 content_rect,
                 &segment_text,
                 &segment_style,
-                segment_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             ctx.pop_clip();
         }

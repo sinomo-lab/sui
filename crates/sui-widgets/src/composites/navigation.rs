@@ -15,7 +15,7 @@ use crate::composites::status::{
 };
 use crate::controls::draw_icon_glyph;
 use crate::paint_theme_shadow;
-use crate::text_align::paint_aligned_text;
+use crate::text_align::paint_text;
 use std::sync::Arc;
 use sui_core::Event;
 use sui_core::ImageHandle;
@@ -50,8 +50,8 @@ use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
 use sui_runtime::motion_policy;
 use sui_scene::ImageSource;
-use sui_text::TextMeasurement;
 use sui_text::TextStyle;
+use sui_text::{TextAlign, TextMeasurement};
 
 /// One navigation tab, measured and painted as a single optional-icon + label item.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -696,14 +696,7 @@ impl Widget for TabBar {
             } else {
                 content
             };
-            paint_aligned_text(
-                ctx,
-                label_slot,
-                &tab.label,
-                &text_style,
-                text_style.line_height,
-                0.0,
-            );
+            paint_text(ctx, label_slot, &tab.label, &text_style, TextAlign::Start);
             ctx.pop_clip();
         }
 
@@ -1356,13 +1349,12 @@ impl Widget for BrowserTabBar {
             let color = palette.text_muted;
             let text_style = theme.text_style(color.with_alpha(color.alpha * fade));
             ctx.push_clip_rect(slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 self.label_rect_for(full),
                 &closing.label,
                 &text_style,
-                text_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             ctx.pop_clip();
         }
@@ -1414,13 +1406,12 @@ impl Widget for BrowserTabBar {
             let text_slot = self.label_rect_for(rect);
             let pressed_offset = press_amount * interaction.pressed_offset;
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 text_slot.translate(Vector::new(0.0, pressed_offset)),
                 tab,
                 &text_style,
-                text_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             ctx.pop_clip();
 
@@ -2041,13 +2032,12 @@ impl Widget for SegmentedControl {
             let text_slot = inset_rect(rect, padding);
             let pressed_offset = press_amount * interaction.pressed_offset;
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 text_slot.translate(Vector::new(0.0, pressed_offset)),
                 &segment.label,
                 &text_style,
-                text_style.line_height,
-                0.5,
+                TextAlign::Center,
             );
             ctx.pop_clip();
         }
@@ -2593,13 +2583,12 @@ impl Widget for Tabs {
             let text_slot = inset_rect(rect, tab_padding);
             let pressed_offset = press_amount * interaction.pressed_offset;
             ctx.push_clip_rect(text_slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 text_slot.translate(Vector::new(0.0, pressed_offset)),
                 label,
                 &text_style,
-                text_style.line_height,
-                0.5,
+                TextAlign::Center,
             );
             ctx.pop_clip();
         }

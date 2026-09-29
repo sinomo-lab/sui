@@ -1,5 +1,9 @@
+//! Painting text in a rect: one line, a wrapped paragraph, or a paragraph
+//! laid out during measurement.
+
 use sui_core::{Color, Point, Rect, Size};
-use sui_runtime::{PaintCtx, window_render_options};
+use sui_layout::LayoutContext;
+use sui_runtime::{MeasureCtx, PaintCtx, window_render_options};
 use sui_text::{
     TextAlign, TextDocument, TextLayout, TextLayoutRequest, TextMeasurement, TextStyle, TextWrap,
 };
@@ -147,29 +151,333 @@ fn aligned_text_layout_for_text_with_mode_and_wrap(
     })
 }
 
-/// Paint text using SUI's shared optical baseline and horizontal alignment path.
+/// Where text goes vertically in the rect it is painted into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VerticalAlign {
+    /// The first line starts at the top.
+    Top,
+    /// A single line centers on its capital letters, or on its ascent when
+    /// optical text centering is off. Several lines center their line boxes,
+    /// so a rect exactly as tall as the text leaves it where it was laid out.
+    #[default]
+    Center,
+    /// The last line ends at the bottom.
+    Bottom,
+}
+
+/// Where text goes in the rect it is painted into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextPlacement {
+    pub horizontal: TextAlign,
+    pub vertical: VerticalAlign,
+}
+
+impl TextPlacement {
+    pub const fn new(horizontal: TextAlign, vertical: VerticalAlign) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+
+    /// At the start, centered vertically: labels in controls.
+    pub const START: Self = Self::new(TextAlign::Start, VerticalAlign::Center);
+    /// Centered both ways.
+    pub const CENTER: Self = Self::new(TextAlign::Center, VerticalAlign::Center);
+    /// At the end, centered vertically.
+    pub const END: Self = Self::new(TextAlign::End, VerticalAlign::Center);
+    /// From the top start corner: running text.
+    pub const TOP_START: Self = Self::new(TextAlign::Start, VerticalAlign::Top);
+}
+
+impl From<TextAlign> for TextPlacement {
+    /// Centered vertically.
+    fn from(horizontal: TextAlign) -> Self {
+        Self::new(horizontal, VerticalAlign::Center)
+    }
+}
+
+/// Where along the rect a line or block goes, from 0 (left) to 1 (right).
+pub(crate) const fn alignment_fraction(align: TextAlign) -> f32 {
+    match align {
+        TextAlign::Start | TextAlign::Left | TextAlign::Justified => 0.0,
+        TextAlign::Center => 0.5,
+        TextAlign::End | TextAlign::Right => 1.0,
+    }
+}
+
+/// Lays text out: implemented by the measure and paint contexts, and by
+/// [`LayoutContext`].
+pub trait TextShaper {
+    fn shape_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout>;
+}
+
+impl TextShaper for LayoutContext {
+    fn shape_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout> {
+        self.layout_document(request)
+    }
+}
+
+impl TextShaper for MeasureCtx {
+    fn shape_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout> {
+        self.layout().layout_document(request)
+    }
+}
+
+impl TextShaper for PaintCtx {
+    fn shape_document(&self, request: TextLayoutRequest) -> sui_core::Result<TextLayout> {
+        self.layout_text_document(request)
+    }
+}
+
+/// Text wrapped to a width and laid out once, to measure and then paint.
 ///
-/// `horizontal_alignment` is clamped to `0.0..=1.0`, where `0.0` is left,
-/// `0.5` is centered, and `1.0` is right aligned. Callers should normally pass
-/// `style.line_height` for `line_height`; the separate argument is retained for
-/// compatibility with controls that constrain a token line-height to their slot.
-pub fn paint_aligned_text(
+/// Lay a paragraph out in `measure` and keep it on the widget. `paint` draws
+/// the layout that was measured, so the painted lines always fit the size the
+/// widget reported.
+///
+/// ```ignore
+/// fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+///     self.paragraph = Paragraph::new(
+///         ctx,
+///         &self.text,
+///         &self.style,
+///         TextAlign::Start,
+///         constraints.max.width,
+///     );
+///     constraints.clamp(self.paragraph.size())
+/// }
+///
+/// fn paint(&self, ctx: &mut PaintCtx) {
+///     self.paragraph.paint(ctx, ctx.bounds(), VerticalAlign::Top);
+/// }
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Paragraph {
+    text: String,
+    style: TextStyle,
+    align: TextAlign,
+    layout: Option<TextLayout>,
+    /// The width lines were aligned in.
+    box_width: f32,
+}
+
+impl Paragraph {
+    /// Lay out `text` wrapped to `max_width`, or unwrapped when it is
+    /// infinite, with each line aligned by `align`.
+    pub fn new(
+        shaper: &(impl TextShaper + ?Sized),
+        text: impl Into<String>,
+        style: &TextStyle,
+        align: TextAlign,
+        max_width: f32,
+    ) -> Self {
+        let text = text.into();
+        let width = if max_width.is_finite() {
+            max_width.max(1.0)
+        } else {
+            f32::INFINITY
+        };
+        let request = |paragraph_align| {
+            // Shape in white and paint in the style's color, so the layout is
+            // shared across colors.
+            let mut layout_style = style.clone();
+            layout_style.color = Color::WHITE;
+            let mut document = TextDocument::from_plain_text(text.clone(), layout_style);
+            for paragraph in &mut document.paragraphs {
+                paragraph.style.align = paragraph_align;
+                paragraph.style.wrap = TextWrap::Word;
+            }
+            TextLayoutRequest::new(document).with_box_size(Size::new(width, f32::INFINITY))
+        };
+        // Lines laid out from the left edge are placed by their ink, which
+        // keeps a single line optically aligned. Several lines aligned
+        // otherwise are aligned by the layout itself.
+        let mut layout = shaper.shape_document(request(TextAlign::Left)).ok();
+        if !matches!(align, TextAlign::Left | TextAlign::Start)
+            && layout
+                .as_ref()
+                .is_some_and(|layout| layout.lines().len() > 1)
+        {
+            layout = shaper.shape_document(request(align)).ok().or(layout);
+        }
+        let box_width = layout
+            .as_ref()
+            .map_or(0.0, |layout| layout.box_size().width);
+        Self {
+            text,
+            style: style.clone(),
+            align,
+            layout,
+            box_width,
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The size the text takes: its widest line by the height of its lines.
+    pub fn size(&self) -> Size {
+        self.layout.as_ref().map_or_else(
+            || Size::new(0.0, self.style.line_height),
+            |layout| {
+                let measurement = layout.measurement();
+                Size::new(measurement.width, measurement.height)
+            },
+        )
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.layout
+            .as_ref()
+            .map_or(0, |layout| layout.lines().len())
+    }
+
+    /// Paint into `rect`, placed vertically by `vertical` and horizontally by
+    /// the alignment the paragraph was laid out with.
+    pub fn paint(&self, ctx: &mut PaintCtx, rect: Rect, vertical: VerticalAlign) {
+        self.paint_with_color(ctx, rect, vertical, self.style.color);
+    }
+
+    /// Paint like [`paint`](Self::paint), in `color` instead of the style's,
+    /// for a color that can change without laying the text out again.
+    pub fn paint_with_color(
+        &self,
+        ctx: &mut PaintCtx,
+        rect: Rect,
+        vertical: VerticalAlign,
+        color: Color,
+    ) {
+        let Some(layout) = &self.layout else {
+            if !self.text.is_empty() {
+                let style = TextStyle {
+                    color,
+                    ..self.style.clone()
+                };
+                ctx.draw_text(rect, self.text.clone(), style);
+            }
+            return;
+        };
+        let origin = paragraph_origin(
+            ctx,
+            rect,
+            layout,
+            alignment_fraction(self.align),
+            self.box_width,
+            vertical,
+        );
+        ctx.draw_text_layout_with_color(origin, layout, color);
+    }
+}
+
+/// Where to draw `layout` so it sits in `rect`. Lines laid out from the left
+/// edge are placed by their ink, a single line centers on its capitals, and a
+/// block of lines is placed by its line boxes. A block taller than `rect`
+/// starts at its top, and in a rect with room for one line its first line is
+/// placed like a single line.
+pub(crate) fn paragraph_origin(
+    ctx: &PaintCtx,
+    rect: Rect,
+    layout: &TextLayout,
+    horizontal: f32,
+    box_width: f32,
+    vertical: VerticalAlign,
+) -> Point {
+    let measurement = layout.measurement();
+    let lines = layout.lines();
+    let left_aligned = lines.len() <= 1
+        || layout
+            .paragraphs()
+            .iter()
+            .all(|paragraph| matches!(paragraph.style.align, TextAlign::Left | TextAlign::Start));
+    let x = if left_aligned {
+        horizontal_placement(
+            rect,
+            measurement,
+            horizontal,
+            HorizontalTextAlignmentMode::Optical,
+        )
+        .origin_x
+    } else {
+        rect.x() + (rect.width() - box_width) * horizontal
+    };
+    // A rect with room for one line shows the first line, placed as if it
+    // were alone, so a one-line slot places text the same whether it wraps
+    // or not.
+    let (height, lone_line) = match lines {
+        [line] => (measurement.height, Some(line)),
+        [first, second, ..] if rect.height() < second.rect.max_y() => {
+            (first.rect.max_y(), Some(first))
+        }
+        _ => (measurement.height, None),
+    };
+    let room = (rect.height() - height).max(0.0);
+    let y = match vertical {
+        VerticalAlign::Top => rect.y(),
+        VerticalAlign::Bottom => rect.y() + room,
+        VerticalAlign::Center => match lone_line {
+            Some(line) => {
+                rect.y() + rect.height() * 0.5 - line.baseline - visual_center(ctx, measurement)
+            }
+            None => rect.y() + room * 0.5,
+        },
+    };
+    Point::new(x, y)
+}
+
+/// Paint `text` in `rect`, wrapped to its width and placed by `placement`.
+///
+/// Pass a [`TextAlign`] for text centered vertically, or a
+/// [`TextPlacement`] to place it at the top or bottom. To measure text
+/// before painting it, lay it out as a [`Paragraph`] instead.
+pub fn paint_text(
     ctx: &mut PaintCtx,
     rect: Rect,
     text: &str,
     style: &TextStyle,
-    line_height: f32,
-    horizontal_alignment: f32,
+    placement: impl Into<TextPlacement>,
 ) {
-    paint_aligned_text_with_mode(
+    let placement = placement.into();
+    let paragraph = Paragraph::new(ctx, text, style, placement.horizontal, rect.width());
+    paragraph.paint(ctx, rect, placement.vertical);
+}
+
+/// Paint `text` on one line in `rect`, never wrapping: centered vertically on
+/// its capital letters and placed horizontally by `align`.
+pub fn paint_text_line(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    text: &str,
+    style: &TextStyle,
+    align: TextAlign,
+) {
+    let horizontal = alignment_fraction(align);
+    let horizontal_mode = HorizontalTextAlignmentMode::Optical;
+    if let Some(aligned) = aligned_text_layout_for_text_with_mode_and_wrap(
         ctx,
         rect,
         text,
         style,
-        line_height,
-        horizontal_alignment,
-        HorizontalTextAlignmentMode::Optical,
+        style.line_height,
+        horizontal,
+        horizontal_mode,
+        TextWrap::NoWrap,
+    ) {
+        ctx.draw_text_layout_with_color(aligned.origin, &aligned.layout, aligned.color);
+        return;
+    }
+
+    let fallback_rect = aligned_text_rect_for_text_with_mode(
+        ctx,
+        rect,
+        text,
+        style,
+        style.line_height,
+        horizontal,
+        horizontal_mode,
     );
+    ctx.draw_text(fallback_rect, text.to_string(), style.clone());
 }
 
 pub(crate) fn paint_aligned_text_contained(
@@ -212,40 +520,6 @@ pub(crate) fn paint_aligned_text_contained(
     );
 }
 
-pub(crate) fn paint_aligned_text_with_mode(
-    ctx: &mut PaintCtx,
-    rect: Rect,
-    text: &str,
-    style: &TextStyle,
-    line_height: f32,
-    horizontal_alignment: f32,
-    horizontal_mode: HorizontalTextAlignmentMode,
-) {
-    if let Some(aligned) = aligned_text_layout_for_text_with_mode(
-        ctx,
-        rect,
-        text,
-        style,
-        line_height,
-        horizontal_alignment,
-        horizontal_mode,
-    ) {
-        ctx.draw_text_layout_with_color(aligned.origin, &aligned.layout, aligned.color);
-        return;
-    }
-
-    let fallback_rect = aligned_text_rect_for_text_with_mode(
-        ctx,
-        rect,
-        text,
-        style,
-        line_height,
-        horizontal_alignment,
-        horizontal_mode,
-    );
-    ctx.draw_text(fallback_rect, text.to_string(), style.clone());
-}
-
 fn painted_layout_rect(origin: Point, layout: &TextLayout) -> Rect {
     let measurement = layout.measurement();
     let bounds = measurement.bounds;
@@ -282,41 +556,6 @@ fn containment_offset(inner: Rect, outer: Rect) -> sui_core::Vector {
 }
 
 /// Paint one unwrapped line using SUI's shared optical baseline alignment path.
-pub fn paint_single_line_aligned_text(
-    ctx: &mut PaintCtx,
-    rect: Rect,
-    text: &str,
-    style: &TextStyle,
-    line_height: f32,
-    horizontal_alignment: f32,
-) {
-    let horizontal_mode = HorizontalTextAlignmentMode::Optical;
-    if let Some(aligned) = aligned_text_layout_for_text_with_mode_and_wrap(
-        ctx,
-        rect,
-        text,
-        style,
-        line_height,
-        horizontal_alignment,
-        horizontal_mode,
-        TextWrap::NoWrap,
-    ) {
-        ctx.draw_text_layout_with_color(aligned.origin, &aligned.layout, aligned.color);
-        return;
-    }
-
-    let fallback_rect = aligned_text_rect_for_text_with_mode(
-        ctx,
-        rect,
-        text,
-        style,
-        line_height,
-        horizontal_alignment,
-        horizontal_mode,
-    );
-    ctx.draw_text(fallback_rect, text.to_string(), style.clone());
-}
-
 /// Greedy word-wrap `text` to `max_width`, using `measure` for run widths.
 ///
 /// Explicit newlines are preserved. Words longer than `max_width` are kept on
@@ -476,6 +715,242 @@ fn visual_center(ctx: &PaintCtx, measurement: TextMeasurement) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::wrap_text_lines;
+    use std::{cell::RefCell, rc::Rc};
+
+    use sui_core::{Color, Point, Rect, Size};
+    use sui_layout::Constraints;
+    use sui_runtime::{Application, MeasureCtx, PaintCtx, Widget, WindowBuilder};
+    use sui_scene::SceneCommand;
+    use sui_text::{TextAlign, TextStyle};
+
+    use super::{
+        HorizontalTextAlignmentMode, Paragraph, TextPlacement, VerticalAlign,
+        aligned_text_layout_for_text_with_mode, paint_text,
+    };
+
+    type Paint = Box<dyn Fn(&mut PaintCtx)>;
+    type Measure = Box<dyn Fn(&mut MeasureCtx)>;
+
+    /// A widget that runs `measure` and `paint` callbacks in a 400 × 600 window.
+    struct Probe {
+        measure: Option<Measure>,
+        paint: Paint,
+    }
+
+    impl Widget for Probe {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            if let Some(measure) = &self.measure {
+                measure(ctx);
+            }
+            constraints.clamp(Size::new(400.0, 600.0))
+        }
+
+        fn paint(&self, ctx: &mut PaintCtx) {
+            (self.paint)(ctx);
+        }
+    }
+
+    /// Where each drawn text ended up: its text, its first baseline, the x of
+    /// its layout origin, and its size.
+    #[derive(Debug, Clone, PartialEq)]
+    struct Drawn {
+        text: String,
+        origin: Point,
+        first_baseline: f32,
+        size: Size,
+        line_starts: Vec<f32>,
+    }
+
+    fn render(probe: Probe) -> Vec<Drawn> {
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Text").root(probe))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id).unwrap();
+        let registry = output.frame.text_layout_registry.as_ref();
+        let mut drawn = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawShapedText(text) = command
+                && let Some(layout) = text.resolve(registry)
+            {
+                drawn.push(Drawn {
+                    text: layout.text().to_string(),
+                    origin: text.origin,
+                    first_baseline: text.origin.y + layout.lines()[0].baseline,
+                    size: Size::new(layout.measurement().width, layout.measurement().height),
+                    line_starts: layout.lines().iter().map(|line| line.rect.x()).collect(),
+                });
+            }
+        });
+        drawn
+    }
+
+    fn style() -> TextStyle {
+        TextStyle::new(Color::BLACK)
+    }
+
+    const PARAGRAPH: &str = "several words that wrap onto more than one line of text here";
+
+    #[test]
+    fn a_single_line_is_placed_as_before() {
+        // The previous single-line path, kept for text fields and buttons,
+        // against the new one: same baseline, same optical horizontal place.
+        for (align, fraction) in [
+            (TextAlign::Start, 0.0),
+            (TextAlign::Center, 0.5),
+            (TextAlign::End, 1.0),
+        ] {
+            let drawn = render(Probe {
+                measure: None,
+                paint: Box::new(move |ctx| {
+                    let rect = Rect::new(20.0, 30.0, 300.0, 44.0);
+                    paint_text(ctx, rect, "Label", &style(), align);
+                    let before = aligned_text_layout_for_text_with_mode(
+                        ctx,
+                        rect.translate(sui_core::Vector::new(0.0, 100.0)),
+                        "Label",
+                        &style(),
+                        style().line_height,
+                        fraction,
+                        HorizontalTextAlignmentMode::Optical,
+                    )
+                    .unwrap();
+                    ctx.draw_text_layout_with_color(before.origin, &before.layout, Color::BLACK);
+                }),
+            });
+            let [now, before] = &drawn[..] else {
+                panic!("two texts are drawn: {drawn:?}");
+            };
+            assert!(
+                (now.origin.x - before.origin.x).abs() < 0.001,
+                "{align:?}: {now:?} vs {before:?}"
+            );
+            assert!(
+                (now.first_baseline + 100.0 - before.first_baseline).abs() < 0.001,
+                "{align:?}: {now:?} vs {before:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn several_lines_are_placed_as_a_block() {
+        let rect = Rect::new(10.0, 20.0, 160.0, 300.0);
+        let placed = |vertical| {
+            render(Probe {
+                measure: None,
+                paint: Box::new(move |ctx| {
+                    paint_text(
+                        ctx,
+                        rect,
+                        PARAGRAPH,
+                        &style(),
+                        TextPlacement::new(TextAlign::Start, vertical),
+                    );
+                }),
+            })
+            .remove(0)
+        };
+
+        let top = placed(VerticalAlign::Top);
+        assert!(top.line_starts.len() > 2, "{top:?}");
+        let height = top.size.height;
+        assert!((top.origin.y - rect.y()).abs() < 0.001, "{top:?}");
+        let center = placed(VerticalAlign::Center);
+        assert!(
+            (center.origin.y - (rect.y() + (rect.height() - height) * 0.5)).abs() < 0.001,
+            "{center:?}"
+        );
+        let bottom = placed(VerticalAlign::Bottom);
+        assert!(
+            (bottom.origin.y - (rect.max_y() - height)).abs() < 0.001,
+            "{bottom:?}"
+        );
+
+        // A block taller than its rect starts at the top instead of rising
+        // above it.
+        let shorter = Rect::new(10.0, 20.0, 160.0, height * 0.9);
+        let overflowing = render(Probe {
+            measure: None,
+            paint: Box::new(move |ctx| {
+                paint_text(ctx, shorter, PARAGRAPH, &style(), TextAlign::Start);
+            }),
+        })
+        .remove(0);
+        assert!(
+            (overflowing.origin.y - shorter.y()).abs() < 0.001,
+            "{overflowing:?}"
+        );
+
+        // In a rect with room for one line, the first line sits where it
+        // would on its own.
+        let one_line = Rect::new(10.0, 20.0, 160.0, 12.0);
+        let drawn = render(Probe {
+            measure: None,
+            paint: Box::new(move |ctx| {
+                paint_text(ctx, one_line, PARAGRAPH, &style(), TextAlign::Start);
+                paint_text(ctx, one_line, "several", &style(), TextAlign::Start);
+            }),
+        });
+        let [wrapped, alone] = &drawn[..] else {
+            panic!("two texts are drawn: {drawn:?}");
+        };
+        assert!(wrapped.line_starts.len() > 1, "{wrapped:?}");
+        assert!(
+            (wrapped.first_baseline - alone.first_baseline).abs() < 0.001,
+            "{wrapped:?} vs {alone:?}"
+        );
+    }
+
+    #[test]
+    fn centered_lines_are_centered_one_by_one() {
+        let drawn = render(Probe {
+            measure: None,
+            paint: Box::new(|ctx| {
+                paint_text(
+                    ctx,
+                    Rect::new(0.0, 0.0, 160.0, 300.0),
+                    PARAGRAPH,
+                    &style(),
+                    TextAlign::Center,
+                );
+            }),
+        })
+        .remove(0);
+        let first = drawn.line_starts[0];
+        assert!(
+            drawn
+                .line_starts
+                .iter()
+                .any(|start| (start - first).abs() > 1.0),
+            "lines of different widths start at different places: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn a_paragraph_paints_the_layout_it_measured() {
+        let measured = Rc::new(RefCell::new(Paragraph::default()));
+        let laid_out = Rc::clone(&measured);
+        let painted = Rc::clone(&measured);
+        let drawn = render(Probe {
+            measure: Some(Box::new(move |ctx| {
+                *laid_out.borrow_mut() =
+                    Paragraph::new(ctx, PARAGRAPH, &style(), TextAlign::Start, 160.0);
+            })),
+            paint: Box::new(move |ctx| {
+                let paragraph = painted.borrow();
+                let rect = Rect::from_origin_size(Point::new(5.0, 7.0), paragraph.size());
+                paragraph.paint(ctx, rect, VerticalAlign::Top);
+            }),
+        })
+        .remove(0);
+
+        let paragraph = measured.borrow();
+        assert!(paragraph.line_count() > 2);
+        assert_eq!(drawn.text, PARAGRAPH);
+        assert_eq!(drawn.size, paragraph.size());
+        assert!((drawn.origin.y - 7.0).abs() < 0.001, "{drawn:?}");
+    }
 
     #[test]
     fn wrap_text_lines_preserves_newlines_and_keeps_long_words() {

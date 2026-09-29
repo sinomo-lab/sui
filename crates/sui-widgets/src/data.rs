@@ -31,7 +31,7 @@ use crate::{
     },
     containers::{ScrollAxes, ScrollState},
     controls::{IconGlyph, draw_icon_glyph},
-    text_align::{paint_aligned_text, vertically_centered_text_rect_y},
+    text_align::{paint_text, vertically_centered_text_rect_y},
 };
 
 pub struct ListItem {
@@ -805,14 +805,7 @@ impl Widget for ListView {
                 let leading_measurement = paint_text_measurement(ctx, leading, &leading_style);
                 let leading_slot =
                     Rect::new(text_x, row.y(), leading_measurement.width, row.height());
-                paint_aligned_text(
-                    ctx,
-                    leading_slot,
-                    leading,
-                    &leading_style,
-                    leading_style.line_height,
-                    0.0,
-                );
+                paint_text(ctx, leading_slot, leading, &leading_style, TextAlign::Start);
                 text_x += leading_measurement.width + metrics.data_row_icon_gap;
             }
 
@@ -873,7 +866,7 @@ impl Widget for ListView {
             if let (Some(trailing), Some(rect)) = (&item.trailing, trailing_rect) {
                 let style = detail_style.clone();
                 ctx.push_clip_rect(rect);
-                paint_aligned_text(ctx, rect, trailing, &style, style.line_height, 1.0);
+                paint_text(ctx, rect, trailing, &style, TextAlign::End);
                 ctx.pop_clip();
             }
         }
@@ -3050,6 +3043,17 @@ pub enum TableColumnAlignment {
     Start,
     Center,
     End,
+}
+
+impl TableColumnAlignment {
+    /// How text in the column's cells is aligned.
+    pub const fn text_align(self) -> TextAlign {
+        match self {
+            Self::Start => TextAlign::Start,
+            Self::Center => TextAlign::Center,
+            Self::End => TextAlign::End,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5769,20 +5773,8 @@ fn draw_aligned_text(
     style: &TextStyle,
     alignment: TableColumnAlignment,
 ) {
-    let horizontal_alignment = match alignment {
-        TableColumnAlignment::Start => 0.0,
-        TableColumnAlignment::Center => 0.5,
-        TableColumnAlignment::End => 1.0,
-    };
     ctx.push_clip_rect(rect);
-    paint_aligned_text(
-        ctx,
-        rect,
-        text,
-        style,
-        style.line_height,
-        horizontal_alignment,
-    );
+    paint_text(ctx, rect, text, style, alignment.text_align());
     ctx.pop_clip();
 }
 
@@ -6121,14 +6113,7 @@ pub fn paint_leading_label_cell(
     label_style.weight = style.label_weight;
 
     ctx.push_clip_rect(label_rect);
-    paint_aligned_text(
-        ctx,
-        label_rect,
-        label,
-        &label_style,
-        label_style.line_height,
-        0.0,
-    );
+    paint_text(ctx, label_rect, label, &label_style, TextAlign::Start);
     ctx.pop_clip();
 }
 
@@ -6218,17 +6203,12 @@ pub fn paint_text_cell(
     }
 
     ctx.push_clip_rect(content);
-    paint_aligned_text(
+    paint_text(
         ctx,
         content,
         text,
         &text_style,
-        text_style.line_height,
-        match style.alignment {
-            TableColumnAlignment::Start => 0.0,
-            TableColumnAlignment::Center => 0.5,
-            TableColumnAlignment::End => 1.0,
-        },
+        style.alignment.text_align(),
     );
     ctx.pop_clip();
 }

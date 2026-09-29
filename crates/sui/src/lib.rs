@@ -215,14 +215,15 @@ pub use sui_widgets::{
     VirtualListSelectionMode, VirtualListState, VirtualTable, VirtualTableColumn,
     VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
     VirtualTableState, VirtualViewportSnapshot, WidgetColorRole, WidgetEffectRole,
-    WidgetLuminanceRole, WidgetMaterialRole, detail_row_height_for_value, paint_aligned_text,
-    paint_canvas_grid, paint_coverage_dots, paint_coverage_dots_with_config, paint_detail_row_at,
-    paint_leading_label_cell, paint_placement_badge, paint_progress_bar,
-    paint_single_line_aligned_text, paint_status_badge, paint_text_block, paint_text_cell,
-    paint_theme_shadow, place_overlay, resolve_effect_role, resolve_luminance_role,
-    resolve_material_role, resolve_semantic_color, resolve_widget_hdr_style, wrap_text_lines,
+    WidgetLuminanceRole, WidgetMaterialRole, detail_row_height_for_value, paint_canvas_grid,
+    paint_coverage_dots, paint_coverage_dots_with_config, paint_detail_row_at,
+    paint_leading_label_cell, paint_placement_badge, paint_progress_bar, paint_status_badge,
+    paint_text, paint_text_block, paint_text_cell, paint_text_line, paint_theme_shadow,
+    place_overlay, resolve_effect_role, resolve_luminance_role, resolve_material_role,
+    resolve_semantic_color, resolve_widget_hdr_style, wrap_text_lines,
 };
 pub use sui_widgets::{KeyedStack, Presence, PresenceTransition};
+pub use sui_widgets::{Paragraph, TextPlacement, TextShaper, VerticalAlign};
 
 /// Marker trait for type-indexed application theme extensions.
 pub trait ThemeExtension: Any + Send + Sync {}
@@ -806,9 +807,10 @@ pub mod prelude {
         paint_disclosure_button, paint_empty_state, paint_hairline, paint_icon_button,
         paint_leading_label_cell, paint_placement_badge_with, paint_rounded_panel,
         paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
-        paint_text_block, paint_text_cell, place_overlay, register_builtin_icon_resources,
-        set_window_render_options, wrap_text_lines,
+        paint_text, paint_text_block, paint_text_cell, paint_text_line, place_overlay,
+        register_builtin_icon_resources, set_window_render_options, wrap_text_lines,
     };
+    pub use crate::{Paragraph, TextAlign, TextPlacement, TextShaper, VerticalAlign};
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use sui::prelude::*;
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, PointerButton,
     PointerEventKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
-    Vector, WidgetPodMutVisitor, WidgetPodVisitor, paint_single_line_aligned_text,
+    Vector, WidgetPodMutVisitor, WidgetPodVisitor, paint_text_line,
 };
 
 use super::page::{
@@ -703,14 +703,7 @@ impl Widget for NavEntry {
                     (row.width() - Self::STORY_INDENT - 36.0).max(0.0),
                     row.height(),
                 );
-                paint_single_line_aligned_text(
-                    ctx,
-                    label,
-                    category.title(),
-                    &style,
-                    style.line_height,
-                    0.0,
-                );
+                paint_text_line(ctx, label, category.title(), &style, TextAlign::Start);
                 let query = self.nav.state.borrow().query.clone();
                 let count = stories_in(category)
                     .filter(|story| story.matches(&query))
@@ -718,13 +711,12 @@ impl Widget for NavEntry {
                 let count_style =
                     demo_text_style(theme, DemoTextRole::Metadata, palette.text_muted);
                 let count_rect = Rect::new(row.max_x() - 40.0, row.y(), 32.0, row.height());
-                paint_single_line_aligned_text(
+                paint_text_line(
                     ctx,
                     count_rect,
                     &count.to_string(),
                     &count_style,
-                    count_style.line_height,
-                    1.0,
+                    TextAlign::End,
                 );
             }
             NavTarget::Story(story) => {
@@ -740,14 +732,7 @@ impl Widget for NavEntry {
                     (row.width() - Self::STORY_INDENT - 8.0).max(0.0),
                     row.height(),
                 );
-                paint_single_line_aligned_text(
-                    ctx,
-                    label,
-                    story.title,
-                    &style,
-                    style.line_height,
-                    0.0,
-                );
+                paint_text_line(ctx, label, story.title, &style, TextAlign::Start);
             }
         }
     }

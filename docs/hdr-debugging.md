@@ -46,6 +46,30 @@ colors. Wide-gamut colors arrive with negative channels in the working space
 (extended linear sRGB); scRGB outputs keep them, and other outputs clip them
 after the conversion.
 
+## HDR theme modes follow the output
+
+A theme's HDR mode says how far widgets may go; the window's output decides
+how far they can. Widgets style HDR content for the lesser of the two, which
+the platform records before each frame as the window's `OutputColorRange`:
+
+| Output | Constrained and Full HDR | Wide-gamut only |
+| --- | --- | --- |
+| Native HDR | As the theme says | As the theme says |
+| Wide-gamut SDR | Fall back to wide-gamut only | As the theme says |
+| sRGB SDR | Fall back to the SDR baseline | Fall back to the SDR baseline |
+
+So an HDR accent never reaches an SDR display as a clipped near-white fill.
+Custom widgets do the same with `ctx.output_color_range()` while painting and
+`HdrThemeTokens::limited_to`; reading the range observes it, so the widget is
+painted again when the output changes.
+
+## Test on any display
+
+Tests can render as if on a given display, whatever the machine has; see
+[Simulate a display](./testing.md#simulate-a-display). A simulated HDR display
+presents scRGB, reports its headroom in the diagnostics, and captures the
+final output as linear floating point, so HDR paths are testable anywhere.
+
 ## Generate the standard bundle
 
 From the workspace root:

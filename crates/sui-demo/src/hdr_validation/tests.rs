@@ -11,14 +11,19 @@ use super::probes::{clipped_to_srgb, fitted_on_cpu};
 use super::report::LightMetrics;
 use super::*;
 
-fn page_app(options: Option<WindowRenderOptions>) -> Result<TestApp> {
-    TestApp::new_no_vsync(move || {
+/// The page on a simulated `display`, so tests never depend on this
+/// machine's screens.
+fn page_app(display: DisplayCapabilities, options: Option<WindowRenderOptions>) -> Result<TestApp> {
+    TestApp::builder(move || {
         let application = build_color_validation_application();
         match options {
             Some(options) => application.with_window_render_options(options),
             None => application,
         }
     })
+    .vsync(false)
+    .display_capabilities(display)
+    .launch()
 }
 
 fn diagnostics(
@@ -63,7 +68,7 @@ fn text_starting_with(window: &TestWindow, prefix: &str) -> Option<String> {
 
 #[test]
 fn page_lays_out_every_section_probe_and_control() -> Result<()> {
-    let app = page_app(None)?;
+    let app = page_app(DisplayCapabilities::sdr(), None)?;
     let window = app.main_window()?;
     let snapshot = window.snapshot()?;
     let nodes = &snapshot.accessibility.nodes;
@@ -128,15 +133,28 @@ fn page_lays_out_every_section_probe_and_control() -> Result<()> {
     Ok(())
 }
 
-/// SDR whatever the display: tests must not depend on the machine's screen.
-fn forced_sdr() -> WindowRenderOptions {
-    WindowRenderOptions::new(true, 1.0)
-        .with_color_management_mode(WindowColorManagementMode::ForceSdr)
+#[test]
+fn verdict_and_expectations_describe_a_native_hdr_display() -> Result<()> {
+    let app = page_app(DisplayCapabilities::hdr(1000.0, 250.0), None)?;
+    let window = app.main_window()?;
+    window.run_until_idle()?;
+
+    let verdict = text_starting_with(&window, "Native HDR output.")
+        .expect("the verdict describes the HDR display");
+    assert!(verdict.contains("1000 nits peak"), "{verdict}");
+    assert!(
+        verdict.contains("Colors outside sRGB reach it too."),
+        "{verdict}"
+    );
+    let ui_modes = text_starting_with(&window, "On this output: accents in the Constrained")
+        .expect("HDR theme modes take effect on an HDR display");
+    assert!(ui_modes.contains("glow above SDR white"), "{ui_modes}");
+    Ok(())
 }
 
 #[test]
 fn verdict_and_expectations_follow_the_presented_output() -> Result<()> {
-    let app = page_app(Some(forced_sdr()))?;
+    let app = page_app(DisplayCapabilities::sdr(), None)?;
     let window = app.main_window()?;
     window.run_until_idle()?;
 
@@ -155,7 +173,7 @@ fn page_starts_from_the_window_options_and_edits_them() -> Result<()> {
         .with_color_management_mode(WindowColorManagementMode::ForceSdr)
         .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
         .with_tone_mapping_mode(WindowToneMappingMode::Clamp);
-    let app = page_app(Some(configured))?;
+    let app = page_app(DisplayCapabilities::sdr(), Some(configured))?;
     let window = app.main_window()?;
     window.run_until_idle()?;
 
@@ -212,7 +230,7 @@ fn capture_writes_a_bundle_and_reports_what_it_found() -> Result<()> {
     let options = WindowRenderOptions::new(true, 1.0)
         .with_color_management_mode(WindowColorManagementMode::PreferHdr)
         .with_dynamic_range_mode(WindowDynamicRangeMode::HighDynamicRange);
-    let app = page_app(Some(options))?;
+    let app = page_app(DisplayCapabilities::hdr(1000.0, 250.0), Some(options))?;
     let window = app.main_window()?;
     // The capture panel is at the bottom of the page.
     window
@@ -235,6 +253,11 @@ fn capture_writes_a_bundle_and_reports_what_it_found() -> Result<()> {
         .expect("the capture status is exposed");
     assert!(
         status.contains("Scene (HDR intermediate): brightest channel"),
+        "{status}"
+    );
+    // On an HDR display the final output keeps extended range too.
+    assert!(
+        status.contains("Final output: brightest channel"),
         "{status}"
     );
     let dir = status

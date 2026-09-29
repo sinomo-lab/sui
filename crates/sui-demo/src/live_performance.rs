@@ -8,9 +8,9 @@ use sui::prelude::*;
 use sui::{
     FramePhase, InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
     SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue, TextStyle,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot,
-    paint_single_line_aligned_text, set_window_scene_statistics_detail_mode,
-    window_performance_snapshot, window_scene_statistics_detail_mode,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot, paint_text_line,
+    set_window_scene_statistics_detail_mode, window_performance_snapshot,
+    window_scene_statistics_detail_mode,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::LayerCompositionMode;
@@ -405,14 +405,7 @@ impl LivePerformancePanel {
 
         if display.samples.is_empty() {
             let style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.72));
-            paint_single_line_aligned_text(
-                ctx,
-                graph,
-                "waiting for frames",
-                &style,
-                style.line_height,
-                0.5,
-            );
+            paint_text_line(ctx, graph, "waiting for frames", &style, TextAlign::Center);
             return;
         }
 
@@ -446,7 +439,7 @@ impl LivePerformancePanel {
 
         let scale_style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.62));
         let scale_label = format!("{scale_ms:.0} ms");
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 graph.x() + 4.0,
@@ -456,10 +449,9 @@ impl LivePerformancePanel {
             ),
             &scale_label,
             &scale_style,
-            scale_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 graph.x() + 4.0,
@@ -469,8 +461,7 @@ impl LivePerformancePanel {
             ),
             "16.7 ms",
             &scale_style,
-            scale_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
     }
 
@@ -494,13 +485,12 @@ impl LivePerformancePanel {
                 Rect::new(x, y + 4.0, 7.0, 7.0),
                 Self::stage_color(phase, 0.95),
             );
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 Rect::new(x + 10.0, y, label_width - 10.0, label_style.line_height),
                 label,
                 &label_style,
-                label_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             x += label_width;
         }
@@ -601,7 +591,7 @@ impl Widget for LivePerformancePanel {
         };
 
         let fps_style = Self::headline_text_style(Color::rgba(0.98, 1.0, 1.0, 0.96));
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 ctx.bounds().x() + Self::PADDING_X,
@@ -611,11 +601,10 @@ impl Widget for LivePerformancePanel {
             ),
             &fps_text,
             &fps_style,
-            fps_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         let detail_style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.76));
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 ctx.bounds().x() + 136.0,
@@ -625,11 +614,10 @@ impl Widget for LivePerformancePanel {
             ),
             &frame_text,
             &detail_style,
-            detail_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         let muted_detail_style = Self::caption_text_style(Color::rgba(0.92, 0.96, 1.0, 0.66));
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 ctx.bounds().x() + 136.0,
@@ -639,8 +627,7 @@ impl Widget for LivePerformancePanel {
             ),
             &slowest_text,
             &muted_detail_style,
-            muted_detail_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
 
         self.paint_graph(ctx, &display, Self::graph_bounds(ctx.bounds()));

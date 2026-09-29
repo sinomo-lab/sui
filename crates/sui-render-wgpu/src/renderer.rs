@@ -213,12 +213,18 @@ impl WgpuRenderer {
         window_id: WindowId,
         capabilities: DisplayCapabilities,
     ) -> Result<()> {
-        if let Some(surface) = self.surfaces.get_mut(&window_id) {
-            if surface.display_capabilities == capabilities {
-                return Ok(());
-            }
-            surface.display_capabilities = capabilities;
+        let Some(surface) = self.surfaces.get_mut(&window_id) else {
+            // Offscreen windows render as if presenting to this display.
+            self.offscreen_outputs
+                .entry(window_id)
+                .or_default()
+                .display_capabilities = capabilities;
+            return Ok(());
+        };
+        if surface.display_capabilities == capabilities {
+            return Ok(());
         }
+        surface.display_capabilities = capabilities;
         self.configure_existing_surface(window_id)
     }
 
@@ -226,6 +232,11 @@ impl WgpuRenderer {
         self.surfaces
             .get(&window_id)
             .map(|surface| surface.display_capabilities.clone())
+            .or_else(|| {
+                self.offscreen_outputs
+                    .get(&window_id)
+                    .map(|output| output.display_capabilities.clone())
+            })
     }
 
     pub fn set_window_color_management(
@@ -235,8 +246,10 @@ impl WgpuRenderer {
     ) -> Result<()> {
         let Some(surface) = self.surfaces.get_mut(&window_id) else {
             // Offscreen windows fit and capture with it too.
-            self.offscreen_color_management
-                .insert(window_id, color_management);
+            self.offscreen_outputs
+                .entry(window_id)
+                .or_default()
+                .color_management = color_management;
             return Ok(());
         };
         if surface.color_management == color_management {
@@ -251,14 +264,25 @@ impl WgpuRenderer {
         self.surfaces
             .get(&window_id)
             .map(|surface| surface.color_management)
-            .or_else(|| self.offscreen_color_management.get(&window_id).copied())
+            .or_else(|| {
+                self.offscreen_outputs
+                    .get(&window_id)
+                    .map(|output| output.color_management)
+            })
             .unwrap_or_default()
     }
 
+    /// The strategy `window_id` presents with. A window without a surface
+    /// reports the strategy it would use on the display it was given.
     pub fn window_output_strategy(&self, window_id: WindowId) -> Option<OutputStrategy> {
         self.surfaces
             .get(&window_id)
             .map(|surface| surface.output_strategy)
+            .or_else(|| {
+                self.offscreen_outputs
+                    .get(&window_id)
+                    .map(crate::output::OffscreenOutput::output_strategy)
+            })
     }
 
     pub fn window_surface_formats(&self, window_id: WindowId) -> Option<Vec<wgpu::TextureFormat>> {
@@ -353,7 +377,7 @@ impl WgpuRenderer {
         self.frame_resources.fragments.remove(&window_id);
         self.frame_resources.output_transforms.remove(&window_id);
         self.surfaces.remove(&window_id);
-        self.offscreen_color_management.remove(&window_id);
+        self.offscreen_outputs.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
         self.intermediate_targets.remove(&window_id);
         self.last_frames.remove(&window_id);
@@ -469,7 +493,7 @@ impl Default for WgpuRenderer {
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             intermediate_targets: HashMap::new(),
-            offscreen_color_management: HashMap::new(),
+            offscreen_outputs: HashMap::new(),
             frame_resources: FrameResources::default(),
         }
     }

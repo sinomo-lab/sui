@@ -29,7 +29,7 @@ use sui::{
     TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetPodMutVisitor,
     WidgetPodVisitor, WindowEvent, WindowId, WindowOutputDiagnostics, WindowRenderOptions,
     WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, default_sui_logo_image,
-    paint_aligned_text, paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
+    paint_text, paint_text_line, prelude::*, window_output_diagnostics,
     window_output_diagnostics_signal,
 };
 
@@ -946,7 +946,7 @@ impl DevBrowserShell {
         let header = Rect::new(content.x(), content.y(), content.width(), 96.0);
         ctx.fill_rect(header, palette.surface_hover.with_alpha(0.45));
         let title_style = demo_text_style(*theme, DemoTextRole::PageTitle, palette.text);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 content.x() + 40.0,
@@ -956,11 +956,10 @@ impl DevBrowserShell {
             ),
             DEV_SHELL_PICKER_TITLE,
             &title_style,
-            title_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
         let subtitle_style = demo_text_style(*theme, DemoTextRole::Supporting, palette.text_muted);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 content.x() + 40.0,
@@ -970,8 +969,7 @@ impl DevBrowserShell {
             ),
             "Renderer, text, color, editor, and widget surfaces.",
             &subtitle_style,
-            subtitle_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
     }
 }
@@ -1596,7 +1594,7 @@ impl Widget for ThemeToggleButton {
         );
         let label_rect = Self::label_rect(bounds, knob, scheme);
         let label_style = demo_text_style(theme, DemoTextRole::Metadata, palette.text);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             label_rect,
             if custom {
@@ -1605,8 +1603,7 @@ impl Widget for ThemeToggleButton {
                 dev_theme_toggle_label(scheme)
             },
             &label_style,
-            label_style.line_height,
-            0.5,
+            TextAlign::Center,
         );
     }
 
@@ -1870,7 +1867,7 @@ impl Widget for FloatingSettingsWindow {
             content_palette.border,
         );
         let title_style = demo_text_style(theme, DemoTextRole::CardTitle, palette.text);
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 title.x() + 14.0,
@@ -1880,8 +1877,7 @@ impl Widget for FloatingSettingsWindow {
             ),
             SETTINGS_TAB_LABEL,
             &title_style,
-            title_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
 
         let close = Self::close_rect(bounds);
@@ -2436,7 +2432,6 @@ const SETTINGS_PANEL_MAX_WIDTH: f32 = 640.0;
 const SETTINGS_PANEL_PADDING_X: f32 = 14.0;
 const SETTINGS_PANEL_PADDING_TOP: f32 = 12.0;
 const SETTINGS_PANEL_PADDING_BOTTOM: f32 = 12.0;
-const SETTINGS_PANEL_TITLE_HEIGHT: f32 = 18.0;
 const SETTINGS_PANEL_TITLE_GAP: f32 = 10.0;
 const SETTINGS_PANEL_LINE_GAP: f32 = 3.0;
 
@@ -2466,14 +2461,27 @@ fn settings_wrapped_text_height(
     style: &TextStyle,
     width: f32,
 ) -> f32 {
-    ctx.layout()
-        .shape_text(
-            text.to_string(),
-            Size::new(width.max(1.0), f32::INFINITY),
-            style.clone(),
-        )
-        .map(|layout| layout.measurement().height.max(style.line_height))
-        .unwrap_or(style.line_height)
+    Paragraph::new(ctx, text, style, TextAlign::Start, width)
+        .size()
+        .height
+        .max(style.line_height)
+}
+
+/// A settings panel's lines, each wrapped to the panel's text width.
+fn settings_panel_paragraphs(
+    shaper: &(impl TextShaper + ?Sized),
+    lines: &[String],
+    text_width: f32,
+    style: &TextStyle,
+) -> Vec<Paragraph> {
+    lines
+        .iter()
+        .map(|line| Paragraph::new(shaper, line.as_str(), style, TextAlign::Start, text_width))
+        .collect()
+}
+
+fn settings_panel_text_width(width: f32) -> f32 {
+    (width - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0)
 }
 
 fn settings_panel_height(
@@ -2483,19 +2491,13 @@ fn settings_panel_height(
     title_style: &TextStyle,
     body_style: &TextStyle,
 ) -> f32 {
-    let text_width = (width - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0);
-    let body_height = lines
+    let paragraphs =
+        settings_panel_paragraphs(ctx, lines, settings_panel_text_width(width), body_style);
+    let body_height = paragraphs
         .iter()
-        .enumerate()
-        .map(|(index, line)| {
-            settings_wrapped_text_height(ctx, line, body_style, text_width)
-                + if index == 0 {
-                    0.0
-                } else {
-                    SETTINGS_PANEL_LINE_GAP
-                }
-        })
-        .sum::<f32>();
+        .map(|paragraph| paragraph.size().height.max(body_style.line_height))
+        .sum::<f32>()
+        + SETTINGS_PANEL_LINE_GAP * paragraphs.len().saturating_sub(1) as f32;
 
     SETTINGS_PANEL_PADDING_TOP
         + title_style.line_height
@@ -2515,12 +2517,12 @@ fn paint_settings_panel(ctx: &mut PaintCtx, title: &str, lines: &[String], theme
     );
 
     let text_x = bounds.x() + SETTINGS_PANEL_PADDING_X;
-    let text_width = (bounds.width() - (SETTINGS_PANEL_PADDING_X * 2.0)).max(1.0);
+    let text_width = settings_panel_text_width(bounds.width());
     let title_style = settings_panel_title_style(theme);
     let body_style = settings_panel_body_style(theme);
 
     ctx.push_clip_rect(bounds);
-    paint_single_line_aligned_text(
+    paint_text_line(
         ctx,
         Rect::new(
             text_x,
@@ -2530,32 +2532,21 @@ fn paint_settings_panel(ctx: &mut PaintCtx, title: &str, lines: &[String], theme
         ),
         title,
         &title_style,
-        title_style.line_height,
-        0.0,
+        TextAlign::Start,
     );
 
     let mut y = bounds.y()
         + SETTINGS_PANEL_PADDING_TOP
-        + SETTINGS_PANEL_TITLE_HEIGHT
+        + title_style.line_height
         + SETTINGS_PANEL_TITLE_GAP;
-    for line in lines {
-        let line_height = ctx
-            .shape_text(
-                line.clone(),
-                Size::new(text_width.max(1.0), f32::INFINITY),
-                body_style.clone(),
-            )
-            .map(|layout| layout.measurement().height.max(body_style.line_height))
-            .unwrap_or(body_style.line_height);
-        paint_aligned_text(
+    for paragraph in settings_panel_paragraphs(ctx, lines, text_width, &body_style) {
+        let height = paragraph.size().height.max(body_style.line_height);
+        paragraph.paint(
             ctx,
-            Rect::new(text_x, y, text_width, line_height),
-            line,
-            &body_style,
-            body_style.line_height,
-            0.0,
+            Rect::new(text_x, y, text_width, height),
+            VerticalAlign::Top,
         );
-        y += line_height + SETTINGS_PANEL_LINE_GAP;
+        y += height + SETTINGS_PANEL_LINE_GAP;
     }
     ctx.pop_clip();
 }
@@ -2713,14 +2704,7 @@ impl Widget for SdrContentBrightnessStatus {
             DemoTextRole::Metadata,
             theme.palette.text.with_alpha(0.78),
         );
-        paint_aligned_text(
-            ctx,
-            ctx.bounds(),
-            self.text(),
-            &style,
-            style.line_height,
-            0.0,
-        );
+        paint_text(ctx, ctx.bounds(), self.text(), &style, TextAlign::Start);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {

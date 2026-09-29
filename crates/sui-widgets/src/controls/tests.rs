@@ -4125,6 +4125,55 @@ fn button_preserves_sdr_palette_when_hdr_mode_disabled() {
 }
 
 #[test]
+fn hdr_buttons_fall_back_to_what_the_output_can_show() {
+    use sui_runtime::{OutputColorRange, set_window_output_color_range};
+
+    let mut theme = DefaultTheme::default();
+    theme.hdr.mode = HdrThemeMode::FullHdr;
+    theme.hdr.luminance.semantic_accent = 1.3;
+    theme.hdr.policy.max_large_area_lift = 1.4;
+    theme.hdr.color_roles.accent = SemanticColorToken::from_sdr(theme.palette.accent)
+        .with_wide_gamut(Color::display_p3(0.1, 0.6, 1.0, 1.0))
+        .with_hdr(Color::linear_display_p3(0.8, 2.4, 3.2, 1.0));
+    let background = |output: &RenderOutput| {
+        solid_fill_colors(output)
+            .first()
+            .copied()
+            .expect("the button paints its background")
+    };
+    let lifted = |color: Color| {
+        let linear = color.to_linear_srgb();
+        linear.red.max(linear.green).max(linear.blue) > 1.0
+    };
+
+    let (mut runtime, window_id) = build_runtime(Button::primary("Go").theme(theme));
+    // Without a platform to say what the output shows, the theme applies.
+    assert!(lifted(background(&runtime.render(window_id).unwrap())));
+
+    // An sRGB SDR output gets the SDR accent...
+    set_window_output_color_range(window_id, OutputColorRange::Standard);
+    assert!(
+        runtime.needs_render(window_id).unwrap(),
+        "a change of output repaints what depends on it"
+    );
+    assert_eq!(
+        background(&runtime.render(window_id).unwrap()),
+        theme.palette.accent
+    );
+
+    // ...a wide-gamut SDR output the wide-gamut accent, not lifted...
+    set_window_output_color_range(window_id, OutputColorRange::WideGamut);
+    assert_eq!(
+        background(&runtime.render(window_id).unwrap()),
+        Color::display_p3(0.1, 0.6, 1.0, 1.0)
+    );
+
+    // ...and an HDR output the lifted HDR accent.
+    set_window_output_color_range(window_id, OutputColorRange::HighDynamicRange);
+    assert!(lifted(background(&runtime.render(window_id).unwrap())));
+}
+
+#[test]
 fn button_can_resolve_constrained_hdr_accent_style() {
     let mut theme = DefaultTheme::default();
     theme.hdr.mode = HdrThemeMode::ConstrainedHdr;

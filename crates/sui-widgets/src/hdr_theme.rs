@@ -1,4 +1,5 @@
 use sui_core::Color;
+use sui_runtime::OutputColorRange;
 
 use crate::theme::{DefaultTheme, ThemeColors};
 
@@ -9,6 +10,23 @@ pub enum HdrThemeMode {
     WideGamutOnly,
     ConstrainedHdr,
     FullHdr,
+}
+
+impl HdrThemeMode {
+    /// This mode as far as an output with `range` can show it: HDR modes
+    /// fall back to wide gamut on wide-gamut SDR outputs, and every mode to
+    /// the SDR baseline on sRGB outputs. An unknown range leaves the mode as
+    /// it is.
+    pub fn limited_to(self, range: Option<OutputColorRange>) -> Self {
+        match (self, range) {
+            (_, None | Some(OutputColorRange::HighDynamicRange)) => self,
+            (Self::ConstrainedHdr | Self::FullHdr, Some(OutputColorRange::WideGamut)) => {
+                Self::WideGamutOnly
+            }
+            (mode, Some(OutputColorRange::WideGamut)) => mode,
+            (_, Some(OutputColorRange::Standard)) => Self::Disabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -362,6 +380,13 @@ impl HdrThemeTokens {
         Self::from_colors(theme.colors)
     }
 
+    /// These tokens with their mode limited to what an output with `range`
+    /// can show; see [`HdrThemeMode::limited_to`].
+    pub fn limited_to(mut self, range: Option<OutputColorRange>) -> Self {
+        self.mode = self.mode.limited_to(range);
+        self
+    }
+
     pub fn sync_semantic_defaults(&mut self, colors: ThemeColors) {
         self.color_roles.sync_sdr_from_colors(colors);
     }
@@ -551,6 +576,37 @@ mod tests {
     use sui_core::{Color, ColorSpace};
 
     fn assert_copy_debug_eq<T: Copy + Debug + PartialEq>() {}
+
+    #[test]
+    fn hdr_theme_modes_fall_back_to_what_the_output_can_show() {
+        use sui_runtime::OutputColorRange::{HighDynamicRange, Standard, WideGamut};
+
+        let modes = [
+            HdrThemeMode::Disabled,
+            HdrThemeMode::WideGamutOnly,
+            HdrThemeMode::ConstrainedHdr,
+            HdrThemeMode::FullHdr,
+        ];
+        for mode in modes {
+            assert_eq!(mode.limited_to(None), mode);
+            assert_eq!(mode.limited_to(Some(HighDynamicRange)), mode);
+            assert_eq!(mode.limited_to(Some(Standard)), HdrThemeMode::Disabled);
+        }
+        assert_eq!(
+            HdrThemeMode::Disabled.limited_to(Some(WideGamut)),
+            HdrThemeMode::Disabled
+        );
+        for mode in [
+            HdrThemeMode::WideGamutOnly,
+            HdrThemeMode::ConstrainedHdr,
+            HdrThemeMode::FullHdr,
+        ] {
+            assert_eq!(
+                mode.limited_to(Some(WideGamut)),
+                HdrThemeMode::WideGamutOnly
+            );
+        }
+    }
 
     #[test]
     fn hdr_theme_tokens_default_to_disabled_mode() {

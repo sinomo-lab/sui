@@ -128,6 +128,13 @@ fn layout_prepared_paragraph(
     prepared.layout_key = Some(key);
 }
 
+/// A box dimension that constrains layout. Non-finite dimensions leave the
+/// text unconstrained: an infinite width does not wrap, and an infinite height
+/// sizes the box to the text instead of centering the lines in it.
+fn constraint(dimension: f32) -> Option<f32> {
+    dimension.is_finite().then_some(dimension)
+}
+
 pub(crate) fn measure_document_size(
     flattened: &FlattenedTextDocument,
     resolved_spans: &[ResolvedSpanInput],
@@ -147,7 +154,7 @@ pub(crate) fn measure_document_size(
                 layout_prepared_paragraph(
                     prepared,
                     &paragraph.style,
-                    box_size.map(|size| size.width),
+                    box_size.and_then(|size| constraint(size.width)),
                 );
                 let paragraph_top = height;
                 let mut line_top = 0.0_f32;
@@ -249,7 +256,8 @@ pub(crate) fn layout_document(
     font_context: &mut FontContext,
     layout_id: TextLayoutId,
 ) -> Result<TextLayout> {
-    let box_width = box_size.map(|size| size.width);
+    let box_width = box_size.and_then(|size| constraint(size.width));
+    let box_height = box_size.and_then(|size| constraint(size.height));
     let mut faces = vec![font_context.default_face().clone()];
     let mut face_slots: HashMap<cosmic_text::fontdb::ID, usize> = HashMap::new();
 
@@ -326,7 +334,10 @@ pub(crate) fn layout_document(
     }
 
     let natural_height = block_height.max(max_ascent + max_descent);
-    let final_box_size = box_size.unwrap_or(Size::new(measured_width, natural_height));
+    let final_box_size = Size::new(
+        box_width.unwrap_or(measured_width),
+        box_height.unwrap_or(natural_height),
+    );
     let block_top = ((final_box_size.height - block_height).max(0.0)) * 0.5;
 
     let mut shaped_glyphs = Vec::new();

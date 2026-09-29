@@ -3,7 +3,7 @@
 //! slides with its slow surface timing.
 
 use sui::prelude::*;
-use sui::{TimerToken, Transition, WakeEvent, paint_single_line_aligned_text};
+use sui::{TimerToken, Transition, WakeEvent, paint_text_line};
 
 use crate::app::{DemoTextRole, demo_text_style};
 
@@ -120,7 +120,7 @@ impl Widget for MotionSample {
             Path::circle(Point::new(knob_x, track.y() + 10.0), 8.0),
             palette.surface_raised,
         );
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 track.max_x() + 12.0,
@@ -133,8 +133,7 @@ impl Widget for MotionSample {
                 Self::milliseconds(theme.motion.duration_normal)
             ),
             &label_style,
-            label_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
 
         let panel_row = Rect::new(
@@ -155,7 +154,7 @@ impl Widget for MotionSample {
             [5.0; 4],
             palette.accent,
         );
-        paint_single_line_aligned_text(
+        paint_text_line(
             ctx,
             Rect::new(
                 bar.max_x() + 12.0,
@@ -165,8 +164,7 @@ impl Widget for MotionSample {
             ),
             &format!("Panel, {}", Self::milliseconds(theme.motion.duration_slow)),
             &label_style,
-            label_style.line_height,
-            0.0,
+            TextAlign::Start,
         );
     }
 

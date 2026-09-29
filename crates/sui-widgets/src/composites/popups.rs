@@ -27,7 +27,7 @@ use crate::overlay::OverlaySide;
 use crate::overlay::place_overlay;
 use crate::paint_theme_shadow;
 use crate::resolve_widget_hdr_style;
-use crate::text_align::paint_aligned_text;
+use crate::text_align::paint_text;
 use std::cell::RefCell;
 use std::rc::Rc;
 use sui_core::Color;
@@ -60,6 +60,7 @@ use sui_runtime::FrameClock;
 use sui_runtime::LayerOptions;
 use sui_runtime::MeasureCtx;
 use sui_runtime::OVERLAY_DISMISS_REQUEST;
+use sui_runtime::OutputColorRange;
 use sui_runtime::OverlayDismissPolicy;
 use sui_runtime::OverlayFocusBehavior;
 use sui_runtime::OverlayKind;
@@ -74,7 +75,7 @@ use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
 use sui_scene::LayerCompositionMode;
 use sui_scene::LayerProperties;
-use sui_text::TextMeasurement;
+use sui_text::{TextAlign, TextMeasurement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TooltipPlacement {
@@ -489,14 +490,7 @@ impl Widget for Menu {
             }
 
             ctx.push_clip_rect(label_slot);
-            paint_aligned_text(
-                ctx,
-                label_slot,
-                &item.label,
-                &label_style,
-                label_style.line_height,
-                0.0,
-            );
+            paint_text(ctx, label_slot, &item.label, &label_style, TextAlign::Start);
             ctx.pop_clip();
 
             if let Some(shortcut) = &item.shortcut {
@@ -508,13 +502,12 @@ impl Widget for Menu {
                     row.height(),
                 );
                 ctx.push_clip_rect(shortcut_slot);
-                paint_aligned_text(
+                paint_text(
                     ctx,
                     shortcut_slot,
                     shortcut,
                     &shortcut_style,
-                    shortcut_style.line_height,
-                    1.0,
+                    TextAlign::End,
                 );
                 ctx.pop_clip();
             }
@@ -787,14 +780,7 @@ impl Widget for TooltipOverlay {
         );
         let text_slot = inset_rect(bubble, metrics.tooltip_padding);
         ctx.push_clip_rect(text_slot);
-        paint_aligned_text(
-            ctx,
-            text_slot,
-            &state.text,
-            &text_style,
-            text_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, text_slot, &state.text, &text_style, TextAlign::Start);
         ctx.pop_clip();
     }
 
@@ -1110,10 +1096,21 @@ impl PopoverSurfaceState {
         .with_scale_anchor(Vector::new(0.5, 0.0))
     }
 
+    #[cfg(test)]
     pub(super) fn resolved_visuals(&self) -> PopoverVisuals {
-        let palette = self.theme.palette;
+        self.resolved_visuals_for_output(None)
+    }
 
-        if !self.is_presented() || matches!(self.theme.hdr.mode, HdrThemeMode::Disabled) {
+    /// The popover's colors, with HDR styling limited to what `output` can
+    /// show.
+    pub(super) fn resolved_visuals_for_output(
+        &self,
+        output: Option<OutputColorRange>,
+    ) -> PopoverVisuals {
+        let palette = self.theme.palette;
+        let hdr = self.theme.hdr.limited_to(output);
+
+        if !self.is_presented() || matches!(hdr.mode, HdrThemeMode::Disabled) {
             return PopoverVisuals {
                 background: palette.surface_raised,
                 border: palette.border,
@@ -1124,14 +1121,14 @@ impl PopoverSurfaceState {
         }
 
         let surface_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
-            &self.theme.hdr,
+            &hdr,
             WidgetColorRole::SurfaceElevated,
             WidgetLuminanceRole::Standard,
             WidgetMaterialRole::Raised,
             self.arrival_active.then_some(WidgetEffectRole::Pulse),
         ));
         let border_style = cap_resolved_hdr_style(resolve_widget_hdr_style(
-            &self.theme.hdr,
+            &hdr,
             WidgetColorRole::SurfaceOutline,
             WidgetLuminanceRole::Standard,
             WidgetMaterialRole::Flat,
@@ -1226,7 +1223,7 @@ impl Widget for PopoverSurface {
 
         let rect = ctx.bounds();
         let metrics = state.theme.metrics;
-        let visuals = state.resolved_visuals();
+        let visuals = state.resolved_visuals_for_output(ctx.output_color_range());
         // Elevation shadow behind the popover surface, drawn before the fill.
         let surface_radius = metrics.corner_radius + 2.0;
         paint_theme_shadow(
@@ -1321,7 +1318,10 @@ impl Widget for PopoverFocusSurface {
             return;
         }
 
-        let Some(focus_ring) = state.resolved_visuals().focus_ring else {
+        let Some(focus_ring) = state
+            .resolved_visuals_for_output(ctx.output_color_range())
+            .focus_ring
+        else {
             return;
         };
         let progress = state.focus_animation.get(ctx);
@@ -1483,8 +1483,13 @@ impl Popover {
         }
 
         let mut state = self.state.borrow_mut();
-        state.arrival_active = !matches!(state.theme.hdr.mode, HdrThemeMode::Disabled)
-            && state.theme.hdr.effects.pulse.intensity > 0.0;
+        // The arrival pulse is an HDR effect: skip it where the output cannot
+        // show the popover's HDR styling.
+        let output = sui_runtime::window_output_color_range(ctx.window_id());
+        state.arrival_active = !matches!(
+            state.theme.hdr.mode.limited_to(output),
+            HdrThemeMode::Disabled
+        ) && state.theme.hdr.effects.pulse.intensity > 0.0;
         if state.arrival_active {
             self.arrival_timer = Some(ctx.schedule_timer_after(state.arrival_duration()));
         }
@@ -2045,14 +2050,7 @@ impl Widget for ContextMenuSurface {
                 }
 
                 ctx.push_clip_rect(label_slot);
-                paint_aligned_text(
-                    ctx,
-                    label_slot,
-                    &item.label,
-                    &label_style,
-                    label_style.line_height,
-                    0.0,
-                );
+                paint_text(ctx, label_slot, &item.label, &label_style, TextAlign::Start);
                 ctx.pop_clip();
 
                 if let Some(shortcut) = &item.shortcut {
@@ -2067,13 +2065,12 @@ impl Widget for ContextMenuSurface {
                         row.height(),
                     );
                     ctx.push_clip_rect(shortcut_slot);
-                    paint_aligned_text(
+                    paint_text(
                         ctx,
                         shortcut_slot,
                         shortcut,
                         &shortcut_style,
-                        shortcut_style.line_height,
-                        1.0,
+                        TextAlign::End,
                     );
                     ctx.pop_clip();
                 }
@@ -2087,13 +2084,12 @@ impl Widget for ContextMenuSurface {
                         row.height(),
                     );
                     ctx.push_clip_rect(indicator_slot);
-                    paint_aligned_text(
+                    paint_text(
                         ctx,
                         indicator_slot,
                         "\u{203a}",
                         &indicator_style,
-                        indicator_style.line_height,
-                        1.0,
+                        TextAlign::End,
                     );
                     ctx.pop_clip();
                 }

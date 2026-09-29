@@ -5,8 +5,8 @@ use sui_core::{
 use sui_layout::Constraints;
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::StrokeStyle;
-use sui_text::TextStyle;
-use sui_widgets::{DefaultTheme, paint_single_line_aligned_text};
+use sui_text::{TextAlign, TextStyle};
+use sui_widgets::{DefaultTheme, paint_text_line};
 
 use crate::{FitViewOptions, NodeGraphState, Viewport};
 
@@ -417,13 +417,12 @@ where
                 },
                 ..theme.body_text_style()
             };
-            paint_single_line_aligned_text(
+            paint_text_line(
                 ctx,
                 rect.inflate(-4.0, -2.0),
                 action.label(snapshot.interactive),
                 &text_style,
-                text_style.line_height,
-                0.5,
+                TextAlign::Center,
             );
         }
         ctx.pop_clip();

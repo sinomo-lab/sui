@@ -13,6 +13,7 @@ mod headless;
 mod motion_preference;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod os_clipboard;
+mod present;
 #[cfg(any(target_arch = "wasm32", test))]
 mod web_interop;
 #[cfg(target_os = "windows")]
@@ -65,6 +66,7 @@ pub use file_dialog::{
 pub use headless::{HeadlessPlatform, PlatformWindow};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub use os_clipboard::OsClipboardBackend;
+pub use present::{PresentedFrame, present_window_frame};
 
 pub(crate) fn reset_window_performance_store() {
     clear_window_performance_snapshots();

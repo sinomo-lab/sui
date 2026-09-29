@@ -397,13 +397,14 @@ impl WgpuRenderer {
     }
 
     pub(crate) fn final_composed_sdr_reference_white(&self, window_id: WindowId) -> f32 {
-        self.surfaces
-            .get(&window_id)
-            .map(|surface| {
+        self.window_output_strategy(window_id)
+            .map(|strategy| {
                 crate::output::output_sdr_content_scale(
-                    surface.output_strategy,
-                    surface.color_management.sdr_content_brightness_nits,
-                    surface.display_capabilities.sdr_white_nits,
+                    strategy,
+                    self.window_color_management(window_id)
+                        .sdr_content_brightness_nits,
+                    self.window_display_capabilities(window_id)
+                        .and_then(|capabilities| capabilities.sdr_white_nits),
                 )
             })
             .filter(|scale| scale.is_finite() && *scale > 0.0)
@@ -414,9 +415,8 @@ impl WgpuRenderer {
         &self,
         window_id: WindowId,
     ) -> DisplayColorPrimaries {
-        self.surfaces
-            .get(&window_id)
-            .map(|surface| crate::output::output_primaries(surface.output_strategy))
+        self.window_output_strategy(window_id)
+            .map(crate::output::output_primaries)
             .unwrap_or(DisplayColorPrimaries::Srgb)
     }
 

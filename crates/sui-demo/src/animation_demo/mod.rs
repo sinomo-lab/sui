@@ -19,7 +19,7 @@ use std::{cell::Cell, rc::Rc};
 use sui::prelude::*;
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, MotionPreference,
-    app_motion_preference, motion_policy, motion_time_scale, paint_single_line_aligned_text,
+    app_motion_preference, motion_policy, motion_time_scale, paint_text_line,
     set_app_motion_preference, set_motion_time_scale, system_motion_preference,
 };
 
@@ -354,7 +354,7 @@ pub(super) fn draw_text(
     color: Color,
 ) {
     let style = demo_text_style(theme, role, color);
-    paint_single_line_aligned_text(ctx, rect, text, &style, style.line_height, 0.0);
+    paint_text_line(ctx, rect, text, &style, TextAlign::Start);
 }
 
 /// Paint `points` as a connected line.

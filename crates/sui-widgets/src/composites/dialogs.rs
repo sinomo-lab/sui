@@ -12,7 +12,7 @@ use crate::composites::indicators::{
 };
 use crate::composites::popups::request_child_invalidation;
 use crate::paint_theme_shadow;
-use crate::text_align::paint_aligned_text;
+use crate::text_align::paint_text;
 use std::cell::RefCell;
 use std::rc::Rc;
 use sui_core::Event;
@@ -56,8 +56,8 @@ use sui_runtime::WidgetPodVisitor;
 use sui_scene::LayerCompositionMode;
 use sui_scene::LayerProperties;
 use sui_scene::StrokeStyle;
-use sui_text::TextMeasurement;
 use sui_text::TextStyle;
+use sui_text::{TextAlign, TextMeasurement};
 
 /// A theme source shared between a surface and the action buttons it builds.
 /// Actions read the surface's current theme through it, so they follow
@@ -702,14 +702,7 @@ impl Widget for Dialog {
             .max(header_action_size.height);
         let title_slot = Rect::new(text_x, text_y, text_width, title_height);
         ctx.push_clip_rect(title_slot);
-        paint_aligned_text(
-            ctx,
-            title_slot,
-            &self.title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, title_slot, &self.title, &title_style, TextAlign::Start);
         ctx.pop_clip();
         if let Some(description) = &self.description {
             let description_height = self
@@ -723,13 +716,12 @@ impl Widget for Dialog {
                 description_height,
             );
             ctx.push_clip_rect(description_slot);
-            paint_aligned_text(
+            paint_text(
                 ctx,
                 description_slot,
                 description,
                 &description_style,
-                description_style.line_height,
-                0.0,
+                TextAlign::Start,
             );
             ctx.pop_clip();
         }
@@ -1622,14 +1614,7 @@ impl Widget for SideSheet {
             (sheet.width() - padding.left - padding.right - action_width).max(0.0),
             title_height,
         );
-        paint_aligned_text(
-            ctx,
-            title_slot,
-            &self.title,
-            &title_style,
-            title_style.line_height,
-            0.0,
-        );
+        paint_text(ctx, title_slot, &self.title, &title_style, TextAlign::Start);
         if let Some(description) = &self.description {
             let style = theme.placeholder_text_style();
             let height = self
@@ -1642,7 +1627,7 @@ impl Widget for SideSheet {
                 (sheet.width() - padding.left - padding.right).max(0.0),
                 height,
             );
-            paint_aligned_text(ctx, slot, description, &style, style.line_height, 0.0);
+            paint_text(ctx, slot, description, &style, TextAlign::Start);
         }
         self.body.paint(ctx);
         if let Some(action) = &self.header_action {

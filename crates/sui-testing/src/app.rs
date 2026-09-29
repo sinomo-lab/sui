@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui_core::{Error, MotionPreference, Result};
-use sui_render_wgpu::WgpuExternalTextureRegistry;
+use sui_render_wgpu::{DisplayCapabilities, WgpuExternalTextureRegistry};
 use sui_runtime::{
     Runtime, set_app_motion_preference, set_motion_time_scale, set_window_render_options,
 };
@@ -10,6 +10,62 @@ use sui_runtime::{
 const SETTLE_STEP: f64 = 1.0 / 60.0;
 
 use crate::{harness::Harness, window::TestWindow};
+
+/// Options for a [`TestApp`], from [`TestApp::builder`].
+pub struct TestAppBuilder<F> {
+    build: F,
+    vsync_enabled: bool,
+    visible: bool,
+    display_capabilities: Option<DisplayCapabilities>,
+}
+
+impl<F, A> TestAppBuilder<F>
+where
+    F: FnOnce() -> A + Send + 'static,
+    A: IntoTestRuntime,
+{
+    pub fn vsync(mut self, enabled: bool) -> Self {
+        self.vsync_enabled = enabled;
+        self
+    }
+
+    /// Show the app's windows on screen when it runs live.
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    /// Run the app as if its windows were on a display with `capabilities`,
+    /// whatever this machine's screens are: output strategies, diagnostics,
+    /// captures, and HDR theme styling follow them. The app runs headless,
+    /// so nothing but `capabilities` decides its output.
+    pub fn display_capabilities(mut self, capabilities: DisplayCapabilities) -> Self {
+        self.display_capabilities = Some(capabilities);
+        self
+    }
+
+    pub fn launch(self) -> Result<TestApp> {
+        let harness = match self.display_capabilities {
+            Some(capabilities) => Harness::new_headless_with_display(
+                (self.build)().into_test_runtime()?,
+                capabilities,
+                30.0,
+            )?,
+            None if live_backend_available() => {
+                let build = self.build;
+                Harness::new_live_with_options(
+                    move || build().into_test_runtime(),
+                    self.vsync_enabled,
+                    self.visible,
+                )?
+            }
+            None => Harness::new_headless_with_timeout((self.build)().into_test_runtime()?, 30.0)?,
+        };
+        Ok(TestApp {
+            harness: Rc::new(RefCell::new(harness)),
+        })
+    }
+}
 
 pub trait IntoTestRuntime {
     fn into_test_runtime(self) -> Result<Runtime>;
@@ -73,17 +129,24 @@ impl TestApp {
         F: FnOnce() -> A + Send + 'static,
         A: IntoTestRuntime,
     {
-        let harness = if live_backend_available() {
-            Harness::new_live_with_options(
-                move || build().into_test_runtime(),
-                vsync_enabled,
-                visible,
-            )?
-        } else {
-            Harness::new_headless_with_timeout(build().into_test_runtime()?, 30.0)?
-        };
-        let harness = Rc::new(RefCell::new(harness));
-        Ok(Self { harness })
+        Self::builder(build)
+            .vsync(vsync_enabled)
+            .visible(visible)
+            .launch()
+    }
+
+    /// Start configuring a test app built by `build`.
+    pub fn builder<F, A>(build: F) -> TestAppBuilder<F>
+    where
+        F: FnOnce() -> A + Send + 'static,
+        A: IntoTestRuntime,
+    {
+        TestAppBuilder {
+            build,
+            vsync_enabled: true,
+            visible: false,
+            display_capabilities: None,
+        }
     }
 
     pub fn new_no_vsync<F, A>(build: F) -> Result<Self>
