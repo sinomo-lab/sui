@@ -303,8 +303,8 @@ fn color_validation_surface_exposes_its_reference_swatches() {
         "White 4×",
         "White 8×",
         "White 16×",
-        "White 0.9×",
-        "White 1.05×",
+        "Near white 0.9×",
+        "Near white 1.05×",
     ] {
         assert!(semantics.iter().any(|node| {
             node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(swatch_name)

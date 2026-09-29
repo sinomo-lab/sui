@@ -398,6 +398,28 @@ Versioning, with the usual expectation that the API may change during the
 - `FloatingViewConfig` and `FloatingViewSnapshot` have a new `closable` field,
   so code building them with struct literals needs it.
 
+### Output diagnostics, browser captures, and unique control names
+
+- Output diagnostics report the colors the output shows in a new
+  `output_gamut` field, from `OutputStrategy::gamut`: sRGB, Display P3, or the
+  display's own gamut. Native HDR output (scRGB) is encoded in sRGB primaries,
+  so `preferred_primaries` read as sRGB even though wide-gamut colors reach a
+  wide-gamut display; the HDR validation page no longer guesses from
+  `supports_wide_gamut`. `WindowOutputDiagnostics` gains the field, so code
+  building it with a struct literal needs it.
+- Debug captures work in browsers. The renderer begins a capture without
+  waiting for the GPU (`WgpuRenderer::begin_debug_capture`) and hands it out
+  once the copy is back (`take_finished_debug_captures`); browsers collect it
+  on a later frame and wake the requesting widget then, where they used to
+  return an error. Captures also accept 8-bit unorm targets, which browsers
+  present to.
+- Settings' copies of controls the HDR validation page shows have their own
+  accessible names, like "Tone mapping in Settings", so automation and
+  assistive technology can tell them apart when Settings is open over the
+  page. `Switch::semantic_name` and `Checkbox::semantic_name` name a control
+  apart from its label. The near-white swatches on the page are named "Near
+  white", no longer repeating the ladder's "White 1×".
+
 ### Breaking: text painting helpers
 
 - Replaced `paint_aligned_text` with `paint_text` and

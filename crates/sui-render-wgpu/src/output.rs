@@ -50,8 +50,13 @@ pub enum DisplayTransferFunction {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayCapabilities {
+    /// Whether the display shows colors beyond sRGB.
     pub supports_wide_gamut: bool,
     pub supports_hdr: bool,
+    /// The primaries to encode output for this display in. A display
+    /// presenting HDR as scRGB prefers sRGB primaries even when it shows
+    /// wider colors, which scRGB carries as values beyond sRGB's range; see
+    /// [`OutputStrategy::gamut`] for the colors an output shows.
     pub preferred_primaries: DisplayColorPrimaries,
     pub preferred_dynamic_range: DynamicRangeMode,
     pub max_luminance_nits: Option<f32>,
@@ -304,6 +309,51 @@ impl OutputStrategy {
             | Self::HdrNativeSurface { format, .. } => format,
             Self::HdrIntermediateThenToneMap { surface_format, .. } => surface_format,
         }
+    }
+
+    /// The colors this output shows on a display with `capabilities`.
+    ///
+    /// Outputs clip colors to their primaries, except native HDR, which
+    /// keeps extended range: colors beyond its primaries reach the display,
+    /// which shows as many as it can.
+    pub fn gamut(self, capabilities: &DisplayCapabilities) -> OutputGamut {
+        let clipped_to = |primaries| match primaries {
+            DisplayColorPrimaries::Srgb => OutputGamut::Srgb,
+            DisplayColorPrimaries::DisplayP3 => OutputGamut::DisplayP3,
+        };
+        match self {
+            Self::SdrSurface { .. } => OutputGamut::Srgb,
+            Self::WideGamutSurface { primaries, .. }
+            | Self::HdrIntermediateThenToneMap { primaries, .. } => clipped_to(primaries),
+            Self::HdrNativeSurface { primaries, .. } => {
+                if capabilities.supports_wide_gamut {
+                    OutputGamut::Display
+                } else {
+                    clipped_to(primaries)
+                }
+            }
+        }
+    }
+}
+
+/// The colors an output shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputGamut {
+    /// sRGB colors; others are clipped to sRGB.
+    #[default]
+    Srgb,
+    /// Display P3 colors; others are clipped to Display P3.
+    DisplayP3,
+    /// The display's own gamut: colors beyond sRGB reach the display
+    /// unclipped, and it shows as many as it can, as with native HDR output
+    /// (scRGB) on a wide-gamut display.
+    Display,
+}
+
+impl OutputGamut {
+    /// Whether colors beyond sRGB reach the display.
+    pub const fn is_wide(self) -> bool {
+        !matches!(self, Self::Srgb)
     }
 }
 

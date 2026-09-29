@@ -209,11 +209,15 @@ impl Widget for CaptureOnClick {
 }
 ```
 
-Wake events go only to the widget that registered the token. Captures are
-native-only; in a browser the result is an error. A host that runs its own
-event loop keeps redrawing while `has_pending_window_debug_captures` and calls
+Wake events go only to the widget that registered the token. Native platforms
+wait for the GPU to copy a capture back, so it is ready after the redraw that
+made it. Browsers cannot wait: the copy comes back on a later frame, and the
+widget is woken then. A host that runs its own event loop keeps redrawing
+while `has_pending_window_debug_captures` and calls
 `service_window_debug_captures` after each redraw, delivering the returned
-tokens with `Runtime::wake_async`.
+tokens with `Runtime::wake_async`. The renderer's
+`WgpuRenderer::begin_debug_capture` and `take_finished_debug_captures` are the
+same steps for hosts that manage captures themselves.
 
 ## Read the visualizations
 
@@ -243,7 +247,11 @@ bug report. The useful fields include:
 - whether the detected display reports wide gamut or HDR;
 - whether SUI can use native HDR presentation on that platform;
 - the preferred dynamic range and capability notes;
-- the renderer's active output strategy.
+- the renderer's active output strategy;
+- the colors the output shows, `output_gamut`. The display's
+  `preferred_primaries` only says how output is encoded: native HDR output
+  (scRGB) is encoded in sRGB primaries yet shows wide-gamut colors on a
+  wide-gamut display, which `output_gamut` reports as `Display`.
 
 Treat capability detection and renderer selection as separate questions. A
 display may report HDR while the active platform integration still uses a

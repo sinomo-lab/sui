@@ -2751,25 +2751,14 @@ mod tests {
         );
 
         open_dev_shell_settings(&window)?;
-        let snapshot = window.snapshot()?;
-        let tone_mapping_selects = snapshot
-            .accessibility
-            .nodes
-            .iter()
-            .filter(|node| {
-                node.role == SemanticsRole::ComboBox
-                    && node.name.as_deref() == Some(TONE_MAPPING_MODE_NAME)
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            tone_mapping_selects.len(),
-            2,
-            "expected the page's and Settings' tone mapping selects"
-        );
-        for select in tone_mapping_selects {
+        for name in [
+            TONE_MAPPING_MODE_NAME.to_string(),
+            in_settings(TONE_MAPPING_MODE_NAME),
+        ] {
             assert_eq!(
-                select.value,
-                Some(SemanticsValue::Text("Reinhard".to_string()))
+                semantic_text_value(&window, SemanticsRole::ComboBox, &name),
+                "Reinhard",
+                "{name}"
             );
         }
         Ok(())
@@ -5828,6 +5817,48 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
+    fn controls_have_unique_names_with_settings_over_the_hdr_page() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, HDR_VALIDATION_TAB_LABEL)?;
+        open_dev_shell_settings(&window)?;
+        let snapshot = window.snapshot()?;
+
+        let mut seen = std::collections::HashMap::<_, usize>::new();
+        for node in &snapshot.accessibility.nodes {
+            let control = matches!(
+                node.role,
+                SemanticsRole::Button
+                    | SemanticsRole::CheckBox
+                    | SemanticsRole::ComboBox
+                    | SemanticsRole::Slider
+                    | SemanticsRole::SpinBox
+                    | SemanticsRole::Switch
+                    | SemanticsRole::ColorSwatch
+            );
+            if control && let Some(name) = &node.name {
+                *seen
+                    .entry((format!("{:?}", node.role), name.as_str()))
+                    .or_default() += 1;
+            }
+        }
+        let duplicates = seen
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|((role, name), count)| format!("{count} × {role} {name:?}"))
+            .collect::<Vec<_>>();
+        assert!(duplicates.is_empty(), "{duplicates:#?}");
+        // Settings' copies of the page's controls say where they are.
+        find_named_node(&snapshot, SemanticsRole::ComboBox, TONE_MAPPING_MODE_NAME);
+        find_named_node(
+            &snapshot,
+            SemanticsRole::ComboBox,
+            &in_settings(TONE_MAPPING_MODE_NAME),
+        );
+        Ok(())
+    }
+
+    #[test]
     fn settings_groups_every_render_option() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
@@ -5849,6 +5880,13 @@ final_max_luminance={final_max_luminance}
             OUTPUT_ROW_NAME,
             SDR_WHITE_ROW_NAME,
             HDR_THEME_ROW_NAME,
+            OPEN_HDR_VALIDATION_LABEL,
+            PERFORMANCE_OVERLAY_LABEL,
+            RESET_LABEL,
+        ] {
+            assert!(named(name)?, "Settings shows {name:?}");
+        }
+        for label in [
             COLOR_MANAGEMENT_MODE_NAME,
             OUTPUT_PRIMARIES_NAME,
             DYNAMIC_RANGE_MODE_NAME,
@@ -5856,33 +5894,30 @@ final_max_luminance={final_max_luminance}
             SDR_CONTENT_BRIGHTNESS_NAME,
             USE_SYSTEM_SDR_BRIGHTNESS_LABEL,
             HDR_THEME_MODE_NAME,
-            OPEN_HDR_VALIDATION_LABEL,
             TEXT_COVERAGE_POLICY_NAME,
             TEXT_HINTING_LABEL,
             TEXT_HINTING_MAX_PPEM_NAME,
             STEM_DARKENING_LABEL,
             OPTICAL_CENTERING_LABEL,
             FEATHERING_LABEL,
-            PERFORMANCE_OVERLAY_LABEL,
-            RESET_LABEL,
         ] {
-            assert!(named(name)?, "Settings shows {name:?}");
+            assert!(named(&in_settings(label))?, "Settings shows {label:?}");
         }
 
         // Settings that only matter with another one show with it.
-        for name in [
+        for label in [
             TEXT_COVERAGE_GAMMA_NAME,
             STEM_DARKENING_AMOUNT_NAME,
             STEM_DARKENING_MAX_PPEM_NAME,
         ] {
             assert!(
-                !named(name)?,
-                "{name:?} waits for the setting it depends on"
+                !named(&in_settings(label))?,
+                "{label:?} waits for the setting it depends on"
             );
         }
         // Perceptual, then Linear, then Gamma.
         choose_in_settings(&window, TEXT_COVERAGE_POLICY_NAME, 2)?;
-        assert!(named(TEXT_COVERAGE_GAMMA_NAME)?);
+        assert!(named(&in_settings(TEXT_COVERAGE_GAMMA_NAME))?);
         assert!(matches!(
             sui::window_render_options(window.id()).map(|options| options.text_coverage_policy),
             Some(WindowTextCoveragePolicy::Gamma(_))
@@ -5950,10 +5985,11 @@ final_max_luminance={final_max_luminance}
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
 
-        reveal_in_settings(&window, SemanticsRole::Switch, STEM_DARKENING_LABEL)?;
+        let stem_darkening_name = in_settings(STEM_DARKENING_LABEL);
+        reveal_in_settings(&window, SemanticsRole::Switch, &stem_darkening_name)?;
         window
             .get_by_role(SemanticsRole::Switch)
-            .with_name(STEM_DARKENING_LABEL)
+            .with_name(&stem_darkening_name)
             .click()?;
         assert!(matches!(
             sui::window_render_options(window.id()).map(|options| options.stem_darkening),
@@ -5972,7 +6008,7 @@ final_max_luminance={final_max_luminance}
         let stem_darkening = find_named_node(
             &window.snapshot()?,
             SemanticsRole::Switch,
-            STEM_DARKENING_LABEL,
+            &stem_darkening_name,
         );
         assert_eq!(stem_darkening.state.checked, Some(ToggleState::Unchecked));
         Ok(())
@@ -5983,14 +6019,11 @@ final_max_luminance={final_max_luminance}
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
-        reveal_in_settings(&window, SemanticsRole::SpinBox, SDR_CONTENT_BRIGHTNESS_NAME)?;
+        let brightness_name = in_settings(SDR_CONTENT_BRIGHTNESS_NAME);
+        reveal_in_settings(&window, SemanticsRole::SpinBox, &brightness_name)?;
 
         let light_snapshot = window.snapshot()?;
-        let brightness = find_named_node(
-            &light_snapshot,
-            SemanticsRole::SpinBox,
-            SDR_CONTENT_BRIGHTNESS_NAME,
-        );
+        let brightness = find_named_node(&light_snapshot, SemanticsRole::SpinBox, &brightness_name);
         let probe = Rect::new(
             brightness.bounds.x() + 8.0,
             brightness.bounds.y() + brightness.bounds.height() * 0.5,
@@ -6115,7 +6148,11 @@ final_max_luminance={final_max_luminance}
         open_dev_shell_settings(&window)?;
 
         let mode = crate::theme_demo::hdr_theme_lab_mode();
-        let select = semantic_text_value(&window, SemanticsRole::ComboBox, HDR_THEME_MODE_NAME);
+        let select = semantic_text_value(
+            &window,
+            SemanticsRole::ComboBox,
+            &in_settings(HDR_THEME_MODE_NAME),
+        );
         assert_eq!(select, hdr_theme_mode_label(mode));
         let row = semantic_text_value(&window, SemanticsRole::GenericContainer, HDR_THEME_ROW_NAME);
         assert!(row.starts_with(hdr_theme_mode_label(mode)), "{row}");
@@ -6527,13 +6564,19 @@ final_max_luminance={final_max_luminance}
         )))
     }
 
+    /// The accessible name of Settings' control labeled `label`.
+    fn in_settings(label: &str) -> String {
+        Place::Settings.name(label)
+    }
+
     /// Choose the option `steps_down` below the current one in the Settings
-    /// select `name`.
-    fn choose_in_settings(window: &TestWindow, name: &str, steps_down: usize) -> Result<()> {
-        reveal_in_settings(window, SemanticsRole::ComboBox, name)?;
+    /// select labeled `label`.
+    fn choose_in_settings(window: &TestWindow, label: &str, steps_down: usize) -> Result<()> {
+        let name = in_settings(label);
+        reveal_in_settings(window, SemanticsRole::ComboBox, &name)?;
         window
             .get_by_role(SemanticsRole::ComboBox)
-            .with_name(name)
+            .with_name(&name)
             .click()?;
         for _ in 0..steps_down {
             window.focused().press("ArrowDown")?;

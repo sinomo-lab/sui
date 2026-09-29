@@ -5949,6 +5949,25 @@ fn select_selected_when_reads_external_selection() -> Result<()> {
 }
 
 #[test]
+fn switches_and_checkboxes_can_be_named_apart_from_their_labels() -> Result<()> {
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .with_child(Switch::new("Hinting").semantic_name("Hinting in Settings"))
+            .with_child(Checkbox::new("Overlay").semantic_name("Overlay in Settings")),
+    );
+    let output = runtime.render(window_id)?;
+    let named = |role, name: &str| {
+        output
+            .semantics
+            .iter()
+            .any(|node| node.role == role && node.name.as_deref() == Some(name))
+    };
+    assert!(named(SemanticsRole::Switch, "Hinting in Settings"));
+    assert!(named(SemanticsRole::CheckBox, "Overlay in Settings"));
+    Ok(())
+}
+
+#[test]
 fn switch_on_when_follows_external_state_and_toggles_it() -> Result<()> {
     let on = Rc::new(Cell::new(true));
     let reader = Rc::clone(&on);

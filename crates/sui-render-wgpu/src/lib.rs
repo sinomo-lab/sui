@@ -33,6 +33,7 @@ mod uploads;
 pub use sui_scene::TextSubpixelOrder;
 
 pub use capture::DebugCaptureArtifact;
+pub use capture::DebugCaptureId;
 pub use capture::HdrRgbaImage;
 pub use capture::RgbaImage;
 pub use diagnostics::RendererFrameStats;
@@ -51,6 +52,7 @@ pub use output::DisplayCapabilities;
 pub use output::DisplayColorPrimaries;
 pub use output::DisplayTransferFunction;
 pub use output::DynamicRangeMode;
+pub use output::OutputGamut;
 pub use output::OutputStrategy;
 pub use output::RendererCapabilities;
 pub use output::RequestedColorManagementMode;
@@ -122,4 +124,7 @@ pub struct WgpuRenderer {
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     intermediate_targets: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
+    /// Debug captures whose pixels are being copied back.
+    debug_captures_in_flight: Vec<capture::InFlightCapture>,
+    next_debug_capture_id: u64,
 }

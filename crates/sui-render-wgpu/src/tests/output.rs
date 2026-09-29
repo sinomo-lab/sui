@@ -1161,3 +1161,72 @@ pub(crate) fn offscreen_captures_fit_highlights_with_the_window_tone_mapping() {
         assert_rgba_pixel_near(&preview, 8, 8, expected, RGBA_CHANNEL_TOLERANCE);
     }
 }
+
+#[test]
+fn debug_captures_are_collected_once_their_copy_is_back() {
+    let window_id = WindowId::new(4631);
+    let viewport = Size::new(16.0, 12.0);
+    let mut scene = Scene::new();
+    scene.push(SceneCommand::Clear(Color::rgba(1.0, 0.0, 0.0, 1.0)));
+    let frame = SceneFrame {
+        window_id,
+        viewport,
+        surface_size: viewport,
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    };
+    let mut renderer = WgpuRenderer::new();
+    renderer.render(&frame).unwrap();
+
+    let id = renderer
+        .begin_debug_capture(window_id, DebugCaptureRequest::default())
+        .unwrap();
+    assert!(renderer.has_debug_captures_in_flight(window_id));
+    renderer.wait_for_debug_captures().unwrap();
+    let finished = renderer.take_finished_debug_captures(window_id);
+    let [(finished_id, Ok(DebugCaptureArtifact::SdrRgba8(image)))] = &finished[..] else {
+        panic!("one SDR capture comes back: {finished:?}");
+    };
+    assert_eq!(*finished_id, id);
+    assert_rgba_pixel_near(image, 8, 6, [255, 0, 0, 255], RGBA_CHANNEL_TOLERANCE);
+    assert!(!renderer.has_debug_captures_in_flight(window_id));
+    assert!(renderer.take_finished_debug_captures(window_id).is_empty());
+}
+
+#[test]
+fn outputs_report_the_colors_they_show() {
+    use crate::output::OutputGamut;
+
+    let sdr = DisplayCapabilities::sdr();
+    let wide = DisplayCapabilities::wide_gamut();
+    let hdr = DisplayCapabilities::hdr(1000.0, 250.0);
+    let format = wgpu::TextureFormat::Rgba16Float;
+    let native_hdr = OutputStrategy::HdrNativeSurface {
+        format,
+        primaries: DisplayColorPrimaries::Srgb,
+        transfer: DisplayTransferFunction::LinearExtended,
+    };
+
+    assert_eq!(
+        OutputStrategy::SdrSurface { format }.gamut(&hdr),
+        OutputGamut::Srgb
+    );
+    assert_eq!(
+        OutputStrategy::WideGamutSurface {
+            format,
+            primaries: DisplayColorPrimaries::DisplayP3,
+        }
+        .gamut(&wide),
+        OutputGamut::DisplayP3
+    );
+    // scRGB carries colors beyond its sRGB primaries to a wide-gamut display.
+    assert_eq!(native_hdr.gamut(&hdr), OutputGamut::Display);
+    assert!(native_hdr.gamut(&hdr).is_wide());
+    assert_eq!(native_hdr.gamut(&sdr), OutputGamut::Srgb);
+    assert!(!OutputGamut::Srgb.is_wide());
+}

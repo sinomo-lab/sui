@@ -30,18 +30,20 @@ fn diagnostics(
     strategy: OutputStrategy,
     tone_mapping: WindowToneMappingMode,
 ) -> WindowOutputDiagnostics {
+    let display_capabilities = DisplayCapabilities {
+        supports_wide_gamut: true,
+        supports_hdr: true,
+        preferred_primaries: DisplayColorPrimaries::DisplayP3,
+        preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
+        max_luminance_nits: Some(1000.0),
+        sdr_white_nits: Some(250.0),
+        max_content_headroom: None,
+        native_hdr_presentation_supported: true,
+        notes: String::new(),
+    };
     WindowOutputDiagnostics {
-        display_capabilities: DisplayCapabilities {
-            supports_wide_gamut: true,
-            supports_hdr: true,
-            preferred_primaries: DisplayColorPrimaries::DisplayP3,
-            preferred_dynamic_range: DynamicRangeMode::HighDynamicRange,
-            max_luminance_nits: Some(1000.0),
-            sdr_white_nits: Some(250.0),
-            max_content_headroom: None,
-            native_hdr_presentation_supported: true,
-            notes: String::new(),
-        },
+        output_gamut: strategy.gamut(&display_capabilities),
+        display_capabilities,
         requested_color_management_mode: WindowColorManagementMode::Automatic,
         requested_output_primaries: WindowOutputColorPrimaries::Automatic,
         requested_dynamic_range_mode: WindowDynamicRangeMode::Automatic,
@@ -107,7 +109,7 @@ fn page_lays_out_every_section_probe_and_control() -> Result<()> {
     for swatch in [
         "White 1×",
         "White 16×",
-        "White 1.05×",
+        "Near white 1.05×",
         "sRGB clipped green",
         "Display P3 green",
         "Full HDR emissive indicator",

@@ -52,6 +52,25 @@ const HDR_THEME_MODES: [HdrThemeMode; 4] = [
     HdrThemeMode::FullHdr,
 ];
 
+/// Where controls are. Settings floats over pages that show some of the same
+/// controls, so its controls say so in their accessible names, which keeps
+/// each name in a window unique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Place {
+    Page,
+    Settings,
+}
+
+impl Place {
+    /// The accessible name of the control labeled `label` here.
+    pub(crate) fn name(self, label: &str) -> String {
+        match self {
+            Self::Page => label.to_string(),
+            Self::Settings => format!("{label} in Settings"),
+        }
+    }
+}
+
 pub(crate) fn hdr_theme_mode_label(mode: HdrThemeMode) -> &'static str {
     match mode {
         HdrThemeMode::Disabled => "Disabled (SDR baseline)",
@@ -82,6 +101,7 @@ where
 fn option_select(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
     name: &'static str,
     labels: &'static [&'static str],
     index: fn(&WindowRenderOptions) -> usize,
@@ -89,7 +109,7 @@ fn option_select(
 ) -> Select {
     let read = options.clone();
     let write = options.clone();
-    Select::new(name)
+    Select::new(place.name(name))
         .theme_when(clone_dev_theme_reader(theme_reader))
         .options(labels.iter().copied())
         .selected_when(move || Some(index(&read.get())))
@@ -101,6 +121,7 @@ fn option_select(
 fn option_switch(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
     label: &'static str,
     on: fn(&WindowRenderOptions) -> bool,
     set: fn(&mut WindowRenderOptions, bool),
@@ -108,6 +129,7 @@ fn option_switch(
     let read = options.clone();
     let write = options.clone();
     Switch::new(label)
+        .semantic_name(place.name(label))
         .theme_when(clone_dev_theme_reader(theme_reader))
         .on_when(move || on(&read.get()))
         .on_toggle(move |value| write.update(|options| set(options, value)))
@@ -119,6 +141,7 @@ fn option_switch(
 fn option_number(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
     name: &'static str,
     (min, max): (f64, f64),
     step: f64,
@@ -128,7 +151,7 @@ fn option_number(
 ) -> NumberInput {
     let read = options.clone();
     let write = options.clone();
-    NumberInput::new(name)
+    NumberInput::new(place.name(name))
         .theme_when(clone_dev_theme_reader(theme_reader))
         .range(min, max)
         .step(step)
@@ -143,10 +166,12 @@ fn option_number(
 pub(crate) fn color_management_select(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Select {
     option_select(
         theme_reader,
         options,
+        place,
         COLOR_MANAGEMENT_MODE_NAME,
         &["Automatic", "Force SDR", "Prefer wide gamut", "Prefer HDR"],
         |options| match options.color_management_mode {
@@ -169,10 +194,12 @@ pub(crate) fn color_management_select(
 pub(crate) fn output_primaries_select(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Select {
     option_select(
         theme_reader,
         options,
+        place,
         OUTPUT_PRIMARIES_NAME,
         &["Automatic", "sRGB", "Display P3"],
         |options| match options.output_color_primaries {
@@ -193,10 +220,12 @@ pub(crate) fn output_primaries_select(
 pub(crate) fn dynamic_range_select(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Select {
     option_select(
         theme_reader,
         options,
+        place,
         DYNAMIC_RANGE_MODE_NAME,
         &["Automatic", "SDR", "HDR"],
         |options| match options.dynamic_range_mode {
@@ -217,10 +246,12 @@ pub(crate) fn dynamic_range_select(
 pub(crate) fn tone_mapping_select(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Select {
     option_select(
         theme_reader,
         options,
+        place,
         TONE_MAPPING_MODE_NAME,
         &["Automatic", "Clamp", "Reinhard"],
         |options| match options.tone_mapping_mode {
@@ -241,10 +272,12 @@ pub(crate) fn tone_mapping_select(
 pub(crate) fn sdr_content_brightness_input(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> NumberInput {
     option_number(
         theme_reader,
         options,
+        place,
         SDR_CONTENT_BRIGHTNESS_NAME,
         SDR_CONTENT_BRIGHTNESS_NITS,
         1.0,
@@ -257,10 +290,12 @@ pub(crate) fn sdr_content_brightness_input(
 pub(crate) fn system_sdr_brightness_switch(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Switch {
     option_switch(
         theme_reader,
         options,
+        place,
         USE_SYSTEM_SDR_BRIGHTNESS_LABEL,
         |options| options.use_system_sdr_content_brightness,
         |options, on| options.use_system_sdr_content_brightness = on,
@@ -269,8 +304,8 @@ pub(crate) fn system_sdr_brightness_switch(
 
 /// The HDR theme mode widgets preview, which falls back to what the output
 /// can show.
-pub(crate) fn hdr_theme_mode_select(theme_reader: &DevThemeReader) -> Select {
-    Select::new(HDR_THEME_MODE_NAME)
+pub(crate) fn hdr_theme_mode_select(theme_reader: &DevThemeReader, place: Place) -> Select {
+    Select::new(place.name(HDR_THEME_MODE_NAME))
         .theme_when(clone_dev_theme_reader(theme_reader))
         .options(HDR_THEME_MODES.map(hdr_theme_mode_label))
         .selected_when(|| {
@@ -288,10 +323,12 @@ pub(crate) fn hdr_theme_mode_select(theme_reader: &DevThemeReader) -> Select {
 pub(crate) fn text_coverage_policy_select(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Select {
     option_select(
         theme_reader,
         options,
+        place,
         TEXT_COVERAGE_POLICY_NAME,
         &[
             "Perceptual",
@@ -342,10 +379,12 @@ fn text_coverage_gamma(options: &WindowRenderOptions) -> f64 {
 pub(crate) fn text_coverage_gamma_input(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> NumberInput {
     option_number(
         theme_reader,
         options,
+        place,
         TEXT_COVERAGE_GAMMA_NAME,
         TEXT_COVERAGE_GAMMA,
         0.05,
@@ -371,10 +410,12 @@ fn text_hinting_max_ppem(options: &WindowRenderOptions) -> f32 {
 pub(crate) fn text_hinting_switch(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Switch {
     option_switch(
         theme_reader,
         options,
+        place,
         TEXT_HINTING_LABEL,
         uses_text_hinting,
         |options, on| {
@@ -392,10 +433,12 @@ pub(crate) fn text_hinting_switch(
 pub(crate) fn text_hinting_max_ppem_input(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> NumberInput {
     option_number(
         theme_reader,
         options,
+        place,
         TEXT_HINTING_MAX_PPEM_NAME,
         (1.0, f64::from(TEXT_HINTING_MAX_PPEM_LIMIT)),
         0.5,
@@ -430,10 +473,12 @@ fn stem_darkening(options: &WindowRenderOptions) -> (f32, f32) {
 pub(crate) fn stem_darkening_switch(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Switch {
     option_switch(
         theme_reader,
         options,
+        place,
         STEM_DARKENING_LABEL,
         uses_stem_darkening,
         |options, on| {
@@ -450,10 +495,12 @@ pub(crate) fn stem_darkening_switch(
 pub(crate) fn stem_darkening_amount_input(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> NumberInput {
     option_number(
         theme_reader,
         options,
+        place,
         STEM_DARKENING_AMOUNT_NAME,
         STEM_DARKENING_AMOUNT,
         0.01,
@@ -472,10 +519,12 @@ pub(crate) fn stem_darkening_amount_input(
 pub(crate) fn stem_darkening_max_ppem_input(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> NumberInput {
     option_number(
         theme_reader,
         options,
+        place,
         STEM_DARKENING_MAX_PPEM_NAME,
         STEM_DARKENING_MAX_PPEM,
         0.5,
@@ -494,20 +543,27 @@ pub(crate) fn stem_darkening_max_ppem_input(
 pub(crate) fn optical_centering_switch(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> Switch {
     option_switch(
         theme_reader,
         options,
+        place,
         OPTICAL_CENTERING_LABEL,
         |options| options.optical_vertical_text_alignment_enabled,
         |options, on| options.optical_vertical_text_alignment_enabled = on,
     )
 }
 
-pub(crate) fn feathering_switch(theme_reader: &DevThemeReader, options: &RenderOptions) -> Switch {
+pub(crate) fn feathering_switch(
+    theme_reader: &DevThemeReader,
+    options: &RenderOptions,
+    place: Place,
+) -> Switch {
     option_switch(
         theme_reader,
         options,
+        place,
         FEATHERING_LABEL,
         |options| options.feathering_enabled,
         |options, on| options.feathering_enabled = on,
@@ -517,10 +573,12 @@ pub(crate) fn feathering_switch(theme_reader: &DevThemeReader, options: &RenderO
 pub(crate) fn feather_width_input(
     theme_reader: &DevThemeReader,
     options: &RenderOptions,
+    place: Place,
 ) -> NumberInput {
     option_number(
         theme_reader,
         options,
+        place,
         FEATHER_WIDTH_NAME,
         FEATHER_WIDTH,
         0.05,

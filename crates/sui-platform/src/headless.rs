@@ -847,7 +847,7 @@ mod tests {
     fn headless_windows_render_for_the_display_they_are_given() -> Result<()> {
         use sui_render_wgpu::{
             DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
-            DisplayCapabilities, OutputStrategy,
+            DisplayCapabilities, OutputGamut, OutputStrategy,
         };
         use sui_runtime::{OutputColorRange, window_output_color_range};
 
@@ -859,6 +859,7 @@ mod tests {
             diagnostics.active_output_strategy,
             OutputStrategy::SdrSurface { .. }
         ));
+        assert_eq!(diagnostics.output_gamut, OutputGamut::Srgb);
         assert_eq!(
             window_output_color_range(window_id),
             Some(OutputColorRange::Standard)
@@ -883,6 +884,12 @@ mod tests {
             diagnostics.display_capabilities.max_luminance_nits,
             Some(1000.0)
         );
+        // Encoded in sRGB primaries, scRGB still shows the display's colors.
+        assert_eq!(
+            diagnostics.display_capabilities.preferred_primaries,
+            sui_render_wgpu::DisplayColorPrimaries::Srgb
+        );
+        assert_eq!(diagnostics.output_gamut, OutputGamut::Display);
         assert_eq!(
             window_output_color_range(window_id),
             Some(OutputColorRange::HighDynamicRange)

@@ -1958,6 +1958,7 @@ pub struct Checkbox {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    semantic_name: Option<String>,
     checked: bool,
     checked_reader: Option<Box<dyn Fn() -> bool>>,
     appearance: ChoiceAppearance,
@@ -2079,6 +2080,7 @@ impl Checkbox {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            semantic_name: None,
             checked: false,
             checked_reader: None,
             appearance: ChoiceAppearance::Plain,
@@ -2101,6 +2103,13 @@ impl Checkbox {
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = checked;
         self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
+        self
+    }
+
+    /// Name the control for accessibility and automation instead of its
+    /// label, which still shows. The name should contain the label.
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
         self
     }
 
@@ -2447,7 +2456,11 @@ impl Widget for Checkbox {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::CheckBox, ctx.bounds());
-        node.name = Some(self.label.clone());
+        node.name = Some(
+            self.semantic_name
+                .clone()
+                .unwrap_or_else(|| self.label.clone()),
+        );
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.state.checked = Some(if self.current_checked() {
@@ -2475,6 +2488,7 @@ pub struct Switch {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    semantic_name: Option<String>,
     on: bool,
     on_reader: Option<Box<dyn Fn() -> bool>>,
     appearance: ChoiceAppearance,
@@ -2510,6 +2524,7 @@ impl Switch {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            semantic_name: None,
             on: false,
             on_reader: None,
             appearance: ChoiceAppearance::Plain,
@@ -2531,6 +2546,13 @@ impl Switch {
     pub fn on(mut self, on: bool) -> Self {
         self.on = on;
         self.toggle_animation = AnimatedScalar::new(on as u8 as f32);
+        self
+    }
+
+    /// Name the control for accessibility and automation instead of its
+    /// label, which still shows. The name should contain the label.
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
         self
     }
 
@@ -3011,7 +3033,11 @@ impl Widget for Switch {
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Switch, ctx.bounds());
-        node.name = Some(self.label.clone());
+        node.name = Some(
+            self.semantic_name
+                .clone()
+                .unwrap_or_else(|| self.label.clone()),
+        );
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.state.checked = Some(if self.current_on() {

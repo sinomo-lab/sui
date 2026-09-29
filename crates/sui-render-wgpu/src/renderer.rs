@@ -383,6 +383,8 @@ impl WgpuRenderer {
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
         self.compositors.remove(&window_id);
+        self.debug_captures_in_flight
+            .retain(|capture| capture.window_id != window_id);
     }
 
     pub fn render(&mut self, frame: &SceneFrame) -> Result<()> {
@@ -495,6 +497,8 @@ impl Default for WgpuRenderer {
             intermediate_targets: HashMap::new(),
             offscreen_outputs: HashMap::new(),
             frame_resources: FrameResources::default(),
+            debug_captures_in_flight: Vec::new(),
+            next_debug_capture_id: 1,
         }
     }
 }

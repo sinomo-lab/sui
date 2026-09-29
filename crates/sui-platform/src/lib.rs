@@ -156,26 +156,6 @@ pub(crate) fn clear_window_performance(window_id: WindowId) {
     debug_capture::clear_window_debug_captures(window_id);
 }
 
-/// Capture `window_id`'s last frame for the app. Browsers cannot read frames
-/// back synchronously, so captures are native-only.
-pub(crate) fn capture_window_for_app(
-    renderer: &mut WgpuRenderer,
-    window_id: WindowId,
-    request: sui_render_wgpu::DebugCaptureRequest,
-) -> sui_core::Result<sui_render_wgpu::DebugCaptureArtifact> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        renderer.capture_last_frame_debug(window_id, request)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (renderer, window_id, request);
-        Err(sui_core::Error::new(
-            "debug captures are not available in the browser, which cannot read frames back synchronously",
-        ))
-    }
-}
-
 fn retained_packet_rebuild_diagnostics(
     rebuilds: sui_render_wgpu::RetainedPacketRebuildStats,
 ) -> RetainedPacketRebuildDiagnostics {

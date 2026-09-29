@@ -5,7 +5,7 @@
 
 use sui_core::{Result, WindowId};
 use sui_render_wgpu::{
-    DisplayCapabilities, DisplayColorPrimaries, FeatheringOptions, OutputStrategy, WgpuRenderer,
+    DisplayCapabilities, FeatheringOptions, OutputGamut, OutputStrategy, WgpuRenderer,
 };
 use sui_runtime::{
     OutputColorRange, RenderOutput, Runtime, WindowRenderOptions, set_window_output_color_range,
@@ -46,7 +46,12 @@ pub fn present_window_frame(
     let options = apply_render_options(renderer, window_id)?;
     // Before the runtime paints, so widgets style for this frame's output.
     if let Some(strategy) = renderer.window_output_strategy(window_id) {
-        set_window_output_color_range(window_id, output_color_range(strategy));
+        let gamut = strategy.gamut(
+            &renderer
+                .window_display_capabilities(window_id)
+                .unwrap_or_default(),
+        );
+        set_window_output_color_range(window_id, output_color_range(strategy, gamut));
     }
     let setup_time = setup_started.elapsed();
 
@@ -125,18 +130,11 @@ fn apply_render_options(
     })
 }
 
-/// What an output presenting with `strategy` can show.
-fn output_color_range(strategy: OutputStrategy) -> OutputColorRange {
+/// What an output presenting with `strategy` in `gamut` can show.
+fn output_color_range(strategy: OutputStrategy, gamut: OutputGamut) -> OutputColorRange {
     match strategy {
         OutputStrategy::HdrNativeSurface { .. } => OutputColorRange::HighDynamicRange,
-        OutputStrategy::WideGamutSurface {
-            primaries: DisplayColorPrimaries::DisplayP3,
-            ..
-        }
-        | OutputStrategy::HdrIntermediateThenToneMap {
-            primaries: DisplayColorPrimaries::DisplayP3,
-            ..
-        } => OutputColorRange::WideGamut,
+        _ if gamut.is_wide() => OutputColorRange::WideGamut,
         _ => OutputColorRange::Standard,
     }
 }
@@ -159,6 +157,7 @@ fn publish_output_diagnostics(
         );
     }
     let options = &applied.options;
+    let output_gamut = active_output_strategy.gamut(&display_capabilities);
     publish_window_output_diagnostics(
         window_id,
         WindowOutputDiagnostics {
@@ -172,6 +171,7 @@ fn publish_output_diagnostics(
             configured_sdr_content_brightness_nits: options.sdr_content_brightness_nits,
             use_system_sdr_content_brightness: options.use_system_sdr_content_brightness,
             active_output_strategy,
+            output_gamut,
         },
     );
 }

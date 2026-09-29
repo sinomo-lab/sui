@@ -155,7 +155,7 @@ fn output_details(diagnostics: Option<&WindowOutputDiagnostics>) -> String {
     let capabilities = &diagnostics.display_capabilities;
     let yes_no = |value: bool| if value { "yes" } else { "no" };
     format!(
-        "Display: wide gamut {}, HDR {}, native HDR presentation {}; prefers {:?}, {:?}. {}. Strategy: {:?}. {}",
+        "Display: wide gamut {}, HDR {}, native HDR presentation {}; prefers {:?}, {:?}. {}. Strategy: {:?}, showing {:?} colors. {}",
         yes_no(capabilities.supports_wide_gamut),
         yes_no(capabilities.supports_hdr),
         yes_no(capabilities.native_hdr_presentation_supported),
@@ -163,6 +163,7 @@ fn output_details(diagnostics: Option<&WindowOutputDiagnostics>) -> String {
         capabilities.preferred_dynamic_range,
         sdr_content_brightness_line(diagnostics),
         diagnostics.active_output_strategy,
+        diagnostics.output_gamut,
         capabilities.notes,
     )
 }
@@ -188,36 +189,37 @@ fn output_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> imp
         .with_child(control_row(
             theme_reader,
             controls::COLOR_MANAGEMENT_MODE_NAME,
-            controls::color_management_select(theme_reader, options),
+            controls::color_management_select(theme_reader, options, controls::Place::Page),
         ))
         .with_child(control_row(
             theme_reader,
             controls::OUTPUT_PRIMARIES_NAME,
-            controls::output_primaries_select(theme_reader, options),
+            controls::output_primaries_select(theme_reader, options, controls::Place::Page),
         ))
         .with_child(control_row(
             theme_reader,
             controls::DYNAMIC_RANGE_MODE_NAME,
-            controls::dynamic_range_select(theme_reader, options),
+            controls::dynamic_range_select(theme_reader, options, controls::Place::Page),
         ))
         .with_child(control_row(
             theme_reader,
             controls::TONE_MAPPING_MODE_NAME,
-            controls::tone_mapping_select(theme_reader, options),
+            controls::tone_mapping_select(theme_reader, options, controls::Place::Page),
         ))
         .with_child(control_row(
             theme_reader,
             controls::SDR_CONTENT_BRIGHTNESS_NAME,
-            controls::sdr_content_brightness_input(theme_reader, options),
+            controls::sdr_content_brightness_input(theme_reader, options, controls::Place::Page),
         ))
         .with_child(control_row(
             theme_reader,
             controls::HDR_THEME_MODE_NAME,
-            controls::hdr_theme_mode_select(theme_reader),
+            controls::hdr_theme_mode_select(theme_reader, controls::Place::Page),
         ))
         .with_child(controls::system_sdr_brightness_switch(
             theme_reader,
             options,
+            controls::Place::Page,
         ));
 
     section(
@@ -268,7 +270,7 @@ fn headroom_section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     let mut near_white = probes::SwatchStrip::new(NEAR_WHITE_NAME, theme_reader);
     for multiple in [0.9_f32, 0.95, 1.0, 1.05, 1.1, 1.25] {
         near_white = near_white.swatch(
-            format!("White {multiple}×"),
+            format!("Near white {multiple}×"),
             format!("{multiple}×"),
             Color::linear_rgba(multiple, multiple, multiple, 1.0),
         );

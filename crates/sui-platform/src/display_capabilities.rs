@@ -6,7 +6,8 @@ use std::{
 use sui_core::WindowId;
 use sui_reactive::Signal;
 use sui_render_wgpu::{
-    DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DisplayCapabilities, DisplayColorPrimaries, OutputStrategy,
+    DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DisplayCapabilities, DisplayColorPrimaries, OutputGamut,
+    OutputStrategy,
 };
 use sui_runtime::{
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
@@ -42,6 +43,10 @@ pub struct WindowOutputDiagnostics {
     pub system_sdr_content_brightness_nits: Option<f32>,
     pub use_system_sdr_content_brightness: bool,
     pub active_output_strategy: OutputStrategy,
+    /// The colors the output shows. `display_capabilities.preferred_primaries`
+    /// only says how output is encoded: native HDR output in sRGB primaries
+    /// shows wide-gamut colors on a wide-gamut display.
+    pub output_gamut: OutputGamut,
 }
 
 type DiagnosticsSignal = Signal<Option<WindowOutputDiagnostics>>;

@@ -103,11 +103,11 @@ pub use sui_reactive::{
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
-    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
-    DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries, HdrRgbaImage,
-    OutputStrategy, RendererCapabilities, RendererInterop, RequestedToneMappingMode, RgbaImage,
-    StemDarkening, TextCoveragePolicy, TextHinting, WgpuExternalTextureContext,
-    WgpuExternalTextureRegistry, WgpuRenderer, fit_to_sdr,
+    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureId, DebugCaptureRequest,
+    DebugCaptureStage, DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries,
+    HdrRgbaImage, OutputGamut, OutputStrategy, RendererCapabilities, RendererInterop,
+    RequestedToneMappingMode, RgbaImage, StemDarkening, TextCoveragePolicy, TextHinting,
+    WgpuExternalTextureContext, WgpuExternalTextureRegistry, WgpuRenderer, fit_to_sdr,
 };
 pub use sui_runtime::{
     AnimateCtx, Application as RuntimeApplication, ArrangeCtx, AsyncTaskInspectorSnapshot,

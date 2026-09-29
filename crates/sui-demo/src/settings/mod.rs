@@ -91,33 +91,37 @@ fn display_section(
             .with_child(row(
                 theme_reader,
                 COLOR_MANAGEMENT_MODE_NAME,
-                color_management_select(theme_reader, options),
+                color_management_select(theme_reader, options, Place::Settings),
             ))
             .with_child(row(
                 theme_reader,
                 OUTPUT_PRIMARIES_NAME,
-                output_primaries_select(theme_reader, options),
+                output_primaries_select(theme_reader, options, Place::Settings),
             ))
             .with_child(row(
                 theme_reader,
                 DYNAMIC_RANGE_MODE_NAME,
-                dynamic_range_select(theme_reader, options),
+                dynamic_range_select(theme_reader, options, Place::Settings),
             ))
             .with_child(row(
                 theme_reader,
                 TONE_MAPPING_MODE_NAME,
-                tone_mapping_select(theme_reader, options),
+                tone_mapping_select(theme_reader, options, Place::Settings),
             ))
             .with_child(row(
                 theme_reader,
                 SDR_CONTENT_BRIGHTNESS_NAME,
-                sdr_content_brightness_input(theme_reader, options),
+                sdr_content_brightness_input(theme_reader, options, Place::Settings),
             ))
-            .with_child(system_sdr_brightness_switch(theme_reader, options))
+            .with_child(system_sdr_brightness_switch(
+                theme_reader,
+                options,
+                Place::Settings,
+            ))
             .with_child(row(
                 theme_reader,
                 HDR_THEME_MODE_NAME,
-                hdr_theme_mode_select(theme_reader),
+                hdr_theme_mode_select(theme_reader, Place::Settings),
             ))
             .with_child(Align::new(
                 Alignment::Start,
@@ -139,7 +143,7 @@ fn text_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> Panel
                 row(
                     theme_reader,
                     TEXT_COVERAGE_POLICY_NAME,
-                    text_coverage_policy_select(theme_reader, options),
+                    text_coverage_policy_select(theme_reader, options, Place::Settings),
                 ),
                 options.flag(
                     "Text coverage follows a gamma curve",
@@ -148,34 +152,38 @@ fn text_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> Panel
                 rows().with_child(row(
                     theme_reader,
                     TEXT_COVERAGE_GAMMA_NAME,
-                    text_coverage_gamma_input(theme_reader, options),
+                    text_coverage_gamma_input(theme_reader, options, Place::Settings),
                 )),
             ))
             .with_child(with_details(
-                text_hinting_switch(theme_reader, options),
+                text_hinting_switch(theme_reader, options, Place::Settings),
                 options.flag("Text hinting is on", uses_text_hinting),
                 rows().with_child(row(
                     theme_reader,
                     TEXT_HINTING_MAX_PPEM_NAME,
-                    text_hinting_max_ppem_input(theme_reader, options),
+                    text_hinting_max_ppem_input(theme_reader, options, Place::Settings),
                 )),
             ))
             .with_child(with_details(
-                stem_darkening_switch(theme_reader, options),
+                stem_darkening_switch(theme_reader, options, Place::Settings),
                 options.flag("Stem darkening is on", uses_stem_darkening),
                 rows()
                     .with_child(row(
                         theme_reader,
                         STEM_DARKENING_AMOUNT_NAME,
-                        stem_darkening_amount_input(theme_reader, options),
+                        stem_darkening_amount_input(theme_reader, options, Place::Settings),
                     ))
                     .with_child(row(
                         theme_reader,
                         STEM_DARKENING_MAX_PPEM_NAME,
-                        stem_darkening_max_ppem_input(theme_reader, options),
+                        stem_darkening_max_ppem_input(theme_reader, options, Place::Settings),
                     )),
             ))
-            .with_child(optical_centering_switch(theme_reader, options)),
+            .with_child(optical_centering_switch(
+                theme_reader,
+                options,
+                Place::Settings,
+            )),
     )
 }
 
@@ -184,12 +192,12 @@ fn shapes_section(theme_reader: &DevThemeReader, options: &RenderOptions) -> Pan
         theme_reader,
         SHAPES_SECTION_NAME,
         rows().with_child(with_details(
-            feathering_switch(theme_reader, options),
+            feathering_switch(theme_reader, options, Place::Settings),
             options.flag("Feathering is on", |options| options.feathering_enabled),
             rows().with_child(row(
                 theme_reader,
                 FEATHER_WIDTH_NAME,
-                feather_width_input(theme_reader, options),
+                feather_width_input(theme_reader, options, Place::Settings),
             )),
         )),
     )

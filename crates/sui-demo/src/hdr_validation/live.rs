@@ -112,10 +112,7 @@ impl OutputSummary {
         } else {
             Some(1.0)
         };
-        // Native HDR output is extended linear sRGB (scRGB), which carries
-        // colors outside sRGB as negative channels to a wide-gamut display.
-        let wide_gamut = primaries == DisplayColorPrimaries::DisplayP3
-            || (kind == OutputKind::NativeHdr && capabilities.supports_wide_gamut);
+        let wide_gamut = diagnostics.output_gamut.is_wide();
         Self {
             kind,
             fit,
