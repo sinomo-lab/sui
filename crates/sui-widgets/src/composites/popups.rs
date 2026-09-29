@@ -610,6 +610,19 @@ pub(super) fn tooltip_fallback_measurement(theme: &DefaultTheme) -> TextMeasurem
     }
 }
 
+pub(super) fn tooltip_bubble_size(
+    measurement: Option<TextMeasurement>,
+    theme: &DefaultTheme,
+) -> Size {
+    let measurement = measurement.unwrap_or_else(|| tooltip_fallback_measurement(theme));
+    let padding = theme.metrics.tooltip_padding;
+    let width =
+        (measurement.width + padding.left + padding.right).max(theme.metrics.tooltip_min_width);
+    let height =
+        measurement.height.max(theme.typography.body_line_height) + padding.top + padding.bottom;
+    Size::new(width, height)
+}
+
 pub(super) fn tooltip_bubble_rect(
     trigger_bounds: Rect,
     measurement: Option<TextMeasurement>,
@@ -618,12 +631,7 @@ pub(super) fn tooltip_bubble_rect(
     alignment: TooltipAlignment,
     viewport: Rect,
 ) -> (Rect, TooltipPlacement) {
-    let measurement = measurement.unwrap_or_else(|| tooltip_fallback_measurement(theme));
-    let padding = theme.metrics.tooltip_padding;
-    let width =
-        (measurement.width + padding.left + padding.right).max(theme.metrics.tooltip_min_width);
-    let height =
-        measurement.height.max(theme.typography.body_line_height) + padding.top + padding.bottom;
+    let Size { width, height } = tooltip_bubble_size(measurement, theme);
     let side = match placement {
         TooltipPlacement::Above => OverlaySide::Top,
         TooltipPlacement::Below => OverlaySide::Bottom,
@@ -663,6 +671,8 @@ pub(super) struct TooltipPresentationState {
     pub(super) trigger_bounds: Rect,
     pub(super) bubble_bounds: Rect,
     pub(super) reveal: AnimatedScalar,
+    /// Pinned open and laid out in flow; see [`Tooltip::show_inline`].
+    pub(super) inline: bool,
 }
 
 impl TooltipPresentationState {
@@ -678,6 +688,7 @@ impl TooltipPresentationState {
             trigger_bounds: Rect::ZERO,
             bubble_bounds: Rect::ZERO,
             reveal: AnimatedScalar::new(0.0),
+            inline: false,
         }
     }
 
@@ -768,10 +779,10 @@ impl Widget for TooltipOverlay {
     }
 
     fn layer_options(&self) -> LayerOptions {
-        let presented = self.state.borrow().is_presented();
+        let state = self.state.borrow();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if presented {
+            composition_mode: if state.is_presented() && !state.inline {
                 LayerCompositionMode::Overlay
             } else {
                 LayerCompositionMode::Normal
@@ -784,14 +795,12 @@ impl Widget for TooltipOverlay {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.state
-            .borrow()
-            .is_presented()
-            .then_some(StackSurfaceOptions {
-                transient: true,
-                hit_test: false,
-                ..StackSurfaceOptions::default()
-            })
+        let state = self.state.borrow();
+        (state.is_presented() && !state.inline).then_some(StackSurfaceOptions {
+            transient: true,
+            hit_test: false,
+            ..StackSurfaceOptions::default()
+        })
     }
 }
 
@@ -829,10 +838,61 @@ impl Tooltip {
         self
     }
 
+    /// Keeps the bubble visible and lays it out in flow next to the trigger,
+    /// as part of this widget's own size, instead of floating in the window
+    /// overlay stack. Widget galleries and documentation use this to show an
+    /// open tooltip beside other content.
+    pub fn show_inline(self) -> Self {
+        {
+            let mut state = self.state.borrow_mut();
+            state.inline = true;
+            state.reveal = AnimatedScalar::new(1.0);
+        }
+        self
+    }
+
+    /// Inline placement: the trigger and bubble share one column, aligned by
+    /// [`Self::alignment`], with the bubble above or below the trigger.
+    pub(super) fn inline_layout(&self, origin: Point, trigger_size: Size) -> (Rect, Rect, Size) {
+        let state = self.state.borrow();
+        let bubble_size = tooltip_bubble_size(state.measurement, &state.theme);
+        let gap = state.theme.metrics.tooltip_gap;
+        let width = trigger_size.width.max(bubble_size.width);
+        let align = match state.alignment {
+            TooltipAlignment::Start => 0.0,
+            TooltipAlignment::Center => 0.5,
+            TooltipAlignment::End => 1.0,
+        };
+        let x = |item_width: f32| origin.x + (width - item_width) * align;
+        let (trigger_y, bubble_y) = match state.placement {
+            TooltipPlacement::Above => (origin.y + bubble_size.height + gap, origin.y),
+            TooltipPlacement::Below => (origin.y, origin.y + trigger_size.height + gap),
+        };
+        (
+            Rect::new(
+                x(trigger_size.width),
+                trigger_y,
+                trigger_size.width,
+                trigger_size.height,
+            ),
+            Rect::new(
+                x(bubble_size.width),
+                bubble_y,
+                bubble_size.width,
+                bubble_size.height,
+            ),
+            Size::new(width, trigger_size.height + gap + bubble_size.height),
+        )
+    }
+
     pub(super) fn set_hovered(&mut self, ctx: &mut EventCtx, hovered: bool) {
         let overlay_id = self.overlay.child().id();
         let mut state = self.state.borrow_mut();
         if state.hovered == hovered {
+            return;
+        }
+        if state.inline {
+            state.hovered = hovered;
             return;
         }
         let was_presented = state.is_presented();
@@ -905,13 +965,33 @@ impl Widget for Tooltip {
             state.theme.surfaces.tooltip_text,
         );
         state.measurement = Some(measure_text(ctx, &state.text, &text_style));
+        let inline = state.inline;
         drop(state);
-        self.child.measure(ctx, constraints)
+        let trigger_size = self.child.measure(ctx, constraints);
+        if !inline {
+            return trigger_size;
+        }
+        let (_, bubble, size) = self.inline_layout(Point::ZERO, trigger_size);
+        self.overlay.measure(ctx, Constraints::tight(bubble.size));
+        constraints.clamp(size)
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        let trigger_bounds =
-            Rect::from_origin_size(bounds.origin, self.child.child().measured_size());
+        let trigger_size = self.child.child().measured_size();
+        if self.state.borrow().inline {
+            let (trigger_bounds, bubble_bounds, _) =
+                self.inline_layout(bounds.origin, trigger_size);
+            self.child.arrange(ctx, trigger_bounds);
+            {
+                let mut state = self.state.borrow_mut();
+                state.trigger_bounds = trigger_bounds;
+                state.bubble_bounds = bubble_bounds;
+                state.resolved_placement = state.placement;
+            }
+            self.overlay.arrange(ctx, bubble_bounds);
+            return;
+        }
+        let trigger_bounds = Rect::from_origin_size(bounds.origin, trigger_size);
         self.child.arrange(ctx, trigger_bounds);
 
         let mut state = self.state.borrow_mut();
@@ -942,7 +1022,8 @@ impl Widget for Tooltip {
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
-        self.state.borrow().is_presented().then_some(
+        let state = self.state.borrow();
+        (state.is_presented() && !state.inline).then_some(
             OverlayOptions::new(OverlayKind::Tooltip)
                 .dismiss(OverlayDismissPolicy::NONE)
                 .focus(OverlayFocusBehavior::NONE),
@@ -952,7 +1033,7 @@ impl Widget for Tooltip {
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.child.semantics(ctx);
         let state = self.state.borrow();
-        if state.hovered {
+        if state.hovered || state.inline {
             let mut node =
                 SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tooltip, state.bubble_bounds);
             node.name = Some(state.text.clone());
@@ -991,6 +1072,8 @@ pub(super) struct PopoverSurfaceState {
     pub(super) arrival_active: bool,
     pub(super) reveal: AnimatedScalar,
     pub(super) focus_animation: AnimatedScalar,
+    /// Pinned open and laid out in flow; see [`Popover::show_inline`].
+    pub(super) inline: bool,
 }
 
 impl PopoverSurfaceState {
@@ -1001,6 +1084,7 @@ impl PopoverSurfaceState {
             arrival_active: false,
             reveal: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            inline: false,
         }
     }
 
@@ -1171,10 +1255,10 @@ impl Widget for PopoverSurface {
     }
 
     fn layer_options(&self) -> LayerOptions {
-        let presented = self.state.borrow().is_presented();
+        let state = self.state.borrow();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if presented {
+            composition_mode: if state.is_presented() && !state.inline {
                 LayerCompositionMode::Overlay
             } else {
                 LayerCompositionMode::Normal
@@ -1187,13 +1271,11 @@ impl Widget for PopoverSurface {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.state
-            .borrow()
-            .is_presented()
-            .then_some(StackSurfaceOptions {
-                transient: true,
-                ..StackSurfaceOptions::default()
-            })
+        let state = self.state.borrow();
+        (state.is_presented() && !state.inline).then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -1266,7 +1348,7 @@ impl Widget for PopoverFocusSurface {
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
         let state = self.state.borrow();
-        (state.is_presented() && state.focus_animation.is_presented()).then_some(
+        (state.is_presented() && state.focus_animation.is_presented() && !state.inline).then_some(
             StackSurfaceOptions {
                 transient: true,
                 hit_test: false,
@@ -1359,6 +1441,25 @@ impl Popover {
         self
     }
 
+    /// Keeps the surface open and lays it out in flow beneath the trigger, as
+    /// part of this widget's own size, instead of floating in the window
+    /// overlay stack. The surface ignores dismissal. Widget galleries and
+    /// documentation use this to show an open popover beside other content.
+    pub fn show_inline(mut self) -> Self {
+        self.open = true;
+        self.open_reader = None;
+        {
+            let mut state = self.state.borrow_mut();
+            state.inline = true;
+            state.reveal = AnimatedScalar::new(1.0);
+        }
+        self
+    }
+
+    pub(super) fn is_inline(&self) -> bool {
+        self.state.borrow().inline
+    }
+
     pub(super) fn sync_external_open(&mut self) {
         let Some(open) = self.open_reader.as_ref().map(|open| open()) else {
             return;
@@ -1406,7 +1507,7 @@ impl Popover {
     }
 
     pub(super) fn set_open(&mut self, ctx: &mut EventCtx, open: bool) {
-        if self.open == open {
+        if self.open == open || self.is_inline() {
             return;
         }
 
@@ -1560,6 +1661,24 @@ impl Widget for Popover {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_external_open();
         let trigger_size = self.trigger.measure(ctx, constraints.loosen());
+        if self.is_inline() {
+            let surface_size = self.surface.measure(
+                ctx,
+                Constraints::new(Size::ZERO, Size::new(constraints.max.width, f32::INFINITY)),
+            );
+            let surface_size = Size::new(
+                surface_size.width.max(trigger_size.width),
+                surface_size.height,
+            );
+            // The focus ring surface sizes itself from the shared frame.
+            self.state.borrow_mut().frame_rect = Rect::from_origin_size(Point::ZERO, surface_size);
+            self.focus_surface
+                .measure(ctx, Constraints::tight(surface_size));
+            return constraints.clamp(Size::new(
+                surface_size.width,
+                trigger_size.height + self.gap + surface_size.height,
+            ));
+        }
         // A popover's trigger belongs to its parent's layout, but its surface belongs to the
         // window overlay stack. In particular, toolbar and title-bar slots are commonly tight to
         // the trigger; reusing those constraints for the surface collapses a wide panel into that
@@ -1604,7 +1723,16 @@ impl Widget for Popover {
         self.trigger.arrange(ctx, trigger_bounds);
 
         let presented = self.state.borrow().is_presented();
-        let surface_bounds = if presented {
+        let surface_bounds = if self.is_inline() {
+            let measured = self.surface.child().measured_size();
+            let surface_size = Size::new(measured.width.max(trigger_size.width), measured.height);
+            Rect::new(
+                aligned_x(surface_size.width),
+                trigger_bounds.max_y() + self.gap,
+                surface_size.width,
+                surface_size.height,
+            )
+        } else if presented {
             let surface_size = self.surface.child().measured_size();
             let viewport = Rect::from_origin_size(Point::ZERO, ctx.dpi().viewport);
             let margin = self.gap.max(4.0);
@@ -1664,6 +1792,9 @@ impl Widget for Popover {
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
+        if self.is_inline() {
+            return None;
+        }
         (self.open || self.state.borrow().is_presented()).then_some(
             OverlayOptions::new(OverlayKind::Popover)
                 .dismiss(if self.open {
@@ -1758,6 +1889,8 @@ pub(super) struct ContextMenuPresentationState {
     pub(super) focus_animation: AnimatedScalar,
     pub(super) highlight_animation: AnimatedScalar,
     pub(super) press_animation: AnimatedScalar,
+    /// Pinned open and laid out in flow; see [`ContextMenu::show_inline`].
+    pub(super) inline: bool,
 }
 
 impl ContextMenuPresentationState {
@@ -1776,6 +1909,7 @@ impl ContextMenuPresentationState {
             focus_animation: AnimatedScalar::new(0.0),
             highlight_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
+            inline: false,
         }
     }
 
@@ -1981,10 +2115,10 @@ impl Widget for ContextMenuSurface {
     }
 
     fn layer_options(&self) -> LayerOptions {
-        let presented = self.state.borrow().is_presented();
+        let state = self.state.borrow();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if presented {
+            composition_mode: if state.is_presented() && !state.inline {
                 LayerCompositionMode::Overlay
             } else {
                 LayerCompositionMode::Normal
@@ -1997,13 +2131,11 @@ impl Widget for ContextMenuSurface {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.state
-            .borrow()
-            .is_presented()
-            .then_some(StackSurfaceOptions {
-                transient: true,
-                ..StackSurfaceOptions::default()
-            })
+        let state = self.state.borrow();
+        (state.is_presented() && !state.inline).then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
     }
 }
 
@@ -2066,7 +2198,7 @@ impl Widget for ContextMenuFocusSurface {
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
         let state = self.state.borrow();
-        (state.is_presented() && state.focus_animation.is_presented()).then_some(
+        (state.is_presented() && state.focus_animation.is_presented() && !state.inline).then_some(
             StackSurfaceOptions {
                 transient: true,
                 hit_test: false,
@@ -2099,6 +2231,7 @@ pub struct ContextMenu {
     pub(super) primary_trigger_press: Option<u64>,
     pub(super) anchor_to_pointer: Option<bool>,
     pub(super) open_position: Option<Point>,
+    pub(super) inline: bool,
     pub(super) on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
     pub(super) on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, MenuItem)>>,
     pub(super) on_activate_path: Option<Box<dyn FnMut(Vec<usize>, MenuItem)>>,
@@ -2137,6 +2270,7 @@ impl ContextMenu {
             primary_trigger_press: None,
             anchor_to_pointer: None,
             open_position: None,
+            inline: false,
             on_activate: None,
             on_activate_with_ctx: None,
             on_activate_path: None,
@@ -2248,6 +2382,66 @@ impl ContextMenu {
     pub fn anchor_to_pointer(mut self, anchor_to_pointer: bool) -> Self {
         self.anchor_to_pointer = Some(anchor_to_pointer);
         self
+    }
+
+    /// Keeps the menu open and lays its panels out in flow beneath the
+    /// trigger, as part of this widget's own size, instead of floating in the
+    /// window overlay stack. The menu ignores dismissal but stays interactive.
+    /// Widget galleries and documentation use this to show an open menu
+    /// beside other content; see also [`Self::highlighted_path`].
+    pub fn show_inline(mut self) -> Self {
+        self.inline = true;
+        self.open = true;
+        {
+            let mut state = self.surface_state.borrow_mut();
+            state.inline = true;
+            state.reveal = AnimatedScalar::new(1.0);
+        }
+        self
+    }
+
+    /// Highlights the item at `path` (indices from the root menu) and opens
+    /// the submenus leading to it, or its own submenu when it has one. Call
+    /// after adding items; useful with [`Self::show_inline`].
+    pub fn highlighted_path(mut self, path: impl IntoIterator<Item = usize>) -> Self {
+        let path: Vec<usize> = path.into_iter().collect();
+        let opens_submenu = self
+            .item_at_path(&path)
+            .is_some_and(|item| item.enabled && item.has_submenu());
+        self.open_path = if opens_submenu {
+            path.clone()
+        } else {
+            path[..path.len().saturating_sub(1)].to_vec()
+        };
+        self.highlight_visual = Some(path.clone());
+        self.highlight_animation = AnimatedScalar::new(1.0);
+        self.highlighted = Some(path);
+        self
+    }
+
+    /// Positions inline panels: the root panel sits below the trigger and
+    /// each submenu opens to the right of its owner row. Returns the union of
+    /// the trigger and every panel, relative to the widget origin.
+    pub(super) fn layout_inline_panels(&mut self, trigger_size: Size) -> Size {
+        let theme = self.resolved_theme();
+        let row_height = self.row_height();
+        let mut extent = Rect::from_origin_size(Point::ZERO, trigger_size);
+        for depth in 0..self.panels.len() {
+            let origin = if depth == 0 {
+                Point::new(0.0, trigger_size.height + theme.metrics.popover_gap)
+            } else {
+                let owner = *self.panels[depth].prefix.last().unwrap_or(&0);
+                let Some(row) = self.panels[depth - 1].item_rect(&theme, row_height, owner) else {
+                    continue;
+                };
+                Point::new(row.max_x(), row.y())
+            };
+            let size = self.panels[depth].frame_rect.size;
+            self.panels[depth].frame_rect = Rect::from_origin_size(origin, size);
+            self.panels[depth].opens_left = false;
+            extent = extent.union(self.panels[depth].frame_rect);
+        }
+        Size::new(extent.max_x(), extent.max_y())
     }
 
     pub(super) fn anchors_to_pointer(&self) -> bool {
@@ -2599,7 +2793,7 @@ impl ContextMenu {
     }
 
     pub(super) fn set_open(&mut self, ctx: &mut EventCtx, open: bool) {
-        if self.open == open {
+        if self.open == open || self.inline {
             return;
         }
 
@@ -2963,7 +3157,7 @@ impl Widget for ContextMenu {
             let mut prefix = Vec::new();
             while let Some(items) = self.items_at_prefix(&prefix).map(<[MenuItem]>::to_vec) {
                 let mut width = self.measured_menu_width_for_items(ctx, &items);
-                if prefix.is_empty() && !pointer_anchored {
+                if prefix.is_empty() && !pointer_anchored && !self.inline {
                     width = width.max(trigger_size.width);
                 }
                 let height = themed_menu_height_for_rows(&theme, self.row_height(), items.len());
@@ -2996,7 +3190,12 @@ impl Widget for ContextMenu {
                 .iter()
                 .map(|panel| panel.frame_rect.height())
                 .sum::<f32>();
-            let estimated_size = Size::new(estimated_width, estimated_height);
+            let estimated_size = if self.inline {
+                self.layout_inline_panels(trigger_size);
+                self.surface_rect().size
+            } else {
+                Size::new(estimated_width, estimated_height)
+            };
             {
                 let mut state = self.surface_state.borrow_mut();
                 state.theme = theme;
@@ -3014,6 +3213,13 @@ impl Widget for ContextMenu {
                 .measure(ctx, Constraints::tight(estimated_size));
             self.focus_surface
                 .measure(ctx, Constraints::tight(estimated_size));
+            if self.inline {
+                let extent = self.panels.iter().map(|panel| panel.frame_rect).fold(
+                    Rect::from_origin_size(Point::ZERO, trigger_size),
+                    Rect::union,
+                );
+                return constraints.clamp(Size::new(extent.max_x(), extent.max_y()));
+            }
         } else {
             self.panels.clear();
         }
@@ -3025,7 +3231,7 @@ impl Widget for ContextMenu {
             ctx,
             Rect::from_origin_size(bounds.origin, self.trigger.child().measured_size()),
         );
-        if self.open && !self.panels.is_empty() {
+        if self.open && !self.panels.is_empty() && !self.inline {
             let theme = self.resolved_theme();
             let anchor = self.open_position.map_or_else(
                 || self.trigger.child().bounds(),
@@ -3183,6 +3389,9 @@ impl Widget for ContextMenu {
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
+        if self.inline {
+            return None;
+        }
         (self.open || self.surface_state.borrow().is_presented()).then_some(
             OverlayOptions::new(OverlayKind::Menu)
                 .dismiss(if self.open {

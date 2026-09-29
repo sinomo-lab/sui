@@ -67,7 +67,9 @@ and renderer-neutral scene commands.
 1. Add or update a focused regression test.
 2. Implement the smallest coherent change in the owning crate.
 3. Re-export application-facing API through `crates/sui` when appropriate.
-4. Add or update a widget-book story for visible built-in widget behavior.
+4. Add or update a widget-book story in
+   `crates/sui-demo/src/widget_book/stories/` for visible built-in widget
+   behavior, laying out its variants and states side by side.
 5. Update user documentation and runnable examples for public API changes.
 6. Run the focused crate tests before the full checks below.
 

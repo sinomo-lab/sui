@@ -196,7 +196,9 @@ anchoring, follow-end, and retained-row policies.
 
 `ScrollState` can be shared with `ScrollView::state` when application code
 needs to inspect or control an offset. Without it, the view retains its own
-scroll state.
+scroll state. For a `VirtualScrollView`, `scroll_to_item` jumps to a child and
+`virtual_item_at`, `first_visible_item`, and `virtual_item_offset` report which
+child sits at a content offset, which is enough to build scroll-spy navigation.
 
 Use `content_width` and `content_height` to separate the viewport from the
 child's content offer. `ContentExtent::Viewport` enables wrapping at viewport

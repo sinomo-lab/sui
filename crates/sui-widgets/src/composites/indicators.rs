@@ -702,26 +702,48 @@ impl Widget for ProgressBar {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let (_, tone_text) = theme.semantic_tone_colors(self.tone);
-        paint_progress_bar(ctx, ctx.bounds(), &theme, self.fraction(), self.tone);
+        let bounds = ctx.bounds();
+        paint_progress_bar(ctx, bounds, &theme, self.fraction(), self.tone);
         if self.show_value {
             let label = format!("{:.0}%", self.fraction() * 100.0);
-            let text_style = numeric_text_style(text_token_style(&theme, theme.text.sm, tone_text));
             let label_padding = Insets {
                 top: 0.0,
                 bottom: 0.0,
                 ..metrics.progress_bar_label_padding
             };
-            let label_slot = inset_rect(ctx.bounds(), label_padding);
-            ctx.push_clip_rect(label_slot);
-            paint_aligned_text(
-                ctx,
-                label_slot,
-                &label,
-                &text_style,
-                text_style.line_height,
-                0.5,
+            let label_slot = inset_rect(bounds, label_padding);
+            // The centered label straddles the fill edge: glyphs over the fill
+            // take the tone's content color, glyphs over the track take body
+            // text, so the value stays readable at every fraction.
+            let fill_edge = bounds.x() + bounds.width() * self.fraction();
+            let fill_part = Rect::new(
+                bounds.x(),
+                bounds.y(),
+                (fill_edge - bounds.x()).max(0.0),
+                bounds.height(),
             );
-            ctx.pop_clip();
+            let track_part = Rect::new(
+                fill_edge,
+                bounds.y(),
+                (bounds.max_x() - fill_edge).max(0.0),
+                bounds.height(),
+            );
+            for (part, color) in [(fill_part, tone_text), (track_part, theme.palette.text)] {
+                let Some(clip) = part.intersection(label_slot) else {
+                    continue;
+                };
+                let text_style = numeric_text_style(text_token_style(&theme, theme.text.sm, color));
+                ctx.push_clip_rect(clip);
+                paint_aligned_text(
+                    ctx,
+                    label_slot,
+                    &label,
+                    &text_style,
+                    text_style.line_height,
+                    0.5,
+                );
+                ctx.pop_clip();
+            }
         }
     }
 

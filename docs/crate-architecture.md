@@ -252,9 +252,12 @@ platform contracts instead of a fake widget model.
 The main development host, widget gallery, and visual validation package.
 
 This crate launches the desktop app used for manual runtime, widget, and
-renderer validation. Its `widget_book` module owns the built-in widget gallery,
-benchmark and stress targets, animation demos, diagnostics surfaces,
-performance overlays, and visual artifact generation.
+renderer validation. Its `widget_book` module owns the built-in widget gallery:
+a story registry, one module of stories per category, the page and rail, and
+visual artifact generation. Sibling modules own the benchmark surfaces
+(`benchmarks`), text and color validation surfaces (`validation`), the Themes
+page and HDR theme lab (`theme_demo`), the live performance overlay
+(`live_performance`), and the other demos.
 
 ## Directional Rules
 

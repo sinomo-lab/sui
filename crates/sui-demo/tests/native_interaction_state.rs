@@ -2,12 +2,41 @@
 #![forbid(unsafe_code)]
 
 use sui::{
-    Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-    SemanticsNode, SemanticsRole, ToggleState,
+    Alignment, Application, Button, Checkbox, Event, Point, PointerButton, PointerButtons,
+    PointerEvent, PointerEventKind, Rect, Result, SemanticsNode, SemanticsRole, SizedBox,
+    TextInput, ToggleState, VirtualScrollView, WindowBuilder, containers::Padding,
 };
 use sui_testing::{Screenshot, TestApp, TestWindow};
 
 const PIXEL_TOLERANCE: u8 = 1;
+const FIXTURE_SCROLL_NAME: &str = "Interaction fixture";
+const BUTTON_LABEL: &str = "States button";
+const TEXT_INPUT_LABEL: &str = "States text input";
+const CHECKBOX_LABEL: &str = "States checkbox";
+
+/// Controls with unique accessible names in a scrollable page, leaving empty
+/// space on the right for outside clicks.
+fn interaction_fixture() -> Application {
+    Application::new().window(
+        WindowBuilder::new()
+            .title("Interaction state fixture")
+            .root(
+                VirtualScrollView::new()
+                    .name(FIXTURE_SCROLL_NAME)
+                    .with_child(Padding::all(
+                        24.0,
+                        sui::Stack::vertical()
+                            .spacing(16.0)
+                            .alignment(Alignment::Start)
+                            .with_child(Button::new(BUTTON_LABEL).min_width(170.0))
+                            .with_child(SizedBox::new().width(240.0).with_child(
+                                TextInput::new(TEXT_INPUT_LABEL).placeholder("Search layers"),
+                            ))
+                            .with_child(Checkbox::new(CHECKBOX_LABEL)),
+                    )),
+            ),
+    )
+}
 
 fn find_node(
     snapshot: &sui_testing::WindowSnapshot,
@@ -110,21 +139,13 @@ fn advance_interaction_motion(app: &TestApp) -> Result<()> {
 }
 
 fn outside_gallery_point(snapshot: &sui_testing::WindowSnapshot) -> Point {
-    let gallery = find_node(
-        snapshot,
-        SemanticsRole::ScrollView,
-        sui_demo_app::widget_book::GALLERY_SCROLL_NAME,
-    );
+    let gallery = find_node(snapshot, SemanticsRole::ScrollView, FIXTURE_SCROLL_NAME);
     Point::new(gallery.bounds.max_x() - 32.0, gallery.bounds.y() + 32.0)
 }
 
 #[test]
 fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_click() -> Result<()> {
-    let app = TestApp::new_no_vsync(|| {
-        sui_demo_app::widget_book::build_widget_book_application(
-            sui_demo_app::widget_book::default_widget_book_state(),
-        )
-    })?;
+    let app = TestApp::new_no_vsync(interaction_fixture)?;
     let window = app.main_window()?;
     window.run_until_idle()?;
 
@@ -136,41 +157,25 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
 
     let button = window
         .get_by_role(SemanticsRole::Button)
-        .with_name(sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL);
-    let button_node = find_node(
-        &initial,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
-    );
+        .with_name(BUTTON_LABEL);
+    let button_node = find_node(&initial, SemanticsRole::Button, BUTTON_LABEL);
     let button_baseline = crop(&window, button_node.bounds)?;
 
     button.hover()?;
     advance_interaction_motion(&app)?;
-    let button_hovered = find_node(
-        &window.snapshot()?,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
-    );
+    let button_hovered = find_node(&window.snapshot()?, SemanticsRole::Button, BUTTON_LABEL);
     assert!(button_hovered.state.hovered);
 
     button.click()?;
     advance_interaction_motion(&app)?;
-    let button_focused = find_node(
-        &window.snapshot()?,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
-    );
+    let button_focused = find_node(&window.snapshot()?, SemanticsRole::Button, BUTTON_LABEL);
     assert!(button_focused.state.focused);
     let button_focused_crop = crop(&window, button_node.bounds)?;
     assert_crop_changed("button focus", &button_baseline, &button_focused_crop);
 
     click_at(&window, outside)?;
     advance_interaction_motion(&app)?;
-    let button_cleared = find_node(
-        &window.snapshot()?,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
-    );
+    let button_cleared = find_node(&window.snapshot()?, SemanticsRole::Button, BUTTON_LABEL);
     assert!(!button_cleared.state.hovered);
     assert!(!button_cleared.state.focused);
     assert_crop_changed(
@@ -181,13 +186,9 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
 
     let input = window
         .get_by_role(SemanticsRole::TextInput)
-        .with_name(sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL);
+        .with_name(TEXT_INPUT_LABEL);
     let before_input = window.snapshot()?;
-    let input_node = find_node(
-        &before_input,
-        SemanticsRole::TextInput,
-        sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL,
-    );
+    let input_node = find_node(&before_input, SemanticsRole::TextInput, TEXT_INPUT_LABEL);
     let input_baseline = crop(&window, input_node.bounds)?;
 
     input.hover()?;
@@ -195,7 +196,7 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
     let input_hovered = find_node(
         &window.snapshot()?,
         SemanticsRole::TextInput,
-        sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL,
+        TEXT_INPUT_LABEL,
     );
     assert!(input_hovered.state.hovered);
 
@@ -205,7 +206,7 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
     let input_focused = find_node(
         &window.snapshot()?,
         SemanticsRole::TextInput,
-        sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL,
+        TEXT_INPUT_LABEL,
     );
     assert!(input_focused.state.focused);
     assert_crop_changed("text input focus", &input_baseline, &input_immediate_crop);
@@ -215,7 +216,7 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
     let input_cleared = find_node(
         &window.snapshot()?,
         SemanticsRole::TextInput,
-        sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL,
+        TEXT_INPUT_LABEL,
     );
     assert!(!input_cleared.state.hovered);
     assert!(!input_cleared.state.focused);
@@ -227,22 +228,14 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
 
     let checkbox = window
         .get_by_role(SemanticsRole::CheckBox)
-        .with_name(sui_demo_app::widget_book::WIDGET_STATES_CHECKBOX_LABEL);
+        .with_name(CHECKBOX_LABEL);
     let before_checkbox = window.snapshot()?;
-    let checkbox_node = find_node(
-        &before_checkbox,
-        SemanticsRole::CheckBox,
-        sui_demo_app::widget_book::WIDGET_STATES_CHECKBOX_LABEL,
-    );
+    let checkbox_node = find_node(&before_checkbox, SemanticsRole::CheckBox, CHECKBOX_LABEL);
     let checkbox_baseline = crop(&window, checkbox_node.bounds)?;
 
     checkbox.hover()?;
     advance_interaction_motion(&app)?;
-    let checkbox_hovered = find_node(
-        &window.snapshot()?,
-        SemanticsRole::CheckBox,
-        sui_demo_app::widget_book::WIDGET_STATES_CHECKBOX_LABEL,
-    );
+    let checkbox_hovered = find_node(&window.snapshot()?, SemanticsRole::CheckBox, CHECKBOX_LABEL);
     assert!(checkbox_hovered.state.hovered);
     assert_eq!(checkbox_hovered.state.checked, Some(ToggleState::Unchecked));
     assert_crop_changed(
@@ -253,11 +246,7 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
 
     checkbox.click()?;
     advance_interaction_motion(&app)?;
-    let checkbox_focused = find_node(
-        &window.snapshot()?,
-        SemanticsRole::CheckBox,
-        sui_demo_app::widget_book::WIDGET_STATES_CHECKBOX_LABEL,
-    );
+    let checkbox_focused = find_node(&window.snapshot()?, SemanticsRole::CheckBox, CHECKBOX_LABEL);
     assert!(checkbox_focused.state.focused);
     assert_eq!(checkbox_focused.state.checked, Some(ToggleState::Checked));
     let checkbox_checked_focused = crop(&window, checkbox_node.bounds)?;
@@ -269,11 +258,7 @@ fn native_widget_states_clear_hover_focus_and_visual_highlight_after_outside_cli
 
     click_at(&window, outside)?;
     advance_interaction_motion(&app)?;
-    let checkbox_cleared = find_node(
-        &window.snapshot()?,
-        SemanticsRole::CheckBox,
-        sui_demo_app::widget_book::WIDGET_STATES_CHECKBOX_LABEL,
-    );
+    let checkbox_cleared = find_node(&window.snapshot()?, SemanticsRole::CheckBox, CHECKBOX_LABEL);
     assert!(!checkbox_cleared.state.hovered);
     assert!(!checkbox_cleared.state.focused);
     assert_eq!(checkbox_cleared.state.checked, Some(ToggleState::Checked));

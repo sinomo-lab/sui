@@ -8692,3 +8692,232 @@ where
         .with_child(top)
         .with_child(bottom)
 }
+
+fn semantics_bounds(output: &RenderOutput, role: SemanticsRole, name: &str) -> Rect {
+    output
+        .semantics
+        .iter()
+        .find(|node| node.role == role && node.name.as_deref() == Some(name))
+        .unwrap_or_else(|| panic!("{role:?} semantics named {name:?} present"))
+        .bounds
+}
+
+#[test]
+fn inline_overlays_reserve_layout_space_without_floating_layers() {
+    let output = render(
+        crate::Stack::vertical()
+            .spacing(8.0)
+            .alignment(Alignment::Start)
+            .with_child(
+                crate::Tooltip::new("Copy link", crate::Button::new("Share"))
+                    .placement(super::TooltipPlacement::Below)
+                    .show_inline(),
+            )
+            .with_child(crate::Label::new("After tooltip"))
+            .with_child(
+                Popover::new(
+                    "Details",
+                    crate::Button::new("Open details"),
+                    crate::Label::new("Popover body"),
+                )
+                .show_inline(),
+            )
+            .with_child(crate::Label::new("After popover"))
+            .with_child(
+                ContextMenu::new("Layer menu", crate::Label::new("Canvas"))
+                    .item(MenuItem::new("Rename"))
+                    .item(MenuItem::new("Move to").submenu([MenuItem::new("Archive")]))
+                    .show_inline()
+                    .highlighted_path([1]),
+            )
+            .with_child(crate::Label::new("After menu")),
+    );
+
+    assert!(
+        overlay_layer_descriptor(&output).is_none(),
+        "inline overlays composite in flow, not as floating overlay layers"
+    );
+
+    let share = semantics_bounds(&output, SemanticsRole::Button, "Share");
+    let bubble = semantics_bounds(&output, SemanticsRole::Tooltip, "Copy link");
+    let after_tooltip = semantics_bounds(&output, SemanticsRole::Text, "After tooltip");
+    assert!(
+        bubble.y() > share.max_y(),
+        "bubble={bubble:?} share={share:?}"
+    );
+    assert!(
+        after_tooltip.y() >= bubble.max_y(),
+        "{after_tooltip:?} {bubble:?}"
+    );
+
+    let trigger = semantics_bounds(&output, SemanticsRole::Button, "Open details");
+    let body = semantics_bounds(&output, SemanticsRole::Text, "Popover body");
+    let after_popover = semantics_bounds(&output, SemanticsRole::Text, "After popover");
+    assert!(
+        body.y() > trigger.max_y(),
+        "body={body:?} trigger={trigger:?}"
+    );
+    assert!(
+        after_popover.y() > body.max_y(),
+        "{after_popover:?} {body:?}"
+    );
+
+    let owner = semantics_bounds(&output, SemanticsRole::MenuItem, "Move to");
+    let submenu = semantics_bounds(&output, SemanticsRole::MenuItem, "Archive");
+    let after_menu = semantics_bounds(&output, SemanticsRole::Text, "After menu");
+    assert!(
+        submenu.x() >= owner.max_x() - 0.5,
+        "the highlighted submenu opens beside its owner: owner={owner:?} submenu={submenu:?}"
+    );
+    assert!(after_menu.y() >= owner.max_y().max(submenu.max_y()));
+}
+
+#[test]
+fn inline_overlays_ignore_dismissal() {
+    let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+        16.0,
+        crate::Stack::vertical()
+            .spacing(8.0)
+            .alignment(Alignment::Start)
+            .with_child(
+                Popover::new(
+                    "Details",
+                    crate::Button::new("Open details"),
+                    crate::Label::new("Popover body"),
+                )
+                .show_inline(),
+            )
+            .with_child(
+                ContextMenu::new("Layer menu", crate::Label::new("Canvas"))
+                    .item(MenuItem::new("Rename"))
+                    .show_inline(),
+            ),
+    ));
+    let output = runtime.render(window_id).unwrap();
+    let trigger = semantics_bounds(&output, SemanticsRole::Button, "Open details");
+    for position in [
+        Point::new(trigger.x() + 8.0, trigger.y() + 8.0),
+        Point::new(600.0, 500.0),
+    ] {
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .unwrap();
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, position, false),
+            )
+            .unwrap();
+    }
+    runtime
+        .handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("Escape", KeyState::Pressed)),
+        )
+        .unwrap();
+
+    let output = runtime.render(window_id).unwrap();
+    semantics_bounds(&output, SemanticsRole::Text, "Popover body");
+    semantics_bounds(&output, SemanticsRole::MenuItem, "Rename");
+}
+
+#[test]
+fn progress_bar_value_label_contrasts_with_fill_and_track() {
+    let theme = DefaultTheme::default();
+    let output = render(
+        SizedBox::new().width(240.0).with_child(
+            ProgressBar::new("Export")
+                .range(0.0, 100.0)
+                .value(35.0)
+                .show_value(true)
+                .theme(theme),
+        ),
+    );
+    let (_, on_fill) = theme.semantic_tone_colors(SemanticTone::Accent);
+    let mut label_colors = Vec::new();
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::DrawShapedText(run) = command
+            && let Some(layout) = run.resolve(output.frame.text_layout_registry.as_ref())
+            && layout.text() == "35%"
+        {
+            label_colors.push(run.color_override.unwrap_or(layout.style().color));
+        }
+        if let SceneCommand::DrawText(run) = command
+            && run.text == "35%"
+        {
+            label_colors.push(run.style.color);
+        }
+    });
+    assert!(
+        label_colors.contains(&theme.palette.text),
+        "the part of the label over the track uses body text: {label_colors:?}"
+    );
+    assert!(
+        label_colors.contains(&on_fill) || label_colors.len() == 1,
+        "the part of the label over the fill uses the tone content color: {label_colors:?}"
+    );
+}
+
+#[test]
+fn inline_popover_paints_its_surface_frame() {
+    let theme = DefaultTheme::default();
+    let output = render(
+        Popover::new(
+            "Details",
+            crate::Button::new("Open details").theme(theme),
+            crate::Label::new("Popover body"),
+        )
+        .theme(theme)
+        .show_inline(),
+    );
+    let body = semantics_bounds(&output, SemanticsRole::Text, "Popover body");
+    let mut frame = None;
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::FillPath {
+            path,
+            brush: Brush::Solid(color),
+        } = command
+            && *color == theme.palette.surface_raised
+            && path.bounds().contains(body.origin)
+        {
+            frame = Some(path.bounds());
+        }
+    });
+    let frame = frame.expect("the inline popover surface frame is painted around its content");
+    assert!(frame.width() > body.width() && frame.height() > body.height());
+}
+
+#[test]
+fn inline_dialog_lays_out_at_its_content_size() {
+    let output = render(
+        crate::Stack::vertical()
+            .spacing(8.0)
+            .alignment(Alignment::Start)
+            .with_child(
+                SizedBox::new().width(420.0).with_child(
+                    Dialog::new(
+                        "Project settings",
+                        crate::Label::new("Autosave every 90 seconds"),
+                    )
+                    .description("Applies to every document.")
+                    .secondary_action("Cancel", || {})
+                    .primary_action("Apply", || {})
+                    .show_inline(),
+                ),
+            )
+            .with_child(crate::Label::new("After dialog")),
+    );
+    assert!(overlay_layer_descriptor(&output).is_none());
+    let dialog = semantics_bounds(&output, SemanticsRole::Dialog, "Project settings");
+    let apply = semantics_bounds(&output, SemanticsRole::Button, "Apply");
+    let after = semantics_bounds(&output, SemanticsRole::Text, "After dialog");
+    assert!(dialog.contains(apply.origin));
+    assert!(
+        dialog.height() < 400.0,
+        "inline dialogs fit their content: {dialog:?}"
+    );
+    assert!(after.y() >= dialog.max_y());
+}

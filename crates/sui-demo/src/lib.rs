@@ -2,16 +2,23 @@
 
 mod animation_demo;
 mod app;
+pub mod benchmarks;
 mod command_demo;
+mod demo_support;
 mod drag_drop_demo;
 mod editorial_demo;
 mod layout_demo;
+pub mod live_performance;
 mod markdown_demo;
 #[cfg(feature = "nodes")]
 mod nodes_demo;
 mod paint_demo;
 mod shrinkwrap_demo;
+#[cfg(test)]
+mod test_support;
+pub mod theme_demo;
 mod theme_editor_demo;
+pub mod validation;
 mod vector_demo;
 pub mod widget_book;
 
@@ -40,13 +47,15 @@ use std::{
     time::Duration,
 };
 
+use crate::benchmarks::{
+    build_retained_text_benchmark_application, build_text_editing_benchmark_application,
+};
+use crate::validation::{
+    build_color_validation_application, build_text_rendering_comparison_application,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::widget_book::GALLERY_SCROLL_NAME;
-use crate::widget_book::{
-    build_color_validation_application, build_retained_text_benchmark_application,
-    build_text_editing_benchmark_application, build_text_rendering_comparison_application,
-    build_widget_book_application, default_widget_book_state,
-};
+use crate::widget_book::build_widget_book_application;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use crossterm::{
     event::{
@@ -3045,9 +3054,7 @@ fn build_application_for_web_mode(mode: &WebLaunchMode) -> Application {
         Some(WebBenchmarkKind::TextEditing) => build_text_editing_benchmark_application(),
         Some(WebBenchmarkKind::TextComparison) => build_text_rendering_comparison_application(),
         Some(WebBenchmarkKind::ColorValidation) => build_color_validation_application(),
-        Some(WebBenchmarkKind::WidgetBook) => {
-            build_widget_book_application(default_widget_book_state())
-        }
+        Some(WebBenchmarkKind::WidgetBook) => build_widget_book_application(),
         Some(WebBenchmarkKind::DevWorkspace) | None => {
             let initial_demo = mode
                 .dev_initial_demo

@@ -1,0 +1,533 @@
+use sui::prelude::*;
+use sui::{SemanticTone, StatusBadge};
+
+use super::super::SPLIT_VIEW_NAME;
+use super::super::registry::{Category, Story, StoryCtx};
+use super::super::specimen::{Section, boxed, example, strip};
+use super::sized;
+use crate::app::{DemoTextRole, demo_text_style};
+
+pub(super) const STORIES: [Story; 7] = [
+    Story {
+        id: "surface",
+        title: "Surface",
+        api: "Surface",
+        summary: "Themed backgrounds for app regions, with elevation, appearance, and tone.",
+        keywords: "panel card background elevation shadow",
+        category: Category::Layout,
+        build: surface,
+    },
+    Story {
+        id: "separator",
+        title: "Separator and section label",
+        api: "Separator, Divider, SectionLabel",
+        summary: "Hairlines between groups and small labels that title a group.",
+        keywords: "divider rule hairline heading",
+        category: Category::Layout,
+        build: separator,
+    },
+    Story {
+        id: "form-section",
+        title: "Form section",
+        api: "FormSection, FieldGroup, FormRow, PropertyRow, DetailRow",
+        summary: "Grouped settings rows with stacked or inline labels and read-only details.",
+        keywords: "form settings rows inspector property",
+        category: Category::Layout,
+        build: form_section,
+    },
+    Story {
+        id: "panel-section",
+        title: "Panel section and dock panel",
+        api: "PanelSection, DockPanel",
+        summary: "Collapsible inspector groups inside a titled dock panel.",
+        keywords: "inspector collapsible dock",
+        category: Category::Layout,
+        build: panel_section,
+    },
+    Story {
+        id: "split-view",
+        title: "Split view",
+        api: "SplitView, ResizablePane",
+        summary: "Two panes separated by a draggable divider.",
+        keywords: "splitter resizable panes divider",
+        category: Category::Layout,
+        build: split_view,
+    },
+    Story {
+        id: "pane-layouts",
+        title: "Pane layouts",
+        api: "FixedPaneSplit, Dock, MeasuredBottomDock, TrailingSlotRow",
+        summary: "Fixed-size panes, docked header and footer slots, and trailing slots.",
+        keywords: "dock fixed pane slots shell",
+        category: Category::Layout,
+        build: pane_layouts,
+    },
+    Story {
+        id: "scroll-view",
+        title: "Scroll view",
+        api: "ScrollView, VirtualScrollView",
+        summary: "Bounded, scrollable content; the virtual variant lays out only visible children.",
+        keywords: "scroll overflow virtual",
+        category: Category::Layout,
+        build: scroll_view,
+    },
+];
+
+fn surface(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    let tile = |label: &str, color: Color| {
+        SizedBox::new()
+            .width(116.0)
+            .height(64.0)
+            .with_child(Align::center(Label::new(label).style(demo_text_style(
+                theme,
+                DemoTextRole::Supporting,
+                color,
+            ))))
+    };
+    let muted = theme.palette.text_muted;
+    let roles = [
+        ("Window", SurfaceRole::Window),
+        ("Sidebar", SurfaceRole::Sidebar),
+        ("Panel", SurfaceRole::Panel),
+        ("Titlebar", SurfaceRole::Titlebar),
+        ("Field", SurfaceRole::Field),
+    ];
+    let elevations = [
+        ("None", SurfaceElevation::None),
+        ("Small", SurfaceElevation::Small),
+        ("Medium", SurfaceElevation::Medium),
+        ("Large", SurfaceElevation::Large),
+    ];
+    let appearances = [
+        (
+            "Standard",
+            SurfaceAppearance::Standard,
+            SemanticTone::Neutral,
+        ),
+        ("Raised", SurfaceAppearance::Raised, SemanticTone::Neutral),
+        ("Soft accent", SurfaceAppearance::Soft, SemanticTone::Accent),
+        (
+            "Soft success",
+            SurfaceAppearance::Soft,
+            SemanticTone::Success,
+        ),
+        (
+            "Filled accent",
+            SurfaceAppearance::Filled,
+            SemanticTone::Accent,
+        ),
+    ];
+    vec![
+        strip(
+            theme,
+            "Roles",
+            roles
+                .into_iter()
+                .map(|(label, role)| {
+                    (
+                        label,
+                        boxed(
+                            Surface::new(role, tile(label, muted))
+                                .border(SurfaceBorder::All)
+                                .radius(8.0)
+                                .theme(theme),
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        strip(
+            theme,
+            "Elevation",
+            elevations
+                .into_iter()
+                .map(|(label, elevation)| {
+                    (
+                        label,
+                        boxed(
+                            Surface::panel(tile(label, muted))
+                                .elevation(elevation)
+                                .radius(8.0)
+                                .theme(theme),
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        strip(
+            theme,
+            "Appearance and tone",
+            appearances
+                .into_iter()
+                .map(|(label, appearance, tone)| {
+                    (
+                        label,
+                        boxed(
+                            Surface::panel(tile(
+                                label,
+                                if appearance == SurfaceAppearance::Filled {
+                                    theme.palette.accent_text
+                                } else {
+                                    muted
+                                },
+                            ))
+                            .appearance(appearance)
+                            .tone(tone)
+                            .radius(8.0)
+                            .theme(theme),
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+    ]
+}
+
+fn separator(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    vec![
+        strip(
+            theme,
+            "Separators",
+            vec![
+                (
+                    "Horizontal",
+                    boxed(sized(200.0, Separator::horizontal().theme(theme))),
+                ),
+                (
+                    "Inset",
+                    boxed(sized(
+                        200.0,
+                        Separator::horizontal().inset(24.0).theme(theme),
+                    )),
+                ),
+                (
+                    "Vertical",
+                    boxed(
+                        SizedBox::new()
+                            .height(48.0)
+                            .with_child(Separator::vertical().theme(theme)),
+                    ),
+                ),
+            ],
+        ),
+        strip(
+            theme,
+            "Section label",
+            vec![
+                (
+                    "Default",
+                    boxed(SectionLabel::new("Inspector").theme(theme)),
+                ),
+                (
+                    "Accent",
+                    boxed(
+                        SectionLabel::new("Recent")
+                            .color(theme.palette.accent)
+                            .theme(theme),
+                    ),
+                ),
+            ],
+        ),
+    ]
+}
+
+fn form_section(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    vec![example(
+        "",
+        sized(
+            420.0,
+            FormSection::new(
+                "Publish settings",
+                FieldGroup::new()
+                    .fill_width()
+                    .spacing(10.0)
+                    .with_child(
+                        FormRow::new(
+                            "Target",
+                            TextInput::new("Publish target")
+                                .value("staging")
+                                .theme(theme),
+                        )
+                        .theme(theme),
+                    )
+                    .with_child(
+                        FormRow::new(
+                            "Channel",
+                            Select::new("Publish channel")
+                                .options(["Stable", "Beta", "Nightly"])
+                                .selected(1)
+                                .theme(theme),
+                        )
+                        .theme(theme),
+                    )
+                    .with_child(
+                        PropertyRow::new(
+                            "Opacity",
+                            Slider::new("Opacity property value")
+                                .range(0.0, 100.0)
+                                .value(72.0)
+                                .theme(theme),
+                        )
+                        .inline()
+                        .theme(theme),
+                    )
+                    .with_child(DetailRow::new("Last publish", "2 min ago").theme(theme))
+                    .with_child(DetailRow::new("Build", "sui-042 (release)").theme(theme)),
+            )
+            .description("Applies to every environment in this cluster.")
+            .header_action(Button::new("Reset").theme(theme))
+            .theme(theme),
+        ),
+    )]
+}
+
+fn panel_section(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    let details = |first: &str, second: &str| {
+        Stack::vertical()
+            .spacing(6.0)
+            .alignment(Alignment::Stretch)
+            .with_child(ctx.muted(first))
+            .with_child(ctx.muted(second))
+    };
+    vec![strip(
+        theme,
+        "",
+        vec![
+            (
+                "Dock panel",
+                boxed(sized(
+                    300.0,
+                    DockPanel::new(
+                        "Inspector",
+                        Stack::vertical()
+                            .spacing(8.0)
+                            .alignment(Alignment::Stretch)
+                            .with_child(
+                                PanelSection::new(
+                                    "Layer",
+                                    details("Blend: Screen", "Mask feather: 8 px"),
+                                )
+                                .collapsible(true)
+                                .theme(theme),
+                            )
+                            .with_child(
+                                PanelSection::new("Effects", details("Glow", "Drop shadow"))
+                                    .collapsible(true)
+                                    .collapsed()
+                                    .theme(theme),
+                            ),
+                    )
+                    .name("Inspector dock panel")
+                    .theme(theme),
+                )),
+            ),
+            (
+                "Header action",
+                boxed(sized(
+                    260.0,
+                    PanelSection::new("Transform", details("X 120  Y 48", "Rotation 0°"))
+                        .header_action(
+                            IconButton::new(IconGlyph::MoreHorizontal, "Transform options")
+                                .theme(theme),
+                        )
+                        .theme(theme),
+                )),
+            ),
+        ],
+    )]
+}
+
+fn split_view(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    let pane = |title: &str, detail: &str, role: SurfaceRole| {
+        Surface::new(
+            role,
+            Stack::vertical()
+                .spacing(6.0)
+                .alignment(Alignment::Stretch)
+                .with_child(ctx.text(title))
+                .with_child(ctx.muted(detail)),
+        )
+        .padding(Insets::all(14.0))
+        .fill()
+        .theme(theme)
+    };
+    vec![
+        example(
+            "Horizontal",
+            SizedBox::new().width(560.0).height(160.0).with_child(
+                SplitView::horizontal(
+                    pane(
+                        "Viewport",
+                        "Drag the divider to resize.",
+                        SurfaceRole::Window,
+                    ),
+                    pane(
+                        "Inspector",
+                        "Keeps its minimum width.",
+                        SurfaceRole::Sidebar,
+                    ),
+                )
+                .name(SPLIT_VIEW_NAME)
+                .ratio(0.62)
+                .min_second(160.0)
+                .theme(theme),
+            ),
+        ),
+        example(
+            "Vertical",
+            SizedBox::new().width(360.0).height(200.0).with_child(
+                ResizablePane::vertical(
+                    pane("Editor", "Source text", SurfaceRole::Window),
+                    pane("Console", "Build output", SurfaceRole::Panel),
+                )
+                .name("Console split")
+                .ratio(0.6)
+                .theme(theme),
+            ),
+        ),
+    ]
+}
+
+/// Outlines a layout sample so panes that share the stage color stay visible.
+fn framed<W>(theme: DefaultTheme, child: W) -> Surface
+where
+    W: Widget + 'static,
+{
+    Surface::window(child)
+        .border(SurfaceBorder::All)
+        .fill()
+        .theme(theme)
+}
+
+fn pane_layouts(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    let fill = |role: SurfaceRole, label: &str| {
+        Surface::new(role, ctx.muted(label))
+            .padding(Insets::all(10.0))
+            .fill()
+            .theme(theme)
+    };
+    vec![strip(
+        theme,
+        "",
+        vec![
+            (
+                "Fixed pane split",
+                boxed(
+                    SizedBox::new()
+                        .width(280.0)
+                        .height(130.0)
+                        .with_child(framed(
+                            theme,
+                            FixedPaneSplit::horizontal(
+                                fill(SurfaceRole::Sidebar, "Fixed 96 px"),
+                                Separator::vertical().theme(theme),
+                                fill(SurfaceRole::Window, "Flexible"),
+                            )
+                            .fixed_first(96.0)
+                            .divider_extent(1.0),
+                        )),
+                ),
+            ),
+            (
+                "Dock",
+                boxed(
+                    SizedBox::new()
+                        .width(280.0)
+                        .height(130.0)
+                        .with_child(framed(
+                            theme,
+                            Dock::new(fill(SurfaceRole::Window, "Body fills the rest"))
+                                .top(32.0, fill(SurfaceRole::Titlebar, "Top slot"))
+                                .bottom(32.0, fill(SurfaceRole::Titlebar, "Bottom slot")),
+                        )),
+                ),
+            ),
+            (
+                "Measured bottom dock",
+                boxed(
+                    SizedBox::new()
+                        .width(280.0)
+                        .height(130.0)
+                        .with_child(framed(
+                            theme,
+                            MeasuredBottomDock::new(
+                                fill(SurfaceRole::Window, "Body"),
+                                StatusBar::new()
+                                    .text_segment("Measured footer")
+                                    .theme(theme),
+                            ),
+                        )),
+                ),
+            ),
+            (
+                "Trailing slot row",
+                boxed(
+                    SizedBox::new().width(280.0).height(34.0).with_child(
+                        TrailingSlotRow::new(
+                            ctx.text("Replication"),
+                            StatusBadge::new("Active")
+                                .tone(SemanticTone::Success)
+                                .theme(theme),
+                        )
+                        .trailing_width(96.0)
+                        .trailing_height(28.0)
+                        .gap(10.0),
+                    ),
+                ),
+            ),
+        ],
+    )]
+}
+
+fn scroll_view(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    let rows = |prefix: &str| {
+        (1..=12).fold(
+            Stack::vertical().spacing(8.0).alignment(Alignment::Stretch),
+            |stack, index| stack.with_child(ctx.text(format!("{prefix} {index}"))),
+        )
+    };
+    let virtual_rows = (1..=40).fold(
+        VirtualScrollView::new()
+            .name("Virtual scroll sample")
+            .padding(Insets::all(10.0))
+            .spacing(8.0)
+            .theme(theme),
+        |view, index| view.with_child(ctx.text(format!("Virtual row {index}"))),
+    );
+    vec![strip(
+        theme,
+        "",
+        vec![
+            (
+                "Scroll view",
+                boxed(
+                    SizedBox::new().width(240.0).height(140.0).with_child(
+                        Surface::field(
+                            ScrollView::vertical(Padding::all(10.0, rows("Scroll item")))
+                                .name("Inner scroll view")
+                                .theme(theme),
+                        )
+                        .fill()
+                        .theme(theme),
+                    ),
+                ),
+            ),
+            (
+                "Virtual scroll view",
+                boxed(
+                    SizedBox::new()
+                        .width(240.0)
+                        .height(140.0)
+                        .with_child(Surface::field(virtual_rows).fill().theme(theme)),
+                ),
+            ),
+        ],
+    )]
+}

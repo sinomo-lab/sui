@@ -367,13 +367,13 @@ Run the focused correctness checks from the repository root:
 ```bash
 cargo test -p sinomo-ui-text
 cargo test -p sinomo-ui-widgets text_surface
-cargo test -p sinomo-ui-demo --lib widget_book::tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
+cargo test -p sinomo-ui-demo --lib validation::tests::text_rendering_comparison_surface_exposes_all_render_modes -- --exact
 cargo test -p sinomo-ui-demo --lib tests::parses_text_comparison_web_benchmark_mode -- --exact
 cargo test -p sinomo-ui-demo --lib tests::parses_comparison_surface_alias -- --exact
 ```
 
-For visual inspection, run the widget book and open its text rendering
-comparison surface:
+For visual inspection, run the demo and open its text rendering comparison
+view:
 
 ```bash
 cargo run -p sinomo-ui-demo

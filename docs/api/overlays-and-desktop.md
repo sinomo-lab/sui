@@ -87,6 +87,32 @@ expanded/collapsed semantics. Existing `on_activate` callbacks remain valid for
 flat menus; use `on_activate_path` or `on_activate_path_with_ctx` when sibling
 branches can contain different leaves.
 
+## Showing Overlays in Place
+
+Galleries, documentation, and screenshots often need an overlay visible next
+to other content rather than floating over the window. `Tooltip`, `Popover`,
+`ContextMenu`, `Select`, and `Dialog` provide `show_inline()`: the surface stays
+open, joins the widget's own measured size below (or above) its trigger, and
+paints in flow instead of in the window overlay stack. Inline overlays ignore
+dismissal but keep their normal pointer and keyboard behavior.
+
+```rust
+use sui::prelude::*;
+
+let open_menu = ContextMenu::new("Layer menu", Label::new("Layer 08"))
+    .item(MenuItem::new("Rename"))
+    .item(MenuItem::new("Move to").submenu([MenuItem::new("Archive")]))
+    .show_inline()
+    .highlighted_path([1]);
+
+let hint = Tooltip::new("Copy link", Button::new("Share"))
+    .placement(TooltipPlacement::Below)
+    .show_inline();
+```
+
+`ContextMenu::highlighted_path` highlights an item and opens the submenus that
+lead to it, which is useful for showing nested panels.
+
 ## Custom Managed Overlays
 
 A custom overlay remains a normal retained widget. Declare its active policy

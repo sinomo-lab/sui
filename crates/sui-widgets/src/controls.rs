@@ -18,6 +18,7 @@ use crate::{
     },
     text_command::TextCommand,
 };
+pub use interaction::InteractionPreview;
 use interaction::PressInteraction;
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use sui_core::{
@@ -808,7 +809,9 @@ fn semantic_button_visuals(
         };
         SemanticButtonVisuals {
             background,
-            border: border.with_alpha(interaction.disabled_content_opacity),
+            // Scale rather than replace alpha so transparent ghost borders
+            // stay invisible.
+            border: border.with_alpha(border.alpha * interaction.disabled_content_opacity),
             content: palette.text_disabled,
         }
     }
@@ -999,7 +1002,19 @@ fn paint_icon_button_frame(
             style.hover_progress,
             style.press_progress,
         );
-        if selected && enabled {
+        if selected && enabled && style.appearance == ButtonAppearance::Filled {
+            // A solid fill already carries the tone, so selection deepens the
+            // fill and keeps the on-fill icon color readable.
+            let roles = theme.tone_roles(style.tone);
+            visuals.background = mix_color(
+                visuals.background,
+                roles.pressed,
+                interaction.selected_blend,
+            );
+            if style.tone != SemanticTone::Neutral {
+                visuals.border = visuals.background;
+            }
+        } else if selected && enabled {
             let selection = if style.tone == SemanticTone::Neutral {
                 palette.text
             } else {
@@ -1172,6 +1187,12 @@ impl IconButton {
         self
     }
 
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.interaction.preview = preview;
+        self
+    }
+
     pub fn on_press<F>(mut self, on_press: F) -> Self
     where
         F: FnMut() + 'static,
@@ -1269,9 +1290,13 @@ impl Widget for IconButton {
             .tone(self.tone)
             .selected(self.is_selected())
             .enabled(self.is_enabled())
-            .hover_progress(self.interaction.hover_animation.value)
-            .press_progress(self.interaction.press_animation.value)
-            .focus_progress(self.focus_animation.value)
+            .hover_progress(self.interaction.hover_progress())
+            .press_progress(self.interaction.press_progress())
+            .focus_progress(
+                self.focus_animation
+                    .value
+                    .max(self.interaction.preview.focus()),
+            )
             .icon_size(self.resolved_icon_size());
         match self.icon {
             ButtonIcon::Glyph(icon) => paint_icon_button(ctx, &theme, ctx.bounds(), icon, style),
@@ -1507,6 +1532,12 @@ impl Button {
         self
     }
 
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.interaction.preview = preview;
+        self
+    }
+
     pub fn on_press<F>(mut self, on_press: F) -> Self
     where
         F: FnMut() + 'static,
@@ -1608,12 +1639,12 @@ impl Button {
             0.0
         };
         let hover_progress = if enabled {
-            self.interaction.hover_animation.value * interaction.hover_blend
+            self.interaction.hover_progress() * interaction.hover_blend
         } else {
             0.0
         };
         let press_progress = if enabled {
-            self.interaction.press_animation.value * interaction.pressed_blend
+            self.interaction.press_progress() * interaction.pressed_blend
         } else {
             0.0
         };
@@ -1625,8 +1656,8 @@ impl Button {
                 self.appearance,
                 self.tone,
                 enabled,
-                self.interaction.hover_animation.value,
-                self.interaction.press_animation.value,
+                self.interaction.hover_progress(),
+                self.interaction.press_progress(),
             );
             let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
             let label_color = if enabled {
@@ -1834,7 +1865,11 @@ impl Widget for Button {
         let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
-        let visuals = self.resolved_visuals_with_focus_progress(self.focus_animation.value);
+        let visuals = self.resolved_visuals_with_focus_progress(
+            self.focus_animation
+                .value
+                .max(self.interaction.preview.focus()),
+        );
         draw_control_frame(
             ctx,
             ctx.bounds(),
@@ -1934,6 +1969,7 @@ pub struct Checkbox {
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_toggle: Option<Box<dyn FnMut(bool)>>,
+    preview: InteractionPreview,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2051,6 +2087,7 @@ impl Checkbox {
             press_animation: AnimatedScalar::new(0.0),
             toggle_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             label_measurement: None,
             on_toggle: None,
         }
@@ -2121,6 +2158,12 @@ impl Checkbox {
         self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
     }
 
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
+        self
+    }
+
     pub fn on_toggle<F>(mut self, on_toggle: F) -> Self
     where
         F: FnMut(bool) + 'static,
@@ -2184,6 +2227,18 @@ impl Checkbox {
             .as_ref()
             .map(|theme| theme())
             .unwrap_or(*self.theme)
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn press_value(&self) -> f32 {
+        self.press_animation.value.max(self.preview.press())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -2314,10 +2369,10 @@ impl Widget for Checkbox {
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
-        let press_progress = self.press_animation.value * interaction.pressed_blend;
+        let hover_progress = self.hover_value() * interaction.hover_blend;
+        let press_progress = self.press_value() * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_value();
         let (framed_background, framed_border) =
             framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
         let frame_visuals = choice_frame_visuals(
@@ -2352,8 +2407,8 @@ impl Widget for Checkbox {
             &theme,
             indicator,
             CheckboxIndicatorVisual {
-                hover_progress: self.hover_animation.value,
-                press_progress: self.press_animation.value,
+                hover_progress: self.hover_value(),
+                press_progress: self.press_value(),
                 toggle_progress,
             },
         );
@@ -2410,6 +2465,7 @@ pub struct Switch {
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_toggle: Option<Box<dyn FnMut(bool)>>,
+    preview: InteractionPreview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2441,6 +2497,7 @@ impl Switch {
             press_animation: AnimatedScalar::new(0.0),
             toggle_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             label_measurement: None,
             on_toggle: None,
         }
@@ -2503,6 +2560,12 @@ impl Switch {
 
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = Some(gap.max(0.0));
+        self
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
         self
     }
 
@@ -2570,14 +2633,10 @@ impl Switch {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let interaction = theme.interaction;
-        let hover_t = self.hover_animation.value * interaction.hover_blend;
-        let press_t = self.press_animation.value * interaction.pressed_blend;
-        let (framed_background, framed_border) = framed_choice_colors(
-            &palette,
-            self.hover_animation.value,
-            press_t,
-            focused as u8 as f32,
-        );
+        let hover_t = self.hover_value() * interaction.hover_blend;
+        let press_t = self.press_value() * interaction.pressed_blend;
+        let (framed_background, framed_border) =
+            framed_choice_colors(&palette, self.hover_value(), press_t, focused as u8 as f32);
         let frame_visuals = choice_frame_visuals(
             &theme,
             self.appearance,
@@ -2642,6 +2701,18 @@ impl Switch {
 
     fn resolved_visuals(&self, focused: bool) -> SwitchVisuals {
         self.resolved_visuals_for_state(self.on, focused)
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn press_value(&self) -> f32 {
+        self.press_animation.value.max(self.preview.press())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -2775,13 +2846,15 @@ impl Widget for Switch {
         let gap = self.resolved_gap();
         let track = switch_track_rect(ctx.bounds(), padding, metrics);
         let label_rect = switch_label_rect(ctx.bounds(), padding, metrics, gap);
-        let visuals = self.resolved_visuals(ctx.is_focused());
-        let off_visuals = self.resolved_visuals_for_state(false, ctx.is_focused());
-        let on_visuals = self.resolved_visuals_for_state(true, ctx.is_focused());
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
-        let press_progress = self.press_animation.value * interaction.pressed_blend;
+        let visuals = self.resolved_visuals(ctx.is_focused() || self.preview.is_focused());
+        let off_visuals =
+            self.resolved_visuals_for_state(false, ctx.is_focused() || self.preview.is_focused());
+        let on_visuals =
+            self.resolved_visuals_for_state(true, ctx.is_focused() || self.preview.is_focused());
+        let hover_progress = self.hover_value() * interaction.hover_blend;
+        let press_progress = self.press_value() * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_value();
 
         let (framed_background, framed_border) =
             framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
@@ -2924,6 +2997,7 @@ pub struct RadioButton {
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_select: Option<Box<dyn FnMut()>>,
+    preview: InteractionPreview,
 }
 
 impl RadioButton {
@@ -2944,6 +3018,7 @@ impl RadioButton {
             press_animation: AnimatedScalar::new(0.0),
             toggle_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             label_measurement: None,
             on_select: None,
         }
@@ -3011,6 +3086,12 @@ impl RadioButton {
 
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = Some(gap.max(0.0));
+        self
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
         self
     }
 
@@ -3082,6 +3163,18 @@ impl RadioButton {
             | self.press_animation.advance(time)
             | self.toggle_animation.advance(time)
             | self.focus_animation.advance(time)
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn press_value(&self) -> f32 {
+        self.press_animation.value.max(self.preview.press())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -3200,10 +3293,10 @@ impl Widget for RadioButton {
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
-        let press_progress = self.press_animation.value * interaction.pressed_blend;
+        let hover_progress = self.hover_value() * interaction.hover_blend;
+        let press_progress = self.press_value() * interaction.pressed_blend;
         let toggle_progress = self.toggle_animation.value;
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_value();
         let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
         let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
@@ -3793,6 +3886,7 @@ pub struct Slider {
     focus_animation: AnimatedScalar,
     on_change: Option<Box<dyn FnMut(f64)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, f64)>>,
+    preview: InteractionPreview,
 }
 
 impl Slider {
@@ -3811,6 +3905,7 @@ impl Slider {
             hover_animation: AnimatedScalar::new(0.0),
             drag_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             on_change: None,
             on_change_with_ctx: None,
         }
@@ -3859,6 +3954,12 @@ impl Slider {
 
     pub const fn current_value(&self) -> f64 {
         self.value
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -3980,6 +4081,18 @@ impl Slider {
         self.hover_animation.advance(time)
             | self.drag_animation.advance(time)
             | self.focus_animation.advance(time)
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn drag_value(&self) -> f32 {
+        self.drag_animation.value.max(self.preview.press())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -4121,9 +4234,9 @@ impl Widget for Slider {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
-        let hover_progress = self.hover_animation.value;
-        let drag_progress = self.drag_animation.value;
-        let focus_progress = self.focus_animation.value;
+        let hover_progress = self.hover_value();
+        let drag_progress = self.drag_value();
+        let focus_progress = self.focus_value();
         let value = self.resolved_value();
         let track = self.track_rect(ctx.bounds());
         let active = Rect::new(
@@ -4223,6 +4336,7 @@ pub struct NumberInput {
     editing: bool,
     value_reader: Option<Box<dyn Fn() -> f64>>,
     on_change: Option<Box<dyn FnMut(f64)>>,
+    preview: InteractionPreview,
 }
 
 impl NumberInput {
@@ -4245,6 +4359,7 @@ impl NumberInput {
             stepper_hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             editing: false,
             value_reader: None,
             on_change: None,
@@ -4303,6 +4418,12 @@ impl NumberInput {
 
     pub const fn current_value(&self) -> f64 {
         self.value
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -4446,6 +4567,18 @@ impl NumberInput {
             | self.stepper_hover_animation.advance(time)
             | self.press_animation.advance(time)
             | self.focus_animation.advance(time)
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn press_value(&self) -> f32 {
+        self.press_animation.value.max(self.preview.press())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -4621,15 +4754,15 @@ impl Widget for NumberInput {
         let text_style = self.text_style();
         let buffer = self.display_buffer();
         let stepper_hover_progress = self.stepper_hover_animation.value * interaction.hover_blend;
-        let press_progress = self.press_animation.value * interaction.pressed_blend;
-        let focus_progress = self.focus_animation.value;
+        let press_progress = self.press_value() * interaction.pressed_blend;
+        let focus_progress = self.focus_value();
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
             mix_color(palette.field, palette.surface_focus, focus_progress),
-            field_border(&palette, self.hover_animation.value, focus_progress),
+            field_border(&palette, self.hover_value(), focus_progress),
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -4696,12 +4829,12 @@ impl Widget for NumberInput {
             }
         }
         let increment_offset = if self.pressed_stepper == Some(NumberInputStepperPart::Increment) {
-            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset)
+            Vector::new(0.0, self.press_value() * interaction.pressed_offset)
         } else {
             Vector::ZERO
         };
         let decrement_offset = if self.pressed_stepper == Some(NumberInputStepperPart::Decrement) {
-            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset)
+            Vector::new(0.0, self.press_value() * interaction.pressed_offset)
         } else {
             Vector::ZERO
         };
@@ -4807,6 +4940,7 @@ pub struct TextArea {
     changes: TextChangeCallbacks,
     on_submit: Option<Box<dyn FnMut(&str)>>,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
+    preview: InteractionPreview,
 }
 
 impl TextArea {
@@ -4828,6 +4962,7 @@ impl TextArea {
             dragging_selection: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             caret: CaretBlink::new(CARET_BLINK_PERIOD_SECONDS),
             display_layout: None,
             input_layout: None,
@@ -4925,6 +5060,12 @@ impl TextArea {
 
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.editor.set_text(value);
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -5124,6 +5265,14 @@ impl TextArea {
             ctx.request_paint();
             ctx.request_semantics();
         }
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -5395,7 +5544,7 @@ impl Widget for TextArea {
         let metrics = theme.metrics;
         let padding = self.resolved_padding();
         let content = inset_rect(ctx.bounds(), padding);
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_value();
 
         // Fields keep their well; hover strengthens the outline and focus adds
         // the accent ring.
@@ -5407,7 +5556,7 @@ impl Widget for TextArea {
                 metrics.corner_radius,
                 metrics,
                 background,
-                field_border(&palette, self.hover_animation.value, focus_progress),
+                field_border(&palette, self.hover_value(), focus_progress),
                 (focus_progress > 0.0).then_some(
                     palette
                         .focus_ring
@@ -5527,6 +5676,8 @@ struct SelectMenuPresentationState {
     placement: SelectMenuPlacement,
     menu_bounds: Rect,
     reveal: AnimatedScalar,
+    /// Pinned open and laid out in flow; see [`Select::show_inline`].
+    inline: bool,
 }
 
 impl SelectMenuPresentationState {
@@ -5541,6 +5692,7 @@ impl SelectMenuPresentationState {
             placement: SelectMenuPlacement::Below,
             menu_bounds: Rect::ZERO,
             reveal: AnimatedScalar::new(0.0),
+            inline: false,
         }
     }
 
@@ -5763,10 +5915,10 @@ impl Widget for SelectMenuSurface {
     }
 
     fn layer_options(&self) -> LayerOptions {
-        let presented = self.state.borrow().is_presented();
+        let state = self.state.borrow();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if presented {
+            composition_mode: if state.is_presented() && !state.inline {
                 LayerCompositionMode::Overlay
             } else {
                 LayerCompositionMode::Normal
@@ -5779,13 +5931,11 @@ impl Widget for SelectMenuSurface {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.state
-            .borrow()
-            .is_presented()
-            .then_some(StackSurfaceOptions {
-                transient: true,
-                ..StackSurfaceOptions::default()
-            })
+        let state = self.state.borrow();
+        (state.is_presented() && !state.inline).then_some(StackSurfaceOptions {
+            transient: true,
+            ..StackSurfaceOptions::default()
+        })
     }
 }
 
@@ -5806,8 +5956,10 @@ pub struct Select {
     focus_animation: AnimatedScalar,
     menu_surface: SingleChild,
     menu_state: Rc<RefCell<SelectMenuPresentationState>>,
+    inline: bool,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
+    preview: InteractionPreview,
 }
 
 impl Select {
@@ -5828,8 +5980,10 @@ impl Select {
             hover_animation: AnimatedScalar::new(0.0),
             press_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             menu_surface: SingleChild::new(SelectMenuSurface::new(Rc::clone(&menu_state))),
             menu_state,
+            inline: false,
             on_change: None,
             on_change_with_ctx: None,
         }
@@ -5893,6 +6047,21 @@ impl Select {
         self
     }
 
+    /// Keeps the option list open and lays it out in flow beneath the field,
+    /// as part of this widget's own size, instead of floating in the window
+    /// overlay stack. The list ignores dismissal but stays interactive.
+    /// Widget galleries and documentation use this to show an open select
+    /// beside other content.
+    pub fn show_inline(mut self) -> Self {
+        self.inline = true;
+        self.menu_state.borrow_mut().inline = true;
+        self.expanded(true)
+    }
+
+    fn is_inline(&self) -> bool {
+        self.inline
+    }
+
     pub const fn selected_index(&self) -> Option<usize> {
         self.selected
     }
@@ -5900,6 +6069,12 @@ impl Select {
     pub fn current_value(&self) -> Option<&str> {
         self.current_selected_index()
             .and_then(|index| self.options.get(index).map(String::as_str))
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -5944,6 +6119,9 @@ impl Select {
     }
 
     fn header_rect(&self, bounds: Rect) -> Rect {
+        if self.is_inline() {
+            return Rect::new(bounds.x(), bounds.y(), bounds.width(), self.header_height());
+        }
         let height = self.header_height().min(bounds.height()).max(0.0);
         Rect::new(
             bounds.x(),
@@ -5960,6 +6138,18 @@ impl Select {
 
     fn menu_layout(&self, bounds: Rect, viewport: Size) -> (SelectMenuPlacement, Rect) {
         let theme = self.resolved_theme();
+        if self.is_inline() {
+            let header = self.header_rect(bounds);
+            return (
+                SelectMenuPlacement::Below,
+                Rect::new(
+                    header.x(),
+                    header.max_y() + theme.metrics.select_menu_gap,
+                    header.width(),
+                    self.menu_height(),
+                ),
+            );
+        }
         let viewport = if viewport.width.is_finite()
             && viewport.height.is_finite()
             && viewport.width > 0.0
@@ -6069,7 +6259,7 @@ impl Select {
     }
 
     fn set_expanded(&mut self, ctx: &mut EventCtx, expanded: bool) {
-        if self.expanded == expanded {
+        if self.expanded == expanded || self.is_inline() {
             return;
         }
 
@@ -6168,6 +6358,18 @@ impl Select {
             || self.press_animation.changed_since(previous_press)
             || self.focus_animation.changed_since(previous_focus);
         (changed, animating)
+    }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn press_value(&self) -> f32 {
+        self.press_animation.value.max(self.preview.press())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
     }
 }
 
@@ -6384,6 +6586,12 @@ impl Widget for Select {
             }
             self.menu_surface
                 .measure(ctx, Constraints::tight(menu_size));
+            if self.is_inline() {
+                return constraints.clamp(Size::new(
+                    width,
+                    height + theme.metrics.select_menu_gap + menu_size.height,
+                ));
+            }
         }
 
         constraints.clamp(Size::new(width, height))
@@ -6409,11 +6617,10 @@ impl Widget for Select {
         let header = self.header_rect(ctx.bounds());
         let label = self.current_label();
         let placeholder = self.current_value().is_none();
-        let hover_progress = self.hover_animation.value * interaction.hover_blend;
-        let press_progress = self.press_animation.value * interaction.pressed_blend;
-        let focus_progress = self.focus_animation.value;
-        let content_offset =
-            Vector::new(0.0, self.press_animation.value * interaction.pressed_offset);
+        let hover_progress = self.hover_value() * interaction.hover_blend;
+        let press_progress = self.press_value() * interaction.pressed_blend;
+        let focus_progress = self.focus_value();
+        let content_offset = Vector::new(0.0, self.press_value() * interaction.pressed_offset);
         let text_style = if placeholder {
             theme.placeholder_text_style()
         } else {
@@ -6443,7 +6650,7 @@ impl Widget for Select {
             ),
             field_border(
                 &palette,
-                self.hover_animation.value.max(hover_progress),
+                self.hover_value().max(hover_progress),
                 focus_progress,
             ),
             (focus_progress > 0.0).then_some(
@@ -6500,6 +6707,9 @@ impl Widget for Select {
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
+        if self.is_inline() {
+            return None;
+        }
         (self.expanded || self.menu_state.borrow().is_presented()).then_some(
             OverlayOptions::new(OverlayKind::Menu)
                 .dismiss(if self.expanded {
@@ -6567,6 +6777,7 @@ pub struct TextInput {
     input_layout: Option<PersistentTextLayout>,
     changes: TextChangeCallbacks,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
+    preview: InteractionPreview,
 }
 
 impl TextInput {
@@ -6590,6 +6801,7 @@ impl TextInput {
             dragging_selection: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
+            preview: InteractionPreview::None,
             caret: CaretBlink::new(CARET_BLINK_PERIOD_SECONDS),
             visible_measurement: None,
             input_measurement: None,
@@ -6702,6 +6914,12 @@ impl TextInput {
 
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.editor.set_text(single_line_text(value.into()));
+    }
+
+    /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.preview = preview;
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -6973,6 +7191,14 @@ impl TextInput {
     ) -> Rect {
         aligned_text_rect_for_text(ctx, content, text, style, line_height, 0.0)
     }
+
+    fn hover_value(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    fn focus_value(&self) -> f32 {
+        self.focus_animation.value.max(self.preview.focus())
+    }
 }
 
 impl Widget for TextInput {
@@ -7209,11 +7435,11 @@ impl Widget for TextInput {
         let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_value();
         // Fields keep their well; hover strengthens the outline and focus adds
         // the accent ring.
         let background = field_background(&theme, self.read_only, focus_progress);
-        let border = field_border(&palette, self.hover_animation.value, focus_progress);
+        let border = field_border(&palette, self.hover_value(), focus_progress);
         let full_content_rect = inset_rect(ctx.bounds(), padding);
         let content_rect = self.text_content_rect(ctx.bounds());
         let display_text = self.visible_text();
@@ -7435,6 +7661,12 @@ impl PasswordInput {
         self
     }
 
+    /// Pins hover or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.inner = self.inner.interaction_preview(preview);
+        self
+    }
+
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
         self.inner = self.inner.selectable(selection_scope);
         self
@@ -7565,6 +7797,12 @@ impl DateTimeInput {
 
     pub fn read_only(mut self) -> Self {
         self.inner = self.inner.read_only();
+        self
+    }
+
+    /// Pins hover or focus visuals; see [`InteractionPreview`].
+    pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
+        self.inner = self.inner.interaction_preview(preview);
         self
     }
 

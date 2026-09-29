@@ -275,7 +275,7 @@ keep them synchronized or establish one as the source of truth.
 
 ## Validation
 
-Run the widget book and open **HDR theme mode lab** to compare all four modes:
+Run the demo and open the **Themes** page's HDR theme lab to compare all four modes:
 
 ```bash
 cargo run -p sinomo-ui-demo
@@ -333,4 +333,4 @@ presentation work is tracked separately in the
 - Pilot consumers: `crates/sui-widgets/src/controls.rs` and
   `crates/sui-widgets/src/composites.rs`
 - Top-level re-exports and typed theme extensions: `crates/sui/src/lib.rs`
-- Widget-book lab: `crates/sui-demo/src/widget_book/mod.rs`
+- Themes page lab: `crates/sui-demo/src/theme_demo.rs`

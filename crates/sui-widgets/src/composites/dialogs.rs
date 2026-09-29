@@ -197,6 +197,8 @@ pub struct Dialog {
     pub(super) entrance_started: bool,
     pub(super) on_dismiss: Option<Box<dyn FnMut()>>,
     pub(super) overlay_kind: OverlayKind,
+    /// Laid out in flow at its content size; see [`Dialog::show_inline`].
+    pub(super) inline: bool,
 }
 
 impl Dialog {
@@ -227,7 +229,21 @@ impl Dialog {
             entrance_started: false,
             on_dismiss: None,
             overlay_kind: OverlayKind::Dialog,
+            inline: false,
         }
+    }
+
+    /// Lays the dialog surface out in flow at its content size, without a
+    /// scrim, entrance animation, or dismissal, instead of centering it in the
+    /// window overlay stack. Widget galleries and documentation use this to
+    /// show a dialog beside other content.
+    pub fn show_inline(mut self) -> Self {
+        self.inline = true;
+        self.modal = false;
+        self.shown = true;
+        self.reveal = AnimatedScalar::new(1.0);
+        self.entrance_started = true;
+        self
     }
 
     pub fn theme(self, theme: DefaultTheme) -> Self {
@@ -347,6 +363,9 @@ impl Dialog {
     }
 
     pub(super) fn dismiss(&mut self) {
+        if self.inline {
+            return;
+        }
         if let Some(on_dismiss) = &mut self.on_dismiss {
             on_dismiss();
         }
@@ -479,13 +498,19 @@ impl Widget for Dialog {
             },
             if constraints.max.height.is_finite() {
                 constraints.max.height
+            } else if self.inline {
+                f32::MAX / 4.0
             } else {
                 420.0
             },
         ));
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
-        let outer_margin = metrics.dialog_outer_margin;
+        let outer_margin = if self.inline {
+            0.0
+        } else {
+            metrics.dialog_outer_margin
+        };
         let padding = metrics.dialog_padding;
         let title_style = self.title_style();
         let description_style = theme.placeholder_text_style();
@@ -556,8 +581,14 @@ impl Widget for Dialog {
 
         let dialog_height =
             body_top + body_size.height + footer_gap + footer_height + padding.bottom;
-        let dialog_x = ((viewport.width - dialog_width) * 0.5).max(outer_margin);
-        let dialog_y = ((viewport.height - dialog_height) * 0.5).max(outer_margin);
+        let (dialog_x, dialog_y) = if self.inline {
+            (0.0, 0.0)
+        } else {
+            (
+                ((viewport.width - dialog_width) * 0.5).max(outer_margin),
+                ((viewport.height - dialog_height) * 0.5).max(outer_margin),
+            )
+        };
         self.dialog_frame = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
         self.body_frame = Rect::new(padding.left, body_top, body_size.width, body_size.height);
         {
@@ -570,7 +601,11 @@ impl Widget for Dialog {
         self.focus_surface
             .measure(ctx, Constraints::tight(self.dialog_frame.size));
 
-        viewport
+        if self.inline {
+            constraints.clamp(self.dialog_frame.size)
+        } else {
+            viewport
+        }
     }
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
@@ -739,7 +774,7 @@ impl Widget for Dialog {
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if self.shown {
+            composition_mode: if self.shown && !self.inline {
                 if self.modal {
                     LayerCompositionMode::Effect
                 } else {
@@ -764,14 +799,14 @@ impl Widget for Dialog {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        self.shown.then_some(StackSurfaceOptions {
+        (self.shown && !self.inline).then_some(StackSurfaceOptions {
             transient: true,
             ..StackSurfaceOptions::default()
         })
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
-        self.shown.then_some(
+        (self.shown && !self.inline).then_some(
             OverlayOptions::new(self.overlay_kind)
                 .modal(self.modal)
                 .dismiss(OverlayDismissPolicy {

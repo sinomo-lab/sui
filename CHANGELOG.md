@@ -44,14 +44,65 @@ Versioning, with the usual expectation that the API may change during the
   theme regardless of builder order and across live theme switches; added
   `Dialog::theme_when` and `ResponsiveSidebar::theme_when`.
 
+### Breaking: redesigned widget book
+
+- The widget book is now one scrolling page of 60 component stories in nine
+  categories. Each story lays out its variants, tones, sizes, and interaction
+  states side by side in labeled grids, so every variation is visible without
+  clicking. Overlays such as menus, tooltips, popovers, selects, context
+  menus, and dialogs are shown open in place.
+- A navigation rail lists every category and component in page order, jumps to
+  a component, and highlights the component currently at the top of the page,
+  scrolling itself to keep that entry visible. A filter collapses
+  non-matching components and categories, and a theme switch rebuilds every
+  story in Light, Dark, Neutral, Neutral dark, or Void (plus App when the book
+  is embedded in a host that owns the theme). The rail hides in narrow windows.
+- Stories are registered in one ordered list that drives the page, the rail,
+  search, tests, and visual artifacts.
+- `WidgetBookState`, `default_widget_book_state`, and the widget-book summary
+  were removed. `build_widget_book_application`, `build_widget_book_gallery`,
+  and `build_widget_book_gallery_with_theme` no longer take state, and
+  `build_theme_demo_application` and `build_theme_demo_surface*` no longer take
+  it either.
+- Moved the benchmark surfaces to `sui_demo_app::benchmarks`, the text and color
+  validation surfaces to `sui_demo_app::validation`, the Themes page and HDR
+  theme lab to `sui_demo_app::theme_demo` (`set_widget_book_hdr_theme_mode` is
+  now `set_hdr_theme_lab_mode`), and `LivePerformanceRoot` to
+  `sui_demo_app::live_performance`, which no longer watches widget-book state.
+- The visual artifact bundle now holds `overview-light/`, `overview-dark/`,
+  `narrow-light/`, `stories/<id>/{light,dark}.png` for every story,
+  `themes-page/`, and `hdr-validation/` (formerly `hdr-widget-book/`).
+
+### Added
+
+- `InteractionPreview` and `interaction_preview` on `Button`, `IconButton`,
+  `Checkbox`, `RadioButton`, `Switch`, `Slider`, `NumberInput`, `TextInput`,
+  `PasswordInput`, `DateTimeInput`, `TextArea`, and `Select` pin hover, press,
+  or focus visuals for galleries, documentation, and screenshots. Previews
+  affect paint only; semantics keep reporting real state, and disabled controls
+  ignore them.
+- `show_inline` on `Tooltip`, `Popover`, `ContextMenu`, `Select`, and `Dialog`
+  keeps the overlay open and lays it out in flow as part of the widget's own
+  size instead of floating in the window overlay stack. Inline overlays ignore
+  dismissal. `ContextMenu::highlighted_path` highlights an item and opens the
+  submenus leading to it.
+- `ScrollState::virtual_item_at`, `first_visible_item`, and
+  `virtual_item_offset` report which `VirtualScrollView` item sits at a content
+  offset, for scroll-spy navigation.
+
 ### Fixes
 
+- A progress bar's value label now uses the tone's content color over the fill
+  and body text over the track, so values below the midpoint stay readable.
+- Disabled ghost buttons no longer reveal their transparent border as a dark
+  outline on light themes.
+- A selected filled icon button keeps its icon visible instead of painting it
+  in the fill color.
 - The demo's Themes page sizes each row of preview cards to its tallest card,
   so wrapped descriptions no longer squash the color swatches.
-- Demo widgets that ignored the live theme now follow it, including the widget
-  book dialog preview, toolbar separators and swatches, layout examples, and
-  editor toolbar separators, so nothing renders with light-theme colors in dark
-  mode.
+- Demo widgets that ignored the live theme now follow it, including layout
+  examples and editor toolbar separators, so nothing renders with light-theme
+  colors in dark mode.
 - Fixed a browser panic when opening the Editorial engine demo by using a
   WebAssembly-compatible monotonic clock for reflow timing. Added a browser
   regression check covering animation, controls, resizing, and tab switching.

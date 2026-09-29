@@ -167,6 +167,17 @@ window
     .to_match_screenshot("tests/baselines/delete-dialog.png")?;
 ```
 
+To capture hover, press, or focus chrome without synthesizing input, pin the
+state with `interaction_preview`. Previews change paint only: semantics keep
+reporting the control's real state, and disabled controls ignore them.
+
+```rust
+use sui::prelude::*;
+
+let hovered = Button::new("Export").interaction_preview(InteractionPreview::Hovered);
+let focused = TextInput::new("Name").interaction_preview(InteractionPreview::Focused);
+```
+
 `capture_artifacts()` returns the current window snapshot plus available
 screenshot, semantics overlay, and widget overlay. `performance_snapshot()`
 captures runtime timing diagnostics. Keep baseline tests small and focused;

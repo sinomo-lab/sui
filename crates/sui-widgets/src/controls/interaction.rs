@@ -3,12 +3,55 @@ use crate::{DefaultTheme, MotionScalar};
 use sui_core::{Event, KeyState, PointerButton, PointerEventKind};
 use sui_runtime::EventCtx;
 
+/// Pins the interaction visuals of a control.
+///
+/// Widget galleries, documentation, and screenshot tests use a preview to show
+/// hover, press, and focus chrome side by side without synthesizing input.
+/// The preview only affects paint: the control stays interactive, keeps its
+/// real semantics state, and live interaction can still add to the pinned
+/// visuals. Disabled controls ignore previews, like they ignore input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum InteractionPreview {
+    /// Show only live interaction. This is the default.
+    #[default]
+    None,
+    /// Paint as if a pointer rests over the control.
+    Hovered,
+    /// Paint as if the control is held down; implies hover.
+    Pressed,
+    /// Paint the keyboard focus chrome.
+    Focused,
+}
+
+impl InteractionPreview {
+    /// Hover progress pinned by this preview.
+    pub(crate) fn hover(self) -> f32 {
+        matches!(self, Self::Hovered | Self::Pressed) as u8 as f32
+    }
+
+    /// Press progress pinned by this preview.
+    pub(crate) fn press(self) -> f32 {
+        (self == Self::Pressed) as u8 as f32
+    }
+
+    /// Focus progress pinned by this preview.
+    pub(crate) fn focus(self) -> f32 {
+        (self == Self::Focused) as u8 as f32
+    }
+
+    /// Whether the preview shows the control as focused.
+    pub(crate) fn is_focused(self) -> bool {
+        self == Self::Focused
+    }
+}
+
 /// Pointer/keyboard press state shared by ordinary and icon buttons.
 pub(super) struct PressInteraction {
     pub(super) hovered: bool,
     pub(super) pressed: bool,
     pub(super) hover_animation: MotionScalar,
     pub(super) press_animation: MotionScalar,
+    pub(super) preview: InteractionPreview,
 }
 
 impl Default for PressInteraction {
@@ -18,11 +61,22 @@ impl Default for PressInteraction {
             pressed: false,
             hover_animation: MotionScalar::new(0.0),
             press_animation: MotionScalar::new(0.0),
+            preview: InteractionPreview::None,
         }
     }
 }
 
 impl PressInteraction {
+    /// Hover progress including any pinned preview.
+    pub(super) fn hover_progress(&self) -> f32 {
+        self.hover_animation.value.max(self.preview.hover())
+    }
+
+    /// Press progress including any pinned preview.
+    pub(super) fn press_progress(&self) -> f32 {
+        self.press_animation.value.max(self.preview.press())
+    }
+
     pub(super) fn event(
         &mut self,
         ctx: &mut EventCtx,

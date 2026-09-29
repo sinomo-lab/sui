@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use super::{
     Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, ChoiceAppearance,
     DateTimeInput, DefaultTheme, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
-    Label, Link, NumberInput, PasswordInput, RadioButton, RadioGroup, Select, Separator, Slider,
-    Switch, TextArea, TextInput, paint_icon_button, rect_is_finite,
+    InteractionPreview, Label, Link, NumberInput, PasswordInput, RadioButton, RadioGroup, Select,
+    Separator, Slider, Switch, TextArea, TextInput, paint_icon_button, rect_is_finite,
 };
 use crate::{
     HdrThemeMode, SemanticColorToken, SemanticTone, WidgetLuminanceRole, resolve_luminance_role,
@@ -6783,5 +6783,200 @@ fn select_retains_chevron_ink_when_feathering_is_enabled() {
     assert!(
         feathered_ink * 3 >= hard_ink * 2,
         "feathered select chevron lost too much dark ink (feathered={feathered_ink}, hard={hard_ink}, crop={chevron_crop:?})"
+    );
+}
+
+fn painted_colors(output: &RenderOutput) -> (Vec<Color>, Vec<Color>) {
+    (solid_fill_colors(output), solid_stroke_colors(output))
+}
+
+macro_rules! assert_previews_change_paint {
+    ($name:literal, $build:expr) => {{
+        let build = $build;
+        let rest = painted_colors(&render(build(InteractionPreview::None)));
+        for preview in [
+            InteractionPreview::Hovered,
+            InteractionPreview::Pressed,
+            InteractionPreview::Focused,
+        ] {
+            let pinned = painted_colors(&render(build(preview)));
+            assert_ne!(
+                pinned, rest,
+                "{} should paint {preview:?} differently from rest",
+                $name
+            );
+        }
+    }};
+}
+
+#[test]
+fn interaction_previews_pin_control_visuals_without_input() {
+    assert_previews_change_paint!("Button", |preview| Button::new("Save")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("Primary button", |preview| Button::primary("Save")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("IconButton", |preview| IconButton::new(
+        IconGlyph::Search,
+        "Search"
+    )
+    .interaction_preview(preview));
+    assert_previews_change_paint!("Checkbox", |preview| Checkbox::new("Snap")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("Switch", |preview| Switch::new("Snap")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("RadioButton", |preview| RadioButton::new("Fast")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("Slider", |preview| SizedBox::new().width(160.0).with_child(
+        Slider::new("Opacity")
+            .value(40.0)
+            .interaction_preview(preview)
+    ));
+    assert_previews_change_paint!("NumberInput", |preview| NumberInput::new("Size")
+        .value(12.0)
+        .interaction_preview(preview));
+    assert_previews_change_paint!("Select", |preview| Select::new("Blend")
+        .options(["Normal", "Screen"])
+        .selected(0)
+        .interaction_preview(preview));
+    assert_previews_change_paint!("TextInput", |preview| TextInput::new("Name")
+        .value("Ada")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("TextArea", |preview| TextArea::new("Notes")
+        .value("Draft")
+        .interaction_preview(preview));
+    assert_previews_change_paint!("PasswordInput", |preview| PasswordInput::new("Secret")
+        .value("hunter2")
+        .interaction_preview(preview));
+}
+
+#[test]
+fn focused_interaction_preview_paints_the_focus_ring() {
+    let theme = DefaultTheme::default();
+    let output = render(Button::new("Save").interaction_preview(InteractionPreview::Focused));
+    let (fills, strokes) = painted_colors(&output);
+    assert!(
+        fills
+            .iter()
+            .chain(&strokes)
+            .any(|color| *color == theme.palette.focus_ring),
+        "focused preview should paint the theme focus ring"
+    );
+}
+
+#[test]
+fn disabled_controls_ignore_interaction_previews() {
+    let rest = painted_colors(&render(Button::new("Save").enabled(false)));
+    for preview in [
+        InteractionPreview::Hovered,
+        InteractionPreview::Pressed,
+        InteractionPreview::Focused,
+    ] {
+        let pinned = painted_colors(&render(
+            Button::new("Save")
+                .enabled(false)
+                .interaction_preview(preview),
+        ));
+        assert_eq!(pinned, rest, "disabled button ignores {preview:?}");
+    }
+}
+
+#[test]
+fn interaction_preview_keeps_real_semantics_state() {
+    let output = render(Button::new("Save").interaction_preview(InteractionPreview::Hovered));
+    let node = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::Button)
+        .expect("button semantics present");
+    assert!(!node.state.hovered);
+    assert!(!node.state.focused);
+}
+
+#[test]
+fn inline_select_lays_out_its_option_list_in_flow() {
+    let theme = DefaultTheme::default();
+    let output = render(
+        Stack::vertical()
+            .spacing(8.0)
+            .alignment(Alignment::Start)
+            .with_child(
+                Select::new("Blend mode")
+                    .options(["Normal", "Multiply", "Screen"])
+                    .selected(1)
+                    .show_inline(),
+            )
+            .with_child(Label::new("After select")),
+    );
+    let select = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::ComboBox)
+        .expect("select semantics present");
+    assert_eq!(select.state.expanded, Some(true));
+    let header_height = theme.metrics.min_height.max(28.0);
+    assert!(
+        select.bounds.height() > header_height * 3.0,
+        "inline select reserves room for its options: {:?}",
+        select.bounds
+    );
+    let after = output
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Text && node.name.as_deref() == Some("After select")
+        })
+        .expect("follower semantics present");
+    assert!(after.bounds.y() >= select.bounds.max_y());
+    let mut overlay_layers = 0;
+    output.frame.scene.visit_layers(&mut |layer| {
+        if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
+            overlay_layers += 1;
+        }
+    });
+    assert_eq!(overlay_layers, 0);
+    assert!(text_run_for(&output, "Screen").rect.y() > select.bounds.y() + header_height);
+}
+
+#[test]
+fn disabled_ghost_button_keeps_a_transparent_border() {
+    let output = render(
+        Button::new("Export")
+            .appearance(ButtonAppearance::Ghost)
+            .enabled(false),
+    );
+    let strokes = solid_stroke_colors(&output);
+    assert!(
+        strokes.iter().all(|color| color.alpha <= f32::EPSILON),
+        "a disabled ghost button must not reveal its transparent border: {strokes:?}"
+    );
+}
+
+#[test]
+fn selected_filled_icon_button_keeps_its_icon_readable() {
+    let theme = DefaultTheme::default();
+    let output = render(
+        IconButton::new(IconGlyph::Search, "Search")
+            .appearance(ButtonAppearance::Filled)
+            .tone(crate::SemanticTone::Accent)
+            .selected(true)
+            .theme(theme),
+    );
+    let mut icon_colors = Vec::new();
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::StrokePath {
+            brush: Brush::Solid(color),
+            stroke,
+            ..
+        } = command
+            && stroke.cap == sui_scene::StrokeCap::Round
+        {
+            icon_colors.push(*color);
+        }
+    });
+    let fills = solid_fill_colors(&output);
+    assert!(!icon_colors.is_empty(), "icon strokes present");
+    assert!(
+        icon_colors.iter().all(|icon| !fills.contains(icon)),
+        "icon strokes {icon_colors:?} must differ from the fill {fills:?}"
     );
 }

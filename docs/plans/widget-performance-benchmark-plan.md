@@ -438,7 +438,8 @@ useful intermediate milestone; it does not close first-presented-frame coverage.
   and `crates/sui-testing/src/harness.rs`.
 - Native presentation: `crates/sui-platform/src/desktop.rs`.
 - Existing desktop workloads: `crates/sui-demo/tests/desktop_e2e.rs`.
-- Existing headless widget-book workloads: `crates/sui-demo/src/widget_book/tests.rs`.
+- Existing headless workloads: `crates/sui-demo/src/widget_book/tests.rs` (widget
+  book) and `crates/sui-demo/src/benchmarks/tests.rs` (text and animation).
 - Scrollbar layout: `crates/sui-widgets/src/containers.rs`,
   `crates/sui-widgets/src/collection.rs`, `crates/sui-widgets/src/data.rs`, and
   `crates/sui-widgets/src/panes.rs`.

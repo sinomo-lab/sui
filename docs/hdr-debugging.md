@@ -14,8 +14,9 @@ From the workspace root:
 cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
-The command writes under `target/ui-artifacts/sui-demo/widget-book`. Its HDR
-validation directory includes, when supported by the active configuration:
+The command writes under `target/ui-artifacts/sui-demo/widget-book`. Its
+`hdr-validation` directory includes, when supported by the active
+configuration:
 
 - ordinary screenshot, semantics, and widget overlays;
 - linear floating-point `hdr-intermediate.exr` and `final-composed.exr` files;

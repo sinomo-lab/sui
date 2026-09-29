@@ -3,16 +3,20 @@ use std::{
     rc::Rc,
 };
 
+use crate::benchmarks::{
+    build_retained_text_benchmark_with_theme, build_text_editing_benchmark_with_theme,
+};
+use crate::live_performance::LivePerformanceRoot;
+use crate::theme_demo::{
+    build_theme_demo_surface_with_theme, hdr_theme_lab_mode, set_hdr_theme_lab_mode,
+};
+use crate::validation::{
+    build_color_validation_surface_with_theme, build_text_rendering_comparison_surface_with_theme,
+    build_text_validation_surface_with_theme,
+};
 #[cfg(test)]
 use crate::widget_book::build_widget_book_gallery;
-use crate::widget_book::{
-    LivePerformanceRoot, build_color_validation_surface_with_theme,
-    build_retained_text_benchmark_with_theme, build_text_editing_benchmark_with_theme,
-    build_text_rendering_comparison_surface_with_theme, build_text_validation_surface_with_theme,
-    build_theme_demo_surface_with_theme, build_widget_book_gallery_with_theme,
-    default_widget_book_state, register_widget_book_images, set_widget_book_hdr_theme_mode,
-    widget_book_hdr_theme_mode,
-};
+use crate::widget_book::{build_widget_book_gallery_with_theme, register_widget_book_images};
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
@@ -581,7 +585,7 @@ impl DevBrowserShell {
     }
 
     fn with_initial_demo(render_options: WindowRenderOptions, initial_demo: Option<&str>) -> Self {
-        set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+        set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
         let state = DevShellState::new();
         let tab_scroll_state = ScrollState::new();
         let tab_scroll_to_end = Rc::new(Cell::new(false));
@@ -1903,17 +1907,17 @@ fn build_dev_demo_entries(
     vec![
         themed_demo!(
             WIDGET_BOOK_TAB_LABEL,
-            "Catalog of controls, containers, media, and text surfaces.",
+            "Every component and its variations on one page.",
             IconGlyph::MoreHorizontal,
             DecorativeHue::Blue,
-            |theme| build_widget_book_gallery_with_theme(default_widget_book_state(), theme)
+            |theme| build_widget_book_gallery_with_theme(theme)
         ),
         themed_demo!(
             THEMES_TAB_LABEL,
             "Theme previews and HDR theme mode comparisons.",
             IconGlyph::PaintBucket,
             DecorativeHue::Violet,
-            |theme| build_theme_demo_surface_with_theme(default_widget_book_state(), theme)
+            |theme| build_theme_demo_surface_with_theme(theme)
         ),
         themed_demo!(
             THEME_EDITOR_TAB_LABEL,
@@ -2390,7 +2394,7 @@ fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String 
 }
 
 fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
-    let current_mode = widget_book_hdr_theme_mode();
+    let current_mode = hdr_theme_lab_mode();
     let mut lines = vec![format!(
         "Current theme mode: {}",
         hdr_theme_mode_label(current_mode)
@@ -2798,7 +2802,7 @@ impl RenderSettingsTab {
         let tone_mapping_state = Rc::clone(&state);
         let sdr_content_brightness_state = Rc::clone(&state);
         let system_sdr_content_brightness_state = Rc::clone(&state);
-        let current_hdr_theme_mode = widget_book_hdr_theme_mode();
+        let current_hdr_theme_mode = hdr_theme_lab_mode();
 
         let content = ScrollView::vertical(Padding::all(
                 28.0,
@@ -3118,7 +3122,7 @@ impl RenderSettingsTab {
                             .options(HDR_THEME_MODE_OPTIONS)
                             .selected(hdr_theme_mode_selected_index(current_hdr_theme_mode))
                             .on_change(move |index, _| {
-                                set_widget_book_hdr_theme_mode(hdr_theme_mode_from_index(index));
+                                set_hdr_theme_lab_mode(hdr_theme_mode_from_index(index));
                             }),
                     ))
                     .with_child(HdrThemeInspectionPanel::new(Rc::clone(&theme_reader)))
@@ -3165,7 +3169,7 @@ impl RenderSettingsTab {
 
 impl Widget for RenderSettingsTab {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        let current_hdr_theme_mode = widget_book_hdr_theme_mode();
+        let current_hdr_theme_mode = hdr_theme_lab_mode();
         if current_hdr_theme_mode != self.last_hdr_theme_mode {
             self.last_hdr_theme_mode = current_hdr_theme_mode;
             ctx.request_paint();
@@ -3622,13 +3626,13 @@ mod tests {
     }
 
     fn build_floating_widget_book_test_application(widget_book_bounds: Rect) -> Application {
-        set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+        set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
         let workspace = FloatingWorkspaceState::new();
         let mut views = FloatingWorkspace::new(workspace).name("Widget book floating regression");
         views.push_view(
             FloatingViewConfig::new(WIDGET_BOOK_TAB_LABEL, widget_book_bounds)
                 .min_size(Size::new(420.0, 320.0)),
-            build_widget_book_gallery(default_widget_book_state()),
+            build_widget_book_gallery(),
         );
         finish_dev_application(views)
     }
@@ -3636,7 +3640,7 @@ mod tests {
     fn build_floating_color_imagery_test_application(widget_book_bounds: Rect) -> Application {
         const WIDGET_BOOK_TEST_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
 
-        set_widget_book_hdr_theme_mode(HdrThemeMode::Disabled);
+        set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
         let workspace = FloatingWorkspaceState::new();
         let mut views = FloatingWorkspace::new(workspace).name("Widget book floating regression");
         let gallery = ScrollView::vertical(Padding::all(
@@ -4174,7 +4178,7 @@ mod tests {
         open_dev_shell_demo(&window, HDR_VALIDATION_TAB_LABEL)?;
         window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(crate::widget_book::COLOR_VALIDATION_SCROLL_NAME)
+            .with_name(crate::validation::COLOR_VALIDATION_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
         Ok(())
@@ -7063,7 +7067,7 @@ mod tests {
             .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
             .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_no_vsync(move || {
-            crate::widget_book::build_color_validation_application()
+            crate::validation::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
         let window = app.main_window()?;
@@ -7203,13 +7207,13 @@ final_max_luminance={final_max_luminance}
             .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
             .with_system_sdr_content_brightness_enabled(false);
         let app = TestApp::new_no_vsync(move || {
-            crate::widget_book::build_color_validation_application()
+            crate::validation::build_color_validation_application()
                 .with_window_render_options(options)
         })?;
         let window = app.main_window()?;
         let scroll = window
             .get_by_role(SemanticsRole::ScrollView)
-            .with_name(crate::widget_book::COLOR_VALIDATION_SCROLL_NAME);
+            .with_name(crate::validation::COLOR_VALIDATION_SCROLL_NAME);
         scroll.scroll_pixels(Vector::new(0.0, -240.0))?;
 
         let artifact = window.capture_debug_frame(DebugCaptureRequest {
@@ -7447,25 +7451,15 @@ final_max_luminance={final_max_luminance}
         let gallery = window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(crate::widget_book::GALLERY_SCROLL_NAME);
-        scroll_story_until_visible(
-            &window,
-            &gallery,
-            SemanticsRole::Button,
-            crate::widget_book::PRIMARY_BUTTON_LABEL,
-            240,
-        )?;
+        scroll_story_until_visible(&window, &gallery, SemanticsRole::Button, "Download", 240)?;
 
         let light_snapshot = window.snapshot()?;
-        let primary_button = find_named_node(
-            &light_snapshot,
-            SemanticsRole::Button,
-            crate::widget_book::PRIMARY_BUTTON_LABEL,
-        );
-        // The primary azure is shared by every scheme, so probe the neutral
-        // surface just beside the button, which must follow the scheme.
+        let button = find_named_node(&light_snapshot, SemanticsRole::Button, "Download");
+        // Probe the neutral stage just beside the button, which must follow
+        // the scheme.
         let probe = Rect::new(
-            primary_button.bounds.x() - 6.0,
-            primary_button.bounds.y() + primary_button.bounds.height() * 0.5,
+            button.bounds.x() - 6.0,
+            button.bounds.y() + button.bounds.height() * 0.5,
             1.0,
             1.0,
         );
@@ -7481,7 +7475,7 @@ final_max_luminance={final_max_luminance}
 
         assert_ne!(
             light_pixel, dark_pixel,
-            "expected the widget book surface beside the primary button to repaint after the theme switch toggles"
+            "expected the widget book stage beside the button to repaint after the theme switch toggles"
         );
         Ok(())
     }

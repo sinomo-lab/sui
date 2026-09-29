@@ -2214,6 +2214,8 @@ struct ScrollStateInner {
     content_size: Size,
     offset: Vector,
     pending_virtual_item: Option<usize>,
+    /// Content-space top of each virtual-scroll item from the latest layout.
+    virtual_item_offsets: Vec<f32>,
     scroll_view_id: Option<WidgetId>,
     scroll_content_id: Option<WidgetId>,
     scroll_bar_ids: Vec<WidgetId>,
@@ -2343,6 +2345,45 @@ impl ScrollState {
         true
     }
 
+    /// Index of the virtual-scroll item whose extent contains the content
+    /// offset `y`, measured from the top of the scrolled content. Offsets past
+    /// the last item resolve to the last item; returns `None` before the bound
+    /// [`VirtualScrollView`] has been laid out or when it has no items.
+    ///
+    /// Scroll-spy navigation compares this against the current offset, for
+    /// example `virtual_item_at(current_offset().y + threshold)`.
+    pub fn virtual_item_at(&self, y: f32) -> Option<usize> {
+        let inner = self.inner.borrow();
+        let offsets = &inner.virtual_item_offsets;
+        if offsets.is_empty() {
+            return None;
+        }
+        Some(
+            offsets
+                .partition_point(|top| *top <= y)
+                .saturating_sub(1)
+                .min(offsets.len() - 1),
+        )
+    }
+
+    /// Index of the virtual-scroll item at the top edge of the viewport.
+    pub fn first_visible_item(&self) -> Option<usize> {
+        self.virtual_item_at(self.current_offset().y)
+    }
+
+    /// Content-space top of a virtual-scroll item from the latest layout.
+    pub fn virtual_item_offset(&self, index: usize) -> Option<f32> {
+        self.inner.borrow().virtual_item_offsets.get(index).copied()
+    }
+
+    pub(crate) fn sync_virtual_item_offsets(&self, offsets: &[f32]) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.virtual_item_offsets != offsets {
+            inner.virtual_item_offsets.clear();
+            inner.virtual_item_offsets.extend_from_slice(offsets);
+        }
+    }
+
     pub(crate) fn take_pending_virtual_item(&self) -> Option<usize> {
         self.inner.borrow_mut().pending_virtual_item.take()
     }
@@ -2370,6 +2411,7 @@ impl Default for ScrollState {
                 content_size: Size::ZERO,
                 offset: Vector::ZERO,
                 pending_virtual_item: None,
+                virtual_item_offsets: Vec::new(),
                 scroll_view_id: None,
                 scroll_content_id: None,
                 scroll_bar_ids: Vec::new(),
@@ -4123,6 +4165,7 @@ impl VirtualScrollView {
         let state = &self.state;
 
         state.bind_scroll_view(ctx.widget_id(), ctx.widget_id());
+        state.sync_virtual_item_offsets(&self.item_offsets);
         let content_size = Size::new(viewport.width, self.content_height);
         let mut state_changed = state.sync_metrics(ScrollAxes::Vertical, viewport, content_size);
         if let Some(index) = state.take_pending_virtual_item()
@@ -7601,6 +7644,43 @@ mod tests {
 
         assert_eq!(state.current_offset(), Vector::new(0.0, 40.0));
         assert_eq!(target.bounds.y(), viewport.bounds.y());
+    }
+
+    #[test]
+    fn virtual_scroll_state_reports_items_at_content_offsets() {
+        let state = ScrollState::new();
+        assert_eq!(state.first_visible_item(), None);
+        assert!(state.scroll_to_item(1));
+
+        let _ = render_root(
+            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+                VirtualScrollView::new()
+                    .state(state.clone())
+                    .spacing(4.0)
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 20.0),
+                        Color::rgba(0.8, 0.2, 0.2, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 30.0),
+                        Color::rgba(0.2, 0.8, 0.2, 1.0),
+                    ))
+                    .with_child(FixedBox::new(
+                        Size::new(80.0, 40.0),
+                        Color::rgba(0.2, 0.2, 0.8, 1.0),
+                    )),
+            ),
+        );
+
+        assert_eq!(state.virtual_item_offset(1), Some(24.0));
+        assert_eq!(state.virtual_item_offset(2), Some(58.0));
+        assert_eq!(state.virtual_item_offset(3), None);
+        assert_eq!(state.first_visible_item(), Some(1));
+        assert_eq!(state.virtual_item_at(0.0), Some(0));
+        assert_eq!(state.virtual_item_at(23.9), Some(0));
+        assert_eq!(state.virtual_item_at(24.0), Some(1));
+        assert_eq!(state.virtual_item_at(-10.0), Some(0));
+        assert_eq!(state.virtual_item_at(500.0), Some(2));
     }
 
     #[test]

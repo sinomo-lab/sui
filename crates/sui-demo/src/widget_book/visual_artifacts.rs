@@ -1,536 +1,43 @@
+//! Writes reviewable screenshots of the widget book: the page in each theme,
+//! every registered story in light and dark, the Themes page, and an HDR
+//! validation capture.
+
 use std::{
-    cell::RefCell,
     fs,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 use sui::{
-    Error, Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect,
-    Result, ScrollDelta, SemanticsNode, SemanticsRole, Vector, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
-    window_output_diagnostics,
+    Error, Event, Rect, Result, SemanticsRole, Size, Vector, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries, WindowRenderOptions,
+    WindowToneMappingMode, window_output_diagnostics,
 };
 use sui_render_wgpu::{
     DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
     DebugSdrVisualization,
 };
 use sui_testing::{
-    Locator, Screenshot, TestApp, TestWindow, hdr_clip_mask, hdr_headroom_heatmap,
-    hdr_luminance_heatmap, write_hdr_avif, write_hdr_exr,
+    Screenshot, TestApp, TestWindow, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap,
+    write_hdr_avif, write_hdr_exr,
 };
 
+use super::registry::{Story, stories};
+use super::shell::RAIL_SCROLL_NAME;
 use super::{
-    BREADCRUMB_NAME, COLOR_PICKER_NAME, COLOR_SWATCH_NAME, COLOR_VALIDATION_VIEW_TITLE,
-    CONTEXT_MENU_NAME, DEMO_IMAGE_LABEL, DIALOG_TITLE, DIALOG_TRIGGER_LABEL, GALLERY_SCROLL_NAME,
-    ICON_BUTTON_LABEL, ICON_LABEL, LIST_VIEW_NAME, MENU_NAME, NAME_INPUT_LABEL, NUMBER_INPUT_NAME,
-    POPOVER_NAME, POPOVER_TRIGGER_LABEL, PRIMARY_BUTTON_LABEL, PROGRESS_NAME, RADIO_BUTTON_LABEL,
-    RADIO_GROUP_NAME, SELECT_NAME, SLIDER_NAME, SPINNER_NAME, SPLIT_VIEW_NAME, SUBSCRIBE_LABEL,
-    SUMMARY_NAME, SWITCH_LABEL, TAB_BAR_NAME, TAB_BAR_OPTIONS, TAB_PANEL_OPTIONS, TABLE_NAME,
-    TABS_NAME, TEXT_AREA_LABEL, THEME_DEMO_SCROLL_NAME, THEME_PREVIEW_NAME, TOOLBAR_SEPARATOR_NAME,
-    TOOLTIP_TEXT, TOOLTIP_TRIGGER_LABEL, TREE_VIEW_NAME, WINDOW_TITLE, WidgetBookState,
-    build_color_validation_application, build_theme_demo_application,
-    build_widget_book_application, default_widget_book_state,
+    WIDGET_BOOK_SEARCH_NAME, WIDGET_BOOK_THEME_SWITCH_NAME, build_widget_book_application,
 };
+use crate::theme_demo::build_theme_demo_application;
+use crate::validation::{COLOR_VALIDATION_VIEW_TITLE, build_color_validation_application};
 
-#[derive(Clone, Copy)]
-pub(crate) enum StoryCase {
-    Overview,
-    OverviewConfigured,
-    Button,
-    ButtonHover,
-    ButtonPressed,
-    Checkbox,
-    CheckboxUnchecked,
-    FilledInput,
-    EmptyInputFocused,
-    Icon,
-    IconButton,
-    Separator,
-    Switch,
-    RadioButton,
-    RadioGroup,
-    Slider,
-    NumberInput,
-    TextArea,
-    SelectExpanded,
-    TabBar,
-    Tabs,
-    Menu,
-    ContextMenuOpen,
-    TooltipVisible,
-    PopoverOpen,
-    Dialog,
-    ProgressBar,
-    Spinner,
-    ScrollViewScrolled,
-    Summary,
-    ListView,
-    TreeView,
-    Table,
-    SplitView,
-    Breadcrumb,
-    ColorSwatch,
-    ColorPicker,
-    ThemePreview,
-    ImageWidget,
-}
+/// Window size for story captures: wide enough for the rail and every
+/// specimen grid, tall enough that most stories fit in one screenshot.
+pub(crate) const CAPTURE_SIZE: Size = Size::new(1440.0, 1600.0);
 
-impl StoryCase {
-    pub(crate) const ALL: [Self; 39] = [
-        Self::Overview,
-        Self::OverviewConfigured,
-        Self::Button,
-        Self::ButtonHover,
-        Self::ButtonPressed,
-        Self::Checkbox,
-        Self::CheckboxUnchecked,
-        Self::FilledInput,
-        Self::EmptyInputFocused,
-        Self::Icon,
-        Self::IconButton,
-        Self::Separator,
-        Self::Switch,
-        Self::RadioButton,
-        Self::RadioGroup,
-        Self::Slider,
-        Self::NumberInput,
-        Self::TextArea,
-        Self::SelectExpanded,
-        Self::TabBar,
-        Self::Tabs,
-        Self::Menu,
-        Self::ContextMenuOpen,
-        Self::TooltipVisible,
-        Self::PopoverOpen,
-        Self::Dialog,
-        Self::ProgressBar,
-        Self::Spinner,
-        Self::ScrollViewScrolled,
-        Self::Summary,
-        Self::ListView,
-        Self::TreeView,
-        Self::Table,
-        Self::SplitView,
-        Self::Breadcrumb,
-        Self::ColorSwatch,
-        Self::ColorPicker,
-        Self::ThemePreview,
-        Self::ImageWidget,
-    ];
+/// Below the rail breakpoint, for checking the single-column fallback.
+const NARROW_CAPTURE_SIZE: Size = Size::new(720.0, 1400.0);
 
-    pub(crate) fn id(self) -> &'static str {
-        match self {
-            Self::Overview => "overview",
-            Self::OverviewConfigured => "overview-configured",
-            Self::Button => "button",
-            Self::ButtonHover => "button-hover",
-            Self::ButtonPressed => "button-pressed",
-            Self::Checkbox => "checkbox",
-            Self::CheckboxUnchecked => "checkbox-unchecked",
-            Self::FilledInput => "filled-input",
-            Self::EmptyInputFocused => "empty-input-focused",
-            Self::Icon => "icon",
-            Self::IconButton => "icon-button",
-            Self::Separator => "separator",
-            Self::Switch => "switch",
-            Self::RadioButton => "radio-button",
-            Self::RadioGroup => "radio-group",
-            Self::Slider => "slider",
-            Self::NumberInput => "number-input",
-            Self::TextArea => "text-area",
-            Self::SelectExpanded => "select-expanded",
-            Self::TabBar => "tab-bar",
-            Self::Tabs => "tabs",
-            Self::Menu => "menu",
-            Self::ContextMenuOpen => "context-menu-open",
-            Self::TooltipVisible => "tooltip-visible",
-            Self::PopoverOpen => "popover-open",
-            Self::Dialog => "dialog",
-            Self::ProgressBar => "progress-bar",
-            Self::Spinner => "spinner",
-            Self::ScrollViewScrolled => "scroll-view-scrolled",
-            Self::Summary => "summary",
-            Self::ListView => "list-view",
-            Self::TreeView => "tree-view",
-            Self::Table => "table",
-            Self::SplitView => "split-view",
-            Self::Breadcrumb => "breadcrumb",
-            Self::ColorSwatch => "color-swatch",
-            Self::ColorPicker => "color-picker",
-            Self::ThemePreview => "theme-preview",
-            Self::ImageWidget => "image-widget",
-        }
-    }
-
-    pub(crate) fn description(self) -> &'static str {
-        match self {
-            Self::Overview => "Whole-window widget book overview screenshot.",
-            Self::OverviewConfigured => {
-                "Whole-window widget book overview with configured state changes."
-            }
-            Self::Button => "Primary button crop for direct visual regression review.",
-            Self::ButtonHover => "Primary button crop in the hovered state.",
-            Self::ButtonPressed => "Primary button crop while the pointer is held down.",
-            Self::Checkbox => "Checkbox crop in the checked default state.",
-            Self::CheckboxUnchecked => "Checkbox crop in the unchecked configured state.",
-            Self::FilledInput => {
-                "Text input crop with a configured value for text rendering checks."
-            }
-            Self::EmptyInputFocused => {
-                "Empty text input crop with focus ring and placeholder visible."
-            }
-            Self::Icon => "Standalone icon crop for compact toolbar glyph review.",
-            Self::IconButton => "Icon button crop for titlebar-style actions.",
-            Self::Separator => "Separator crop for toolbar and inspector dividers.",
-            Self::Switch => "Switch crop for boolean controls distinct from checkbox rows.",
-            Self::RadioButton => "Standalone radio button crop.",
-            Self::RadioGroup => "Radio group crop for mutually exclusive choices.",
-            Self::Slider => "Slider crop for numeric tuning controls.",
-            Self::NumberInput => "Number input crop for spinbox-style editing.",
-            Self::TextArea => "Text area crop with multiline content.",
-            Self::SelectExpanded => "Expanded select crop showing compact option picking.",
-            Self::TabBar => "Standalone tab bar crop for editor-style navigation.",
-            Self::Tabs => "Tabs crop showing selected panel content.",
-            Self::Menu => "Command menu crop for overflow and app menus.",
-            Self::ContextMenuOpen => {
-                "Open context menu crop anchored to an explicit scene-layer surface."
-            }
-            Self::TooltipVisible => "Tooltip crop while the trigger is hovered.",
-            Self::PopoverOpen => "Open popover crop for inline inspector content.",
-            Self::Dialog => "Dialog crop for confirmations and settings.",
-            Self::ProgressBar => "Progress bar crop for long-running tasks.",
-            Self::Spinner => "Busy indicator crop for indeterminate work.",
-            Self::ScrollViewScrolled => {
-                "Outer widget-book scroll view after paging down through the gallery."
-            }
-            Self::Summary => "Composed summary panel showing derived state.",
-            Self::ListView => "List view crop for asset browser and inspector collections.",
-            Self::TreeView => "Tree view crop for layers, files, and scene hierarchies.",
-            Self::Table => "Table crop for structured tool data and data-grid layouts.",
-            Self::SplitView => "Split view crop with the resizable divider in an editor shell.",
-            Self::Breadcrumb => "Breadcrumb crop for path and project navigation surfaces.",
-            Self::ColorSwatch => "Color swatch crop for palette chips and compact property rows.",
-            Self::ColorPicker => "Color picker crop for interactive color adjustment workflows.",
-            Self::ThemePreview => "Responsive grid showing all five built-in theme presets.",
-            Self::ImageWidget => "Image widget crop for previews, thumbnails, and asset panels.",
-        }
-    }
-
-    pub(crate) fn build_app(self) -> Result<TestApp> {
-        if matches!(self, Self::ThemePreview) {
-            return TestApp::from_runtime(
-                build_theme_demo_application(default_widget_book_state()).build()?,
-            );
-        }
-
-        let state = match self {
-            Self::Overview
-            | Self::Button
-            | Self::ButtonHover
-            | Self::ButtonPressed
-            | Self::Checkbox
-            | Self::Icon
-            | Self::IconButton
-            | Self::Separator
-            | Self::Switch
-            | Self::RadioButton
-            | Self::RadioGroup
-            | Self::Slider
-            | Self::NumberInput
-            | Self::SelectExpanded
-            | Self::TabBar
-            | Self::Tabs
-            | Self::Menu
-            | Self::ContextMenuOpen
-            | Self::TooltipVisible
-            | Self::PopoverOpen
-            | Self::Dialog
-            | Self::ProgressBar
-            | Self::Spinner
-            | Self::ScrollViewScrolled
-            | Self::ListView
-            | Self::TreeView
-            | Self::Table
-            | Self::SplitView
-            | Self::Breadcrumb
-            | Self::ColorSwatch
-            | Self::ColorPicker
-            | Self::ThemePreview
-            | Self::ImageWidget => default_widget_book_state(),
-            Self::OverviewConfigured
-            | Self::CheckboxUnchecked
-            | Self::FilledInput
-            | Self::TextArea
-            | Self::Summary => configured_widget_book_state(),
-            Self::EmptyInputFocused => blank_widget_book_state(),
-        };
-
-        TestApp::from_runtime(build_widget_book_application(state).build()?)
-    }
-
-    pub(crate) fn prepare(self, window: &TestWindow) -> Result<()> {
-        if !matches!(
-            self,
-            Self::Overview | Self::OverviewConfigured | Self::ScrollViewScrolled
-        ) {
-            scroll_to_story_target(window, self, 64)?;
-        }
-
-        match self {
-            Self::Button
-            | Self::Checkbox
-            | Self::CheckboxUnchecked
-            | Self::FilledInput
-            | Self::Icon
-            | Self::IconButton
-            | Self::Separator
-            | Self::Switch
-            | Self::RadioButton
-            | Self::RadioGroup
-            | Self::Slider
-            | Self::NumberInput
-            | Self::TabBar
-            | Self::Tabs
-            | Self::Menu
-            | Self::ProgressBar
-            | Self::Spinner
-            | Self::Summary
-            | Self::ListView
-            | Self::TreeView
-            | Self::Table
-            | Self::SplitView
-            | Self::Breadcrumb
-            | Self::ColorSwatch
-            | Self::ColorPicker
-            | Self::ThemePreview
-            | Self::ImageWidget
-            | Self::TextArea => Ok(()),
-            Self::ButtonHover => self.target(window).hover(),
-            Self::ButtonPressed => {
-                press_target(window, SemanticsRole::Button, PRIMARY_BUTTON_LABEL)
-            }
-            Self::EmptyInputFocused => self.target(window).focus(),
-            Self::SelectExpanded => {
-                self.target(window).click()?;
-                Ok(())
-            }
-            Self::ContextMenuOpen | Self::TooltipVisible | Self::PopoverOpen | Self::Dialog => {
-                match self {
-                    Self::ContextMenuOpen => secondary_click_target(
-                        window,
-                        SemanticsRole::ContextMenu,
-                        CONTEXT_MENU_NAME,
-                    ),
-                    Self::TooltipVisible => window
-                        .get_by_role(SemanticsRole::Button)
-                        .with_name(TOOLTIP_TRIGGER_LABEL)
-                        .hover(),
-                    Self::PopoverOpen => self.target(window).click(),
-                    Self::Dialog => window
-                        .get_by_role(SemanticsRole::Button)
-                        .with_name(DIALOG_TRIGGER_LABEL)
-                        .click(),
-                    _ => Ok(()),
-                }
-            }
-            Self::ScrollViewScrolled => scroll_gallery(window, 1),
-            Self::Overview | Self::OverviewConfigured => Ok(()),
-        }
-    }
-
-    pub(crate) fn target(self, window: &TestWindow) -> Locator {
-        match self {
-            Self::Overview | Self::OverviewConfigured => window.root(),
-            Self::Button | Self::ButtonHover | Self::ButtonPressed => window
-                .get_by_role(SemanticsRole::Button)
-                .with_name(PRIMARY_BUTTON_LABEL),
-            Self::Checkbox | Self::CheckboxUnchecked => window
-                .get_by_role(SemanticsRole::CheckBox)
-                .with_name(SUBSCRIBE_LABEL),
-            Self::FilledInput | Self::EmptyInputFocused => window
-                .get_by_role(SemanticsRole::TextInput)
-                .with_name(NAME_INPUT_LABEL),
-            Self::Icon => window
-                .get_by_role(SemanticsRole::Image)
-                .with_name(ICON_LABEL),
-            Self::IconButton => window
-                .get_by_role(SemanticsRole::Button)
-                .with_name(ICON_BUTTON_LABEL),
-            Self::Separator => window
-                .get_by_role(SemanticsRole::Separator)
-                .with_name(TOOLBAR_SEPARATOR_NAME),
-            Self::Switch => window
-                .get_by_role(SemanticsRole::Switch)
-                .with_name(SWITCH_LABEL),
-            Self::RadioButton => window
-                .get_by_role(SemanticsRole::RadioButton)
-                .with_name(RADIO_BUTTON_LABEL),
-            Self::RadioGroup => window
-                .get_by_role(SemanticsRole::RadioGroup)
-                .with_name(RADIO_GROUP_NAME),
-            Self::Slider => window
-                .get_by_role(SemanticsRole::Slider)
-                .with_name(SLIDER_NAME),
-            Self::NumberInput => window
-                .get_by_role(SemanticsRole::SpinBox)
-                .with_name(NUMBER_INPUT_NAME),
-            Self::TextArea => window
-                .get_by_role(SemanticsRole::TextInput)
-                .with_name(TEXT_AREA_LABEL),
-            Self::SelectExpanded => window
-                .get_by_role(SemanticsRole::ComboBox)
-                .with_name(SELECT_NAME),
-            Self::TabBar => window
-                .get_by_role(SemanticsRole::TabBar)
-                .with_name(TAB_BAR_NAME),
-            Self::Tabs => window.get_by_role(SemanticsRole::Tabs).with_name(TABS_NAME),
-            Self::Menu => window.get_by_role(SemanticsRole::Menu).with_name(MENU_NAME),
-            Self::ContextMenuOpen => window
-                .get_by_role(SemanticsRole::ContextMenu)
-                .with_name(CONTEXT_MENU_NAME),
-            Self::TooltipVisible => window
-                .get_by_role(SemanticsRole::Tooltip)
-                .with_name(TOOLTIP_TEXT),
-            Self::PopoverOpen => window
-                .get_by_role(SemanticsRole::Popover)
-                .with_name(POPOVER_NAME),
-            Self::Dialog => window
-                .get_by_role(SemanticsRole::Dialog)
-                .with_name(DIALOG_TITLE),
-            Self::ProgressBar => window
-                .get_by_role(SemanticsRole::ProgressBar)
-                .with_name(PROGRESS_NAME),
-            Self::Spinner => window
-                .get_by_role(SemanticsRole::BusyIndicator)
-                .with_name(SPINNER_NAME),
-            Self::ScrollViewScrolled => window
-                .get_by_role(SemanticsRole::ScrollView)
-                .with_name(GALLERY_SCROLL_NAME),
-            Self::Summary => window
-                .get_by_role(SemanticsRole::GenericContainer)
-                .with_name(SUMMARY_NAME),
-            Self::ListView => window
-                .get_by_role(SemanticsRole::List)
-                .with_name(LIST_VIEW_NAME),
-            Self::TreeView => window
-                .get_by_role(SemanticsRole::Tree)
-                .with_name(TREE_VIEW_NAME),
-            Self::Table => window
-                .get_by_role(SemanticsRole::Table)
-                .with_name(TABLE_NAME),
-            Self::SplitView => window
-                .get_by_role(SemanticsRole::Splitter)
-                .with_name(SPLIT_VIEW_NAME),
-            Self::Breadcrumb => window
-                .get_by_role(SemanticsRole::Breadcrumb)
-                .with_name(BREADCRUMB_NAME),
-            Self::ColorSwatch => window
-                .get_by_role(SemanticsRole::ColorSwatch)
-                .with_name(COLOR_SWATCH_NAME),
-            Self::ColorPicker => window
-                .get_by_role(SemanticsRole::ColorPicker)
-                .with_name(COLOR_PICKER_NAME),
-            Self::ThemePreview => window
-                .get_by_role(SemanticsRole::GenericContainer)
-                .with_name(THEME_PREVIEW_NAME),
-            Self::ImageWidget => window
-                .get_by_role(SemanticsRole::Image)
-                .with_name(DEMO_IMAGE_LABEL),
-        }
-    }
-
-    fn capture_target(self) -> (SemanticsRole, Option<&'static str>) {
-        match self {
-            Self::Overview | Self::OverviewConfigured => {
-                (SemanticsRole::Window, Some(WINDOW_TITLE))
-            }
-            Self::Button | Self::ButtonHover | Self::ButtonPressed => {
-                (SemanticsRole::Button, Some(PRIMARY_BUTTON_LABEL))
-            }
-            Self::Checkbox | Self::CheckboxUnchecked => {
-                (SemanticsRole::CheckBox, Some(SUBSCRIBE_LABEL))
-            }
-            Self::FilledInput | Self::EmptyInputFocused => {
-                (SemanticsRole::TextInput, Some(NAME_INPUT_LABEL))
-            }
-            Self::Icon => (SemanticsRole::Image, Some(ICON_LABEL)),
-            Self::IconButton => (SemanticsRole::Button, Some(ICON_BUTTON_LABEL)),
-            Self::Separator => (SemanticsRole::Separator, Some(TOOLBAR_SEPARATOR_NAME)),
-            Self::Switch => (SemanticsRole::Switch, Some(SWITCH_LABEL)),
-            Self::RadioButton => (SemanticsRole::RadioButton, Some(RADIO_BUTTON_LABEL)),
-            Self::RadioGroup => (SemanticsRole::RadioGroup, Some(RADIO_GROUP_NAME)),
-            Self::Slider => (SemanticsRole::Slider, Some(SLIDER_NAME)),
-            Self::NumberInput => (SemanticsRole::SpinBox, Some(NUMBER_INPUT_NAME)),
-            Self::TextArea => (SemanticsRole::TextInput, Some(TEXT_AREA_LABEL)),
-            Self::SelectExpanded => (SemanticsRole::ComboBox, Some(SELECT_NAME)),
-            Self::TabBar => (SemanticsRole::TabBar, Some(TAB_BAR_NAME)),
-            Self::Tabs => (SemanticsRole::Tabs, Some(TABS_NAME)),
-            Self::Menu => (SemanticsRole::Menu, Some(MENU_NAME)),
-            Self::ContextMenuOpen => (SemanticsRole::ContextMenu, Some(CONTEXT_MENU_NAME)),
-            Self::TooltipVisible => (SemanticsRole::Tooltip, Some(TOOLTIP_TEXT)),
-            Self::PopoverOpen => (SemanticsRole::Popover, Some(POPOVER_NAME)),
-            Self::Dialog => (SemanticsRole::Dialog, Some(DIALOG_TITLE)),
-            Self::ProgressBar => (SemanticsRole::ProgressBar, Some(PROGRESS_NAME)),
-            Self::Spinner => (SemanticsRole::BusyIndicator, Some(SPINNER_NAME)),
-            Self::ScrollViewScrolled => (SemanticsRole::ScrollView, Some(GALLERY_SCROLL_NAME)),
-            Self::Summary => (SemanticsRole::GenericContainer, Some(SUMMARY_NAME)),
-            Self::ListView => (SemanticsRole::List, Some(LIST_VIEW_NAME)),
-            Self::TreeView => (SemanticsRole::Tree, Some(TREE_VIEW_NAME)),
-            Self::Table => (SemanticsRole::Table, Some(TABLE_NAME)),
-            Self::SplitView => (SemanticsRole::Splitter, Some(SPLIT_VIEW_NAME)),
-            Self::Breadcrumb => (SemanticsRole::Breadcrumb, Some(BREADCRUMB_NAME)),
-            Self::ColorSwatch => (SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME)),
-            Self::ColorPicker => (SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME)),
-            Self::ThemePreview => (SemanticsRole::GenericContainer, Some(THEME_PREVIEW_NAME)),
-            Self::ImageWidget => (SemanticsRole::Image, Some(DEMO_IMAGE_LABEL)),
-        }
-    }
-
-    fn story_node(self) -> Option<(SemanticsRole, Option<&'static str>)> {
-        match self {
-            Self::Button | Self::ButtonHover | Self::ButtonPressed => {
-                Some((SemanticsRole::Button, Some(PRIMARY_BUTTON_LABEL)))
-            }
-            Self::Checkbox | Self::CheckboxUnchecked => {
-                Some((SemanticsRole::CheckBox, Some(SUBSCRIBE_LABEL)))
-            }
-            Self::FilledInput | Self::EmptyInputFocused => {
-                Some((SemanticsRole::TextInput, Some(NAME_INPUT_LABEL)))
-            }
-            Self::Icon => Some((SemanticsRole::Image, Some(ICON_LABEL))),
-            Self::IconButton => Some((SemanticsRole::Button, Some(ICON_BUTTON_LABEL))),
-            Self::Separator => Some((SemanticsRole::Separator, Some(TOOLBAR_SEPARATOR_NAME))),
-            Self::Switch => Some((SemanticsRole::Switch, Some(SWITCH_LABEL))),
-            Self::RadioButton => Some((SemanticsRole::RadioButton, Some(RADIO_BUTTON_LABEL))),
-            Self::RadioGroup => Some((SemanticsRole::RadioGroup, Some(RADIO_GROUP_NAME))),
-            Self::Slider => Some((SemanticsRole::Slider, Some(SLIDER_NAME))),
-            Self::NumberInput => Some((SemanticsRole::SpinBox, Some(NUMBER_INPUT_NAME))),
-            Self::TextArea => Some((SemanticsRole::TextInput, Some(TEXT_AREA_LABEL))),
-            Self::SelectExpanded => Some((SemanticsRole::ComboBox, Some(SELECT_NAME))),
-            Self::TabBar => Some((SemanticsRole::TabBar, Some(TAB_BAR_NAME))),
-            Self::Tabs => Some((SemanticsRole::Tabs, Some(TABS_NAME))),
-            Self::Menu => Some((SemanticsRole::Menu, Some(MENU_NAME))),
-            Self::ContextMenuOpen => Some((SemanticsRole::ContextMenu, Some(CONTEXT_MENU_NAME))),
-            Self::TooltipVisible => Some((SemanticsRole::Button, Some(TOOLTIP_TRIGGER_LABEL))),
-            Self::PopoverOpen => Some((SemanticsRole::Button, Some(POPOVER_TRIGGER_LABEL))),
-            Self::Dialog => Some((SemanticsRole::Button, Some(DIALOG_TRIGGER_LABEL))),
-            Self::ProgressBar => Some((SemanticsRole::ProgressBar, Some(PROGRESS_NAME))),
-            Self::Spinner => Some((SemanticsRole::BusyIndicator, Some(SPINNER_NAME))),
-            Self::Summary => Some((SemanticsRole::GenericContainer, Some(SUMMARY_NAME))),
-            Self::ListView => Some((SemanticsRole::List, Some(LIST_VIEW_NAME))),
-            Self::TreeView => Some((SemanticsRole::Tree, Some(TREE_VIEW_NAME))),
-            Self::Table => Some((SemanticsRole::Table, Some(TABLE_NAME))),
-            Self::SplitView => Some((SemanticsRole::Splitter, Some(SPLIT_VIEW_NAME))),
-            Self::Breadcrumb => Some((SemanticsRole::Breadcrumb, Some(BREADCRUMB_NAME))),
-            Self::ColorSwatch => Some((SemanticsRole::ColorSwatch, Some(COLOR_SWATCH_NAME))),
-            Self::ColorPicker => Some((SemanticsRole::ColorPicker, Some(COLOR_PICKER_NAME))),
-            Self::ThemePreview => Some((SemanticsRole::GenericContainer, Some(THEME_PREVIEW_NAME))),
-            Self::ImageWidget => Some((SemanticsRole::Image, Some(DEMO_IMAGE_LABEL))),
-            _ => None,
-        }
-    }
-}
+/// Themes captured for every story, by theme-switch label.
+pub(crate) const CAPTURE_THEMES: [&str; 2] = ["Light", "Dark"];
 
 pub fn write_visual_artifacts() -> Result<PathBuf> {
     let output_root = artifact_root();
@@ -540,28 +47,165 @@ pub fn write_visual_artifacts() -> Result<PathBuf> {
 pub(crate) fn write_visual_artifacts_to(output_root: &Path) -> Result<PathBuf> {
     reset_dir(output_root)?;
 
-    for story in StoryCase::ALL {
-        let story_dir = output_root.join(story.id());
-        create_dir(&story_dir)?;
-
-        let app = story.build_app()?;
+    for theme in CAPTURE_THEMES {
+        let app = widget_book_capture_app(theme)?;
         let window = app.main_window()?;
-        story.prepare(&window)?;
-        let artifacts = window.capture_artifacts()?;
-        artifacts.write_to_dir(&story_dir)?;
-        rename_window_artifacts(&story_dir)?;
 
-        let screenshot = capture_story_screenshot(story, &window)?;
-        screenshot.write_png(story_dir.join("screenshot.png"))?;
-        write_text(story_dir.join("story.txt"), story.description())?;
+        let overview_dir = output_root.join(format!("overview-{}", theme.to_lowercase()));
+        create_dir(&overview_dir)?;
+        window.capture_artifacts()?.write_to_dir(&overview_dir)?;
+        rename_window_artifacts(&overview_dir)?;
+
+        for story in stories() {
+            let story_dir = output_root.join("stories").join(story.id);
+            create_dir(&story_dir)?;
+            jump_to_story(&window, story)?;
+            capture_story(&window, story)?
+                .write_png(story_dir.join(format!("{}.png", theme.to_lowercase())))?;
+            write_text(
+                story_dir.join("story.txt"),
+                &format!("{}\n{}\n{}\n", story.title, story.api, story.summary),
+            )?;
+        }
     }
 
-    write_hdr_widget_book_artifacts(output_root)?;
+    // Narrow windows hide the rail and collapse the theme switch. Each capture
+    // app is dropped before the next one starts.
+    {
+        let narrow_dir = output_root.join("narrow-light");
+        create_dir(&narrow_dir)?;
+        let narrow = TestApp::new(|| build_widget_book_application().build())?;
+        let window = narrow.main_window()?;
+        window
+            .root()
+            .dispatch_event(Event::Window(WindowEvent::Resized(NARROW_CAPTURE_SIZE)))?;
+        window
+            .get_by_role(SemanticsRole::TextInput)
+            .with_name(WIDGET_BOOK_SEARCH_NAME)
+            .fill("button")?;
+        window.run_until_idle()?;
+        window.capture_artifacts()?.write_to_dir(&narrow_dir)?;
+        rename_window_artifacts(&narrow_dir)?;
+    }
+
+    {
+        let themes_dir = output_root.join("themes-page");
+        create_dir(&themes_dir)?;
+        let themes = TestApp::new(|| build_theme_demo_application().build())?;
+        themes
+            .main_window()?
+            .capture_artifacts()?
+            .write_to_dir(&themes_dir)?;
+        rename_window_artifacts(&themes_dir)?;
+    }
+
+    write_hdr_validation_artifacts(output_root)?;
 
     Ok(output_root.to_path_buf())
 }
 
-fn hdr_widget_book_render_options() -> WindowRenderOptions {
+/// A widget book window sized for captures and switched to `theme`.
+pub(crate) fn widget_book_capture_app(theme: &str) -> Result<TestApp> {
+    let app = TestApp::new(|| build_widget_book_application().build())?;
+    let window = app.main_window()?;
+    window
+        .root()
+        .dispatch_event(Event::Window(WindowEvent::Resized(CAPTURE_SIZE)))?;
+    window.run_until_idle()?;
+    select_theme(&window, theme)?;
+    Ok(app)
+}
+
+/// Clicks a segment of the widget book's theme switch.
+pub(crate) fn select_theme(window: &TestWindow, label: &str) -> Result<()> {
+    let snapshot = window.snapshot()?;
+    let switch = snapshot
+        .accessibility
+        .nodes
+        .iter()
+        .find(|node| node.name.as_deref() == Some(WIDGET_BOOK_THEME_SWITCH_NAME))
+        .ok_or_else(|| Error::new("widget book theme switch is missing"))?;
+    let segment = snapshot
+        .accessibility
+        .nodes
+        .iter()
+        .find(|node| {
+            node.name.as_deref() == Some(label)
+                && node.bounds.intersection(switch.bounds).is_some()
+                && node.role != SemanticsRole::Text
+        })
+        .ok_or_else(|| Error::new(format!("theme segment {label} is missing")))?;
+    window
+        .get_by_role(segment.role.clone())
+        .with_name(label)
+        .click()?;
+    window.run_until_idle()
+}
+
+/// Jumps to a story through its rail link, scrolling the rail first when the
+/// link is outside it.
+pub(crate) fn jump_to_story(window: &TestWindow, story: &Story) -> Result<()> {
+    let snapshot = window.snapshot()?;
+    let find = |role: SemanticsRole, name: &str| {
+        snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.role == role && node.name.as_deref() == Some(name))
+            .map(|node| node.bounds)
+    };
+    let link = find(SemanticsRole::Link, story.title)
+        .ok_or_else(|| Error::new(format!("rail link for {} is missing", story.title)))?;
+    let rail = find(SemanticsRole::ScrollView, RAIL_SCROLL_NAME)
+        .ok_or_else(|| Error::new("widget book rail is missing"))?;
+    if link.y() < rail.y() || link.max_y() > rail.max_y() {
+        let delta = link.y() - (rail.y() + rail.height() * 0.5);
+        window
+            .get_by_role(SemanticsRole::ScrollView)
+            .with_name(RAIL_SCROLL_NAME)
+            .scroll_pixels(Vector::new(0.0, -delta))?;
+        window.run_until_idle()?;
+    }
+    window
+        .get_by_role(SemanticsRole::Link)
+        .with_name(story.title)
+        .click()?;
+    window.run_until_idle()
+}
+
+/// Crops the window screenshot to a story's page block.
+pub(crate) fn capture_story(window: &TestWindow, story: &Story) -> Result<Screenshot> {
+    let snapshot = window.snapshot()?;
+    let screenshot = window.capture_screenshot()?;
+    let region = story.region_name();
+    let bounds = snapshot
+        .accessibility
+        .nodes
+        .iter()
+        .find(|node| node.name.as_deref() == Some(region.as_str()))
+        .map(|node| node.bounds)
+        .ok_or_else(|| Error::new(format!("story block {region} is missing")))?;
+    let viewport = snapshot
+        .scene_summary
+        .map(|scene| scene.viewport)
+        .unwrap_or(Size::new(
+            screenshot.width() as f32,
+            screenshot.height() as f32,
+        ));
+    let scale_x = screenshot.width() as f32 / viewport.width.max(1.0);
+    let scale_y = screenshot.height() as f32 / viewport.height.max(1.0);
+    let visible = bounds
+        .intersection(Rect::from_origin_size(sui::Point::ZERO, viewport))
+        .ok_or_else(|| Error::new(format!("story block {region} is off screen")))?;
+    screenshot.crop(Rect::new(
+        visible.x() * scale_x,
+        visible.y() * scale_y,
+        visible.width() * scale_x,
+        visible.height() * scale_y,
+    ))
+}
+
+fn hdr_render_options() -> WindowRenderOptions {
     WindowRenderOptions::new(true, 1.0)
         .with_color_management_mode(WindowColorManagementMode::PreferHdr)
         .with_output_color_primaries(WindowOutputColorPrimaries::DisplayP3)
@@ -569,11 +213,11 @@ fn hdr_widget_book_render_options() -> WindowRenderOptions {
         .with_tone_mapping_mode(WindowToneMappingMode::Automatic)
 }
 
-fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
-    let hdr_dir = output_root.join("hdr-widget-book");
+fn write_hdr_validation_artifacts(output_root: &Path) -> Result<()> {
+    let hdr_dir = output_root.join("hdr-validation");
     create_dir(&hdr_dir)?;
 
-    let options = hdr_widget_book_render_options();
+    let options = hdr_render_options();
     let runtime = build_color_validation_application().build()?;
     for window_id in runtime.window_ids() {
         sui::set_window_render_options(window_id, options);
@@ -586,7 +230,7 @@ fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
     rename_window_artifacts(&hdr_dir)?;
     write_text(
         hdr_dir.join("story.txt"),
-        "HDR-configured widget-book validation surface with HDR debug captures.",
+        "HDR-configured color validation surface with HDR debug captures.",
     )?;
 
     let artifact = window.capture_debug_frame(DebugCaptureRequest {
@@ -596,7 +240,7 @@ fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
     })?;
     let DebugCaptureArtifact::HdrLinearRgbaF32(image) = artifact else {
         return Err(Error::new(
-            "widget-book HDR artifact capture did not produce an HDR intermediate frame",
+            "HDR artifact capture did not produce an HDR intermediate frame",
         ));
     };
 
@@ -680,104 +324,6 @@ fn write_hdr_widget_book_artifacts(output_root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn configured_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
-    Rc::new(RefCell::new(WidgetBookState {
-        name: "Grace Hopper".to_string(),
-        password: "compiler".to_string(),
-        scheduled_for: "2026-07-16 09:00".to_string(),
-        subscribed: false,
-        button_presses: 1,
-        icon_button_presses: 2,
-        switch_on: false,
-        standalone_radio_selected: true,
-        radio_choice: "High".to_string(),
-        slider_value: 35.0,
-        number_value: 24.0,
-        notes: "Line 1\nLine 2".to_string(),
-        mode: "Multiply".to_string(),
-        tab_bar_choice: "Export".to_string(),
-        tabs_choice: "History".to_string(),
-        last_menu_action: "Delete layer".to_string(),
-        last_context_action: "Duplicate".to_string(),
-        dialog_apply_count: 2,
-    }))
-}
-
-pub(crate) fn blank_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
-    Rc::new(RefCell::new(WidgetBookState {
-        name: String::new(),
-        password: String::new(),
-        scheduled_for: String::new(),
-        subscribed: false,
-        button_presses: 0,
-        icon_button_presses: 0,
-        switch_on: false,
-        standalone_radio_selected: false,
-        radio_choice: "Balanced".to_string(),
-        slider_value: 50.0,
-        number_value: 8.0,
-        notes: String::new(),
-        mode: String::new(),
-        tab_bar_choice: TAB_BAR_OPTIONS[0].to_string(),
-        tabs_choice: TAB_PANEL_OPTIONS[0].to_string(),
-        last_menu_action: String::new(),
-        last_context_action: String::new(),
-        dialog_apply_count: 0,
-    }))
-}
-
-pub(crate) fn scroll_to_story_target(
-    window: &TestWindow,
-    story: StoryCase,
-    max_pages: usize,
-) -> Result<()> {
-    const SCROLL_STEP: f32 = -180.0;
-
-    let Some((role, name)) = story.story_node() else {
-        return Ok(());
-    };
-
-    if reveal_story_node(window, &role, name)? {
-        align_story_target_for_capture(window, story)?;
-        return Ok(());
-    }
-
-    for _ in 0..(max_pages * 4) {
-        if !reveal_story_node(window, &role, name)? {
-            scroll_gallery_by(window, SCROLL_STEP)?;
-        }
-        if story_node_is_visible(window, role.clone(), name)? {
-            align_story_target_for_capture(window, story)?;
-            return Ok(());
-        }
-    }
-
-    let snapshot = window.snapshot()?;
-    let visible_nodes = snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .filter_map(|node| {
-            node.name
-                .as_deref()
-                .map(|name| format!("{:?}:{name}", node.role))
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    Err(Error::new(format!(
-        "failed to scroll story target {:?} {:?} into view; visible nodes: {}",
-        role, name, visible_nodes
-    )))
-}
-
-fn align_story_target_for_capture(window: &TestWindow, story: StoryCase) -> Result<()> {
-    if matches!(story, StoryCase::Dialog) {
-        scroll_gallery_by(window, -220.0)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn artifact_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -827,227 +373,4 @@ fn rename_if_exists(dir: &Path, from: &str, to: &str) -> Result<()> {
 
     fs::rename(&from_path, &to_path)
         .map_err(|error| Error::new(format!("failed to rename {}: {error}", from_path.display())))
-}
-
-fn press_target(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
-    let locator = window.get_by_role(role.clone()).with_name(name);
-    let point = node_center(window, role, name)?;
-
-    locator.dispatch_event(Event::Pointer(PointerEvent::new(
-        PointerEventKind::Move,
-        point,
-    )))?;
-
-    let mut down = PointerEvent::new(PointerEventKind::Down, point);
-    down.button = Some(PointerButton::Primary);
-    down.buttons = PointerButtons::new(1);
-    locator.dispatch_event(Event::Pointer(down))
-}
-
-fn secondary_click_target(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
-    let locator = window.get_by_role(role.clone()).with_name(name);
-    let point = node_center(window, role, name)?;
-
-    locator.dispatch_event(Event::Pointer(PointerEvent::new(
-        PointerEventKind::Move,
-        point,
-    )))?;
-
-    let mut down = PointerEvent::new(PointerEventKind::Down, point);
-    down.button = Some(PointerButton::Secondary);
-    down.buttons = PointerButtons::new(2);
-    locator.dispatch_event(Event::Pointer(down))?;
-
-    let mut up = PointerEvent::new(PointerEventKind::Up, point);
-    up.button = Some(PointerButton::Secondary);
-    locator.dispatch_event(Event::Pointer(up))
-}
-
-fn scroll_gallery(window: &TestWindow, pages: usize) -> Result<()> {
-    for _ in 0..pages {
-        scroll_gallery_by(window, -360.0)?;
-    }
-    Ok(())
-}
-
-fn scroll_gallery_by(window: &TestWindow, delta_y: f32) -> Result<()> {
-    let point = gallery_scroll_point(window)?;
-    let root = window.root();
-
-    root.dispatch_event(Event::Pointer(PointerEvent::new(
-        PointerEventKind::Move,
-        point,
-    )))?;
-
-    let mut scroll = PointerEvent::new(PointerEventKind::Scroll, point);
-    scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, delta_y)));
-    root.dispatch_event(Event::Pointer(scroll))
-}
-
-fn gallery_scroll_point(window: &TestWindow) -> Result<Point> {
-    let snapshot = window.snapshot()?;
-    let gallery = snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .find(|node| {
-            node.role == SemanticsRole::ScrollView && story_scroll_name(node.name.as_deref())
-        })
-        .ok_or_else(|| Error::new("story scroll view is missing"))?;
-
-    Ok(Point::new(
-        gallery.bounds.max_x() - 8.0,
-        gallery.bounds.y() + (gallery.bounds.height() * 0.5),
-    ))
-}
-
-fn reveal_story_node(
-    window: &TestWindow,
-    role: &SemanticsRole,
-    name: Option<&str>,
-) -> Result<bool> {
-    let snapshot = window.snapshot()?;
-    let viewport = story_viewport_bounds(&snapshot.accessibility.nodes);
-    let Some(bounds) = snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .find(|node| node.role == *role && node.name.as_deref() == name)
-        .map(|node| node.bounds)
-    else {
-        return Ok(false);
-    };
-
-    if story_bounds_visible_enough(bounds, viewport) {
-        return Ok(true);
-    }
-
-    let delta_y = scroll_delta_to_reveal_bounds(bounds, viewport);
-    if delta_y.abs() > 0.5 {
-        scroll_gallery_by(window, -delta_y)?;
-        return story_node_is_visible(window, role.clone(), name);
-    }
-
-    Ok(false)
-}
-
-fn story_node_is_visible(
-    window: &TestWindow,
-    role: SemanticsRole,
-    name: Option<&str>,
-) -> Result<bool> {
-    let snapshot = window.snapshot()?;
-    let viewport = story_viewport_bounds(&snapshot.accessibility.nodes);
-    Ok(snapshot.accessibility.nodes.iter().any(|node| {
-        if node.role != role || node.name.as_deref() != name {
-            return false;
-        }
-
-        story_bounds_visible_enough(node.bounds, viewport)
-    }))
-}
-
-fn story_viewport_bounds(nodes: &[SemanticsNode]) -> Rect {
-    nodes
-        .iter()
-        .find(|node| {
-            node.role == SemanticsRole::ScrollView && story_scroll_name(node.name.as_deref())
-        })
-        .or_else(|| nodes.iter().find(|node| node.role == SemanticsRole::Window))
-        .map(|node| node.bounds)
-        .unwrap_or(Rect::ZERO)
-}
-
-fn story_bounds_visible_enough(bounds: Rect, viewport: Rect) -> bool {
-    let Some(visible) = bounds.intersection(viewport) else {
-        return false;
-    };
-
-    let required_width = bounds.width().min(viewport.width()) * 0.85;
-    let required_height = bounds.height().min(viewport.height()) * 0.85;
-    required_width > 0.0
-        && required_height > 0.0
-        && visible.width() >= required_width
-        && visible.height() >= required_height
-}
-
-fn scroll_delta_to_reveal_bounds(bounds: Rect, viewport: Rect) -> f32 {
-    if bounds.height() >= viewport.height() || bounds.y() < viewport.y() {
-        bounds.y() - viewport.y()
-    } else if bounds.max_y() > viewport.max_y() {
-        bounds.max_y() - viewport.max_y()
-    } else {
-        0.0
-    }
-}
-
-fn story_scroll_name(name: Option<&str>) -> bool {
-    matches!(
-        name,
-        Some(GALLERY_SCROLL_NAME) | Some(THEME_DEMO_SCROLL_NAME)
-    )
-}
-
-fn node_center(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<Point> {
-    let snapshot = window.snapshot()?;
-    let node = snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .find(|node| node.role == role && node.name.as_deref() == Some(name))
-        .ok_or_else(|| Error::new(format!("missing story node {:?} {name}", role)))?;
-
-    Ok(Point::new(
-        node.bounds.x() + (node.bounds.width() / 2.0),
-        node.bounds.y() + (node.bounds.height() / 2.0),
-    ))
-}
-
-fn capture_story_screenshot(
-    story: StoryCase,
-    window: &TestWindow,
-) -> Result<sui_testing::Screenshot> {
-    let snapshot = window.snapshot()?;
-    let screenshot = window.capture_screenshot()?;
-    let (role, name) = story.capture_target();
-    let bounds = snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .find(|node| node.role == role && node.name.as_deref() == name)
-        .map(|node| node.bounds)
-        .ok_or_else(|| {
-            Error::new(format!(
-                "widget book story {} is missing target semantics {:?} {:?}",
-                story.id(),
-                role,
-                name
-            ))
-        })?;
-
-    let bounds = if let Some(scene) = &snapshot.scene_summary {
-        let viewport = scene.viewport;
-        if viewport.width > 0.0 && viewport.height > 0.0 {
-            let scale_x = screenshot.width() as f32 / viewport.width;
-            let scale_y = screenshot.height() as f32 / viewport.height;
-            Rect::new(
-                bounds.x() * scale_x,
-                bounds.y() * scale_y,
-                bounds.width() * scale_x,
-                bounds.height() * scale_y,
-            )
-        } else {
-            bounds
-        }
-    } else {
-        bounds
-    };
-
-    screenshot.crop(bounds).map_err(|error| {
-        Error::new(format!(
-            "widget book story {} failed to crop screenshot: {}",
-            story.id(),
-            error
-        ))
-    })
 }

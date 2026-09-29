@@ -1,9 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    cell::RefCell,
     collections::HashMap,
-    rc::Rc,
     sync::{
         Arc, Mutex, OnceLock,
         mpsc::{self, Receiver, SyncSender},
@@ -20,12 +18,14 @@ use sui::{
     Switch, Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer,
     Window as SuiWindow, WindowBuilder, WindowEvent, WindowId, window_performance_snapshot,
 };
-use sui_demo_app::widget_book::{
+use sui_demo_app::benchmarks::{
     RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,
     TEXT_EDITING_BENCHMARK_EDITOR_NAME, TEXT_EDITING_BENCHMARK_SYNTAX_SCROLL_NAME,
-    TEXT_EDITING_BENCHMARK_TITLE, WidgetBookState, build_retained_text_benchmark_application,
-    build_text_editing_benchmark_application, build_widget_book_application,
-    build_widget_book_gallery, default_widget_book_state, register_widget_book_images,
+    TEXT_EDITING_BENCHMARK_TITLE, build_retained_text_benchmark_application,
+    build_text_editing_benchmark_application,
+};
+use sui_demo_app::widget_book::{
+    build_widget_book_application, build_widget_book_gallery, register_widget_book_images,
 };
 use sui_platform::publish_frame_performance;
 use sui_runtime::{
@@ -1688,31 +1688,6 @@ impl ScrollBenchmarkFrameSample {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DialogRepaintTransition {
-    Open,
-    Close,
-}
-
-impl DialogRepaintTransition {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Close => "close",
-        }
-    }
-
-    const fn dialog_should_be_visible(self) -> bool {
-        matches!(self, Self::Open)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DialogRepaintFrameSample {
-    transition: DialogRepaintTransition,
-    sample: ScrollBenchmarkFrameSample,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct WidgetTimingAggregateKey {
     widget_id: u64,
@@ -1776,7 +1751,181 @@ fn scroll_gallery_until_visible(
     )))
 }
 
-fn run_widget_book_dialog_repaint_benchmark(
+fn gallery_scroll_point(bounds: Rect) -> Point {
+    Point::new(bounds.max_x() - 40.0, bounds.y() + bounds.height() * 0.5)
+}
+
+fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
+    const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
+    const BLEND_MODES: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
+
+    let choices_panel = SizedBox::new()
+        .width(420.0)
+        .height(240.0)
+        .with_child(Background::new(
+            Color::rgba(0.97, 0.97, 0.98, 1.0),
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Label::new("Choices and ranges")
+                        .font_size(26.0)
+                        .line_height(30.0),
+                )
+                .with_child(Switch::new("Enable snapping").on(true))
+                .with_child(RadioButton::new("Standalone radio sample").selected(false))
+                .with_child(
+                    SizedBox::new().width(280.0).with_child(
+                        RadioGroup::new("Quality")
+                            .options(RADIO_OPTIONS)
+                            .selected(0),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(320.0).with_child(
+                        Slider::new("Blend strength")
+                            .range(0.0, 100.0)
+                            .step(1.0)
+                            .value(72.0),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new().width(220.0).with_child(
+                        NumberInput::new("Sample count")
+                            .range(1.0, 256.0)
+                            .step(1.0)
+                            .precision(0)
+                            .value(12.0),
+                    ),
+                )
+                .with_child(
+                    SizedBox::new()
+                        .width(260.0)
+                        .with_child(Select::new("Blend mode").options(BLEND_MODES).selected(0)),
+                ),
+        ));
+    let notes_panel = SizedBox::new().width(420.0).height(280.0).with_child(
+        Background::new(
+            Color::rgba(0.99, 0.99, 1.0, 1.0),
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(Label::new("Multiline and scroll").font_size(26.0).line_height(30.0))
+                .with_child(
+                    SizedBox::new().width(420.0).with_child(
+                        TextArea::new("Notes")
+                            .min_height(160.0)
+                            .value(
+                                "Pinned notes for inspector workflows.\nSupports multiline editing.\nUsed to reproduce scroll history artifacts.",
+                            ),
+                    ),
+                ),
+        ),
+    );
+    let summary_panel = SizedBox::new().width(420.0).height(220.0).with_child(
+        Background::new(
+            Color::rgba(0.96, 0.97, 0.99, 1.0),
+            Stack::vertical()
+                .spacing(12.0)
+                .alignment(Alignment::Stretch)
+                .with_child(Label::new("Summary").font_size(26.0).line_height(30.0))
+                .with_child(Label::new(
+                    "Equivalent final offsets should render the same frame, regardless of how many wheel ticks produced them.",
+                )),
+        ),
+    );
+
+    VirtualScrollView::new()
+        .name(name)
+        .padding(Insets::all(24.0))
+        .spacing(18.0)
+        .with_child(choices_panel)
+        .with_child(notes_panel)
+        .with_child(summary_panel)
+        .with_child(SizedBox::new().width(420.0).height(220.0).with_child(
+            Background::new(
+                Color::rgba(0.95, 0.96, 0.98, 1.0),
+                Stack::vertical()
+                    .spacing(12.0)
+                    .alignment(Alignment::Stretch)
+                    .with_child(Label::new("Lower content").font_size(26.0).line_height(30.0))
+                    .with_child(Label::new(
+                        "Extra height keeps the visible range stable during the small scroll sequence.",
+                    )),
+            ),
+        ))
+}
+
+fn build_scroll_history_repro_application() -> Application {
+    Application::new().window(
+        WindowBuilder::new().title("Scroll history repro").root(
+            SizedBox::new()
+                .size(Size::new(540.0, 360.0))
+                .with_child(build_scroll_history_repro_scroll("History repro scroll")),
+        ),
+    )
+}
+
+fn build_widget_book_gallery_application() -> Application {
+    App::new()
+        .with_resources(|resources| {
+            register_widget_book_images(resources);
+            Ok(())
+        })
+        .expect("widget-book image resources should be valid")
+        .window(
+            SuiWindow::new(sui_demo_app::widget_book::WINDOW_TITLE)
+                .root(build_widget_book_gallery()),
+        )
+        .into_application()
+}
+
+fn build_widget_book_application_with_overlay() -> Application {
+    App::new()
+        .with_resources(|resources| {
+            register_widget_book_images(resources);
+            Ok(())
+        })
+        .expect("widget-book image resources should be valid")
+        .window(
+            SuiWindow::new(sui_demo_app::widget_book::WINDOW_TITLE).root(
+                sui_demo_app::live_performance::LivePerformanceRoot::new(
+                    sui_demo_app::widget_book::WINDOW_TITLE,
+                    sui_demo_app::widget_book::WINDOW_DESCRIPTION,
+                    build_widget_book_gallery(),
+                )
+                .show_performance_overlay(),
+            ),
+        )
+        .into_application()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToggleRepaintTransition {
+    On,
+    Off,
+}
+
+impl ToggleRepaintTransition {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+
+    const fn switch_should_be_on(self) -> bool {
+        matches!(self, Self::On)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ToggleRepaintFrameSample {
+    transition: ToggleRepaintTransition,
+    sample: ScrollBenchmarkFrameSample,
+}
+
+fn run_widget_book_toggle_repaint_benchmark(
     build_runtime: impl FnOnce() -> Application + Send + 'static,
 ) -> Result<()> {
     const FRAME_BUDGET_MS: f64 = 1000.0 / 60.0;
@@ -1789,11 +1938,11 @@ fn run_widget_book_dialog_repaint_benchmark(
     set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;
 
-    let (initial_snapshot, dialog_trigger, gallery_bounds) = scroll_gallery_until_visible(
+    let (initial_snapshot, switch, gallery_bounds) = scroll_gallery_until_visible(
         &harness,
         window_id,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::DIALOG_TRIGGER_LABEL,
+        SemanticsRole::Switch,
+        TOGGLE_BENCHMARK_SWITCH,
     )?;
     let mut previous_frame_index = initial_snapshot
         .performance
@@ -1802,19 +1951,14 @@ fn run_widget_book_dialog_repaint_benchmark(
         .frame_index;
 
     assert!(
-        find_node_optional(
-            &initial_snapshot,
-            SemanticsRole::Dialog,
-            sui_demo_app::widget_book::DIALOG_TITLE,
-        )
-        .is_none(),
-        "project settings dialog should start closed",
+        !switch_is_on(&initial_snapshot, TOGGLE_BENCHMARK_SWITCH),
+        "the benchmark switch should start off",
     );
 
     move_cursor(
         &harness,
         window_id,
-        visible_node_center(&dialog_trigger, gallery_bounds),
+        visible_node_center(&switch, gallery_bounds),
     )?;
 
     let benchmark_start = Instant::now();
@@ -1825,10 +1969,7 @@ fn run_widget_book_dialog_repaint_benchmark(
     let mut repaint_diff_checks = 0usize;
 
     for cycle in 0..(WARMUP_CYCLES + MEASURED_CYCLES) {
-        for transition in [
-            DialogRepaintTransition::Open,
-            DialogRepaintTransition::Close,
-        ] {
+        for transition in [ToggleRepaintTransition::On, ToggleRepaintTransition::Off] {
             let before_frame = (cycle >= WARMUP_CYCLES && repaint_diff_checks < 2)
                 .then(|| harness.capture(window_id))
                 .transpose()?;
@@ -1843,22 +1984,17 @@ fn run_widget_book_dialog_repaint_benchmark(
 
             assert!(
                 performance.frame_index > previous_frame_index,
-                "dialog repaint benchmark did not render a new frame for cycle {} transition {}",
+                "toggle repaint benchmark did not render a new frame for cycle {} transition {}",
                 cycle,
                 transition.label(),
             );
             previous_frame_index = performance.frame_index;
 
-            let dialog_visible = find_node_optional(
-                &after_snapshot,
-                SemanticsRole::Dialog,
-                sui_demo_app::widget_book::DIALOG_TITLE,
-            )
-            .is_some();
+            let switch_on = switch_is_on(&after_snapshot, TOGGLE_BENCHMARK_SWITCH);
             assert_eq!(
-                dialog_visible,
-                transition.dialog_should_be_visible(),
-                "dialog visibility mismatch after {} transition in cycle {}",
+                switch_on,
+                transition.switch_should_be_on(),
+                "switch state mismatch after {} transition in cycle {}",
                 transition.label(),
                 cycle,
             );
@@ -1867,14 +2003,14 @@ fn run_widget_book_dialog_repaint_benchmark(
                 let after_frame = harness.capture(window_id)?;
                 assert!(
                     frame_pixel_diff_count(&before_frame, &after_frame) > 0,
-                    "dialog repaint benchmark {} transition did not change any rendered pixels",
+                    "toggle repaint benchmark {} transition did not change any rendered pixels",
                     transition.label(),
                 );
                 repaint_diff_checks += 1;
             }
 
             if cycle >= WARMUP_CYCLES {
-                measured_samples.push(DialogRepaintFrameSample {
+                measured_samples.push(ToggleRepaintFrameSample {
                     transition,
                     sample: ScrollBenchmarkFrameSample::from_snapshot(performance),
                 });
@@ -1995,7 +2131,7 @@ fn run_widget_book_dialog_repaint_benchmark(
     let avg_surface_present_ms =
         average_of(|sample| sample.surface_present_time_us as f64 / 1000.0);
 
-    println!("\n=== Widget Book Dialog Repaint Benchmark ===");
+    println!("\n=== Widget Book Toggle Repaint Benchmark ===");
     println!("scenario:         project settings preview open/close");
     println!("frames measured:  {valid_count}");
     println!("cycles measured:  {MEASURED_CYCLES}");
@@ -2051,10 +2187,7 @@ fn run_widget_book_dialog_repaint_benchmark(
     );
 
     println!("\n--- By transition ---");
-    for transition in [
-        DialogRepaintTransition::Open,
-        DialogRepaintTransition::Close,
-    ] {
+    for transition in [ToggleRepaintTransition::On, ToggleRepaintTransition::Off] {
         let transition_samples = measured_samples
             .iter()
             .filter(|sample| sample.transition == transition)
@@ -2243,179 +2376,13 @@ fn run_widget_book_dialog_repaint_benchmark(
     Ok(())
 }
 
-fn gallery_scroll_point(bounds: Rect) -> Point {
-    Point::new(bounds.max_x() - 40.0, bounds.y() + bounds.height() * 0.5)
-}
+/// The first rest-state switch in the widget book's switch story.
+const TOGGLE_BENCHMARK_SWITCH: &str = "Live preview";
 
-fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
-    const RADIO_OPTIONS: [&str; 3] = ["Balanced", "High", "Fast"];
-    const BLEND_MODES: [&str; 4] = ["Normal", "Multiply", "Screen", "Overlay"];
-
-    let choices_panel = SizedBox::new()
-        .width(420.0)
-        .height(240.0)
-        .with_child(Background::new(
-            Color::rgba(0.97, 0.97, 0.98, 1.0),
-            Stack::vertical()
-                .spacing(14.0)
-                .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new("Choices and ranges")
-                        .font_size(26.0)
-                        .line_height(30.0),
-                )
-                .with_child(Switch::new("Enable snapping").on(true))
-                .with_child(RadioButton::new("Standalone radio sample").selected(false))
-                .with_child(
-                    SizedBox::new().width(280.0).with_child(
-                        RadioGroup::new("Quality")
-                            .options(RADIO_OPTIONS)
-                            .selected(0),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(320.0).with_child(
-                        Slider::new("Blend strength")
-                            .range(0.0, 100.0)
-                            .step(1.0)
-                            .value(72.0),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new().width(220.0).with_child(
-                        NumberInput::new("Sample count")
-                            .range(1.0, 256.0)
-                            .step(1.0)
-                            .precision(0)
-                            .value(12.0),
-                    ),
-                )
-                .with_child(
-                    SizedBox::new()
-                        .width(260.0)
-                        .with_child(Select::new("Blend mode").options(BLEND_MODES).selected(0)),
-                ),
-        ));
-    let notes_panel = SizedBox::new().width(420.0).height(280.0).with_child(
-        Background::new(
-            Color::rgba(0.99, 0.99, 1.0, 1.0),
-            Stack::vertical()
-                .spacing(14.0)
-                .alignment(Alignment::Stretch)
-                .with_child(Label::new("Multiline and scroll").font_size(26.0).line_height(30.0))
-                .with_child(
-                    SizedBox::new().width(420.0).with_child(
-                        TextArea::new("Notes")
-                            .min_height(160.0)
-                            .value(
-                                "Pinned notes for inspector workflows.\nSupports multiline editing.\nUsed to reproduce scroll history artifacts.",
-                            ),
-                    ),
-                ),
-        ),
-    );
-    let summary_panel = SizedBox::new().width(420.0).height(220.0).with_child(
-        Background::new(
-            Color::rgba(0.96, 0.97, 0.99, 1.0),
-            Stack::vertical()
-                .spacing(12.0)
-                .alignment(Alignment::Stretch)
-                .with_child(Label::new("Summary").font_size(26.0).line_height(30.0))
-                .with_child(Label::new(
-                    "Equivalent final offsets should render the same frame, regardless of how many wheel ticks produced them.",
-                )),
-        ),
-    );
-
-    VirtualScrollView::new()
-        .name(name)
-        .padding(Insets::all(24.0))
-        .spacing(18.0)
-        .with_child(choices_panel)
-        .with_child(notes_panel)
-        .with_child(summary_panel)
-        .with_child(SizedBox::new().width(420.0).height(220.0).with_child(
-            Background::new(
-                Color::rgba(0.95, 0.96, 0.98, 1.0),
-                Stack::vertical()
-                    .spacing(12.0)
-                    .alignment(Alignment::Stretch)
-                    .with_child(Label::new("Lower content").font_size(26.0).line_height(30.0))
-                    .with_child(Label::new(
-                        "Extra height keeps the visible range stable during the small scroll sequence.",
-                    )),
-            ),
-        ))
-}
-
-fn build_scroll_history_repro_application() -> Application {
-    Application::new().window(
-        WindowBuilder::new().title("Scroll history repro").root(
-            SizedBox::new()
-                .size(Size::new(540.0, 360.0))
-                .with_child(build_scroll_history_repro_scroll("History repro scroll")),
-        ),
-    )
-}
-
-fn scroll_benchmark_widget_book_state() -> Rc<RefCell<WidgetBookState>> {
-    Rc::new(RefCell::new(WidgetBookState {
-        name: "Ada".to_string(),
-        password: "sui-demo".to_string(),
-        scheduled_for: "2026-07-15 14:30".to_string(),
-        subscribed: true,
-        button_presses: 0,
-        icon_button_presses: 0,
-        switch_on: true,
-        standalone_radio_selected: false,
-        radio_choice: "Balanced".to_string(),
-        slider_value: 72.0,
-        number_value: 12.0,
-        notes: "Pinned notes for inspector workflows.\nSupports multiline editing.".to_string(),
-        mode: "Normal".to_string(),
-        tab_bar_choice: "Canvas".to_string(),
-        tabs_choice: "Layout".to_string(),
-        last_menu_action: String::new(),
-        last_context_action: String::new(),
-        dialog_apply_count: 0,
-    }))
-}
-
-fn build_widget_book_gallery_application(state: Rc<RefCell<WidgetBookState>>) -> Application {
-    App::new()
-        .with_resources(|resources| {
-            register_widget_book_images(resources);
-            Ok(())
-        })
-        .expect("widget-book image resources should be valid")
-        .window(
-            SuiWindow::new(sui_demo_app::widget_book::WINDOW_TITLE)
-                .root(build_widget_book_gallery(state)),
-        )
-        .into_application()
-}
-
-fn build_widget_book_application_with_overlay(state: Rc<RefCell<WidgetBookState>>) -> Application {
-    sui_demo_app::widget_book::set_widget_book_hdr_theme_mode(sui::HdrThemeMode::Disabled);
-
-    App::new()
-        .with_resources(|resources| {
-            register_widget_book_images(resources);
-            Ok(())
-        })
-        .expect("widget-book image resources should be valid")
-        .window(
-            SuiWindow::new(sui_demo_app::widget_book::WINDOW_TITLE).root(
-                sui_demo_app::widget_book::LivePerformanceRoot::new(
-                    sui_demo_app::widget_book::WINDOW_TITLE,
-                    sui_demo_app::widget_book::WINDOW_DESCRIPTION,
-                    build_widget_book_gallery(Rc::clone(&state)),
-                )
-                .show_performance_overlay()
-                .watch_widget_book_state(state),
-            ),
-        )
-        .into_application()
+fn switch_is_on(snapshot: &DesktopWindowSnapshot, name: &str) -> bool {
+    find_node_optional(snapshot, SemanticsRole::Switch, name)
+        .and_then(|node| node.state.checked)
+        .is_some_and(|checked| checked == sui::ToggleState::Checked)
 }
 
 fn run_widget_book_scroll_benchmark(
@@ -3555,36 +3522,14 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let harness = DesktopHarness::launch(|| {
-        build_widget_book_application(Rc::new(RefCell::new(WidgetBookState {
-            name: String::new(),
-            password: String::new(),
-            scheduled_for: String::new(),
-            subscribed: false,
-            button_presses: 0,
-            icon_button_presses: 0,
-            switch_on: false,
-            standalone_radio_selected: false,
-            radio_choice: "Balanced".to_string(),
-            slider_value: 50.0,
-            number_value: 8.0,
-            notes: String::new(),
-            mode: String::new(),
-            tab_bar_choice: "Canvas".to_string(),
-            tabs_choice: "Layout".to_string(),
-            last_menu_action: String::new(),
-            last_context_action: String::new(),
-            dialog_apply_count: 0,
-        })))
-        .build()
-    })?;
+    let harness = DesktopHarness::launch(|| build_widget_book_application().build())?;
     let window_id = harness.main_window_id();
 
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;
 
     let before_frame = harness.capture(window_id)?;
     let before_snapshot = harness.snapshot(window_id)?;
-    let input_label = sui_demo_app::widget_book::WIDGET_STATES_TEXT_INPUT_LABEL;
+    let input_label = sui_demo_app::widget_book::WIDGET_BOOK_SEARCH_NAME;
     assert_eq!(
         before_snapshot.title,
         sui_demo_app::widget_book::WINDOW_TITLE
@@ -3597,14 +3542,14 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
     harness.dispatch(
         window_id,
         HostInputEvent::ImeCommit {
-            text: "Ada".to_string(),
+            text: "button".to_string(),
         },
     )?;
 
     let after_frame = harness.capture(window_id)?;
     let after_snapshot = harness.snapshot(window_id)?;
 
-    assert_eq!(text_input_value(&after_snapshot, input_label), "Ada");
+    assert_eq!(text_input_value(&after_snapshot, input_label), "button");
     assert!(
         frame_pixel_diff_count(&before_frame, &after_frame) > 0,
         "desktop IME commit should repaint the real renderer output"
@@ -3628,11 +3573,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
         SemanticsRole::ScrollView,
         sui_demo_app::widget_book::GALLERY_SCROLL_NAME,
     );
-    let before_button = find_node(
-        &before_scroll_snapshot,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
-    );
+    let before_button = find_node(&before_scroll_snapshot, SemanticsRole::Button, "Download");
 
     move_cursor(&harness, window_id, node_center(gallery.bounds))?;
     harness.dispatch(
@@ -3648,11 +3589,7 @@ fn desktop_widget_book_repaints_and_updates_metrics_from_platform_events() -> Re
         .performance
         .clone()
         .expect("desktop scroll redraw should publish performance metrics");
-    let after_button = find_node(
-        &after_snapshot,
-        SemanticsRole::Button,
-        sui_demo_app::widget_book::WIDGET_STATES_BUTTON_LABEL,
-    );
+    let after_button = find_node(&after_snapshot, SemanticsRole::Button, "Download");
 
     assert!(
         frame_pixel_diff_count(&before_scroll_frame, &after_frame) > 0,
@@ -3678,12 +3615,11 @@ fn desktop_widget_book_repaints_when_scrolling_with_split_view_visible() -> Resu
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     const SCROLL_STEP_PX: f32 = -120.0;
-    const MAX_SCROLL_STEPS: usize = 80;
+    // The split view story sits near the end of the page.
+    const MAX_SCROLL_STEPS: usize = 400;
     const MIN_VISIBLE_AREA_RATIO: f32 = 0.2;
 
-    let harness = DesktopHarness::launch(|| {
-        build_widget_book_application(default_widget_book_state()).build()
-    })?;
+    let harness = DesktopHarness::launch(|| build_widget_book_application().build())?;
     let window_id = harness.main_window_id();
 
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;
@@ -4010,9 +3946,7 @@ fn widget_book_scroll_fps_benchmark() -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    run_widget_book_scroll_benchmark(|| {
-        build_widget_book_application(scroll_benchmark_widget_book_state())
-    })
+    run_widget_book_scroll_benchmark(build_widget_book_application)
 }
 
 #[test]
@@ -4026,15 +3960,13 @@ fn widget_book_scroll_fps_benchmark_without_live_overlay() -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    run_widget_book_scroll_benchmark(|| {
-        build_widget_book_gallery_application(scroll_benchmark_widget_book_state())
-    })
+    run_widget_book_scroll_benchmark(build_widget_book_gallery_application)
 }
 
 #[test]
 #[ignore = "diagnostic benchmark for cache-invalid repaint cost in overlay-free widget-book gallery"]
-fn widget_book_dialog_repaint_benchmark_without_live_overlay() -> Result<()> {
-    if skip_without_desktop_display("widget_book_dialog_repaint_benchmark_without_live_overlay") {
+fn widget_book_toggle_repaint_benchmark_without_live_overlay() -> Result<()> {
+    if skip_without_desktop_display("widget_book_toggle_repaint_benchmark_without_live_overlay") {
         return Ok(());
     }
 
@@ -4042,9 +3974,7 @@ fn widget_book_dialog_repaint_benchmark_without_live_overlay() -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    run_widget_book_dialog_repaint_benchmark(|| {
-        build_widget_book_gallery_application(scroll_benchmark_widget_book_state())
-    })
+    run_widget_book_toggle_repaint_benchmark(build_widget_book_gallery_application)
 }
 
 #[test]
@@ -4084,29 +4014,7 @@ fn desktop_widget_book_overlay_publishes_detailed_scene_stats() -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let harness = DesktopHarness::launch(|| {
-        build_widget_book_application_with_overlay(Rc::new(RefCell::new(WidgetBookState {
-            name: "Ada".to_string(),
-            password: "sui-demo".to_string(),
-            scheduled_for: "2026-07-15 14:30".to_string(),
-            subscribed: true,
-            button_presses: 0,
-            icon_button_presses: 0,
-            switch_on: true,
-            standalone_radio_selected: false,
-            radio_choice: "Balanced".to_string(),
-            slider_value: 72.0,
-            number_value: 12.0,
-            notes: "Pinned notes for inspector workflows.\nSupports multiline editing.".to_string(),
-            mode: "Normal".to_string(),
-            tab_bar_choice: "Canvas".to_string(),
-            tabs_choice: "Layout".to_string(),
-            last_menu_action: "New tab".to_string(),
-            last_context_action: "Rename".to_string(),
-            dialog_apply_count: 0,
-        })))
-        .build()
-    })?;
+    let harness = DesktopHarness::launch(|| build_widget_book_application_with_overlay().build())?;
     let window_id = harness.main_window_id();
 
     harness.dispatch(window_id, HostInputEvent::Focused(true))?;

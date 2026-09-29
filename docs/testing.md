@@ -143,7 +143,14 @@ review:
 cargo run -p sinomo-ui-demo --bin sui-demo-artifacts
 ```
 
-The artifact command writes to `target/ui-artifacts/sui-demo/widget-book`.
+The artifact command writes to `target/ui-artifacts/sui-demo/widget-book`:
+
+- `overview-light/` and `overview-dark/`: the top of the page in each theme;
+- `narrow-light/`: a window below the rail breakpoint, filtered to buttons;
+- `stories/<id>/light.png` and `dark.png`: every registered story's block;
+- `themes-page/`: the Themes page;
+- `hdr-validation/`: HDR captures of the color validation surface.
+
 Ordinary `sinomo-ui-demo` tests do not run this slow artifact generator.
 
 For linear HDR captures, SDR previews, headroom maps, clip masks, and output
@@ -157,9 +164,14 @@ Note: AVIF export in the artifact pipeline currently uses a high-quality rav1e s
 
 Assert what a user or automation system can observe. Roles, names, text, values, and focus state are better than direct widget graph inspection.
 
-### Use unique semantics for gallery and story content
+### Locate widget-book content by story, not by specimen
 
-The widget-book tests rely on unique role and accessible-name combinations. If multiple nodes expose the same role and name in one story, locators become ambiguous.
+Widget-book stories repeat the same control across variants and states, so a
+name such as `Export` appears many times. Locate a story by its block region
+(`"<Title> story"`), rail entries by the `Link` role, and the page chrome by its
+unique names (the filter, theme switch, and gallery). When a test exercises one
+control's behavior rather than the book, build a small fixture window whose
+controls have unique role and accessible-name combinations.
 
 ### Prefer high-level actions
 
