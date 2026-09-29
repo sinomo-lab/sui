@@ -2,6 +2,7 @@
 
 mod composition;
 mod geometry;
+mod gradients;
 mod images;
 mod lcd;
 mod output;

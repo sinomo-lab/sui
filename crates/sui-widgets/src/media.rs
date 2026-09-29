@@ -4301,40 +4301,20 @@ fn paint_oklch_bar(
     paint_linear_color_bar(ctx, rect, stops, theme);
 }
 
-/// Paints a horizontal gradient through every stop. Rectangle gradients
-/// render only their end stops, so each pair of neighboring stops gets its
-/// own two-stop segment. Segments overlap by a pixel under a clip so their
-/// antialiased edges leave no seams.
 fn paint_linear_color_bar(
     ctx: &mut PaintCtx,
     rect: Rect,
     stops: Vec<GradientStop>,
     theme: &DefaultTheme,
 ) {
-    ctx.push_clip_rect(rect);
-    for (index, pair) in stops.windows(2).enumerate() {
-        let x0 = rect.x() + pair[0].offset.clamp(0.0, 1.0) * rect.width();
-        let x1 = rect.x() + pair[1].offset.clamp(0.0, 1.0) * rect.width();
-        let overlap = if index + 2 < stops.len() { 1.0 } else { 0.0 };
-        ctx.fill_rect(
-            Rect::new(x0, rect.y(), (x1 - x0 + overlap).max(0.0), rect.height()),
-            Brush::LinearGradient {
-                start: Point::new(x0, rect.y()),
-                end: Point::new(x1, rect.y()),
-                stops: vec![
-                    GradientStop {
-                        offset: 0.0,
-                        color: pair[0].color,
-                    },
-                    GradientStop {
-                        offset: 1.0,
-                        color: pair[1].color,
-                    },
-                ],
-            },
-        );
-    }
-    ctx.pop_clip();
+    ctx.fill_rect(
+        rect,
+        Brush::LinearGradient {
+            start: rect.origin,
+            end: Point::new(rect.max_x(), rect.y()),
+            stops,
+        },
+    );
     paint_bar_border(ctx, rect, theme);
 }
 
@@ -5004,7 +4984,7 @@ mod tests {
     };
     use sui_layout::Padding as Insets;
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
-    use sui_scene::{Brush, RegisteredImage, SceneCommand, WidgetShader};
+    use sui_scene::{Brush, GradientStop, RegisteredImage, SceneCommand, WidgetShader};
     use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -6165,36 +6145,32 @@ mod tests {
         )
     }
 
-    /// The gradient segments painted inside a slider row, left to right.
-    fn gradient_segments(output: &sui_runtime::RenderOutput, row: Rect) -> Vec<(Rect, Color)> {
+    /// The gradient track painted inside a slider row, and its stops.
+    fn gradient_fill(output: &sui_runtime::RenderOutput, row: Rect) -> (Rect, Vec<GradientStop>) {
         output
             .frame
             .scene
             .commands()
             .iter()
-            .filter_map(|command| match command {
+            .find_map(|command| match command {
                 SceneCommand::FillRect {
                     rect,
                     brush: Brush::LinearGradient { stops, .. },
                 } if row.contains(Point::new(rect.x() + 0.5, rect.y() + 0.5)) => {
-                    Some((*rect, stops[0].color))
+                    Some((*rect, stops.clone()))
                 }
                 _ => None,
             })
-            .collect()
+            .unwrap_or_else(|| panic!("a gradient track is painted in {row:?}"))
     }
 
     /// The gradient track painted inside a slider row.
     fn gradient_track(output: &sui_runtime::RenderOutput, row: Rect) -> Rect {
-        gradient_segments(output, row)
-            .into_iter()
-            .map(|(rect, _)| rect)
-            .reduce(Rect::union)
-            .unwrap_or_else(|| panic!("a gradient track is painted in {row:?}"))
+        gradient_fill(output, row).0
     }
 
     #[test]
-    fn multi_stop_color_tracks_paint_every_stop() -> Result<()> {
+    fn oklch_hue_track_sweeps_the_hue_wheel() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
             SimpleColorPicker::from_color(
                 "Theme color",
@@ -6204,23 +6180,18 @@ mod tests {
         );
         let output = runtime.render(window_id)?;
         let hue = picker_slider(&output, "Hue").bounds;
-        let segments = gradient_segments(&output, hue);
-        assert!(segments.len() >= 16, "{} segments", segments.len());
-        let hues = segments
+        let (_, stops) = gradient_fill(&output, hue);
+        assert!(stops.len() >= 16, "{} stops", stops.len());
+        assert_eq!(stops.first().map(|stop| stop.offset), Some(0.0));
+        assert_eq!(stops.last().map(|stop| stop.offset), Some(1.0));
+        assert!(stops.windows(2).all(|pair| pair[0].offset < pair[1].offset));
+        let hues = stops
             .iter()
-            .map(|(_, color)| color.to_oklch().hue)
+            .map(|stop| stop.color.to_oklch().hue)
             .collect::<Vec<_>>();
         let span = hues.iter().copied().fold(f32::MIN, f32::max)
             - hues.iter().copied().fold(f32::MAX, f32::min);
         assert!(span > 300.0, "the hue track sweeps the wheel: {hues:?}");
-        for pair in segments.windows(2) {
-            assert!(
-                pair[1].0.x() <= pair[0].0.max_x(),
-                "segments leave no gaps: {:?} then {:?}",
-                pair[0].0,
-                pair[1].0
-            );
-        }
         Ok(())
     }
 

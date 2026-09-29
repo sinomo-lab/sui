@@ -1113,9 +1113,11 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
         | SceneCommand::PopTransform
         | SceneCommand::PushTextRenderPolicy { .. }
         | SceneCommand::PopTextRenderPolicy => {}
-        SceneCommand::FillRect { rect, .. }
-        | SceneCommand::StrokeRect { rect, .. }
-        | SceneCommand::DrawImage { rect, .. }
+        SceneCommand::FillRect { rect, brush } | SceneCommand::StrokeRect { rect, brush, .. } => {
+            *rect = rect.translate(delta);
+            translate_brush(brush, delta);
+        }
+        SceneCommand::DrawImage { rect, .. }
         | SceneCommand::DrawShaderRect { rect, .. }
         | SceneCommand::PushClip { rect }
         | SceneCommand::Label { rect, .. } => {
@@ -1126,9 +1128,11 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
                 *point += delta;
             }
         }
-        SceneCommand::FillPath { path, .. }
-        | SceneCommand::StrokePath { path, .. }
-        | SceneCommand::PushClipPath { path } => {
+        SceneCommand::FillPath { path, brush } | SceneCommand::StrokePath { path, brush, .. } => {
+            *path = translate_path(path, delta);
+            translate_brush(brush, delta);
+        }
+        SceneCommand::PushClipPath { path } => {
             *path = translate_path(path, delta);
         }
         SceneCommand::DrawText(text) => {
@@ -1146,11 +1150,16 @@ fn translate_command(command: &mut SceneCommand, delta: Vector) {
         }
         SceneCommand::FillRoundedRect { rect, brush, .. } => {
             *rect = rect.translate(delta);
-            if let Brush::LinearGradient { start, end, .. } = brush {
-                *start += delta;
-                *end += delta;
-            }
+            translate_brush(brush, delta);
         }
+    }
+}
+
+/// Gradient axes are in scene coordinates, so they move with their shape.
+fn translate_brush(brush: &mut Brush, delta: Vector) {
+    if let Brush::LinearGradient { start, end, .. } = brush {
+        *start += delta;
+        *end += delta;
     }
 }
 
@@ -1517,6 +1526,76 @@ mod tests {
     #[test]
     fn scene_frame_is_send_sync() {
         assert_send_sync::<SceneFrame>();
+    }
+
+    #[test]
+    fn translating_a_scene_moves_gradient_axes_with_their_shapes() {
+        let gradient = |start: Point, end: Point| Brush::LinearGradient {
+            start,
+            end,
+            stops: vec![
+                super::GradientStop {
+                    offset: 0.0,
+                    color: Color::rgba(1.0, 0.0, 0.0, 1.0),
+                },
+                super::GradientStop {
+                    offset: 1.0,
+                    color: Color::rgba(0.0, 0.0, 1.0, 1.0),
+                },
+            ],
+        };
+        let axis = |brush: &Brush| match brush {
+            Brush::LinearGradient { start, end, .. } => (*start, *end),
+            Brush::Solid(_) => panic!("a gradient brush"),
+        };
+        let (start, end) = (Point::new(10.0, 5.0), Point::new(90.0, 5.0));
+        let mut path = Path::builder();
+        path.move_to(Point::new(10.0, 0.0));
+        path.line_to(Point::new(90.0, 0.0));
+        path.line_to(Point::new(90.0, 10.0));
+        path.close();
+        let path = path.build();
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::FillRect {
+            rect: Rect::new(10.0, 0.0, 80.0, 10.0),
+            brush: gradient(start, end),
+        });
+        scene.push(SceneCommand::StrokeRect {
+            rect: Rect::new(10.0, 0.0, 80.0, 10.0),
+            brush: gradient(start, end),
+            stroke: StrokeStyle::new(1.0),
+        });
+        scene.push(SceneCommand::FillPath {
+            path: path.clone(),
+            brush: gradient(start, end),
+        });
+        scene.push(SceneCommand::StrokePath {
+            path,
+            brush: gradient(start, end),
+            stroke: StrokeStyle::new(1.0),
+        });
+        scene.push(SceneCommand::FillRoundedRect {
+            rect: Rect::new(10.0, 0.0, 80.0, 10.0),
+            radii: [4.0; 4],
+            brush: gradient(start, end),
+            border: None,
+            shadow: None,
+        });
+
+        let delta = Vector::new(3.0, 40.0);
+        scene.translate(delta);
+        let moved = (start + delta, end + delta);
+        for command in scene.commands() {
+            let brush = match command {
+                SceneCommand::FillRect { brush, .. }
+                | SceneCommand::StrokeRect { brush, .. }
+                | SceneCommand::FillPath { brush, .. }
+                | SceneCommand::StrokePath { brush, .. }
+                | SceneCommand::FillRoundedRect { brush, .. } => brush,
+                other => panic!("unexpected command {other:?}"),
+            };
+            assert_eq!(axis(brush), moved, "{command:?}");
+        }
     }
 
     #[test]

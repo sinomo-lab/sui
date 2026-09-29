@@ -11,6 +11,7 @@ use sui_core::Size;
 use sui_core::Transform;
 use sui_core::Vector;
 use sui_scene::Brush;
+use sui_scene::GradientStop;
 
 pub(crate) fn append_image(
     vertices: &mut Vec<Vertex>,
@@ -471,10 +472,21 @@ pub(crate) fn append_rounded_rect_shadow(
     );
 }
 
-/// Fill a (possibly rounded) rectangle with a 2-stop linear gradient. The gradient axis
-/// is given by `start`/`end` in scene (pre-transform) coordinates; both are mapped into
-/// the same center-origin rect-local space used by the SDF. Stops beyond the first two
-/// are ignored (documented limitation of the bind-group-free packing).
+/// Fill a (possibly rounded) rectangle with a linear gradient through every stop. The
+/// gradient axis is given by `start`/`end` in scene (pre-transform) coordinates; both
+/// are mapped into the same center-origin rect-local space used by the SDF.
+///
+/// The gradient pipeline draws axis-aligned quads that each blend two colors, so the
+/// gradient is split into [`GradientRegion`]s, one per pair of neighboring stops.
+/// Every region evaluates the same rounded-rect coverage, so edges and antialiasing
+/// match a single fill:
+///
+/// - A horizontal or vertical gradient cuts the quad into adjacent bands along its
+///   axis. Neighbors share bit-identical edges, which the rasterizer tiles without
+///   gaps or overlap.
+/// - Any other direction cannot be cut into axis-aligned bands, so every region
+///   draws the whole quad and the shader keeps only the fragments inside the
+///   region's range along the axis (see [`gradient_band_code`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn append_gradient_rect(
     vertices: &mut Vec<Vertex>,
@@ -483,8 +495,7 @@ pub(crate) fn append_gradient_rect(
     radii: [f32; 4],
     start: Point,
     end: Point,
-    stop0: Color,
-    stop1: Color,
+    stops: &[GradientStop],
     viewport: Size,
     feather: f32,
 ) {
@@ -504,28 +515,257 @@ pub(crate) fn append_gradient_rect(
         return;
     };
     let radii = clamp_radii(radii, half_w, half_h);
+    let params = [half_w, half_h, GRADIENT_BAND_NONE, feather];
 
-    // Gradient axis end-points in center-origin local space (matching the SDF space).
+    // Gradient axis end-points in screen space, and the point at `offset` along it.
     let start_screen = state.current_transform.transform_point(start);
     let end_screen = state.current_transform.transform_point(end);
-    let axis = [
-        start_screen.x - center.x,
-        start_screen.y - center.y,
-        end_screen.x - center.x,
-        end_screen.y - center.y,
-    ];
+    let direction = Vector::new(end_screen.x - start_screen.x, end_screen.y - start_screen.y);
+    let along = |offset: f32| {
+        Point::new(
+            start_screen.x + direction.x * offset,
+            start_screen.y + direction.y * offset,
+        )
+    };
+    let local_axis = |from: Point, to: Point| {
+        [
+            from.x - center.x,
+            from.y - center.y,
+            to.x - center.x,
+            to.y - center.y,
+        ]
+    };
+    let full_axis = local_axis(start_screen, end_screen);
 
-    append_rounded_rect_quad(
-        vertices,
-        screen_quad,
-        center,
-        viewport,
-        shader_color(stop0),
-        [half_w, half_h, 0.0, feather],
-        radii,
-        axis,
-        shader_color(stop1),
-    );
+    let regions = gradient_regions(stops);
+    let degenerate = direction.x.abs().max(direction.y.abs()) <= 1.0e-4;
+    if let [region] = regions.as_slice() {
+        // One two-color ramp: map its offsets onto the axis, and clamping pads the ends.
+        let axis = if degenerate {
+            full_axis
+        } else {
+            local_axis(along(region.ramp.0), along(region.ramp.1))
+        };
+        append_rounded_rect_quad(
+            vertices,
+            screen_quad,
+            center,
+            viewport,
+            shader_color(region.from),
+            params,
+            radii,
+            axis,
+            shader_color(region.to),
+        );
+        return;
+    }
+    if degenerate {
+        // A zero-length axis has no direction to spread stops along; like the shader
+        // with a single ramp, it shows the first stop.
+        let first = regions[0].from;
+        append_rounded_rect_quad(
+            vertices,
+            screen_quad,
+            center,
+            viewport,
+            shader_color(first),
+            params,
+            radii,
+            full_axis,
+            shader_color(first),
+        );
+        return;
+    }
+
+    let horizontal = direction.y.abs() <= direction.x.abs() * 1.0e-4;
+    let vertical = direction.x.abs() <= direction.y.abs() * 1.0e-4;
+    if horizontal || vertical {
+        // Band edges come from one computation per boundary, so neighbors share them
+        // exactly and the rasterizer covers each pixel once.
+        let (quad_min, quad_max) = if horizontal {
+            (screen_quad.x(), screen_quad.max_x())
+        } else {
+            (screen_quad.y(), screen_quad.max_y())
+        };
+        let edge = |offset: Option<f32>, open: f32| match offset {
+            Some(offset) => {
+                let point = along(offset);
+                (if horizontal { point.x } else { point.y }).clamp(quad_min, quad_max)
+            }
+            None => open,
+        };
+        let backwards = if horizontal {
+            direction.x < 0.0
+        } else {
+            direction.y < 0.0
+        };
+        for region in &regions {
+            let (open_start, open_end) = if backwards {
+                (quad_max, quad_min)
+            } else {
+                (quad_min, quad_max)
+            };
+            let a = edge(region.start, open_start);
+            let b = edge(region.end, open_end);
+            let (low, high) = (a.min(b), a.max(b));
+            if high <= low {
+                continue;
+            }
+            let band = if horizontal {
+                Rect::new(low, screen_quad.y(), high - low, screen_quad.height())
+            } else {
+                Rect::new(screen_quad.x(), low, screen_quad.width(), high - low)
+            };
+            append_rounded_rect_quad(
+                vertices,
+                band,
+                center,
+                viewport,
+                shader_color(region.from),
+                params,
+                radii,
+                local_axis(along(region.ramp.0), along(region.ramp.1)),
+                shader_color(region.to),
+            );
+        }
+        return;
+    }
+
+    // Diagonal: every region covers the whole quad, so each fragment evaluates the
+    // same position along the axis in every region and lands in exactly one.
+    for region in &regions {
+        let mut params = params;
+        params[2] = gradient_band_code(region);
+        append_rounded_rect_quad(
+            vertices,
+            screen_quad,
+            center,
+            viewport,
+            shader_color(region.from),
+            params,
+            radii,
+            full_axis,
+            shader_color(region.to),
+        );
+    }
+}
+
+/// `shader_params.z` of a gradient quad that is not limited to a band.
+const GRADIENT_BAND_NONE: f32 = 0.0;
+/// Steps a band's offsets are quantized to (11 bits each), so the band code stays an
+/// integer that `f32` represents exactly.
+const GRADIENT_BAND_STEPS: f32 = 2047.0;
+
+/// Packs a region's range along the axis into `shader_params.z` for the gradient
+/// shader. The code is `1 + open_start << 23 + open_end << 22 + low << 11 + high`, with
+/// `low` and `high` the ramp's offsets in [`GRADIENT_BAND_STEPS`]; the largest code is
+/// `2^24`, which `f32` holds exactly. Neighboring regions quantize their shared
+/// boundary identically, so the shader's half-open range test assigns every fragment
+/// to one region.
+pub(crate) fn gradient_band_code(region: &GradientRegion) -> f32 {
+    // A bounded end always equals the matching end of the ramp, so the ramp's
+    // offsets serve as both the range and the color mapping.
+    let quantize = |offset: f32| (offset.clamp(0.0, 1.0) * GRADIENT_BAND_STEPS).round() as u32;
+    let (low, high) = (quantize(region.ramp.0), quantize(region.ramp.1));
+    let code = ((region.start.is_none() as u32) << 23)
+        | ((region.end.is_none() as u32) << 22)
+        | (low << 11)
+        | high;
+    (code + 1) as f32
+}
+
+/// A stretch of a linear gradient between two boundaries along its axis (as offsets
+/// from 0 at `start` to 1 at `end`; `None` extends past the rectangle). Inside it the
+/// color ramps from `from` at `ramp.0` to `to` at `ramp.1`, clamping outside the ramp.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GradientRegion {
+    pub(crate) start: Option<f32>,
+    pub(crate) end: Option<f32>,
+    pub(crate) ramp: (f32, f32),
+    pub(crate) from: Color,
+    pub(crate) to: Color,
+}
+
+impl GradientRegion {
+    fn solid(color: Color, start: Option<f32>, end: Option<f32>, at: f32) -> Self {
+        Self {
+            start,
+            end,
+            ramp: (at, at),
+            from: color,
+            to: color,
+        }
+    }
+}
+
+/// Splits `stops` into regions that tile the whole axis. Offsets are clamped to
+/// `0..=1` and made non-decreasing, so a stop placed before its predecessor sits on it
+/// and makes a hard edge. Before the first stop and after the last, the gradient
+/// holds that stop's color.
+pub(crate) fn gradient_regions(stops: &[GradientStop]) -> Vec<GradientRegion> {
+    let mut previous = 0.0_f32;
+    let stops = stops
+        .iter()
+        .map(|stop| {
+            previous = stop.offset.clamp(0.0, 1.0).max(previous);
+            (previous, stop.color)
+        })
+        .collect::<Vec<_>>();
+    let (Some(&(first_offset, first_color)), Some(&(last_offset, last_color))) =
+        (stops.first(), stops.last())
+    else {
+        return vec![GradientRegion::solid(Color::TRANSPARENT, None, None, 0.0)];
+    };
+
+    let ramps = stops
+        .windows(2)
+        .filter(|pair| pair[1].0 > pair[0].0)
+        .map(|pair| (pair[0], pair[1]))
+        .collect::<Vec<_>>();
+    let (Some(&((ramp_start, ramp_first), _)), Some(&(_, (ramp_end, ramp_last)))) =
+        (ramps.first(), ramps.last())
+    else {
+        // Every stop shares one offset: a hard edge from the first color to the last.
+        if first_color == last_color {
+            return vec![GradientRegion::solid(first_color, None, None, first_offset)];
+        }
+        return vec![
+            GradientRegion::solid(first_color, None, Some(first_offset), first_offset),
+            GradientRegion::solid(last_color, Some(last_offset), None, last_offset),
+        ];
+    };
+
+    let mut regions = Vec::with_capacity(ramps.len() + 2);
+    // A hard edge at the first ramp starts it from a different color than the pad.
+    let leading_pad = ramp_first != first_color;
+    if leading_pad {
+        regions.push(GradientRegion::solid(
+            first_color,
+            None,
+            Some(ramp_start),
+            ramp_start,
+        ));
+    }
+    for (index, &((low, from), (high, to))) in ramps.iter().enumerate() {
+        regions.push(GradientRegion {
+            start: (index > 0 || leading_pad).then_some(low),
+            end: Some(high),
+            ramp: (low, high),
+            from,
+            to,
+        });
+    }
+    if ramp_last != last_color {
+        regions.push(GradientRegion::solid(
+            last_color,
+            Some(ramp_end),
+            None,
+            ramp_end,
+        ));
+    } else if let Some(last) = regions.last_mut() {
+        last.end = None;
+    }
+    regions
 }
 
 pub(crate) fn points_bounds(points: &[Point]) -> Rect {

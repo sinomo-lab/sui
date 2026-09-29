@@ -121,8 +121,14 @@ Versioning, with the usual expectation that the API may change during the
 - Color picker slider rows place the channel label and value beside the
   colored track instead of on it, so they stay readable and the marker no
   longer covers the value at the ends of the range.
-- Color picker tracks with more than two gradient stops, such as the HSL
-  lightness track, now paint every stop instead of only the first and last.
+- Linear gradients on rectangles and rounded rectangles now paint every stop
+  in any direction, including hard stops and offsets that do not start at 0 or
+  end at 1; the renderer previously blended only the first and last stops.
+  Color picker tracks such as HSL lightness and OKLCH hue now render
+  correctly.
+- Gradient fills on rectangles and paths now move their gradient axis when a
+  scene or retained layer is translated. Previously a scrolled layer left the
+  axis behind, flattening the gradient to one end color.
 - `Select` now handles the expand, collapse, and set-value accessibility
   actions it advertises.
 - The demo's Themes page sizes each row of preview cards to its tallest card,

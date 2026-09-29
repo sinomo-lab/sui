@@ -33,7 +33,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let fill_cov = clamp(0.5 - d / max(aa, 1e-4), 0.0, 1.0);
     let a = in.axis.xy; let b = in.axis.zw;
     let ab = b - a; let denom = max(dot(ab, ab), 1e-6);
-    let t = clamp(dot(in.local - a, ab) / denom, 0.0, 1.0);
-    let col = mix(in.stop0, in.stop1, t);
+    let t = dot(in.local - a, ab) / denom;
+    // p0.z = 0: the axis maps the two stops directly. Otherwise the quad is one band
+    // of a multi-stop gradient along the full axis (see `gradient_band_code`): keep
+    // fragments in the band's half-open range, then ramp between its offsets.
+    let band = u32(round(in.p0.z));
+    var u = clamp(t, 0.0, 1.0);
+    if band != 0u {
+        let code = band - 1u;
+        let low = f32((code >> 11u) & 0x7FFu) / 2047.0;
+        let high = f32(code & 0x7FFu) / 2047.0;
+        let open_start = (code & 0x800000u) != 0u;
+        let open_end = (code & 0x400000u) != 0u;
+        if (!open_start && t < low) || (!open_end && t >= high) { discard; }
+        u = clamp((t - low) / max(high - low, 1e-6), 0.0, 1.0);
+    }
+    let col = mix(in.stop0, in.stop1, u);
     return vec4<f32>(col.rgb, col.a * fill_cov);
 }

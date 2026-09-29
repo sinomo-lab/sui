@@ -218,8 +218,6 @@ impl SceneDrawOpBuilder<'_> {
                         );
                     }
                     Brush::LinearGradient { start, end, stops } => {
-                        let stop0 = stops.first().map(|s| s.color).unwrap_or(Color::TRANSPARENT);
-                        let stop1 = stops.last().map(|s| s.color).unwrap_or(stop0);
                         append_gradient_rect(
                             &mut self.scratch_vertices,
                             state,
@@ -227,8 +225,7 @@ impl SceneDrawOpBuilder<'_> {
                             [0.0; 4],
                             *start,
                             *end,
-                            stop0,
-                            stop1,
+                            stops,
                             viewport,
                             self.feather_width,
                         );
@@ -574,8 +571,6 @@ impl SceneDrawOpBuilder<'_> {
                         );
                     }
                     Brush::LinearGradient { start, end, stops } => {
-                        let stop0 = stops.first().map(|s| s.color).unwrap_or(Color::TRANSPARENT);
-                        let stop1 = stops.last().map(|s| s.color).unwrap_or(stop0);
                         append_gradient_rect(
                             &mut self.scratch_vertices,
                             state,
@@ -583,8 +578,7 @@ impl SceneDrawOpBuilder<'_> {
                             *radii,
                             *start,
                             *end,
-                            stop0,
-                            stop1,
+                            stops,
                             viewport,
                             self.feather_width,
                         );
