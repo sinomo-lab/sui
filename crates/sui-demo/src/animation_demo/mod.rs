@@ -1,10 +1,11 @@
 //! The animation demo: one scroll that shows how SUI moves things. Curves and
-//! springs come first, then interruption, the built-in widgets, a timeline
-//! editor, and what motion costs the renderer.
+//! springs come first, then interruption, the built-in widgets, content that
+//! comes and goes, a timeline editor, and what motion costs the renderer.
 //!
 //! The motion controls at the top set the app-wide motion policy, so every
 //! transition in the app, not just on this page, follows them.
 
+mod choreography;
 mod curves;
 mod interruption;
 mod studio;
@@ -38,9 +39,14 @@ pub(crate) const MOTION_STATUS_NAME: &str = "Motion policy status";
 pub(crate) const CURVES_SECTION_NAME: &str = "Easing and springs";
 pub(crate) const INTERRUPTION_SECTION_NAME: &str = "Interruptible motion";
 pub(crate) const WIDGET_MOTION_SECTION_NAME: &str = "Built-in widget motion";
+pub(crate) const CHOREOGRAPHY_SECTION_NAME: &str = "Choreography";
 pub(crate) const STUDIO_SECTION_NAME: &str = "Timeline studio";
 pub(crate) const UNDER_THE_HOOD_SECTION_NAME: &str = "Under the hood";
 
+#[cfg(test)]
+pub(crate) use choreography::{
+    ADD_THREE_LABEL, DETAILS_TOGGLE_LABEL, KEYED_LIST_NAME, SHUFFLE_LABEL, STAGGER_NAME,
+};
 #[cfg(test)]
 pub(crate) use interruption::{FLING_PAD_NAME, INTERRUPTION_COMPARISON_NAME};
 #[cfg(test)]
@@ -113,6 +119,13 @@ pub(crate) fn build_animation_demo_with_theme(theme_reader: DevThemeReader) -> i
             "Built-in widgets",
             "Real widgets using the theme's motion tokens. Try them at a slower speed or with reduced motion.",
             widget_motion::gallery(Rc::clone(&theme_reader)),
+        ))
+        .with_child(section(
+            &theme_reader,
+            CHOREOGRAPHY_SECTION_NAME,
+            "Choreography",
+            "Content that comes and goes: new items cascade in, removed ones leave while the gap closes, and reordered ones glide. Leaving content stops taking input at once.",
+            choreography::gallery(Rc::clone(&theme_reader)),
         ))
         .with_child(section(
             &theme_reader,

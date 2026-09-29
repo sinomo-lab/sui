@@ -2986,6 +2986,26 @@ pub fn py_safe_area(
     )))
 }
 
+#[pyfunction(name = "Presence")]
+#[pyo3(signature = (child, shown=None, collapse=false, appear=false))]
+pub fn py_presence(
+    child: PyRef<'_, PyWidget>,
+    shown: Option<&Bound<'_, PyAny>>,
+    collapse: bool,
+    appear: bool,
+) -> PyResult<PyWidget> {
+    let shown = shown
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(true));
+    Ok(PyWidget::from_binding(BindingWidget::presence(
+        child.binding_widget()?,
+        shown,
+        collapse,
+        appear,
+    )))
+}
+
 #[pyfunction(name = "LayoutTransition")]
 #[pyo3(signature = (child, duration=0.22, easing="ease-in-out"))]
 pub fn py_layout_transition(
@@ -4157,6 +4177,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_grid, m)?)?;
     m.add_function(wrap_pyfunction!(py_aspect_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(py_safe_area, m)?)?;
+    m.add_function(wrap_pyfunction!(py_presence, m)?)?;
     m.add_function(wrap_pyfunction!(py_layout_transition, m)?)?;
     m.add_function(wrap_pyfunction!(py_adaptive_view, m)?)?;
     m.add_class::<PyConstraintCase>()?;
@@ -4290,6 +4311,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("grid", m.getattr("Grid")?)?;
     m.add("aspect_ratio", m.getattr("AspectRatio")?)?;
     m.add("safe_area", m.getattr("SafeArea")?)?;
+    m.add("presence", m.getattr("Presence")?)?;
     m.add("layout_transition", m.getattr("LayoutTransition")?)?;
     m.add("adaptive_view", m.getattr("AdaptiveView")?)?;
     m.add("constraint_view", m.getattr("ConstraintView")?)?;

@@ -1,7 +1,8 @@
 mod interaction;
+use crate::animation::Reveal;
 use crate::{
     AnimationSpec, ControlMetrics, ControlPalette, DefaultTheme, HdrThemeMode, Interpolate,
-    MotionScalar, Progress, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole,
+    Progress, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole,
     WidgetLuminanceRole, WidgetMaterialRole,
     editable_text::{
         CaretBlink, EditableTextController, EditableTextLineMode, TextChangeCallbacks,
@@ -25,7 +26,7 @@ use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
     SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsPopupKind, SemanticsRole,
-    SemanticsTextRange, SemanticsValue, Size, ToggleState, Vector, WakeEvent, WidgetId,
+    SemanticsTextRange, SemanticsValue, Size, ToggleState, Vector, WidgetId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, Padding as Insets};
 use sui_lucide::LucideIcon;
@@ -523,22 +524,6 @@ fn set_focus_animation_target(
         target,
         theme.motion.focus_duration(),
         theme.motion.focus_easing(),
-        ctx,
-    );
-}
-
-/// Hover in the select menu, whose shared presentation state still advances
-/// from animation frames (it spans the select and its menu surface).
-fn set_menu_hover_target(
-    animation: &mut MotionScalar,
-    target: f32,
-    theme: &DefaultTheme,
-    ctx: &mut EventCtx,
-) {
-    animation.set_target_event(
-        target,
-        theme.motion.hover_duration(),
-        theme.motion.hover_easing(),
         ctx,
     );
 }
@@ -5579,10 +5564,10 @@ struct SelectMenuPresentationState {
     selected: Option<usize>,
     hovered: Option<usize>,
     hover_visual: Option<usize>,
-    hover_animation: MotionScalar,
+    hover_animation: Progress,
     placement: SelectMenuPlacement,
     menu_bounds: Rect,
-    reveal: MotionScalar,
+    reveal: Reveal,
     /// Pinned open and laid out in flow; see [`Select::show_inline`].
     inline: bool,
 }
@@ -5595,10 +5580,10 @@ impl SelectMenuPresentationState {
             selected: None,
             hovered: None,
             hover_visual: None,
-            hover_animation: MotionScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
             placement: SelectMenuPlacement::Below,
             menu_bounds: Rect::ZERO,
-            reveal: MotionScalar::new(0.0),
+            reveal: Reveal::new(0.0),
             inline: false,
         }
     }
@@ -5620,33 +5605,28 @@ impl SelectMenuPresentationState {
         )
     }
 
-    fn set_hovered(&mut self, hovered: Option<usize>, animate: bool, ctx: &mut EventCtx) -> bool {
+    /// Move the hover highlight to `hovered`, fading it on `surface`, the
+    /// menu surface that paints it.
+    fn set_hovered(
+        &mut self,
+        hovered: Option<usize>,
+        ctx: &mut EventCtx,
+        surface: WidgetId,
+    ) -> bool {
         if self.hovered == hovered && self.hover_visual == hovered {
             return false;
         }
 
         self.hovered = hovered;
-        match hovered {
-            Some(index) => {
-                if self.hover_visual != Some(index) {
-                    self.hover_visual = Some(index);
-                    self.hover_animation = MotionScalar::new(0.0);
-                }
-                if animate {
-                    set_menu_hover_target(&mut self.hover_animation, 1.0, &self.theme, ctx);
-                } else {
-                    self.hover_animation = MotionScalar::new(1.0);
-                }
-            }
-            None => {
-                if animate {
-                    set_menu_hover_target(&mut self.hover_animation, 0.0, &self.theme, ctx);
-                } else {
-                    self.hover_animation = MotionScalar::new(0.0);
-                    self.hover_visual = None;
-                }
-            }
+        let spec = self.theme.motion.hover_spec();
+        if let Some(index) = hovered
+            && self.hover_visual != Some(index)
+        {
+            self.hover_visual = Some(index);
+            self.hover_animation = Progress::new(0.0);
         }
+        self.hover_animation
+            .animate_for(hovered.is_some() as u8 as f32, spec, ctx, surface);
         true
     }
 
@@ -5656,44 +5636,35 @@ impl SelectMenuPresentationState {
         }
         self.hovered = hovered;
         self.hover_visual = hovered;
-        self.hover_animation = MotionScalar::new(hovered.is_some() as u8 as f32);
+        self.hover_animation = Progress::new(hovered.is_some() as u8 as f32);
         true
     }
 
-    fn advance_hover(&mut self, time: f64) -> (bool, bool) {
-        let previous = self.hover_animation.value;
-        let active = self.hover_animation.advance(time);
-        let changed = self.hover_animation.changed_since(previous);
-        if self.hovered.is_none() && !self.hover_animation.is_presented() {
-            self.hover_visual = None;
-        }
-        (changed, active)
-    }
-
-    fn hover_progress_for(&self, index: usize) -> f32 {
+    fn hover_progress_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
+    fn layer_properties_at(&self, time: f64) -> LayerProperties {
         // The list grows from the edge next to the field.
         let (direction, anchor) = match self.placement {
             SelectMenuPlacement::Below => (-1.0, Vector::new(0.5, 0.0)),
             SelectMenuPlacement::Above => (1.0, Vector::new(0.5, 1.0)),
         };
+        let reveal = self.reveal.at(time);
         LayerProperties::new(
-            self.reveal.value,
+            reveal,
             Vector::new(
                 0.0,
                 self.theme.metrics.popover_reveal_offset
-                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value)
+                    * sui_runtime::motion_policy().entrance_offset(reveal)
                     * direction,
             ),
         )
-        .with_scale(crate::animation::entrance_scale(self.reveal.value))
+        .with_scale(crate::animation::entrance_scale(reveal))
         .with_scale_anchor(anchor)
     }
 }
@@ -5727,7 +5698,8 @@ impl Widget for SelectMenuSurface {
                             .then_some(index)
                     })
                 });
-                let changed = state.set_hovered(hovered.flatten(), true, ctx);
+                let surface = ctx.widget_id();
+                let changed = state.set_hovered(hovered.flatten(), ctx, surface);
                 drop(state);
                 if changed {
                     ctx.request_paint();
@@ -5735,23 +5707,12 @@ impl Widget for SelectMenuSurface {
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
                 let mut state = self.state.borrow_mut();
-                let changed = state.set_hovered(None, true, ctx);
+                let surface = ctx.widget_id();
+                let changed = state.set_hovered(None, ctx, surface);
                 drop(state);
                 if changed {
                     ctx.request_paint();
                 }
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let mut state = self.state.borrow_mut();
-                let (changed, active) = state.advance_hover(*time);
-                drop(state);
-                if changed {
-                    ctx.request_paint();
-                }
-                if active {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
             }
             _ => {}
         }
@@ -5790,7 +5751,7 @@ impl Widget for SelectMenuSurface {
         for (index, option) in state.options.iter().enumerate() {
             let row = state.row_rect(index, menu);
             let selected = state.selected == Some(index);
-            let hover_progress = state.hover_progress_for(index);
+            let hover_progress = state.hover_progress_for(index, ctx);
             let text_style = theme.body_text_style();
             if hover_progress > AnimatedScalar::EPSILON || selected {
                 let background = if selected {
@@ -5838,8 +5799,8 @@ impl Widget for SelectMenuSurface {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        self.state.borrow().layer_properties()
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        self.state.borrow().layer_properties_at(frame_time)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -5947,7 +5908,10 @@ impl Select {
         } else {
             self.hovered_option = None;
         }
-        self.menu_state.borrow_mut().reveal = MotionScalar::new(expanded as u8 as f32);
+        self.menu_state
+            .borrow_mut()
+            .reveal
+            .jump_to(expanded as u8 as f32);
         self
     }
 
@@ -6160,7 +6124,7 @@ impl Select {
         let mut state = self.menu_state.borrow_mut();
         let selected_changed = state.selected != selected;
         state.selected = selected;
-        let hover_changed = state.set_hovered(hovered, true, ctx);
+        let hover_changed = state.set_hovered(hovered, ctx, surface_id);
         let changed = selected_changed || hover_changed;
         let presented = state.is_presented();
         drop(state);
@@ -6188,27 +6152,23 @@ impl Select {
         state.theme = theme;
         let was_presented = state.is_presented();
         state.sync_hovered_without_animation(self.hovered_option);
-        let should_animate = if expanded {
-            let motion = theme.motion;
-            state.reveal.set_target(
-                1.0,
-                ctx.current_time(),
-                motion.entrance_duration(),
-                motion.entrance_easing(),
-            )
+        // The list opens with an entrance and closes at once.
+        let until = if expanded {
+            state
+                .reveal
+                .start(1.0, ctx.current_time(), theme.motion.entrance_spec())
         } else {
-            state.reveal = MotionScalar::new(0.0);
-            false
+            state.reveal.jump_to(0.0);
+            None
         };
+        let reveal = state.reveal;
         let is_presented = state.is_presented();
         drop(state);
 
+        reveal.track(ctx, &[surface_id], until, &Reveal::LAYER);
         if expanded || was_presented != is_presented {
             ctx.request_measure();
             request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
-        }
-        if should_animate {
-            ctx.request_animation_frame();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -6233,7 +6193,7 @@ impl Select {
             let surface_id = self.menu_surface.child().id();
             let mut state = self.menu_state.borrow_mut();
             state.theme = theme;
-            state.set_hovered(hovered_option, true, ctx);
+            state.set_hovered(hovered_option, ctx, surface_id);
             let presented = state.is_presented();
             drop(state);
             if presented {
@@ -6418,35 +6378,6 @@ impl Widget for Select {
                 self.refresh_menu_interaction_state(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
-                ctx.set_handled();
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                // Only the menu advances here; the header's hover, press, and
-                // focus are runtime-driven.
-                let surface_id = self.menu_surface.child().id();
-                let mut state = self.menu_state.borrow_mut();
-                let was_presented = state.is_presented();
-                let previous = state.reveal.value;
-                let (hover_changed, hover_animating) = state.advance_hover(*time);
-                let animating = state.reveal.advance(*time);
-                let changed = state.reveal.changed_since(previous);
-                let is_presented = state.is_presented();
-                drop(state);
-
-                if changed {
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
-                }
-                if was_presented != is_presented {
-                    ctx.request_measure();
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
-                }
-                if hover_changed {
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
-                }
-                if animating || hover_animating {
-                    ctx.request_animation_frame();
-                }
                 ctx.set_handled();
             }
             Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {

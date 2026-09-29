@@ -956,6 +956,7 @@ pub struct WidgetPod {
     query_context: Option<crate::measure_cache::QueryContext>,
     last_probe_invalidation: u64,
     force_paint_boundary: bool,
+    inert: bool,
     observed_phases: Cell<u8>,
     widget: Box<dyn Widget>,
 }
@@ -1024,6 +1025,7 @@ impl WidgetPod {
             query_context: None,
             last_probe_invalidation: 0,
             force_paint_boundary: false,
+            inert: false,
             observed_phases: Cell::new(0),
             widget,
         }
@@ -1031,6 +1033,21 @@ impl WidgetPod {
 
     pub const fn id(&self) -> WidgetId {
         self.id
+    }
+
+    /// Whether this subtree is inert: still painted, but out of hit testing,
+    /// focus, and semantics. Containers make content inert while it animates
+    /// out, so it looks gone to everything but the eye.
+    pub const fn is_inert(&self) -> bool {
+        self.inert
+    }
+
+    /// Make this subtree inert or live again (see [`WidgetPod::is_inert`]).
+    /// Focus and pointer capture inside an inert subtree are released when
+    /// the runtime next refreshes its widget graph, after the current layout
+    /// pass.
+    pub fn set_inert(&mut self, inert: bool) {
+        self.inert = inert;
     }
 
     pub fn debug_name(&self) -> &'static str {
@@ -1594,6 +1611,9 @@ impl WidgetPod {
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
+        if self.inert {
+            return;
+        }
         let presentation_transform = self.layout_state.presentation_transform;
         let relative_transform =
             relative_transform(presentation_transform, parent_ctx.presentation_transform());
@@ -2198,6 +2218,11 @@ pub(crate) enum WakeRequest {
         kind: InvalidationKind,
         until: f64,
     },
+    MotionEnd {
+        target: WidgetId,
+        kind: InvalidationKind,
+        until: f64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2395,8 +2420,24 @@ impl EventCtx {
     where
         T: Interpolate + Copy + PartialEq,
     {
+        self.animate_after(motion, target, 0.0, spec)
+    }
+
+    /// Like `animate`, starting `delay` seconds from now. Use a
+    /// [`Stagger`](sui_animation::Stagger) to start a group of transitions one
+    /// after another.
+    pub fn animate_after<T>(
+        &mut self,
+        motion: &mut Motion<T>,
+        target: T,
+        delay: f64,
+        spec: AnimationSpec,
+    ) -> bool
+    where
+        T: Interpolate + Copy + PartialEq,
+    {
         let before = motion.target();
-        let until = motion.start(target, self.current_time, spec);
+        let until = motion.start_after(target, self.current_time, delay, spec);
         if before != target {
             // The value may change right away (an instant jump under the
             // motion policy), so repaint now as well as every frame.
@@ -2411,8 +2452,30 @@ impl EventCtx {
     /// Keep invalidating this widget with `kind` every animation frame until
     /// `until` (in frame time), for presentation that is a function of time.
     pub fn track_motion(&mut self, until: f64, kind: InvalidationKind) {
+        self.track_motion_for(self.widget_id, until, kind);
+    }
+
+    /// Like `track_motion`, for another widget: a container animating a
+    /// child's layer keeps the child's layer updated until `until`.
+    pub fn track_motion_for(&mut self, target: WidgetId, until: f64, kind: InvalidationKind) {
         self.wake_requests.push(WakeRequest::Motion {
-            target: self.widget_id,
+            target,
+            kind,
+            until,
+        });
+    }
+
+    /// Invalidate this widget with `kind` once, at the first frame at or
+    /// after `until`: for state that changes when a motion ends, such as
+    /// content that stops taking space once it has faded out.
+    pub fn track_motion_end(&mut self, until: f64, kind: InvalidationKind) {
+        self.track_motion_end_for(self.widget_id, until, kind);
+    }
+
+    /// Like `track_motion_end`, for another widget.
+    pub fn track_motion_end_for(&mut self, target: WidgetId, until: f64, kind: InvalidationKind) {
+        self.wake_requests.push(WakeRequest::MotionEnd {
+            target,
             kind,
             until,
         });
@@ -3017,8 +3080,24 @@ impl MeasureCtx {
     where
         T: Interpolate + Copy + PartialEq,
     {
+        self.animate_after(motion, target, 0.0, spec)
+    }
+
+    /// Like `animate`, starting `delay` seconds from now. Use a
+    /// [`Stagger`](sui_animation::Stagger) to start a group of transitions one
+    /// after another.
+    pub fn animate_after<T>(
+        &mut self,
+        motion: &mut Motion<T>,
+        target: T,
+        delay: f64,
+        spec: AnimationSpec,
+    ) -> bool
+    where
+        T: Interpolate + Copy + PartialEq,
+    {
         let before = motion.target();
-        let until = motion.start(target, self.current_time, spec);
+        let until = motion.start_after(target, self.current_time, delay, spec);
         if before != target {
             // The value may change right away (an instant jump under the
             // motion policy), so repaint now as well as every frame.
@@ -3033,8 +3112,30 @@ impl MeasureCtx {
     /// Keep invalidating this widget with `kind` every animation frame until
     /// `until` (in frame time), for presentation that is a function of time.
     pub fn track_motion(&mut self, until: f64, kind: InvalidationKind) {
+        self.track_motion_for(self.widget_id, until, kind);
+    }
+
+    /// Like `track_motion`, for another widget: a container animating a
+    /// child's layer keeps the child's layer updated until `until`.
+    pub fn track_motion_for(&mut self, target: WidgetId, until: f64, kind: InvalidationKind) {
         self.wake_requests.push(WakeRequest::Motion {
-            target: self.widget_id,
+            target,
+            kind,
+            until,
+        });
+    }
+
+    /// Invalidate this widget with `kind` once, at the first frame at or
+    /// after `until`: for state that changes when a motion ends, such as
+    /// content that stops taking space once it has faded out.
+    pub fn track_motion_end(&mut self, until: f64, kind: InvalidationKind) {
+        self.track_motion_end_for(self.widget_id, until, kind);
+    }
+
+    /// Like `track_motion_end`, for another widget.
+    pub fn track_motion_end_for(&mut self, target: WidgetId, until: f64, kind: InvalidationKind) {
+        self.wake_requests.push(WakeRequest::MotionEnd {
+            target,
             kind,
             until,
         });
@@ -3227,8 +3328,24 @@ impl ArrangeCtx {
     where
         T: Interpolate + Copy + PartialEq,
     {
+        self.animate_after(motion, target, 0.0, spec)
+    }
+
+    /// Like `animate`, starting `delay` seconds from now. Use a
+    /// [`Stagger`](sui_animation::Stagger) to start a group of transitions one
+    /// after another.
+    pub fn animate_after<T>(
+        &mut self,
+        motion: &mut Motion<T>,
+        target: T,
+        delay: f64,
+        spec: AnimationSpec,
+    ) -> bool
+    where
+        T: Interpolate + Copy + PartialEq,
+    {
         let before = motion.target();
-        let until = motion.start(target, self.current_time, spec);
+        let until = motion.start_after(target, self.current_time, delay, spec);
         if before != target {
             // The value may change right away (an instant jump under the
             // motion policy), so repaint now as well as every frame.
@@ -3243,8 +3360,30 @@ impl ArrangeCtx {
     /// Keep invalidating this widget with `kind` every animation frame until
     /// `until` (in frame time), for presentation that is a function of time.
     pub fn track_motion(&mut self, until: f64, kind: InvalidationKind) {
+        self.track_motion_for(self.widget_id, until, kind);
+    }
+
+    /// Like `track_motion`, for another widget: a container animating a
+    /// child's layer keeps the child's layer updated until `until`.
+    pub fn track_motion_for(&mut self, target: WidgetId, until: f64, kind: InvalidationKind) {
         self.wake_requests.push(WakeRequest::Motion {
-            target: self.widget_id,
+            target,
+            kind,
+            until,
+        });
+    }
+
+    /// Invalidate this widget with `kind` once, at the first frame at or
+    /// after `until`: for state that changes when a motion ends, such as
+    /// content that stops taking space once it has faded out.
+    pub fn track_motion_end(&mut self, until: f64, kind: InvalidationKind) {
+        self.track_motion_end_for(self.widget_id, until, kind);
+    }
+
+    /// Like `track_motion_end`, for another widget.
+    pub fn track_motion_end_for(&mut self, target: WidgetId, until: f64, kind: InvalidationKind) {
+        self.wake_requests.push(WakeRequest::MotionEnd {
+            target,
             kind,
             until,
         });
@@ -3340,11 +3479,17 @@ pub struct PaintCtx {
 macro_rules! impl_animate_ctx {
     ($($ctx:ty),*) => {$(
         impl crate::motion::AnimateCtx for $ctx {
-            fn animate<T>(&mut self, motion: &mut Motion<T>, target: T, spec: AnimationSpec) -> bool
+            fn animate_after<T>(
+                &mut self,
+                motion: &mut Motion<T>,
+                target: T,
+                delay: f64,
+                spec: AnimationSpec,
+            ) -> bool
             where
                 T: Interpolate + Copy + PartialEq,
             {
-                <$ctx>::animate(self, motion, target, spec)
+                <$ctx>::animate_after(self, motion, target, delay, spec)
             }
         }
     )*};

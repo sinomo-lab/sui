@@ -82,6 +82,7 @@ use sui::PasswordInput;
 use sui::PixelCanvas;
 use sui::PlacementBadge;
 use sui::Popover;
+use sui::Presence;
 use sui::PresetStrip;
 use sui::PropertyRow;
 use sui::RadioButton;
@@ -2004,6 +2005,28 @@ impl BindingWidget {
                     .duration(*duration)
                     .easing(*easing),
             ),
+            BindingWidgetKind::Presence {
+                child,
+                shown,
+                collapse,
+                appear,
+            } => {
+                let presence = Presence::new(child.into_runtime_widget(errors.clone()));
+                let mut presence = match shown {
+                    BindingBool::State(_) => {
+                        let shown = shown.clone();
+                        presence.shown_when(move || shown.resolve())
+                    }
+                    BindingBool::Static(shown) => presence.shown(*shown),
+                };
+                if *collapse {
+                    presence = presence.collapse(sui::Axis::Vertical);
+                }
+                if *appear {
+                    presence = presence.appear();
+                }
+                BindingRuntimeWidget::new(presence)
+            }
             BindingWidgetKind::AdaptiveView {
                 compact,
                 medium,

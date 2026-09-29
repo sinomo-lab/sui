@@ -561,6 +561,19 @@ docs = ["SafeArea"]
 compat = true
 
 [[item]]
+name = "Presence"
+kind = "layout"
+core_kind = "Presence"
+core_constructor = "presence"
+python_kind = "function"
+python_rust = "py_presence"
+js_kind = "function"
+js_rust = "js_presence"
+ts_kind = "function"
+docs = ["Presence"]
+compat = true
+
+[[item]]
 name = "LayoutTransition"
 kind = "layout"
 core_kind = "LayoutTransition"
@@ -1864,6 +1877,10 @@ classification = "bound"
 bindings = ["Image"]
 
 [[rust_widget]]
+name = "KeyedStack"
+classification = "rust-only"
+
+[[rust_widget]]
 name = "Label"
 classification = "bound"
 bindings = ["Label"]
@@ -1947,6 +1964,11 @@ bindings = ["PlacementBadge"]
 name = "Popover"
 classification = "bound"
 bindings = ["Popover"]
+
+[[rust_widget]]
+name = "Presence"
+classification = "bound"
+bindings = ["Presence"]
 
 [[rust_widget]]
 name = "PresetStrip"

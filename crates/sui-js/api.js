@@ -122,6 +122,9 @@ function decorateApi(native) {
     safeArea(child, options = {}) {
       return native.SafeArea(child, options.edges, options.minimumLeft, options.minimumTop, options.minimumRight, options.minimumBottom);
     },
+    presence(child, options = {}) {
+      return native.Presence(child, options.shown, options.collapse, options.appear);
+    },
     layoutTransition(child, options = {}) {
       return native.LayoutTransition(child, options.duration, options.easing);
     },

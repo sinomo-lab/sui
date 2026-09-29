@@ -29,10 +29,12 @@ use sui::{
 
 #[cfg(test)]
 use crate::animation_demo::{
-    ANIMATION_DEMO_SCROLL_NAME, CURVES_SECTION_NAME, FLING_PAD_NAME, FRAME_PACING_NAME,
-    INTERRUPTION_COMPARISON_NAME, INTERRUPTION_SECTION_NAME, LAYER_STAGE_NAME, MOTION_STATUS_NAME,
-    REPAINT_STAGE_NAME, STUDIO_EDITOR_NAME, STUDIO_PAUSE_LABEL, STUDIO_PLAY_LABEL,
-    STUDIO_SECTION_NAME, UNDER_THE_HOOD_SECTION_NAME, WIDGET_MOTION_SECTION_NAME,
+    ADD_THREE_LABEL, ANIMATION_DEMO_SCROLL_NAME, CHOREOGRAPHY_SECTION_NAME, CURVES_SECTION_NAME,
+    DETAILS_TOGGLE_LABEL, FLING_PAD_NAME, FRAME_PACING_NAME, INTERRUPTION_COMPARISON_NAME,
+    INTERRUPTION_SECTION_NAME, KEYED_LIST_NAME, LAYER_STAGE_NAME, MOTION_STATUS_NAME,
+    REPAINT_STAGE_NAME, SHUFFLE_LABEL, STAGGER_NAME, STUDIO_EDITOR_NAME, STUDIO_PAUSE_LABEL,
+    STUDIO_PLAY_LABEL, STUDIO_SECTION_NAME, UNDER_THE_HOOD_SECTION_NAME,
+    WIDGET_MOTION_SECTION_NAME,
 };
 use crate::animation_demo::{ANIMATION_DEMO_TAB_LABEL, build_animation_demo_with_theme};
 #[cfg(test)]
@@ -8169,6 +8171,10 @@ final_max_luminance={final_max_luminance}
             INTERRUPTION_COMPARISON_NAME,
             FLING_PAD_NAME,
             WIDGET_MOTION_SECTION_NAME,
+            CHOREOGRAPHY_SECTION_NAME,
+            KEYED_LIST_NAME,
+            STAGGER_NAME,
+            DETAILS_TOGGLE_LABEL,
             STUDIO_SECTION_NAME,
             STUDIO_EDITOR_NAME,
             UNDER_THE_HOOD_SECTION_NAME,
@@ -8287,6 +8293,38 @@ final_max_luminance={final_max_luminance}
                 .scroll_pixels(Vector::new(0.0, page_y - target_y))?;
         }
         panic!("{name:?} did not scroll into the animation demo viewport");
+    }
+
+    /// How many task rows the keyed list shows to assistive technology.
+    fn task_rows(window: &TestWindow) -> usize {
+        window
+            .snapshot()
+            .expect("window snapshot should be available")
+            .accessibility
+            .nodes
+            .iter()
+            .filter(|node| node.name.as_deref() == Some("Remove task"))
+            .count()
+    }
+
+    #[test]
+    fn animation_demo_keyed_list_adds_removes_and_shuffles() -> Result<()> {
+        let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
+        assert_eq!(task_rows(&window), 4);
+
+        click_in_animation_demo(&window, SemanticsRole::Button, ADD_THREE_LABEL)?;
+        assert_eq!(task_rows(&window), 7, "new rows are live at once");
+        app.advance_time(1.0)?;
+        assert_eq!(task_rows(&window), 7);
+
+        click_in_animation_demo(&window, SemanticsRole::Button, "Remove")?;
+        assert_eq!(task_rows(&window), 6, "a leaving row drops out at once");
+        click_in_animation_demo(&window, SemanticsRole::Button, SHUFFLE_LABEL)?;
+        app.advance_time(1.0)?;
+        assert_eq!(task_rows(&window), 6);
+        Ok(())
     }
 
     #[test]

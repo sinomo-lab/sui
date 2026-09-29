@@ -4,7 +4,7 @@ use sui_core::Color;
 use sui_layout::Padding as Insets;
 use sui_text::{FontFamilyStack, TextStyle};
 
-use crate::animation::{AnimationSpec, Easing};
+use crate::animation::{AnimationSpec, Easing, Stagger};
 use crate::hdr_theme::HdrThemeTokens;
 
 /// Motion design tokens: a shared vocabulary of animation durations and easing
@@ -151,6 +151,24 @@ impl ThemeMotion {
 
     pub fn tab_switch_spec(&self) -> AnimationSpec {
         AnimationSpec::tween(self.tab_switch_duration(), self.tab_switch_easing())
+    }
+
+    /// Content leaving: as quick as an entrance, accelerating away.
+    pub fn exit_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(f64::from(self.duration_normal), self.easing_accelerate)
+    }
+
+    /// Content gliding to a new place after its layout changes, such as a
+    /// reordered list item.
+    pub fn layout_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(f64::from(self.duration_slow), self.easing_standard)
+    }
+
+    /// Delays for a group of items entering together: a quick cascade that
+    /// always finishes starting within a medium duration.
+    pub fn stagger(&self) -> Stagger {
+        let interval = f64::from(self.duration_fast) * 0.5;
+        Stagger::new(interval).max_delay(f64::from(self.duration_slow))
     }
 }
 

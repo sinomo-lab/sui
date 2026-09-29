@@ -1,13 +1,16 @@
 use crate::Button;
 use crate::ButtonAppearance;
 use crate::DefaultTheme;
+use crate::Progress;
 use crate::SemanticTone;
+use crate::animation::AnimationSpec;
+use crate::animation::Reveal;
 use crate::composites::forms::set_focus_animation_target;
 use crate::composites::indicators::{
     draw_control_frame, draw_focus_ring_frame, measure_text, physical_pixels, rounded_rect_path,
     text_token_style,
 };
-use crate::composites::popups::{AnimatedScalar, request_child_invalidation};
+use crate::composites::popups::request_child_invalidation;
 use crate::paint_theme_shadow;
 use crate::text_align::paint_aligned_text;
 use std::cell::RefCell;
@@ -32,6 +35,7 @@ use sui_reactive::Signal;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::Command;
 use sui_runtime::EventCtx;
+use sui_runtime::FrameClock;
 use sui_runtime::LayerOptions;
 use sui_runtime::MeasureCtx;
 use sui_runtime::OVERLAY_DISMISS_REQUEST;
@@ -101,7 +105,7 @@ pub(super) struct DialogFocusState {
     pub(super) theme: DefaultTheme,
     pub(super) frame: Rect,
     pub(super) shown: bool,
-    pub(super) animation: AnimatedScalar,
+    pub(super) animation: Progress,
 }
 
 impl DialogFocusState {
@@ -110,7 +114,7 @@ impl DialogFocusState {
             theme: DefaultTheme::default(),
             frame: Rect::ZERO,
             shown: false,
-            animation: AnimatedScalar::new(0.0),
+            animation: Progress::new(0.0),
         }
     }
 }
@@ -137,11 +141,11 @@ impl Widget for DialogFocusSurface {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let state = self.state.borrow();
-        if !state.shown || !state.animation.is_presented() {
+        if !state.shown {
             return;
         }
-        let progress = state.animation.value;
-        if progress <= AnimatedScalar::EPSILON {
+        let progress = state.animation.get(ctx);
+        if progress <= Progress::EPSILON {
             return;
         }
         let metrics = state.theme.metrics;
@@ -190,8 +194,8 @@ pub struct Dialog {
     pub(super) dialog_frame: Rect,
     pub(super) title_measurement: Option<TextMeasurement>,
     pub(super) description_measurement: Option<TextMeasurement>,
-    pub(super) reveal: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) reveal: Reveal,
+    pub(super) focus_animation: Progress,
     pub(super) focus_state: Rc<RefCell<DialogFocusState>>,
     pub(super) focus_surface: SingleChild,
     pub(super) entrance_started: bool,
@@ -222,8 +226,8 @@ impl Dialog {
             dialog_frame: Rect::ZERO,
             title_measurement: None,
             description_measurement: None,
-            reveal: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            reveal: Reveal::new(0.0),
+            focus_animation: Progress::new(0.0),
             focus_surface: SingleChild::new(DialogFocusSurface::new(Rc::clone(&focus_state))),
             focus_state,
             entrance_started: false,
@@ -241,7 +245,7 @@ impl Dialog {
         self.inline = true;
         self.modal = false;
         self.shown = true;
-        self.reveal = AnimatedScalar::new(1.0);
+        self.reveal = Reveal::new(1.0);
         self.entrance_started = true;
         self
     }
@@ -281,12 +285,12 @@ impl Dialog {
         }
         self.shown = shown;
         if !shown {
-            self.reveal = AnimatedScalar::new(0.0);
-            self.focus_animation = AnimatedScalar::new(0.0);
+            self.reveal = Reveal::new(0.0);
+            self.focus_animation = Progress::new(0.0);
             self.entrance_started = false;
             let mut focus = self.focus_state.borrow_mut();
             focus.shown = false;
-            focus.animation = AnimatedScalar::new(0.0);
+            focus.animation = Progress::new(0.0);
         }
         true
     }
@@ -377,13 +381,14 @@ impl Dialog {
         }
         self.entrance_started = true;
         let motion = self.resolved_theme().motion;
-        if self.reveal.set_target(
-            1.0,
-            ctx.current_time(),
-            motion.entrance_duration(),
-            motion.entrance_easing(),
-        ) {
-            ctx.request_animation_frame();
+        if let Some(until) = self
+            .reveal
+            .start(1.0, ctx.frame_time(), motion.entrance_spec())
+        {
+            ctx.track_motion(until, InvalidationKind::Effect);
+            if !self.modal {
+                ctx.track_motion(until, InvalidationKind::Transform);
+            }
         }
     }
 }
@@ -403,38 +408,6 @@ impl Widget for Dialog {
         }
 
         match event {
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let previous = self.reveal.value;
-                let animating = self.reveal.advance(*time);
-                if self.reveal.changed_since(previous) {
-                    ctx.request_effect();
-                    if !self.modal {
-                        ctx.request_transform();
-                    }
-                }
-                let previous_focus = self.focus_animation.value;
-                let was_focus_presented = self.focus_animation.is_presented();
-                let focus_animating = self.focus_animation.advance(*time);
-                if self.focus_animation.changed_since(previous_focus) {
-                    self.focus_state.borrow_mut().animation = self.focus_animation;
-                    request_child_invalidation(
-                        ctx,
-                        self.focus_surface.child().id(),
-                        InvalidationKind::Paint,
-                    );
-                }
-                if was_focus_presented != self.focus_animation.is_presented() {
-                    request_child_invalidation(
-                        ctx,
-                        self.focus_surface.child().id(),
-                        InvalidationKind::Visibility,
-                    );
-                }
-                if animating || focus_animating {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
-            }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary)
@@ -479,13 +452,13 @@ impl Widget for Dialog {
         if !self.shown {
             self.dialog_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
-            self.reveal = AnimatedScalar::new(0.0);
-            self.focus_animation = AnimatedScalar::new(0.0);
+            self.reveal = Reveal::new(0.0);
+            self.focus_animation = Progress::new(0.0);
             self.entrance_started = false;
             let mut focus = self.focus_state.borrow_mut();
             focus.shown = false;
             focus.frame = Rect::ZERO;
-            focus.animation = AnimatedScalar::new(0.0);
+            focus.animation = Progress::new(0.0);
             return Size::ZERO;
         }
         self.ensure_entrance_started(ctx);
@@ -786,17 +759,18 @@ impl Widget for Dialog {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        let reveal = self.reveal.at(frame_time);
         let translation = if self.modal {
             Vector::ZERO
         } else {
             Vector::new(
                 0.0,
                 self.resolved_theme().metrics.popover_reveal_offset
-                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value),
+                    * sui_runtime::motion_policy().entrance_offset(reveal),
             )
         };
-        LayerProperties::new(self.reveal.value, translation)
+        LayerProperties::new(reveal, translation)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -846,22 +820,12 @@ impl Widget for Dialog {
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
-        let was_presented = self.focus_animation.is_presented();
-        let theme = self.resolved_theme();
-        set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
+        let spec = self.resolved_theme().motion.focus_spec();
+        let focus_surface_id = self.focus_surface.child().id();
+        self.focus_animation
+            .animate_for(focused as u8 as f32, spec, ctx, focus_surface_id);
         self.focus_state.borrow_mut().animation = self.focus_animation;
-        request_child_invalidation(
-            ctx,
-            self.focus_surface.child().id(),
-            InvalidationKind::Paint,
-        );
-        if was_presented != self.focus_animation.is_presented() {
-            request_child_invalidation(
-                ctx,
-                self.focus_surface.child().id(),
-                InvalidationKind::Visibility,
-            );
-        }
+        request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
         ctx.request_semantics();
     }
 
@@ -1069,8 +1033,8 @@ pub struct SideSheet {
     pub(super) header_action_frame: Rect,
     pub(super) title_measurement: Option<TextMeasurement>,
     pub(super) description_measurement: Option<TextMeasurement>,
-    pub(super) reveal: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) reveal: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) entrance_started: bool,
     pub(super) focus_requested: bool,
     pub(super) previous_focus: Option<WidgetId>,
@@ -1101,8 +1065,8 @@ impl SideSheet {
             header_action_frame: Rect::ZERO,
             title_measurement: None,
             description_measurement: None,
-            reveal: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            reveal: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             entrance_started: false,
             focus_requested: false,
             previous_focus: None,
@@ -1144,8 +1108,8 @@ impl SideSheet {
         }
         self.shown = shown;
         if !self.shown {
-            self.reveal = AnimatedScalar::new(0.0);
-            self.focus_animation = AnimatedScalar::new(0.0);
+            self.reveal = Progress::new(0.0);
+            self.focus_animation = Progress::new(0.0);
             self.entrance_started = false;
             self.focus_requested = false;
             self.previous_focus = None;
@@ -1328,20 +1292,21 @@ impl SideSheet {
         }
         self.entrance_started = true;
         let motion = self.resolved_theme().motion;
-        let reveal_animating = self.reveal.set_target(
+        self.reveal.animate(
             1.0,
-            ctx.current_time(),
-            f64::from(motion.duration_slower),
-            motion.easing_decelerate,
+            AnimationSpec::tween(f64::from(motion.duration_slower), motion.easing_decelerate),
+            ctx,
         );
-        if reveal_animating || !self.focus_requested {
+        if !self.focus_requested {
+            // Focus moves into the sheet on the next frame, once it is laid
+            // out.
             ctx.request_animation_frame();
         }
     }
 
-    pub(super) fn reveal_offset(&self) -> Vector {
+    pub(super) fn reveal_offset(&self, clock: &impl FrameClock) -> Vector {
         // Reduced motion shows the sheet in place instead of sliding it in.
-        let hidden = sui_runtime::motion_policy().entrance_offset(self.reveal.value);
+        let hidden = sui_runtime::motion_policy().entrance_offset(self.reveal.get(clock));
         let horizontal_distance = self.sheet_frame.width() * hidden;
         let vertical_distance = self.sheet_frame.height() * hidden;
         match self.placement {
@@ -1351,9 +1316,9 @@ impl SideSheet {
         }
     }
 
-    pub(super) fn presented_sheet(&self, origin: Point) -> Rect {
+    pub(super) fn presented_sheet(&self, origin: Point, clock: &impl FrameClock) -> Rect {
         self.sheet_frame
-            .translate(origin.to_vector() + self.reveal_offset())
+            .translate(origin.to_vector() + self.reveal_offset(clock))
     }
 }
 
@@ -1373,27 +1338,15 @@ impl Widget for SideSheet {
             return;
         }
         match event {
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if !self.focus_requested {
-                    self.focus_requested = true;
-                    let current_focus = ctx.focused_widget_id();
-                    let focus_is_inside = current_focus.is_some_and(|focused| {
-                        focused == ctx.widget_id() || self.contains_widget(focused)
-                    });
-                    if !focus_is_inside {
-                        self.previous_focus = current_focus;
-                        ctx.request_focus();
-                    }
-                }
-                let previous = self.reveal.value;
-                let previous_focus = self.focus_animation.value;
-                if self.reveal.advance(*time) | self.focus_animation.advance(*time) {
-                    ctx.request_animation_frame();
-                }
-                if self.reveal.changed_since(previous)
-                    || self.focus_animation.changed_since(previous_focus)
-                {
-                    ctx.request_paint();
+            Event::Wake(WakeEvent::AnimationFrame { .. }) if !self.focus_requested => {
+                self.focus_requested = true;
+                let current_focus = ctx.focused_widget_id();
+                let focus_is_inside = current_focus.is_some_and(|focused| {
+                    focused == ctx.widget_id() || self.contains_widget(focused)
+                });
+                if !focus_is_inside {
+                    self.previous_focus = current_focus;
+                    ctx.request_focus();
                 }
                 ctx.set_handled();
             }
@@ -1410,7 +1363,7 @@ impl Widget for SideSheet {
                     && pointer.button == Some(PointerButton::Primary) =>
             {
                 if self
-                    .presented_sheet(ctx.bounds().origin)
+                    .presented_sheet(ctx.bounds().origin, ctx)
                     .contains(pointer.position)
                 {
                     ctx.request_focus();
@@ -1442,8 +1395,8 @@ impl Widget for SideSheet {
             self.sheet_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
             self.header_action_frame = Rect::ZERO;
-            self.reveal = AnimatedScalar::new(0.0);
-            self.focus_animation = AnimatedScalar::new(0.0);
+            self.reveal = Progress::new(0.0);
+            self.focus_animation = Progress::new(0.0);
             self.entrance_started = false;
             self.focus_requested = false;
             self.previous_focus = None;
@@ -1612,11 +1565,11 @@ impl Widget for SideSheet {
             let scrim = theme
                 .surfaces
                 .overlay_scrim
-                .with_alpha(theme.surfaces.overlay_scrim.alpha * self.reveal.value);
+                .with_alpha(theme.surfaces.overlay_scrim.alpha * self.reveal.get(ctx));
             ctx.fill_bounds(scrim);
         }
 
-        let reveal_offset = self.reveal_offset();
+        let reveal_offset = self.reveal_offset(ctx);
         ctx.push_transform(Transform::translation(reveal_offset.x, reveal_offset.y));
         let sheet = self.sheet_frame.translate(ctx.bounds().origin.to_vector());
         let metrics = theme.metrics;
@@ -1638,14 +1591,15 @@ impl Widget for SideSheet {
             }
         };
         ctx.fill_rect(border, theme.palette.border);
-        if self.focus_animation.value > AnimatedScalar::EPSILON {
+        let focus = self.focus_animation.get(ctx);
+        if focus > Progress::EPSILON {
             let inset = physical_pixels(ctx, theme.metrics.focus_ring_width) * 0.5;
             ctx.stroke(
                 rounded_rect_path(sheet.inflate(-inset, -inset), 0.0),
                 theme
                     .palette
                     .focus_ring
-                    .with_alpha(theme.palette.focus_ring.alpha * self.focus_animation.value),
+                    .with_alpha(theme.palette.focus_ring.alpha * focus),
                 StrokeStyle::new(physical_pixels(ctx, theme.metrics.focus_ring_width)),
             );
         }

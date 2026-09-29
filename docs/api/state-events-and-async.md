@@ -262,7 +262,8 @@ Each transition takes an `AnimationSpec`: either
 `SpringSpec` has a `duration` and a `bounce` (`SMOOTH`, `SNAPPY`, and `BOUNCY`
 are presets). Springs are solved exactly, so they follow the same path at any
 frame rate. `ThemeMotion` provides the theme's specs: `hover_spec()`,
-`press_spec()`, `focus_spec()`, `toggle_spec()`, `entrance_spec()`, and
+`press_spec()`, `focus_spec()`, `toggle_spec()`, `entrance_spec()`,
+`exit_spec()`, `layout_spec()` (content gliding to a new place), and
 `tab_switch_spec()`.
 
 Retargeting mid-flight keeps momentum: the new animation blends from the one
@@ -301,6 +302,68 @@ impl Widget for Highlight {
     }
 }
 ```
+
+### Delays and Stagger
+
+`ctx.animate_after(&mut motion, target, delay, spec)` and
+`progress.animate_after(target, delay, spec, ctx)` start a transition `delay`
+seconds from now; until then the value keeps doing what it was doing. Delays follow the motion policy's time scale, and are skipped when
+the policy makes the transition instant.
+
+`Stagger` computes delays that start a group one after another:
+`Stagger::new(0.035).delay(index, count)` gives each item its delay, counted
+from the first item, the last, the center, or any index (`from(origin)`), and
+`max_delay(seconds)` keeps a long list's cascade short by shrinking the
+interval. `ThemeMotion::stagger()` is the theme's cascade.
+
+```rust,no_run
+use sui::prelude::*;
+
+/// Dots that pop in one after another when pressed.
+struct Dots {
+    shown: Vec<Motion<f32>>,
+}
+
+impl Widget for Dots {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if matches!(event, Event::Pointer(pointer) if pointer.kind == sui::PointerEventKind::Down) {
+            let motion = DefaultTheme::default().motion;
+            let stagger = motion.stagger().from(StaggerOrigin::Center);
+            let count = self.shown.len();
+            for (index, dot) in self.shown.iter_mut().enumerate() {
+                dot.jump_to(0.0);
+                ctx.animate_after(dot, 1.0, stagger.delay(index, count), motion.entrance_spec());
+            }
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        for (index, dot) in self.shown.iter().enumerate() {
+            let center = Point::new(12.0 + index as f32 * 24.0, 12.0);
+            let radius = 8.0 * dot.get(ctx);
+            ctx.fill(
+                Path::rounded_rect(
+                    Rect::new(center.x - radius, center.y - radius, radius * 2.0, radius * 2.0),
+                    radius,
+                ),
+                Color::rgba(0.2, 0.45, 0.95, 1.0),
+            );
+        }
+    }
+}
+```
+
+### Timelines
+
+A `Timeline` holds keyframed clips and named markers; an `AnimationPlayer` (or
+the widget-side `TimelinePlayer`) plays it. `LoopMode::Once` stops at the end,
+`Repeat` starts over, and `PingPong` plays forward then backward.
+`PlaybackState::start_delay` waits before playing from the start, and
+`loop_delay` holds at each end before looping. Markers (`Timeline::with_marker`)
+name points in time; after each tick, `AnimationPlayer::passed_markers` and
+`TimelineTick::passed_markers` list the markers the playhead passed, in order
+and once per pass, so an app can start the next step of a sequence in time
+with the animation.
 
 ### Frame Timing
 

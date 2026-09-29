@@ -284,6 +284,14 @@ host/surface options. Use these only for explicit retained paint boundaries,
 compositor transforms/effects, or overlay ordering. Ordinary widgets should
 keep the defaults and emit normal scene commands.
 
+A container animating a child's layer can keep that layer updated with
+`ctx.track_motion_for(child_id, until, kind)`, and state that changes only
+when a motion ends, such as content that stops taking space once it has faded
+out, can ask for a single invalidation then with `ctx.track_motion_end(until,
+kind)`. `WidgetPod::set_inert(true)` keeps a child painted but takes its
+subtree out of hit testing, focus, and semantics, for content that is on its
+way out.
+
 `LayerProperties` presents a retained layer without repainting it: opacity,
 translation, and scale around an anchor (`with_scale`, `with_scale_anchor`,
 the anchor as a fraction of the layer's bounds). When they animate, override

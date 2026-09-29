@@ -5871,3 +5871,299 @@ fn motion_layer_properties_update_without_repainting() {
         "an effect-only motion does not repaint the widget"
     );
 }
+
+/// A focusable, pressable block.
+struct FocusBlock {
+    semantics_name: &'static str,
+}
+
+impl Widget for FocusBlock {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+        {
+            ctx.request_focus();
+            ctx.request_pointer_capture(pointer.pointer_id);
+            ctx.set_handled();
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(120.0, 40.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::WHITE);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
+        node.name = Some(self.semantics_name.to_string());
+        ctx.push(node);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+}
+
+/// A root whose one child turns inert when `inert` is set.
+struct InertingRoot {
+    inert: Signal<bool>,
+    child: SingleChild,
+}
+
+impl Widget for InertingRoot {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let inert = ctx.observe(&self.inert);
+        self.child.child_mut().set_inert(inert);
+        self.child
+            .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+        constraints.clamp(Size::new(320.0, 180.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(
+            ctx,
+            Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+#[test]
+fn inert_subtrees_drop_out_of_hit_testing_focus_and_semantics() {
+    let inert = Signal::new(false);
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(InertingRoot {
+            inert: inert.clone(),
+            child: SingleChild::new(FocusBlock {
+                semantics_name: "Leaving",
+            }),
+        }))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    runtime.render(window_id).unwrap();
+    press(&mut runtime, window_id);
+    runtime.render(window_id).unwrap();
+    let child = runtime.widget_graph(window_id).unwrap().nodes[1].id;
+    assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(child));
+
+    inert.set(true);
+    runtime.render(window_id).unwrap();
+    let graph = runtime.widget_graph(window_id).unwrap();
+    let node = graph.nodes.iter().find(|node| node.id == child).unwrap();
+    assert!(node.inert && !node.hit_test && !node.accepts_focus);
+    assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+    assert!(
+        runtime
+            .semantics(window_id)
+            .unwrap()
+            .iter()
+            .all(|node| node.name.as_deref() != Some("Leaving"))
+    );
+    // A press where the child still paints now reaches the root.
+    press(&mut runtime, window_id);
+    runtime.render(window_id).unwrap();
+    assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+
+    inert.set(false);
+    runtime.render(window_id).unwrap();
+    let graph = runtime.widget_graph(window_id).unwrap();
+    assert!(
+        !graph
+            .nodes
+            .iter()
+            .find(|node| node.id == child)
+            .unwrap()
+            .inert
+    );
+}
+
+/// Counts measures, and on a press asks to be measured once when a motion
+/// ending 0.3 seconds later does.
+struct MotionEndProbe {
+    measures: Rc<Cell<usize>>,
+}
+
+impl Widget for MotionEndProbe {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+        {
+            let until = ctx.current_time() + 0.3;
+            ctx.track_motion_end(until, InvalidationKind::Measure);
+            ctx.set_handled();
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measures.set(self.measures.get() + 1);
+        constraints.clamp(Size::new(120.0, 40.0))
+    }
+}
+
+#[test]
+fn a_motion_end_invalidates_once_when_the_motion_ends() {
+    let measures = Rc::new(Cell::new(0));
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(PaintingRoot {
+            child: SingleChild::new(MotionEndProbe {
+                measures: Rc::clone(&measures),
+            }),
+        }))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    runtime.render(window_id).unwrap();
+    press(&mut runtime, window_id);
+    runtime.render(window_id).unwrap();
+    let before = measures.get();
+
+    run_frame(&mut runtime, window_id, 0.1);
+    run_frame(&mut runtime, window_id, 0.2);
+    assert_eq!(measures.get(), before, "nothing to do before the end");
+    run_frame(&mut runtime, window_id, 0.31);
+    assert_eq!(measures.get(), before + 1);
+    run_frame(&mut runtime, window_id, 0.4);
+    assert_eq!(measures.get(), before + 1);
+    assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+}
+
+/// A parent that, on a press, starts fading a child that joins the widget
+/// graph only at its next layout.
+struct LateChildHost {
+    shown: bool,
+    fade: Rc<Cell<Motion<f32>>>,
+    child: SingleChild,
+}
+
+struct FadingChild {
+    fade: Rc<Cell<Motion<f32>>>,
+}
+
+impl Widget for FadingChild {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(120.0, 40.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::WHITE);
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        LayerProperties::default().with_opacity(self.fade.get().at(frame_time))
+    }
+}
+
+impl Widget for LateChildHost {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+        {
+            self.shown = true;
+            let mut fade = self.fade.get();
+            let spec = sui_animation::AnimationSpec::tween(0.2, sui_animation::Easing::Linear);
+            let until = fade
+                .start(1.0, ctx.current_time(), spec)
+                .expect("a fade starts");
+            self.fade.set(fade);
+            ctx.track_motion_for(self.child.child().id(), until, InvalidationKind::Effect);
+            ctx.request_measure();
+            ctx.set_handled();
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if self.shown {
+            self.child
+                .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+        }
+        constraints.clamp(Size::new(320.0, 180.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        if self.shown {
+            self.child.arrange(
+                ctx,
+                Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+            );
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::BLACK);
+        if self.shown {
+            self.child.paint(ctx);
+        }
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        if self.shown {
+            self.child.visit_children(visitor);
+        }
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        if self.shown {
+            self.child.visit_children_mut(visitor);
+        }
+    }
+}
+
+#[test]
+fn motion_started_for_a_widget_before_it_joins_the_graph_still_runs() {
+    let fade = Rc::new(Cell::new(Motion::new(0.0_f32)));
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(LateChildHost {
+            shown: false,
+            fade: Rc::clone(&fade),
+            child: SingleChild::new(FadingChild {
+                fade: Rc::clone(&fade),
+            }),
+        }))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    runtime.render(window_id).unwrap();
+    press(&mut runtime, window_id);
+    // An animation frame starts before the next layout adds the child.
+    runtime.tick(0.05);
+    let _ = runtime.drain_ready_events();
+    runtime.render(window_id).unwrap();
+
+    let midway = run_frame(&mut runtime, window_id, 0.1);
+    let mut opacities = Vec::new();
+    midway.frame.scene.visit_layers(&mut |layer| {
+        opacities.push(layer.descriptor.properties.opacity);
+    });
+    assert!(
+        opacities
+            .iter()
+            .any(|opacity| *opacity > 0.3 && *opacity < 0.7),
+        "the child's layer fades: {opacities:?}"
+    );
+}

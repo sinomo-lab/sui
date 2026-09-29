@@ -328,6 +328,46 @@ reconciles around it, focus, selection, editor state, and scroll position stay
 with the same child. Size changes currently snap; only origin movement is
 animated because it can use transform-only invalidation without re-painting.
 
+### Content That Comes and Goes
+
+`Presence` shows or hides one child and animates it in and out. By default it
+fades and grows from 96%; `PresenceTransition` sets the opacity, scale, and
+offset content enters from and leaves to, and the enter and exit specs. With
+`collapse`, the space the child takes grows and shrinks too, so the content
+around it moves smoothly instead of jumping:
+
+```rust
+let shown = Signal::named("details shown", false);
+let details = Presence::new(details)
+    .shown_from(shown.clone())
+    .collapse(Axis::Vertical);
+```
+
+A hidden child takes no space and stays retained, so it keeps its state for
+the next time it shows. `appear()` animates the child in when it is first laid
+out.
+
+`KeyedStack` keeps a row or column in step with a list of keyed items. Each
+item's widget is built once and kept while its key stays in the list; new
+items enter one after another, removed items leave while the gap they leave
+closes, and reordered items glide to their new places:
+
+```rust
+let tasks = Signal::named("tasks", vec![(1, "Draft".to_string())]);
+let list = KeyedStack::vertical(
+    tasks.clone(),
+    |(id, _)| *id,
+    |_, task| Label::dynamic(task.get().1, move || task.get().1),
+)
+.spacing(6.0);
+```
+
+`stagger`, `move_spec`, and `transition` tune the motion. Content that is
+leaving is inert from the moment it starts to leave: it stays on screen until
+its exit ends, but takes no clicks or focus and is gone from the accessibility
+tree. Under reduced motion content only fades; space opens at once on entry
+and closes after an exit.
+
 ## Split Pane State and Persistence
 
 `SplitView` accepts either fractional or pixel sizing through `SplitExtent`.

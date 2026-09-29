@@ -5750,6 +5750,85 @@ fn tab_bar_observable_selection_animates_without_redraw_polling() -> Result<(), 
 }
 
 #[test]
+fn closing_a_browser_tab_slides_the_next_tab_over() -> Result<(), String> {
+    let theme = DefaultTheme::default();
+    let exit = theme.motion.exit_spec().duration();
+    let tabs = Rc::new(RefCell::new(vec![
+        "One".to_string(),
+        "Two".to_string(),
+        "Three".to_string(),
+    ]));
+    let reader = Rc::clone(&tabs);
+    let writer = Rc::clone(&tabs);
+    let (mut runtime, window_id) = build_runtime(
+        BrowserTabBar::new("Documents")
+            .theme(theme)
+            .tabs_when(move || reader.borrow().clone())
+            .on_close(move |index, _| {
+                writer.borrow_mut().remove(index);
+            }),
+    );
+    let tab_x = |output: &RenderOutput, name: &str| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some(name))
+            .map(|node| node.bounds.x())
+    };
+    let initial = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let two_x = tab_x(&initial, "Two").expect("second tab");
+    let three_x = tab_x(&initial, "Three").expect("third tab");
+    let close = initial
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some("Close Two tab"))
+        .expect("close button for the second tab")
+        .bounds;
+    let center = Point::new(
+        close.x() + close.width() * 0.5,
+        close.y() + close.height() * 0.5,
+    );
+    for kind in [PointerEventKind::Down, PointerEventKind::Up] {
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(kind, center, kind == PointerEventKind::Down),
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    let start = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    assert!(tab_x(&start, "Two").is_none());
+    assert_eq!(tab_x(&start, "Three"), Some(three_x), "starts where it was");
+
+    runtime.tick(exit * 0.5);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
+    let midway = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let x = tab_x(&midway, "Three").expect("third tab");
+    assert!(x < three_x && x > two_x, "sliding over: {x}");
+
+    runtime.tick(exit + 0.01);
+    handle_ready_events(&mut runtime)?;
+    let settled = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    assert_eq!(tab_x(&settled, "Three"), Some(two_x));
+    assert_eq!(
+        runtime
+            .next_wakeup_time(window_id)
+            .map_err(|error| error.to_string())?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
 fn browser_tab_bar_semantics_ids_are_javascript_safe_and_distinct() {
     let parent = WidgetId::new(17);
     let mut ids = BTreeSet::new();
@@ -6119,7 +6198,7 @@ fn menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -6129,7 +6208,7 @@ fn menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -6143,7 +6222,7 @@ fn menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration + press_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -6153,7 +6232,7 @@ fn menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration + press_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7319,7 +7398,7 @@ fn context_menu_entrance_uses_theme_motion_layer_properties() -> Result<(), Stri
     );
 
     runtime.tick(duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7356,7 +7435,7 @@ fn context_menu_entrance_uses_theme_motion_layer_properties() -> Result<(), Stri
     );
 
     runtime.tick(duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7427,7 +7506,7 @@ fn context_menu_focus_ring_uses_non_hit_test_retained_layer() -> Result<(), Stri
         .expect("context menu focus layer owner present");
 
     runtime.tick(focus_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_focus = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7451,7 +7530,7 @@ fn context_menu_focus_ring_uses_non_hit_test_retained_layer() -> Result<(), Stri
     );
 
     runtime.tick(focus_duration + 0.01);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_focus = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7518,7 +7597,7 @@ fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7528,7 +7607,7 @@ fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7542,7 +7621,7 @@ fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration + press_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7552,7 +7631,7 @@ fn context_menu_row_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration + press_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -7966,6 +8045,82 @@ fn tooltip_text_preserves_tall_measurement_in_padded_bubble() -> Result<(), Stri
 }
 
 #[test]
+fn tooltip_fades_out_before_leaving_the_overlay_stack() -> Result<(), String> {
+    let theme = DefaultTheme::default();
+    let duration = theme.motion.entrance_duration();
+    let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+        16.0,
+        crate::Tooltip::new(
+            "Quick access to common commands",
+            crate::Button::new("Hover for shortcuts").min_width(180.0),
+        )
+        .theme(theme),
+    ));
+    let initial = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let trigger = initial
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some("Hover for shortcuts")
+        })
+        .expect("tooltip trigger semantics present")
+        .bounds;
+    let inside = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+    runtime
+        .handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, inside, false),
+        )
+        .map_err(|error| error.to_string())?;
+    runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    runtime.tick(duration + 0.01);
+    handle_ready_events(&mut runtime)?;
+    let shown = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        overlay_layer_descriptor(&shown).map(|layer| layer.properties.opacity),
+        Some(1.0)
+    );
+
+    runtime
+        .handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(1.0, 1.0), false),
+        )
+        .map_err(|error| error.to_string())?;
+    runtime.tick(duration + 0.01 + duration * 0.5);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
+    let fading = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let opacity = overlay_layer_descriptor(&fading)
+        .expect("the bubble stays while it fades out")
+        .properties
+        .opacity;
+    assert!(opacity > 0.0 && opacity < 1.0, "fading out: {opacity}");
+
+    runtime.tick(duration * 2.0 + 0.05);
+    handle_ready_events(&mut runtime)?;
+    let gone = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    assert!(overlay_layer_descriptor(&gone).is_none());
+    assert_eq!(
+        runtime
+            .next_wakeup_time(window_id)
+            .map_err(|error| error.to_string())?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
 fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<(), String> {
     let theme = DefaultTheme::default();
     let entrance_duration = theme.motion.entrance_duration();
@@ -8022,7 +8177,7 @@ fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<
     assert_eq!(start_descriptor.properties.opacity, 0.0);
 
     runtime.tick(entrance_duration * 0.5);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8043,7 +8198,7 @@ fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<
     );
 
     runtime.tick(entrance_duration);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8130,7 +8285,7 @@ fn tooltip_fades_in_place_under_reduced_motion() -> Result<(), String> {
     assert_eq!(start_descriptor.properties.translation.y, 0.0);
 
     runtime.tick(entrance_duration * 0.5);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8216,7 +8371,7 @@ fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(
     );
 
     runtime.tick(entrance_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8240,7 +8395,7 @@ fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(
     );
 
     runtime.tick(entrance_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8367,7 +8522,7 @@ fn popover_focus_ring_animates_without_repainting_retained_content() -> Result<(
     assert_eq!(content.borrow().paint, 1);
 
     runtime.tick(focus_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_focus = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8382,7 +8537,7 @@ fn popover_focus_ring_animates_without_repainting_retained_content() -> Result<(
     );
 
     runtime.tick(entrance_duration.max(focus_duration) + 0.01);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_focus = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8424,7 +8579,7 @@ fn popover_arrival_effect_obeys_hdr_theme_mode() {
     disabled.open = true;
     {
         let mut state = disabled.state.borrow_mut();
-        state.reveal = super::AnimatedScalar::new(1.0);
+        state.reveal.jump_to(1.0);
         state.arrival_active = true;
     }
     let disabled_visuals = disabled.state.borrow().resolved_visuals();
@@ -8473,7 +8628,7 @@ fn popover_arrival_effect_obeys_hdr_theme_mode() {
     hdr.open = true;
     {
         let mut state = hdr.state.borrow_mut();
-        state.reveal = super::AnimatedScalar::new(1.0);
+        state.reveal.jump_to(1.0);
         state.arrival_active = true;
     }
     let hdr_visuals = hdr.state.borrow().resolved_visuals();
@@ -8675,7 +8830,7 @@ fn modal_dialog_entrance_uses_theme_motion_effect_layer_properties() -> Result<(
     );
 
     runtime.tick(duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8686,7 +8841,7 @@ fn modal_dialog_entrance_uses_theme_motion_effect_layer_properties() -> Result<(
     assert_eq!(mid_descriptor.properties.translation, Vector::ZERO);
 
     runtime.tick(duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8730,7 +8885,7 @@ fn dialog_entrance_animates_without_repainting_retained_body() -> Result<(), Str
     assert_eq!(body.borrow().paint, 1);
 
     runtime.tick(entrance_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8745,7 +8900,7 @@ fn dialog_entrance_animates_without_repainting_retained_body() -> Result<(), Str
     );
 
     runtime.tick(entrance_duration + 0.01);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;

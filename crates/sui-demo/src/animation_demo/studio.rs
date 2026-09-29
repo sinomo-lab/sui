@@ -26,7 +26,9 @@ pub(crate) const STUDIO_RESTART_LABEL: &str = "Restart";
 pub(crate) const STUDIO_COPY_LABEL: &str = "Copy document";
 pub(crate) const STUDIO_ADD_LABEL: &str = "Add keyframe";
 pub(crate) const STUDIO_REMOVE_LABEL: &str = "Remove keyframe";
-const STUDIO_LOOP_LABEL: &str = "Loop";
+pub(crate) const STUDIO_LOOP_NAME: &str = "Playback loop";
+pub(crate) const STUDIO_MARKER_LABEL: &str = "Add marker";
+const STUDIO_HOLD_NAME: &str = "Hold at ends";
 const STUDIO_EASING_NAME: &str = "Keyframe easing";
 const STUDIO_SNAP_NAME: &str = "Timeline snapping";
 
@@ -49,6 +51,17 @@ const FREE_NUDGE: f64 = 0.05;
 /// Vertical range of the curve editor, room for handles past the ends.
 const CURVE_MIN: f32 = -0.35;
 const CURVE_MAX: f32 = 1.35;
+
+/// Loop modes in the loop control, in segment order.
+const LOOP_CHOICES: [(LoopMode, &str); 3] = [
+    (LoopMode::Once, "Once"),
+    (LoopMode::Repeat, "Repeat"),
+    (LoopMode::PingPong, "Ping-pong"),
+];
+
+/// How long playback holds at each end before looping, in menu order.
+const HOLD_CHOICES: [(f64, &str); 3] =
+    [(0.0, "No hold"), (0.25, "Hold 0.25 s"), (0.5, "Hold 0.5 s")];
 
 /// Easing choices in the easing menu, followed by "Custom" for any other
 /// curve.
@@ -134,47 +147,50 @@ fn studio_timeline() -> Timeline {
     let green = AnimationValue::Color(Color::rgba(0.10, 0.72, 0.50, 1.0));
     let standard = EASING_PRESETS[4].1;
     let emphasized = EASING_PRESETS[5].1;
-    Timeline::new(DURATION).with_clip(
-        Clip::new("studio", 0.0, DURATION)
-            .with_track(
-                track(AnimationProperty::LayerTranslation).with_keyframes([
-                    Keyframe::new(0.0, AnimationValue::Vector(Vector::new(-TRAVEL, 0.0)))
-                        .with_easing(emphasized),
-                    Keyframe::new(1.0, AnimationValue::Vector(Vector::new(TRAVEL, 0.0)))
-                        .with_easing(emphasized),
-                    Keyframe::new(2.0, AnimationValue::Vector(Vector::new(-TRAVEL, 0.0))),
-                ]),
-            )
-            .with_track(track(AnimationProperty::LayerOpacity).with_keyframes([
-                Keyframe::new(0.0, AnimationValue::Scalar(0.45)).with_easing(Easing::EaseInOut),
-                Keyframe::new(1.0, AnimationValue::Scalar(1.0)).with_easing(Easing::EaseInOut),
-                Keyframe::new(2.0, AnimationValue::Scalar(0.45)),
-            ]))
-            .with_track(track(AnimationProperty::FillColor).with_keyframes([
-                Keyframe::new(0.0, blue).with_easing(standard),
-                Keyframe::new(1.0, green).with_easing(standard),
-                Keyframe::new(2.0, blue),
-            ]))
-            .with_track(
-                track(AnimationProperty::Custom(AnimationPropertyPath::new(
-                    RADIUS_PATH,
-                )))
-                .with_keyframes([
-                    Keyframe::new(0.0, AnimationValue::Scalar(8.0)).with_easing(standard),
-                    Keyframe::new(1.0, AnimationValue::Scalar(24.0)).with_easing(standard),
-                    Keyframe::new(2.0, AnimationValue::Scalar(8.0)),
-                ]),
-            )
-            .with_track(
-                track(AnimationProperty::Bounds).with_keyframes([
-                    Keyframe::new(0.0, AnimationValue::Rect(Rect::new(0.0, 0.0, 64.0, 40.0)))
-                        .with_easing(Easing::EaseInOut),
-                    Keyframe::new(1.0, AnimationValue::Rect(Rect::new(0.0, 0.0, 104.0, 56.0)))
-                        .with_easing(Easing::EaseInOut),
-                    Keyframe::new(2.0, AnimationValue::Rect(Rect::new(0.0, 0.0, 64.0, 40.0))),
-                ]),
-            ),
-    )
+    Timeline::new(DURATION)
+        .with_marker("Arrive", 1.0)
+        .with_marker("Home", DURATION)
+        .with_clip(
+            Clip::new("studio", 0.0, DURATION)
+                .with_track(
+                    track(AnimationProperty::LayerTranslation).with_keyframes([
+                        Keyframe::new(0.0, AnimationValue::Vector(Vector::new(-TRAVEL, 0.0)))
+                            .with_easing(emphasized),
+                        Keyframe::new(1.0, AnimationValue::Vector(Vector::new(TRAVEL, 0.0)))
+                            .with_easing(emphasized),
+                        Keyframe::new(2.0, AnimationValue::Vector(Vector::new(-TRAVEL, 0.0))),
+                    ]),
+                )
+                .with_track(track(AnimationProperty::LayerOpacity).with_keyframes([
+                    Keyframe::new(0.0, AnimationValue::Scalar(0.45)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(1.0, AnimationValue::Scalar(1.0)).with_easing(Easing::EaseInOut),
+                    Keyframe::new(2.0, AnimationValue::Scalar(0.45)),
+                ]))
+                .with_track(track(AnimationProperty::FillColor).with_keyframes([
+                    Keyframe::new(0.0, blue).with_easing(standard),
+                    Keyframe::new(1.0, green).with_easing(standard),
+                    Keyframe::new(2.0, blue),
+                ]))
+                .with_track(
+                    track(AnimationProperty::Custom(AnimationPropertyPath::new(
+                        RADIUS_PATH,
+                    )))
+                    .with_keyframes([
+                        Keyframe::new(0.0, AnimationValue::Scalar(8.0)).with_easing(standard),
+                        Keyframe::new(1.0, AnimationValue::Scalar(24.0)).with_easing(standard),
+                        Keyframe::new(2.0, AnimationValue::Scalar(8.0)),
+                    ]),
+                )
+                .with_track(
+                    track(AnimationProperty::Bounds).with_keyframes([
+                        Keyframe::new(0.0, AnimationValue::Rect(Rect::new(0.0, 0.0, 64.0, 40.0)))
+                            .with_easing(Easing::EaseInOut),
+                        Keyframe::new(1.0, AnimationValue::Rect(Rect::new(0.0, 0.0, 104.0, 56.0)))
+                            .with_easing(Easing::EaseInOut),
+                        Keyframe::new(2.0, AnimationValue::Rect(Rect::new(0.0, 0.0, 64.0, 40.0))),
+                    ]),
+                ),
+        )
 }
 
 /// The control points of `easing` as a cubic bezier, so any curve can be
@@ -204,6 +220,8 @@ struct StudioInner {
     player: TimelinePlayer,
     preview: Preview,
     status: String,
+    /// The marker the playhead passed last.
+    last_marker: Option<String>,
 }
 
 impl StudioInner {
@@ -265,6 +283,7 @@ impl StudioState {
             player,
             preview: Preview::default(),
             status: String::new(),
+            last_marker: None,
         };
         inner.resample();
         Self {
@@ -319,19 +338,54 @@ impl StudioState {
         inner.resample();
     }
 
-    #[cfg(test)]
-    pub(super) fn looping(&self) -> bool {
-        self.inner.borrow().player.playback().loop_mode == LoopMode::Repeat
+    pub(super) fn loop_mode(&self) -> LoopMode {
+        self.inner.borrow().player.playback().loop_mode
     }
 
-    pub(super) fn set_looping(&self, looping: bool) {
+    pub(super) fn set_loop_mode(&self, loop_mode: LoopMode) {
         let mut inner = self.inner.borrow_mut();
-        inner.player.playback_mut().loop_mode = if looping {
-            LoopMode::Repeat
-        } else {
-            LoopMode::Once
-        };
+        inner.player.playback_mut().loop_mode = loop_mode;
         inner.resample();
+    }
+
+    pub(super) fn loop_delay(&self) -> f64 {
+        self.inner.borrow().player.playback().loop_delay
+    }
+
+    pub(super) fn set_loop_delay(&self, delay: f64) {
+        let mut inner = self.inner.borrow_mut();
+        inner.player.playback_mut().loop_delay = delay;
+        inner.resample();
+    }
+
+    /// The marker the playhead passed last.
+    #[cfg(test)]
+    pub(super) fn last_marker(&self) -> Option<String> {
+        self.inner.borrow().last_marker.clone()
+    }
+
+    /// Add a marker at the playhead.
+    pub(super) fn add_marker(&self) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let time = inner.player.playback().playhead;
+        let name = format!(
+            "Marker {}",
+            inner.editor.document.timeline.markers.len() + 1
+        );
+        inner.apply(AnimationEditorCommand::AddMarker { name, time })
+    }
+
+    /// The timeline's markers, as edited.
+    pub(super) fn markers(&self) -> Vec<(String, f64)> {
+        self.inner
+            .borrow()
+            .editor
+            .document
+            .timeline
+            .markers
+            .iter()
+            .map(|marker| (marker.name.clone(), marker.time))
+            .collect()
     }
 
     pub(super) fn seek(&self, time: f64) {
@@ -348,7 +402,11 @@ impl StudioState {
         if !inner.player.playback().playing {
             return false;
         }
-        let playing = inner.player.tick(delta, &mut inner.preview).should_continue;
+        let tick = inner.player.tick(delta, &mut inner.preview);
+        let playing = tick.should_continue;
+        if let Some(marker) = tick.passed_markers.last() {
+            inner.last_marker = Some(marker.name.clone());
+        }
         inner.editor.playback = inner.player.playback();
         playing
     }
@@ -568,6 +626,11 @@ impl StudioState {
             inner.editor.undo_len(),
             inner.editor.redo_len()
         );
+        let markers = inner.editor.document.timeline.markers.len();
+        summary.push_str(&format!(" · {markers} markers"));
+        if let Some(marker) = &inner.last_marker {
+            summary.push_str(&format!(" · passed {marker}"));
+        }
         if !inner.status.is_empty() {
             summary.push_str(" · ");
             summary.push_str(&inner.status);
@@ -592,7 +655,11 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
     let pause = state.clone();
     let pause_enabled = state.clone();
     let restart = state.clone();
-    let looping = state.clone();
+    let loop_choice = state.clone();
+    let loop_change = state.clone();
+    let hold_choice = state.clone();
+    let hold_change = state.clone();
+    let marker = state.clone();
     let add = state.clone();
     let remove = state.clone();
     let remove_enabled = state.clone();
@@ -646,10 +713,34 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
                         }),
                 )
                 .with_child(
-                    Switch::new(STUDIO_LOOP_LABEL)
-                        .on(true)
+                    SegmentedControl::new(STUDIO_LOOP_NAME)
+                        .segments(LOOP_CHOICES.map(|(_, label)| label))
+                        .selected_when(move || {
+                            LOOP_CHOICES
+                                .iter()
+                                .position(|(mode, _)| *mode == loop_choice.loop_mode())
+                        })
                         .theme_when(theme())
-                        .on_toggle(move |on| looping.set_looping(on)),
+                        .on_change_with_ctx(move |index, _, ctx| {
+                            loop_change.set_loop_mode(LOOP_CHOICES[index].0);
+                            refresh_page(ctx);
+                        }),
+                )
+                .with_item(
+                    Select::new(STUDIO_HOLD_NAME)
+                        .options(HOLD_CHOICES.map(|(_, label)| label))
+                        .selected_when(move || {
+                            let delay = hold_choice.loop_delay();
+                            HOLD_CHOICES
+                                .iter()
+                                .position(|(hold, _)| (hold - delay).abs() < 1e-9)
+                        })
+                        .theme_when(theme())
+                        .on_change_with_ctx(move |ctx, index, _| {
+                            hold_change.set_loop_delay(HOLD_CHOICES[index].0);
+                            refresh_page(ctx);
+                        }),
+                    FlexItem::fixed(140.0),
                 )
                 .with_child(SizedBox::new().width(12.0))
                 .with_child(
@@ -658,6 +749,14 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
                         .theme_when(theme())
                         .on_press_with_ctx(move |ctx| {
                             add.add_keyframe();
+                            refresh_page(ctx);
+                        }),
+                )
+                .with_child(
+                    Button::new(STUDIO_MARKER_LABEL)
+                        .theme_when(theme())
+                        .on_press_with_ctx(move |ctx| {
+                            marker.add_marker();
                             refresh_page(ctx);
                         }),
                 )
@@ -1151,6 +1250,33 @@ impl StudioEditor {
                     },
                 );
             }
+        }
+
+        // Markers: a flag on the ruler, named, with a faint line down the
+        // lanes.
+        for (name, time) in self.state.markers() {
+            let x = layout.time_x(time);
+            let bottom = layout.lane(clip.tracks.len().saturating_sub(1)).max_y();
+            hairline(
+                ctx,
+                Point::new(x, ruler.max_y()),
+                Point::new(x, bottom),
+                palette.warning.with_alpha(0.45),
+            );
+            let mut flag = Path::builder();
+            flag.move_to(Point::new(x, ruler.y() + 12.0))
+                .line_to(Point::new(x + 7.0, ruler.y() + 16.0))
+                .line_to(Point::new(x, ruler.y() + 20.0))
+                .close();
+            ctx.fill(flag.build(), palette.warning);
+            draw_text(
+                ctx,
+                theme,
+                Rect::new(x - 72.0, ruler.y() + 10.0, 68.0, 16.0),
+                &name,
+                DemoTextRole::Metadata,
+                palette.text_muted,
+            );
         }
 
         // Playhead across the ruler and lanes.

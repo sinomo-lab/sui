@@ -2637,6 +2637,23 @@ pub fn js_safe_area(
     )))
 }
 
+#[napi(js_name = "Presence")]
+pub fn js_presence(
+    child: &JsWidget,
+    shown: Option<JsBindingBoolArg>,
+    collapse: Option<bool>,
+    appear: Option<bool>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::presence(
+        child.binding_widget()?,
+        shown
+            .map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(true)),
+        collapse.unwrap_or(false),
+        appear.unwrap_or(false),
+    )))
+}
+
 #[napi(js_name = "LayoutTransition")]
 pub fn js_layout_transition(
     child: &JsWidget,

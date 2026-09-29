@@ -384,6 +384,7 @@ export class AnimatedValue {
   setDuration(seconds: number): void;
   setEasing(easing: string): void;
   setTarget(target: AnimationValue): void;
+  setTargetAfter(target: AnimationValue, delay: number): void;
   jumpTo(value: AnimationValue): void;
   tick(deltaSeconds: number): boolean;
   readonly value: AnimationValue;
@@ -429,12 +430,30 @@ export class AnimationSample {
   readonly value: AnimationValue;
 }
 
+export class AnimationMarker {
+  readonly name: string;
+  readonly time: number;
+}
+
+export interface StaggerOptions {
+  origin?: "first" | "last" | "center" | string;
+  maxDelay?: number;
+}
+
+export class Stagger {
+  constructor(interval: number, options?: StaggerOptions);
+  delay(index: number, count: number): number;
+  readonly interval: number;
+}
+
 export class AnimationTimeline {
   constructor(duration: number);
   addClip(clip: AnimationClip): void;
+  addMarker(name: string, time: number): void;
   sample(time: number): AnimationSample[];
   readonly duration: number;
   readonly clipCount: number;
+  readonly markers: AnimationMarker[];
 }
 
 export class AnimationPlayer {
@@ -444,11 +463,16 @@ export class AnimationPlayer {
   stop(): void;
   seek(time: number): void;
   setRepeat(repeat: boolean): void;
+  setLoopMode(mode: "once" | "repeat" | "ping-pong"): void;
+  setStartDelay(seconds: number): void;
+  setLoopDelay(seconds: number): void;
   setPlaybackRate(rate: number): void;
   sample(): AnimationSample[];
   tick(deltaSeconds: number): AnimationSample[];
   readonly playhead: number;
   readonly isPlaying: boolean;
+  readonly loopMode: "once" | "repeat" | "ping-pong";
+  readonly passedMarkers: AnimationMarker[];
 }
 
 export class AnimationDocument {
@@ -474,6 +498,10 @@ export class AnimationEditor {
     easing: string
   ): boolean;
   removeKeyframe(clipIndex: number, trackIndex: number, keyframeIndex: number): boolean;
+  addMarker(name: string, time: number): boolean;
+  moveMarker(index: number, time: number): boolean;
+  renameMarker(index: number, name: string): boolean;
+  removeMarker(index: number): boolean;
   undo(): boolean;
   redo(): boolean;
   readonly canUndo: boolean;
@@ -1356,6 +1384,16 @@ export interface SafeAreaOptions {
 }
 
 export function safeArea(child: Widget, options?: SafeAreaOptions): Widget;
+
+export function Presence(child: Widget, shown?: State | boolean | number, collapse?: boolean, appear?: boolean): Widget;
+
+export interface PresenceOptions {
+  shown?: State | boolean | number;
+  collapse?: boolean;
+  appear?: boolean;
+}
+
+export function presence(child: Widget, options?: PresenceOptions): Widget;
 
 export function LayoutTransition(child: Widget, duration?: number, easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out"): Widget;
 

@@ -344,6 +344,10 @@ impl BindingWidget {
             | BindingWidgetKind::Tooltip { child, .. } => {
                 child.bind_ui_handle(handle);
             }
+            BindingWidgetKind::Presence { child, shown, .. } => {
+                shown.bind_ui_handle(handle);
+                child.bind_ui_handle(handle);
+            }
             BindingWidgetKind::DockWorkspace { panels, .. } => {
                 for panel in panels {
                     panel.child.bind_ui_handle(handle);

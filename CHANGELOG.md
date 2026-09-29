@@ -150,8 +150,8 @@ Versioning, with the usual expectation that the API may change during the
   and table rows, color swatches and palettes, scroll bars and views, split
   views, canvases, text surfaces, reorderable lists, and `LayoutTransition`
   now use runtime-driven motion, removing 36 of the 47 animation-frame
-  handlers in built-in widgets. Tooltips, popovers, menus, dialogs, the select
-  menu, and the node editor still advance their own frames.
+  handlers in built-in widgets. (Tooltips, popovers, menus, context menus,
+  dialogs, side sheets, and the select menu followed; see Choreography below.)
 - On displays that present with vsync, animation frames now follow the
   display: the platform starts one frame per refresh and stamps it with the
   time the frame is expected on screen, on a steady cadence of whole refresh
@@ -166,6 +166,71 @@ Versioning, with the usual expectation that the API may change during the
   lists now grow from 96% at the edge next to their trigger as they appear;
   reduced motion shows them at full size. Constructing `LayerProperties` with
   a struct literal now needs `..LayerProperties::default()`.
+
+### Choreography
+
+- Added `Presence`, which shows or hides one child and animates it in and
+  out: it fades and grows from 96% by default (`PresenceTransition` sets the
+  opacity, scale, offset, and enter and exit specs), and with `collapse` the
+  space it takes grows and shrinks too, so neighbors move smoothly. Drive it
+  with `shown_from(observable)` or `shown_when(closure)`; `appear()` animates
+  the child in on first layout. A hidden child stays retained and takes no
+  space. Reduced motion only fades: space opens at once on entry and closes
+  after an exit.
+- Added `KeyedStack`, a row or column kept in step with a list of keyed items
+  from an observable. Each item's widget is built once and updated through a
+  `Signal`; new items enter one after another (`stagger`), removed items leave
+  while the gap they leave closes, reordered items glide to their new places
+  (`move_spec`), and an item added back while it is leaving turns around.
+- Content that is leaving is inert: `WidgetPod::set_inert` keeps a subtree
+  painted but takes it out of hit testing, focus, and the accessibility tree,
+  and releases focus, pointer capture, and drags inside it. The widget graph
+  reports it as `WidgetNodeSnapshot::inert`.
+- Transitions can start after a delay: `ctx.animate_after(&mut motion,
+  target, delay, spec)`, `Motion::start_after`, and
+  `MotionValue::animate_to_after`. Delays follow the motion policy's time
+  scale and are skipped when motion is off. `Stagger` (with `StaggerOrigin`
+  first, last, center, or an index, and an optional `max_delay`) computes the
+  delays for a group; `ThemeMotion::stagger` is the theme's cascade.
+- `ThemeMotion` gains `exit_spec` (content leaving) and `layout_spec`
+  (content gliding to a new place).
+- Added `ctx.track_motion_for` to keep another widget's layer updated while it
+  animates, and `ctx.track_motion_end` / `track_motion_end_for` to invalidate a
+  widget once when a motion ends, such as a surface that stops taking space
+  once it has faded out. Motion started for a widget that joins the widget
+  graph at the next layout, such as a surface that is opening, now runs
+  instead of being dropped by an animation frame that starts first.
+- Tooltips, popovers, menus, context menus, dialogs, side sheets, and the
+  select menu now use runtime-driven motion; no built-in widget advances its
+  own animation from frames except the node editor's viewport and edge
+  animations. A hiding tooltip or popover keeps its surface until it has
+  faded out.
+- Notifications slide in, fade out when dismissed or expired, and the rest
+  glide into place. Closing a browser tab fades its label while its space
+  collapses and the tabs after it slide over.
+- Timelines: `LoopMode::PingPong` plays forward, then backward. Players can
+  wait before starting (`PlaybackState::start_delay`) and hold at each end
+  before looping (`loop_delay`). Timelines carry named `TimelineMarker`s;
+  players report the markers the playhead passes each tick
+  (`AnimationPlayer::passed_markers`, `TimelineTick::passed_markers`), once
+  per pass and in order, including across loops. `PlaybackState::tick_spans`
+  reports the stretches of timeline a tick covered, and the animation editor
+  adds, moves, renames, and removes markers with undo. Animation documents are
+  now version 2, which adds `marker` lines; version 1 documents still parse.
+  `PlaybackState` gained fields, so struct literals need
+  `..PlaybackState::default()`, and `stop()` now also resets a reversed
+  playback rate.
+- The JS and Python bindings add `Presence`, `Stagger`, `AnimationMarker`,
+  `AnimationTimeline.addMarker`/`add_marker` and `markers`, player loop modes
+  (`setLoopMode("ping-pong")`), start and loop delays, `passedMarkers`,
+  marker editing on `AnimationEditor`, and `AnimatedValue.setTargetAfter`.
+  `KeyedStack` is Rust-only for now.
+- Widgets built by the bindings now keep their own layers, overlay behavior,
+  intrinsic sizes, and commands: the binding wrapper forwarded only events,
+  layout, paint, and semantics, so `LayoutTransition` never animated and
+  overlays lost their dismissal and focus policy in JS and Python apps.
+- The `sui` facade now exports `LayerProperties` and `LayerCompositionMode`,
+  which custom widgets need to present retained layers.
 
 ### Redesigned animation demo
 
@@ -187,6 +252,12 @@ Versioning, with the usual expectation that the API may change during the
 - Under the hood: a retained layer and a repainted chip move side by side with
   counts of frames, repaints, and layer moves, next to a graph of animation
   frame intervals.
+- Choreography: a keyed task list that adds, removes, and shuffles with
+  animation; a row of bars that cascades from the first, center, or last bar;
+  a switch that shows and hides a panel with `Presence`; and closable tabs and
+  notifications. The timeline studio plays once, repeats, or ping-pongs, can
+  hold at each end, and shows its markers on the ruler, reporting the last one
+  it passed.
 
 ### Redesigned theme editor demo
 

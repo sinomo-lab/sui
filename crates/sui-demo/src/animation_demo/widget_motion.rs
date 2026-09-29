@@ -12,7 +12,7 @@ use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text
 const CARD_WIDTH: f32 = 280.0;
 
 /// What a card says about its motion, from the live theme.
-type TokenLine = fn(&DefaultTheme) -> String;
+pub(super) type TokenLine = fn(&DefaultTheme) -> String;
 
 pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
     let theme = || clone_dev_theme_reader(&theme_reader);
@@ -210,7 +210,7 @@ where
     RebuildOnChange::new(move || key(), move |theme| build(*theme))
 }
 
-fn card<W>(
+pub(super) fn card<W>(
     theme_reader: &DevThemeReader,
     title: &str,
     token_line: TokenLine,

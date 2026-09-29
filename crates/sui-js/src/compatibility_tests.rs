@@ -97,7 +97,16 @@ fn high_level_app_renders_extended_compatibility_signature() {
         ),
         (
             "CommandPalette",
-            BindingWidget::command_palette("commands", child(), None, true, None, None),
+            // A shown palette is modal: only what is inside it stays in the
+            // accessibility tree.
+            BindingWidget::command_palette(
+                "commands",
+                BindingWidget::label("CommandPalette"),
+                None,
+                true,
+                None,
+                None,
+            ),
         ),
         (
             "PasswordInput",

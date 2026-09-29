@@ -47,6 +47,7 @@ rust-widget Grid bound Grid
 rust-widget Icon bound Icon
 rust-widget IconButton bound IconButton
 rust-widget Image bound Image
+rust-widget KeyedStack rust-only
 rust-widget Label bound Label
 rust-widget LayerList bound LayerList
 rust-widget LayoutTransition bound LayoutTransition
@@ -64,6 +65,7 @@ rust-widget PasswordInput manual-wrapper PasswordInput
 rust-widget PixelCanvas manual-wrapper PixelCanvas
 rust-widget PlacementBadge bound PlacementBadge
 rust-widget Popover bound Popover
+rust-widget Presence bound Presence
 rust-widget PresetStrip bound PresetStrip
 rust-widget ProgressBar bound ProgressBar
 rust-widget PropertyRow bound PropertyRow
@@ -573,6 +575,16 @@ layout SafeArea
   js function js_safe_area
   api function SafeArea(child: Widget, edges?: string, minimumLeft?: number, minimumTop?: number, minimumRight?: number, minimumBottom?: number): Widget;
   docs SafeArea
+  compat
+end
+
+layout Presence
+  core_kind Presence
+  core_constructor presence
+  python function py_presence
+  js function js_presence
+  api function Presence(child: Widget, shown?: State | boolean | number, collapse?: boolean, appear?: boolean): Widget;
+  docs Presence
   compat
 end
 

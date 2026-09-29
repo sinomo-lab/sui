@@ -354,6 +354,18 @@ impl fmt::Debug for BindingWidget {
                 .field("duration", duration)
                 .field("child", child)
                 .finish(),
+            BindingWidgetKind::Presence {
+                child,
+                shown,
+                collapse,
+                appear,
+            } => f
+                .debug_struct("BindingWidget::Presence")
+                .field("shown", shown)
+                .field("collapse", collapse)
+                .field("appear", appear)
+                .field("child", child)
+                .finish(),
             BindingWidgetKind::AdaptiveView { compact, .. } => f
                 .debug_struct("BindingWidget::AdaptiveView")
                 .field("compact", compact)
@@ -1017,6 +1029,12 @@ pub(crate) enum BindingWidgetKind {
         child: BindingWidget,
         duration: f64,
         easing: Easing,
+    },
+    Presence {
+        child: BindingWidget,
+        shown: BindingBool,
+        collapse: bool,
+        appear: bool,
     },
     AdaptiveView {
         compact: BindingWidget,

@@ -62,6 +62,10 @@ use sui_bindings_core::{
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
     binding_tooltip_placement_from_name, resolve_binding_image_slots,
 };
+use sui_bindings_core::{
+    BindingAnimationMarker, BindingStagger, binding_loop_mode_from_name, binding_loop_mode_name,
+    binding_stagger_origin_from_name,
+};
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
     PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
@@ -1006,6 +1010,22 @@ impl From<Color> for PyColor {
     }
 }
 
+fn py_loop_mode(value: &str) -> PyResult<sui_crate::LoopMode> {
+    binding_loop_mode_from_name(value).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown loop mode '{value}'; expected once, repeat, or ping-pong"
+        ))
+    })
+}
+
+fn py_stagger_origin(value: &str) -> PyResult<sui_crate::StaggerOrigin> {
+    binding_stagger_origin_from_name(value).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown stagger origin '{value}'; expected first, last, center, or an item index"
+        ))
+    })
+}
+
 fn py_easing(value: &str) -> PyResult<sui_crate::Easing> {
     binding_easing_from_name(value).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -1235,6 +1255,11 @@ impl PyAnimatedValue {
         self.inner.set_target(target.inner);
     }
 
+    /// Start toward `target` after `delay` seconds of ticks.
+    pub fn set_target_after(&mut self, target: PyRef<'_, PyAnimationValue>, delay: f64) {
+        self.inner.set_target_after(target.inner, delay);
+    }
+
     pub fn jump_to(&mut self, value: PyRef<'_, PyAnimationValue>) {
         self.inner.jump_to(value.inner);
     }
@@ -1400,6 +1425,52 @@ impl From<BindingAnimationSample> for PyAnimationSample {
     }
 }
 
+#[pyclass(name = "AnimationMarker", frozen, module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyAnimationMarker {
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub time: f64,
+}
+
+impl From<BindingAnimationMarker> for PyAnimationMarker {
+    fn from(value: BindingAnimationMarker) -> Self {
+        Self {
+            name: value.name,
+            time: value.time,
+        }
+    }
+}
+
+#[pyclass(name = "Stagger", module = "sui", skip_from_py_object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PyStagger {
+    inner: BindingStagger,
+}
+
+#[pymethods]
+impl PyStagger {
+    #[new]
+    #[pyo3(signature = (interval, *, origin="first", max_delay=None))]
+    pub fn new(interval: f64, origin: &str, max_delay: Option<f64>) -> PyResult<Self> {
+        let mut inner = BindingStagger::new(interval);
+        inner.set_origin(py_stagger_origin(origin)?);
+        inner.set_max_delay(max_delay);
+        Ok(Self { inner })
+    }
+
+    /// The delay in seconds for item `index` of `count`.
+    pub fn delay(&self, index: usize, count: usize) -> f64 {
+        self.inner.delay(index, count)
+    }
+
+    #[getter]
+    pub fn interval(&self) -> f64 {
+        self.inner.interval()
+    }
+}
+
 #[pyclass(name = "AnimationTimeline", module = "sui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationTimeline {
@@ -1417,6 +1488,15 @@ impl PyAnimationTimeline {
 
     pub fn add_clip(&mut self, clip: PyRef<'_, PyAnimationClip>) {
         self.inner.add_clip(clip.inner.clone());
+    }
+
+    pub fn add_marker(&mut self, name: String, time: f64) {
+        self.inner.add_marker(name, time);
+    }
+
+    #[getter]
+    pub fn markers(&self) -> Vec<PyAnimationMarker> {
+        self.inner.markers().into_iter().map(Into::into).collect()
     }
 
     pub fn sample(&self, time: f64) -> Vec<PyAnimationSample> {
@@ -1473,8 +1553,38 @@ impl PyAnimationPlayer {
         self.inner.set_repeat(repeat);
     }
 
+    /// Play `"once"`, `"repeat"` from the start, or `"ping-pong"` back and
+    /// forth.
+    pub fn set_loop_mode(&mut self, mode: &str) -> PyResult<()> {
+        self.inner.set_loop_mode(py_loop_mode(mode)?);
+        Ok(())
+    }
+
+    #[getter]
+    pub fn loop_mode(&self) -> &'static str {
+        binding_loop_mode_name(self.inner.loop_mode())
+    }
+
+    pub fn set_start_delay(&mut self, seconds: f64) {
+        self.inner.set_start_delay(seconds);
+    }
+
+    pub fn set_loop_delay(&mut self, seconds: f64) {
+        self.inner.set_loop_delay(seconds);
+    }
+
     pub fn set_playback_rate(&mut self, rate: f64) {
         self.inner.set_playback_rate(rate);
+    }
+
+    /// The markers the playhead passed in the last tick, in order.
+    #[getter]
+    pub fn passed_markers(&self) -> Vec<PyAnimationMarker> {
+        self.inner
+            .passed_markers()
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 
     pub fn sample(&self) -> Vec<PyAnimationSample> {
@@ -1617,6 +1727,22 @@ impl PyAnimationEditor {
     ) -> bool {
         self.inner
             .remove_keyframe(clip_index, track_index, keyframe_index)
+    }
+
+    pub fn add_marker(&mut self, name: String, time: f64) -> bool {
+        self.inner.add_marker(name, time)
+    }
+
+    pub fn move_marker(&mut self, index: usize, time: f64) -> bool {
+        self.inner.move_marker(index, time)
+    }
+
+    pub fn rename_marker(&mut self, index: usize, name: String) -> bool {
+        self.inner.rename_marker(index, name)
+    }
+
+    pub fn remove_marker(&mut self, index: usize) -> bool {
+        self.inner.remove_marker(index)
     }
 
     pub fn undo(&mut self) -> bool {
@@ -4241,6 +4367,8 @@ fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAnimationTrack>()?;
     m.add_class::<PyAnimationClip>()?;
     m.add_class::<PyAnimationSample>()?;
+    m.add_class::<PyAnimationMarker>()?;
+    m.add_class::<PyStagger>()?;
     m.add_class::<PyAnimationTimeline>()?;
     m.add_class::<PyAnimationPlayer>()?;
     m.add_class::<PyAnimationDocument>()?;
@@ -5792,6 +5920,7 @@ root = sui.Column([
     sui.AspectRatio(sui.Label('Aspect content'), 16 / 9),
     sui.SafeArea(sui.Label('Safe content')),
     sui.LayoutTransition(sui.Label('Animated layout')),
+    sui.Presence(sui.Label('Presence content'), shown=True, collapse=True),
     sui.AdaptiveView(
         sui.Label('Compact branch'),
         sui.Label('Medium branch'),

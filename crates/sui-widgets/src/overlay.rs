@@ -7,16 +7,16 @@ use std::{
 };
 
 use sui_core::{
-    Event, Rect, SemanticsLiveRegion, SemanticsNode, SemanticsRole, Size, TimerToken, WakeEvent,
-    WidgetId,
+    Color, Event, InvalidationKind, Rect, SemanticsLiveRegion, SemanticsNode, SemanticsRole, Size,
+    TimerToken, WakeEvent, WidgetId,
 };
 use sui_layout::Constraints;
 use sui_reactive::Signal;
 use sui_runtime::{
-    ArrangeCtx, Command, EventCtx, LayerOptions, MeasureCtx, OverlayDismissPolicy,
-    OverlayFocusBehavior, OverlayKind, OverlayOptions, PaintBoundaryMode, PaintCtx,
-    REACTIVE_CHANGED, SemanticsCtx, SingleChild, StackHostOptions, StackSurfaceOptions, Widget,
-    WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, FrameClock, LayerOptions, MeasureCtx, Motion,
+    OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind, OverlayOptions, PaintBoundaryMode,
+    PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, StackHostOptions, StackSurfaceOptions,
+    Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, motion_policy,
 };
 use sui_scene::{Border, LayerCompositionMode};
 
@@ -513,10 +513,46 @@ impl Default for NotificationCenter {
     }
 }
 
+/// How far a notification slides in from, toward the window edge.
+const TOAST_SLIDE: f32 = 24.0;
+
+/// A notification on screen: arriving, shown, or leaving.
+struct Toast {
+    notification: TransientNotification,
+    /// 0 gone, 1 shown.
+    presence: Motion<f32>,
+    /// Where the toast is stacked; it glides when others arrive or leave.
+    y: Motion<f32>,
+    frame: Rect,
+    positioned: bool,
+    leaving: bool,
+}
+
+impl Toast {
+    fn new(notification: TransientNotification) -> Self {
+        Self {
+            notification,
+            presence: Motion::new(0.0),
+            y: Motion::new(0.0).movement(),
+            frame: Rect::ZERO,
+            positioned: false,
+            leaving: false,
+        }
+    }
+
+    fn is_gone(&self, clock: &impl FrameClock) -> bool {
+        self.leaving && !self.presence.is_animating(clock) && self.presence.get(clock) <= 1.0e-4
+    }
+}
+
 /// Window-level visual and semantic host for a [`NotificationCenter`].
+///
+/// Notifications slide in at the window's edge, stack in arrival order, and
+/// fade out when dismissed or expired while the rest glide into place.
 pub struct NotificationHost {
     center: NotificationCenter,
     notifications: Vec<TransientNotification>,
+    toasts: Vec<Toast>,
     timers: HashMap<TimerToken, NotificationId>,
     scheduled: HashMap<NotificationId, TimerToken>,
     frames: Vec<(NotificationId, Rect)>,
@@ -531,6 +567,7 @@ impl NotificationHost {
         Self {
             center,
             notifications: Vec::new(),
+            toasts: Vec::new(),
             timers: HashMap::new(),
             scheduled: HashMap::new(),
             frames: Vec::new(),
@@ -593,6 +630,48 @@ impl NotificationHost {
             68.0
         }
     }
+
+    /// Bring toasts in step with the notifications: new ones arrive, removed
+    /// ones start leaving, and finished ones go.
+    fn reconcile_toasts(&mut self, ctx: &mut MeasureCtx) {
+        let motion = self.theme.motion;
+        for toast in &mut self.toasts {
+            let current = self
+                .notifications
+                .iter()
+                .find(|notification| notification.id == toast.notification.id);
+            match current {
+                Some(notification) => {
+                    toast.notification = notification.clone();
+                    if toast.leaving {
+                        toast.leaving = false;
+                        ctx.animate(&mut toast.presence, 1.0, motion.entrance_spec());
+                    }
+                }
+                None if !toast.leaving => {
+                    toast.leaving = true;
+                    if ctx.animate(&mut toast.presence, 0.0, motion.exit_spec())
+                        && let Some(until) = toast.presence.end_time()
+                    {
+                        ctx.track_motion_end(until, InvalidationKind::Measure);
+                    }
+                }
+                None => {}
+            }
+        }
+        for notification in &self.notifications {
+            if self
+                .toasts
+                .iter()
+                .all(|toast| toast.notification.id != notification.id)
+            {
+                let mut toast = Toast::new(notification.clone());
+                ctx.animate(&mut toast.presence, 1.0, motion.entrance_spec());
+                self.toasts.push(toast);
+            }
+        }
+        self.toasts.retain(|toast| !toast.is_gone(ctx));
+    }
 }
 
 impl Widget for NotificationHost {
@@ -624,6 +703,7 @@ impl Widget for NotificationHost {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let _ = ctx.observe(&self.center.revision);
         self.notifications = self.center.snapshot();
+        self.reconcile_toasts(ctx);
         if self.notifications.iter().any(|notification| {
             notification.duration.is_some() && !self.scheduled.contains_key(&notification.id)
         }) {
@@ -643,37 +723,61 @@ impl Widget for NotificationHost {
         ))
     }
 
-    fn arrange(&mut self, _ctx: &mut ArrangeCtx, bounds: Rect) {
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.frames.clear();
         let width = self
             .width
             .min((bounds.width() - self.margin * 2.0).max(0.0));
+        let x = bounds.max_x() - self.margin - width;
+        let glide = self.theme.motion.layout_spec();
         let mut y = bounds.y() + self.margin;
-        for notification in &self.notifications {
-            let height = self.notification_height(notification);
-            self.frames.push((
-                notification.id,
-                Rect::new(bounds.max_x() - self.margin - width, y, width, height),
-            ));
+        for index in 0..self.toasts.len() {
+            if self.toasts[index].leaving {
+                // Leaving toasts fade where they are; the rest close up.
+                continue;
+            }
+            let height = self.notification_height(&self.toasts[index].notification);
+            let toast = &mut self.toasts[index];
+            if toast.positioned {
+                ctx.animate(&mut toast.y, y, glide);
+            } else {
+                toast.y.jump_to(y);
+                toast.positioned = true;
+            }
+            toast.frame = Rect::new(x, y, width, height);
+            self.frames.push((toast.notification.id, toast.frame));
             y += height + self.gap;
         }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let metrics = self.theme.metrics;
-        let title_style = self.theme.body_text_style();
-        let message_style = self.theme.placeholder_text_style();
-        for notification in &self.notifications {
-            let Some((_, frame)) = self.frames.iter().find(|(id, _)| *id == notification.id) else {
+        let policy = motion_policy();
+        for toast in &self.toasts {
+            let presence = toast.presence.get(ctx).clamp(0.0, 1.0);
+            if presence <= 1.0e-4 {
                 continue;
-            };
+            }
+            let notification = &toast.notification;
+            let fade = |color: Color| color.with_alpha(color.alpha * presence);
+            let slide = TOAST_SLIDE * policy.entrance_offset(presence);
+            let frame = &Rect::new(
+                toast.frame.x() + slide,
+                toast.y.get(ctx),
+                toast.frame.width(),
+                toast.frame.height(),
+            );
+            let mut title_style = self.theme.body_text_style();
+            title_style.color = fade(title_style.color);
+            let mut message_style = self.theme.placeholder_text_style();
+            message_style.color = fade(message_style.color);
             ctx.fill_rrect_bordered(
                 *frame,
                 [metrics.corner_radius; 4],
-                self.theme.palette.surface_raised,
+                fade(self.theme.palette.surface_raised),
                 Border {
                     width: metrics.border_width,
-                    color: self.theme.palette.border,
+                    color: fade(self.theme.palette.border),
                 },
             );
             let padding = 12.0;
@@ -703,7 +807,7 @@ impl Widget for NotificationHost {
     fn layer_options(&self) -> LayerOptions {
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: if self.notifications.is_empty() {
+            composition_mode: if self.toasts.is_empty() {
                 LayerCompositionMode::Normal
             } else {
                 LayerCompositionMode::Overlay
@@ -712,7 +816,7 @@ impl Widget for NotificationHost {
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
-        (!self.notifications.is_empty()).then_some(StackSurfaceOptions {
+        (!self.toasts.is_empty()).then_some(StackSurfaceOptions {
             transient: true,
             hit_test: false,
             ..StackSurfaceOptions::default()
@@ -720,7 +824,7 @@ impl Widget for NotificationHost {
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
-        (!self.notifications.is_empty()).then_some(
+        (!self.toasts.is_empty()).then_some(
             OverlayOptions::new(OverlayKind::Notification)
                 .dismiss(OverlayDismissPolicy::NONE)
                 .focus(OverlayFocusBehavior::NONE),
@@ -753,7 +857,7 @@ impl Widget for NotificationHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sui_runtime::{Application, WindowBuilder};
+    use sui_runtime::{Application, Runtime, WindowBuilder};
 
     #[test]
     fn placement_flips_before_shifting_when_the_other_side_fits() {
@@ -840,12 +944,64 @@ mod tests {
                 .iter()
                 .all(|node| node.role != SemanticsRole::Status)
         );
+        // The toast fades out before the host leaves the overlay stack.
+        assert_eq!(
+            runtime.overlay_snapshot(window_id).unwrap().overlays.len(),
+            1
+        );
+        runtime.tick(0.06 + DefaultTheme::default().motion.exit_spec().duration() + 0.01);
+        for (ready_window, event) in runtime.drain_ready_events() {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+        runtime.render(window_id).unwrap();
         assert!(
             runtime
                 .overlay_snapshot(window_id)
                 .unwrap()
                 .overlays
                 .is_empty()
+        );
+        assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+    }
+
+    #[test]
+    fn remaining_notifications_glide_up_when_one_leaves() {
+        let center = NotificationCenter::new();
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().root(NotificationHost::new(center.clone())))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        runtime
+            .handle_event(
+                window_id,
+                Event::Window(sui_core::WindowEvent::Resized(Size::new(400.0, 400.0))),
+            )
+            .unwrap();
+        let first = center.push(TransientNotification::new("First", "").persistent());
+        center.push(TransientNotification::new("Second", "").persistent());
+        runtime.render(window_id).unwrap();
+        let status_top = |runtime: &Runtime, name: &str| {
+            runtime
+                .semantics(window_id)
+                .unwrap()
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .map(|node| node.bounds.y())
+        };
+        assert_eq!(status_top(&runtime, "Second"), Some(16.0 + 48.0 + 8.0));
+
+        center.dismiss(first);
+        runtime.tick(1.0);
+        for (ready_window, event) in runtime.drain_ready_events() {
+            runtime.handle_event(ready_window, event).unwrap();
+        }
+        runtime.render(window_id).unwrap();
+        // Semantics move at once; the painted toast glides.
+        assert_eq!(status_top(&runtime, "Second"), Some(16.0));
+        assert!(
+            runtime.next_wakeup_time(window_id).unwrap().is_some(),
+            "the toasts are still moving"
         );
     }
 

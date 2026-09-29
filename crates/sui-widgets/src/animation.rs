@@ -13,6 +13,8 @@ pub struct AnimationBindingInvalidation {
 pub struct TimelineTick<'a> {
     pub samples: &'a [SampledAnimationValue],
     pub invalidations: &'a [AnimationBindingInvalidation],
+    /// The markers the playhead passed this tick, in order.
+    pub passed_markers: &'a [TimelineMarker],
     pub should_continue: bool,
 }
 
@@ -124,9 +126,157 @@ impl Progress {
         ctx.animate(&mut self.motion, target.clamp(0.0, 1.0), spec)
     }
 
+    /// Like [`Progress::animate`], starting `delay` seconds from now.
+    pub fn animate_after(
+        &mut self,
+        target: f32,
+        delay: f64,
+        spec: AnimationSpec,
+        ctx: &mut impl AnimateCtx,
+    ) -> bool {
+        ctx.animate_after(&mut self.motion, target.clamp(0.0, 1.0), delay, spec)
+    }
+
     /// Rest at `value` without animating.
     pub fn jump_to(&mut self, value: f32) {
         self.motion.jump_to(value.clamp(0.0, 1.0));
+    }
+
+    /// When the running transition ends, or `None` at rest.
+    pub fn end_time(&self) -> Option<f64> {
+        self.motion.end_time()
+    }
+
+    /// Like [`Progress::animate`], for progress that `widget` presents, such
+    /// as a surface the caller owns: the runtime keeps `widget` invalidated
+    /// instead of the caller.
+    pub(crate) fn animate_for(
+        &mut self,
+        target: f32,
+        spec: AnimationSpec,
+        ctx: &mut EventCtx,
+        widget: sui_core::WidgetId,
+    ) -> bool {
+        let target = target.clamp(0.0, 1.0);
+        let kind = self.motion.invalidation();
+        let before = self.motion.target();
+        let until = self.motion.start(target, ctx.current_time(), spec);
+        if before != target {
+            ctx.request(InvalidationRequest::new(
+                InvalidationTarget::Widget(widget),
+                kind,
+            ));
+        }
+        if let Some(until) = until {
+            ctx.track_motion_for(widget, until, kind);
+        }
+        until.is_some()
+    }
+}
+
+/// How far a floating surface (a tooltip, popover, menu, or dialog) has
+/// appeared, animated by the runtime.
+///
+/// The surface's owner starts transitions and keeps the surface's layer
+/// updated with [`Reveal::track`]; the surface reads the value for the frame
+/// it presents. A hiding surface stays presented until its transition ends:
+/// the owner is measured again then and calls [`Reveal::settle`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Reveal {
+    motion: Motion<f32>,
+    presented: bool,
+}
+
+impl Reveal {
+    pub(crate) const EPSILON: f32 = 1e-4;
+
+    pub(crate) const fn new(value: f32) -> Self {
+        Self {
+            motion: Motion::new(value).invalidating(InvalidationKind::Effect),
+            presented: value > Self::EPSILON,
+        }
+    }
+
+    /// The value at the time of the frame `clock` is producing.
+    pub(crate) fn get(&self, clock: &impl FrameClock) -> f32 {
+        self.motion.get(clock)
+    }
+
+    /// The value at `time`.
+    pub(crate) fn at(&self, time: f64) -> f32 {
+        self.motion.at(time)
+    }
+
+    pub(crate) fn target(&self) -> f32 {
+        self.motion.target()
+    }
+
+    /// Whether the surface shows: from when it starts to appear until it
+    /// has finished hiding.
+    pub(crate) fn is_presented(&self) -> bool {
+        self.presented
+    }
+
+    /// Start toward `target` (0 hidden, 1 shown) at `time`. Returns when the
+    /// transition ends, if one runs.
+    pub(crate) fn start(&mut self, target: f32, time: f64, spec: AnimationSpec) -> Option<f64> {
+        let target = target.clamp(0.0, 1.0);
+        let until = self.motion.start(target, time, spec);
+        if target > Self::EPSILON {
+            self.presented = true;
+        } else if until.is_none() {
+            self.presented = false;
+        }
+        until
+    }
+
+    /// Show or hide at once.
+    pub(crate) fn jump_to(&mut self, value: f32) {
+        self.motion.jump_to(value.clamp(0.0, 1.0));
+        self.presented = value > Self::EPSILON;
+    }
+
+    /// Stop presenting once hiding has finished by `time`. Returns whether
+    /// that changed.
+    pub(crate) fn settle(&mut self, time: f64) -> bool {
+        let presented = self.target() > Self::EPSILON
+            || self.motion.is_animating(&time)
+            || self.motion.at(time) > Self::EPSILON;
+        let changed = presented != self.presented;
+        self.presented = presented;
+        changed
+    }
+
+    /// What a surface presenting the reveal through its layer needs updated.
+    pub(crate) const LAYER: [InvalidationKind; 2] =
+        [InvalidationKind::Effect, InvalidationKind::Transform];
+
+    /// Keep `surfaces` updated with `kinds` until the transition ending at
+    /// `until` does, and measure the owner again when a hide ends so it can
+    /// [`Reveal::settle`]. Right away, too, in case the change was instant.
+    pub(crate) fn track(
+        &self,
+        ctx: &mut EventCtx,
+        surfaces: &[sui_core::WidgetId],
+        until: Option<f64>,
+        kinds: &[InvalidationKind],
+    ) {
+        for surface in surfaces {
+            for kind in kinds {
+                ctx.request(InvalidationRequest::new(
+                    InvalidationTarget::Widget(*surface),
+                    *kind,
+                ));
+                if let Some(until) = until {
+                    ctx.track_motion_for(*surface, until, *kind);
+                }
+            }
+        }
+        if let Some(until) = until
+            && self.target() <= Self::EPSILON
+        {
+            ctx.track_motion_end(until, InvalidationKind::Measure);
+        }
     }
 }
 
@@ -280,6 +430,7 @@ pub struct TimelinePlayer {
     playback: PlaybackState,
     samples: SampleBuffer,
     invalidations: Vec<AnimationBindingInvalidation>,
+    passed_markers: Vec<TimelineMarker>,
 }
 
 impl TimelinePlayer {
@@ -293,6 +444,7 @@ impl TimelinePlayer {
             playback: PlaybackState::default(),
             samples: SampleBuffer::with_capacity(sample_capacity),
             invalidations: Vec::with_capacity(sample_capacity),
+            passed_markers: Vec::new(),
         }
     }
 
@@ -350,7 +502,13 @@ impl TimelinePlayer {
         S: TimelineBindingSink,
     {
         self.ensure_compiled_timeline();
-        self.playback.tick(delta_seconds, self.compiled.duration());
+        let compiled = &self.compiled;
+        let passed_markers = &mut self.passed_markers;
+        passed_markers.clear();
+        self.playback
+            .tick_spans(delta_seconds, compiled.duration(), |span| {
+                compiled.markers_in(span, passed_markers);
+            });
         self.compiled
             .sample_into(self.playback.playhead, &mut self.samples);
         self.invalidations.clear();
@@ -369,6 +527,7 @@ impl TimelinePlayer {
         TimelineTick {
             samples: self.samples.samples(),
             invalidations: &self.invalidations,
+            passed_markers: &self.passed_markers,
             should_continue: self.playback.playing,
         }
     }

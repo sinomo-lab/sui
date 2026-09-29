@@ -119,10 +119,24 @@ impl FrameClock for f64 {
 /// A context that can start [`Motion`] transitions: event, measure, and
 /// arrange contexts.
 pub trait AnimateCtx: FrameClock {
+    /// See [`crate::EventCtx::animate_after`].
+    fn animate_after<T>(
+        &mut self,
+        motion: &mut Motion<T>,
+        target: T,
+        delay: f64,
+        spec: AnimationSpec,
+    ) -> bool
+    where
+        T: Interpolate + Copy + PartialEq;
+
     /// See [`crate::EventCtx::animate`].
     fn animate<T>(&mut self, motion: &mut Motion<T>, target: T, spec: AnimationSpec) -> bool
     where
-        T: Interpolate + Copy + PartialEq;
+        T: Interpolate + Copy + PartialEq,
+    {
+        self.animate_after(motion, target, 0.0, spec)
+    }
 }
 
 /// A value the runtime animates for a widget.
@@ -213,15 +227,38 @@ where
     /// Returns when the transition ends if one started. Contexts' `animate`
     /// methods call this and keep the widget invalidated until then.
     pub fn start(&mut self, target: T, time: f64, spec: AnimationSpec) -> Option<f64> {
+        self.start_after(target, time, 0.0, spec)
+    }
+
+    /// Like [`Motion::start`], `delay` seconds after `time`. The delay
+    /// follows the policy's time scale, and is skipped when the policy makes
+    /// the transition instant.
+    pub fn start_after(
+        &mut self,
+        target: T,
+        time: f64,
+        delay: f64,
+        spec: AnimationSpec,
+    ) -> Option<f64> {
         let policy = motion_policy();
+        let allowed = if self.movement {
+            policy.allows_movement()
+        } else {
+            policy.allows_motion()
+        };
         let spec = if self.movement {
             spec.with_movement_policy(policy)
         } else {
             spec.with_policy(policy)
         };
+        let delay = if allowed {
+            delay / f64::from(policy.time_scale())
+        } else {
+            0.0
+        };
         // Drop finished transitions so the end time reflects only what runs.
         self.value.advance(time);
-        if self.value.animate_to(target, time, spec) {
+        if self.value.animate_to_after(target, time, delay, spec) {
             self.value.end_time()
         } else {
             None
@@ -279,6 +316,29 @@ mod tests {
         let mut slide = Motion::new(0.0_f32).movement();
         assert!(slide.start(1.0, 0.0, spec).is_none());
         assert_eq!(slide.get(&0.0), 1.0);
+        reset_motion_settings();
+    }
+
+    #[test]
+    fn delays_follow_the_time_scale_and_vanish_without_motion() {
+        reset_motion_settings();
+        let spec = AnimationSpec::tween(0.2, sui_animation::Easing::Linear);
+        set_motion_time_scale(0.5);
+        let mut slow = Motion::new(0.0_f32);
+        let until = slow
+            .start_after(1.0, 0.0, 0.1, spec)
+            .expect("a transition starts");
+        assert!(
+            (until - 0.6).abs() < 1e-9,
+            "delay and duration both double: {until}"
+        );
+        assert_eq!(slow.get(&0.15), 0.0);
+
+        reset_motion_settings();
+        set_app_motion_preference(Some(MotionPreference::Off));
+        let mut off = Motion::new(0.0_f32);
+        assert!(off.start_after(1.0, 0.0, 0.1, spec).is_none());
+        assert_eq!(off.get(&0.0), 1.0);
         reset_motion_settings();
     }
 

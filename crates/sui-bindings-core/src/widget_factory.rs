@@ -1108,6 +1108,23 @@ impl BindingWidget {
         })
     }
 
+    /// Show or hide `child`, animating it in and out; with `collapse`, the
+    /// space it takes animates too, and with `appear` it animates in when
+    /// first shown.
+    pub fn presence(
+        child: BindingWidget,
+        shown: BindingBool,
+        collapse: bool,
+        appear: bool,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::Presence {
+            child,
+            shown,
+            collapse,
+            appear,
+        })
+    }
+
     pub fn layout_transition(child: BindingWidget, duration: f64, easing: Easing) -> Self {
         Self::from_kind(BindingWidgetKind::LayoutTransition {
             child,

@@ -5,7 +5,10 @@ use std::{fmt, sync::Arc};
 use sui_core::{Color, ColorSpace, Point, Rect, Size, Transform, Vector};
 pub use sui_core::{MotionPolicy, MotionPreference};
 
-pub const ANIMATION_DOCUMENT_VERSION: u32 = 1;
+pub const ANIMATION_DOCUMENT_VERSION: u32 = 2;
+/// The oldest document version this build still reads. Version 2 added
+/// timeline markers.
+pub const MIN_ANIMATION_DOCUMENT_VERSION: u32 = 1;
 
 pub trait Interpolate: Sized {
     fn interpolate(from: Self, to: Self, t: f32) -> Self;
@@ -680,7 +683,7 @@ impl AnimationSpec {
             // originate as f32 theme tokens, so a fixed-step advance can land
             // float dust short of `duration`.
             Self::Tween { duration, .. } => {
-                duration <= f64::EPSILON || elapsed >= duration * (1.0 - 1e-6)
+                elapsed >= 0.0 && (duration <= f64::EPSILON || elapsed >= duration * (1.0 - 1e-6))
             }
             Self::Spring(spring) => elapsed >= spring.settling_duration(),
         }
@@ -811,11 +814,28 @@ where
     /// Start animating from the value at `time` toward `target`. Returns
     /// whether the value is animating afterwards.
     pub fn animate_to(&mut self, target: T, time: f64, spec: AnimationSpec) -> bool {
+        self.animate_to_after(target, time, 0.0, spec)
+    }
+
+    /// Like [`MotionValue::animate_to`], starting `delay` seconds after
+    /// `time`. Until then the value keeps doing what it was doing.
+    pub fn animate_to_after(
+        &mut self,
+        target: T,
+        time: f64,
+        delay: f64,
+        spec: AnimationSpec,
+    ) -> bool {
         self.advance(time);
         if target == self.target() {
             return self.is_animating();
         }
-        if spec.is_instant() {
+        let delay = if delay.is_finite() {
+            delay.max(0.0)
+        } else {
+            0.0
+        };
+        if spec.is_instant() && delay <= 0.0 {
             self.jump_to(target);
             return false;
         }
@@ -833,7 +853,7 @@ where
         let slot = self.segment_count();
         self.segments[slot] = Some(MotionSegment {
             target,
-            start_time: time,
+            start_time: time + delay,
             spec,
         });
         true
@@ -876,6 +896,99 @@ where
             }
         }
         self.is_animating()
+    }
+}
+
+/// Where a [`Stagger`] starts: the item that animates first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StaggerOrigin {
+    #[default]
+    First,
+    Last,
+    /// The middle item first, spreading out to both ends.
+    Center,
+    /// The item at this index first, spreading out from it.
+    Index(usize),
+}
+
+/// Delays that start a group of animations one after another, such as list
+/// items cascading in.
+///
+/// `delay(index, count)` gives each item's delay: `interval` seconds per step
+/// away from the origin, shrunk if needed so the last item starts within
+/// `max_delay`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stagger {
+    pub interval: f64,
+    pub origin: StaggerOrigin,
+    pub max_delay: Option<f64>,
+}
+
+impl Stagger {
+    /// Items start at the same time.
+    pub const NONE: Self = Self::new(0.0);
+
+    pub const fn new(interval: f64) -> Self {
+        Self {
+            interval,
+            origin: StaggerOrigin::First,
+            max_delay: None,
+        }
+    }
+
+    pub const fn from(mut self, origin: StaggerOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// Start the last item no later than `max_delay` seconds, however many
+    /// items there are.
+    pub const fn max_delay(mut self, max_delay: f64) -> Self {
+        self.max_delay = Some(max_delay);
+        self
+    }
+
+    fn steps(self, index: usize, count: usize) -> f64 {
+        let index = index as f64;
+        let last = count.saturating_sub(1) as f64;
+        match self.origin {
+            StaggerOrigin::First => index,
+            StaggerOrigin::Last => last - index,
+            StaggerOrigin::Center => (index - last * 0.5).abs(),
+            StaggerOrigin::Index(origin) => (index - origin as f64).abs(),
+        }
+    }
+
+    /// The delay in seconds for item `index` of `count`.
+    pub fn delay(self, index: usize, count: usize) -> f64 {
+        let interval = if self.interval.is_finite() {
+            self.interval.max(0.0)
+        } else {
+            0.0
+        };
+        if interval <= 0.0 || count == 0 {
+            return 0.0;
+        }
+        let steps = self.steps(index.min(count - 1), count).max(0.0);
+        let last = (count - 1) as f64;
+        let widest = match self.origin {
+            StaggerOrigin::First | StaggerOrigin::Last => last,
+            StaggerOrigin::Center => last * 0.5,
+            StaggerOrigin::Index(origin) => (origin as f64).max(last - origin as f64),
+        };
+        let interval = match self.max_delay {
+            Some(max_delay) if widest * interval > max_delay.max(0.0) && widest > 0.0 => {
+                max_delay.max(0.0) / widest
+            }
+            _ => interval,
+        };
+        steps * interval
+    }
+}
+
+impl Default for Stagger {
+    fn default() -> Self {
+        Self::NONE
     }
 }
 
@@ -940,7 +1053,14 @@ where
     }
 
     pub fn set_target(&mut self, target: T) {
-        self.motion.animate_to(target, self.clock, self.spec);
+        self.set_target_after(target, 0.0);
+    }
+
+    /// Like [`AnimatedValue::set_target`], starting `delay` seconds of ticks
+    /// from now.
+    pub fn set_target_after(&mut self, target: T, delay: f64) {
+        self.motion
+            .animate_to_after(target, self.clock, delay, self.spec);
         self.current = self.motion.value(self.clock);
     }
 
@@ -1415,10 +1535,29 @@ where
     }
 }
 
+/// A named point in time on a timeline. Players report the markers the
+/// playhead passes, so an app can start the next step of a sequence or play a
+/// sound in time with the animation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimelineMarker {
+    pub name: String,
+    pub time: f64,
+}
+
+impl TimelineMarker {
+    pub fn new(name: impl Into<String>, time: f64) -> Self {
+        Self {
+            name: name.into(),
+            time,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Timeline<T = AnimationValue> {
     pub duration: f64,
     pub clips: Vec<Clip<T>>,
+    pub markers: Vec<TimelineMarker>,
 }
 
 impl<T> Timeline<T> {
@@ -1426,6 +1565,7 @@ impl<T> Timeline<T> {
         Self {
             duration: duration.max(0.0),
             clips: Vec::new(),
+            markers: Vec::new(),
         }
     }
 
@@ -1436,6 +1576,15 @@ impl<T> Timeline<T> {
 
     pub fn push_clip(&mut self, clip: Clip<T>) {
         self.clips.push(clip);
+    }
+
+    pub fn with_marker(mut self, name: impl Into<String>, time: f64) -> Self {
+        self.push_marker(TimelineMarker::new(name, time));
+        self
+    }
+
+    pub fn push_marker(&mut self, marker: TimelineMarker) {
+        self.markers.push(marker);
     }
 }
 
@@ -1487,6 +1636,7 @@ where
 pub struct CompiledTimeline<T = AnimationValue> {
     duration: f64,
     clips: Vec<CompiledClip<T>>,
+    markers: Vec<TimelineMarker>,
     sample_capacity: usize,
 }
 
@@ -1504,9 +1654,20 @@ where
             .filter_map(CompiledClip::from_clip)
             .collect::<Vec<_>>();
         let sample_capacity = clips.iter().map(|clip| clip.tracks.len()).sum();
+        let duration = timeline.duration.max(0.0);
+        let mut markers = timeline
+            .markers
+            .iter()
+            .filter(|marker| marker.time.is_finite())
+            .map(|marker| {
+                TimelineMarker::new(marker.name.clone(), marker.time.clamp(0.0, duration))
+            })
+            .collect::<Vec<_>>();
+        markers.sort_by(|left, right| left.time.total_cmp(&right.time));
         Self {
-            duration: timeline.duration.max(0.0),
+            duration,
             clips,
+            markers,
             sample_capacity,
         }
     }
@@ -1523,6 +1684,26 @@ impl<T> CompiledTimeline<T> {
 
     pub fn clips(&self) -> &[CompiledClip<T>] {
         &self.clips
+    }
+
+    /// The timeline's markers, in time order.
+    pub fn markers(&self) -> &[TimelineMarker] {
+        &self.markers
+    }
+
+    /// Append the markers the playhead passed over `span` to `hits`, in the
+    /// order it met them.
+    pub fn markers_in(&self, span: PlaybackSpan, hits: &mut Vec<TimelineMarker>) {
+        let start = hits.len();
+        hits.extend(
+            self.markers
+                .iter()
+                .filter(|marker| span.contains(marker.time))
+                .cloned(),
+        );
+        if span.to < span.from {
+            hits[start..].reverse();
+        }
     }
 
     pub fn sample_capacity(&self) -> usize {
@@ -1822,8 +2003,43 @@ impl<'a, T> IntoIterator for SampleBatch<'a, T> {
 pub enum LoopMode {
     #[default]
     Once,
+    /// Start over from the beginning at the end.
     Repeat,
+    /// Play forward, then backward, and so on: the playback rate reverses at
+    /// each end.
+    PingPong,
 }
+
+/// A stretch of timeline the playhead moved over in one tick.
+///
+/// `from` is where the playhead started and `to` where it stopped, so `to <
+/// from` when playing backward. A span covers the times it moved onto, `to`
+/// included, and its start only when `includes_start` is set: when playback
+/// began there or wrapped around to it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaybackSpan {
+    pub from: f64,
+    pub to: f64,
+    pub includes_start: bool,
+}
+
+impl PlaybackSpan {
+    /// Whether the playhead passed `time` over this span.
+    pub fn contains(self, time: f64) -> bool {
+        if time == self.from {
+            return self.includes_start;
+        }
+        if self.to >= self.from {
+            self.from < time && time <= self.to
+        } else {
+            self.to <= time && time < self.from
+        }
+    }
+}
+
+/// Upper bound on the loops one tick plays through, so a huge delta with a
+/// tiny timeline cannot stall a frame.
+const MAX_LOOPS_PER_TICK: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlaybackState {
@@ -1831,6 +2047,13 @@ pub struct PlaybackState {
     pub playback_rate: f64,
     pub playing: bool,
     pub loop_mode: LoopMode,
+    /// Seconds to wait before the playhead moves when playback starts from
+    /// the beginning or a seek. Resuming after a pause does not wait.
+    pub start_delay: f64,
+    /// Seconds to hold at each end before looping.
+    pub loop_delay: f64,
+    wait: f64,
+    fresh: bool,
 }
 
 impl Default for PlaybackState {
@@ -1840,12 +2063,19 @@ impl Default for PlaybackState {
             playback_rate: 1.0,
             playing: false,
             loop_mode: LoopMode::Once,
+            start_delay: 0.0,
+            loop_delay: 0.0,
+            wait: 0.0,
+            fresh: true,
         }
     }
 }
 
 impl PlaybackState {
     pub fn play(&mut self) {
+        if !self.playing && self.fresh {
+            self.wait = sanitize_delay(self.start_delay);
+        }
         self.playing = true;
     }
 
@@ -1856,13 +2086,35 @@ impl PlaybackState {
     pub fn stop(&mut self) {
         self.playing = false;
         self.playhead = 0.0;
+        self.playback_rate = self.playback_rate.abs();
+        self.wait = 0.0;
+        self.fresh = true;
     }
 
     pub fn seek(&mut self, time: f64, duration: f64) {
         self.playhead = time.clamp(0.0, duration.max(0.0));
+        self.wait = 0.0;
+        self.fresh = true;
+    }
+
+    /// Seconds left before the playhead moves again: the start delay or a
+    /// hold between loops.
+    pub fn waiting(&self) -> f64 {
+        self.wait
     }
 
     pub fn tick(&mut self, delta_seconds: f64, duration: f64) -> bool {
+        self.tick_spans(delta_seconds, duration, |_| {})
+    }
+
+    /// Advance like [`PlaybackState::tick`], reporting each stretch of
+    /// timeline the playhead moves over; a tick that loops reports several.
+    pub fn tick_spans(
+        &mut self,
+        delta_seconds: f64,
+        duration: f64,
+        mut visit: impl FnMut(PlaybackSpan),
+    ) -> bool {
         if !self.playing {
             return false;
         }
@@ -1875,26 +2127,55 @@ impl PlaybackState {
             return previous_time != self.playhead;
         }
 
-        self.playhead += delta_seconds.max(0.0) * self.playback_rate;
-        if self.playhead > duration {
+        let mut remaining = sanitize_delay(delta_seconds);
+        let mut loops = 0;
+        while remaining > 0.0 && self.playing {
+            if self.wait > 0.0 {
+                let waited = self.wait.min(remaining);
+                self.wait -= waited;
+                remaining -= waited;
+                continue;
+            }
+            let rate = self.playback_rate;
+            if rate == 0.0 || !rate.is_finite() {
+                break;
+            }
+            let from = self.playhead.clamp(0.0, duration);
+            let edge = if rate > 0.0 { duration } else { 0.0 };
+            let time_to_edge = ((edge - from) / rate).max(0.0);
+            let includes_start = std::mem::take(&mut self.fresh);
+            if remaining < time_to_edge {
+                self.playhead = (from + remaining * rate).clamp(0.0, duration);
+                visit(PlaybackSpan {
+                    from,
+                    to: self.playhead,
+                    includes_start,
+                });
+                break;
+            }
+
+            self.playhead = edge;
+            visit(PlaybackSpan {
+                from,
+                to: edge,
+                includes_start,
+            });
+            remaining -= time_to_edge;
+            loops += 1;
             match self.loop_mode {
-                LoopMode::Once => {
-                    self.playhead = duration;
-                    self.playing = false;
-                }
+                LoopMode::Once => self.playing = false,
                 LoopMode::Repeat => {
-                    self.playhead = self.playhead.rem_euclid(duration);
+                    self.playhead = duration - edge;
+                    self.fresh = true;
+                    self.wait = sanitize_delay(self.loop_delay);
+                }
+                LoopMode::PingPong => {
+                    self.playback_rate = -rate;
+                    self.wait = sanitize_delay(self.loop_delay);
                 }
             }
-        } else if self.playhead < 0.0 {
-            match self.loop_mode {
-                LoopMode::Once => {
-                    self.playhead = 0.0;
-                    self.playing = false;
-                }
-                LoopMode::Repeat => {
-                    self.playhead = self.playhead.rem_euclid(duration);
-                }
+            if loops >= MAX_LOOPS_PER_TICK {
+                break;
             }
         }
 
@@ -1902,10 +2183,19 @@ impl PlaybackState {
     }
 }
 
+fn sanitize_delay(delay: f64) -> f64 {
+    if delay.is_finite() {
+        delay.max(0.0)
+    } else {
+        0.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationPlayer<T = AnimationValue> {
     timeline: SharedCompiledTimeline<T>,
     playback: PlaybackState,
+    passed_markers: Vec<TimelineMarker>,
 }
 
 impl<T> AnimationPlayer<T> {
@@ -1913,6 +2203,7 @@ impl<T> AnimationPlayer<T> {
         Self {
             timeline,
             playback: PlaybackState::default(),
+            passed_markers: Vec::new(),
         }
     }
 
@@ -1945,6 +2236,10 @@ impl<T> AnimationPlayer<T> {
         self.with_loop_mode(LoopMode::Repeat)
     }
 
+    pub fn ping_pong(self) -> Self {
+        self.with_loop_mode(LoopMode::PingPong)
+    }
+
     pub fn once(self) -> Self {
         self.with_loop_mode(LoopMode::Once)
     }
@@ -1952,6 +2247,23 @@ impl<T> AnimationPlayer<T> {
     pub fn with_playback_rate(mut self, playback_rate: f64) -> Self {
         self.playback.playback_rate = playback_rate;
         self
+    }
+
+    /// Wait `delay` seconds before playing from the start.
+    pub fn with_start_delay(mut self, delay: f64) -> Self {
+        self.playback.start_delay = delay;
+        self
+    }
+
+    /// Hold `delay` seconds at each end before looping.
+    pub fn with_loop_delay(mut self, delay: f64) -> Self {
+        self.playback.loop_delay = delay;
+        self
+    }
+
+    /// The markers the playhead passed in the last tick, in order.
+    pub fn passed_markers(&self) -> &[TimelineMarker] {
+        &self.passed_markers
     }
 
     pub fn play(&mut self) {
@@ -1988,7 +2300,14 @@ where
         delta_seconds: f64,
         samples: &'a mut SampleBuffer<T>,
     ) -> AnimationTick<'a, T> {
-        let advanced = self.playback.tick(delta_seconds, self.timeline.duration());
+        let timeline = &self.timeline;
+        let passed_markers = &mut self.passed_markers;
+        passed_markers.clear();
+        let advanced = self
+            .playback
+            .tick_spans(delta_seconds, timeline.duration(), |span| {
+                timeline.markers_in(span, passed_markers);
+            });
         let samples = self.timeline.sample_into(self.playback.playhead, samples);
         AnimationTick {
             samples,
@@ -2044,6 +2363,14 @@ impl AnimationDocument {
         output.push_str("duration\t");
         output.push_str(&format_f64(self.timeline.duration));
         output.push('\n');
+
+        for marker in &self.timeline.markers {
+            output.push_str("marker\t");
+            output.push_str(&escape_document_field(&marker.name));
+            output.push('\t');
+            output.push_str(&format_f64(marker.time));
+            output.push('\n');
+        }
 
         for clip in &self.timeline.clips {
             output.push_str("clip\t");
@@ -2202,6 +2529,22 @@ pub enum AnimationEditorCommand {
         time: f64,
     },
     RemoveKeyframe(KeyframeSelection),
+    /// Add a marker at `time`, snapped and kept inside the timeline.
+    AddMarker {
+        name: String,
+        time: f64,
+    },
+    /// Move the marker at `index` to `time`, snapped and kept inside the
+    /// timeline.
+    MoveMarker {
+        index: usize,
+        time: f64,
+    },
+    RenameMarker {
+        index: usize,
+        name: String,
+    },
+    RemoveMarker(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2389,7 +2732,55 @@ impl AnimationEditorState {
                 self.redo_stack.clear();
                 true
             }
+            AnimationEditorCommand::AddMarker { name, time } => {
+                let time = self.marker_time(time);
+                self.push_undo_snapshot();
+                self.document
+                    .timeline
+                    .push_marker(TimelineMarker::new(name, time));
+                self.redo_stack.clear();
+                true
+            }
+            AnimationEditorCommand::MoveMarker { index, time } => {
+                let time = self.marker_time(time);
+                let Some(marker) = self.document.timeline.markers.get(index) else {
+                    return false;
+                };
+                if marker.time == time {
+                    return false;
+                }
+                self.push_undo_snapshot();
+                self.document.timeline.markers[index].time = time;
+                self.redo_stack.clear();
+                true
+            }
+            AnimationEditorCommand::RenameMarker { index, name } => {
+                let Some(marker) = self.document.timeline.markers.get(index) else {
+                    return false;
+                };
+                if marker.name == name {
+                    return false;
+                }
+                self.push_undo_snapshot();
+                self.document.timeline.markers[index].name = name;
+                self.redo_stack.clear();
+                true
+            }
+            AnimationEditorCommand::RemoveMarker(index) => {
+                if index >= self.document.timeline.markers.len() {
+                    return false;
+                }
+                self.push_undo_snapshot();
+                self.document.timeline.markers.remove(index);
+                self.redo_stack.clear();
+                true
+            }
         }
+    }
+
+    fn marker_time(&self, time: f64) -> f64 {
+        let duration = self.document.timeline.duration.max(0.0);
+        self.snap.snap_time(time).clamp(0.0, duration)
     }
 
     pub fn undo(&mut self) -> bool {
@@ -2435,6 +2826,7 @@ impl<'a> AnimationDocumentFormatParser<'a> {
         let mut name = None;
         let mut duration = None;
         let mut clips = Vec::new();
+        let mut markers = Vec::new();
         let mut current_clip: Option<Clip> = None;
         let mut current_track: Option<Track> = None;
 
@@ -2456,11 +2848,13 @@ impl<'a> AnimationDocumentFormatParser<'a> {
                         ));
                     }
                     let parsed_version = parse_u32_field(line_no, fields[1], "version")?;
-                    if parsed_version != ANIMATION_DOCUMENT_VERSION {
+                    if !(MIN_ANIMATION_DOCUMENT_VERSION..=ANIMATION_DOCUMENT_VERSION)
+                        .contains(&parsed_version)
+                    {
                         return Err(AnimationDocumentFormatError::new(
                             Some(line_no),
                             format!(
-                                "unsupported document version {parsed_version}; expected {ANIMATION_DOCUMENT_VERSION}"
+                                "unsupported document version {parsed_version}; expected {MIN_ANIMATION_DOCUMENT_VERSION} to {ANIMATION_DOCUMENT_VERSION}"
                             ),
                         ));
                     }
@@ -2477,6 +2871,14 @@ impl<'a> AnimationDocumentFormatParser<'a> {
                     expect_field_count(line_no, &fields, 2)?;
                     ensure_no_open_track_or_clip(line_no, &current_track, &current_clip)?;
                     duration = Some(parse_f64_field(line_no, fields[1], "duration")?);
+                }
+                "marker" => {
+                    ensure_document_header(line_no, version)?;
+                    expect_field_count(line_no, &fields, 3)?;
+                    ensure_no_open_track_or_clip(line_no, &current_track, &current_clip)?;
+                    let name = unescape_document_field(fields[1], line_no)?;
+                    let time = parse_f64_field(line_no, fields[2], "marker time")?;
+                    markers.push(TimelineMarker::new(name, time));
                 }
                 "clip" => {
                     ensure_document_header(line_no, version)?;
@@ -2600,6 +3002,7 @@ impl<'a> AnimationDocumentFormatParser<'a> {
                     AnimationDocumentFormatError::new(None, "missing timeline duration")
                 })?,
                 clips,
+                markers,
             },
         })
     }
@@ -3058,7 +3461,8 @@ mod tests {
         AnimationEditorState, AnimationPlayer, AnimationProperty, AnimationPropertyPath,
         AnimationSpec, AnimationTargetId, AnimationValue, Blink, Clip, Easing, Interpolate,
         Keyframe, KeyframeSelection, LoopMode, MotionPolicy, MotionPreference, MotionValue,
-        PlaybackState, Pulse, SampleBuffer, SpringF32, SpringSpec, Timeline, Track, Transition,
+        PlaybackSpan, PlaybackState, Pulse, SampleBuffer, SpringF32, SpringSpec, Stagger,
+        StaggerOrigin, Timeline, TimelineMarker, Track, Transition,
     };
     use sui_core::{Color, ColorSpace, Rect, Transform, Vector};
 
@@ -3723,7 +4127,7 @@ mod tests {
         );
 
         let serialized = document.to_document_format();
-        assert!(serialized.starts_with("sui-animation-document\t1\n"));
+        assert!(serialized.starts_with("sui-animation-document\t2\n"));
         assert!(serialized.contains("paint.radius"));
 
         let parsed = AnimationDocument::from_document_format(&serialized)
@@ -3751,5 +4155,242 @@ mod tests {
         .expect_err("unclosed track should fail");
 
         assert!(err.message.contains("unclosed track"));
+    }
+
+    #[test]
+    fn delayed_motion_holds_its_course_until_it_starts() {
+        let mut value = MotionValue::new(0.0_f32);
+        let spec = AnimationSpec::tween(1.0, Easing::Linear);
+        assert!(value.animate_to_after(1.0, 0.0, 0.5, spec));
+
+        assert_eq!(value.value(0.25), 0.0);
+        assert!(value.is_animating_at(0.25));
+        assert!((value.value(1.0) - 0.5).abs() < 1e-5);
+        assert_eq!(value.end_time(), Some(1.5));
+        assert_eq!(value.value(1.5), 1.0);
+
+        // Retargeting before a delayed start keeps the running motion going
+        // until the new one begins.
+        let mut value = MotionValue::new(0.0_f32);
+        value.animate_to(1.0, 0.0, spec);
+        value.animate_to_after(0.0, 0.5, 0.25, spec);
+        assert!((value.value(0.6) - 0.6).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_delayed_jump_waits_for_its_delay() {
+        let mut value = MotionValue::new(0.0_f32);
+        assert!(value.animate_to_after(1.0, 0.0, 0.2, AnimationSpec::INSTANT));
+        assert_eq!(value.value(0.1), 0.0);
+        assert_eq!(value.value(0.2), 1.0);
+        assert!(!value.advance(0.3));
+    }
+
+    #[test]
+    fn stagger_spreads_delays_from_its_origin() {
+        let stagger = Stagger::new(0.05);
+        let delays = (0..4)
+            .map(|index| stagger.delay(index, 4))
+            .collect::<Vec<_>>();
+        assert_eq!(delays, vec![0.0, 0.05, 0.1, 0.15000000000000002]);
+
+        let last = stagger.from(StaggerOrigin::Last);
+        assert_eq!(last.delay(3, 4), 0.0);
+        assert!((last.delay(0, 4) - 0.15).abs() < 1e-9);
+
+        let center = stagger.from(StaggerOrigin::Center);
+        assert!((center.delay(0, 5) - 0.1).abs() < 1e-9);
+        assert_eq!(center.delay(2, 5), 0.0);
+
+        let from_item = stagger.from(StaggerOrigin::Index(1));
+        assert!((from_item.delay(4, 5) - 0.15).abs() < 1e-9);
+
+        // A long list fits its cascade inside the cap.
+        let capped = Stagger::new(0.05).max_delay(0.2);
+        assert!((capped.delay(99, 100) - 0.2).abs() < 1e-9);
+        assert!((capped.delay(50, 100) - 50.0 * 0.2 / 99.0).abs() < 1e-9);
+
+        assert_eq!(Stagger::NONE.delay(3, 4), 0.0);
+        assert_eq!(stagger.delay(0, 0), 0.0);
+    }
+
+    #[test]
+    fn ping_pong_playback_reverses_at_each_end() {
+        let mut playback = PlaybackState {
+            loop_mode: LoopMode::PingPong,
+            ..PlaybackState::default()
+        };
+        playback.play();
+        playback.tick(1.25, 1.0);
+        assert!((playback.playhead - 0.75).abs() < 1e-9);
+        assert!(playback.playback_rate < 0.0);
+
+        playback.tick(1.0, 1.0);
+        assert!((playback.playhead - 0.25).abs() < 1e-9);
+        assert!(playback.playback_rate > 0.0);
+        assert!(playback.playing);
+
+        playback.stop();
+        assert_eq!(playback.playback_rate, 1.0);
+    }
+
+    #[test]
+    fn playback_waits_before_starting_and_between_loops() {
+        let mut playback = PlaybackState {
+            loop_mode: LoopMode::Repeat,
+            start_delay: 0.5,
+            loop_delay: 0.25,
+            ..PlaybackState::default()
+        };
+        playback.play();
+        assert!(!playback.tick(0.4, 1.0));
+        assert_eq!(playback.playhead, 0.0);
+        playback.tick(0.2, 1.0);
+        assert!((playback.playhead - 0.1).abs() < 1e-9);
+
+        // Reach the end, hold there, then start over.
+        playback.tick(0.9, 1.0);
+        assert_eq!(playback.playhead, 0.0);
+        assert!((playback.waiting() - 0.25).abs() < 1e-9);
+        playback.tick(0.35, 1.0);
+        assert!((playback.playhead - 0.1).abs() < 1e-9);
+
+        // Resuming after a pause does not wait again.
+        playback.pause();
+        playback.play();
+        playback.tick(0.1, 1.0);
+        assert!((playback.playhead - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn once_playback_still_stops_at_either_end() {
+        let mut playback = PlaybackState::default();
+        playback.play();
+        playback.tick(2.0, 1.0);
+        assert_eq!(playback.playhead, 1.0);
+        assert!(!playback.playing);
+
+        let mut backward = PlaybackState {
+            playhead: 0.5,
+            playback_rate: -1.0,
+            ..PlaybackState::default()
+        };
+        backward.play();
+        backward.tick(1.0, 1.0);
+        assert_eq!(backward.playhead, 0.0);
+        assert!(!backward.playing);
+    }
+
+    #[test]
+    fn playback_spans_cover_what_the_playhead_passed() {
+        let span = PlaybackSpan {
+            from: 0.2,
+            to: 0.6,
+            includes_start: false,
+        };
+        assert!(!span.contains(0.2));
+        assert!(span.contains(0.4));
+        assert!(span.contains(0.6));
+        assert!(!span.contains(0.7));
+
+        let backward = PlaybackSpan {
+            from: 0.6,
+            to: 0.2,
+            includes_start: true,
+        };
+        assert!(backward.contains(0.6));
+        assert!(backward.contains(0.2));
+        assert!(!backward.contains(0.1));
+    }
+
+    fn marker_names(player: &AnimationPlayer) -> Vec<&str> {
+        player
+            .passed_markers()
+            .iter()
+            .map(|marker| marker.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn players_report_each_marker_once_per_pass() {
+        let timeline = Timeline::<AnimationValue>::new(1.0)
+            .with_marker("start", 0.0)
+            .with_marker("middle", 0.5)
+            .with_marker("end", 1.0);
+        let mut player = timeline.compile().player().repeat();
+        let mut samples = SampleBuffer::new();
+        player.play();
+
+        player.tick_into(0.25, &mut samples);
+        assert_eq!(marker_names(&player), ["start"]);
+        player.tick_into(0.25, &mut samples);
+        assert_eq!(marker_names(&player), ["middle"]);
+        player.tick_into(0.25, &mut samples);
+        assert!(player.passed_markers().is_empty());
+        // Wrapping passes the end and then the start again.
+        player.tick_into(0.5, &mut samples);
+        assert_eq!(marker_names(&player), ["end", "start"]);
+
+        let mut ping_pong = timeline.compile().player().ping_pong();
+        ping_pong.play();
+        ping_pong.tick_into(1.75, &mut samples);
+        assert_eq!(
+            marker_names(&ping_pong),
+            ["start", "middle", "end", "middle"]
+        );
+        ping_pong.tick_into(0.25, &mut samples);
+        assert_eq!(marker_names(&ping_pong), ["start"]);
+        ping_pong.tick_into(0.25, &mut samples);
+        assert!(ping_pong.passed_markers().is_empty());
+    }
+
+    #[test]
+    fn animation_documents_keep_markers_and_read_version_one() {
+        let document =
+            AnimationDocument::new("Markers", Timeline::new(2.0).with_marker("cue\tone", 0.5));
+        let serialized = document.to_document_format();
+        assert!(serialized.starts_with("sui-animation-document\t2\n"));
+        let parsed = AnimationDocument::from_document_format(&serialized).expect("markers parse");
+        assert_eq!(
+            parsed.timeline.markers,
+            vec![TimelineMarker::new("cue\tone", 0.5)]
+        );
+
+        let version_one = AnimationDocument::from_document_format(
+            "sui-animation-document\t1\nname\tOld\nduration\t1\n",
+        )
+        .expect("version 1 documents still parse");
+        assert!(version_one.timeline.markers.is_empty());
+    }
+
+    #[test]
+    fn editor_commands_add_move_rename_and_remove_markers_with_undo() {
+        let mut editor =
+            AnimationEditorState::new(AnimationDocument::new("Markers", Timeline::new(1.0)));
+        assert!(editor.apply_command(AnimationEditorCommand::AddMarker {
+            name: "cue".to_string(),
+            time: 0.49,
+        }));
+        let snapped = editor.document.timeline.markers[0].time;
+        assert!(
+            (snapped - 0.5).abs() < 1e-9,
+            "snapped to the grid: {snapped}"
+        );
+
+        assert!(editor.apply_command(AnimationEditorCommand::MoveMarker {
+            index: 0,
+            time: 4.0,
+        }));
+        assert_eq!(editor.document.timeline.markers[0].time, 1.0);
+        assert!(editor.apply_command(AnimationEditorCommand::RenameMarker {
+            index: 0,
+            name: "done".to_string(),
+        }));
+        assert!(!editor.apply_command(AnimationEditorCommand::RemoveMarker(3)));
+        assert!(editor.apply_command(AnimationEditorCommand::RemoveMarker(0)));
+        assert!(editor.document.timeline.markers.is_empty());
+
+        assert!(editor.undo());
+        assert_eq!(editor.document.timeline.markers[0].name, "done");
     }
 }

@@ -18,6 +18,7 @@ pub mod layout_policy;
 pub mod media;
 pub mod overlay;
 pub mod panes;
+pub mod presence;
 pub mod reorderable;
 pub mod rich_document;
 pub mod rich_text;
@@ -34,9 +35,10 @@ pub use animation::{
     AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection, AnimationSpec,
     AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, Blink, Clip,
     CompiledClip, CompiledTimeline, CompiledTrack, Easing, Interpolate, Keyframe,
-    KeyframeSelection, LoopMode, MotionScalar, MotionValue, PlaybackState, Progress, Pulse,
-    SampleBatch, SampleBuffer, SampledAnimationValue, SharedCompiledTimeline, SpringF32,
-    SpringSpec, Timeline, TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, Track,
+    KeyframeSelection, LoopMode, MIN_ANIMATION_DOCUMENT_VERSION, MotionScalar, MotionValue,
+    PlaybackSpan, PlaybackState, Progress, Pulse, SampleBatch, SampleBuffer, SampledAnimationValue,
+    SharedCompiledTimeline, SpringF32, SpringSpec, Stagger, StaggerOrigin, Timeline,
+    TimelineBindingSink, TimelineMarker, TimelinePlayer, TimelineSnap, TimelineTick, Track,
     Transition, invalidation_for_animation_property,
 };
 pub use canvas::{
@@ -121,6 +123,7 @@ pub use panes::{
     FloatingWorkspaceState, ResizablePane, SplitExtent, SplitPaneSide, SplitState,
     SplitStateSnapshot, SplitView,
 };
+pub use presence::{KeyedStack, Presence, PresenceTransition};
 pub use reorderable::{ReorderableList, ReorderableListChange};
 pub use rich_document::{
     BasicSyntaxHighlighter, RichAttachment, RichBlockId, RichDocumentBlock, RichDocumentBlockKind,

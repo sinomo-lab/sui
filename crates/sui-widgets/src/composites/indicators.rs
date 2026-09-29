@@ -2,10 +2,11 @@ use crate::ControlMetrics;
 use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::Interpolate;
+use crate::Progress;
 use crate::ResolvedEffectStyle;
 use crate::SemanticTone;
 use crate::ThemeTextToken;
-use crate::composites::popups::{AnimatedScalar, TooltipPlacement};
+use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
 use crate::text_align::paint_aligned_text;
@@ -1020,7 +1021,7 @@ pub(super) fn tab_panel_transition_translation(
     }
 
     let remaining = 1.0 - progress.clamp(0.0, 1.0);
-    if remaining <= AnimatedScalar::EPSILON {
+    if remaining <= Progress::EPSILON {
         return Vector::ZERO;
     }
 

@@ -1,12 +1,13 @@
 use crate::DefaultTheme;
 use crate::HdrThemeMode;
-use crate::MotionScalar;
+use crate::Progress;
 use crate::ResolvedEffectStyle;
 use crate::ResolvedHdrStyle;
 use crate::WidgetColorRole;
 use crate::WidgetEffectRole;
 use crate::WidgetLuminanceRole;
 use crate::WidgetMaterialRole;
+use crate::animation::Reveal;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
@@ -55,6 +56,7 @@ use sui_runtime::ArrangeCtx;
 use sui_runtime::Command;
 use sui_runtime::EventCtx;
 use sui_runtime::EventPhase;
+use sui_runtime::FrameClock;
 use sui_runtime::LayerOptions;
 use sui_runtime::MeasureCtx;
 use sui_runtime::OVERLAY_DISMISS_REQUEST;
@@ -96,9 +98,9 @@ pub struct Menu {
     pub(super) highlight_visual: Option<usize>,
     pub(super) pressed: Option<usize>,
     pub(super) press_visual: Option<usize>,
-    pub(super) highlight_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) highlight_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) measured_width: f32,
     pub(super) focus_on_pointer_down: bool,
     pub(super) on_activate: Option<Box<dyn FnMut(usize, MenuItem)>>,
@@ -116,9 +118,9 @@ impl Menu {
             highlight_visual: None,
             pressed: None,
             press_visual: None,
-            highlight_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            highlight_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             measured_width: 220.0,
             focus_on_pointer_down: true,
             on_activate: None,
@@ -156,7 +158,7 @@ impl Menu {
     pub fn highlighted(mut self, index: usize) -> Self {
         self.highlighted = Some(index);
         self.highlight_visual = Some(index);
-        self.highlight_animation = AnimatedScalar::new(1.0);
+        self.highlight_animation = Progress::new(1.0);
         self
     }
 
@@ -257,7 +259,7 @@ impl Menu {
         self.highlighted = highlighted;
         if let Some(index) = highlighted {
             self.highlight_visual = Some(index);
-            self.highlight_animation = AnimatedScalar::new(0.0);
+            self.highlight_animation = Progress::new(0.0);
             set_hover_animation_target(&mut self.highlight_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.highlight_animation, 0.0, &theme, ctx) {
             self.highlight_visual = None;
@@ -274,7 +276,7 @@ impl Menu {
         self.pressed = pressed;
         if let Some(index) = pressed {
             self.press_visual = Some(index);
-            self.press_animation = AnimatedScalar::new(0.0);
+            self.press_animation = Progress::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
             self.press_visual = None;
@@ -283,40 +285,20 @@ impl Menu {
         ctx.request_semantics();
     }
 
-    pub(super) fn highlight_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn highlight_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.highlight_visual == Some(index) {
-            self.highlight_animation.value
+            self.highlight_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
-    }
-
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        let highlight_animating = self.highlight_animation.advance(time);
-        if !highlight_animating
-            && self.highlighted.is_none()
-            && self.highlight_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.highlight_visual = None;
-        }
-
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-
-        highlight_animating | press_animating | self.focus_animation.advance(time)
     }
 }
 
@@ -389,12 +371,6 @@ impl Widget for Menu {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -451,11 +427,14 @@ impl Widget for Menu {
             metrics,
             palette.surface_raised,
             palette.border,
-            (self.focus_animation.value > AnimatedScalar::EPSILON).then_some(
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
-            ),
+            {
+                let focus = self.focus_animation.get(ctx);
+                (focus > Progress::EPSILON).then_some(
+                    palette
+                        .focus_ring
+                        .with_alpha(palette.focus_ring.alpha * focus),
+                )
+            },
         );
 
         for (index, item) in self.items.iter().enumerate() {
@@ -474,8 +453,8 @@ impl Widget for Menu {
             }
 
             let highlighted = self.highlighted == Some(index);
-            let highlight_amount = self.highlight_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let highlight_amount = self.highlight_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
             let label_style = theme.text_style(item.text_color(&theme));
             let label_slot = Rect::new(
                 row.x() + item_padding.left,
@@ -586,8 +565,6 @@ impl Widget for Menu {
     }
 }
 
-pub(super) type AnimatedScalar = MotionScalar;
-
 pub(super) fn request_child_invalidation(
     ctx: &mut EventCtx,
     widget_id: WidgetId,
@@ -597,6 +574,46 @@ pub(super) fn request_child_invalidation(
         InvalidationTarget::Widget(widget_id),
         kind,
     ));
+}
+
+pub(super) fn request_measure_child(
+    ctx: &mut MeasureCtx,
+    widget_id: WidgetId,
+    kind: InvalidationKind,
+) {
+    ctx.request(InvalidationRequest::new(
+        InvalidationTarget::Widget(widget_id),
+        kind,
+    ));
+}
+
+/// Settle a surface's reveal and its focus ring's once their hides have
+/// finished, taking finished surfaces out of the overlay stack.
+pub(super) fn settle_reveals(
+    ctx: &mut MeasureCtx,
+    reveal: &mut Reveal,
+    focus: &mut Reveal,
+    surface_id: WidgetId,
+    focus_surface_id: WidgetId,
+) {
+    let time = ctx.frame_time();
+    if reveal.settle(time) {
+        request_measure_child(ctx, surface_id, InvalidationKind::Visibility);
+        request_measure_child(ctx, focus_surface_id, InvalidationKind::Visibility);
+    }
+    if focus.settle(time) {
+        request_measure_child(ctx, focus_surface_id, InvalidationKind::Visibility);
+    }
+}
+
+fn settle_surfaces(
+    ctx: &mut MeasureCtx,
+    state: &mut PopoverSurfaceState,
+    surface_id: WidgetId,
+    focus_surface_id: WidgetId,
+) {
+    let (reveal, focus) = (&mut state.reveal, &mut state.focus_animation);
+    settle_reveals(ctx, reveal, focus, surface_id, focus_surface_id);
 }
 
 pub(super) fn tooltip_fallback_measurement(theme: &DefaultTheme) -> TextMeasurement {
@@ -670,7 +687,7 @@ pub(super) struct TooltipPresentationState {
     pub(super) hovered: bool,
     pub(super) trigger_bounds: Rect,
     pub(super) bubble_bounds: Rect,
-    pub(super) reveal: AnimatedScalar,
+    pub(super) reveal: Reveal,
     /// Pinned open and laid out in flow; see [`Tooltip::show_inline`].
     pub(super) inline: bool,
 }
@@ -687,7 +704,7 @@ impl TooltipPresentationState {
             hovered: false,
             trigger_bounds: Rect::ZERO,
             bubble_bounds: Rect::ZERO,
-            reveal: AnimatedScalar::new(0.0),
+            reveal: Reveal::new(0.0),
             inline: false,
         }
     }
@@ -696,17 +713,18 @@ impl TooltipPresentationState {
         self.reveal.is_presented()
     }
 
-    pub(super) fn layer_properties(&self) -> LayerProperties {
+    pub(super) fn layer_properties_at(&self, time: f64) -> LayerProperties {
         let direction = match self.resolved_placement {
             TooltipPlacement::Above => -1.0,
             TooltipPlacement::Below => 1.0,
         };
+        let reveal = self.reveal.at(time);
         LayerProperties::new(
-            self.reveal.value,
+            reveal,
             Vector::new(
                 0.0,
                 self.theme.metrics.tooltip_reveal_offset
-                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value)
+                    * sui_runtime::motion_policy().entrance_offset(reveal)
                     * direction,
             ),
         )
@@ -792,8 +810,8 @@ impl Widget for TooltipOverlay {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        self.state.borrow().layer_properties()
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        self.state.borrow().layer_properties_at(frame_time)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -848,7 +866,7 @@ impl Tooltip {
         {
             let mut state = self.state.borrow_mut();
             state.inline = true;
-            state.reveal = AnimatedScalar::new(1.0);
+            state.reveal.jump_to(1.0);
         }
         self
     }
@@ -900,21 +918,19 @@ impl Tooltip {
         let was_presented = state.is_presented();
         let motion = state.theme.motion;
         state.hovered = hovered;
-        let should_animate = state.reveal.set_target(
+        let until = state.reveal.start(
             hovered as u8 as f32,
             ctx.current_time(),
-            motion.entrance_duration(),
-            motion.entrance_easing(),
+            motion.entrance_spec(),
         );
+        let reveal = state.reveal;
         let is_presented = state.is_presented();
         drop(state);
 
+        reveal.track(ctx, &[overlay_id], until, &Reveal::LAYER);
         if was_presented != is_presented {
             ctx.request_measure();
             request_child_invalidation(ctx, overlay_id, InvalidationKind::Visibility);
-        }
-        if should_animate {
-            ctx.request_animation_frame();
         }
         ctx.request_semantics();
     }
@@ -932,35 +948,16 @@ impl Widget for Tooltip {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
                 self.set_hovered(ctx, ctx.bounds().contains(pointer.position));
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let overlay_id = self.overlay.child().id();
-                let mut state = self.state.borrow_mut();
-                let was_presented = state.is_presented();
-                let previous = state.reveal.value;
-                let animating = state.reveal.advance(*time);
-                let changed = state.reveal.changed_since(previous);
-                let is_presented = state.is_presented();
-                drop(state);
-
-                if changed {
-                    request_child_invalidation(ctx, overlay_id, InvalidationKind::Transform);
-                    request_child_invalidation(ctx, overlay_id, InvalidationKind::Effect);
-                }
-                if was_presented != is_presented {
-                    ctx.request_measure();
-                    request_child_invalidation(ctx, overlay_id, InvalidationKind::Visibility);
-                }
-                if animating {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
-            }
             _ => {}
         }
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let mut state = self.state.borrow_mut();
+        if state.reveal.settle(ctx.frame_time()) {
+            // Finished hiding: the bubble leaves the overlay stack.
+            request_measure_child(ctx, self.overlay.child().id(), InvalidationKind::Visibility);
+        }
         let text_style = text_token_style(
             &state.theme,
             state.theme.text.sm,
@@ -1072,8 +1069,8 @@ pub(super) struct PopoverSurfaceState {
     pub(super) theme: DefaultTheme,
     pub(super) frame_rect: Rect,
     pub(super) arrival_active: bool,
-    pub(super) reveal: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) reveal: Reveal,
+    pub(super) focus_animation: Reveal,
     /// Pinned open and laid out in flow; see [`Popover::show_inline`].
     pub(super) inline: bool,
 }
@@ -1084,8 +1081,8 @@ impl PopoverSurfaceState {
             theme: DefaultTheme::default(),
             frame_rect: Rect::ZERO,
             arrival_active: false,
-            reveal: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            reveal: Reveal::new(0.0),
+            focus_animation: Reveal::new(0.0),
             inline: false,
         }
     }
@@ -1098,17 +1095,18 @@ impl PopoverSurfaceState {
         (0.18 / self.theme.hdr.effects.pulse.speed.max(0.25) as f64).clamp(0.10, 0.28)
     }
 
-    pub(super) fn layer_properties(&self) -> LayerProperties {
+    pub(super) fn layer_properties_at(&self, time: f64) -> LayerProperties {
         // Drops into place below its trigger, growing from the top edge.
+        let reveal = self.reveal.at(time);
         LayerProperties::new(
-            self.reveal.value,
+            reveal,
             Vector::new(
                 0.0,
                 -self.theme.metrics.popover_reveal_offset
-                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value),
+                    * sui_runtime::motion_policy().entrance_offset(reveal),
             ),
         )
-        .with_scale(crate::animation::entrance_scale(self.reveal.value))
+        .with_scale(crate::animation::entrance_scale(reveal))
         .with_scale_anchor(Vector::new(0.5, 0.0))
     }
 
@@ -1272,8 +1270,8 @@ impl Widget for PopoverSurface {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        self.state.borrow().layer_properties()
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        self.state.borrow().layer_properties_at(frame_time)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -1326,8 +1324,8 @@ impl Widget for PopoverFocusSurface {
         let Some(focus_ring) = state.resolved_visuals().focus_ring else {
             return;
         };
-        let progress = state.focus_animation.value;
-        if progress <= AnimatedScalar::EPSILON {
+        let progress = state.focus_animation.get(ctx);
+        if progress <= Reveal::EPSILON {
             return;
         }
 
@@ -1348,8 +1346,8 @@ impl Widget for PopoverFocusSurface {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        self.state.borrow().layer_properties()
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        self.state.borrow().layer_properties_at(frame_time)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -1418,7 +1416,7 @@ impl Popover {
         self.open_reader = None;
         {
             let mut state = self.state.borrow_mut();
-            state.reveal = AnimatedScalar::new(if open { 1.0 } else { 0.0 });
+            state.reveal.jump_to(if open { 1.0 } else { 0.0 });
         }
         self
     }
@@ -1457,7 +1455,7 @@ impl Popover {
         {
             let mut state = self.state.borrow_mut();
             state.inline = true;
-            state.reveal = AnimatedScalar::new(1.0);
+            state.reveal.jump_to(1.0);
         }
         self
     }
@@ -1475,7 +1473,7 @@ impl Popover {
         }
         self.open = open;
         let mut state = self.state.borrow_mut();
-        state.reveal = AnimatedScalar::new(if open { 1.0 } else { 0.0 });
+        state.reveal.jump_to(if open { 1.0 } else { 0.0 });
         state.arrival_active = false;
     }
 
@@ -1532,22 +1530,20 @@ impl Popover {
         let mut state = self.state.borrow_mut();
         let was_presented = state.is_presented();
         let motion = state.theme.motion;
-        let should_animate = state.reveal.set_target(
+        let until = state.reveal.start(
             open as u8 as f32,
             ctx.current_time(),
-            motion.entrance_duration(),
-            motion.entrance_easing(),
+            motion.entrance_spec(),
         );
+        let reveal = state.reveal;
         let is_presented = state.is_presented();
         drop(state);
 
+        reveal.track(ctx, &[surface_id, focus_surface_id], until, &Reveal::LAYER);
         if open || was_presented != is_presented {
             ctx.request_measure();
             request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
             request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
-        }
-        if should_animate {
-            ctx.request_animation_frame();
         }
         ctx.request_semantics();
     }
@@ -1609,44 +1605,6 @@ impl Widget for Popover {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let surface_id = self.surface.child().id();
-                let focus_surface_id = self.focus_surface.child().id();
-                let mut state = self.state.borrow_mut();
-                let was_presented = state.is_presented();
-                let was_focus_presented = state.focus_animation.is_presented();
-                let previous_reveal = state.reveal.value;
-                let previous_focus = state.focus_animation.value;
-                let reveal_animating = state.reveal.advance(*time);
-                let focus_animating = state.focus_animation.advance(*time);
-                let reveal_changed = state.reveal.changed_since(previous_reveal);
-                let focus_changed = state.focus_animation.changed_since(previous_focus);
-                let is_presented = state.is_presented();
-                let is_focus_presented = state.focus_animation.is_presented();
-                drop(state);
-
-                if reveal_changed {
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Transform);
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Effect);
-                }
-                if focus_changed {
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
-                }
-                if was_presented != is_presented {
-                    ctx.request_measure();
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
-                }
-                if was_focus_presented != is_focus_presented {
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
-                }
-                if reveal_animating || focus_animating {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
-            }
             Event::Wake(WakeEvent::Timer { token, .. }) if self.arrival_timer == Some(*token) => {
                 self.arrival_timer = None;
                 let surface_id = self.surface.child().id();
@@ -1666,6 +1624,12 @@ impl Widget for Popover {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.sync_external_open();
+        settle_surfaces(
+            ctx,
+            &mut self.state.borrow_mut(),
+            self.surface.child().id(),
+            self.focus_surface.child().id(),
+        );
         let trigger_size = self.trigger.measure(ctx, constraints.loosen());
         if self.is_inline() {
             let surface_size = self.surface.measure(
@@ -1816,20 +1780,18 @@ impl Widget for Popover {
         let focus_surface_id = self.focus_surface.child().id();
         let mut state = self.state.borrow_mut();
         let was_focus_presented = state.focus_animation.is_presented();
-        let theme = state.theme;
-        set_focus_animation_target(
-            &mut state.focus_animation,
-            focused as u8 as f32,
-            &theme,
-            ctx,
-        );
+        let spec = state.theme.motion.focus_spec();
+        let until = state
+            .focus_animation
+            .start(focused as u8 as f32, ctx.current_time(), spec);
+        let focus = state.focus_animation;
         let is_focus_presented = state.focus_animation.is_presented();
         drop(state);
 
+        focus.track(ctx, &[focus_surface_id], until, &[InvalidationKind::Paint]);
         if was_focus_presented != is_focus_presented {
             request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
         }
-        request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
         if !focused && self.open {
             self.set_open(ctx, false);
         }
@@ -1891,10 +1853,10 @@ pub(super) struct ContextMenuPresentationState {
     pub(super) press_visual: Option<Vec<usize>>,
     pub(super) surface_rect: Rect,
     pub(super) row_height: f32,
-    pub(super) reveal: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
-    pub(super) highlight_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
+    pub(super) reveal: Reveal,
+    pub(super) focus_animation: Reveal,
+    pub(super) highlight_animation: Progress,
+    pub(super) press_animation: Progress,
     /// Pinned open and laid out in flow; see [`ContextMenu::show_inline`].
     pub(super) inline: bool,
 }
@@ -1911,10 +1873,10 @@ impl ContextMenuPresentationState {
             press_visual: None,
             surface_rect: Rect::ZERO,
             row_height: menu_row_height(&theme),
-            reveal: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
-            highlight_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
+            reveal: Reveal::new(0.0),
+            focus_animation: Reveal::new(0.0),
+            highlight_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
             inline: false,
         }
     }
@@ -1941,31 +1903,32 @@ impl ContextMenuPresentationState {
         }
     }
 
-    pub(super) fn layer_properties(&self) -> LayerProperties {
+    pub(super) fn layer_properties_at(&self, time: f64) -> LayerProperties {
         // Drops into place below its trigger, growing from the top edge.
+        let reveal = self.reveal.at(time);
         LayerProperties::new(
-            self.reveal.value,
+            reveal,
             Vector::new(
                 0.0,
                 -self.theme.metrics.popover_reveal_offset
-                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value),
+                    * sui_runtime::motion_policy().entrance_offset(reveal),
             ),
         )
-        .with_scale(crate::animation::entrance_scale(self.reveal.value))
+        .with_scale(crate::animation::entrance_scale(reveal))
         .with_scale_anchor(Vector::new(0.5, 0.0))
     }
 
-    pub(super) fn highlight_amount_for(&self, path: &[usize]) -> f32 {
+    pub(super) fn highlight_amount_for(&self, path: &[usize], clock: &impl FrameClock) -> f32 {
         if self.highlight_visual.as_deref() == Some(path) {
-            self.highlight_animation.value
+            self.highlight_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, path: &[usize]) -> f32 {
+    pub(super) fn press_amount_for(&self, path: &[usize], clock: &impl FrameClock) -> f32 {
         if self.press_visual.as_deref() == Some(path) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
@@ -2039,8 +2002,8 @@ impl Widget for ContextMenuSurface {
                 }
 
                 let highlighted = state.highlighted.as_deref() == Some(path.as_slice());
-                let highlight_amount = state.highlight_amount_for(&path);
-                let press_amount = state.press_amount_for(&path);
+                let highlight_amount = state.highlight_amount_for(&path, ctx);
+                let press_amount = state.press_amount_for(&path, ctx);
                 let label_style = theme.text_style(item.text_color(&theme));
                 let shortcut_width = item
                     .shortcut
@@ -2150,8 +2113,8 @@ impl Widget for ContextMenuSurface {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        self.state.borrow().layer_properties()
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        self.state.borrow().layer_properties_at(frame_time)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -2189,8 +2152,8 @@ impl Widget for ContextMenuFocusSurface {
             return;
         }
 
-        let progress = state.focus_animation.value;
-        if progress <= AnimatedScalar::EPSILON {
+        let progress = state.focus_animation.get(ctx);
+        if progress <= Reveal::EPSILON {
             return;
         }
 
@@ -2217,8 +2180,8 @@ impl Widget for ContextMenuFocusSurface {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        self.state.borrow().layer_properties()
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        self.state.borrow().layer_properties_at(frame_time)
     }
 
     fn stack_surface_options(&self) -> Option<StackSurfaceOptions> {
@@ -2246,8 +2209,8 @@ pub struct ContextMenu {
     pub(super) highlight_visual: Option<Vec<usize>>,
     pub(super) pressed: Option<Vec<usize>>,
     pub(super) press_visual: Option<Vec<usize>>,
-    pub(super) highlight_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
+    pub(super) highlight_animation: Progress,
+    pub(super) press_animation: Progress,
     pub(super) panels: Vec<ContextMenuPanel>,
     pub(super) surface: SingleChild,
     pub(super) focus_surface: SingleChild,
@@ -2283,8 +2246,8 @@ impl ContextMenu {
             highlight_visual: None,
             pressed: None,
             press_visual: None,
-            highlight_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
+            highlight_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
             panels: Vec::new(),
             surface: SingleChild::new(ContextMenuSurface::new(Rc::clone(&surface_state))),
             focus_surface: SingleChild::new(ContextMenuFocusSurface::new(Rc::clone(
@@ -2420,7 +2383,7 @@ impl ContextMenu {
         {
             let mut state = self.surface_state.borrow_mut();
             state.inline = true;
-            state.reveal = AnimatedScalar::new(1.0);
+            state.reveal.jump_to(1.0);
         }
         self
     }
@@ -2439,7 +2402,7 @@ impl ContextMenu {
             path[..path.len().saturating_sub(1)].to_vec()
         };
         self.highlight_visual = Some(path.clone());
-        self.highlight_animation = AnimatedScalar::new(1.0);
+        self.highlight_animation = Progress::new(1.0);
         self.highlighted = Some(path);
         self
     }
@@ -2620,13 +2583,18 @@ impl ContextMenu {
         if self.highlighted == highlighted {
             return;
         }
-        let theme = self.resolved_theme();
+        let spec = self.resolved_theme().motion.hover_spec();
+        let surface_id = self.surface.child().id();
         self.highlighted = highlighted.clone();
         if let Some(path) = highlighted {
             self.highlight_visual = Some(path);
-            self.highlight_animation = AnimatedScalar::new(0.0);
-            set_hover_animation_target(&mut self.highlight_animation, 1.0, &theme, ctx);
-        } else if !set_hover_animation_target(&mut self.highlight_animation, 0.0, &theme, ctx) {
+            self.highlight_animation = Progress::new(0.0);
+            self.highlight_animation
+                .animate_for(1.0, spec, ctx, surface_id);
+        } else if !self
+            .highlight_animation
+            .animate_for(0.0, spec, ctx, surface_id)
+        {
             self.highlight_visual = None;
         }
         self.refresh_surface_interaction_state(ctx);
@@ -2638,38 +2606,19 @@ impl ContextMenu {
         if self.pressed == pressed {
             return;
         }
-        let theme = self.resolved_theme();
+        let spec = self.resolved_theme().motion.press_spec();
+        let surface_id = self.surface.child().id();
         self.pressed = pressed.clone();
         if let Some(path) = pressed {
             self.press_visual = Some(path);
-            self.press_animation = AnimatedScalar::new(0.0);
-            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
-        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
+            self.press_animation = Progress::new(0.0);
+            self.press_animation.animate_for(1.0, spec, ctx, surface_id);
+        } else if !self.press_animation.animate_for(0.0, spec, ctx, surface_id) {
             self.press_visual = None;
         }
         self.refresh_surface_interaction_state(ctx);
         ctx.request_paint();
         ctx.request_semantics();
-    }
-
-    pub(super) fn advance_row_animations(&mut self, time: f64) -> bool {
-        let highlight_animating = self.highlight_animation.advance(time);
-        if !highlight_animating
-            && self.highlighted.is_none()
-            && self.highlight_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.highlight_visual = None;
-        }
-
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-
-        highlight_animating | press_animating
     }
 
     pub(super) fn set_open_path(&mut self, ctx: &mut EventCtx, open_path: Vec<usize>) {
@@ -2840,10 +2789,10 @@ impl ContextMenu {
             None
         };
         self.highlight_visual = self.highlighted.clone();
-        self.highlight_animation = AnimatedScalar::new(self.highlighted.is_some() as u8 as f32);
+        self.highlight_animation = Progress::new(self.highlighted.is_some() as u8 as f32);
         self.pressed = None;
         self.press_visual = None;
-        self.press_animation = AnimatedScalar::new(0.0);
+        self.press_animation = Progress::new(0.0);
         self.panels.clear();
 
         let surface_id = self.surface.child().id();
@@ -2859,28 +2808,24 @@ impl ContextMenu {
         state.highlight_animation = self.highlight_animation;
         state.press_animation = self.press_animation;
         let was_presented = state.is_presented();
-        let should_animate = if open {
-            let motion = theme.motion;
-            state.reveal.set_target(
-                1.0,
-                ctx.current_time(),
-                motion.entrance_duration(),
-                motion.entrance_easing(),
-            )
+        // Menus open with an entrance and close at once.
+        let until = if open {
+            state
+                .reveal
+                .start(1.0, ctx.current_time(), theme.motion.entrance_spec())
         } else {
-            state.reveal = AnimatedScalar::new(0.0);
-            false
+            state.reveal.jump_to(0.0);
+            None
         };
+        let reveal = state.reveal;
         let is_presented = state.is_presented();
         drop(state);
 
+        reveal.track(ctx, &[surface_id, focus_surface_id], until, &Reveal::LAYER);
         if open || was_presented != is_presented {
             ctx.request_measure();
             request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
             request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
-        }
-        if should_animate {
-            ctx.request_animation_frame();
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -3121,59 +3066,23 @@ impl Widget for ContextMenu {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let surface_id = self.surface.child().id();
-                let focus_surface_id = self.focus_surface.child().id();
-                let mut state = self.surface_state.borrow_mut();
-                let was_presented = state.is_presented();
-                let was_focus_presented = state.focus_animation.is_presented();
-                let previous = state.reveal.value;
-                let previous_focus = state.focus_animation.value;
-                let reveal_animating = state.reveal.advance(*time);
-                let focus_animating = state.focus_animation.advance(*time);
-                let reveal_changed = state.reveal.changed_since(previous);
-                let focus_changed = state.focus_animation.changed_since(previous_focus);
-                let is_presented = state.is_presented();
-                let is_focus_presented = state.focus_animation.is_presented();
-                drop(state);
-
-                let previous_highlight = self.highlight_animation.value;
-                let previous_press = self.press_animation.value;
-                let row_animating = self.advance_row_animations(*time);
-                let row_changed = self.highlight_animation.changed_since(previous_highlight)
-                    || self.press_animation.changed_since(previous_press);
-                if row_changed {
-                    self.refresh_surface_interaction_state(ctx);
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
-                }
-
-                if reveal_changed {
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Transform);
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Effect);
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Transform);
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Effect);
-                }
-                if focus_changed {
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
-                }
-                if was_presented != is_presented {
-                    ctx.request_measure();
-                    request_child_invalidation(ctx, surface_id, InvalidationKind::Visibility);
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
-                }
-                if was_focus_presented != is_focus_presented {
-                    request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
-                }
-                if reveal_animating || row_animating || focus_animating {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
-            }
             _ => {}
         }
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        {
+            let mut state = self.surface_state.borrow_mut();
+            let state = &mut *state;
+            let (reveal, focus) = (&mut state.reveal, &mut state.focus_animation);
+            settle_reveals(
+                ctx,
+                reveal,
+                focus,
+                self.surface.child().id(),
+                self.focus_surface.child().id(),
+            );
+        }
         let trigger_size = self.trigger.measure(ctx, constraints.loosen());
         if self.open {
             let theme = self.resolved_theme();
@@ -3436,18 +3345,18 @@ impl Widget for ContextMenu {
         {
             let mut state = self.surface_state.borrow_mut();
             let was_focus_presented = state.focus_animation.is_presented();
-            let theme = state.theme;
-            set_focus_animation_target(
-                &mut state.focus_animation,
-                focused as u8 as f32,
-                &theme,
-                ctx,
-            );
-            if was_focus_presented != state.focus_animation.is_presented() {
+            let spec = state.theme.motion.focus_spec();
+            let until = state
+                .focus_animation
+                .start(focused as u8 as f32, ctx.current_time(), spec);
+            let focus = state.focus_animation;
+            let is_focus_presented = state.focus_animation.is_presented();
+            drop(state);
+            focus.track(ctx, &[focus_surface_id], until, &[InvalidationKind::Paint]);
+            if was_focus_presented != is_focus_presented {
                 request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Visibility);
             }
         }
-        request_child_invalidation(ctx, focus_surface_id, InvalidationKind::Paint);
         ctx.request_semantics();
     }
 

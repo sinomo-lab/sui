@@ -113,8 +113,6 @@ use crate::composites::indicators::{inset_rect, mix_color, rect_center, text_tok
 use crate::composites::navigation::{browser_tab_close_semantics_id, browser_tab_semantics_id};
 
 #[cfg(test)]
-use crate::composites::popups::AnimatedScalar;
-#[cfg(test)]
 use crate::composites::status::status_bar_segment_id;
 
 #[cfg(test)]

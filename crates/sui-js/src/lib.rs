@@ -60,6 +60,10 @@ use sui_bindings_core::{
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
     binding_tooltip_placement_from_name, resolve_binding_image_slots,
 };
+use sui_bindings_core::{
+    BindingAnimationMarker, BindingStagger, binding_loop_mode_from_name, binding_loop_mode_name,
+    binding_stagger_origin_from_name,
+};
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
     PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
@@ -1114,6 +1118,26 @@ impl From<Color> for JsColor {
     }
 }
 
+fn js_loop_mode(value: &str) -> Result<sui_crate::LoopMode> {
+    binding_loop_mode_from_name(value).ok_or_else(|| {
+        Error::new(
+            Status::InvalidArg,
+            format!("unknown loop mode '{value}'; expected once, repeat, or ping-pong"),
+        )
+    })
+}
+
+fn js_stagger_origin(value: &str) -> Result<sui_crate::StaggerOrigin> {
+    binding_stagger_origin_from_name(value).ok_or_else(|| {
+        Error::new(
+            Status::InvalidArg,
+            format!(
+                "unknown stagger origin '{value}'; expected first, last, center, or an item index"
+            ),
+        )
+    })
+}
+
 fn js_easing(value: Option<&str>) -> Result<sui_crate::Easing> {
     let value = value.unwrap_or("ease-in-out");
     binding_easing_from_name(value).ok_or_else(|| {
@@ -1382,6 +1406,12 @@ impl JsAnimatedValue {
         Ok(())
     }
 
+    /// Start toward `target` after `delay` seconds of ticks.
+    #[napi(js_name = "setTargetAfter")]
+    pub fn set_target_after(&mut self, target: &JsAnimationValue, delay: f64) {
+        self.inner.set_target_after(target.inner, delay);
+    }
+
     #[napi(js_name = "setTarget")]
     pub fn set_target(&mut self, target: &JsAnimationValue) {
         self.inner.set_target(target.inner);
@@ -1568,6 +1598,61 @@ impl From<BindingAnimationSample> for JsAnimationSample {
     }
 }
 
+#[napi(js_name = "AnimationMarker")]
+#[derive(Debug, Clone)]
+pub struct JsAnimationMarker {
+    #[napi(readonly)]
+    pub name: String,
+    #[napi(readonly)]
+    pub time: f64,
+}
+
+impl From<BindingAnimationMarker> for JsAnimationMarker {
+    fn from(value: BindingAnimationMarker) -> Self {
+        Self {
+            name: value.name,
+            time: value.time,
+        }
+    }
+}
+
+#[napi(object, js_name = "StaggerOptions")]
+pub struct JsStaggerOptions {
+    pub origin: Option<String>,
+    #[napi(js_name = "maxDelay")]
+    pub max_delay: Option<f64>,
+}
+
+#[napi(js_name = "Stagger")]
+#[derive(Debug, Clone, Copy)]
+pub struct JsStagger {
+    inner: BindingStagger,
+}
+
+#[napi]
+impl JsStagger {
+    #[napi(constructor)]
+    pub fn new(interval: f64, options: Option<JsStaggerOptions>) -> Result<Self> {
+        let mut inner = BindingStagger::new(interval);
+        if let Some(options) = options {
+            if let Some(origin) = options.origin {
+                inner.set_origin(js_stagger_origin(&origin)?);
+            }
+            inner.set_max_delay(options.max_delay);
+        }
+        Ok(Self { inner })
+    }
+    /// The delay in seconds for item `index` of `count`.
+    #[napi]
+    pub fn delay(&self, index: u32, count: u32) -> f64 {
+        self.inner.delay(index as usize, count as usize)
+    }
+    #[napi(getter)]
+    pub fn interval(&self) -> f64 {
+        self.inner.interval()
+    }
+}
+
 #[napi(js_name = "AnimationTimeline")]
 #[derive(Debug, Clone)]
 pub struct JsAnimationTimeline {
@@ -1585,6 +1670,14 @@ impl JsAnimationTimeline {
     #[napi(js_name = "addClip")]
     pub fn add_clip(&mut self, clip: &JsAnimationClip) {
         self.inner.add_clip(clip.inner.clone());
+    }
+    #[napi(js_name = "addMarker")]
+    pub fn add_marker(&mut self, name: String, time: f64) {
+        self.inner.add_marker(name, time);
+    }
+    #[napi(getter)]
+    pub fn markers(&self) -> Vec<JsAnimationMarker> {
+        self.inner.markers().into_iter().map(Into::into).collect()
     }
     #[napi]
     pub fn sample(&self, time: f64) -> Vec<JsAnimationSample> {
@@ -1637,6 +1730,34 @@ impl JsAnimationPlayer {
     #[napi(js_name = "setRepeat")]
     pub fn set_repeat(&mut self, repeat: bool) {
         self.inner.set_repeat(repeat);
+    }
+    /// Play `"once"`, `"repeat"` from the start, or `"ping-pong"` back and
+    /// forth.
+    #[napi(js_name = "setLoopMode")]
+    pub fn set_loop_mode(&mut self, mode: String) -> Result<()> {
+        self.inner.set_loop_mode(js_loop_mode(&mode)?);
+        Ok(())
+    }
+    #[napi(getter, js_name = "loopMode")]
+    pub fn loop_mode(&self) -> String {
+        binding_loop_mode_name(self.inner.loop_mode()).to_owned()
+    }
+    #[napi(js_name = "setStartDelay")]
+    pub fn set_start_delay(&mut self, seconds: f64) {
+        self.inner.set_start_delay(seconds);
+    }
+    #[napi(js_name = "setLoopDelay")]
+    pub fn set_loop_delay(&mut self, seconds: f64) {
+        self.inner.set_loop_delay(seconds);
+    }
+    /// The markers the playhead passed in the last tick, in order.
+    #[napi(getter, js_name = "passedMarkers")]
+    pub fn passed_markers(&self) -> Vec<JsAnimationMarker> {
+        self.inner
+            .passed_markers()
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
     #[napi(js_name = "setPlaybackRate")]
     pub fn set_playback_rate(&mut self, rate: f64) {
@@ -1774,6 +1895,22 @@ impl JsAnimationEditor {
             track_index as usize,
             keyframe_index as usize,
         )
+    }
+    #[napi(js_name = "addMarker")]
+    pub fn add_marker(&mut self, name: String, time: f64) -> bool {
+        self.inner.add_marker(name, time)
+    }
+    #[napi(js_name = "moveMarker")]
+    pub fn move_marker(&mut self, index: u32, time: f64) -> bool {
+        self.inner.move_marker(index as usize, time)
+    }
+    #[napi(js_name = "renameMarker")]
+    pub fn rename_marker(&mut self, index: u32, name: String) -> bool {
+        self.inner.rename_marker(index as usize, name)
+    }
+    #[napi(js_name = "removeMarker")]
+    pub fn remove_marker(&mut self, index: u32) -> bool {
+        self.inner.remove_marker(index as usize)
     }
     #[napi]
     pub fn undo(&mut self) -> bool {
@@ -6625,6 +6762,12 @@ mod tests {
                     BindingWidget::label("Animated layout"),
                     0.22,
                     sui_crate::Easing::EaseInOut,
+                ),
+                BindingWidget::presence(
+                    BindingWidget::label("Presence content"),
+                    sui_bindings_core::BindingBool::Static(true),
+                    true,
+                    false,
                 ),
                 BindingWidget::adaptive_view(
                     BindingWidget::label("Compact branch"),

@@ -1,9 +1,10 @@
 use sui::prelude::*;
 use sui::{
-    AnimationDocument, AnimationSpec, MotionPreference, Point, SpringSpec, Vector,
+    AnimationDocument, AnimationSpec, LoopMode, MotionPreference, Point, SpringSpec, Vector,
     reset_motion_settings, set_app_motion_preference, set_motion_time_scale,
 };
 
+use super::choreography::TaskList;
 use super::curves::{CURVES, Curve, Shuttle};
 use super::interruption::{FlingPuck, RetargetPair};
 use super::policy_summary;
@@ -223,9 +224,9 @@ fn studio_adds_keyframes_at_the_playhead_and_selects_them() {
 fn studio_pause_and_loop_control_playback() {
     let studio = StudioState::new();
     assert!(studio.is_playing());
-    assert!(studio.looping());
+    assert_eq!(studio.loop_mode(), LoopMode::Repeat);
 
-    studio.set_looping(false);
+    studio.set_loop_mode(LoopMode::Once);
     studio.seek(1.9);
     assert!(!studio.advance(0.5), "a single play stops at the end");
     assert!((studio.playhead() - 2.0).abs() < 1e-9);
@@ -260,4 +261,59 @@ fn frame_intervals_ignore_the_first_frame_and_report_extremes() {
     assert!((intervals.worst().expect("a worst") - 12.0).abs() < 1e-9);
     assert!((intervals.median().expect("a median") - 12.0).abs() < 1e-9);
     assert!(intervals.summary().starts_with("typically 12.0 ms (83 Hz)"));
+}
+
+#[test]
+fn studio_ping_pong_turns_back_at_the_end() {
+    let studio = StudioState::new();
+    studio.set_loop_mode(LoopMode::PingPong);
+    studio.seek(1.9);
+    studio.play();
+    assert!(studio.advance(0.3), "ping-pong keeps playing");
+    assert!(
+        (studio.playhead() - 1.8).abs() < 1e-9,
+        "{}",
+        studio.playhead()
+    );
+
+    studio.set_loop_delay(0.5);
+    assert_eq!(studio.loop_delay(), 0.5);
+}
+
+#[test]
+fn studio_reports_the_markers_it_passes() {
+    let studio = StudioState::new();
+    assert_eq!(studio.markers().len(), 2);
+    studio.seek(0.9);
+    studio.advance(0.2);
+    assert_eq!(studio.last_marker().as_deref(), Some("Arrive"));
+
+    studio.seek(0.5);
+    assert!(studio.add_marker());
+    assert_eq!(studio.markers().len(), 3);
+    assert!(studio.summary().contains("3 markers"));
+}
+
+#[test]
+fn task_list_edits_keep_keys_unique() {
+    let list = TaskList::new();
+    let ids = |list: &TaskList| {
+        list.items
+            .get()
+            .iter()
+            .map(|task| task.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&list), vec![0, 1, 2, 3]);
+
+    list.add(3);
+    assert_eq!(ids(&list), vec![4, 5, 6, 0, 1, 2, 3]);
+    list.remove_one();
+    assert_eq!(ids(&list), vec![4, 6, 0, 1, 2, 3]);
+    list.shuffle();
+    assert_eq!(ids(&list), vec![3, 2, 1, 0, 6, 4]);
+    list.shuffle();
+    assert_eq!(ids(&list), vec![2, 1, 0, 6, 4, 3]);
+    list.remove(0);
+    assert_eq!(ids(&list), vec![2, 1, 6, 4, 3]);
 }

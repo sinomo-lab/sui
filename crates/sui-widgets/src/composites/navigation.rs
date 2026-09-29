@@ -40,6 +40,7 @@ use sui_runtime::Command;
 use sui_runtime::EventCtx;
 use sui_runtime::FrameClock;
 use sui_runtime::MeasureCtx;
+use sui_runtime::Motion;
 use sui_runtime::PaintCtx;
 use sui_runtime::REACTIVE_CHANGED;
 use sui_runtime::SemanticsCtx;
@@ -47,6 +48,7 @@ use sui_runtime::Widget;
 use sui_runtime::WidgetChildren;
 use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
+use sui_runtime::motion_policy;
 use sui_scene::ImageSource;
 use sui_text::TextMeasurement;
 use sui_text::TextStyle;
@@ -760,6 +762,19 @@ impl BrowserTabHit {
 pub(super) type BrowserTabBarChange = Box<dyn FnMut(usize, String)>;
 pub(super) type BrowserTabBarContextChange = Box<dyn FnMut(usize, String, &mut EventCtx)>;
 
+/// A tab that just closed: it fades while the space it took collapses, so
+/// the tabs after it slide over.
+#[derive(Debug, Clone)]
+pub(super) struct ClosingTab {
+    /// Where it was: before the remaining tab at this index.
+    index: usize,
+    label: String,
+    width: f32,
+    presence: Motion<f32>,
+    /// How much of its space it takes this frame, as of the last measure.
+    space: f32,
+}
+
 pub struct BrowserTabBar {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -785,6 +800,9 @@ pub struct BrowserTabBar {
     pub(super) on_change_with_ctx: Option<BrowserTabBarContextChange>,
     pub(super) on_close: Option<BrowserTabBarChange>,
     pub(super) on_close_with_ctx: Option<BrowserTabBarContextChange>,
+    /// A tab that left since the last measure: its index, label, and width.
+    pending_close: Option<(usize, String, f32)>,
+    pub(super) closing: Option<ClosingTab>,
 }
 
 impl BrowserTabBar {
@@ -814,6 +832,8 @@ impl BrowserTabBar {
             on_change_with_ctx: None,
             on_close: None,
             on_close_with_ctx: None,
+            pending_close: None,
+            closing: None,
         }
     }
 
@@ -918,7 +938,13 @@ impl BrowserTabBar {
 
     pub(super) fn refresh_tabs(&mut self) {
         if let Some(reader) = &self.tabs_reader {
-            self.tabs = reader();
+            let tabs = reader();
+            if let Some(index) = single_removal(&self.tabs, &tabs)
+                && let Some(width) = self.widths.get(index).copied()
+            {
+                self.pending_close = Some((index, self.tabs[index].clone(), width));
+            }
+            self.tabs = tabs;
         }
         self.selected = self.resolved_selected_raw();
         let selected = self.normalized_selected();
@@ -977,6 +1003,57 @@ impl BrowserTabBar {
         }
         self.refresh_tabs();
         self.start_selection_animation(from, self.normalized_selected(), ctx);
+        ctx.request_measure();
+    }
+
+    /// Start collapsing a tab that just left, and forget one that has.
+    fn update_closing(&mut self, ctx: &mut MeasureCtx) {
+        if let Some((index, label, width)) = self.pending_close.take() {
+            self.closing = None;
+            let mut presence = Motion::new(1.0_f32);
+            let spec = self.resolved_theme().motion.exit_spec();
+            // Collapsing moves the tabs after it; without movement they close
+            // up at once.
+            if motion_policy().allows_movement() && ctx.animate(&mut presence, 0.0, spec) {
+                if let Some(until) = presence.end_time() {
+                    ctx.track_motion(until, InvalidationKind::Measure);
+                }
+                self.closing = Some(ClosingTab {
+                    index,
+                    label,
+                    width,
+                    presence,
+                    space: 1.0,
+                });
+            }
+        }
+        if let Some(closing) = &mut self.closing {
+            closing.space = closing.presence.get(ctx).clamp(0.0, 1.0);
+            if closing.space <= 0.0 && !closing.presence.is_animating(ctx) {
+                self.closing = None;
+            }
+        }
+    }
+
+    /// Where the closing tab is, collapsed to the space it takes now.
+    pub(super) fn closing_rect(&self, bounds: Rect) -> Option<Rect> {
+        let closing = self.closing.as_ref()?;
+        let gap = self.resolved_theme().metrics.tab_gap;
+        let x = bounds.x()
+            + self
+                .widths
+                .iter()
+                .take(closing.index)
+                .map(|width| width + gap)
+                .sum::<f32>();
+        let tab_height = self.tab_height().min(bounds.height()).max(0.0);
+        let tab_y = bounds.y() + ((bounds.height() - tab_height) * 0.5).max(0.0);
+        Some(Rect::new(
+            x,
+            tab_y,
+            closing.width * closing.space,
+            tab_height,
+        ))
     }
 
     pub(super) fn start_selection_animation(
@@ -1039,6 +1116,11 @@ impl BrowserTabBar {
         let tab_y = bounds.y() + ((bounds.height() - tab_height) * 0.5).max(0.0);
         let mut x = bounds.x();
         for (current, measured_width) in self.widths.iter().enumerate() {
+            if let Some(closing) = &self.closing
+                && closing.index == current
+            {
+                x += (closing.width + gap) * closing.space;
+            }
             let visible_width = (*measured_width).min((bounds.max_x() - x).max(0.0));
             let rect = Rect::new(x, tab_y, visible_width, tab_height);
             if current == index {
@@ -1224,6 +1306,7 @@ impl Widget for BrowserTabBar {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.refresh_tabs();
+        self.update_closing(ctx);
         let theme = self.resolved_theme();
         let style = theme.text_style(theme.palette.text);
         let padding = theme.metrics.tab_padding;
@@ -1244,8 +1327,13 @@ impl Widget for BrowserTabBar {
             .collect();
 
         let gap = theme.metrics.tab_gap;
-        let width =
-            self.widths.iter().sum::<f32>() + (gap * self.tabs.len().saturating_sub(1) as f32);
+        let closing = self
+            .closing
+            .as_ref()
+            .map_or(0.0, |closing| (closing.width + gap) * closing.space);
+        let width = self.widths.iter().sum::<f32>()
+            + (gap * self.tabs.len().saturating_sub(1) as f32)
+            + closing;
         constraints.clamp(Size::new(width, self.tab_height()))
     }
 
@@ -1261,6 +1349,23 @@ impl Widget for BrowserTabBar {
             theme.metrics.focus_ring_outset + (theme.metrics.focus_ring_width * 0.5),
         );
         ctx.push_clip_rect(ctx.bounds().inflate(clip_outset, clip_outset));
+        if let (Some(closing), Some(slot)) = (&self.closing, self.closing_rect(ctx.bounds())) {
+            // The closed tab's label fades out as its space collapses.
+            let fade = closing.presence.get(ctx).clamp(0.0, 1.0);
+            let full = Rect::new(slot.x(), slot.y(), closing.width, slot.height());
+            let color = palette.text_muted;
+            let text_style = theme.text_style(color.with_alpha(color.alpha * fade));
+            ctx.push_clip_rect(slot);
+            paint_aligned_text(
+                ctx,
+                self.label_rect_for(full),
+                &closing.label,
+                &text_style,
+                text_style.line_height,
+                0.0,
+            );
+            ctx.pop_clip();
+        }
         for (index, tab) in self.tabs.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -1415,6 +1520,20 @@ impl Widget for BrowserTabBar {
         ctx.request_paint();
         ctx.request_semantics();
     }
+}
+
+/// The index of the one item `before` has that `after` lacks, when that is
+/// the only difference.
+fn single_removal(before: &[String], after: &[String]) -> Option<usize> {
+    if before.len() != after.len() + 1 {
+        return None;
+    }
+    let index = before
+        .iter()
+        .zip(after)
+        .position(|(left, right)| left != right)
+        .unwrap_or(after.len());
+    (before[index + 1..] == after[index..]).then_some(index)
 }
 
 pub(super) fn browser_tab_semantics_id(parent: WidgetId, index: usize) -> WidgetId {

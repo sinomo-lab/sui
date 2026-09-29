@@ -1257,6 +1257,65 @@ fn binding_side_sheet_reads_bound_shown_state() {
 }
 
 #[test]
+fn binding_presence_follows_bound_shown_state() {
+    let shown = BindingState::new(true);
+    let app = BindingApp::new().with_window(BindingWindow::new(
+        "Presence state",
+        BindingWidget::column(
+            [
+                BindingWidget::presence(
+                    BindingWidget::label("Leaving content"),
+                    BindingBool::State(shown.clone()),
+                    true,
+                    false,
+                ),
+                BindingWidget::layout_transition(
+                    BindingWidget::label("Gliding content"),
+                    0.2,
+                    sui::Easing::EaseOut,
+                ),
+            ],
+            0.0,
+        ),
+    ));
+    let mut runtime = app.start().unwrap();
+    let window_id = runtime.window_id_at(0).unwrap();
+
+    let visible = runtime.render_window(window_id).unwrap();
+    assert!(
+        visible
+            .semantics_names
+            .iter()
+            .any(|name| name == "Leaving content")
+    );
+    // Built widgets keep their own layers inside binding trees.
+    let graph = runtime.runtime.widget_graph(window_id.into_sui()).unwrap();
+    for widget in ["Presence", "LayoutTransition"] {
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.widget_name.ends_with(widget))
+            .unwrap_or_else(|| panic!("{widget} in the widget graph"));
+        assert_eq!(
+            node.paint_boundary,
+            sui::PaintBoundaryMode::Explicit,
+            "{widget} presents through its own layer"
+        );
+    }
+
+    shown.set(false);
+    assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+    let leaving = runtime.render_window(window_id).unwrap();
+    assert!(
+        !leaving
+            .semantics_names
+            .iter()
+            .any(|name| name == "Leaving content"),
+        "leaving content drops out of the accessibility tree at once"
+    );
+}
+
+#[test]
 fn binding_split_view_reads_bound_ratio_state() {
     let ratio = BindingState::new(0.25);
     let app = BindingApp::new().with_window(BindingWindow::new(

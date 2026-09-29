@@ -197,7 +197,11 @@ supports scalar, point/vector, size, rectangle, color, and transform values;
 `Transition`, `Spring`, and `AnimatedValue` cover local motion. Reusable motion
 uses `Keyframe`, `AnimationTrack`, `AnimationClip`, and `AnimationTimeline`,
 with `AnimationPlayer`, serializable `AnimationDocument`, and undoable
-`AnimationEditor` APIs for tools.
+`AnimationEditor` APIs for tools. Timelines carry named markers that players
+report as the playhead passes them, players loop once, repeat, or ping-pong
+with optional start and loop delays, and `Stagger` computes delays for
+`AnimatedValue.setTargetAfter` so a group can cascade. `Presence` shows and
+hides a widget with an enter and exit animation.
 
 ```javascript
 const zero = sui.AnimationValue.scalar(0);

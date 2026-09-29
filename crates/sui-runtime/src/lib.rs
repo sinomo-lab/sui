@@ -1048,6 +1048,9 @@ pub struct WidgetNodeSnapshot {
     pub stack_order_policy: StackOrderPolicy,
     pub accepts_focus: bool,
     pub focused: bool,
+    /// Whether the node is inside an inert subtree (see
+    /// [`WidgetPod::is_inert`]): painted, but not hit tested or focusable.
+    pub inert: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1283,6 +1286,9 @@ struct WindowState {
     /// Widgets with a running [`Motion`], by the invalidation it needs, and
     /// the frame time its transition ends.
     active_motions: HashMap<(WidgetId, InvalidationKind), f64>,
+    /// Widgets to invalidate once, at the first frame at or after each of
+    /// these times: when motion that changes their layout ends.
+    motion_ends: HashMap<(WidgetId, InvalidationKind), Vec<f64>>,
     frame_pacing: FramePacing,
     last_animation_frame_time: Option<f64>,
     next_animation_frame_index: u64,
@@ -1362,6 +1368,7 @@ impl WindowState {
             requested_animation_frames: BTreeSet::new(),
             delivering_animation_frames: VecDeque::new(),
             active_motions: HashMap::new(),
+            motion_ends: HashMap::new(),
             frame_pacing: FramePacing::Timer,
             last_animation_frame_time: None,
             next_animation_frame_index: 0,
@@ -2118,7 +2125,9 @@ impl WindowState {
 
     /// Whether a widget has asked for a frame or has a running [`Motion`].
     fn wants_animation_frame(&self) -> bool {
-        !self.requested_animation_frames.is_empty() || !self.active_motions.is_empty()
+        !self.requested_animation_frames.is_empty()
+            || !self.active_motions.is_empty()
+            || !self.motion_ends.is_empty()
     }
 
     /// When the runtime's own timer delivers the next animation frame. With
@@ -2177,20 +2186,36 @@ impl WindowState {
     /// Invalidate every widget whose motion is still running at `frame_time`,
     /// once more for motion that just ended, and forget finished motion.
     fn tick_motions(&mut self, frame_time: f64) {
-        if self.active_motions.is_empty() {
+        if self.active_motions.is_empty() && self.motion_ends.is_empty() {
             return;
         }
         let mut invalidations = Vec::with_capacity(self.active_motions.len());
+        // A widget can start motion for a surface the graph does not show
+        // yet, such as a tooltip it is opening; the next layout adds it.
+        // Refreshing the graph forgets motion for widgets that are gone.
         let graph = &self.graph;
         self.active_motions.retain(|&(widget_id, kind), until| {
-            if !graph.contains(widget_id) {
-                return false;
+            if graph.contains(widget_id) {
+                invalidations.push(InvalidationRequest::new(
+                    InvalidationTarget::Widget(widget_id),
+                    kind,
+                ));
             }
-            invalidations.push(InvalidationRequest::new(
-                InvalidationTarget::Widget(widget_id),
-                kind,
-            ));
             frame_time < *until
+        });
+        self.motion_ends.retain(|&(widget_id, kind), ends| {
+            if !graph.contains(widget_id) {
+                return true;
+            }
+            let pending = ends.len();
+            ends.retain(|end| frame_time < *end);
+            if ends.len() != pending {
+                invalidations.push(InvalidationRequest::new(
+                    InvalidationTarget::Widget(widget_id),
+                    kind,
+                ));
+            }
+            !ends.is_empty()
         });
         for request in &invalidations {
             if let InvalidationTarget::Widget(widget_id) = request.target {
@@ -2242,6 +2267,7 @@ impl WindowState {
             .copied()
             .chain(self.delivering_animation_frames.iter().copied())
             .chain(self.active_motions.keys().map(|(widget_id, _)| *widget_id))
+            .chain(self.motion_ends.keys().map(|(widget_id, _)| *widget_id))
             .collect::<BTreeSet<_>>()
             .len()
     }
@@ -2759,6 +2785,16 @@ impl WindowState {
                 } => {
                     let end = self.active_motions.entry((target, kind)).or_insert(until);
                     *end = end.max(until);
+                }
+                WakeRequest::MotionEnd {
+                    target,
+                    kind,
+                    until,
+                } => {
+                    let ends = self.motion_ends.entry((target, kind)).or_default();
+                    if !ends.contains(&until) {
+                        ends.push(until);
+                    }
                 }
             }
         }
@@ -4630,22 +4666,22 @@ impl WindowState {
 
     fn prune_runtime_state(&mut self) {
         self.pointer_capture
-            .retain(|_, widget_id| self.graph.contains(*widget_id));
+            .retain(|_, widget_id| self.graph.is_live(*widget_id));
         let stale_grab_owner = self
             .cursor
             .grab_owner
-            .is_some_and(|widget_id| !self.graph.contains(widget_id));
+            .is_some_and(|widget_id| !self.graph.is_live(widget_id));
         let stale_visibility_owner = self
             .cursor
             .visibility_owner
-            .is_some_and(|widget_id| !self.graph.contains(widget_id));
+            .is_some_and(|widget_id| !self.graph.is_live(widget_id));
         if stale_grab_owner || stale_visibility_owner {
             self.reset_cursor_state();
         }
         if self
             .active_drag
             .as_ref()
-            .is_some_and(|drag| !self.graph.contains(drag.source))
+            .is_some_and(|drag| !self.graph.is_live(drag.source))
         {
             self.active_drag = None;
         }
@@ -4663,6 +4699,8 @@ impl WindowState {
             .retain(|widget_id| self.graph.contains(*widget_id));
         self.active_motions
             .retain(|(widget_id, _), _| self.graph.contains(*widget_id));
+        self.motion_ends
+            .retain(|(widget_id, _), _| self.graph.contains(*widget_id));
         if self.delivering_animation_frames.is_empty() && !self.wants_animation_frame() {
             self.last_animation_frame_time = None;
         }
@@ -4670,7 +4708,7 @@ impl WindowState {
         if self
             .focus
             .focused_widget
-            .is_some_and(|widget_id| !self.graph.contains(widget_id))
+            .is_some_and(|widget_id| !self.graph.is_live(widget_id))
         {
             self.focus.focused_widget = None;
             self.focused_semantics = None;
@@ -4899,6 +4937,7 @@ struct GraphCollectContext {
     stack_host: WidgetId,
     stack_surface: WidgetId,
     overlay_owner: Option<WidgetId>,
+    inert: bool,
 }
 
 impl WidgetGraph {
@@ -4943,6 +4982,7 @@ impl WidgetGraph {
                 stack_host: root.id(),
                 stack_surface: root.id(),
                 overlay_owner: None,
+                inert: false,
             },
             &mut inverse_cache,
         );
@@ -4988,6 +5028,12 @@ impl WidgetGraph {
 
     fn contains(&self, widget_id: WidgetId) -> bool {
         self.nodes.contains_key(&widget_id)
+    }
+
+    /// Whether `widget_id` is in the graph and not inert: able to hold focus,
+    /// pointer capture, and other interaction state.
+    fn is_live(&self, widget_id: WidgetId) -> bool {
+        self.nodes.get(&widget_id).is_some_and(|node| !node.inert)
     }
 
     fn node(&self, widget_id: WidgetId) -> Option<&WidgetNodeSnapshot> {
@@ -5222,6 +5268,7 @@ impl WidgetGraph {
     ) {
         let id = pod.id();
         self.order.push(id);
+        let inert = context.inert || pod.is_inert();
 
         let overlay_options = pod.current_overlay_options();
         let is_overlay_owner = overlay_options.is_some();
@@ -5267,7 +5314,7 @@ impl WidgetGraph {
         let is_stack_surface = id != self.root
             && emits_layer
             && (surface_options.is_some() || is_direct_child_of_host);
-        let hit_test = surface_options.is_none_or(|options| options.hit_test);
+        let hit_test = !inert && surface_options.is_none_or(|options| options.hit_test);
         let resolved_surface = if is_stack_surface {
             id
         } else {
@@ -5307,6 +5354,7 @@ impl WidgetGraph {
                     stack_host: resolved_host,
                     stack_surface: resolved_surface,
                     overlay_owner,
+                    inert,
                 },
                 children,
                 inverse_cache,
@@ -5351,8 +5399,9 @@ impl WidgetGraph {
                 is_stack_surface,
                 hit_test,
                 stack_order_policy: resolved_policy,
-                accepts_focus: pod.accepts_focus(),
+                accepts_focus: !inert && pod.accepts_focus(),
                 focused: Some(id) == focused_widget,
+                inert,
             },
         );
     }

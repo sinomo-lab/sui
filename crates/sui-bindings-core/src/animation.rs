@@ -14,10 +14,14 @@ use sui::Keyframe;
 use sui::LoopMode;
 use sui::Point;
 use sui::Rect;
+use sui::SampleBuffer;
 use sui::Size;
 use sui::SpringF32;
+use sui::Stagger;
+use sui::StaggerOrigin;
 use sui::TableColumnAlignment;
 use sui::Timeline;
+use sui::TimelineMarker;
 use sui::Track;
 use sui::Transform;
 use sui::Transition;
@@ -245,6 +249,11 @@ impl BindingAnimatedValue {
         self.inner.set_target(target.into());
     }
 
+    /// Start toward `target` after `delay` seconds of ticks.
+    pub fn set_target_after(&mut self, target: BindingAnimationValue, delay: f64) {
+        self.inner.set_target_after(target.into(), delay);
+    }
+
     pub fn jump_to(&mut self, value: BindingAnimationValue) {
         self.inner.jump_to(value.into());
     }
@@ -390,6 +399,22 @@ pub(crate) fn binding_animation_samples(
         .collect()
 }
 
+/// A named point in time on a timeline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingAnimationMarker {
+    pub name: String,
+    pub time: f64,
+}
+
+impl From<TimelineMarker> for BindingAnimationMarker {
+    fn from(marker: TimelineMarker) -> Self {
+        Self {
+            name: marker.name,
+            time: marker.time,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindingAnimationTimeline {
     pub(crate) inner: Timeline<AnimationValue>,
@@ -404,6 +429,14 @@ impl BindingAnimationTimeline {
 
     pub fn add_clip(&mut self, clip: BindingAnimationClip) {
         self.inner.push_clip(clip.inner);
+    }
+
+    pub fn add_marker(&mut self, name: impl Into<String>, time: f64) {
+        self.inner.push_marker(TimelineMarker::new(name, time));
+    }
+
+    pub fn markers(&self) -> Vec<BindingAnimationMarker> {
+        self.inner.markers.iter().cloned().map(Into::into).collect()
     }
 
     pub fn duration(&self) -> f64 {
@@ -448,11 +481,39 @@ impl BindingAnimationPlayer {
     }
 
     pub fn set_repeat(&mut self, repeat: bool) {
-        self.inner.playback_mut().loop_mode = if repeat {
+        self.set_loop_mode(if repeat {
             LoopMode::Repeat
         } else {
             LoopMode::Once
-        };
+        });
+    }
+
+    pub fn set_loop_mode(&mut self, loop_mode: LoopMode) {
+        self.inner.playback_mut().loop_mode = loop_mode;
+    }
+
+    pub fn loop_mode(&self) -> LoopMode {
+        self.inner.playback().loop_mode
+    }
+
+    /// Wait `seconds` before playing from the start.
+    pub fn set_start_delay(&mut self, seconds: f64) {
+        self.inner.playback_mut().start_delay = seconds;
+    }
+
+    /// Hold `seconds` at each end before looping.
+    pub fn set_loop_delay(&mut self, seconds: f64) {
+        self.inner.playback_mut().loop_delay = seconds;
+    }
+
+    /// The markers the playhead passed in the last tick, in order.
+    pub fn passed_markers(&self) -> Vec<BindingAnimationMarker> {
+        self.inner
+            .passed_markers()
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect()
     }
 
     pub fn set_playback_rate(&mut self, rate: f64) {
@@ -472,9 +533,9 @@ impl BindingAnimationPlayer {
     }
 
     pub fn tick(&mut self, delta_seconds: f64) -> Vec<BindingAnimationSample> {
-        let duration = self.inner.timeline().duration();
-        self.inner.playback_mut().tick(delta_seconds, duration);
-        self.sample()
+        let mut samples = SampleBuffer::new();
+        self.inner.tick_into(delta_seconds, &mut samples);
+        binding_animation_samples(samples.into_samples())
     }
 }
 
@@ -601,6 +662,31 @@ impl BindingAnimationEditor {
             ))
     }
 
+    pub fn add_marker(&mut self, name: impl Into<String>, time: f64) -> bool {
+        self.inner.apply_command(AnimationEditorCommand::AddMarker {
+            name: name.into(),
+            time,
+        })
+    }
+
+    pub fn move_marker(&mut self, index: usize, time: f64) -> bool {
+        self.inner
+            .apply_command(AnimationEditorCommand::MoveMarker { index, time })
+    }
+
+    pub fn rename_marker(&mut self, index: usize, name: impl Into<String>) -> bool {
+        self.inner
+            .apply_command(AnimationEditorCommand::RenameMarker {
+                index,
+                name: name.into(),
+            })
+    }
+
+    pub fn remove_marker(&mut self, index: usize) -> bool {
+        self.inner
+            .apply_command(AnimationEditorCommand::RemoveMarker(index))
+    }
+
     pub fn undo(&mut self) -> bool {
         self.inner.undo()
     }
@@ -627,6 +713,64 @@ impl BindingAnimationEditor {
 
     pub fn scroll(&self) -> f32 {
         self.inner.scroll
+    }
+}
+
+/// Delays that start a group of animations one after another.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingStagger {
+    pub(crate) inner: Stagger,
+}
+
+impl BindingStagger {
+    pub fn new(interval: f64) -> Self {
+        Self {
+            inner: Stagger::new(interval),
+        }
+    }
+
+    pub fn set_origin(&mut self, origin: StaggerOrigin) {
+        self.inner = self.inner.from(origin);
+    }
+
+    pub fn set_max_delay(&mut self, max_delay: Option<f64>) {
+        self.inner.max_delay = max_delay;
+    }
+
+    pub fn delay(&self, index: usize, count: usize) -> f64 {
+        self.inner.delay(index, count)
+    }
+
+    pub fn interval(&self) -> f64 {
+        self.inner.interval
+    }
+}
+
+pub fn binding_loop_mode_from_name(value: &str) -> Option<LoopMode> {
+    match normalize_binding_name(value).as_str() {
+        "once" => Some(LoopMode::Once),
+        "repeat" | "loop" => Some(LoopMode::Repeat),
+        "pingpong" | "alternate" => Some(LoopMode::PingPong),
+        _ => None,
+    }
+}
+
+pub fn binding_loop_mode_name(mode: LoopMode) -> &'static str {
+    match mode {
+        LoopMode::Once => "once",
+        LoopMode::Repeat => "repeat",
+        LoopMode::PingPong => "ping-pong",
+    }
+}
+
+/// A stagger origin from its name: `"first"`, `"last"`, `"center"`, or an
+/// item index.
+pub fn binding_stagger_origin_from_name(value: &str) -> Option<StaggerOrigin> {
+    match normalize_binding_name(value).as_str() {
+        "first" | "start" => Some(StaggerOrigin::First),
+        "last" | "end" => Some(StaggerOrigin::Last),
+        "center" | "centre" | "middle" => Some(StaggerOrigin::Center),
+        other => other.parse().ok().map(StaggerOrigin::Index),
     }
 }
 

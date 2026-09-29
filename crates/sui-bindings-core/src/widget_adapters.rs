@@ -740,9 +740,67 @@ impl BindingRuntimeWidget {
     }
 }
 
+/// Transparent: the built widget's layout, layers, overlay behavior, and
+/// commands all pass through, as if it were in the tree directly. Output
+/// reuse stays off, so a binding subtree repaints and re-reads its state
+/// whenever it paints.
 impl Widget for BindingRuntimeWidget {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.inner.event(ctx, event);
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &sui::Command<'_>) {
+        self.inner.command(ctx, command);
+    }
+
+    fn diagnostics(&self, ctx: &mut sui::WidgetDiagnosticsCtx) {
+        self.inner.diagnostics(ctx);
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.inner.measure_size(ctx, constraints)
+    }
+
+    fn measure_axis(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: sui::Axis,
+    ) -> f32 {
+        self.inner.measure_axis(ctx, constraints, axis)
+    }
+
+    fn intrinsic_size(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        axis: sui::Axis,
+        available_cross: f32,
+    ) -> sui::IntrinsicSize {
+        self.inner.intrinsic_size(ctx, axis, available_cross)
+    }
+
+    fn layer_options(&self) -> sui::LayerOptions {
+        self.inner.layer_options()
+    }
+
+    fn layer_properties(&self) -> sui::LayerProperties {
+        self.inner.layer_properties()
+    }
+
+    fn layer_properties_at(&self, frame_time: f64) -> sui::LayerProperties {
+        self.inner.layer_properties_at(frame_time)
+    }
+
+    fn stack_host_options(&self) -> Option<sui::StackHostOptions> {
+        self.inner.stack_host_options()
+    }
+
+    fn stack_surface_options(&self) -> Option<sui::StackSurfaceOptions> {
+        self.inner.stack_surface_options()
+    }
+
+    fn overlay_options(&self) -> Option<sui::OverlayOptions> {
+        self.inner.overlay_options()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -807,6 +865,60 @@ impl Widget for BindingUiTaskRootWidget {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.inner.event(ctx, event);
         self.drain_ui_tasks(ctx);
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &sui::Command<'_>) {
+        self.inner.command(ctx, command);
+    }
+
+    fn diagnostics(&self, ctx: &mut sui::WidgetDiagnosticsCtx) {
+        self.inner.diagnostics(ctx);
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.inner.measure_size(ctx, constraints)
+    }
+
+    fn measure_axis(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: sui::Axis,
+    ) -> f32 {
+        self.inner.measure_axis(ctx, constraints, axis)
+    }
+
+    fn intrinsic_size(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        axis: sui::Axis,
+        available_cross: f32,
+    ) -> sui::IntrinsicSize {
+        self.inner.intrinsic_size(ctx, axis, available_cross)
+    }
+
+    fn layer_options(&self) -> sui::LayerOptions {
+        self.inner.layer_options()
+    }
+
+    fn layer_properties(&self) -> sui::LayerProperties {
+        self.inner.layer_properties()
+    }
+
+    fn layer_properties_at(&self, frame_time: f64) -> sui::LayerProperties {
+        self.inner.layer_properties_at(frame_time)
+    }
+
+    fn stack_host_options(&self) -> Option<sui::StackHostOptions> {
+        self.inner.stack_host_options()
+    }
+
+    fn stack_surface_options(&self) -> Option<sui::StackSurfaceOptions> {
+        self.inner.stack_surface_options()
+    }
+
+    fn overlay_options(&self) -> Option<sui::OverlayOptions> {
+        self.inner.overlay_options()
     }
 
     fn debug_name(&self) -> &'static str {

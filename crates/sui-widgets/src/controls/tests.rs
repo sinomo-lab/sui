@@ -2089,7 +2089,7 @@ fn expanded_select_option_hover_animation_uses_theme_motion() -> Result<()> {
     let entrance_time = entrance_duration();
     let hover_time = hover_duration();
     runtime.tick(entrance_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let expanded = runtime.render(window_id)?;
     let select = expanded
         .semantics
@@ -2119,7 +2119,7 @@ fn expanded_select_option_hover_animation_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(entrance_time + (hover_time * 0.5));
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     let mid_fills = solid_fill_colors(&mid);
     assert!(
@@ -2131,7 +2131,7 @@ fn expanded_select_option_hover_animation_uses_theme_motion() -> Result<()> {
     // Allow a tiny margin because opening the managed overlay can schedule
     // an independent focus-frame at the same timestamp as the menu reveal.
     runtime.tick(entrance_time + hover_time + 0.001);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime.render(window_id)?;
     let settled_fills = solid_fill_colors(&settled);
     assert!(
@@ -6043,7 +6043,7 @@ fn expanded_select_menu_entrance_uses_theme_motion_layer_properties() -> Result<
     assert!(start_descriptor.properties.translation.y < 0.0);
 
     runtime.tick(duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     let mid_descriptor =
         overlay_layer_descriptor(&mid).expect("select menu overlay layer still present");
@@ -6073,7 +6073,7 @@ fn expanded_select_menu_entrance_uses_theme_motion_layer_properties() -> Result<
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime.render(window_id)?;
     let settled_descriptor =
         overlay_layer_descriptor(&settled).expect("select menu overlay layer still present");
@@ -6233,7 +6233,7 @@ fn expanded_select_flips_above_when_below_space_is_constrained() -> Result<()> {
         primary_pointer(PointerEventKind::Up, header_point, false),
     )?;
     runtime.tick(entrance_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
 
     let expanded = runtime.render(window_id)?;
     let select = expanded
@@ -6301,7 +6301,7 @@ fn expanded_select_popover_paints_outside_layout_bounds() -> Result<()> {
         primary_pointer(PointerEventKind::Up, header_point, false),
     )?;
     runtime.tick(entrance_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
 
     let expanded = runtime.render(window_id)?;
     let select = expanded
