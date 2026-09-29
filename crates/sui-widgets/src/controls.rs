@@ -6552,6 +6552,24 @@ impl Widget for Select {
                 }
                 ctx.set_handled();
             }
+            Event::Semantics(semantics) if semantics.target == ctx.widget_id() => {
+                match &semantics.action {
+                    SemanticsActionRequest::SetValue(SemanticsValue::Text(value)) => {
+                        let Some(index) = self.options.iter().position(|option| option == value)
+                        else {
+                            return;
+                        };
+                        self.select_index(ctx, index);
+                        self.set_expanded(ctx, false);
+                    }
+                    SemanticsActionRequest::Expand => self.set_expanded(ctx, true),
+                    SemanticsActionRequest::Collapse => self.set_expanded(ctx, false),
+                    _ => return,
+                }
+                ctx.request_paint();
+                ctx.request_semantics();
+                ctx.set_handled();
+            }
             _ => {}
         }
     }

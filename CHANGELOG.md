@@ -89,6 +89,26 @@ Versioning, with the usual expectation that the API may change during the
 - `ScrollState::virtual_item_at`, `first_visible_item`, and
   `virtual_item_offset` report which `VirtualScrollView` item sits at a content
   offset, for scroll-spy navigation.
+- `SimpleColorPickerMode::Oklch` edits perceptual lightness, chroma, and hue.
+  Chroma beyond the editing space's gamut is reduced to fit at the same
+  lightness and hue, the chroma track marks the gamut edge, and the hue is
+  kept while chroma passes through zero. The Python and JavaScript bindings
+  accept `"oklch"`.
+
+### Redesigned theme editor demo
+
+- Source colors are grouped by job (brand, status, surfaces, fills, borders,
+  ink, and decorative), each with its hex value, an edit marker, and the WCAG
+  contrast of "on" colors and text levels. Pressing a color opens an OKLCH,
+  RGB, or HSL editor with a hex field right beneath it.
+- Role overrides are added explicitly and listed with their own reset; spacing,
+  corner radius, type size, and motion sliders show their values.
+- The preview lays out contrast checks (failures first), every surface tier
+  with each text level, the decorative palette, a looping motion sample, and
+  15 widget book stories in the edited theme.
+- "Copy as Rust" copies a function that rebuilds the theme, and "Use as app
+  theme" applies it to the whole demo app, including the widget book's App
+  theme; the dev shell's theme toggle shows "Custom" until it is used again.
 
 ### Fixes
 
@@ -98,6 +118,13 @@ Versioning, with the usual expectation that the API may change during the
   outline on light themes.
 - A selected filled icon button keeps its icon visible instead of painting it
   in the fill color.
+- Color picker slider rows place the channel label and value beside the
+  colored track instead of on it, so they stay readable and the marker no
+  longer covers the value at the ends of the range.
+- Color picker tracks with more than two gradient stops, such as the HSL
+  lightness track, now paint every stop instead of only the first and last.
+- `Select` now handles the expand, collapse, and set-value accessibility
+  actions it advertises.
 - The demo's Themes page sizes each row of preview cards to its tallest card,
   so wrapped descriptions no longer squash the color swatches.
 - Demo widgets that ignored the live theme now follow it, including layout

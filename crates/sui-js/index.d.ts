@@ -1916,11 +1916,11 @@ export interface ColorPickerOptions {
 
 export function colorPicker(name: string, options?: ColorPickerOptions): Widget;
 
-export function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+export function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb" | "oklch", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
 
 export interface SimpleColorPickerOptions {
   color?: Color;
-  mode?: "hsl" | "hsv" | "rgb";
+  mode?: "hsl" | "hsv" | "rgb" | "oklch";
   onChange?: (color: Color) => void;
   showAlpha?: boolean;
   compact?: boolean;

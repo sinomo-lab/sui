@@ -103,7 +103,7 @@ The original `PascalCase` positional functions remain available for existing
 applications.
 
 The portable media surface includes both `colorPicker(...)` and the compact,
-mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, or `rgb`).
+mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).
 Editor shells can use `DockState`, serializable `DockLayout`/`DockNode` values,
 stable `DockPanelSpec` descriptors, and `dockWorkspace(...)` without exposing
 Rust-local widget ownership.

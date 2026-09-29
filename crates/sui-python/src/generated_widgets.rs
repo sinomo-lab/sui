@@ -4086,7 +4086,7 @@ pub fn py_simple_color_picker(
     compact: bool,
 ) -> PyResult<PyWidget> {
     let mode = binding_simple_color_picker_mode_from_name(mode)
-        .ok_or_else(|| PyValueError::new_err("mode must be 'hsl', 'hsv', or 'rgb'"))?;
+        .ok_or_else(|| PyValueError::new_err("mode must be 'hsl', 'hsv', 'rgb', or 'oklch'"))?;
     let action = on_change.map(|callback| {
         BindingColorAction::new(move |color| {
             Python::attach(|py| {

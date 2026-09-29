@@ -17,7 +17,7 @@ mod shrinkwrap_demo;
 #[cfg(test)]
 mod test_support;
 pub mod theme_demo;
-mod theme_editor_demo;
+mod theme_editor;
 pub mod validation;
 mod vector_demo;
 pub mod widget_book;

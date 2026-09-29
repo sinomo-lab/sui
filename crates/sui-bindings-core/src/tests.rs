@@ -3122,3 +3122,16 @@ fn binding_app_run_reports_missing_desktop_feature() {
     assert!(app.run().unwrap_err().contains("desktop"));
     assert!(app.run_with_handle(|_| {}).unwrap_err().contains("desktop"));
 }
+
+#[test]
+fn simple_color_picker_mode_names_include_oklch() {
+    assert_eq!(
+        binding_simple_color_picker_mode_from_name("OKLCH"),
+        Some(sui::SimpleColorPickerMode::Oklch)
+    );
+    assert_eq!(
+        binding_simple_color_picker_mode_from_name("hsb"),
+        Some(sui::SimpleColorPickerMode::Hsv)
+    );
+    assert_eq!(binding_simple_color_picker_mode_from_name("lab"), None);
+}

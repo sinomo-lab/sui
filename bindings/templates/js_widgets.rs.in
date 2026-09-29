@@ -3669,7 +3669,7 @@ pub fn js_simple_color_picker(
 ) -> Result<JsWidget> {
     let mode_name = mode.as_deref().unwrap_or("hsv");
     let mode = binding_simple_color_picker_mode_from_name(mode_name)
-        .ok_or_else(|| napi_invalid_arg("mode must be 'hsl', 'hsv', or 'rgb'"))?;
+        .ok_or_else(|| napi_invalid_arg("mode must be 'hsl', 'hsv', 'rgb', or 'oklch'"))?;
     let action = on_change
         .map(|callback| {
             let env = JsEnvHandle::from_env(env);

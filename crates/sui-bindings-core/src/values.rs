@@ -699,6 +699,7 @@ pub fn binding_simple_color_picker_mode_from_name(value: &str) -> Option<SimpleC
         "hsl" => Some(SimpleColorPickerMode::Hsl),
         "hsv" | "hsb" => Some(SimpleColorPickerMode::Hsv),
         "rgb" => Some(SimpleColorPickerMode::Rgb),
+        "oklch" => Some(SimpleColorPickerMode::Oklch),
         _ => None,
     }
 }

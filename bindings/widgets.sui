@@ -1218,7 +1218,7 @@ widget SimpleColorPicker
   core_constructor simple_color_picker
   python function py_simple_color_picker
   js function js_simple_color_picker
-  api function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+  api function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb" | "oklch", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
   docs SimpleColorPicker
   compat
 end

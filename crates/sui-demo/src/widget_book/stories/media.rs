@@ -57,8 +57,8 @@ pub(super) const STORIES: [Story; 10] = [
         id: "color-picker",
         title: "Color picker",
         api: "ColorPicker, SimpleColorPicker",
-        summary: "Full HDR-aware picking and compact channel sliders in HSL, HSV, or RGB.",
-        keywords: "color picker hdr hsl rgb",
+        summary: "Full HDR-aware picking and compact channel sliders in HSL, HSV, RGB, or OKLCH.",
+        keywords: "color picker hdr hsl rgb oklch perceptual",
         category: Category::Media,
         build: color_picker,
     },
@@ -331,6 +331,18 @@ fn color_picker(ctx: &StoryCtx) -> Vec<Section> {
                         )
                         .mode(SimpleColorPickerMode::Rgb)
                         .color_space(ColorSpace::DisplayP3)
+                        .theme(theme),
+                    )),
+                ),
+                (
+                    "OKLCH",
+                    boxed(sized(
+                        220.0,
+                        SimpleColorPicker::from_color(
+                            "Simple OKLCH color picker",
+                            Color::oklch(0.62, 0.17, 300.0),
+                        )
+                        .mode(SimpleColorPickerMode::Oklch)
                         .theme(theme),
                     )),
                 ),

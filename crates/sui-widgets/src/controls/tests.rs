@@ -5787,6 +5787,60 @@ fn select_can_choose_option_from_keyboard() -> Result<()> {
 }
 
 #[test]
+fn select_handles_the_accessibility_actions_it_advertises() -> Result<()> {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let on_change = Rc::clone(&changes);
+    let (mut runtime, window_id) = build_runtime(
+        Select::new("Mode")
+            .placeholder("Choose mode")
+            .options(["Draft", "Final", "Review"])
+            .on_change(move |_, value| on_change.borrow_mut().push(value)),
+    );
+    let combo_box = |output: &RenderOutput| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .cloned()
+            .expect("select semantics present")
+    };
+    let output = runtime.render(window_id)?;
+    let select = combo_box(&output);
+    let act = |runtime: &mut Runtime, action: SemanticsActionRequest| {
+        runtime.handle_event(
+            window_id,
+            Event::Semantics(sui_core::SemanticsEvent::new(select.id, action)),
+        )
+    };
+
+    act(&mut runtime, SemanticsActionRequest::Expand)?;
+    assert_eq!(
+        combo_box(&runtime.render(window_id)?).state.expanded,
+        Some(true)
+    );
+    act(&mut runtime, SemanticsActionRequest::Collapse)?;
+    assert_eq!(
+        combo_box(&runtime.render(window_id)?).state.expanded,
+        Some(false)
+    );
+
+    act(
+        &mut runtime,
+        SemanticsActionRequest::SetValue(SemanticsValue::Text("Review".into())),
+    )?;
+    act(
+        &mut runtime,
+        SemanticsActionRequest::SetValue(SemanticsValue::Text("Missing".into())),
+    )?;
+    assert_eq!(changes.borrow().as_slice(), &["Review".to_string()]);
+    assert_eq!(
+        combo_box(&runtime.render(window_id)?).value,
+        Some(SemanticsValue::Text("Review".to_string()))
+    );
+    Ok(())
+}
+
+#[test]
 fn select_selected_when_reads_external_selection() -> Result<()> {
     let selected = Rc::new(RefCell::new(Some(1usize)));
     let selected_reader = Rc::clone(&selected);

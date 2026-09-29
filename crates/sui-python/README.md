@@ -115,7 +115,7 @@ optional configuration. The original `PascalCase` names remain as compatibility
 aliases while applications migrate.
 
 The portable media surface includes both `color_picker(...)` and the compact,
-mode-selectable `simple_color_picker(...)` (`hsl`, `hsv`, or `rgb`).
+mode-selectable `simple_color_picker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).
 Editor shells can use `DockState`, serializable `DockLayout`/`DockNode` values,
 stable `DockPanelSpec` descriptors, and `dock_workspace(...)` without exposing
 Rust-local widget ownership.

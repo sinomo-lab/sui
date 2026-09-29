@@ -20,12 +20,11 @@ use crate::widget_book::{build_widget_book_gallery_with_theme, register_widget_b
 use sui::{
     HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
-    TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetId,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode,
-    WindowEvent, WindowId, WindowOutputColorPrimaries, WindowOutputDiagnostics,
-    WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
-    WindowToneMappingMode, default_sui_logo_image, paint_aligned_text,
-    paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
+    TextCoveragePolicy, TextHinting, ToggleState, Vector, WgpuRenderer, WidgetPodMutVisitor,
+    WidgetPodVisitor, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
+    WindowOutputColorPrimaries, WindowOutputDiagnostics, WindowRenderOptions, WindowStemDarkening,
+    WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode, default_sui_logo_image,
+    paint_aligned_text, paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
 };
 
 #[cfg(test)]
@@ -69,11 +68,10 @@ use crate::nodes_demo::{NODES_TAB_LABEL, build_nodes_demo_with_theme};
 use crate::paint_demo::{PAINT_TAB_LABEL, build_paint_demo_with_theme};
 use crate::shrinkwrap_demo::{SHRINKWRAP_TAB_LABEL, build_shrinkwrap_demo_with_theme};
 #[cfg(test)]
-use crate::theme_editor_demo::{
-    THEME_COLOR_PICKER_NAME, THEME_EDITOR_CONTROLS_SCROLL_NAME, THEME_EDITOR_PREVIEW_SCROLL_NAME,
-    THEME_SPACING_NAME,
+use crate::theme_editor::{
+    THEME_EDITOR_CONTROLS_SCROLL_NAME, THEME_EDITOR_PREVIEW_SCROLL_NAME, THEME_SPACING_NAME,
 };
-use crate::theme_editor_demo::{THEME_EDITOR_TAB_LABEL, build_theme_editor_demo_with_theme};
+use crate::theme_editor::{THEME_EDITOR_TAB_LABEL, build_theme_editor_demo};
 #[cfg(test)]
 use crate::vector_demo::{
     VECTOR_DOCUMENT_WIDTH, VECTOR_FILL_RULE_NAME, VECTOR_MIN_OBJECT_SIZE, VECTOR_OPACITY_NAME,
@@ -178,7 +176,7 @@ const DEV_SHELL_DEFAULT_SETTINGS_WIDTH: f32 = 460.0;
 const DEV_SHELL_DEFAULT_SETTINGS_HEIGHT: f32 = 380.0;
 const DEV_SHELL_DEFAULT_SETTINGS_X: f32 = 420.0;
 const DEV_SHELL_DEFAULT_SETTINGS_Y: f32 = 96.0;
-const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
+pub(crate) const DEV_SHELL_THEME_TOGGLE_NAME: &str = "Theme mode";
 const DEV_SHELL_PICKER_TITLE: &str = "SUI Demo";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +323,9 @@ fn dev_theme_for_scheme(scheme: ThemeColorScheme) -> DefaultTheme {
     }
 }
 
+/// Theme toggle label while a demo supplies the app theme.
+pub(crate) const DEV_THEME_CUSTOM_LABEL: &str = "Custom";
+
 fn dev_theme_scheme_label(scheme: ThemeColorScheme) -> &'static str {
     match scheme {
         ThemeColorScheme::Light => "Light",
@@ -349,6 +350,21 @@ fn dev_theme_toggle_position(scheme: ThemeColorScheme) -> f32 {
     }
 }
 
+/// Lets a demo replace the whole dev shell's theme, as the theme editor's
+/// "Use as app theme" action does. The theme toggle returns to the built-in
+/// themes.
+#[derive(Clone)]
+pub(crate) struct DevAppTheme {
+    state: DevShellState,
+}
+
+impl DevAppTheme {
+    pub(crate) fn apply(&self, ctx: &mut EventCtx, theme: DefaultTheme) {
+        self.state.use_custom_theme(theme);
+        request_window_refresh(ctx, true);
+    }
+}
+
 #[derive(Clone)]
 struct DevShellState {
     inner: Rc<RefCell<DevShellStateInner>>,
@@ -360,6 +376,9 @@ struct DevShellStateInner {
     picker_open: bool,
     theme_scheme: ThemeColorScheme,
     theme: DefaultTheme,
+    /// Whether `theme` came from a demo, such as the theme editor, rather
+    /// than the built-in theme for `theme_scheme`.
+    custom_theme: bool,
     performance_overlay_visible: bool,
     settings_visible: bool,
     settings_bounds: Rect,
@@ -375,6 +394,7 @@ impl DevShellState {
                 picker_open: true,
                 theme_scheme: ThemeColorScheme::Light,
                 theme: dev_theme_for_scheme(ThemeColorScheme::Light),
+                custom_theme: false,
                 performance_overlay_visible: false,
                 settings_visible: false,
                 settings_bounds: Rect::new(
@@ -417,7 +437,20 @@ impl DevShellState {
         let mut inner = self.inner.borrow_mut();
         inner.theme_scheme = next_dev_theme_scheme(inner.theme_scheme);
         inner.theme = dev_theme_for_scheme(inner.theme_scheme);
+        inner.custom_theme = false;
         inner.theme_scheme
+    }
+
+    /// Replaces the built-in theme until the theme toggle is next used.
+    fn use_custom_theme(&self, theme: DefaultTheme) {
+        let mut inner = self.inner.borrow_mut();
+        inner.theme_scheme = theme.colors.scheme;
+        inner.theme = theme;
+        inner.custom_theme = true;
+    }
+
+    fn has_custom_theme(&self) -> bool {
+        self.inner.borrow().custom_theme
     }
 
     fn performance_overlay_visible(&self) -> bool {
@@ -591,7 +624,13 @@ impl DevBrowserShell {
         let tab_scroll_to_end = Rc::new(Cell::new(false));
         let theme_reader = state.theme_reader();
         let command_demo_state = CommandDemoState::new();
-        let demos = build_dev_demo_entries(Rc::clone(&theme_reader), command_demo_state.clone());
+        let demos = build_dev_demo_entries(
+            Rc::clone(&theme_reader),
+            command_demo_state.clone(),
+            DevAppTheme {
+                state: state.clone(),
+            },
+        );
         if let Some(index) =
             initial_demo.and_then(|title| demos.iter().position(|demo| demo.title == title))
         {
@@ -1510,6 +1549,7 @@ impl Widget for ThemeToggleButton {
         let palette = theme.palette;
         let bounds = ctx.bounds();
         let scheme = self.state.theme_scheme();
+        let custom = self.state.has_custom_theme();
         let (from_scheme, to_scheme, transition) = self.visual_transition();
         let background = Color::interpolate(
             Self::track_color(from_scheme),
@@ -1544,18 +1584,26 @@ impl Widget for ThemeToggleButton {
                 ),
                 14.0,
             ),
-            Color::interpolate(
-                Self::knob_color(from_scheme),
-                Self::knob_color(to_scheme),
-                transition,
-            ),
+            if custom {
+                theme.colors.primary
+            } else {
+                Color::interpolate(
+                    Self::knob_color(from_scheme),
+                    Self::knob_color(to_scheme),
+                    transition,
+                )
+            },
         );
         let label_rect = Self::label_rect(bounds, knob, scheme);
         let label_style = demo_text_style(theme, DemoTextRole::Metadata, palette.text);
         paint_single_line_aligned_text(
             ctx,
             label_rect,
-            dev_theme_toggle_label(scheme),
+            if custom {
+                DEV_THEME_CUSTOM_LABEL
+            } else {
+                dev_theme_toggle_label(scheme)
+            },
             &label_style,
             label_style.line_height,
             0.5,
@@ -1566,9 +1614,11 @@ impl Widget for ThemeToggleButton {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Switch, ctx.bounds());
         let scheme = self.state.theme_scheme();
         node.name = Some(DEV_SHELL_THEME_TOGGLE_NAME.to_string());
-        node.value = Some(SemanticsValue::Text(
-            dev_theme_scheme_label(scheme).to_string(),
-        ));
+        node.value = Some(SemanticsValue::Text(if self.state.has_custom_theme() {
+            DEV_THEME_CUSTOM_LABEL.to_string()
+        } else {
+            dev_theme_scheme_label(scheme).to_string()
+        }));
         node.state.checked = Some(match scheme {
             ThemeColorScheme::Light => ToggleState::Unchecked,
             ThemeColorScheme::Dark => ToggleState::Checked,
@@ -1896,6 +1946,7 @@ impl Widget for FloatingSettingsWindow {
 fn build_dev_demo_entries(
     theme_reader: DevThemeReader,
     command_demo_state: CommandDemoState,
+    app_theme: DevAppTheme,
 ) -> Vec<DevDemo> {
     macro_rules! themed_demo {
         ($title:expr, $description:expr, $icon:expr, $accent:expr, |$theme:ident| $child:expr) => {{
@@ -1924,7 +1975,7 @@ fn build_dev_demo_entries(
             "Edit foundational theme tokens and preview every change in real time.",
             IconGlyph::PaintBucket,
             DecorativeHue::Magenta,
-            |theme| build_theme_editor_demo_with_theme(theme)
+            |theme| build_theme_editor_demo(theme, Some(app_theme.clone()))
         ),
         themed_demo!(
             ANIMATION_DEMO_TAB_LABEL,
@@ -2165,40 +2216,6 @@ pub(crate) fn request_window_refresh(ctx: &mut EventCtx, include_ordering: bool)
         InvalidationTarget::Window(ctx.window_id()),
         InvalidationKind::Semantics,
     ));
-}
-
-pub(crate) fn request_widget_refresh(
-    ctx: &mut EventCtx,
-    widget_id: WidgetId,
-    kinds: impl IntoIterator<Item = InvalidationKind>,
-) {
-    for kind in kinds {
-        ctx.request(InvalidationRequest::new(
-            InvalidationTarget::Widget(widget_id),
-            kind,
-        ));
-    }
-}
-
-pub(crate) fn request_widget_visual_refresh(ctx: &mut EventCtx, widget_id: WidgetId) {
-    request_widget_refresh(
-        ctx,
-        widget_id,
-        [InvalidationKind::Paint, InvalidationKind::Semantics],
-    );
-}
-
-pub(crate) fn request_widget_layout_refresh(ctx: &mut EventCtx, widget_id: WidgetId) {
-    request_widget_refresh(
-        ctx,
-        widget_id,
-        [
-            InvalidationKind::Measure,
-            InvalidationKind::Paint,
-            InvalidationKind::HitTest,
-            InvalidationKind::Semantics,
-        ],
-    );
 }
 
 fn scroll_dev_tab_strip(state: &ScrollState, direction: f32, ctx: &mut EventCtx) {
@@ -3746,85 +3763,6 @@ mod tests {
                 _ => {}
             });
         rects
-    }
-
-    fn solid_fill_bounds_for_rgba8_color_in_rect(
-        output: &RenderOutput,
-        expected: Color,
-        region: Rect,
-    ) -> Vec<Rect> {
-        let expected = color_to_rgba8(expected);
-        let mut rects = Vec::new();
-        output
-            .frame
-            .scene
-            .visit_commands(&mut |command| match command {
-                SceneCommand::FillRect {
-                    rect,
-                    brush: Brush::Solid(color),
-                } if color_to_rgba8(*color) == expected && rects_overlap(*rect, region) => {
-                    rects.push(*rect);
-                }
-                SceneCommand::FillPath {
-                    path,
-                    brush: Brush::Solid(color),
-                } if color_to_rgba8(*color) == expected && rects_overlap(path.bounds(), region) => {
-                    rects.push(path.bounds());
-                }
-                _ => {}
-            });
-        rects
-    }
-
-    fn theme_editor_color_slider(output: &RenderOutput, channel: &str) -> SemanticsNode {
-        let picker = output
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ColorPicker
-                    && node.name.as_deref() == Some(THEME_COLOR_PICKER_NAME)
-            })
-            .expect("theme color picker should exist");
-        output
-            .semantics
-            .iter()
-            .find(|node| {
-                node.parent == Some(picker.id)
-                    && node.role == SemanticsRole::Slider
-                    && node.name.as_deref() == Some(channel)
-            })
-            .cloned()
-            .unwrap_or_else(|| panic!("{channel} channel picker row should exist"))
-    }
-
-    fn theme_editor_slider(output: &RenderOutput, name: &str) -> SemanticsNode {
-        output
-            .semantics
-            .iter()
-            .find(|node| node.role == SemanticsRole::Slider && node.name.as_deref() == Some(name))
-            .cloned()
-            .unwrap_or_else(|| panic!("{name} slider should exist"))
-    }
-
-    fn theme_editor_color_swatch(output: &RenderOutput, name: &str) -> SemanticsNode {
-        output
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ColorSwatch && node.name.as_deref() == Some(name)
-            })
-            .cloned()
-            .unwrap_or_else(|| panic!("{name} swatch should exist"))
-    }
-
-    fn slider_range_value(node: &SemanticsNode) -> f64 {
-        let Some(SemanticsValue::Range { value, .. }) = node.value else {
-            panic!(
-                "{} should expose a range value",
-                node.name.as_deref().unwrap_or("slider")
-            );
-        };
-        value
     }
 
     #[test]
@@ -8187,328 +8125,6 @@ final_max_luminance={final_max_luminance}
             .with_name(THEME_SPACING_NAME)
             .expect()
             .to_be_visible()?;
-        Ok(())
-    }
-
-    #[test]
-    fn theme_editor_color_changes_repaint_the_live_preview() -> Result<()> {
-        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
-            Some(THEME_EDITOR_TAB_LABEL),
-        ))
-        .build()
-        .expect("theme editor demo should build");
-        let window_id = runtime.window_ids()[0];
-        let before = runtime.render(window_id)?;
-        let picker = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ColorPicker
-                    && node.name.as_deref() == Some(THEME_COLOR_PICKER_NAME)
-            })
-            .expect("theme color picker should exist");
-        let red_slider = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.parent == Some(picker.id)
-                    && node.role == SemanticsRole::Slider
-                    && node.name.as_deref() == Some("Red")
-            })
-            .expect("red channel picker row should exist");
-        let initial_theme = DefaultTheme::light();
-
-        let start = Point::new(
-            red_slider.bounds.x() + red_slider.bounds.width() * 0.20,
-            red_slider.bounds.y() + red_slider.bounds.height() * 0.5,
-        );
-        let end = Point::new(
-            red_slider.bounds.x() + red_slider.bounds.width() * 0.95,
-            red_slider.bounds.y() + red_slider.bounds.height() * 0.5,
-        );
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(73, PointerEventKind::Down, start, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(73, PointerEventKind::Move, end, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(73, PointerEventKind::Up, end, false),
-        )?;
-
-        let after = runtime.render(window_id)?;
-        let edited_slider = after
-            .semantics
-            .iter()
-            .find(|node| node.id == red_slider.id)
-            .expect("red channel slider should remain in the semantic tree");
-        let Some(SemanticsValue::Range { value, min, max }) = edited_slider.value else {
-            panic!("red channel slider should expose its edited range value");
-        };
-        assert!(
-            (value - 0.95).abs() < 0.001,
-            "expected dragged red channel to land near 0.95, got {value}"
-        );
-        assert_eq!((min, max), (0.0, 1.0));
-
-        let preview_button = after
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::Button && node.name.as_deref() == Some("Create project")
-            })
-            .expect("primary preview button should exist");
-        let mut edited_theme = initial_theme;
-        let primary = edited_theme.colors.primary;
-        edited_theme.colors.primary = Color::rgba(value as f32, primary.green, primary.blue, 1.0);
-        edited_theme.sync_derived_fields();
-
-        assert!(
-            !solid_fill_bounds_for_rgba8_color_in_rect(
-                &after,
-                edited_theme.palette.accent,
-                preview_button.bounds,
-            )
-            .is_empty(),
-            "expected the edited primary color to repaint the live preview button"
-        );
-        assert!(
-            solid_fill_bounds_for_rgba8_color_in_rect(
-                &after,
-                initial_theme.palette.accent,
-                preview_button.bounds,
-            )
-            .is_empty(),
-            "expected the preview button to stop using the original primary color"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn theme_editor_paint_only_color_selection_preserves_controls_scroll_position() -> Result<()> {
-        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
-            Some(THEME_EDITOR_TAB_LABEL),
-        ))
-        .build()
-        .expect("theme editor demo should build");
-        let window_id = runtime.window_ids()[0];
-        let before = runtime.render(window_id)?;
-        let controls = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
-            })
-            .expect("theme editor controls scroll view should exist");
-        let before_red = theme_editor_color_slider(&before, "Red");
-
-        let mut scroll = PointerEvent::new(
-            PointerEventKind::Scroll,
-            Point::new(controls.bounds.x() + 24.0, controls.bounds.y() + 24.0),
-        );
-        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -160.0)));
-        runtime.handle_event(window_id, Event::Pointer(scroll))?;
-
-        let scrolled = runtime.render(window_id)?;
-        let controls = scrolled
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
-            })
-            .expect("theme editor controls scroll view should still exist");
-        let scrolled_red = theme_editor_color_slider(&scrolled, "Red");
-        assert!(
-            scrolled_red.bounds.y() < before_red.bounds.y() - 8.0,
-            "expected controls panel content to move after scrolling; before={}, after={}",
-            before_red.bounds.y(),
-            scrolled_red.bounds.y()
-        );
-
-        let warning = theme_editor_color_swatch(&scrolled, "Warning theme color");
-        let click = Point::new(
-            warning.bounds.x() + warning.bounds.width() * 0.5,
-            warning.bounds.y() + warning.bounds.height() * 0.5,
-        );
-        assert!(
-            controls.bounds.contains(click),
-            "expected warning swatch to be visible after scrolling; swatch={:?}, controls={:?}",
-            warning.bounds,
-            controls.bounds
-        );
-
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(76, PointerEventKind::Down, click, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(76, PointerEventKind::Up, click, false),
-        )?;
-
-        let after = runtime.render(window_id)?;
-        let after_red = theme_editor_color_slider(&after, "Red");
-        assert!(
-            (after_red.bounds.y() - scrolled_red.bounds.y()).abs() <= 1.0,
-            "expected paint-only color selection to preserve controls scroll position; before_click={}, after_click={}",
-            scrolled_red.bounds.y(),
-            after_red.bounds.y()
-        );
-        assert!(
-            (slider_range_value(&after_red) - f64::from(DefaultTheme::sui().colors.warning.red))
-                .abs()
-                < 0.001,
-            "expected selecting the warning swatch to retarget the color picker"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn theme_editor_slider_drag_preserves_controls_scroll_position() -> Result<()> {
-        let mut runtime = finish_dev_application(DevBrowserShell::with_initial_demo(
-            RenderSettingsTab::default_options(),
-            Some(THEME_EDITOR_TAB_LABEL),
-        ))
-        .build()
-        .expect("theme editor demo should build");
-        let window_id = runtime.window_ids()[0];
-        let before = runtime.render(window_id)?;
-        let controls = before
-            .semantics
-            .iter()
-            .find(|node| {
-                node.role == SemanticsRole::ScrollView
-                    && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
-            })
-            .expect("theme editor controls scroll view should exist");
-        let before_red = theme_editor_color_slider(&before, "Red");
-
-        let mut scroll = PointerEvent::new(
-            PointerEventKind::Scroll,
-            Point::new(controls.bounds.x() + 24.0, controls.bounds.y() + 24.0),
-        );
-        scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -320.0)));
-        runtime.handle_event(window_id, Event::Pointer(scroll))?;
-
-        let scrolled = runtime.render(window_id)?;
-        let scrolled_red = theme_editor_color_slider(&scrolled, "Red");
-        assert!(
-            scrolled_red.bounds.y() < before_red.bounds.y() - 8.0,
-            "expected controls panel content to move after scrolling; before={}, after={}",
-            before_red.bounds.y(),
-            scrolled_red.bounds.y()
-        );
-
-        let start = Point::new(
-            scrolled_red.bounds.x() + scrolled_red.bounds.width() * 0.20,
-            scrolled_red.bounds.y() + scrolled_red.bounds.height() * 0.5,
-        );
-        let end = Point::new(
-            scrolled_red.bounds.x() + scrolled_red.bounds.width() * 0.85,
-            scrolled_red.bounds.y() + scrolled_red.bounds.height() * 0.5,
-        );
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(74, PointerEventKind::Down, start, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(74, PointerEventKind::Move, end, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(74, PointerEventKind::Up, end, false),
-        )?;
-
-        let after = runtime.render(window_id)?;
-        let after_red = theme_editor_color_slider(&after, "Red");
-        assert!(
-            (after_red.bounds.y() - scrolled_red.bounds.y()).abs() <= 1.0,
-            "expected slider drag to preserve controls scroll position; before_drag={}, after_drag={}",
-            scrolled_red.bounds.y(),
-            after_red.bounds.y()
-        );
-
-        // The source color list is long; scroll until the spacing slider is
-        // inside the controls viewport before dragging it.
-        let mut after = after;
-        for _ in 0..24 {
-            let spacing = theme_editor_slider(&after, THEME_SPACING_NAME);
-            let center = Point::new(
-                spacing.bounds.x() + spacing.bounds.width() * 0.5,
-                spacing.bounds.y() + spacing.bounds.height() * 0.5,
-            );
-            let controls = after
-                .semantics
-                .iter()
-                .find(|node| {
-                    node.role == SemanticsRole::ScrollView
-                        && node.name.as_deref() == Some(THEME_EDITOR_CONTROLS_SCROLL_NAME)
-                })
-                .expect("theme editor controls scroll view should exist")
-                .bounds;
-            if controls.inflate(0.0, -24.0).contains(center) {
-                break;
-            }
-            let mut scroll = PointerEvent::new(
-                PointerEventKind::Scroll,
-                Point::new(controls.x() + 24.0, controls.y() + 24.0),
-            );
-            scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(
-                0.0,
-                if center.y > controls.max_y() {
-                    -120.0
-                } else {
-                    120.0
-                },
-            )));
-            runtime.handle_event(window_id, Event::Pointer(scroll))?;
-            after = runtime.render(window_id)?;
-        }
-
-        let scrolled_spacing = theme_editor_slider(&after, THEME_SPACING_NAME);
-        let start = Point::new(
-            scrolled_spacing.bounds.x() + scrolled_spacing.bounds.width() * 0.35,
-            scrolled_spacing.bounds.y() + scrolled_spacing.bounds.height() * 0.5,
-        );
-        let end = Point::new(
-            scrolled_spacing.bounds.x() + scrolled_spacing.bounds.width() * 0.70,
-            scrolled_spacing.bounds.y() + scrolled_spacing.bounds.height() * 0.5,
-        );
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(75, PointerEventKind::Down, start, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(75, PointerEventKind::Move, end, true),
-        )?;
-        runtime.handle_event(
-            window_id,
-            primary_pointer_event(75, PointerEventKind::Up, end, false),
-        )?;
-
-        let final_output = runtime.render(window_id)?;
-        let final_spacing = theme_editor_slider(&final_output, THEME_SPACING_NAME);
-        assert!(
-            (slider_range_value(&final_spacing) - slider_range_value(&scrolled_spacing)).abs()
-                > 0.01,
-            "expected spacing slider drag to change the slider value"
-        );
-        assert!(
-            (final_spacing.bounds.y() - scrolled_spacing.bounds.y()).abs()
-                <= DefaultTheme::sui().metrics.list_row_height + 1.0,
-            "expected scale slider drag to preserve the scroll region apart from one-row focus visibility adjustment; before_drag={}, after_drag={}",
-            scrolled_spacing.bounds.y(),
-            final_spacing.bounds.y()
-        );
         Ok(())
     }
 

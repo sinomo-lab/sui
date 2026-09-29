@@ -115,13 +115,32 @@ Custom widgets should pair `palette.selection` with `selection_border`, use
 `palette.button*` for neutral raised controls, `border_control` for
 unselected indicators, and `focus_ring` for focus.
 
-The demo theme editor exposes two deliberate layers: source colors (neutral
-ramp, brand, status, and decorative) and the common semantic role palette
-used as widget defaults. It does not expose widget-specific paint details as
-global theme tokens. Semantic-role edits are stored as explicit overrides and
-reapplied after source, spacing, radius, or typography changes; selecting a
-preset clears them. Alpha is editable for translucent roles such as hover and
-selection washes.
+The demo theme editor exposes two deliberate layers. Source colors (brand,
+status, surfaces, fills, borders, ink, and decorative) are listed by job, with
+the WCAG contrast of each "on" color and text level shown beside it. Semantic
+roles follow the sources unless explicitly overridden; overrides are reapplied
+after source, spacing, radius, or typography changes, and selecting a preset
+clears them. The editor does not expose widget-specific paint details as
+global theme tokens. Its preview shows contrast checks, every surface tier,
+the decorative palette, motion, and widget book stories in the edited theme.
+"Copy as Rust" produces a function that rebuilds the theme from
+`ThemeColors` with `DefaultTheme::from_colors`, and "Use as app theme" applies
+it to the whole demo.
+
+To edit theme colors in your own tools, `SimpleColorPicker` offers an OKLCH
+mode. Its lightness, chroma, and hue sliders match the space themes derive
+their roles in, so a lightness change looks the same across hues. Chroma
+beyond the editing space's gamut is reduced to fit, and the chroma track marks
+where that starts:
+
+```rust
+use sui::prelude::*;
+
+let theme = DefaultTheme::sui();
+let picker = SimpleColorPicker::from_color("Primary", theme.colors.primary)
+    .mode(SimpleColorPickerMode::Oklch)
+    .on_change(|color| println!("primary is now {color:?}"));
+```
 
 ## Widget-owned appearance
 

@@ -129,7 +129,6 @@ pub(crate) fn stories_in(category: Category) -> impl Iterator<Item = &'static St
         .filter(move |story| story.category == category)
 }
 
-#[cfg(test)]
 pub(crate) fn story(id: &str) -> Option<&'static Story> {
     stories().iter().find(|story| story.id == id)
 }

@@ -154,6 +154,25 @@ pub fn build_widget_book_gallery_with_theme(theme_reader: DevThemeReader) -> imp
     build_book(theme_reader, ThemeChoice::App, &ThemeChoice::EMBEDDED)
 }
 
+/// One story's block, as it appears on the page, in `theme`. Other demos use
+/// this to show real components; the theme editor previews with it.
+///
+/// # Panics
+///
+/// If no story has the id `id`.
+pub(crate) fn story_preview(id: &str, theme: DefaultTheme) -> impl Widget + use<> {
+    let story = registry::story(id).unwrap_or_else(|| panic!("no widget book story {id:?}"));
+    page::story_block(story, theme)
+}
+
+/// The accessible name of a story's block, such as "Button story".
+#[cfg(test)]
+pub(crate) fn story_region_name(id: &str) -> String {
+    registry::story(id)
+        .unwrap_or_else(|| panic!("no widget book story {id:?}"))
+        .region_name()
+}
+
 fn build_book(
     application_theme: DevThemeReader,
     initial: ThemeChoice,

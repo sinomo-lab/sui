@@ -1,7 +1,7 @@
 use sui_core::{
-    Color, ColorSpace, Event, ImageHandle, KeyState, Path, PathBuilder, Point, PointerButton,
-    PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    WakeEvent, WidgetId,
+    Color, ColorSpace, Event, ImageHandle, KeyState, Oklch, Path, PathBuilder, Point,
+    PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
+    SemanticsValue, Size, WakeEvent, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
@@ -1680,12 +1680,25 @@ enum ActiveChannel {
     RgbBlue,
 }
 
+/// The channel sliders a [`SimpleColorPicker`] shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimpleColorPickerMode {
     Hsl,
     Hsv,
     Rgb,
+    /// Perceptual lightness, chroma, and hue. Equal lightness steps look
+    /// equally bright across hues, which suits editing theme colors. Chroma
+    /// beyond the editing space's gamut is reduced to fit, keeping lightness
+    /// and hue; the chroma track marks where that begins.
+    Oklch,
 }
+
+/// Top of the OKLCH chroma slider. Display P3 reaches about this far; sRGB
+/// colors stop sooner, which the chroma track marks.
+const OKLCH_MAX_CHROMA: f32 = 0.37;
+
+/// Below this chroma a color reads as gray and its hue is meaningless.
+const OKLCH_ACHROMATIC_CHROMA: f32 = 1.0e-4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColorSliderChannel {
@@ -1698,15 +1711,19 @@ enum ColorSliderChannel {
     Red,
     Green,
     Blue,
+    OklchLightness,
+    OklchChroma,
+    OklchHue,
 }
 
 impl ColorSliderChannel {
     fn label(self) -> &'static str {
         match self {
-            ColorSliderChannel::Hue => "H",
+            ColorSliderChannel::Hue | ColorSliderChannel::OklchHue => "H",
             ColorSliderChannel::HsvSaturation | ColorSliderChannel::HslSaturation => "S",
             ColorSliderChannel::HsvValue => "V",
-            ColorSliderChannel::HslLightness => "L",
+            ColorSliderChannel::HslLightness | ColorSliderChannel::OklchLightness => "L",
+            ColorSliderChannel::OklchChroma => "C",
             ColorSliderChannel::Alpha => "A",
             ColorSliderChannel::Red => "R",
             ColorSliderChannel::Green => "G",
@@ -1716,10 +1733,11 @@ impl ColorSliderChannel {
 
     fn name(self) -> &'static str {
         match self {
-            ColorSliderChannel::Hue => "Hue",
+            ColorSliderChannel::Hue | ColorSliderChannel::OklchHue => "Hue",
             ColorSliderChannel::HsvSaturation | ColorSliderChannel::HslSaturation => "Saturation",
             ColorSliderChannel::HsvValue => "Value",
-            ColorSliderChannel::HslLightness => "Lightness",
+            ColorSliderChannel::HslLightness | ColorSliderChannel::OklchLightness => "Lightness",
+            ColorSliderChannel::OklchChroma => "Chroma",
             ColorSliderChannel::Alpha => "Alpha",
             ColorSliderChannel::Red => "Red",
             ColorSliderChannel::Green => "Green",
@@ -1775,6 +1793,8 @@ struct ColorSliderValues {
     red: f32,
     green: f32,
     blue: f32,
+    /// OKLCH coordinates, with hue in degrees.
+    oklch: Oklch,
     max_channel_value: f32,
     hdr_capable: bool,
 }
@@ -1796,6 +1816,7 @@ impl ColorSliderValues {
             red: color.red,
             green: color.green,
             blue: color.blue,
+            oklch: color.to_oklch(),
             max_channel_value,
             hdr_capable: color_space_hdr_capable(color.space),
         }
@@ -1823,6 +1844,7 @@ impl ColorSliderValues {
             red: color.red,
             green: color.green,
             blue: color.blue,
+            oklch: color.to_oklch(),
             max_channel_value,
             hdr_capable: color_space_hdr_capable(editing_space),
         }
@@ -1857,6 +1879,7 @@ impl ColorSliderValues {
             red: color.red,
             green: color.green,
             blue: color.blue,
+            oklch: color.to_oklch(),
             max_channel_value,
             hdr_capable: color_space_hdr_capable(editing_space),
         }
@@ -1864,6 +1887,34 @@ impl ColorSliderValues {
 
     fn from_rgb(editing_space: ColorSpace, red: f32, green: f32, blue: f32, alpha: f32) -> Self {
         Self::from_color(Color::new(editing_space, red, green, blue, alpha))
+    }
+
+    /// Values for an OKLCH edit. The coordinates are kept as given, so the
+    /// sliders do not jump when the gamut-mapped color reads back slightly
+    /// differently, and hue survives while chroma is zero.
+    fn from_oklch(editing_space: ColorSpace, oklch: Oklch) -> Self {
+        Self {
+            oklch,
+            ..Self::from_color(oklch_to_color(editing_space, oklch))
+        }
+    }
+}
+
+/// Converts OKLCH to a color in `space`, reducing chroma to fit its gamut.
+fn oklch_to_color(space: ColorSpace, oklch: Oklch) -> Color {
+    match space {
+        ColorSpace::Srgb => oklch.to_srgb(),
+        ColorSpace::LinearSrgb => oklch.to_srgb().to_linear_srgb(),
+        ColorSpace::DisplayP3 => oklch.to_display_p3(),
+        ColorSpace::LinearDisplayP3 => oklch.to_linear_display_p3(),
+    }
+}
+
+/// The largest chroma `space` can display at this lightness and hue.
+fn oklch_gamut_chroma(space: ColorSpace, oklch: Oklch) -> f32 {
+    match space {
+        ColorSpace::Srgb | ColorSpace::LinearSrgb => oklch.max_srgb_chroma(),
+        ColorSpace::DisplayP3 | ColorSpace::LinearDisplayP3 => oklch.max_display_p3_chroma(),
     }
 }
 
@@ -1999,6 +2050,9 @@ pub struct SimpleColorPicker {
     red: f32,
     green: f32,
     blue: f32,
+    /// OKLCH coordinates edited in [`SimpleColorPickerMode::Oklch`]; alpha
+    /// lives in `alpha`.
+    oklch: Oklch,
     alpha: f32,
     show_alpha: bool,
     compact: bool,
@@ -2424,18 +2478,15 @@ impl ColorPicker {
                 self.emit_change();
             }
             ActiveChannel::Hue => {
-                let rect = self.left_slider_rect(bounds, 0);
-                self.hue = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.hue = self.slider_position(self.left_slider_rect(bounds, 0), position);
                 self.emit_change();
             }
             ActiveChannel::Saturation => {
-                let rect = self.left_slider_rect(bounds, 1);
-                self.saturation = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.saturation = self.slider_position(self.left_slider_rect(bounds, 1), position);
                 self.emit_change();
             }
             ActiveChannel::Value => {
-                let rect = self.left_slider_rect(bounds, 2);
-                let t = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                let t = self.slider_position(self.left_slider_rect(bounds, 2), position);
                 self.value = if self.hdr_capable() {
                     hdr_slider_to_value(t)
                 } else {
@@ -2444,8 +2495,7 @@ impl ColorPicker {
                 self.emit_change();
             }
             ActiveChannel::Alpha => {
-                let rect = self.left_slider_rect(bounds, 3);
-                self.alpha = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+                self.alpha = self.slider_position(self.left_slider_rect(bounds, 3), position);
                 self.emit_change();
             }
             ActiveChannel::EncodingSelector | ActiveChannel::EncodingOption(_) => {}
@@ -2460,6 +2510,11 @@ impl ColorPicker {
         if let Some(on_change) = &mut self.on_change {
             on_change(color);
         }
+    }
+
+    /// Where `position` falls along the track of the slider row `rect`.
+    fn slider_position(&self, rect: Rect, position: Point) -> f32 {
+        ColorSliderRowSlots::new(rect, &self.resolved_theme()).position(position.x)
     }
 
     fn apply_color(&mut self, color: Color) {
@@ -2493,8 +2548,7 @@ impl ColorPicker {
         channel_index: usize,
         position: Point,
     ) {
-        let rect = self.rgb_row_rect(bounds, channel_index);
-        let t = ((position.x - rect.x()) / rect.width()).clamp(0.0, 1.0);
+        let t = self.slider_position(self.rgb_row_rect(bounds, channel_index), position);
         let mut channels = [self.color().red, self.color().green, self.color().blue];
         channels[channel_index] = self.max_channel_value() * t;
         self.apply_color(Color::new(
@@ -2827,6 +2881,7 @@ impl SimpleColorPicker {
             red: values.red,
             green: values.green,
             blue: values.blue,
+            oklch: values.oklch,
             alpha: values.alpha,
             show_alpha: true,
             compact: false,
@@ -2930,7 +2985,28 @@ impl SimpleColorPicker {
                 self.blue,
                 self.alpha,
             ),
+            SimpleColorPickerMode::Oklch => {
+                oklch_to_color(self.editing_space, self.oklch_with_alpha())
+            }
         }
+    }
+
+    fn oklch_with_alpha(&self) -> Oklch {
+        Oklch {
+            alpha: self.alpha,
+            ..self.oklch
+        }
+    }
+
+    /// Takes OKLCH coordinates from `oklch`, keeping the current hue while
+    /// the color has no chroma so a gray does not reset the hue slider.
+    fn set_oklch_from(&mut self, oklch: Oklch) {
+        let hue = if oklch.chroma < OKLCH_ACHROMATIC_CHROMA {
+            self.oklch.hue
+        } else {
+            oklch.hue
+        };
+        self.oklch = Oklch { hue, ..oklch };
     }
 
     fn hdr_capable(&self) -> bool {
@@ -3047,13 +3123,23 @@ impl SimpleColorPicker {
                 self.blue,
                 self.alpha,
             ),
+            SimpleColorPickerMode::Oklch => {
+                ColorSliderValues::from_oklch(self.editing_space, self.oklch_with_alpha())
+            }
         }
     }
 
     fn resolved_values(&self) -> ColorSliderValues {
-        self.external_color()
-            .map(ColorSliderValues::from_color)
-            .unwrap_or_else(|| self.current_values())
+        match self.external_color() {
+            Some(color) if !colors_close(self.color(), color) => {
+                let mut values = ColorSliderValues::from_color(color);
+                if values.oklch.chroma < OKLCH_ACHROMATIC_CHROMA {
+                    values.oklch.hue = self.oklch.hue;
+                }
+                values
+            }
+            _ => self.current_values(),
+        }
     }
 
     fn current_rows(&self) -> Vec<ColorSliderRow> {
@@ -3086,6 +3172,7 @@ impl SimpleColorPicker {
         self.red = values.red;
         self.green = values.green;
         self.blue = values.blue;
+        self.set_oklch_from(values.oklch);
         self.alpha = values.alpha;
     }
 
@@ -3124,7 +3211,7 @@ impl SimpleColorPicker {
         let Some(rect) = self.slider_rect_for_channel(bounds, channel) else {
             return;
         };
-        let t = ((position.x - rect.x()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let t = ColorSliderRowSlots::new(rect, &self.resolved_theme()).position(position.x);
         let max_channel_value = self.max_channel_value();
 
         match channel {
@@ -3143,6 +3230,9 @@ impl SimpleColorPicker {
             ColorSliderChannel::Red => self.red = max_channel_value * t,
             ColorSliderChannel::Green => self.green = max_channel_value * t,
             ColorSliderChannel::Blue => self.blue = max_channel_value * t,
+            ColorSliderChannel::OklchLightness => self.oklch.lightness = t,
+            ColorSliderChannel::OklchChroma => self.oklch.chroma = t * OKLCH_MAX_CHROMA,
+            ColorSliderChannel::OklchHue => self.oklch.hue = t * 360.0,
         }
         self.refresh_inactive_channels();
         self.emit_change(ctx);
@@ -3157,6 +3247,7 @@ impl SimpleColorPicker {
                 self.red = values.red;
                 self.green = values.green;
                 self.blue = values.blue;
+                self.set_oklch_from(values.oklch);
             }
             SimpleColorPickerMode::Hsv => {
                 self.hsl_saturation = values.hsl_saturation;
@@ -3164,6 +3255,7 @@ impl SimpleColorPicker {
                 self.red = values.red;
                 self.green = values.green;
                 self.blue = values.blue;
+                self.set_oklch_from(values.oklch);
             }
             SimpleColorPickerMode::Rgb => {
                 self.hue = values.hue;
@@ -3171,6 +3263,17 @@ impl SimpleColorPicker {
                 self.hsv_value = values.hsv_value;
                 self.hsl_saturation = values.hsl_saturation;
                 self.hsl_lightness = values.hsl_lightness;
+                self.set_oklch_from(values.oklch);
+            }
+            SimpleColorPickerMode::Oklch => {
+                self.hue = values.hue;
+                self.hsv_saturation = values.hsv_saturation;
+                self.hsv_value = values.hsv_value;
+                self.hsl_saturation = values.hsl_saturation;
+                self.hsl_lightness = values.hsl_lightness;
+                self.red = values.red;
+                self.green = values.green;
+                self.blue = values.blue;
             }
         }
     }
@@ -3202,6 +3305,7 @@ impl SimpleColorPicker {
             SimpleColorPickerMode::Hsl => "HSL",
             SimpleColorPickerMode::Hsv => "HSV",
             SimpleColorPickerMode::Rgb => "RGB",
+            SimpleColorPickerMode::Oklch => "OKLCH",
         }
     }
 
@@ -3237,6 +3341,9 @@ fn simple_color_picker_child_semantics_id(
         ColorSliderChannel::Red => 7,
         ColorSliderChannel::Green => 8,
         ColorSliderChannel::Blue => 9,
+        ColorSliderChannel::OklchLightness => 10,
+        ColorSliderChannel::OklchChroma => 11,
+        ColorSliderChannel::OklchHue => 12,
     };
     const TAG: u64 = 4_u64 << 51;
     const LOW_MASK: u64 = (1_u64 << 51) - 1;
@@ -3311,6 +3418,8 @@ impl Widget for SimpleColorPicker {
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 let unit_step = if key.modifiers.shift { 0.1 } else { 0.02 };
                 let value_step = if key.modifiers.shift { 0.5 } else { 0.1 };
+                let chroma_step = if key.modifiers.shift { 0.02 } else { 0.005 };
+                let lightness_step = if key.modifiers.shift { 0.05 } else { 0.01 };
                 match key.key.as_str() {
                     "ArrowLeft" => match self.mode {
                         SimpleColorPickerMode::Hsl => {
@@ -3322,6 +3431,10 @@ impl Widget for SimpleColorPicker {
                         SimpleColorPickerMode::Rgb => {
                             self.red = (self.red - value_step).clamp(0.0, self.max_channel_value())
                         }
+                        SimpleColorPickerMode::Oklch => {
+                            self.oklch.chroma =
+                                (self.oklch.chroma - chroma_step).clamp(0.0, OKLCH_MAX_CHROMA)
+                        }
                     },
                     "ArrowRight" => match self.mode {
                         SimpleColorPickerMode::Hsl => {
@@ -3332,6 +3445,10 @@ impl Widget for SimpleColorPicker {
                         }
                         SimpleColorPickerMode::Rgb => {
                             self.red = (self.red + value_step).clamp(0.0, self.max_channel_value())
+                        }
+                        SimpleColorPickerMode::Oklch => {
+                            self.oklch.chroma =
+                                (self.oklch.chroma + chroma_step).clamp(0.0, OKLCH_MAX_CHROMA)
                         }
                     },
                     "ArrowUp" => match self.mode {
@@ -3347,6 +3464,10 @@ impl Widget for SimpleColorPicker {
                             self.green =
                                 (self.green + value_step).clamp(0.0, self.max_channel_value())
                         }
+                        SimpleColorPickerMode::Oklch => {
+                            self.oklch.lightness =
+                                (self.oklch.lightness + lightness_step).clamp(0.0, 1.0)
+                        }
                     },
                     "ArrowDown" => match self.mode {
                         SimpleColorPickerMode::Hsl => {
@@ -3360,6 +3481,10 @@ impl Widget for SimpleColorPicker {
                         SimpleColorPickerMode::Rgb => {
                             self.green =
                                 (self.green - value_step).clamp(0.0, self.max_channel_value())
+                        }
+                        SimpleColorPickerMode::Oklch => {
+                            self.oklch.lightness =
+                                (self.oklch.lightness - lightness_step).clamp(0.0, 1.0)
                         }
                     },
                     _ => return,
@@ -3739,6 +3864,29 @@ fn color_slider_rows(
                 values.max_channel_value,
             ));
         }
+        SimpleColorPickerMode::Oklch => {
+            let oklch = values.oklch;
+            rows.push(percent_slider_row(
+                ColorSliderChannel::OklchLightness,
+                oklch.lightness.clamp(0.0, 1.0),
+            ));
+            rows.push(ColorSliderRow::new(
+                ColorSliderChannel::OklchChroma,
+                oklch.chroma,
+                0.0,
+                OKLCH_MAX_CHROMA,
+                oklch.chroma / OKLCH_MAX_CHROMA,
+                format!("{:.3}", oklch.chroma),
+            ));
+            rows.push(ColorSliderRow::new(
+                ColorSliderChannel::OklchHue,
+                oklch.hue,
+                0.0,
+                360.0,
+                oklch.hue / 360.0,
+                format!("{:.1}", oklch.hue),
+            ));
+        }
     }
 
     if show_alpha {
@@ -3782,11 +3930,13 @@ fn channel_slider_row(channel: ColorSliderChannel, value: f32, max_value: f32) -
 
 fn paint_color_slider_row(
     ctx: &mut PaintCtx,
-    rect: Rect,
+    row_rect: Rect,
     row: &ColorSliderRow,
     values: ColorSliderValues,
     theme: &DefaultTheme,
 ) {
+    let slots = ColorSliderRowSlots::new(row_rect, theme);
+    let rect = slots.track;
     match row.channel {
         ColorSliderChannel::Hue => paint_hue_bar(ctx, rect, theme),
         ColorSliderChannel::HsvSaturation => paint_saturation_bar(
@@ -3837,15 +3987,54 @@ fn paint_color_slider_row(
         ColorSliderChannel::Blue => {
             paint_rgb_channel_bar(ctx, rect, values.color, 2, values.max_channel_value, theme)
         }
+        ColorSliderChannel::OklchLightness => paint_oklch_bar(
+            ctx,
+            rect,
+            values.editing_space,
+            |t| values.oklch.with_lightness(t),
+            theme,
+        ),
+        ColorSliderChannel::OklchChroma => {
+            let space = values.editing_space;
+            paint_oklch_bar(
+                ctx,
+                rect,
+                space,
+                |t| values.oklch.with_chroma(t * OKLCH_MAX_CHROMA),
+                theme,
+            );
+            let gamut_edge = oklch_gamut_chroma(space, values.oklch) / OKLCH_MAX_CHROMA;
+            if gamut_edge < 0.995 {
+                ctx.fill_rect(
+                    Rect::new(
+                        rect.x() + rect.width() * gamut_edge,
+                        rect.y(),
+                        1.0,
+                        rect.height(),
+                    ),
+                    theme.surfaces.color_picker_hdr_divider,
+                );
+            }
+        }
+        ColorSliderChannel::OklchHue => paint_oklch_bar(
+            ctx,
+            rect,
+            values.editing_space,
+            |t| Oklch {
+                hue: t * 360.0,
+                ..values.oklch
+            },
+            theme,
+        ),
     }
 
     paint_labeled_row_text(
         ctx,
-        rect,
+        row_rect,
         row.label,
         &row.value_text,
         theme,
-        theme.palette.placeholder,
+        theme.palette.text_muted,
     );
     paint_marker(
         ctx,
@@ -4085,20 +4274,67 @@ fn paint_hsl_lightness_bar(
     }
 }
 
+/// Paints `sample(t)` for `t` across the track, gamut-mapped into `space`.
+fn paint_oklch_bar(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    space: ColorSpace,
+    sample: impl Fn(f32) -> Oklch,
+    theme: &DefaultTheme,
+) {
+    const STOPS: usize = 16;
+    let stops = (0..=STOPS)
+        .map(|index| {
+            let offset = index as f32 / STOPS as f32;
+            GradientStop {
+                offset,
+                color: oklch_to_color(
+                    space,
+                    Oklch {
+                        alpha: 1.0,
+                        ..sample(offset)
+                    },
+                ),
+            }
+        })
+        .collect();
+    paint_linear_color_bar(ctx, rect, stops, theme);
+}
+
+/// Paints a horizontal gradient through every stop. Rectangle gradients
+/// render only their end stops, so each pair of neighboring stops gets its
+/// own two-stop segment. Segments overlap by a pixel under a clip so their
+/// antialiased edges leave no seams.
 fn paint_linear_color_bar(
     ctx: &mut PaintCtx,
     rect: Rect,
     stops: Vec<GradientStop>,
     theme: &DefaultTheme,
 ) {
-    ctx.fill_rect(
-        rect,
-        Brush::LinearGradient {
-            start: rect.origin,
-            end: Point::new(rect.max_x(), rect.y()),
-            stops,
-        },
-    );
+    ctx.push_clip_rect(rect);
+    for (index, pair) in stops.windows(2).enumerate() {
+        let x0 = rect.x() + pair[0].offset.clamp(0.0, 1.0) * rect.width();
+        let x1 = rect.x() + pair[1].offset.clamp(0.0, 1.0) * rect.width();
+        let overlap = if index + 2 < stops.len() { 1.0 } else { 0.0 };
+        ctx.fill_rect(
+            Rect::new(x0, rect.y(), (x1 - x0 + overlap).max(0.0), rect.height()),
+            Brush::LinearGradient {
+                start: Point::new(x0, rect.y()),
+                end: Point::new(x1, rect.y()),
+                stops: vec![
+                    GradientStop {
+                        offset: 0.0,
+                        color: pair[0].color,
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: pair[1].color,
+                    },
+                ],
+            },
+        );
+    }
+    ctx.pop_clip();
     paint_bar_border(ctx, rect, theme);
 }
 
@@ -4126,6 +4362,55 @@ fn paint_rgb_channel_bar(
     paint_bar_border(ctx, rect, theme);
 }
 
+/// A color slider row: the channel label, the colored track, and the value,
+/// side by side so neither text sits on the gradient or under the marker.
+#[derive(Debug, Clone, Copy)]
+struct ColorSliderRowSlots {
+    label: Rect,
+    track: Rect,
+    value: Rect,
+}
+
+impl ColorSliderRowSlots {
+    /// Room between the track and its neighbors for the marker, which is
+    /// centered on the track's ends at the extremes.
+    const MARKER_CLEARANCE: f32 = 9.0;
+
+    fn new(rect: Rect, theme: &DefaultTheme) -> Self {
+        let label_width = (theme.metrics.icon_size + theme.spacing * 2.0).max(20.0);
+        let value_width = (rect.width() * 0.18).clamp(44.0, 64.0);
+        let label = Rect::new(
+            rect.x() + theme.spacing * 1.5,
+            rect.y(),
+            label_width,
+            rect.height(),
+        );
+        let value = Rect::new(
+            rect.max_x() - value_width - theme.spacing,
+            rect.y(),
+            value_width,
+            rect.height(),
+        );
+        let track_x = label.max_x() + Self::MARKER_CLEARANCE;
+        let track = Rect::new(
+            track_x,
+            rect.y(),
+            (value.x() - Self::MARKER_CLEARANCE - track_x).max(1.0),
+            rect.height(),
+        );
+        Self {
+            label,
+            track,
+            value,
+        }
+    }
+
+    /// Where along the track `x` falls, from 0 to 1.
+    fn position(&self, x: f32) -> f32 {
+        ((x - self.track.x()) / self.track.width().max(1.0)).clamp(0.0, 1.0)
+    }
+}
+
 fn paint_labeled_row_text(
     ctx: &mut PaintCtx,
     rect: Rect,
@@ -4136,22 +4421,11 @@ fn paint_labeled_row_text(
 ) {
     let text = theme.text.xs;
     let paint_line_height = text.line_height.min(rect.height()).max(1.0);
-    let label_width = (theme.metrics.icon_size + theme.spacing * 2.0).max(20.0);
-    let value_width = (rect.width() * 0.36).clamp(56.0, 96.0);
     let label_style = text_token_style(theme, text, theme.palette.text_muted);
     let value_style = numeric_text_style(text_token_style(theme, text, value_color));
-    let label_slot = Rect::new(
-        rect.x() + theme.spacing * 1.5,
-        rect.y(),
-        label_width,
-        rect.height(),
-    );
-    let value_slot = Rect::new(
-        rect.max_x() - value_width - theme.spacing,
-        rect.y(),
-        value_width,
-        rect.height(),
-    );
+    let slots = ColorSliderRowSlots::new(rect, theme);
+    let label_slot = slots.label;
+    let value_slot = slots.value;
     ctx.push_clip_rect(label_slot);
     paint_aligned_text(ctx, label_slot, label, &label_style, paint_line_height, 0.0);
     ctx.pop_clip();
@@ -4718,19 +4992,19 @@ mod tests {
     use super::{
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
         ColorPaletteSwatch, ColorPicker, ColorPickerAppearance, ColorPickerSemanticPart,
-        ColorSwatch, Image, SignalMeter, SimpleColorPicker, SimpleColorPickerMode,
-        color_picker_child_semantics_id, format_color, hsl_to_color, hsv_to_rgb, rgb_to_hsl,
-        rgb_to_hsv, signal_meter_bar_layout,
+        ColorSwatch, Image, OKLCH_MAX_CHROMA, SignalMeter, SimpleColorPicker,
+        SimpleColorPickerMode, color_picker_child_semantics_id, format_color, hsl_to_color,
+        hsv_to_rgb, rgb_to_hsl, rgb_to_hsv, signal_meter_bar_layout,
     };
     use crate::{DefaultTheme, SemanticTone, ThemeTextToken};
     use sui_core::{
-        Color, ColorSpace, Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, Rect, Result, SemanticsAction, SemanticsRole, SemanticsValue, Size,
-        Vector, WidgetId,
+        Color, ColorSpace, Event, ImageHandle, Oklch, Point, PointerButton, PointerButtons,
+        PointerEvent, PointerEventKind, Rect, Result, SemanticsAction, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowId,
     };
     use sui_layout::Padding as Insets;
     use sui_runtime::{Application, Runtime, Widget, WindowBuilder};
-    use sui_scene::{Brush, RegisteredImage, SceneCommand};
+    use sui_scene::{Brush, RegisteredImage, SceneCommand, WidgetShader};
     use sui_text::{FontFeature, FontRegistry, TextSystem};
 
     fn build_runtime<W>(root: W) -> (Runtime, sui_core::WindowId)
@@ -5860,6 +6134,309 @@ mod tests {
             changed_color.red
         );
         assert_eq!(changed_color.space, ColorSpace::LinearSrgb);
+        Ok(())
+    }
+
+    fn picker_slider(output: &sui_runtime::RenderOutput, name: &str) -> SemanticsNode {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Slider && node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} slider semantics present"))
+            .clone()
+    }
+
+    fn drag_across(runtime: &mut Runtime, window_id: WindowId, from: Point, to: Point) {
+        for (kind, position, pressed) in [
+            (PointerEventKind::Down, from, true),
+            (PointerEventKind::Move, to, true),
+            (PointerEventKind::Up, to, false),
+        ] {
+            runtime
+                .handle_event(window_id, primary_pointer(kind, position, pressed))
+                .unwrap();
+        }
+    }
+
+    fn row_point(bounds: Rect, fraction: f32) -> Point {
+        Point::new(
+            bounds.x() + bounds.width() * fraction,
+            bounds.y() + bounds.height() * 0.5,
+        )
+    }
+
+    /// The gradient segments painted inside a slider row, left to right.
+    fn gradient_segments(output: &sui_runtime::RenderOutput, row: Rect) -> Vec<(Rect, Color)> {
+        output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                SceneCommand::FillRect {
+                    rect,
+                    brush: Brush::LinearGradient { stops, .. },
+                } if row.contains(Point::new(rect.x() + 0.5, rect.y() + 0.5)) => {
+                    Some((*rect, stops[0].color))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The gradient track painted inside a slider row.
+    fn gradient_track(output: &sui_runtime::RenderOutput, row: Rect) -> Rect {
+        gradient_segments(output, row)
+            .into_iter()
+            .map(|(rect, _)| rect)
+            .reduce(Rect::union)
+            .unwrap_or_else(|| panic!("a gradient track is painted in {row:?}"))
+    }
+
+    #[test]
+    fn multi_stop_color_tracks_paint_every_stop() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color(
+                "Theme color",
+                Oklch::new(0.7, 0.12, 40.0, 1.0).to_srgb(),
+            )
+            .mode(SimpleColorPickerMode::Oklch),
+        );
+        let output = runtime.render(window_id)?;
+        let hue = picker_slider(&output, "Hue").bounds;
+        let segments = gradient_segments(&output, hue);
+        assert!(segments.len() >= 16, "{} segments", segments.len());
+        let hues = segments
+            .iter()
+            .map(|(_, color)| color.to_oklch().hue)
+            .collect::<Vec<_>>();
+        let span = hues.iter().copied().fold(f32::MIN, f32::max)
+            - hues.iter().copied().fold(f32::MAX, f32::min);
+        assert!(span > 300.0, "the hue track sweeps the wheel: {hues:?}");
+        for pair in segments.windows(2) {
+            assert!(
+                pair[1].0.x() <= pair[0].0.max_x(),
+                "segments leave no gaps: {:?} then {:?}",
+                pair[0].0,
+                pair[1].0
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn simple_color_picker_oklch_mode_exposes_perceptual_channels() -> Result<()> {
+        let color = Oklch::new(0.62, 0.14, 250.0, 1.0).to_srgb();
+        let expected = color.to_oklch();
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Theme color", color).mode(SimpleColorPickerMode::Oklch),
+        );
+        let output = runtime.render(window_id)?;
+        let picker = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ColorPicker)
+            .expect("color picker semantics present");
+        assert_eq!(
+            picker.description.as_deref(),
+            Some("OKLCH sliders; sRGB editing space; SDR range available")
+        );
+        let range = |name: &str| match picker_slider(&output, name).value {
+            Some(SemanticsValue::Range { value, min, max }) => (value as f32, min, max),
+            other => panic!("{name} has a range value, got {other:?}"),
+        };
+        let (lightness, _, lightness_max) = range("Lightness");
+        let (chroma, _, chroma_max) = range("Chroma");
+        let (hue, _, hue_max) = range("Hue");
+        assert!((lightness - expected.lightness * 100.0).abs() < 0.01);
+        assert_eq!(lightness_max, 100.0);
+        assert!((chroma - expected.chroma).abs() < 1.0e-4);
+        assert!((chroma_max - f64::from(OKLCH_MAX_CHROMA)).abs() < 1.0e-6);
+        assert!((hue - expected.hue).abs() < 0.01);
+        assert_eq!(hue_max, 360.0);
+        picker_slider(&output, "Alpha");
+        Ok(())
+    }
+
+    #[test]
+    fn simple_color_picker_oklch_lightness_drag_keeps_hue_and_chroma() -> Result<()> {
+        let start = Oklch::new(0.55, 0.10, 150.0, 1.0);
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Theme color", start.to_srgb())
+                .mode(SimpleColorPickerMode::Oklch)
+                .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+        let output = runtime.render(window_id)?;
+        let lightness = gradient_track(&output, picker_slider(&output, "Lightness").bounds);
+        drag_across(
+            &mut runtime,
+            window_id,
+            row_point(lightness, 0.55),
+            row_point(lightness, 0.75),
+        );
+
+        let changed = changes
+            .borrow()
+            .last()
+            .expect("the drag emits a color")
+            .to_oklch();
+        assert!(
+            (changed.lightness - 0.75).abs() < 0.01,
+            "lightness follows the track: {changed:?}"
+        );
+        assert!((changed.hue - start.hue).abs() < 1.0, "{changed:?}");
+        assert!((changed.chroma - start.chroma).abs() < 0.005, "{changed:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn simple_color_picker_oklch_hue_survives_zero_chroma() -> Result<()> {
+        let start = Oklch::new(0.6, 0.12, 30.0, 1.0);
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Theme color", start.to_srgb())
+                .mode(SimpleColorPickerMode::Oklch)
+                .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+        let output = runtime.render(window_id)?;
+        let chroma = gradient_track(&output, picker_slider(&output, "Chroma").bounds);
+        drag_across(
+            &mut runtime,
+            window_id,
+            row_point(chroma, 0.5),
+            row_point(chroma, 0.0),
+        );
+        let gray = changes.borrow().last().copied().expect("a gray is emitted");
+        assert!(gray.to_oklch().chroma < 0.001, "{:?}", gray.to_oklch());
+        let _ = runtime.render(window_id)?;
+
+        drag_across(
+            &mut runtime,
+            window_id,
+            row_point(chroma, 0.0),
+            row_point(chroma, 0.4),
+        );
+        let restored = changes.borrow().last().expect("chroma returns").to_oklch();
+        assert!(restored.chroma > 0.05, "{restored:?}");
+        assert!(
+            (restored.hue - start.hue).abs() < 1.0,
+            "the hue is kept through gray: {restored:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn simple_color_picker_oklch_fits_chroma_into_the_editing_gamut() -> Result<()> {
+        let start = Oklch::new(0.7, 0.05, 145.0, 1.0);
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Theme color", start.to_srgb())
+                .mode(SimpleColorPickerMode::Oklch)
+                .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+        let output = runtime.render(window_id)?;
+        let chroma = gradient_track(&output, picker_slider(&output, "Chroma").bounds);
+        drag_across(
+            &mut runtime,
+            window_id,
+            row_point(chroma, 0.5),
+            row_point(chroma, 1.0),
+        );
+
+        let color = *changes.borrow().last().expect("the drag emits a color");
+        assert_eq!(color.space, ColorSpace::Srgb);
+        for channel in [color.red, color.green, color.blue] {
+            assert!((0.0..=1.0).contains(&channel), "{color:?}");
+        }
+        let fitted = color.to_oklch();
+        assert!(
+            (fitted.chroma - start.max_srgb_chroma()).abs() < 0.01,
+            "chroma stops at the sRGB edge: {fitted:?}"
+        );
+        assert!((fitted.lightness - start.lightness).abs() < 0.01);
+
+        let output = runtime.render(window_id)?;
+        match picker_slider(&output, "Chroma").value {
+            Some(SemanticsValue::Range { value, .. }) => assert!(
+                (value - f64::from(OKLCH_MAX_CHROMA)).abs() < 1.0e-4,
+                "the slider keeps the requested chroma: {value}"
+            ),
+            other => panic!("chroma has a range value, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn color_slider_label_and_value_sit_beside_the_track() -> Result<()> {
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Theme color", Color::rgba(1.0, 0.25, 0.5, 1.0))
+                .mode(SimpleColorPickerMode::Rgb),
+        );
+        let output = runtime.render(window_id)?;
+        let track = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawShaderRect {
+                    rect,
+                    shader: WidgetShader::ColorPickerRgbChannelBar { channel: 0, .. },
+                } => Some(*rect),
+                _ => None,
+            })
+            .expect("the red track is painted");
+        let marker_reach = 7.5;
+        let label = text_run_for(&output, "R");
+        let value = text_run_for(&output, "1.000");
+        assert!(
+            label.rect.max_x() <= track.x() - marker_reach,
+            "label {:?} clears the track {track:?}",
+            label.rect
+        );
+        assert!(
+            value.rect.x() >= track.max_x() + marker_reach,
+            "value {:?} clears the marker at the track end {track:?}",
+            value.rect
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_slider_drag_maps_across_the_track_not_the_row() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            SimpleColorPicker::from_color("Theme color", Color::rgba(0.5, 0.5, 0.5, 1.0))
+                .mode(SimpleColorPickerMode::Rgb)
+                .on_change(move |color| on_change.borrow_mut().push(color)),
+        );
+        let output = runtime.render(window_id)?;
+        let track = output
+            .frame
+            .scene
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                SceneCommand::DrawShaderRect {
+                    rect,
+                    shader: WidgetShader::ColorPickerRgbChannelBar { channel: 0, .. },
+                } => Some(*rect),
+                _ => None,
+            })
+            .expect("the red track is painted");
+        drag_across(
+            &mut runtime,
+            window_id,
+            row_point(track, 0.5),
+            row_point(track, 0.25),
+        );
+        let red = changes.borrow().last().expect("the drag emits a color").red;
+        assert!((red - 0.25).abs() < 0.01, "red {red}");
         Ok(())
     }
 
