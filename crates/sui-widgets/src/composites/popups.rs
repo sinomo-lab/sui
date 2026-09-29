@@ -1923,6 +1923,18 @@ impl ContextMenuPresentationState {
             .item_rect(&self.theme, self.row_height, index)
     }
 
+    /// How far an inline surface at `bounds` has moved since the panels were
+    /// last positioned. Scroll views move arranged subtrees without arranging
+    /// them again, so inline panels paint relative to the surface's current
+    /// bounds. Overlay panels keep their window position.
+    pub(super) fn paint_offset(&self, bounds: Rect) -> Vector {
+        if self.inline {
+            bounds.origin - self.surface_rect.origin
+        } else {
+            Vector::ZERO
+        }
+    }
+
     pub(super) fn layer_properties(&self) -> LayerProperties {
         LayerProperties {
             opacity: self.reveal.value,
@@ -1983,9 +1995,10 @@ impl Widget for ContextMenuSurface {
         let item_padding = metrics.menu_item_padding;
         let surface_radius = metrics.corner_radius + 2.0;
         let submenu_width = menu_submenu_indicator_width(&theme);
+        let offset = state.paint_offset(ctx.bounds());
 
         for (panel_index, panel) in state.panels.iter().enumerate() {
-            let menu = panel.frame_rect;
+            let menu = panel.frame_rect.translate(offset);
             paint_theme_shadow(ctx, menu, [surface_radius; 4], &theme.shadows.box_shadow.lg);
             draw_control_frame(
                 ctx,
@@ -2001,6 +2014,7 @@ impl Widget for ContextMenuSurface {
                 let Some(row) = state.item_rect(panel_index, index) else {
                     continue;
                 };
+                let row = row.translate(offset);
                 let mut path = panel.prefix.clone();
                 path.push(index);
 
@@ -2172,10 +2186,11 @@ impl Widget for ContextMenuFocusSurface {
 
         let metrics = state.theme.metrics;
         let palette = state.theme.palette;
+        let offset = state.paint_offset(ctx.bounds());
         for panel in &state.panels {
             draw_focus_ring_frame(
                 ctx,
-                panel.frame_rect,
+                panel.frame_rect.translate(offset),
                 metrics.corner_radius + 2.0,
                 metrics,
                 palette

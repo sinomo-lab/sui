@@ -26,8 +26,8 @@ use crate::{
 };
 use sui_core::{
     Color, Event, ImageHandle, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Rect, SemanticsAction, SemanticsActionRequest, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
+    PointerEvent, PointerEventKind, Rect, ScrollDelta, SemanticsAction, SemanticsActionRequest,
+    SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId, WindowEvent,
 };
 use sui_layout::{Alignment, Constraints};
 use sui_reactive::Signal;
@@ -8770,6 +8770,62 @@ fn inline_overlays_reserve_layout_space_without_floating_layers() {
         "the highlighted submenu opens beside its owner: owner={owner:?} submenu={submenu:?}"
     );
     assert!(after_menu.y() >= owner.max_y().max(submenu.max_y()));
+}
+
+#[test]
+fn inline_context_menu_panels_scroll_with_their_scroll_view() {
+    let theme = DefaultTheme::default();
+    let (mut runtime, window_id) = build_runtime(
+        SizedBox::new()
+            .size(Size::new(360.0, 240.0))
+            .with_child(ScrollView::vertical(
+                Stack::vertical()
+                    .alignment(Alignment::Start)
+                    .with_child(SizedBox::new().height(40.0))
+                    .with_child(
+                        ContextMenu::new("Layer menu", crate::Label::new("Canvas"))
+                            .item(MenuItem::new("Rename"))
+                            .item(MenuItem::new("Delete"))
+                            .theme(theme)
+                            .show_inline(),
+                    )
+                    .with_child(SizedBox::new().height(600.0)),
+            )),
+    );
+    let panel_frame = |output: &RenderOutput, row: Rect| {
+        let mut frame = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillPath {
+                path,
+                brush: Brush::Solid(color),
+            } = command
+                && *color == theme.palette.surface_raised
+                && path.bounds().contains(row.origin)
+            {
+                frame = Some(path.bounds());
+            }
+        });
+        frame.unwrap_or_else(|| panic!("a menu panel is painted behind the row at {row:?}"))
+    };
+
+    let output = runtime.render(window_id).unwrap();
+    let row = semantics_bounds(&output, SemanticsRole::MenuItem, "Rename");
+    let frame = panel_frame(&output, row);
+
+    let mut wheel = PointerEvent::new(PointerEventKind::Scroll, Point::new(180.0, 120.0));
+    wheel.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -30.0)));
+    runtime
+        .handle_event(window_id, Event::Pointer(wheel))
+        .unwrap();
+    let output = runtime.render(window_id).unwrap();
+    let scrolled_row = semantics_bounds(&output, SemanticsRole::MenuItem, "Rename");
+    let delta = scrolled_row.origin - row.origin;
+    assert!(delta.y < -1.0, "the wheel scrolls the menu: {delta:?}");
+    assert_eq!(
+        panel_frame(&output, scrolled_row),
+        frame.translate(delta),
+        "the panel paints where its rows moved"
+    );
 }
 
 #[test]
