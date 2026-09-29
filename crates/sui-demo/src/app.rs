@@ -5859,6 +5859,63 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
+    fn closing_a_tab_moves_the_open_button_after_the_remaining_tabs() -> Result<()> {
+        let app = TestApp::new(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, THEMES_TAB_LABEL)?;
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("Open demo")
+            .click()?;
+        open_dev_shell_demo(&window, WIDGET_BOOK_TAB_LABEL)?;
+        let open_button = |snapshot: &WindowSnapshot| {
+            find_named_node(snapshot, SemanticsRole::Button, "Open demo").bounds
+        };
+        let before = open_button(&window.snapshot()?);
+
+        window
+            .get_by_role(SemanticsRole::Button)
+            .with_name("Close Widget book tab")
+            .click()?;
+        app.settle_animations()?;
+        window.run_until_idle()?;
+
+        let snapshot = window.snapshot()?;
+        let after = open_button(&snapshot);
+        let themes = find_named_node(&snapshot, SemanticsRole::Button, THEMES_TAB_LABEL).bounds;
+        assert!(
+            after.x() > themes.max_x() && after.x() < themes.max_x() + 24.0,
+            "the open button follows the remaining tab: {after:?}, tab {themes:?}"
+        );
+        // It is drawn there too, not left where it was.
+        let center = |rect: Rect| {
+            Rect::new(
+                rect.x() + rect.width() * 0.5,
+                rect.y() + rect.height() * 0.5,
+                1.0,
+                1.0,
+            )
+        };
+        let screenshot = window.capture_screenshot()?;
+        let background = sample_pixel(
+            &screenshot,
+            Rect::new(after.max_x() + 8.0, after.y() + 2.0, 1.0, 1.0),
+            &snapshot,
+        )?;
+        assert_eq!(
+            sample_pixel(&screenshot, center(before), &snapshot)?,
+            background,
+            "nothing is left where the button was"
+        );
+        assert_ne!(
+            sample_pixel(&screenshot, center(after), &snapshot)?,
+            background,
+            "the button's glyph is where it went"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn settings_groups_every_render_option() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;

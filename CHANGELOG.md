@@ -460,6 +460,10 @@ Versioning, with the usual expectation that the API may change during the
 
 ### Fixes
 
+- Widgets that layout moves while an event is handled, before the next frame
+  renders, are drawn where they went. A widget in a retained layer kept its
+  old position until another event: the demo's open-demo button stayed where
+  it was after closing a tab, beside the gap the closed tab left.
 - A progress bar's value label now uses the tone's content color over the fill
   and body text over the track, so values below the midpoint stay readable.
 - Disabled ghost buttons no longer reveal their transparent border as a dark

@@ -5629,6 +5629,135 @@ fn changing_render_options_repaints_the_window() {
     runtime.remove_window(window_id).unwrap();
 }
 
+/// A leaf filling its bounds with one color, as wide as `width` says, in a
+/// retained layer of its own.
+struct Fill {
+    color: Color,
+    width: Rc<Cell<f32>>,
+}
+
+impl Widget for Fill {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(self.width.get(), 20.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(self.color);
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            ..LayerOptions::default()
+        }
+    }
+
+    fn supports_output_reuse(&self) -> bool {
+        true
+    }
+}
+
+/// A red box that a "shrink" event narrows, followed by a blue box placed
+/// after it. Only the red box asks to be measured again.
+struct ShrinkingRow {
+    red_width: Rc<Cell<f32>>,
+    children: WidgetChildren,
+}
+
+impl Widget for ShrinkingRow {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if let Event::Custom(custom) = event
+            && custom.kind == "shrink"
+        {
+            self.red_width.set(10.0);
+            let red = self.children.as_slice()[0].id();
+            ctx.request(InvalidationRequest::new(
+                InvalidationTarget::Widget(red),
+                InvalidationKind::Measure,
+            ));
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let loose = Constraints::new(Size::ZERO, Size::new(120.0, 20.0));
+        self.children.measure_child(0, ctx, loose);
+        self.children.measure_child(1, ctx, loose);
+        constraints.clamp(Size::new(120.0, 20.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        let red = self.children.as_slice()[0].measured_size();
+        self.children
+            .arrange_child(0, ctx, Rect::new(bounds.x(), bounds.y(), red.width, 20.0));
+        self.children.arrange_child(
+            1,
+            ctx,
+            Rect::new(bounds.x() + red.width, bounds.y(), 20.0, 20.0),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.children.paint(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.children.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.children.visit_children_mut(visitor);
+    }
+}
+
+#[test]
+fn widgets_moved_by_layout_during_an_event_are_repainted_where_they_went() {
+    let blue = Color::rgba(0.1, 0.2, 0.9, 1.0);
+    let red_width = Rc::new(Cell::new(60.0));
+    let mut children = WidgetChildren::with_capacity(2);
+    children.push(Fill {
+        color: Color::rgba(0.9, 0.1, 0.1, 1.0),
+        width: Rc::clone(&red_width),
+    });
+    children.push(Fill {
+        color: blue,
+        width: Rc::new(Cell::new(20.0)),
+    });
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Shrinking row")
+                .root(ShrinkingRow {
+                    red_width,
+                    children,
+                }),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    let blue_fills = |output: &RenderOutput| {
+        let mut fills = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRect { rect, brush } = command
+                && *brush == sui_scene::Brush::Solid(blue)
+            {
+                fills.push(rect.x());
+            }
+        });
+        fills
+    };
+    assert_eq!(blue_fills(&runtime.render(window_id).unwrap()), vec![60.0]);
+
+    runtime
+        .handle_event(window_id, Event::Custom(CustomEvent::new("shrink")))
+        .unwrap();
+    // Handling the redraw lays the window out before it renders, as the
+    // desktop platform does with display-paced frames.
+    runtime
+        .handle_event(window_id, Event::Window(WindowEvent::RedrawRequested))
+        .unwrap();
+    assert_eq!(blue_fills(&runtime.render(window_id).unwrap()), vec![10.0]);
+}
+
 #[test]
 fn removing_a_window_tears_down_runtime_state() {
     let (mut runtime, window_id, _, _) = build_runtime();

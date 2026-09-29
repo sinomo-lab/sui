@@ -1318,6 +1318,10 @@ struct WindowState {
     last_render_diagnostics: RenderDiagnostics,
     /// The render options the last frame was painted with.
     painted_render_options: Option<WindowRenderOptions>,
+    /// The widget graph the last frame was painted from, kept when layout
+    /// runs while an event is handled, before the next frame renders. The
+    /// frame compares against it to repaint and move what that layout moved.
+    graph_before_event_layout: Option<WidgetGraphSnapshot>,
 }
 
 impl WindowState {
@@ -1399,6 +1403,7 @@ impl WindowState {
             widget_rebuild_history: VecDeque::new(),
             last_render_diagnostics: RenderDiagnostics::default(),
             painted_render_options: None,
+            graph_before_event_layout: None,
         }
     }
 
@@ -2431,6 +2436,9 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) {
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
+            if self.graph_before_event_layout.is_none() && !self.graph.is_empty() {
+                self.graph_before_event_layout = Some(self.graph.snapshot());
+            }
             let scope_source = self.pending_invalidations.clone();
             let invalidations = self.run_measure_arrange_pass(
                 &scope_source,
@@ -3378,10 +3386,14 @@ impl WindowState {
         let mut layer_updates = Vec::new();
         let root_repaint_covers_graph_changes =
             root_repaint_covers_graph_changes(self.root.id(), &invalidations);
-        let previous_graph = if (self.schedule.measure || self.schedule.arrange)
-            && !self.graph.is_empty()
-            && !root_repaint_covers_graph_changes
-        {
+        // Layout that already ran while handling events changed the graph
+        // since the last frame too.
+        let graph_before_event_layout = self.graph_before_event_layout.take();
+        let previous_graph = if root_repaint_covers_graph_changes {
+            None
+        } else if graph_before_event_layout.is_some() {
+            graph_before_event_layout
+        } else if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
             Some(self.graph.snapshot())
         } else {
             None
@@ -3409,11 +3421,16 @@ impl WindowState {
             if diagnostics_enabled {
                 diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
             }
-        } else if self.schedule.hit_test || self.graph.is_empty() {
-            let started = Instant::now();
-            self.refresh_graph();
-            if diagnostics_enabled {
-                diagnostics.push(FramePhase::HitTest, started.elapsed());
+        } else {
+            if self.schedule.hit_test || self.graph.is_empty() {
+                let started = Instant::now();
+                self.refresh_graph();
+                if diagnostics_enabled {
+                    diagnostics.push(FramePhase::HitTest, started.elapsed());
+                }
+            }
+            if let Some(previous_graph) = previous_graph.as_ref() {
+                graph_changes = self.collect_graph_changes(Some(previous_graph));
             }
         }
 
