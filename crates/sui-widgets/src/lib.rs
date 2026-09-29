@@ -31,12 +31,12 @@ pub mod workspace;
 pub use animation::{
     ANIMATION_DOCUMENT_VERSION, AnimatedValue, AnimationBinding, AnimationBindingInvalidation,
     AnimationDocument, AnimationDocumentFormatError, AnimationEditorCommand, AnimationEditorState,
-    AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection,
+    AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection, AnimationSpec,
     AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, Blink, Clip,
     CompiledClip, CompiledTimeline, CompiledTrack, Easing, Interpolate, Keyframe,
-    KeyframeSelection, LoopMode, MotionScalar, PlaybackState, Pulse, SampleBatch, SampleBuffer,
-    SampledAnimationValue, SharedCompiledTimeline, SpringF32, Timeline, TimelineBindingSink,
-    TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
+    KeyframeSelection, LoopMode, MotionScalar, MotionValue, PlaybackState, Pulse, SampleBatch,
+    SampleBuffer, SampledAnimationValue, SharedCompiledTimeline, SpringF32, SpringSpec, Timeline,
+    TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
     invalidation_for_animation_property,
 };
 pub use canvas::{

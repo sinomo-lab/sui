@@ -6,10 +6,10 @@ use sui_core::{
 use sui_layout::Constraints;
 use sui_runtime::{
     ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, WidgetChildren,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    WidgetPodMutVisitor, WidgetPodVisitor, motion_policy,
 };
 
-use crate::{DefaultTheme, Easing, Transition};
+use crate::{AnimationSpec, DefaultTheme, Easing, MotionValue};
 
 const DEFAULT_DRAG_THRESHOLD: f32 = 4.0;
 const REORDERABLE_LIST_PAYLOAD_KIND: &str = "sui-widgets.reorderable-list";
@@ -53,7 +53,7 @@ struct ActiveReorderDrag {
 struct RowMotion {
     y: f32,
     target_y: f32,
-    transition: Option<Transition<f32>>,
+    motion: MotionValue<f32>,
 }
 
 impl RowMotion {
@@ -61,20 +61,22 @@ impl RowMotion {
         Self {
             y,
             target_y: y,
-            transition: None,
+            motion: MotionValue::new(y),
         }
     }
 
     fn current_at(self, time: f64) -> f32 {
-        self.transition
-            .map(|transition| transition.sample(time))
-            .unwrap_or(self.y)
+        if self.motion.is_animating() {
+            self.motion.value(time)
+        } else {
+            self.y
+        }
     }
 
     fn jump_to(&mut self, y: f32) {
         self.y = y;
         self.target_y = y;
-        self.transition = None;
+        self.motion.jump_to(y);
     }
 
     fn set_target(&mut self, target_y: f32, time: f64, duration: f64, easing: Easing) -> bool {
@@ -86,26 +88,27 @@ impl RowMotion {
 
         self.y = current;
         self.target_y = target_y;
-        self.transition = Some(Transition::new(current, target_y, time, duration, easing));
-        true
+        // Rows sliding into place are movement, which reduced motion skips.
+        let spec = AnimationSpec::tween(duration, easing).with_movement_policy(motion_policy());
+        self.motion.animate_to(target_y, time, spec)
     }
 
     fn advance(&mut self, time: f64) -> bool {
-        let Some(transition) = self.transition else {
+        if !self.motion.is_animating() {
             return false;
-        };
-
-        self.y = transition.sample(time);
-        if transition.is_complete(time) {
-            self.jump_to(self.target_y);
-            false
-        } else {
-            true
         }
+
+        let animating = self.motion.advance(time);
+        self.y = if animating {
+            self.motion.value(time)
+        } else {
+            self.target_y
+        };
+        animating
     }
 
     fn is_animating(&self) -> bool {
-        self.transition.is_some()
+        self.motion.is_animating()
     }
 }
 

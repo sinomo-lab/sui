@@ -227,6 +227,93 @@ from the next `WakeEvent::AnimationFrame`, invalidate the changed presentation,
 and request another frame only while animation remains active. Do not run a
 blocking loop inside `event` or `paint`.
 
+### Animating Values
+
+Pick the value type by what drives it:
+
+- `MotionScalar` is a 0-to-1 progress value for widget state such as hover,
+  press, focus, or reveal. It runs on the runtime clock and applies the motion
+  policy for you.
+- `MotionValue<T>` animates any `Interpolate` value (numbers, points, rects,
+  colors, transforms) on an absolute clock.
+- `AnimatedValue<T>` does the same when you only have frame deltas.
+- `SpringF32` is a physics spring for interactive motion, such as a dragged
+  handle that springs home with the velocity of the fling.
+
+Each transition takes an `AnimationSpec`: either
+`AnimationSpec::tween(duration, easing)` or `AnimationSpec::spring(spec)`. A
+`SpringSpec` has a `duration` and a `bounce` (`SMOOTH`, `SNAPPY`, and `BOUNCY`
+are presets). Springs are solved exactly, so they follow the same path at any
+frame rate. `ThemeMotion` provides the theme's specs: `hover_spec()`,
+`press_spec()`, `focus_spec()`, `toggle_spec()`, `entrance_spec()`, and
+`tab_switch_spec()`.
+
+Retargeting mid-flight keeps momentum: the new animation blends from the one
+still running instead of restarting at zero speed, so a hover that ends halfway
+through its fade turns around smoothly. Colors blend in premultiplied OKLab,
+so a fade from a transparent color keeps its hue instead of passing through a
+dark fringe. Transforms blend their translation, rotation, scale, and shear
+separately, so a turning shape keeps its size.
+
+```rust,no_run
+use sui::prelude::*;
+use sui::PointerEventKind;
+
+/// A highlight that fades in while the pointer is over it.
+struct Highlight {
+    shown: MotionScalar,
+}
+
+impl Widget for Highlight {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let hover = DefaultTheme::default().motion.hover_spec();
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
+                self.shown.set_target_event_with(1.0, hover, ctx);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.shown.set_target_event_with(0.0, hover, ctx);
+            }
+            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+                if self.shown.advance(*time) {
+                    ctx.request_animation_frame();
+                }
+                ctx.request_paint();
+            }
+            _ => {}
+        }
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill_bounds(Color::rgba(0.2, 0.45, 0.95, 0.3 * self.shown.value));
+    }
+}
+```
+
+### Reduced Motion and the Motion Policy
+
+`motion_policy()` returns the app-wide `MotionPolicy`: a `MotionPreference`
+(`Full`, `Reduced`, or `Off`) and a time scale. The platform reports the
+operating system setting (Windows "Show animations in Windows" and the web's
+`prefers-reduced-motion`; other platforms report full motion). An app can
+override it with `set_app_motion_preference(Some(preference))`, follow the
+system again with `None`, and slow every transition down for inspection with
+`set_motion_time_scale(0.25)`. The policy is read when a transition starts, so
+changes apply to the next animation.
+
+- `Full` plays everything.
+- `Reduced` keeps fades and color changes but drops movement: surfaces fade in
+  place instead of sliding, and sliding indicators jump.
+- `Off` finishes every transition immediately.
+
+`MotionScalar` applies the policy automatically. Use its `set_movement_target`
+and `set_movement_target_event` methods for transitions that move content, and
+`MotionPolicy::entrance_offset(progress)` for the distance a surface slides in.
+With `MotionValue`, pass `spec.with_policy(motion_policy())` or
+`spec.with_movement_policy(motion_policy())`. Delta-driven animation, such as a
+timeline player or a simulation, can follow the time scale with
+`motion_policy().scale_delta(delta)`.
+
 ## Tutorial: Deliver Typed Background Results with `UiHandle`
 
 Widgets are not required to be `Send`, and their methods stay synchronous.

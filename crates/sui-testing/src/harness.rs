@@ -171,9 +171,14 @@ enum HarnessCommand {
         request: DebugCaptureRequest,
         reply: SyncSender<Result<DebugCaptureArtifact>>,
     },
+    WithRuntime {
+        task: RuntimeTask,
+        reply: SyncSender<Result<()>>,
+    },
 }
 
 type RuntimeBuilder = Box<dyn FnOnce() -> Result<Runtime> + Send>;
+type RuntimeTask = Box<dyn FnOnce(&mut Runtime) + Send>;
 
 #[derive(Debug)]
 struct LiveWindowState {
@@ -237,6 +242,7 @@ impl Harness {
         runtime: Runtime,
         registry: WgpuExternalTextureRegistry,
     ) -> Result<Self> {
+        sui_runtime::reset_motion_settings();
         let mut platform = HeadlessPlatform::new();
         platform.set_external_texture_registry(registry);
         let mut harness = Self {
@@ -251,6 +257,7 @@ impl Harness {
         runtime: Runtime,
         default_timeout: f64,
     ) -> Result<Self> {
+        sui_runtime::reset_motion_settings();
         let mut harness = Self {
             backend: HarnessBackend::Headless(HeadlessHarness {
                 runtime,
@@ -266,6 +273,7 @@ impl Harness {
         runtime: Runtime,
         initial_frames: usize,
     ) -> Result<Self> {
+        sui_runtime::reset_motion_settings();
         let mut harness = Self {
             backend: HarnessBackend::Headless(HeadlessHarness {
                 runtime,
@@ -364,6 +372,27 @@ impl Harness {
                     .find(|(_, window_title)| window_title == title)
                     .map(|(window_id, _)| window_id)
             }),
+        }
+    }
+
+    /// Run `task` with the app's runtime on the thread that owns it, which is
+    /// where thread-local settings such as the motion policy live.
+    pub(crate) fn with_runtime<R, F>(&mut self, task: F) -> Result<R>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut Runtime) -> R + Send + 'static,
+    {
+        match &mut self.backend {
+            HarnessBackend::Headless(harness) => Ok(task(&mut harness.runtime)),
+            HarnessBackend::Live(harness) => {
+                let (result_tx, result_rx) = mpsc::sync_channel(1);
+                harness.with_runtime(Box::new(move |runtime| {
+                    let _ = result_tx.send(task(runtime));
+                }))?;
+                result_rx
+                    .recv_timeout(LIVE_RESPONSE_TIMEOUT)
+                    .map_err(|_| Error::new("live harness runtime task did not finish"))
+            }
         }
     }
 
@@ -604,6 +633,21 @@ fn timeout_error(context: &str, timeout: Duration) -> Error {
 }
 
 impl LiveHarness {
+    fn with_runtime(&self, task: RuntimeTask) -> Result<()> {
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        self.proxy
+            .send_event(HarnessCommand::WithRuntime {
+                task,
+                reply: reply_tx,
+            })
+            .map_err(|_| Error::new("live harness service is unavailable"))?;
+        recv_result(
+            &reply_rx,
+            "live harness runtime task",
+            LIVE_RESPONSE_TIMEOUT,
+        )
+    }
+
     fn flush(&self) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.proxy
@@ -767,6 +811,8 @@ impl LiveHarnessApp {
         self.window_visible = visible;
         self.reset_runtime_state();
         self.last_error = None;
+        // Each app starts from full motion, whatever earlier tests set.
+        sui_runtime::reset_motion_settings();
         self.runtime = build_runtime()?;
         self.flush_pending_frames(event_loop)
     }
@@ -1547,6 +1593,10 @@ impl LiveHarnessApp {
                     self.take_last_error()
                         .and_then(|()| self.capture_debug(event_loop, window_id, request)),
                 );
+            }
+            HarnessCommand::WithRuntime { task, reply } => {
+                task(&mut self.runtime);
+                let _ = reply.send(Ok(()));
             }
         }
     }

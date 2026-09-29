@@ -29,10 +29,10 @@ use sui::{
 
 #[cfg(test)]
 use crate::animation_demo::{
-    ANIMATION_DEMO_NAME, ANIMATION_DEMO_SCROLL_NAME, ANIMATION_EDITOR_SURFACE_NAME,
-    ANIMATION_PAINT_INVALIDATION_NAME, ANIMATION_PAUSE_BUTTON_LABEL, ANIMATION_PLAY_BUTTON_LABEL,
-    ANIMATION_RETAINED_LAYER_NAME, ANIMATION_RETARGET_BUTTON_LABEL,
-    ANIMATION_TIMELINE_PREVIEW_NAME,
+    ANIMATION_DEMO_SCROLL_NAME, CURVES_SECTION_NAME, FLING_PAD_NAME, FRAME_PACING_NAME,
+    INTERRUPTION_COMPARISON_NAME, INTERRUPTION_SECTION_NAME, LAYER_STAGE_NAME, MOTION_STATUS_NAME,
+    REPAINT_STAGE_NAME, STUDIO_EDITOR_NAME, STUDIO_PAUSE_LABEL, STUDIO_PLAY_LABEL,
+    STUDIO_SECTION_NAME, UNDER_THE_HOOD_SECTION_NAME, WIDGET_MOTION_SECTION_NAME,
 };
 use crate::animation_demo::{ANIMATION_DEMO_TAB_LABEL, build_animation_demo_with_theme};
 #[cfg(test)]
@@ -1979,7 +1979,7 @@ fn build_dev_demo_entries(
         ),
         themed_demo!(
             ANIMATION_DEMO_TAB_LABEL,
-            "Timeline playback, retained layer, repaint, editor, and overlay examples.",
+            "Curves, springs, interruption, widget motion, a timeline editor, and render cost.",
             IconGlyph::Sparkles,
             DecorativeHue::Cyan,
             |theme| build_animation_demo_with_theme(theme)
@@ -8164,11 +8164,19 @@ final_max_luminance={final_max_luminance}
 
         let snapshot = window.snapshot()?;
         for name in [
-            ANIMATION_DEMO_NAME,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-            ANIMATION_RETAINED_LAYER_NAME,
-            ANIMATION_PAINT_INVALIDATION_NAME,
-            ANIMATION_EDITOR_SURFACE_NAME,
+            MOTION_STATUS_NAME,
+            CURVES_SECTION_NAME,
+            "Bouncy spring curve",
+            INTERRUPTION_SECTION_NAME,
+            INTERRUPTION_COMPARISON_NAME,
+            FLING_PAD_NAME,
+            WIDGET_MOTION_SECTION_NAME,
+            STUDIO_SECTION_NAME,
+            STUDIO_EDITOR_NAME,
+            UNDER_THE_HOOD_SECTION_NAME,
+            LAYER_STAGE_NAME,
+            REPAINT_STAGE_NAME,
+            FRAME_PACING_NAME,
         ] {
             assert!(
                 snapshot
@@ -8183,8 +8191,52 @@ final_max_luminance={final_max_luminance}
         Ok(())
     }
 
+    /// Whether any accessibility node's name contains `text`.
+    fn window_mentions(window: &TestWindow, text: &str) -> bool {
+        window
+            .snapshot()
+            .expect("window snapshot should be available")
+            .accessibility
+            .nodes
+            .iter()
+            .any(|node| node.name.as_deref().is_some_and(|name| name.contains(text)))
+    }
+
     #[test]
-    fn animation_demo_resumes_playback_after_tab_switch() -> Result<()> {
+    fn animation_demo_motion_controls_set_the_app_policy() -> Result<()> {
+        let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
+        assert!(window_mentions(&window, "Following the system setting"));
+
+        window
+            .get_by_role(SemanticsRole::RadioButton)
+            .with_name("Reduced")
+            .click()?;
+        assert!(window_mentions(&window, "fades play, movement jumps"));
+
+        window
+            .get_by_role(SemanticsRole::RadioButton)
+            .with_name("0.25×")
+            .click()?;
+        assert!(window_mentions(&window, "at 0.25× speed"));
+
+        window
+            .get_by_role(SemanticsRole::RadioButton)
+            .with_name("Off")
+            .click()?;
+        assert!(window_mentions(&window, "transitions finish immediately"));
+
+        window
+            .get_by_role(SemanticsRole::RadioButton)
+            .with_name("System")
+            .click()?;
+        assert!(window_mentions(&window, "Following the system setting"));
+        Ok(())
+    }
+
+    #[test]
+    fn animation_demo_studio_resumes_playback_after_tab_switch() -> Result<()> {
         let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
@@ -8202,82 +8254,87 @@ final_max_luminance={final_max_luminance}
             .with_name(ANIMATION_DEMO_TAB_LABEL)
             .click()?;
         assert_dev_shell_active_tab(&window, ANIMATION_DEMO_TAB_LABEL)?;
-        let restored_before_advance = semantic_text_value(
-            &window,
-            SemanticsRole::GenericContainer,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-        );
+        let restored_before_advance =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
         app.advance_time(0.18)?;
-        let restored_after_advance = semantic_text_value(
-            &window,
-            SemanticsRole::GenericContainer,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-        );
+        let restored_after_advance =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
 
         assert_ne!(
             restored_before_advance, restored_after_advance,
-            "animation timeline should resume after switching back to the demo tab"
+            "the studio timeline should resume after switching back to the demo tab"
         );
 
         Ok(())
     }
 
+    /// Scroll the animation demo until the control is in view, then click it.
+    fn click_in_animation_demo(window: &TestWindow, role: SemanticsRole, name: &str) -> Result<()> {
+        for _ in 0..8 {
+            let snapshot = window.snapshot()?;
+            let target = find_named_node(&snapshot, role.clone(), name);
+            let page = find_named_node(
+                &snapshot,
+                SemanticsRole::ScrollView,
+                ANIMATION_DEMO_SCROLL_NAME,
+            );
+            let target_y = target.bounds.y() + target.bounds.height() * 0.5;
+            if target_y > page.bounds.y() + 24.0 && target_y < page.bounds.max_y() - 24.0 {
+                return window.get_by_role(role).with_name(name).click();
+            }
+            let page_y = page.bounds.y() + page.bounds.height() * 0.5;
+            window
+                .get_by_role(SemanticsRole::ScrollView)
+                .with_name(ANIMATION_DEMO_SCROLL_NAME)
+                .scroll_pixels(Vector::new(0.0, page_y - target_y))?;
+        }
+        panic!("{name:?} did not scroll into the animation demo viewport");
+    }
+
     #[test]
-    fn animation_demo_transport_pauses_retargets_and_resumes_shared_motion() -> Result<()> {
+    fn animation_demo_studio_pause_holds_the_playhead() -> Result<()> {
         let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
         let window = app.main_window()?;
         open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
         app.advance_time(0.12)?;
 
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(ANIMATION_PAUSE_BUTTON_LABEL)
-            .click()?;
-        let paused = semantic_text_value(
-            &window,
-            SemanticsRole::GenericContainer,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-        );
+        click_in_animation_demo(&window, SemanticsRole::Button, STUDIO_PAUSE_LABEL)?;
+        let paused =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
+        assert!(paused.contains("paused"), "got {paused:?}");
         app.advance_time(0.18)?;
-        let still_paused = semantic_text_value(
-            &window,
-            SemanticsRole::GenericContainer,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-        );
-        assert_eq!(
-            paused, still_paused,
-            "paused transport should not advance primitive values"
-        );
+        let still_paused =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
+        assert_eq!(paused, still_paused, "a paused studio holds its playhead");
 
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(ANIMATION_RETARGET_BUTTON_LABEL)
-            .click()?;
-        let retargeted = semantic_text_value(
-            &window,
-            SemanticsRole::GenericContainer,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-        );
-        assert_ne!(
-            still_paused, retargeted,
-            "retargeting should update the shared primitive target while paused"
-        );
-
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(ANIMATION_PLAY_BUTTON_LABEL)
-            .click()?;
+        click_in_animation_demo(&window, SemanticsRole::Button, STUDIO_PLAY_LABEL)?;
         app.advance_time(0.18)?;
-        let resumed = semantic_text_value(
-            &window,
-            SemanticsRole::GenericContainer,
-            ANIMATION_TIMELINE_PREVIEW_NAME,
-        );
-        assert_ne!(
-            retargeted, resumed,
-            "playing should resume the shared primitive motion"
-        );
+        let resumed =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
+        assert_ne!(still_paused, resumed, "playing moves the playhead again");
 
+        Ok(())
+    }
+
+    #[test]
+    fn animation_demo_studio_space_toggles_playback() -> Result<()> {
+        let app = TestApp::new_no_vsync(|| build_dev_application().build())?;
+        let window = app.main_window()?;
+        open_dev_shell_demo(&window, ANIMATION_DEMO_TAB_LABEL)?;
+
+        click_in_animation_demo(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME)?;
+        let editor = window
+            .get_by_role(SemanticsRole::GenericContainer)
+            .with_name(STUDIO_EDITOR_NAME);
+        editor.press(" ")?;
+        let paused =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
+        assert!(paused.contains("paused"), "got {paused:?}");
+
+        editor.press(" ")?;
+        let playing =
+            semantic_text_value(&window, SemanticsRole::GenericContainer, STUDIO_EDITOR_NAME);
+        assert!(playing.contains("playing"), "got {playing:?}");
         Ok(())
     }
 

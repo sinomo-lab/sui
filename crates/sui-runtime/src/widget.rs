@@ -22,8 +22,8 @@ use crate::{
 use sui_core::{
     AsyncWakeToken, Clipboard, Color, CursorGrabMode, DpiInfo, DragPayload, DragScopeId,
     DragSessionId, DropEffect, Event, ImageHandle, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, Path, Point, Rect, SemanticsNode, Size, TimerToken, Transform, Vector,
-    WakeEvent, WidgetId, WindowId,
+    InvalidationTarget, MotionPolicy, Path, Point, Rect, SemanticsNode, Size, TimerToken,
+    Transform, Vector, WakeEvent, WidgetId, WindowId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, LayoutContext};
 use sui_reactive::{Observable, Signal};
@@ -2355,6 +2355,11 @@ impl EventCtx {
         self.current_time
     }
 
+    /// The motion policy that transitions started now should follow.
+    pub fn motion_policy(&self) -> MotionPolicy {
+        crate::motion_policy()
+    }
+
     pub const fn phase(&self) -> EventPhase {
         self.phase
     }
@@ -2941,6 +2946,11 @@ impl MeasureCtx {
         self.current_time
     }
 
+    /// The motion policy that transitions started now should follow.
+    pub fn motion_policy(&self) -> MotionPolicy {
+        crate::motion_policy()
+    }
+
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
@@ -3115,6 +3125,11 @@ impl ArrangeCtx {
         self.current_time
     }
 
+    /// The motion policy that transitions started now should follow.
+    pub fn motion_policy(&self) -> MotionPolicy {
+        crate::motion_policy()
+    }
+
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
@@ -3208,6 +3223,12 @@ pub(crate) enum PaintImageResource {
 }
 
 impl PaintCtx {
+    /// The motion policy in effect, for paint that depends on it (such as
+    /// an entrance offset that reduced motion turns off).
+    pub fn motion_policy(&self) -> MotionPolicy {
+        crate::motion_policy()
+    }
+
     pub(crate) fn new(
         window_id: WindowId,
         widget_id: WidgetId,

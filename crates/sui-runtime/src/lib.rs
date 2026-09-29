@@ -6,6 +6,7 @@ mod diagnostics;
 mod layout_work;
 mod logo;
 mod measure_cache;
+mod motion;
 mod output_cache;
 mod overlay;
 mod reactive;
@@ -65,13 +66,18 @@ pub use layout_work::{
     LayoutWorkSnapshot, begin_layout_work_collection, take_layout_work_collection,
 };
 pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
+pub use motion::{
+    app_motion_preference, motion_policy, motion_time_scale, reset_motion_settings,
+    set_app_motion_preference, set_motion_time_scale, set_system_motion_preference,
+    system_motion_preference,
+};
 pub use overlay::{
     OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayDismissReason, OverlayDismissRequest,
     OverlayFocusBehavior, OverlayInitialFocus, OverlayKind, OverlayManagerSnapshot,
     OverlayModality, OverlayOptions, OverlaySnapshot, OverlayTraceKind, OverlayTraceSample,
 };
 use std::rc::Rc;
-pub use sui_core::{DpiInfo, SafeAreaInsets};
+pub use sui_core::{DpiInfo, MotionPolicy, MotionPreference, SafeAreaInsets};
 pub use sui_layout::LayoutContext;
 pub use widget::{
     ArrangeCtx, EventCtx, EventPhase, FocusRestorePolicy, FocusScope, FocusScopeState,
@@ -322,6 +328,13 @@ impl Runtime {
     pub fn next_wakeup_time(&self, window_id: WindowId) -> Result<Option<f64>> {
         let window = self.window(window_id)?;
         Ok(window.next_wakeup_time())
+    }
+
+    /// Whether any widget in the window has asked for another animation
+    /// frame, meaning a transition is still running.
+    pub fn has_pending_animation_frames(&self, window_id: WindowId) -> Result<bool> {
+        let window = self.window(window_id)?;
+        Ok(window.active_animated_widget_count() > 0)
     }
 
     pub fn wake_async(&mut self, window_id: WindowId, token: AsyncWakeToken) -> Result<bool> {

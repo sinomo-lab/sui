@@ -8059,6 +8059,108 @@ fn tooltip_reveal_animation_updates_layer_properties_until_complete() -> Result<
     Ok(())
 }
 
+/// Sets the thread's motion preference for one test and restores the default
+/// afterwards, even if the test fails.
+struct MotionPreferenceOverride;
+
+impl MotionPreferenceOverride {
+    fn set(preference: sui_core::MotionPreference) -> Self {
+        sui_runtime::set_app_motion_preference(Some(preference));
+        Self
+    }
+}
+
+impl Drop for MotionPreferenceOverride {
+    fn drop(&mut self) {
+        sui_runtime::reset_motion_settings();
+    }
+}
+
+fn hover_tooltip_trigger(
+    runtime: &mut Runtime,
+    window_id: sui_core::WindowId,
+) -> Result<(), String> {
+    let initial = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let trigger = initial
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Button
+                && node.name.as_deref() == Some("Hover for shortcuts")
+        })
+        .expect("tooltip trigger semantics present")
+        .bounds;
+    let hover_point = Point::new(trigger.x() + 12.0, trigger.y() + (trigger.height() * 0.5));
+    runtime
+        .handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, hover_point, false),
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn tooltip_runtime() -> (Runtime, sui_core::WindowId) {
+    build_runtime(crate::Padding::all(
+        16.0,
+        crate::Tooltip::new(
+            "Quick access to common commands",
+            crate::Button::new("Hover for shortcuts").min_width(180.0),
+        )
+        .theme(DefaultTheme::default()),
+    ))
+}
+
+#[test]
+fn tooltip_fades_in_place_under_reduced_motion() -> Result<(), String> {
+    let _reduced = MotionPreferenceOverride::set(sui_core::MotionPreference::Reduced);
+    let entrance_duration = DefaultTheme::default().motion.entrance_duration();
+    let (mut runtime, window_id) = tooltip_runtime();
+
+    hover_tooltip_trigger(&mut runtime, window_id)?;
+    let start = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let start_descriptor =
+        overlay_layer_descriptor(&start).expect("tooltip overlay layer should appear");
+    assert_eq!(start_descriptor.properties.opacity, 0.0);
+    assert_eq!(start_descriptor.properties.translation.y, 0.0);
+
+    runtime.tick(entrance_duration * 0.5);
+    assert!(handle_ready_events(&mut runtime)? >= 1);
+    let mid = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let mid_descriptor =
+        overlay_layer_descriptor(&mid).expect("tooltip overlay layer should stay active");
+    assert!(mid_descriptor.properties.opacity > 0.0);
+    assert!(mid_descriptor.properties.opacity < 1.0);
+    assert_eq!(mid_descriptor.properties.translation.y, 0.0);
+    Ok(())
+}
+
+#[test]
+fn tooltip_appears_at_once_with_motion_off() -> Result<(), String> {
+    let _off = MotionPreferenceOverride::set(sui_core::MotionPreference::Off);
+    let (mut runtime, window_id) = tooltip_runtime();
+
+    hover_tooltip_trigger(&mut runtime, window_id)?;
+    let shown = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let descriptor = overlay_layer_descriptor(&shown).expect("tooltip overlay layer should appear");
+    assert_eq!(descriptor.properties.opacity, 1.0);
+    assert_eq!(descriptor.properties.translation.y, 0.0);
+    assert_eq!(
+        runtime
+            .next_wakeup_time(window_id)
+            .map_err(|error| error.to_string())?,
+        None
+    );
+    Ok(())
+}
+
 #[test]
 fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(), String> {
     let theme = slow_normal_motion_theme();

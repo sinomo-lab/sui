@@ -8,6 +8,7 @@ mod desktop;
 mod display_capabilities;
 mod file_dialog;
 mod headless;
+mod motion_preference;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod os_clipboard;
 #[cfg(any(target_arch = "wasm32", test))]

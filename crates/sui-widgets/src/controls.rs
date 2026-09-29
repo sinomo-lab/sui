@@ -5780,7 +5780,9 @@ impl SelectMenuPresentationState {
             opacity: self.reveal.value,
             translation: Vector::new(
                 0.0,
-                self.theme.metrics.popover_reveal_offset * (1.0 - self.reveal.value) * direction,
+                self.theme.metrics.popover_reveal_offset
+                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value)
+                    * direction,
             ),
         }
     }

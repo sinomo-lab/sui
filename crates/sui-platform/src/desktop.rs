@@ -1602,6 +1602,10 @@ impl DesktopApp {
                 )
             }
             WinitWindowEvent::Focused(focused) => {
+                if focused {
+                    // The setting may have changed while another app had focus.
+                    crate::motion_preference::sync_system_motion_preference();
+                }
                 if let Some(window) = self.windows.get_mut(&window_id) {
                     window.focused = focused;
                     if !focused {
@@ -2525,6 +2529,7 @@ impl Waker {
 
 impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        crate::motion_preference::sync_system_motion_preference();
         if self.host_lifecycle.resume()
             && let Err(error) = self.restore_window_surfaces(event_loop)
         {

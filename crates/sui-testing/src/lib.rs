@@ -790,6 +790,67 @@ mod tests {
         TestApp::from_runtime_with_frame_budget(runtime, 2)
     }
 
+    fn build_switch_app() -> Result<TestApp> {
+        TestApp::new(|| {
+            sui::Application::new().window(sui::WindowBuilder::new().title("Motion").root(
+                sui::containers::Padding::all(24.0, sui::Switch::new("Wi-Fi")),
+            ))
+        })
+    }
+
+    #[test]
+    fn settle_animations_runs_slowed_transitions_to_completion() -> Result<()> {
+        let app = build_switch_app()?;
+        app.set_motion_time_scale(0.1)?;
+        let window = app.main_window()?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Wi-Fi")
+            .click()?;
+        assert!(app.has_running_animations()?);
+        let elapsed = app.settle_animations()?;
+
+        // The 140 ms toggle token runs ten times slower.
+        assert!(elapsed > 0.5, "settled after {elapsed} s");
+        assert!(!app.has_running_animations()?);
+        Ok(())
+    }
+
+    #[test]
+    fn motion_off_finishes_transitions_immediately() -> Result<()> {
+        let app = build_switch_app()?;
+        app.set_motion_preference(Some(sui_core::MotionPreference::Off))?;
+        let window = app.main_window()?;
+
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Wi-Fi")
+            .click()?;
+
+        assert!(!app.has_running_animations()?);
+        assert_eq!(app.settle_animations()?, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn record_motion_samples_at_each_step() -> Result<()> {
+        let app = build_switch_app()?;
+        let mut calls = 0;
+
+        let samples = app.record_motion(0.1, 0.025, || {
+            calls += 1;
+            Ok(calls)
+        })?;
+
+        let times: Vec<f64> = samples.iter().map(|(time, _)| *time).collect();
+        assert_eq!(times.len(), 5);
+        assert!((times[4] - 0.1).abs() < 1e-9);
+        assert_eq!(samples[4].1, 5);
+        assert!(app.record_motion(0.1, 0.0, || Ok(())).is_err());
+        Ok(())
+    }
+
     #[test]
     fn locators_actions_and_focus_work_end_to_end() -> Result<()> {
         let app = build_app()?;

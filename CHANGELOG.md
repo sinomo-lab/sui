@@ -95,6 +95,68 @@ Versioning, with the usual expectation that the API may change during the
   kept while chroma passes through zero. The Python and JavaScript bindings
   accept `"oklch"`.
 
+### Motion
+
+- Retargeting a transition mid-flight now keeps its momentum. `MotionScalar`,
+  `AnimatedValue`, and the new `MotionValue<T>` blend the new animation from
+  the one still running instead of restarting at zero speed, so a hover that
+  ends halfway through its fade turns around smoothly. Built-in widgets get
+  this automatically.
+- Added `AnimationSpec` (a tween or a spring) and `SpringSpec`, a spring set by
+  duration and bounce with `SMOOTH`, `SNAPPY`, and `BOUNCY` presets.
+  `ThemeMotion` gains `hover_spec`, `press_spec`, `focus_spec`, `toggle_spec`,
+  `entrance_spec`, and `tab_switch_spec`, and `MotionScalar` gains
+  `set_target_with` and `set_target_event_with`.
+- `SpringF32` now steps with the exact spring solution, so it follows the same
+  path at any frame rate and stays stable across long frames. Added
+  `SpringF32::from_spec`, `with_velocity`, `is_settled`, and `settle`.
+- Added an app-wide motion policy. `MotionPreference` (`Full`, `Reduced`, or
+  `Off`) follows the operating system on Windows and the web, and
+  `set_app_motion_preference` overrides it. With reduced motion, popovers,
+  tooltips, menus, dialogs, and side sheets appear in place instead of
+  sliding, and tab, segmented-control, and list-reorder movement jumps; with
+  motion off, transitions finish immediately. `set_motion_time_scale` slows
+  every transition down for inspection. Widget contexts expose
+  `motion_policy()`, and `MotionScalar::set_movement_target` marks transitions
+  that move content.
+- Color interpolation (`Interpolate for Color`, used by animated colors and
+  widget state blends) now mixes in premultiplied OKLab via the new
+  `Color::mix_oklab`, so fades from a transparent color no longer darken
+  midway. Colors in different spaces blend correctly; `Color::to_space`
+  converts between them.
+- Transform interpolation blends translation, rotation, scale, and shear
+  separately, so rotating shapes no longer shrink mid-turn.
+- Added `Interpolate::extrapolate` for values that may overshoot, such as a
+  bouncy spring.
+- `AnimationEditorCommand::MoveKeyframe` moves a keyframe in time with
+  snapping and undo.
+- `sinomo-ui-testing` adds `TestApp::settle_animations`, `record_motion`,
+  `has_running_animations`, `set_motion_preference`, and
+  `set_motion_time_scale`. Each test app starts at full motion regardless of
+  the machine's setting. `Runtime::has_pending_animation_frames` reports
+  whether a window still has transitions running.
+
+### Redesigned animation demo
+
+- The Animation page is one scroll. Its header sets the app-wide motion
+  preference (following the system, full, reduced, or off) and playback speed
+  (1× down to 0.1×), and toggles motion traces.
+- Easing and springs: a card for each theme curve and spring preset plots the
+  curve and loops a puck along it; clicking a card sends it back mid-flight.
+- Interruptible motion: the same retargets played by restarting from rest and
+  by keeping momentum, charted side by side, and a puck that springs home with
+  the velocity it is flung at.
+- Built-in widgets: buttons, choices, segmented controls, tabs, tooltips,
+  popovers, selects, text fields, and sliders, each labelled with the theme
+  token that times it.
+- Timeline studio: keyframes drag along their tracks with snapping, the ruler
+  scrubs, the selected keyframe's curve has draggable bezier handles, edits
+  undo and redo, Space, Delete, and the arrow keys work when focused, and
+  "Copy document" copies the animation document as text.
+- Under the hood: a retained layer and a repainted chip move side by side with
+  counts of frames, repaints, and layer moves, next to a graph of animation
+  frame intervals.
+
 ### Redesigned theme editor demo
 
 - Source colors are grouped by job (brand, status, surfaces, fills, borders,
@@ -131,6 +193,9 @@ Versioning, with the usual expectation that the API may change during the
   axis behind, flattening the gradient to one end color.
 - `Select` now handles the expand, collapse, and set-value accessibility
   actions it advertises.
+- `Easing::CubicBezier` now solves the curve to within 1e-7 instead of about
+  1e-3, so theme curves no longer step visibly when transitions are slowed
+  down.
 - The demo's Themes page sizes each row of preview cards to its tallest card,
   so wrapped descriptions no longer squash the color swatches.
 - Demo widgets that ignored the live theme now follow it, including layout

@@ -43,7 +43,7 @@ arboard = { version = "3.6.1", default-features = false }
 accesskit = { workspace = true }
 accesskit_winit = { workspace = true }
 unicode-segmentation = { workspace = true }
-windows = { version = "0.62.2", features = ["Win32_Devices_Display", "Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi"] }
+windows = { version = "0.62.2", features = ["Win32_Devices_Display", "Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 accesskit_consumer = { workspace = true }

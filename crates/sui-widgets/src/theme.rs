@@ -4,7 +4,7 @@ use sui_core::Color;
 use sui_layout::Padding as Insets;
 use sui_text::{FontFamilyStack, TextStyle};
 
-use crate::animation::Easing;
+use crate::animation::{AnimationSpec, Easing};
 use crate::hdr_theme::HdrThemeTokens;
 
 /// Motion design tokens: a shared vocabulary of animation durations and easing
@@ -125,6 +125,32 @@ impl ThemeMotion {
 
     pub const fn tab_switch_easing(&self) -> Easing {
         self.easing_standard
+    }
+
+    /// Hover feedback as an [`AnimationSpec`]. Like every spec below, widgets
+    /// apply the app's motion policy when they start the transition.
+    pub fn hover_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(self.hover_duration(), self.hover_easing())
+    }
+
+    pub fn press_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(self.press_duration(), self.press_easing())
+    }
+
+    pub fn focus_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(self.focus_duration(), self.focus_easing())
+    }
+
+    pub fn toggle_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(self.toggle_duration(), self.toggle_easing())
+    }
+
+    pub fn entrance_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(self.entrance_duration(), self.entrance_easing())
+    }
+
+    pub fn tab_switch_spec(&self) -> AnimationSpec {
+        AnimationSpec::tween(self.tab_switch_duration(), self.tab_switch_easing())
     }
 }
 

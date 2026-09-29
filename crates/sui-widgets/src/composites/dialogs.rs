@@ -792,7 +792,8 @@ impl Widget for Dialog {
         } else {
             Vector::new(
                 0.0,
-                self.resolved_theme().metrics.popover_reveal_offset * (1.0 - self.reveal.value),
+                self.resolved_theme().metrics.popover_reveal_offset
+                    * sui_runtime::motion_policy().entrance_offset(self.reveal.value),
             )
         };
         LayerProperties::new(self.reveal.value, translation)
@@ -1339,8 +1340,10 @@ impl SideSheet {
     }
 
     pub(super) fn reveal_offset(&self) -> Vector {
-        let horizontal_distance = self.sheet_frame.width() * (1.0 - self.reveal.value);
-        let vertical_distance = self.sheet_frame.height() * (1.0 - self.reveal.value);
+        // Reduced motion shows the sheet in place instead of sliding it in.
+        let hidden = sui_runtime::motion_policy().entrance_offset(self.reveal.value);
+        let horizontal_distance = self.sheet_frame.width() * hidden;
+        let vertical_distance = self.sheet_frame.height() * hidden;
         match self.placement {
             SideSheetPlacement::Left => Vector::new(-horizontal_distance, 0.0),
             SideSheetPlacement::Right => Vector::new(horizontal_distance, 0.0),

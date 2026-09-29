@@ -1,7 +1,7 @@
 pub use sui_animation::*;
 
 use sui_core::{InvalidationKind, InvalidationRequest, InvalidationTarget};
-use sui_runtime::EventCtx;
+use sui_runtime::{EventCtx, motion_policy};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationBindingInvalidation {
@@ -31,11 +31,19 @@ pub trait TimelineBindingSink {
     fn apply_animation_value(&mut self, binding: &AnimationBinding, value: AnimationValue) -> bool;
 }
 
+/// A 0-to-1 progress value for widget state transitions (hover, press,
+/// focus, reveal), driven by the runtime clock.
+///
+/// Every transition follows the app's [`MotionPolicy`]: the time scale
+/// stretches it, and with motion off it finishes immediately. Transitions
+/// that move content can use the `set_movement_*` methods, which also finish
+/// immediately under reduced motion. Retargeting mid-flight keeps momentum
+/// (see [`MotionValue`]). Springs may briefly overshoot the 0-to-1 range.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionScalar {
     pub value: f32,
     pub target: f32,
-    transition: Option<Transition<f32>>,
+    motion: MotionValue<f32>,
 }
 
 impl MotionScalar {
@@ -45,30 +53,59 @@ impl MotionScalar {
         Self {
             value,
             target: value,
-            transition: None,
+            motion: MotionValue::new(value),
         }
     }
 
     pub fn current(&self, time: f64) -> f32 {
-        self.transition
-            .map(|transition| transition.sample(time))
-            .unwrap_or(self.value)
+        if self.motion.is_animating() {
+            self.motion.value(time)
+        } else {
+            self.value
+        }
+    }
+
+    pub fn is_animating(&self) -> bool {
+        self.motion.is_animating()
     }
 
     pub fn set_target(&mut self, target: f32, time: f64, duration: f64, easing: Easing) -> bool {
+        self.set_target_with(target, time, AnimationSpec::tween(duration, easing))
+    }
+
+    /// Start moving toward `target` at `time` with `spec`, as adjusted by the
+    /// motion policy. Returns whether a transition is running.
+    pub fn set_target_with(&mut self, target: f32, time: f64, spec: AnimationSpec) -> bool {
+        self.retarget(target, time, spec.with_policy(motion_policy()))
+    }
+
+    /// Like [`MotionScalar::set_target`], for a transition that moves content
+    /// (a sliding indicator, a reordering row): reduced motion jumps instead.
+    pub fn set_movement_target(
+        &mut self,
+        target: f32,
+        time: f64,
+        duration: f64,
+        easing: Easing,
+    ) -> bool {
+        let spec = AnimationSpec::tween(duration, easing).with_movement_policy(motion_policy());
+        self.retarget(target, time, spec)
+    }
+
+    fn retarget(&mut self, target: f32, time: f64, spec: AnimationSpec) -> bool {
         let target = target.clamp(0.0, 1.0);
         let current = self.current(time);
         if (current - target).abs() < Self::EPSILON {
             self.value = target;
             self.target = target;
-            self.transition = None;
+            self.motion.jump_to(target);
             return false;
         }
 
-        self.value = current;
         self.target = target;
-        self.transition = Some(Transition::new(current, target, time, duration, easing));
-        true
+        let animating = self.motion.animate_to(target, time, spec);
+        self.value = if animating { current } else { target };
+        animating
     }
 
     pub fn set_target_event(
@@ -78,7 +115,34 @@ impl MotionScalar {
         easing: Easing,
         ctx: &mut EventCtx,
     ) -> bool {
-        let should_animate = self.set_target(target, ctx.current_time(), duration, easing);
+        self.set_target_event_with(target, AnimationSpec::tween(duration, easing), ctx)
+    }
+
+    /// Like [`MotionScalar::set_target_with`] at the event's time, requesting
+    /// an animation frame when a transition starts.
+    pub fn set_target_event_with(
+        &mut self,
+        target: f32,
+        spec: AnimationSpec,
+        ctx: &mut EventCtx,
+    ) -> bool {
+        let should_animate = self.set_target_with(target, ctx.current_time(), spec);
+        if should_animate {
+            ctx.request_animation_frame();
+        }
+        should_animate
+    }
+
+    /// Like [`MotionScalar::set_movement_target`] at the event's time,
+    /// requesting an animation frame when a transition starts.
+    pub fn set_movement_target_event(
+        &mut self,
+        target: f32,
+        duration: f64,
+        easing: Easing,
+        ctx: &mut EventCtx,
+    ) -> bool {
+        let should_animate = self.set_movement_target(target, ctx.current_time(), duration, easing);
         if should_animate {
             ctx.request_animation_frame();
         }
@@ -86,18 +150,17 @@ impl MotionScalar {
     }
 
     pub fn advance(&mut self, time: f64) -> bool {
-        let Some(transition) = self.transition else {
-            return false;
-        };
-
-        self.value = transition.sample(time);
-        if transition.is_complete(time) {
-            self.value = self.target;
-            self.transition = None;
+        if !self.motion.is_animating() {
             return false;
         }
 
-        true
+        let animating = self.motion.advance(time);
+        self.value = if animating {
+            self.motion.value(time)
+        } else {
+            self.target
+        };
+        animating
     }
 
     pub fn changed_since(&self, previous: f32) -> bool {
@@ -105,7 +168,7 @@ impl MotionScalar {
     }
 
     pub fn is_presented(&self) -> bool {
-        self.value > Self::EPSILON || self.target > Self::EPSILON || self.transition.is_some()
+        self.value > Self::EPSILON || self.target > Self::EPSILON || self.motion.is_animating()
     }
 }
 
@@ -272,11 +335,11 @@ fn request_invalidation_kind(ctx: &mut EventCtx, kind: InvalidationKind) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AnimationBinding, AnimationProperty, AnimationTargetId, AnimationValue, Clip, Easing,
-        Keyframe, Timeline, TimelineBindingSink, TimelinePlayer, Track,
+        AnimationBinding, AnimationProperty, AnimationSpec, AnimationTargetId, AnimationValue,
+        Clip, Easing, Keyframe, MotionScalar, Timeline, TimelineBindingSink, TimelinePlayer, Track,
         invalidation_for_animation_property,
     };
-    use sui_core::{Color, InvalidationKind, Vector};
+    use sui_core::{Color, InvalidationKind, MotionPreference, Vector};
 
     #[derive(Default)]
     struct DemoSink {
@@ -314,6 +377,79 @@ mod tests {
 
     fn binding(property: AnimationProperty) -> AnimationBinding {
         AnimationBinding::new(AnimationTargetId::new("preview"), property)
+    }
+
+    /// Restores the thread's default motion settings when dropped.
+    struct ResetMotion;
+
+    impl Drop for ResetMotion {
+        fn drop(&mut self) {
+            sui_runtime::reset_motion_settings();
+        }
+    }
+
+    #[test]
+    fn motion_scalar_follows_the_time_scale_and_motion_off() {
+        let _reset = ResetMotion;
+        sui_runtime::set_motion_time_scale(0.5);
+        let mut slow = MotionScalar::new(0.0);
+        assert!(slow.set_target(1.0, 0.0, 0.2, Easing::Linear));
+        assert!(slow.advance(0.2));
+        assert!((slow.value - 0.5).abs() < 1e-5);
+        assert!(!slow.advance(0.4));
+        assert_eq!(slow.value, 1.0);
+
+        sui_runtime::set_app_motion_preference(Some(MotionPreference::Off));
+        let mut instant = MotionScalar::new(0.0);
+        assert!(!instant.set_target(1.0, 0.0, 0.2, Easing::Linear));
+        assert_eq!(instant.value, 1.0);
+        assert!(!instant.is_animating());
+    }
+
+    #[test]
+    fn movement_jumps_but_fades_still_play_under_reduced_motion() {
+        let _reset = ResetMotion;
+        sui_runtime::set_app_motion_preference(Some(MotionPreference::Reduced));
+
+        let mut indicator = MotionScalar::new(0.0);
+        assert!(!indicator.set_movement_target(1.0, 0.0, 0.2, Easing::Linear));
+        assert_eq!(indicator.value, 1.0);
+
+        let mut fade = MotionScalar::new(0.0);
+        assert!(fade.set_target(1.0, 0.0, 0.2, Easing::Linear));
+        assert!(fade.advance(0.1));
+        assert!((fade.value - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn motion_scalar_turns_around_without_stopping() {
+        let _reset = ResetMotion;
+        let mut hover = MotionScalar::new(0.0);
+        hover.set_target(1.0, 0.0, 0.2, Easing::EaseInOut);
+        hover.advance(0.1);
+        let rising = hover.value;
+
+        // The pointer leaves halfway: the value keeps rising briefly before
+        // falling back, instead of freezing and restarting from rest.
+        assert!(hover.set_target(0.0, 0.1, 0.2, Easing::EaseInOut));
+        hover.advance(0.12);
+        assert!(hover.value > rising);
+        assert!(!hover.advance(0.3));
+        assert_eq!(hover.value, 0.0);
+    }
+
+    #[test]
+    fn theme_motion_specs_match_their_tokens() {
+        let motion = crate::theme::ThemeMotion::standard();
+
+        assert_eq!(
+            motion.hover_spec(),
+            AnimationSpec::tween(motion.hover_duration(), motion.hover_easing())
+        );
+        assert_eq!(
+            motion.entrance_spec().duration(),
+            motion.entrance_duration()
+        );
     }
 
     #[test]

@@ -113,6 +113,67 @@ impl Color {
         Self::linear_rgba(red, green, blue, self.alpha)
     }
 
+    /// Convert this color to `space`, keeping alpha. Channels are not clamped,
+    /// so colors outside the target gamut keep their out-of-range values.
+    pub fn to_space(self, space: ColorSpace) -> Self {
+        if self.space == space {
+            return self;
+        }
+        let linear = self.to_linear_srgb();
+        let linear = [linear.red, linear.green, linear.blue];
+        let [red, green, blue] = match space {
+            ColorSpace::Srgb | ColorSpace::LinearSrgb => linear,
+            ColorSpace::DisplayP3 | ColorSpace::LinearDisplayP3 => {
+                multiply_matrix3x3(LINEAR_SRGB_TO_DISPLAY_P3, linear)
+            }
+        };
+        let encode = if space.is_linear() {
+            |channel: f32| channel
+        } else {
+            srgb_transfer_from_linear
+        };
+        Self::new(space, encode(red), encode(green), encode(blue), self.alpha)
+    }
+
+    /// Blend toward `to` by `amount` (0 to 1) in premultiplied OKLab, the
+    /// perceptual mixing CSS `color-mix()` uses by default.
+    ///
+    /// Blending the premultiplied values keeps a fade from a transparent
+    /// color free of a dark fringe: the color holds steady while only its
+    /// opacity changes. The endpoints are returned exactly, and blends between
+    /// colors in different spaces come out in `to`'s space.
+    pub fn mix_oklab(self, to: Color, amount: f32) -> Self {
+        let amount = amount.clamp(0.0, 1.0);
+        if amount <= 0.0 {
+            return self;
+        }
+        if amount >= 1.0 {
+            return to;
+        }
+
+        let oklab = |color: Color| {
+            let linear = color.to_linear_srgb();
+            linear_srgb_to_oklab([linear.red, linear.green, linear.blue])
+        };
+        let (from_lab, to_lab) = (oklab(self), oklab(to));
+        let from_alpha = self.alpha.clamp(0.0, 1.0);
+        let to_alpha = to.alpha.clamp(0.0, 1.0);
+        let alpha = from_alpha + (to_alpha - from_alpha) * amount;
+        let lab: [f32; 3] = std::array::from_fn(|index| {
+            if alpha <= 1.0e-6 {
+                // Both ends are (nearly) invisible: premultiplying would
+                // divide by zero, and any color reads the same.
+                from_lab[index] + (to_lab[index] - from_lab[index]) * amount
+            } else {
+                let from = from_lab[index] * from_alpha;
+                let to = to_lab[index] * to_alpha;
+                (from + (to - from) * amount) / alpha
+            }
+        });
+        let [red, green, blue] = oklab_to_linear_srgb(lab);
+        Self::linear_rgba(red, green, blue, alpha).to_space(to.space)
+    }
+
     /// Build an encoded sRGB color from OKLCH coordinates, reducing chroma
     /// until the color fits the sRGB gamut. See [`Oklch::to_srgb`].
     pub fn oklch(lightness: f32, chroma: f32, hue: f32) -> Self {
@@ -400,6 +461,60 @@ mod tests {
         assert_close(Color::WHITE.contrast_ratio(Color::WHITE), 1.0, 0.0001);
         let gray = Color::rgba(115.0 / 255.0, 115.0 / 255.0, 115.0 / 255.0, 1.0);
         assert_close(gray.contrast_ratio(Color::WHITE), 4.74, 0.01);
+    }
+
+    #[test]
+    fn to_space_round_trips_between_encodings_and_gamuts() {
+        let azure = Color::rgba(0.09, 0.38, 0.96, 0.8);
+        for space in [
+            ColorSpace::LinearSrgb,
+            ColorSpace::DisplayP3,
+            ColorSpace::LinearDisplayP3,
+        ] {
+            let converted = azure.to_space(space);
+            assert_eq!(converted.space, space);
+            assert_eq!(converted.alpha, 0.8);
+            let back = converted.to_space(ColorSpace::Srgb);
+            assert_close(back.red, azure.red, 1.0e-4);
+            assert_close(back.green, azure.green, 1.0e-4);
+            assert_close(back.blue, azure.blue, 1.0e-4);
+        }
+        assert_eq!(azure.to_space(ColorSpace::Srgb), azure);
+    }
+
+    #[test]
+    fn mix_oklab_returns_exact_endpoints() {
+        let from = Color::rgba(0.2, 0.4, 0.6, 1.0);
+        let to = Color::display_p3(0.9, 0.3, 0.1, 0.5);
+
+        assert_eq!(from.mix_oklab(to, 0.0), from);
+        assert_eq!(from.mix_oklab(to, 1.0), to);
+        assert_eq!(from.mix_oklab(to, -1.0), from);
+        assert_eq!(from.mix_oklab(to, 2.0), to);
+        assert_eq!(from.mix_oklab(to, 0.5).space, ColorSpace::DisplayP3);
+    }
+
+    #[test]
+    fn mix_oklab_fades_from_transparent_without_darkening() {
+        let accent = Color::rgba(0.3, 0.6, 1.0, 1.0);
+
+        let halfway = Color::TRANSPARENT.mix_oklab(accent, 0.5);
+
+        // Straight-alpha blending would pass through (0.15, 0.3, 0.5, 0.5).
+        assert_close(halfway.alpha, 0.5, 1.0e-6);
+        assert_close(halfway.red, accent.red, 1.0e-3);
+        assert_close(halfway.green, accent.green, 1.0e-3);
+        assert_close(halfway.blue, accent.blue, 1.0e-3);
+    }
+
+    #[test]
+    fn mix_oklab_blends_lightness_perceptually() {
+        let gray = Color::BLACK.mix_oklab(Color::WHITE, 0.5);
+
+        assert_close(gray.to_oklch().lightness, 0.5, 1.0e-3);
+        assert!(gray.red > 0.37 && gray.red < 0.40, "got {}", gray.red);
+        assert_close(gray.red, gray.green, 1.0e-4);
+        assert_close(gray.green, gray.blue, 1.0e-4);
     }
 
     #[test]

@@ -9,6 +9,7 @@ mod event;
 mod geometry;
 mod id;
 mod invalidation;
+mod motion;
 mod semantics;
 
 pub use clipboard::{Clipboard, ClipboardBackend, LocalClipboardBackend};
@@ -27,6 +28,7 @@ pub use event::{
 pub use geometry::{Path, PathBuilder, PathElement, Point, Rect, Size, Transform, Vector};
 pub use id::{AsyncWakeToken, FontHandle, ImageHandle, SurfaceId, TimerToken, WidgetId, WindowId};
 pub use invalidation::{DirtyRegion, InvalidationKind, InvalidationRequest, InvalidationTarget};
+pub use motion::{MotionPolicy, MotionPreference};
 pub use semantics::{
     EditableTextSemantics, SemanticsAction, SemanticsActionRequest, SemanticsLiveRegion,
     SemanticsNode, SemanticsPopupKind, SemanticsRelations, SemanticsRole, SemanticsState,

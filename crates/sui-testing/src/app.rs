@@ -1,8 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
-use sui_core::{Error, Result};
+use sui_core::{Error, MotionPreference, Result};
 use sui_render_wgpu::WgpuExternalTextureRegistry;
-use sui_runtime::{Runtime, set_window_render_options};
+use sui_runtime::{
+    Runtime, set_app_motion_preference, set_motion_time_scale, set_window_render_options,
+};
+
+/// How far [`TestApp::settle_animations`] advances time per frame.
+const SETTLE_STEP: f64 = 1.0 / 60.0;
 
 use crate::{harness::Harness, window::TestWindow};
 
@@ -144,6 +149,76 @@ impl TestApp {
 
     pub fn advance_time(&self, delta: f64) -> Result<()> {
         self.harness.borrow_mut().advance_time(delta)
+    }
+
+    /// Override the motion preference of the app under test, or pass `None`
+    /// to follow the system preference, which tests treat as full motion.
+    pub fn set_motion_preference(&self, preference: Option<MotionPreference>) -> Result<()> {
+        self.harness
+            .borrow_mut()
+            .with_runtime(move |_| set_app_motion_preference(preference))
+    }
+
+    /// Play the app's transitions at `time_scale` speed.
+    pub fn set_motion_time_scale(&self, time_scale: f32) -> Result<()> {
+        self.harness
+            .borrow_mut()
+            .with_runtime(move |_| set_motion_time_scale(time_scale))
+    }
+
+    /// Whether any window still has a transition running.
+    pub fn has_running_animations(&self) -> Result<bool> {
+        self.harness.borrow_mut().with_runtime(|runtime| {
+            runtime.window_ids().into_iter().any(|window_id| {
+                runtime
+                    .has_pending_animation_frames(window_id)
+                    .unwrap_or(false)
+            })
+        })
+    }
+
+    /// Advance time frame by frame until every transition has finished, and
+    /// return how many seconds that took. Fails after ten seconds, which
+    /// usually means an animation repeats forever.
+    pub fn settle_animations(&self) -> Result<f64> {
+        self.settle_animations_within(10.0)
+    }
+
+    /// Like [`TestApp::settle_animations`], failing after `limit` seconds.
+    pub fn settle_animations_within(&self, limit: f64) -> Result<f64> {
+        let mut elapsed = 0.0;
+        while self.has_running_animations()? {
+            if elapsed >= limit {
+                return Err(Error::new(format!(
+                    "animations were still running after {limit} s"
+                )));
+            }
+            self.advance_time(SETTLE_STEP)?;
+            elapsed += SETTLE_STEP;
+        }
+        Ok(elapsed)
+    }
+
+    /// Sample `probe` now and then every `step` seconds for `duration`
+    /// seconds, returning `(elapsed, value)` pairs, to assert on the shape
+    /// of a transition rather than only its end state.
+    pub fn record_motion<T>(
+        &self,
+        duration: f64,
+        step: f64,
+        mut probe: impl FnMut() -> Result<T>,
+    ) -> Result<Vec<(f64, T)>> {
+        if step <= 0.0 || !step.is_finite() {
+            return Err(Error::new("motion sampling step must be > 0"));
+        }
+        let mut samples = vec![(0.0, probe()?)];
+        let mut elapsed = 0.0;
+        while elapsed + step <= duration + step * 1.0e-6 {
+            self.advance_time(step)?;
+            elapsed += step;
+            samples.push((elapsed, probe()?));
+        }
+        Ok(samples)
     }
 
     pub fn windows(&self) -> Result<Vec<TestWindow>> {

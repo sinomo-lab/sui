@@ -139,6 +139,14 @@ already pump the runtime, timers, wakeups, and redraw work while waiting.
 - `run_until_idle()` to process queued work.
 - `pump_frames(count)` to advance a known number of rendered frames.
 - `advance_time(seconds)` to drive timers and time-based behavior.
+- `settle_animations()` to advance frame by frame until every transition has
+  finished; it returns the time taken and fails after ten seconds, which
+  usually means an animation repeats forever.
+- `record_motion(duration, step, probe)` to sample a value over time and
+  assert on the shape of a transition, not only its end state.
+- `set_motion_preference(Some(preference))` and `set_motion_time_scale(scale)`
+  to test reduced motion, motion off, or slowed transitions. Each test app
+  starts at full motion regardless of the machine's setting.
 - `dispatch_event_now(event)` for tests specifically about normalized event
   details.
 
@@ -252,6 +260,11 @@ The platform routes `SemanticsActionRequest` back to the retained widget that
 owns a node. A widget that advertises `Activate`, `SetValue`, `Increment`, or
 another action must implement the equivalent event path. Keyboard, pointer,
 and assistive-technology activation should converge on the same behavior.
+
+Motion is part of accessibility too. Built-in widgets follow the user's
+reduced-motion setting through the app's motion policy; a custom widget that
+slides, scales, or moves content should do the same (see
+[reduced motion](state-events-and-async.md#reduced-motion-and-the-motion-policy)).
 
 ## Accessible Names and Grouping
 

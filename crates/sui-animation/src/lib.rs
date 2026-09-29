@@ -3,23 +3,34 @@
 use std::{fmt, sync::Arc};
 
 use sui_core::{Color, ColorSpace, Point, Rect, Size, Transform, Vector};
+pub use sui_core::{MotionPolicy, MotionPreference};
 
 pub const ANIMATION_DOCUMENT_VERSION: u32 = 1;
 
 pub trait Interpolate: Sized {
     fn interpolate(from: Self, to: Self, t: f32) -> Self;
+
+    /// Like [`Interpolate::interpolate`], but lets `t` leave `0..=1` so a
+    /// spring can overshoot its target. Values that cannot extend past their
+    /// endpoints, such as colors, clamp instead.
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
+        Self::interpolate(from, to, t)
+    }
 }
 
 impl Interpolate for f32 {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
         // Endpoint-exact: `from + (to - from) * 1.0` accumulates float error
         // and lands one bit away from `to`, so settled animations would never
         // exactly reach their target value.
-        if t <= 0.0 {
+        if t == 0.0 {
             return from;
         }
-        if t >= 1.0 {
+        if t == 1.0 {
             return to;
         }
         from + ((to - from) * t)
@@ -28,67 +39,147 @@ impl Interpolate for f32 {
 
 impl Interpolate for Point {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
         Point::new(
-            f32::interpolate(from.x, to.x, t),
-            f32::interpolate(from.y, to.y, t),
+            f32::extrapolate(from.x, to.x, t),
+            f32::extrapolate(from.y, to.y, t),
         )
     }
 }
 
 impl Interpolate for Vector {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
         Vector::new(
-            f32::interpolate(from.x, to.x, t),
-            f32::interpolate(from.y, to.y, t),
+            f32::extrapolate(from.x, to.x, t),
+            f32::extrapolate(from.y, to.y, t),
         )
     }
 }
 
 impl Interpolate for Size {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
         Size::new(
-            f32::interpolate(from.width, to.width, t),
-            f32::interpolate(from.height, to.height, t),
+            f32::extrapolate(from.width, to.width, t).max(0.0),
+            f32::extrapolate(from.height, to.height, t).max(0.0),
         )
     }
 }
 
 impl Interpolate for Rect {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
         Rect::from_origin_size(
-            Point::interpolate(from.origin, to.origin, t),
-            Size::interpolate(from.size, to.size, t),
+            Point::extrapolate(from.origin, to.origin, t),
+            Size::extrapolate(from.size, to.size, t),
         )
     }
 }
 
+/// Blends the translation, rotation, scale, and shear of two transforms
+/// separately, the way CSS interpolates matrices. Blending the raw matrix
+/// entries would shrink a rotating shape halfway through its turn. Rotation
+/// takes the shorter way around. Degenerate transforms (zero scale) cannot be
+/// decomposed and fall back to blending the matrix entries.
 impl Interpolate for Transform {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
+        if t == 0.0 || from == to {
+            return from;
+        }
+        if t == 1.0 {
+            return to;
+        }
+        match (DecomposedTransform::new(from), DecomposedTransform::new(to)) {
+            (Some(start), Some(end)) => start.extrapolate(end, t).compose(),
+            _ => Transform::new(
+                f32::extrapolate(from.xx, to.xx, t),
+                f32::extrapolate(from.yx, to.yx, t),
+                f32::extrapolate(from.xy, to.xy, t),
+                f32::extrapolate(from.yy, to.yy, t),
+                f32::extrapolate(from.dx, to.dx, t),
+                f32::extrapolate(from.dy, to.dy, t),
+            ),
+        }
+    }
+}
+
+/// An affine transform split as `translate * rotate * [[scale_x, shear],
+/// [0, scale_y]]`. A mirrored transform has a negative `scale_y`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DecomposedTransform {
+    translation: Vector,
+    rotation: f32,
+    scale_x: f32,
+    scale_y: f32,
+    shear: f32,
+}
+
+impl DecomposedTransform {
+    fn new(transform: Transform) -> Option<Self> {
+        let scale_x = transform.xx.hypot(transform.yx);
+        if !scale_x.is_finite() || scale_x <= f32::EPSILON {
+            return None;
+        }
+        let rotation = transform.yx.atan2(transform.xx);
+        let (sin, cos) = rotation.sin_cos();
+        Some(Self {
+            translation: Vector::new(transform.dx, transform.dy),
+            rotation,
+            scale_x,
+            scale_y: (cos * transform.yy) - (sin * transform.xy),
+            shear: (cos * transform.xy) + (sin * transform.yy),
+        })
+    }
+
+    fn extrapolate(self, to: Self, t: f32) -> Self {
+        let turn = (to.rotation - self.rotation + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+        Self {
+            translation: Vector::extrapolate(self.translation, to.translation, t),
+            rotation: self.rotation + turn * t,
+            scale_x: f32::extrapolate(self.scale_x, to.scale_x, t),
+            scale_y: f32::extrapolate(self.scale_y, to.scale_y, t),
+            shear: f32::extrapolate(self.shear, to.shear, t),
+        }
+    }
+
+    fn compose(self) -> Transform {
+        let (sin, cos) = self.rotation.sin_cos();
         Transform::new(
-            f32::interpolate(from.xx, to.xx, t),
-            f32::interpolate(from.yx, to.yx, t),
-            f32::interpolate(from.xy, to.xy, t),
-            f32::interpolate(from.yy, to.yy, t),
-            f32::interpolate(from.dx, to.dx, t),
-            f32::interpolate(from.dy, to.dy, t),
+            cos * self.scale_x,
+            sin * self.scale_x,
+            (cos * self.shear) - (sin * self.scale_y),
+            (sin * self.shear) + (cos * self.scale_y),
+            self.translation.x,
+            self.translation.y,
         )
     }
 }
 
+/// Colors blend in premultiplied OKLab (see [`Color::mix_oklab`]): mixes are
+/// perceptually even, and fades from a transparent color keep their hue
+/// instead of passing through a dark fringe.
 impl Interpolate for Color {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
-        Color::new(
-            from.space,
-            f32::interpolate(from.red, to.red, t),
-            f32::interpolate(from.green, to.green, t),
-            f32::interpolate(from.blue, to.blue, t),
-            f32::interpolate(from.alpha, to.alpha, t),
-        )
+        from.mix_oklab(to, t)
     }
 }
 
@@ -177,6 +268,206 @@ where
     }
 }
 
+/// A spring described the way designers tune one: how long it takes to
+/// settle, and how much it bounces.
+///
+/// `duration` is the period of the undamped spring in seconds, which is
+/// close to how long the motion reads as taking. `bounce` runs from `-1` to
+/// `1`: `0` settles as fast as possible without overshooting, positive values
+/// overshoot and oscillate, and negative values approach more gently.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpringSpec {
+    pub duration: f32,
+    pub bounce: f32,
+}
+
+impl SpringSpec {
+    /// Settles without overshoot.
+    pub const SMOOTH: Self = Self::new(0.35, 0.0);
+    /// Quick, with a hint of overshoot.
+    pub const SNAPPY: Self = Self::new(0.3, 0.15);
+    /// Visibly overshoots and settles back.
+    pub const BOUNCY: Self = Self::new(0.45, 0.4);
+
+    /// How far from rest, as a share of the distance travelled, a spring
+    /// counts as settled.
+    pub const REST_THRESHOLD: f64 = 1.0e-3;
+
+    pub const fn new(duration: f32, bounce: f32) -> Self {
+        Self { duration, bounce }
+    }
+
+    /// The spec matching a unit-mass spring with this `stiffness` and
+    /// `damping`.
+    pub fn from_physics(stiffness: f32, damping: f32) -> Self {
+        let stiffness = stiffness.max(f32::EPSILON);
+        let ratio = damping.max(0.0) / (2.0 * stiffness.sqrt());
+        let bounce = if ratio <= 1.0 {
+            1.0 - ratio
+        } else {
+            1.0 / ratio - 1.0
+        };
+        Self::new(std::f32::consts::TAU / stiffness.sqrt(), bounce)
+    }
+
+    fn resolved_duration(self) -> f64 {
+        f64::from(self.duration).max(1.0e-3)
+    }
+
+    /// Bounce is kept short of `1`, which would oscillate forever.
+    fn resolved_bounce(self) -> f64 {
+        f64::from(self.bounce).clamp(-0.95, 0.95)
+    }
+
+    /// Stiffness of the equivalent unit-mass spring.
+    pub fn stiffness(self) -> f32 {
+        self.physics().0 as f32
+    }
+
+    /// Damping of the equivalent unit-mass spring.
+    pub fn damping(self) -> f32 {
+        self.physics().1 as f32
+    }
+
+    /// The damping ratio: below 1 oscillates, 1 is critically damped.
+    pub fn damping_ratio(self) -> f32 {
+        self.resolved_damping_ratio() as f32
+    }
+
+    fn resolved_damping_ratio(self) -> f64 {
+        let bounce = self.resolved_bounce();
+        if bounce >= 0.0 {
+            1.0 - bounce
+        } else {
+            1.0 / (1.0 + bounce)
+        }
+    }
+
+    fn physics(self) -> (f64, f64) {
+        let angular = std::f64::consts::TAU / self.resolved_duration();
+        let stiffness = angular * angular;
+        let damping = 2.0 * self.resolved_damping_ratio() * angular;
+        (stiffness, damping)
+    }
+
+    /// Progress from 0 to 1 after `elapsed` seconds of a spring released
+    /// from rest. Bouncy springs overshoot past 1 before settling.
+    pub fn progress(self, elapsed: f64) -> f32 {
+        if elapsed <= 0.0 {
+            return 0.0;
+        }
+        if elapsed >= self.settling_duration() {
+            return 1.0;
+        }
+        let (stiffness, damping) = self.physics();
+        let (displacement, _) = spring_state(stiffness, damping, 1.0, 0.0, elapsed);
+        (1.0 - displacement) as f32
+    }
+
+    /// Seconds until a spring released from rest stays within
+    /// [`SpringSpec::REST_THRESHOLD`] of its target.
+    pub fn settling_duration(self) -> f64 {
+        let (stiffness, damping) = self.physics();
+        let ratio = self.resolved_damping_ratio();
+        let angular = stiffness.sqrt();
+        if ratio < 1.0 - 1.0e-4 {
+            // The oscillation stays inside an exponential envelope, whose
+            // amplitude for a release from rest is 1 / sqrt(1 - ratio^2).
+            let amplitude = 1.0 / (1.0 - ratio * ratio).sqrt();
+            return (amplitude / Self::REST_THRESHOLD).ln() / (ratio * angular);
+        }
+        // Critically damped and overdamped springs released from rest approach
+        // the target without crossing it, so the first time within the
+        // threshold is final.
+        let within =
+            |t: f64| spring_state(stiffness, damping, 1.0, 0.0, t).0 <= Self::REST_THRESHOLD;
+        let mut high = 1.0 / angular;
+        while !within(high) && high < 600.0 {
+            high *= 2.0;
+        }
+        let mut low = 0.0;
+        for _ in 0..40 {
+            let middle = (low + high) * 0.5;
+            if within(middle) {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        high
+    }
+}
+
+impl Default for SpringSpec {
+    fn default() -> Self {
+        Self::SMOOTH
+    }
+}
+
+/// Displacement and velocity of a unit-mass damped spring `elapsed` seconds
+/// after it started at `displacement` with `velocity`. This is the exact
+/// solution, so it is stable and gives the same motion at any frame rate.
+fn spring_state(
+    stiffness: f64,
+    damping: f64,
+    displacement: f64,
+    velocity: f64,
+    elapsed: f64,
+) -> (f64, f64) {
+    let t = elapsed.max(0.0);
+    if stiffness <= f64::EPSILON {
+        // No spring: damping alone slows the initial velocity.
+        if damping <= f64::EPSILON {
+            return (displacement + velocity * t, velocity);
+        }
+        let decay = (-damping * t).exp();
+        return (
+            displacement + velocity * (1.0 - decay) / damping,
+            velocity * decay,
+        );
+    }
+
+    let angular = stiffness.sqrt();
+    let ratio = damping / (2.0 * angular);
+    if (ratio - 1.0).abs() <= 1.0e-4 {
+        // Critically damped.
+        let slope = velocity + angular * displacement;
+        let decay = (-angular * t).exp();
+        (
+            decay * (displacement + slope * t),
+            decay * (velocity - angular * slope * t),
+        )
+    } else if ratio < 1.0 {
+        // Underdamped: a decaying oscillation.
+        let damped = angular * (1.0 - ratio * ratio).sqrt();
+        let decay_rate = ratio * angular;
+        let sine_weight = (velocity + decay_rate * displacement) / damped;
+        let decay = (-decay_rate * t).exp();
+        let (sin, cos) = (damped * t).sin_cos();
+        let position = decay * (displacement * cos + sine_weight * sin);
+        let slope = decay
+            * ((sine_weight * damped - decay_rate * displacement) * cos
+                - (displacement * damped + decay_rate * sine_weight) * sin);
+        (position, slope)
+    } else {
+        // Overdamped: two decaying exponentials.
+        let root = (ratio * ratio - 1.0).sqrt();
+        let fast = -angular * (ratio + root);
+        let slow = -angular * (ratio - root);
+        let fast_weight = (velocity - slow * displacement) / (fast - slow);
+        let slow_weight = displacement - fast_weight;
+        let (fast_decay, slow_decay) = ((fast * t).exp(), (slow * t).exp());
+        (
+            fast_weight * fast_decay + slow_weight * slow_decay,
+            fast * fast_weight * fast_decay + slow * slow_weight * slow_decay,
+        )
+    }
+}
+
+/// A spring that follows a moving target, stepped by elapsed time. Use it for
+/// physics-driven motion, such as a dragged handle that springs home carrying
+/// the velocity of the fling; for transitions between states prefer
+/// [`MotionValue`] with an [`AnimationSpec::Spring`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpringF32 {
     pub value: f32,
@@ -186,6 +477,10 @@ pub struct SpringF32 {
 }
 
 impl SpringF32 {
+    /// Distance from the target below which [`SpringF32::is_settled`] reports
+    /// the spring at rest; the speed limit is ten times this per second.
+    pub const REST_EPSILON: f32 = 1.0e-3;
+
     pub fn new(value: f32) -> Self {
         Self {
             value,
@@ -195,23 +490,62 @@ impl SpringF32 {
         }
     }
 
+    /// A spring at rest at `value` with the stiffness and damping of `spec`.
+    pub fn from_spec(value: f32, spec: SpringSpec) -> Self {
+        Self::new(value).with_spec(spec)
+    }
+
     pub fn with_config(mut self, stiffness: f32, damping: f32) -> Self {
         self.stiffness = stiffness.max(0.0);
         self.damping = damping.max(0.0);
         self
     }
 
+    pub fn with_spec(self, spec: SpringSpec) -> Self {
+        self.with_config(spec.stiffness(), spec.damping())
+    }
+
+    pub fn with_velocity(mut self, velocity: f32) -> Self {
+        self.velocity = velocity;
+        self
+    }
+
+    /// Advance the spring by `delta` seconds toward `target` and return the
+    /// new value. The step is exact, so large or uneven deltas neither
+    /// destabilize the spring nor change its path.
     pub fn step(&mut self, target: f32, delta: f64) -> f32 {
-        let dt = delta.max(0.0) as f32;
-        if dt <= f32::EPSILON {
+        let dt = delta.max(0.0);
+        if dt <= f64::EPSILON {
             return self.value;
         }
 
-        let displacement = target - self.value;
-        let acceleration = (displacement * self.stiffness) - (self.velocity * self.damping);
-        self.velocity += acceleration * dt;
-        self.value += self.velocity * dt;
+        let (displacement, velocity) = spring_state(
+            f64::from(self.stiffness),
+            f64::from(self.damping),
+            f64::from(self.value - target),
+            f64::from(self.velocity),
+            dt,
+        );
+        self.value = target + displacement as f32;
+        self.velocity = velocity as f32;
         self.value
+    }
+
+    /// Whether the spring rests at `target`.
+    pub fn is_settled(&self, target: f32) -> bool {
+        (self.value - target).abs() <= Self::REST_EPSILON
+            && self.velocity.abs() <= Self::REST_EPSILON * 10.0
+    }
+
+    /// Snap to `target` once the spring has settled there. Returns whether it
+    /// is at rest.
+    pub fn settle(&mut self, target: f32) -> bool {
+        if self.is_settled(target) {
+            self.value = target;
+            self.velocity = 0.0;
+            return true;
+        }
+        false
     }
 }
 
@@ -288,91 +622,325 @@ impl Pulse {
     }
 }
 
+/// How a value travels to a new target: a timed curve or a spring.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AnimationSpec {
+    /// Follow `easing` for `duration` seconds.
+    Tween { duration: f64, easing: Easing },
+    /// Move like a spring released from rest; see [`SpringSpec`].
+    Spring(SpringSpec),
+}
+
+impl AnimationSpec {
+    /// Jump straight to the target.
+    pub const INSTANT: Self = Self::tween(0.0, Easing::Linear);
+
+    pub const fn tween(duration: f64, easing: Easing) -> Self {
+        Self::Tween { duration, easing }
+    }
+
+    pub const fn spring(spec: SpringSpec) -> Self {
+        Self::Spring(spec)
+    }
+
+    /// Seconds until the value arrives: the tween's duration, or how long the
+    /// spring takes to settle.
+    pub fn duration(self) -> f64 {
+        match self {
+            Self::Tween { duration, .. } => duration.max(0.0),
+            Self::Spring(spring) => spring.settling_duration(),
+        }
+    }
+
+    /// Whether the animation finishes immediately.
+    pub fn is_instant(self) -> bool {
+        match self {
+            Self::Tween { duration, .. } => duration <= f64::EPSILON,
+            Self::Spring(_) => false,
+        }
+    }
+
+    /// Progress toward the target after `elapsed` seconds: 0 at the start and
+    /// exactly 1 once complete. Springs may overshoot past 1 on the way.
+    pub fn progress(self, elapsed: f64) -> f32 {
+        match self {
+            Self::Tween { duration, easing } => {
+                if self.is_complete(elapsed) {
+                    return 1.0;
+                }
+                easing.sample((elapsed / duration).clamp(0.0, 1.0) as f32)
+            }
+            Self::Spring(spring) => spring.progress(elapsed),
+        }
+    }
+
+    pub fn is_complete(self, elapsed: f64) -> bool {
+        match self {
+            // Snap to completion with a hair of tolerance: durations often
+            // originate as f32 theme tokens, so a fixed-step advance can land
+            // float dust short of `duration`.
+            Self::Tween { duration, .. } => {
+                duration <= f64::EPSILON || elapsed >= duration * (1.0 - 1e-6)
+            }
+            Self::Spring(spring) => elapsed >= spring.settling_duration(),
+        }
+    }
+
+    /// The same motion played at `time_scale` speed: `0.5` takes twice as long.
+    pub fn time_scaled(self, time_scale: f32) -> Self {
+        let time_scale = MotionPolicy::FULL.with_time_scale(time_scale).time_scale();
+        match self {
+            Self::Tween { duration, easing } => Self::Tween {
+                duration: duration / f64::from(time_scale),
+                easing,
+            },
+            Self::Spring(spring) => Self::Spring(SpringSpec {
+                duration: spring.duration / time_scale,
+                ..spring
+            }),
+        }
+    }
+
+    /// The motion to play under `policy`: instant when motion is off,
+    /// stretched by the policy's time scale otherwise.
+    pub fn with_policy(self, policy: MotionPolicy) -> Self {
+        if policy.allows_motion() {
+            self.time_scaled(policy.time_scale())
+        } else {
+            Self::INSTANT
+        }
+    }
+
+    /// Like [`AnimationSpec::with_policy`], for motion that moves content:
+    /// instant unless the policy allows movement.
+    pub fn with_movement_policy(self, policy: MotionPolicy) -> Self {
+        if policy.allows_movement() {
+            self.with_policy(policy)
+        } else {
+            Self::INSTANT
+        }
+    }
+}
+
+impl From<SpringSpec> for AnimationSpec {
+    fn from(spring: SpringSpec) -> Self {
+        Self::Spring(spring)
+    }
+}
+
+/// How many overlapping retargets a [`MotionValue`] blends before folding the
+/// oldest into its starting point.
+const MOTION_SEGMENTS: usize = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MotionSegment<T> {
+    target: T,
+    start_time: f64,
+    spec: AnimationSpec,
+}
+
+impl<T> MotionSegment<T> {
+    fn progress(&self, time: f64) -> f32 {
+        self.spec.progress(time - self.start_time)
+    }
+
+    fn is_complete(&self, time: f64) -> bool {
+        self.spec.is_complete(time - self.start_time)
+    }
+}
+
+/// A value that animates toward its latest target on an absolute clock.
+///
+/// Retargeting mid-flight keeps the motion's momentum: the new animation
+/// blends from the still-running previous one instead of restarting from a
+/// standstill, so a hover that ends halfway through its fade-in turns around
+/// smoothly rather than stopping dead.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionValue<T> {
+    base: T,
+    segments: [Option<MotionSegment<T>>; MOTION_SEGMENTS],
+}
+
+impl<T: Copy> MotionValue<T> {
+    pub const fn new(value: T) -> Self {
+        Self {
+            base: value,
+            segments: [None; MOTION_SEGMENTS],
+        }
+    }
+
+    /// The value this motion is heading to.
+    pub fn target(&self) -> T {
+        self.segments
+            .iter()
+            .rev()
+            .flatten()
+            .next()
+            .map_or(self.base, |segment| segment.target)
+    }
+
+    pub fn is_animating(&self) -> bool {
+        self.segments[0].is_some()
+    }
+
+    /// Stop animating and rest at `value`.
+    pub fn jump_to(&mut self, value: T) {
+        self.base = value;
+        self.segments = [None; MOTION_SEGMENTS];
+    }
+
+    fn segment_count(&self) -> usize {
+        self.segments.iter().flatten().count()
+    }
+}
+
+impl<T> MotionValue<T>
+where
+    T: Interpolate + Copy + PartialEq,
+{
+    /// The value at `time`.
+    pub fn value(&self, time: f64) -> T {
+        self.segments
+            .iter()
+            .flatten()
+            .fold(self.base, |value, segment| {
+                T::extrapolate(value, segment.target, segment.progress(time))
+            })
+    }
+
+    /// Start animating from the value at `time` toward `target`. Returns
+    /// whether the value is animating afterwards.
+    pub fn animate_to(&mut self, target: T, time: f64, spec: AnimationSpec) -> bool {
+        self.advance(time);
+        if target == self.target() {
+            return self.is_animating();
+        }
+        if spec.is_instant() {
+            self.jump_to(target);
+            return false;
+        }
+
+        if self.segment_count() == MOTION_SEGMENTS {
+            // Fold the oldest animation into the starting point where it
+            // stands now. The value stays continuous; only that animation's
+            // remaining drift is dropped.
+            if let Some(oldest) = self.segments[0] {
+                self.base = T::extrapolate(self.base, oldest.target, oldest.progress(time));
+            }
+            self.segments.rotate_left(1);
+            self.segments[MOTION_SEGMENTS - 1] = None;
+        }
+        let slot = self.segment_count();
+        self.segments[slot] = Some(MotionSegment {
+            target,
+            start_time: time,
+            spec,
+        });
+        true
+    }
+
+    /// Drop animations that have finished by `time`. Returns whether the
+    /// value is still animating.
+    pub fn advance(&mut self, time: f64) -> bool {
+        // A finished animation pins the value to its target, so it and every
+        // animation it was blending from can be dropped.
+        let finished = self
+            .segments
+            .iter()
+            .rposition(|segment| segment.is_some_and(|segment| segment.is_complete(time)));
+        if let Some(index) = finished {
+            if let Some(segment) = self.segments[index] {
+                self.base = segment.target;
+            }
+            self.segments.rotate_left(index + 1);
+            for slot in &mut self.segments[MOTION_SEGMENTS - index - 1..] {
+                *slot = None;
+            }
+        }
+        self.is_animating()
+    }
+}
+
+/// A value animated by elapsed time: call [`AnimatedValue::tick`] with each
+/// frame's delta. Retargeting keeps momentum like [`MotionValue`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnimatedValue<T> {
-    start: T,
-    target: T,
+    motion: MotionValue<T>,
     current: T,
-    elapsed: f32,
-    duration: f32,
-    easing: Easing,
-    animating: bool,
+    clock: f64,
+    spec: AnimationSpec,
 }
 
 impl<T> AnimatedValue<T>
 where
-    T: Interpolate + Copy,
+    T: Interpolate + Copy + PartialEq,
 {
     pub fn new(initial: T) -> Self {
         Self {
-            start: initial,
-            target: initial,
+            motion: MotionValue::new(initial),
             current: initial,
-            elapsed: 0.0,
-            duration: 0.2,
-            easing: Easing::EaseInOut,
-            animating: false,
+            clock: 0.0,
+            spec: AnimationSpec::tween(0.2, Easing::EaseInOut),
         }
     }
 
     pub fn with_duration(mut self, seconds: f32) -> Self {
-        self.duration = seconds.max(0.0);
+        self.set_duration(seconds);
         self
     }
 
     pub fn with_easing(mut self, easing: Easing) -> Self {
-        self.easing = easing;
+        self.set_easing(easing);
         self
     }
 
-    pub fn set_duration(&mut self, seconds: f32) {
-        self.duration = seconds.max(0.0);
+    pub fn with_spec(mut self, spec: AnimationSpec) -> Self {
+        self.spec = spec;
+        self
     }
 
+    /// Use a tween of `seconds` for later targets, keeping the easing.
+    pub fn set_duration(&mut self, seconds: f32) {
+        let easing = match self.spec {
+            AnimationSpec::Tween { easing, .. } => easing,
+            AnimationSpec::Spring(_) => Easing::EaseInOut,
+        };
+        self.spec = AnimationSpec::tween(f64::from(seconds.max(0.0)), easing);
+    }
+
+    /// Use a tween with `easing` for later targets, keeping the duration.
     pub fn set_easing(&mut self, easing: Easing) {
-        self.easing = easing;
+        self.spec = AnimationSpec::tween(self.spec.duration(), easing);
+    }
+
+    pub fn set_spec(&mut self, spec: AnimationSpec) {
+        self.spec = spec;
+    }
+
+    pub fn spec(&self) -> AnimationSpec {
+        self.spec
     }
 
     pub fn set_target(&mut self, target: T) {
-        self.target = target;
-        if self.duration <= f32::EPSILON {
-            self.start = target;
-            self.current = target;
-            self.elapsed = 0.0;
-            self.animating = false;
-            return;
-        }
-        self.start = self.current;
-        self.elapsed = 0.0;
-        self.animating = true;
+        self.motion.animate_to(target, self.clock, self.spec);
+        self.current = self.motion.value(self.clock);
     }
 
     pub fn jump_to(&mut self, value: T) {
-        self.start = value;
-        self.target = value;
+        self.motion.jump_to(value);
         self.current = value;
-        self.elapsed = 0.0;
-        self.animating = false;
     }
 
+    /// Advance by `delta_seconds`. Returns whether the value is still
+    /// animating.
     pub fn tick(&mut self, delta_seconds: f32) -> bool {
-        if !self.animating {
+        if !self.motion.is_animating() {
             return false;
         }
-        self.elapsed += delta_seconds.max(0.0);
-        let progress = if self.duration <= f32::EPSILON {
-            1.0
-        } else {
-            (self.elapsed / self.duration).clamp(0.0, 1.0)
-        };
-        let eased = self.easing.sample(progress);
-        self.current = T::interpolate(self.start, self.target, eased);
-        if progress >= 1.0 {
-            self.current = self.target;
-            self.animating = false;
-            return false;
-        }
-        true
+        self.clock += f64::from(delta_seconds.max(0.0));
+        let animating = self.motion.advance(self.clock);
+        self.current = self.motion.value(self.clock);
+        animating
     }
 
     pub fn value(&self) -> T {
@@ -380,11 +948,11 @@ where
     }
 
     pub fn target(&self) -> T {
-        self.target
+        self.motion.target()
     }
 
     pub fn is_animating(&self) -> bool {
-        self.animating
+        self.motion.is_animating()
     }
 }
 
@@ -545,17 +1113,21 @@ impl AnimationValue {
 
 impl Interpolate for AnimationValue {
     fn interpolate(from: Self, to: Self, t: f32) -> Self {
+        Self::extrapolate(from, to, t.clamp(0.0, 1.0))
+    }
+
+    fn extrapolate(from: Self, to: Self, t: f32) -> Self {
         match (from, to) {
-            (Self::Scalar(from), Self::Scalar(to)) => Self::Scalar(f32::interpolate(from, to, t)),
-            (Self::Point(from), Self::Point(to)) => Self::Point(Point::interpolate(from, to, t)),
+            (Self::Scalar(from), Self::Scalar(to)) => Self::Scalar(f32::extrapolate(from, to, t)),
+            (Self::Point(from), Self::Point(to)) => Self::Point(Point::extrapolate(from, to, t)),
             (Self::Vector(from), Self::Vector(to)) => {
-                Self::Vector(Vector::interpolate(from, to, t))
+                Self::Vector(Vector::extrapolate(from, to, t))
             }
-            (Self::Size(from), Self::Size(to)) => Self::Size(Size::interpolate(from, to, t)),
-            (Self::Rect(from), Self::Rect(to)) => Self::Rect(Rect::interpolate(from, to, t)),
-            (Self::Color(from), Self::Color(to)) => Self::Color(Color::interpolate(from, to, t)),
+            (Self::Size(from), Self::Size(to)) => Self::Size(Size::extrapolate(from, to, t)),
+            (Self::Rect(from), Self::Rect(to)) => Self::Rect(Rect::extrapolate(from, to, t)),
+            (Self::Color(from), Self::Color(to)) => Self::Color(Color::extrapolate(from, to, t)),
             (Self::Transform(from), Self::Transform(to)) => {
-                Self::Transform(Transform::interpolate(from, to, t))
+                Self::Transform(Transform::extrapolate(from, to, t))
             }
             (from, to) => {
                 if t >= 1.0 {
@@ -1606,6 +2178,11 @@ pub enum AnimationEditorCommand {
         selection: KeyframeSelection,
         easing: Easing,
     },
+    /// Move a keyframe to `time`, snapped and kept inside the timeline.
+    MoveKeyframe {
+        selection: KeyframeSelection,
+        time: f64,
+    },
     RemoveKeyframe(KeyframeSelection),
 }
 
@@ -1741,6 +2318,30 @@ impl AnimationEditorState {
                 self.push_undo_snapshot();
                 self.document.timeline.clips[selection.clip_index].tracks[selection.track_index] =
                     updated_track;
+                self.redo_stack.clear();
+                true
+            }
+            AnimationEditorCommand::MoveKeyframe { selection, time } => {
+                let duration = self.document.timeline.duration.max(0.0);
+                let time = self.snap.snap_time(time).clamp(0.0, duration);
+                let Some(keyframe) = self
+                    .document
+                    .timeline
+                    .clips
+                    .get(selection.clip_index)
+                    .and_then(|clip| clip.tracks.get(selection.track_index))
+                    .and_then(|track| track.keyframes.get(selection.keyframe_index))
+                else {
+                    return false;
+                };
+                if keyframe.time == time {
+                    return false;
+                }
+
+                self.push_undo_snapshot();
+                self.document.timeline.clips[selection.clip_index].tracks[selection.track_index]
+                    .keyframes[selection.keyframe_index]
+                    .time = time;
                 self.redo_stack.clear();
                 true
             }
@@ -2373,6 +2974,9 @@ fn animation_property_from_path(path: String) -> AnimationProperty {
     }
 }
 
+/// The CSS `cubic-bezier()` timing function: solve the curve's x for `t`,
+/// then return its y. Newton's method converges in a few steps on typical
+/// curves; bisection takes over where the slope is too flat for it.
 fn sample_cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
     if t <= 0.0 {
         return 0.0;
@@ -2381,28 +2985,52 @@ fn sample_cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
         return 1.0;
     }
 
-    let sample_curve = |a: f32, b: f32, c: f32, u: f32| {
-        let inv = 1.0 - u;
-        (3.0 * inv * inv * u * a) + (3.0 * inv * u * u * b) + (u * u * u * c)
+    // Polynomial coefficients of each coordinate, in f64 for accuracy.
+    let coefficients = |p1: f32, p2: f32| {
+        let c = 3.0 * f64::from(p1);
+        let b = 3.0 * (f64::from(p2) - f64::from(p1)) - c;
+        let a = 1.0 - c - b;
+        (a, b, c)
     };
+    let (ax, bx, cx) = coefficients(x1, x2);
+    let (ay, by, cy) = coefficients(y1, y2);
+    let curve_x = |u: f64| ((ax * u + bx) * u + cx) * u;
+    let slope_x = |u: f64| (3.0 * ax * u + 2.0 * bx) * u + cx;
+    let target = f64::from(t);
+    const EPSILON: f64 = 1e-7;
 
-    let mut low = 0.0;
-    let mut high = 1.0;
-    let mut u = t;
-    for _ in 0..10 {
-        u = (low + high) * 0.5;
-        let x = sample_curve(x1, x2, 1.0, u);
-        if (x - t).abs() < 1e-5 {
+    let mut u = target;
+    let mut solved = false;
+    for _ in 0..8 {
+        let error = curve_x(u) - target;
+        if error.abs() < EPSILON {
+            solved = true;
             break;
         }
-        if x < t {
-            low = u;
-        } else {
-            high = u;
+        let slope = slope_x(u);
+        if slope.abs() < 1e-6 {
+            break;
+        }
+        u -= error / slope;
+    }
+    if !solved {
+        let (mut low, mut high) = (0.0, 1.0);
+        u = target;
+        for _ in 0..64 {
+            let x = curve_x(u);
+            if (x - target).abs() < EPSILON {
+                break;
+            }
+            if x < target {
+                low = u;
+            } else {
+                high = u;
+            }
+            u = (low + high) * 0.5;
         }
     }
 
-    sample_curve(y1, y2, 1.0, u)
+    (((ay * u + by) * u + cy) * u) as f32
 }
 
 #[cfg(test)]
@@ -2410,9 +3038,9 @@ mod tests {
     use super::{
         AnimatedValue, AnimationBinding, AnimationDocument, AnimationEditorCommand,
         AnimationEditorState, AnimationPlayer, AnimationProperty, AnimationPropertyPath,
-        AnimationTargetId, AnimationValue, Blink, Clip, Easing, Interpolate, Keyframe,
-        KeyframeSelection, LoopMode, PlaybackState, Pulse, SampleBuffer, SpringF32, Timeline,
-        Track, Transition,
+        AnimationSpec, AnimationTargetId, AnimationValue, Blink, Clip, Easing, Interpolate,
+        Keyframe, KeyframeSelection, LoopMode, MotionPolicy, MotionPreference, MotionValue,
+        PlaybackState, Pulse, SampleBuffer, SpringF32, SpringSpec, Timeline, Track, Transition,
     };
     use sui_core::{Color, ColorSpace, Rect, Transform, Vector};
 
@@ -2443,12 +3071,64 @@ mod tests {
             Color::rgba(0.6, 0.8, 1.0, 0.0),
             0.5,
         );
-        let expected = Color::rgba(0.4, 0.6, 0.8, 0.5);
+        // Premultiplied blending: fading toward a transparent color keeps
+        // the visible color and only lowers its opacity.
+        let expected = Color::rgba(0.2, 0.4, 0.6, 0.5);
         assert_eq!(interpolated.space, expected.space);
-        assert!((interpolated.red - expected.red).abs() < 1e-6);
-        assert!((interpolated.green - expected.green).abs() < 1e-6);
-        assert!((interpolated.blue - expected.blue).abs() < 1e-6);
+        assert!((interpolated.red - expected.red).abs() < 1e-4);
+        assert!((interpolated.green - expected.green).abs() < 1e-4);
+        assert!((interpolated.blue - expected.blue).abs() < 1e-4);
         assert!((interpolated.alpha - expected.alpha).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_interpolation_rotates_without_shrinking() {
+        let quarter_turn = Transform::rotation(std::f32::consts::FRAC_PI_2);
+
+        let halfway = Transform::interpolate(Transform::IDENTITY, quarter_turn, 0.5);
+
+        let eighth = Transform::rotation(std::f32::consts::FRAC_PI_4);
+        for (actual, expected) in [
+            (halfway.xx, eighth.xx),
+            (halfway.yx, eighth.yx),
+            (halfway.xy, eighth.xy),
+            (halfway.yy, eighth.yy),
+        ] {
+            assert!((actual - expected).abs() < 1e-5, "{actual} vs {expected}");
+        }
+        // Blending the matrix entries would give a scale of about 0.707.
+        assert!((halfway.xx.hypot(halfway.yx) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn transform_interpolation_blends_scale_translation_and_short_rotation() {
+        let from = Transform::scale(1.0, 2.0).then(Transform::translation(10.0, 0.0));
+        let to = Transform::scale(3.0, 4.0).then(Transform::translation(30.0, 20.0));
+
+        let halfway = Transform::interpolate(from, to, 0.5);
+
+        assert!((halfway.xx - 2.0).abs() < 1e-5);
+        assert!((halfway.yy - 3.0).abs() < 1e-5);
+        assert!((halfway.dx - 20.0).abs() < 1e-5);
+        assert!((halfway.dy - 10.0).abs() < 1e-5);
+        assert_eq!(Transform::interpolate(from, to, 0.0), from);
+        assert_eq!(Transform::interpolate(from, to, 1.0), to);
+
+        // From 170 degrees to -170 degrees turns 20 degrees through 180.
+        let near_half = Transform::rotation(170_f32.to_radians());
+        let past_half = Transform::rotation((-170_f32).to_radians());
+        let middle = Transform::interpolate(near_half, past_half, 0.5);
+        assert!((middle.xx + 1.0).abs() < 1e-5, "{middle:?}");
+    }
+
+    #[test]
+    fn extrapolation_lets_scalars_overshoot_but_clamps_colors() {
+        assert_eq!(f32::extrapolate(0.0, 10.0, 1.2), 12.0);
+        assert_eq!(f32::interpolate(0.0, 10.0, 1.2), 10.0);
+        assert_eq!(
+            Color::extrapolate(Color::BLACK, Color::WHITE, 1.5),
+            Color::WHITE
+        );
     }
 
     #[test]
@@ -2639,6 +3319,179 @@ mod tests {
     }
 
     #[test]
+    fn spring_steps_are_exact_at_any_frame_rate() {
+        let spec = SpringSpec::BOUNCY;
+        let mut fine = SpringF32::from_spec(0.0, spec);
+        let mut coarse = SpringF32::from_spec(0.0, spec);
+        for _ in 0..240 {
+            fine.step(1.0, 1.0 / 240.0);
+        }
+        for _ in 0..10 {
+            coarse.step(1.0, 0.1);
+        }
+
+        assert!((fine.value - coarse.value).abs() < 1e-4);
+        assert!((fine.velocity - coarse.velocity).abs() < 1e-3);
+    }
+
+    #[test]
+    fn stiff_springs_stay_stable_across_long_frames() {
+        let mut spring = SpringF32::new(0.0).with_config(4000.0, 20.0);
+
+        // Explicit integration would blow up at this step size.
+        for _ in 0..20 {
+            spring.step(1.0, 0.25);
+        }
+
+        assert!(spring.value.is_finite());
+        assert!(spring.settle(1.0));
+        assert_eq!(spring.value, 1.0);
+        assert_eq!(spring.velocity, 0.0);
+    }
+
+    #[test]
+    fn spring_carries_fling_velocity() {
+        let mut flung = SpringF32::from_spec(0.0, SpringSpec::SMOOTH).with_velocity(20.0);
+
+        flung.step(0.0, 0.05);
+
+        assert!(flung.value > 0.3, "a fling travels before springing back");
+        assert!(!flung.is_settled(0.0));
+    }
+
+    #[test]
+    fn spring_spec_maps_bounce_to_damping() {
+        assert!((SpringSpec::SMOOTH.damping_ratio() - 1.0).abs() < 1e-6);
+        assert!((SpringSpec::new(0.3, 0.25).damping_ratio() - 0.75).abs() < 1e-6);
+        assert!(SpringSpec::new(0.3, -0.5).damping_ratio() > 1.0);
+
+        let round_trip =
+            SpringSpec::from_physics(SpringSpec::BOUNCY.stiffness(), SpringSpec::BOUNCY.damping());
+        assert!((round_trip.duration - SpringSpec::BOUNCY.duration).abs() < 1e-4);
+        assert!((round_trip.bounce - SpringSpec::BOUNCY.bounce).abs() < 1e-4);
+    }
+
+    #[test]
+    fn spring_progress_overshoots_only_when_bouncy_and_settles_exactly() {
+        let peak = |spec: SpringSpec| {
+            (0..400)
+                .map(|step| spec.progress(f64::from(step) / 200.0))
+                .fold(0.0_f32, f32::max)
+        };
+
+        assert!(peak(SpringSpec::BOUNCY) > 1.05);
+        assert!(peak(SpringSpec::SMOOTH) <= 1.0);
+        assert!(peak(SpringSpec::new(0.3, -0.4)) <= 1.0);
+        for spec in [SpringSpec::SMOOTH, SpringSpec::SNAPPY, SpringSpec::BOUNCY] {
+            let settle = spec.settling_duration();
+            assert!(settle > f64::from(spec.duration) * 0.5 && settle < 3.0);
+            assert_eq!(spec.progress(settle), 1.0);
+            assert!((spec.progress(settle * 0.999) - 1.0).abs() < 2e-3);
+            assert_eq!(spec.progress(0.0), 0.0);
+        }
+    }
+
+    #[test]
+    fn animation_spec_follows_the_motion_policy() {
+        let spec = AnimationSpec::tween(0.2, Easing::EaseOut);
+        let slow = MotionPolicy::FULL.with_time_scale(0.5);
+
+        assert_eq!(spec.with_policy(slow).duration(), 0.4);
+        assert!(
+            spec.with_policy(MotionPolicy::new(MotionPreference::Off))
+                .is_instant()
+        );
+        let reduced = MotionPolicy::new(MotionPreference::Reduced);
+        assert_eq!(spec.with_policy(reduced), spec);
+        assert!(spec.with_movement_policy(reduced).is_instant());
+        let spring = AnimationSpec::spring(SpringSpec::SMOOTH).with_policy(slow);
+        let nominal = AnimationSpec::spring(SpringSpec::SMOOTH).duration();
+        assert!((spring.duration() - nominal * 2.0).abs() < 1e-3);
+    }
+
+    fn velocity(motion: &MotionValue<f32>, time: f64) -> f32 {
+        let step = 1.0e-4;
+        (motion.value(time + step) - motion.value(time - step)) / (2.0 * step) as f32
+    }
+
+    #[test]
+    fn motion_value_reaches_its_target_exactly() {
+        let mut motion = MotionValue::new(0.0_f32);
+
+        assert!(motion.animate_to(1.0, 10.0, AnimationSpec::tween(0.2, Easing::Linear)));
+        assert!((motion.value(10.1) - 0.5).abs() < 1e-5);
+        assert!(motion.advance(10.1));
+        assert!(!motion.advance(10.2));
+        assert_eq!(motion.value(10.2), 1.0);
+        assert!(!motion.animate_to(1.0, 10.3, AnimationSpec::tween(0.2, Easing::Linear)));
+    }
+
+    #[test]
+    fn retargeting_keeps_velocity_instead_of_restarting_from_rest() {
+        let spec = AnimationSpec::tween(0.3, Easing::EaseInOut);
+        let mut motion = MotionValue::new(0.0_f32);
+        motion.animate_to(1.0, 0.0, spec);
+        let before = velocity(&motion, 0.15);
+        assert!(before > 1.0);
+
+        motion.animate_to(0.0, 0.15, spec);
+
+        // The value keeps moving the way it was going and turns around
+        // smoothly, rather than stopping dead at the retarget.
+        assert!((velocity(&motion, 0.15) - before).abs() < 0.05 * before);
+        assert!(motion.value(0.2) > motion.value(0.15));
+        assert!(!motion.advance(0.45));
+        assert_eq!(motion.value(0.45), 0.0);
+    }
+
+    #[test]
+    fn spring_retargets_keep_momentum_too() {
+        let spec = AnimationSpec::spring(SpringSpec::SNAPPY);
+        let mut motion = MotionValue::new(0.0_f32);
+        motion.animate_to(100.0, 0.0, spec);
+        let before = velocity(&motion, 0.08);
+
+        motion.animate_to(-100.0, 0.08, spec);
+
+        assert!((velocity(&motion, 0.08) - before).abs() < 0.05 * before.abs());
+        assert!(motion.animate_to(-100.0, 0.1, spec));
+        let settled = 0.08 + spec.duration() + 0.01;
+        assert!(!motion.advance(settled));
+        assert_eq!(motion.value(settled), -100.0);
+    }
+
+    #[test]
+    fn rapid_retargets_fold_old_motion_without_jumping() {
+        let spec = AnimationSpec::tween(1.0, Easing::EaseInOut);
+        let mut motion = MotionValue::new(0.0_f32);
+        let mut time = 0.0;
+        for step in 0..12 {
+            let before = motion.value(time);
+            motion.animate_to(if step % 2 == 0 { 1.0 } else { 0.0 }, time, spec);
+            assert!((motion.value(time) - before).abs() < 1e-5);
+            time += 0.05;
+        }
+
+        assert_eq!(motion.target(), 0.0);
+        assert!(!motion.advance(time + 1.0));
+        assert_eq!(motion.value(time + 1.0), 0.0);
+    }
+
+    #[test]
+    fn animated_value_supports_springs() {
+        let mut value = AnimatedValue::new(0.0_f32).with_spec(SpringSpec::BOUNCY.into());
+        value.set_target(1.0);
+
+        let mut peak = 0.0_f32;
+        while value.tick(1.0 / 60.0) {
+            peak = peak.max(value.value());
+        }
+
+        assert!(peak > 1.05);
+        assert_eq!(value.value(), 1.0);
+    }
+
+    #[test]
     fn spring_helpers_converge_toward_target_values() {
         let mut spring = SpringF32::new(0.0).with_config(140.0, 22.0);
         let mut value = 0.0;
@@ -2708,6 +3561,45 @@ mod tests {
             editor.document.timeline.clips[0].tracks[0].keyframes.len(),
             1
         );
+    }
+
+    #[test]
+    fn editor_moves_keyframes_with_snapping_and_undo() {
+        let mut editor = AnimationEditorState::new(AnimationDocument::new(
+            "move",
+            Timeline::new(1.0).with_clip(Clip::new("intro", 0.0, 1.0).with_track(
+                Track::new(opacity_binding()).with_keyframes([
+                    Keyframe::new(0.0, AnimationValue::Scalar(0.0)),
+                    Keyframe::new(0.5, AnimationValue::Scalar(1.0)),
+                ]),
+            )),
+        ));
+        let selection = KeyframeSelection {
+            clip_index: 0,
+            track_index: 0,
+            keyframe_index: 1,
+        };
+        let keyframe_time = |editor: &AnimationEditorState| {
+            editor.document.timeline.clips[0].tracks[0].keyframes[1].time
+        };
+
+        assert!(editor.apply_command(AnimationEditorCommand::MoveKeyframe {
+            selection,
+            time: 0.74,
+        }));
+        assert!((keyframe_time(&editor) - 0.75).abs() < 1e-9);
+        assert!(editor.apply_command(AnimationEditorCommand::MoveKeyframe {
+            selection,
+            time: 4.0,
+        }));
+        assert_eq!(keyframe_time(&editor), 1.0);
+        assert!(!editor.apply_command(AnimationEditorCommand::MoveKeyframe {
+            selection,
+            time: 1.0,
+        }));
+        assert_eq!(editor.undo_len(), 2);
+        assert!(editor.undo());
+        assert!((keyframe_time(&editor) - 0.75).abs() < 1e-9);
     }
 
     #[test]

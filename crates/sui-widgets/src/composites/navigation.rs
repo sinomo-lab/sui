@@ -293,7 +293,7 @@ impl TabBar {
         let theme = self.resolved_theme();
         self.selection_from = from.min(self.tabs.len() - 1);
         self.selection_animation = AnimatedScalar::new(0.0);
-        self.selection_animation.set_target_event(
+        self.selection_animation.set_movement_target_event(
             1.0,
             theme.motion.tab_switch_duration(),
             theme.motion.tab_switch_easing(),
@@ -1015,7 +1015,7 @@ impl BrowserTabBar {
         if from.zip(to).is_some_and(|(from, to)| from != to) {
             let theme = self.resolved_theme();
             self.selection_animation = AnimatedScalar::new(0.0);
-            self.selection_animation.set_target_event(
+            self.selection_animation.set_movement_target_event(
                 1.0,
                 theme.motion.tab_switch_duration(),
                 theme.motion.tab_switch_easing(),
@@ -1713,7 +1713,7 @@ impl SegmentedControl {
             self.selection_from = selected;
             self.selected = index;
             self.selection_animation = AnimatedScalar::new(0.0);
-            self.selection_animation.set_target_event(
+            self.selection_animation.set_movement_target_event(
                 1.0,
                 theme.motion.tab_switch_duration(),
                 theme.motion.tab_switch_easing(),
@@ -2233,7 +2233,7 @@ impl Tabs {
             self.selection_from = self.normalized_selected();
             self.selected = index;
             self.selection_animation = AnimatedScalar::new(0.0);
-            self.selection_animation.set_target_event(
+            self.selection_animation.set_movement_target_event(
                 1.0,
                 theme.motion.tab_switch_duration(),
                 theme.motion.tab_switch_easing(),
