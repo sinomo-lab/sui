@@ -100,7 +100,6 @@ type PaintOutput = (
     Scene,
     Vec<(ImageHandle, PaintImageResource)>,
     HashMap<WidgetId, Rect>,
-    Vec<InvalidationRequest>,
     Option<Rect>,
 );
 
@@ -3346,8 +3345,6 @@ impl WindowState {
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
         let mut layer_updates = Vec::new();
-        // Work widgets asked for while painting belongs to the next frame.
-        let mut next_frame_invalidations = Vec::new();
         let root_repaint_covers_graph_changes =
             root_repaint_covers_graph_changes(self.root.id(), &invalidations);
         let previous_graph = if (self.schedule.measure || self.schedule.arrange)
@@ -3497,40 +3494,34 @@ impl WindowState {
                 None
             };
 
-            let (
-                scene,
-                paint_images,
-                mut paint_bounds_by_widget,
-                paint_invalidations,
-                mut ime_composition_rect,
-            ) = if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
-                self.paint_full_scene(
-                    dpi_info,
-                    Arc::clone(&text_system),
-                    Arc::clone(&font_registry),
-                    Arc::clone(&image_registry),
-                )
-            } else if repaint_layers.is_empty() {
-                (
-                    self.last_frame
-                        .as_ref()
-                        .map(|frame| frame.scene.clone())
-                        .unwrap_or_default(),
-                    Vec::new(),
-                    self.last_paint_bounds_by_widget.clone(),
-                    Vec::new(),
-                    baseline_ime_composition_rect,
-                )
-            } else {
-                self.repaint_dirty_layers(
-                    dpi_info,
-                    &repaint_layers,
-                    baseline_ime_composition_rect,
-                    Arc::clone(&text_system),
-                    Arc::clone(&font_registry),
-                    Arc::clone(&image_registry),
-                )
-            };
+            let (scene, paint_images, mut paint_bounds_by_widget, mut ime_composition_rect) =
+                if self.last_frame.is_none() || repaint_layers.contains(&self.root.id()) {
+                    self.paint_full_scene(
+                        dpi_info,
+                        Arc::clone(&text_system),
+                        Arc::clone(&font_registry),
+                        Arc::clone(&image_registry),
+                    )
+                } else if repaint_layers.is_empty() {
+                    (
+                        self.last_frame
+                            .as_ref()
+                            .map(|frame| frame.scene.clone())
+                            .unwrap_or_default(),
+                        Vec::new(),
+                        self.last_paint_bounds_by_widget.clone(),
+                        baseline_ime_composition_rect,
+                    )
+                } else {
+                    self.repaint_dirty_layers(
+                        dpi_info,
+                        &repaint_layers,
+                        baseline_ime_composition_rect,
+                        Arc::clone(&text_system),
+                        Arc::clone(&font_registry),
+                        Arc::clone(&image_registry),
+                    )
+                };
             let mut scene = scene;
             for translation in &composition_only_transforms {
                 let _ = scene.translate_layer(translation.widget_id, translation.delta);
@@ -3575,8 +3566,6 @@ impl WindowState {
             self.last_paint_bounds_by_widget = paint_bounds_by_widget;
             self.graph
                 .update_paint_bounds_from_snapshot(&self.last_paint_bounds_by_widget);
-            next_frame_invalidations.clone_from(&paint_invalidations);
-            invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
             let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
             layer_updates = self.collect_layer_updates(
@@ -3682,8 +3671,6 @@ impl WindowState {
         self.capture_inspector_diagnostics(&diagnostics);
 
         self.schedule.clear();
-        self.schedule.extend(&next_frame_invalidations);
-        self.pending_invalidations.extend(next_frame_invalidations);
 
         RenderOutput {
             title: self.title.clone(),
@@ -3907,7 +3894,6 @@ impl WindowState {
             .map(|frame| frame.scene.clone())
             .unwrap_or_default();
         let mut images = Vec::new();
-        let mut invalidations = Vec::new();
         let mut paint_bounds_by_widget = self.last_paint_bounds_by_widget.clone();
         let mut ime_composition_rect = baseline_ime_composition_rect;
         let frame_time = self.frame_time();
@@ -3943,13 +3929,8 @@ impl WindowState {
                 return self.paint_full_scene(dpi_info, text_system, font_registry, image_registry);
             }
 
-            let (
-                layer_scene,
-                layer_images,
-                layer_paint_bounds,
-                layer_invalidations,
-                layer_ime_composition_rect,
-            ) = paint_ctx.into_parts();
+            let (layer_scene, layer_images, layer_paint_bounds, layer_ime_composition_rect) =
+                paint_ctx.into_parts();
             let Some(descriptor) =
                 self.root
                     .layer_descriptor_for(widget_id, &layer_scene, frame_time)
@@ -3967,19 +3948,12 @@ impl WindowState {
 
             images.extend(layer_images);
             paint_bounds_by_widget.extend(layer_paint_bounds);
-            invalidations.extend(layer_invalidations);
             if layer_ime_composition_rect.is_some() {
                 ime_composition_rect = layer_ime_composition_rect;
             }
         }
 
-        (
-            scene,
-            images,
-            paint_bounds_by_widget,
-            invalidations,
-            ime_composition_rect,
-        )
+        (scene, images, paint_bounds_by_widget, ime_composition_rect)
     }
 
     fn collect_dirty_layers(&self, invalidations: &[InvalidationRequest]) -> Vec<WidgetId> {

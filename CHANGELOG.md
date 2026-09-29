@@ -342,12 +342,18 @@ Versioning, with the usual expectation that the API may change during the
   final-stage values relative to SDR white (native HDR finals are scRGB, where
   SDR white is its brightness over 80 nits).
 
+### Breaking: painting cannot request invalidations
+
+- Removed `PaintCtx::request`, `request_paint`, `request_paint_rect`, and
+  `invalidations`, and `ForeignPaintCtx::request_paint` and
+  `request_paint_rect`. Requests made while painting only annotated the frame
+  already being painted and were then dropped, so a widget asking to paint or
+  measure again was never called. Request repaints from event handlers, ask
+  for an animation frame from `measure` or `event`, or observe a signal while
+  painting.
+
 ### Fixes
 
-- Work a widget requests while painting (`PaintCtx::request_paint`,
-  `request_paint_rect`, and `request`) now happens on the next frame. The
-  runtime previously folded it into the frame being painted and dropped it,
-  so a widget asking to paint or measure again was never called.
 - A progress bar's value label now uses the tone's content color over the fill
   and body text over the track, so values below the midpoint stay readable.
 - Disabled ghost buttons no longer reveal their transparent border as a dark

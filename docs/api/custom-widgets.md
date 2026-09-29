@@ -259,6 +259,10 @@ text-policy stacks balanced within the widget's paint call.
 measurement or use purpose-built interior caches only when their mutation is
 an implementation detail that cannot change observable widget state.
 
+Painting describes the current frame; it cannot invalidate. Request repaints
+from event handlers, ask for an animation frame from `measure` or `event`, or
+observe a signal during painting so that changing it repaints the widget.
+
 ## Semantics Are Part of the Widget
 
 Every interactive custom widget should publish:

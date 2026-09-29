@@ -1513,14 +1513,13 @@ impl WidgetPod {
         )
         .with_frame_time(parent_ctx.frame_time);
         child_ctx.output_cache = output_cache.clone();
-        let (mut scene, images, mut widget_paint_bounds, invalidations, mut ime_composition_rect) =
+        let (mut scene, images, mut widget_paint_bounds, mut ime_composition_rect) =
             if let Some(fragment) = cached {
                 crate::layout_work::record(|work| work.paint_cache_hits += 1);
                 (
                     fragment.scene.clone(),
                     Vec::new(),
                     fragment.bounds.clone(),
-                    Vec::new(),
                     fragment.ime,
                 )
             } else {
@@ -1546,10 +1545,9 @@ impl WidgetPod {
                 let parts = child_ctx.into_parts();
                 if can_reuse
                     && parts.1.is_empty()
-                    && parts.3.is_empty()
                     && let Some(cache) = &output_cache
                 {
-                    cache.put_paint(self.id, key, &parts.0, &parts.2, parts.4);
+                    cache.put_paint(self.id, key, &parts.0, &parts.2, parts.3);
                 }
                 parts
             };
@@ -1584,7 +1582,6 @@ impl WidgetPod {
         }
         parent_ctx.extend_widget_paint_bounds(widget_paint_bounds);
         parent_ctx.extend_images(images);
-        parent_ctx.extend_invalidations(invalidations);
         parent_ctx.extend_ime_composition_rect(ime_composition_rect);
     }
 
@@ -3471,7 +3468,6 @@ pub struct PaintCtx {
     scene: Scene,
     images: Vec<(ImageHandle, PaintImageResource)>,
     widget_paint_bounds: HashMap<WidgetId, Rect>,
-    invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
     frame_time: f64,
 }
@@ -3584,7 +3580,6 @@ impl PaintCtx {
             scene: Scene::new(),
             images: Vec::new(),
             widget_paint_bounds: HashMap::new(),
-            invalidations: Vec::new(),
             ime_composition_rect: None,
             frame_time: 0.0,
         }
@@ -3964,8 +3959,7 @@ impl PaintCtx {
         )
         .with_frame_time(self.frame_time);
         let output = paint(&mut child_ctx);
-        let (scene, images, mut widget_paint_bounds, invalidations, ime_composition_rect) =
-            child_ctx.into_parts();
+        let (scene, images, mut widget_paint_bounds, ime_composition_rect) = child_ctx.into_parts();
 
         if !scene.commands().is_empty() {
             self.scene.push(SceneCommand::PushTransform { transform });
@@ -3977,7 +3971,6 @@ impl PaintCtx {
         }
         self.extend_widget_paint_bounds(widget_paint_bounds);
         self.extend_images(images);
-        self.extend_invalidations(invalidations);
         self.extend_ime_composition_rect(
             ime_composition_rect.map(|bounds| transform.transform_rect_bbox(bounds)),
         );
@@ -4046,15 +4039,13 @@ impl PaintCtx {
         child_ctx.output_cache = self.output_cache.clone();
         let output = paint(&mut child_ctx);
         self.output_reusable &= child_ctx.output_reusable;
-        let (scene, images, widget_paint_bounds, invalidations, ime_composition_rect) =
-            child_ctx.into_parts();
+        let (scene, images, widget_paint_bounds, ime_composition_rect) = child_ctx.into_parts();
 
         if !scene.commands().is_empty() {
             self.push_retained_scene_layer(owner, bounds, Arc::new(scene));
         }
         self.extend_widget_paint_bounds(widget_paint_bounds);
         self.extend_images(images);
-        self.extend_invalidations(invalidations);
         self.extend_ime_composition_rect(ime_composition_rect);
         output
     }
@@ -4065,32 +4056,6 @@ impl PaintCtx {
 
     pub fn scene_mut(&mut self) -> &mut Scene {
         &mut self.scene
-    }
-
-    /// Ask for work on the next frame. What a widget requests while painting
-    /// cannot change the frame being painted, so the runtime renders another.
-    pub fn request(&mut self, request: InvalidationRequest) {
-        self.invalidations.push(request);
-    }
-
-    /// Paint this widget again on the next frame.
-    pub fn request_paint(&mut self) {
-        self.request_widget(InvalidationKind::Paint);
-    }
-
-    /// Paint `rect` of this widget again on the next frame.
-    pub fn request_paint_rect(&mut self, rect: Rect) {
-        self.request(
-            InvalidationRequest::new(
-                InvalidationTarget::Widget(self.widget_id),
-                InvalidationKind::Paint,
-            )
-            .with_region(rect),
-        );
-    }
-
-    pub fn invalidations(&self) -> &[InvalidationRequest] {
-        &self.invalidations
     }
 
     pub fn set_ime_composition_rect(&mut self, rect: Rect) {
@@ -4131,10 +4096,6 @@ impl PaintCtx {
         self.images.extend(images);
     }
 
-    pub(crate) fn extend_invalidations(&mut self, invalidations: Vec<InvalidationRequest>) {
-        self.invalidations.extend(invalidations);
-    }
-
     pub(crate) fn extend_ime_composition_rect(&mut self, ime_composition_rect: Option<Rect>) {
         if ime_composition_rect.is_some() {
             self.ime_composition_rect = ime_composition_rect;
@@ -4147,23 +4108,14 @@ impl PaintCtx {
         Scene,
         Vec<(ImageHandle, PaintImageResource)>,
         HashMap<WidgetId, Rect>,
-        Vec<InvalidationRequest>,
         Option<Rect>,
     ) {
         (
             self.scene,
             self.images,
             self.widget_paint_bounds,
-            self.invalidations,
             self.ime_composition_rect,
         )
-    }
-
-    fn request_widget(&mut self, kind: InvalidationKind) {
-        self.request(InvalidationRequest::new(
-            InvalidationTarget::Widget(self.widget_id),
-            kind,
-        ));
     }
 }
 

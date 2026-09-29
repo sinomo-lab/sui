@@ -656,14 +656,6 @@ impl ForeignPaintCtx<'_> {
     pub fn widget_image_handle(&self, slot: u64) -> ImageHandle {
         self.inner.widget_image_handle(slot)
     }
-
-    pub fn request_paint(&mut self) {
-        self.inner.request_paint();
-    }
-
-    pub fn request_paint_rect(&mut self, rect: Rect) {
-        self.inner.request_paint_rect(rect);
-    }
 }
 
 pub struct ForeignSemanticsCtx<'a> {

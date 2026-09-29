@@ -796,13 +796,6 @@ impl Widget for FloatingWorkspace {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let dirty_region = widget_invalidation_region(ctx.invalidations(), ctx.widget_id())
-            .and_then(|region| region.intersection(ctx.bounds()));
-
-        if let Some(region) = dirty_region {
-            ctx.push_clip_rect(region);
-        }
-
         let theme = self.resolved_theme();
         let palette = theme.palette;
         ctx.fill_bounds(palette.control);
@@ -816,17 +809,8 @@ impl Widget for FloatingWorkspace {
 
         for view_id in self.active_view_ids() {
             if let Some(entry) = self.entry(view_id) {
-                if dirty_region
-                    .is_some_and(|region| entry.child.bounds().intersection(region).is_none())
-                {
-                    continue;
-                }
                 entry.child.paint(ctx);
             }
-        }
-
-        if dirty_region.is_some() {
-            ctx.pop_clip();
         }
     }
 
@@ -2377,30 +2361,6 @@ fn request_widget_refresh(
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Paint).with_region(region));
     ctx.request(InvalidationRequest::new(target, InvalidationKind::HitTest).with_region(region));
     ctx.request(InvalidationRequest::new(target, InvalidationKind::Semantics).with_region(region));
-}
-
-fn widget_invalidation_region(
-    invalidations: &[InvalidationRequest],
-    widget_id: WidgetId,
-) -> Option<Rect> {
-    invalidations
-        .iter()
-        .filter(|request| matches!(request.target, InvalidationTarget::Widget(target) if target == widget_id))
-        .filter(|request| {
-            matches!(
-                request.kind,
-                InvalidationKind::Measure
-                    | InvalidationKind::Arrange
-                    | InvalidationKind::Ordering
-                    | InvalidationKind::Transform
-                    | InvalidationKind::Clip
-                    | InvalidationKind::Effect
-                    | InvalidationKind::Visibility
-                    | InvalidationKind::Paint
-            )
-        })
-        .filter_map(|request| request.region)
-        .reduce(|current, next| current.union(next))
 }
 
 #[cfg(test)]
