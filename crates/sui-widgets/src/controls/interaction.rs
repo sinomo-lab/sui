@@ -1,7 +1,8 @@
 use super::{set_hover_animation_target, set_press_animation_target};
-use crate::{DefaultTheme, MotionScalar};
+use crate::{DefaultTheme, Progress};
 use sui_core::{Event, KeyState, PointerButton, PointerEventKind};
 use sui_runtime::EventCtx;
+use sui_runtime::FrameClock;
 
 /// Pins the interaction visuals of a control.
 ///
@@ -49,8 +50,8 @@ impl InteractionPreview {
 pub(super) struct PressInteraction {
     pub(super) hovered: bool,
     pub(super) pressed: bool,
-    pub(super) hover_animation: MotionScalar,
-    pub(super) press_animation: MotionScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
     pub(super) preview: InteractionPreview,
 }
 
@@ -59,22 +60,22 @@ impl Default for PressInteraction {
         Self {
             hovered: false,
             pressed: false,
-            hover_animation: MotionScalar::new(0.0),
-            press_animation: MotionScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
             preview: InteractionPreview::None,
         }
     }
 }
 
 impl PressInteraction {
-    /// Hover progress including any pinned preview.
-    pub(super) fn hover_progress(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    /// Hover progress at `clock`'s frame, including any pinned preview.
+    pub(super) fn hover_progress(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    /// Press progress including any pinned preview.
-    pub(super) fn press_progress(&self) -> f32 {
-        self.press_animation.value.max(self.preview.press())
+    /// Press progress at `clock`'s frame, including any pinned preview.
+    pub(super) fn press_progress(&self, clock: &impl FrameClock) -> f32 {
+        self.press_animation.get(clock).max(self.preview.press())
     }
 
     pub(super) fn event(
@@ -83,7 +84,6 @@ impl PressInteraction {
         event: &Event,
         enabled: bool,
         theme: impl Fn() -> DefaultTheme,
-        focus_animation: &mut MotionScalar,
     ) -> bool {
         if !enabled {
             if self.hovered || self.pressed {
@@ -166,15 +166,6 @@ impl PressInteraction {
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
                 return true;
-            }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.hover_animation.advance(*time)
-                    | self.press_animation.advance(*time)
-                    | focus_animation.advance(*time)
-                {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
             }
             _ => {}
         }

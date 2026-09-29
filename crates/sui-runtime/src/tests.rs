@@ -11,13 +11,13 @@ use std::{
 
 use super::{
     Application, ArrangeCtx, Command, CommandController, CommandCtx, CommandKey, CommandTarget,
-    EventCtx, EventPhase, EventRoutePhase, FocusScope, FocusScopeState, FocusState, FrameSchedule,
-    LayerOptions, MeasureCtx, OVERLAY_DISMISS_REQUEST, OverlayDismissReason, OverlayFocusBehavior,
-    OverlayKind, OverlayOptions, OverlayTraceKind, PaintBoundaryMode, PaintCtx, RenderOutput,
-    Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
-    WidgetChildren, WidgetDiagnosticsCtx, WidgetGraphSnapshot, WidgetNodeSnapshot,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
-    root_repaint_covers_graph_changes, set_window_render_options,
+    EventCtx, EventPhase, EventRoutePhase, FocusScope, FocusScopeState, FocusState, FramePacing,
+    FrameSchedule, LayerOptions, MeasureCtx, Motion, OVERLAY_DISMISS_REQUEST, OverlayDismissReason,
+    OverlayFocusBehavior, OverlayKind, OverlayOptions, OverlayTraceKind, PaintBoundaryMode,
+    PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
+    StackSurfaceOptions, Widget, WidgetChildren, WidgetDiagnosticsCtx, WidgetGraphSnapshot,
+    WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon,
+    WindowRenderOptions, root_repaint_covers_graph_changes, set_window_render_options,
     set_window_scene_statistics_detail_mode, window_render_options,
 };
 use sui_core::{
@@ -5629,5 +5629,245 @@ fn trial_measurements_do_not_repaint_unchanged_siblings() {
         clean_paints.get(),
         2,
         "actual resize must repaint even when event dispatch arranged it first"
+    );
+}
+
+/// A widget that fades with a runtime-driven [`Motion`] and never handles
+/// animation frames itself.
+struct MotionLeaf {
+    fade: Motion<f32>,
+    layer_fade: Motion<f32>,
+    painted: Rc<RefCell<Vec<f32>>>,
+    frame_events: Rc<Cell<usize>>,
+}
+
+impl MotionLeaf {
+    fn new(painted: Rc<RefCell<Vec<f32>>>, frame_events: Rc<Cell<usize>>) -> Self {
+        Self {
+            fade: Motion::new(0.0),
+            layer_fade: Motion::new(1.0).invalidating(InvalidationKind::Effect),
+            painted,
+            frame_events,
+        }
+    }
+}
+
+impl Widget for MotionLeaf {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        let spec = sui_animation::AnimationSpec::tween(0.1, sui_animation::Easing::Linear);
+        match event {
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down => {
+                ctx.animate(&mut self.fade, 1.0, spec);
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Up => {
+                ctx.animate(&mut self.layer_fade, 0.0, spec);
+                ctx.set_handled();
+            }
+            Event::Wake(WakeEvent::AnimationFrame { .. }) => {
+                self.frame_events.set(self.frame_events.get() + 1);
+            }
+            _ => {}
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(120.0, 40.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.painted.borrow_mut().push(self.fade.get(ctx));
+        ctx.fill_bounds(Color::rgba(0.2, 0.4, 0.8, 1.0));
+    }
+
+    fn layer_options(&self) -> LayerOptions {
+        LayerOptions {
+            paint_boundary: PaintBoundaryMode::Explicit,
+            composition_mode: LayerCompositionMode::Normal,
+        }
+    }
+
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        LayerProperties::default().with_opacity(self.layer_fade.at(frame_time))
+    }
+}
+
+/// A root that lays out and paints one child.
+struct PaintingRoot {
+    child: SingleChild,
+}
+
+impl Widget for PaintingRoot {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child
+            .measure(ctx, Constraints::tight(Size::new(120.0, 40.0)));
+        constraints.clamp(Size::new(320.0, 180.0))
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(
+            ctx,
+            Rect::new(bounds.x() + 32.0, bounds.y() + 24.0, 120.0, 40.0),
+        );
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+struct MotionHarness {
+    runtime: Runtime,
+    window_id: sui_core::WindowId,
+    painted: Rc<RefCell<Vec<f32>>>,
+    frame_events: Rc<Cell<usize>>,
+}
+
+fn build_motion_runtime() -> MotionHarness {
+    crate::reset_motion_settings();
+    let painted = Rc::new(RefCell::new(Vec::new()));
+    let frame_events = Rc::new(Cell::new(0));
+    let runtime = Application::new()
+        .window(WindowBuilder::new().title("Motion").root(PaintingRoot {
+            child: SingleChild::new(MotionLeaf::new(
+                Rc::clone(&painted),
+                Rc::clone(&frame_events),
+            )),
+        }))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    MotionHarness {
+        runtime,
+        window_id,
+        painted,
+        frame_events,
+    }
+}
+
+fn press(runtime: &mut Runtime, window_id: sui_core::WindowId) {
+    let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+    down.button = Some(PointerButton::Primary);
+    down.buttons = PointerButtons::new(1);
+    runtime
+        .handle_event(window_id, Event::Pointer(down))
+        .unwrap();
+}
+
+fn run_frame(runtime: &mut Runtime, window_id: sui_core::WindowId, time: f64) -> RenderOutput {
+    runtime.tick(time);
+    for (ready_window, event) in runtime.drain_ready_events() {
+        runtime.handle_event(ready_window, event).unwrap();
+    }
+    runtime.render(window_id).unwrap()
+}
+
+#[test]
+fn motion_repaints_its_widget_each_frame_without_frame_events() {
+    let MotionHarness {
+        mut runtime,
+        window_id,
+        painted,
+        frame_events,
+    } = build_motion_runtime();
+    let _ = runtime.render(window_id).unwrap();
+
+    press(&mut runtime, window_id);
+    assert!(runtime.has_pending_animation_frames(window_id).unwrap());
+    let _ = run_frame(&mut runtime, window_id, 0.0);
+    let _ = run_frame(&mut runtime, window_id, 0.05);
+    assert!(runtime.needs_render(window_id).unwrap() || !painted.borrow().is_empty());
+    let _ = run_frame(&mut runtime, window_id, 0.1);
+
+    let painted = painted.borrow();
+    let last = painted.len() - 1;
+    assert!((painted[last - 1] - 0.5).abs() < 1e-5, "{painted:?}");
+    assert_eq!(painted[last], 1.0);
+    assert_eq!(
+        frame_events.get(),
+        0,
+        "no animation-frame events are needed"
+    );
+    assert!(!runtime.has_pending_animation_frames(window_id).unwrap());
+    assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+}
+
+#[test]
+fn display_paced_frames_carry_the_presentation_time() {
+    let (mut runtime, window_id, state) = build_animation_wake_runtime(false);
+    runtime
+        .set_frame_pacing(window_id, FramePacing::Display)
+        .unwrap();
+    let _ = runtime.render(window_id).unwrap();
+
+    let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(48.0, 40.0));
+    down.button = Some(PointerButton::Primary);
+    down.buttons = PointerButtons::new(1);
+    runtime
+        .handle_event(window_id, Event::Pointer(down))
+        .unwrap();
+
+    // The platform, not the runtime's timer, starts the frame.
+    assert_eq!(runtime.next_wakeup_time(window_id).unwrap(), None);
+    assert!(runtime.drain_ready_events().is_empty());
+    assert!(runtime.has_pending_animation_frames(window_id).unwrap());
+
+    let events = runtime.begin_animation_frame(window_id, 0.0167).unwrap();
+    assert_eq!(events.len(), 1);
+    for event in events {
+        runtime.handle_event(window_id, event).unwrap();
+    }
+    assert_eq!(state.borrow().last_animation_time, Some(0.0167));
+    assert!(
+        runtime
+            .begin_animation_frame(window_id, 0.0334)
+            .unwrap()
+            .is_empty(),
+        "nothing asked for another frame"
+    );
+}
+
+#[test]
+fn motion_layer_properties_update_without_repainting() {
+    let MotionHarness {
+        mut runtime,
+        window_id,
+        painted,
+        ..
+    } = build_motion_runtime();
+    let _ = runtime.render(window_id).unwrap();
+    let paints_before = painted.borrow().len();
+
+    let mut up = PointerEvent::new(PointerEventKind::Up, Point::new(48.0, 40.0));
+    up.button = Some(PointerButton::Primary);
+    runtime.handle_event(window_id, Event::Pointer(up)).unwrap();
+    let _ = run_frame(&mut runtime, window_id, 0.0);
+    let midway = run_frame(&mut runtime, window_id, 0.05);
+
+    let layer = midway
+        .frame
+        .scene
+        .commands()
+        .iter()
+        .find_map(|command| match command {
+            SceneCommand::Layer(layer) if layer.descriptor.properties.opacity < 1.0 => {
+                Some(layer.clone())
+            }
+            _ => None,
+        })
+        .expect("the fading layer");
+    assert!((layer.descriptor.properties.opacity - 0.5).abs() < 1e-5);
+    assert_eq!(
+        painted.borrow().len(),
+        paints_before,
+        "an effect-only motion does not repaint the widget"
     );
 }

@@ -136,6 +136,37 @@ Versioning, with the usual expectation that the API may change during the
   the machine's setting. `Runtime::has_pending_animation_frames` reports
   whether a window still has transitions running.
 
+### Runtime-driven motion, frame pacing, and layer scale
+
+- Added `Motion<T>` and `Progress`: values the runtime animates for a widget.
+  `ctx.animate(&mut motion, target, spec)` (or `progress.animate(target, spec,
+  ctx)`) starts a transition from an event, measure, or arrange context, and
+  `get(ctx)` reads it for the frame being painted. The runtime invalidates the
+  widget every frame until the transition ends, so the widget handles no
+  animation frames. A motion can invalidate `Transform` or `Effect` instead of
+  paint, and `Widget::layer_properties_at(frame_time)` reads it to move, fade,
+  or scale a retained layer without repainting.
+- Built-in controls, forms, toolbars, tab bars, segmented controls, tabs, list
+  and table rows, color swatches and palettes, scroll bars and views, split
+  views, canvases, text surfaces, reorderable lists, and `LayoutTransition`
+  now use runtime-driven motion, removing 36 of the 47 animation-frame
+  handlers in built-in widgets. Tooltips, popovers, menus, dialogs, the select
+  menu, and the node editor still advance their own frames.
+- On displays that present with vsync, animation frames now follow the
+  display: the platform starts one frame per refresh and stamps it with the
+  time the frame is expected on screen, on a steady cadence of whole refresh
+  intervals. Previously frames came from a 120 Hz timer that beat against the
+  display (skipping updates at 144 Hz) and carried the time the event loop
+  woke. Hidden windows and headless hosts keep the timer. `FramePacing`,
+  `Runtime::set_frame_pacing`, and `Runtime::begin_animation_frame` expose this
+  to custom hosts, and `PaintCtx::frame_time` reports a frame's time.
+- `LayerProperties` gains `scale` and `scale_anchor` (`with_scale`,
+  `with_scale_xy`, `with_scale_anchor`), composed through nested layers by the
+  retained renderer without re-rasterizing content. Popovers, menus, and select
+  lists now grow from 96% at the edge next to their trigger as they appear;
+  reduced motion shows them at full size. Constructing `LayerProperties` with
+  a struct literal now needs `..LayerProperties::default()`.
+
 ### Redesigned animation demo
 
 - The Animation page is one scroll. Its header sets the app-wide motion

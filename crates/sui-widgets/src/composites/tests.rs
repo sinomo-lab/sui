@@ -2928,7 +2928,7 @@ fn preset_strip_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -2938,7 +2938,7 @@ fn preset_strip_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -2952,7 +2952,7 @@ fn preset_strip_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration + press_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -2962,7 +2962,7 @@ fn preset_strip_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration + press_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -3510,7 +3510,7 @@ fn tool_palette_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -3520,7 +3520,7 @@ fn tool_palette_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -3534,7 +3534,7 @@ fn tool_palette_hover_and_press_use_theme_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration + press_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -3544,7 +3544,7 @@ fn tool_palette_hover_and_press_use_theme_motion() -> Result<(), String> {
     );
 
     runtime.tick(hover_duration + press_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -4338,7 +4338,7 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -4348,7 +4348,7 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
     );
 
     runtime.tick(hover_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_hover = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -4362,7 +4362,7 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
         .map_err(|error| error.to_string())?;
 
     runtime.tick(hover_duration + press_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -4372,7 +4372,7 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
     );
 
     runtime.tick(hover_duration + press_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_press = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -4908,7 +4908,8 @@ where
         .map_err(|error| error.to_string())?;
 
     runtime.tick(focus_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    // Frame-driven and runtime-driven widgets both pass through here.
+    handle_ready_events(&mut runtime)?;
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -4918,7 +4919,8 @@ where
     );
 
     runtime.tick(focus_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    // Frame-driven and runtime-driven widgets both pass through here.
+    handle_ready_events(&mut runtime)?;
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -5295,7 +5297,7 @@ fn tab_widgets_focus_highlights_selected_tab_button() -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     tab_bar_runtime.tick(focus_duration + 0.01);
-    assert!(handle_ready_events(&mut tab_bar_runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut tab_bar_runtime)?, 0);
     let tab_bar_focused = tab_bar_runtime
         .render(tab_bar_window)
         .map_err(|error| error.to_string())?;
@@ -5334,7 +5336,7 @@ fn tab_widgets_focus_highlights_selected_tab_button() -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     tabs_runtime.tick(focus_duration + 0.01);
-    assert!(handle_ready_events(&mut tabs_runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut tabs_runtime)?, 0);
     let tabs_focused = tabs_runtime
         .render(tabs_window)
         .map_err(|error| error.to_string())?;
@@ -5529,7 +5531,7 @@ fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
 
         runtime.tick(hover_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_hover = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
@@ -5539,7 +5541,7 @@ fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
         );
 
         runtime.tick(hover_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_hover = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
@@ -5553,7 +5555,7 @@ fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
 
         runtime.tick(hover_duration + press_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_press = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
@@ -5563,7 +5565,7 @@ fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
         );
 
         runtime.tick(hover_duration + press_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_press = runtime
             .render(window_id)
             .map_err(|error| error.to_string())?;
@@ -5664,7 +5666,7 @@ fn tab_bar_external_selected_state_animates_without_rebuild() -> Result<(), Stri
         .map_err(|error| error.to_string())?;
 
     runtime.tick(switch_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(
         runtime
             .next_wakeup_time(window_id)
@@ -5674,7 +5676,7 @@ fn tab_bar_external_selected_state_animates_without_rebuild() -> Result<(), Stri
     );
 
     runtime.tick(switch_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let output = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -5721,7 +5723,7 @@ fn tab_bar_observable_selection_animates_without_redraw_polling() -> Result<(), 
     );
 
     runtime.tick(switch_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(
         runtime
             .next_wakeup_time(window_id)
@@ -5731,7 +5733,7 @@ fn tab_bar_observable_selection_animates_without_redraw_polling() -> Result<(), 
     );
 
     runtime.tick(switch_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let output = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -5867,7 +5869,7 @@ where
         .map_err(|error| error.to_string())?;
 
     runtime.tick(switch_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(
         runtime
             .next_wakeup_time(window_id)
@@ -5877,7 +5879,7 @@ where
     );
 
     runtime.tick(switch_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let output = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -5932,7 +5934,7 @@ fn tabs_panel_body_slides_during_theme_switch_motion() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     runtime.tick(switch_duration * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -5944,7 +5946,7 @@ fn tabs_panel_body_slides_during_theme_switch_motion() -> Result<(), String> {
     );
 
     runtime.tick(switch_duration);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -8206,6 +8208,12 @@ fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(
     assert_eq!(content.borrow().paint, 1);
     assert_eq!(open_descriptor.properties.opacity, 0.0);
     assert!(open_descriptor.properties.translation.y < 0.0);
+    // It grows from its top edge, next to the trigger.
+    assert!((open_descriptor.properties.scale.x - crate::animation::ENTRANCE_SCALE).abs() < 1e-6);
+    assert_eq!(
+        open_descriptor.properties.scale_anchor,
+        Vector::new(0.5, 0.0)
+    );
 
     runtime.tick(entrance_duration * 0.5);
     assert_eq!(handle_ready_events(&mut runtime)?, 1);
@@ -8217,6 +8225,8 @@ fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(
     assert!(mid_descriptor.properties.opacity > 0.0);
     assert!(mid_descriptor.properties.opacity < 1.0);
     assert!(mid_descriptor.properties.translation.y < 0.0);
+    assert!(mid_descriptor.properties.scale.x > crate::animation::ENTRANCE_SCALE);
+    assert!(mid_descriptor.properties.scale.x < 1.0);
     assert_eq!(
         content.borrow().paint,
         1,
@@ -8238,6 +8248,7 @@ fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(
         overlay_layer_descriptor(&settled).expect("popover overlay layer should remain open");
     assert_eq!(settled_descriptor.properties.opacity, 1.0);
     assert_eq!(settled_descriptor.properties.translation.y, 0.0);
+    assert_eq!(settled_descriptor.properties.scale, Vector::new(1.0, 1.0));
     assert_eq!(
         content.borrow().paint,
         1,
@@ -8250,6 +8261,52 @@ fn popover_open_animation_stops_requesting_frames_after_completion() -> Result<(
         None
     );
 
+    Ok(())
+}
+
+#[test]
+fn popover_fades_in_at_full_size_under_reduced_motion() -> Result<(), String> {
+    let _reduced = MotionPreferenceOverride::set(sui_core::MotionPreference::Reduced);
+    let theme = slow_normal_motion_theme();
+    let (mut runtime, window_id) = build_runtime(crate::Padding::all(
+        16.0,
+        Popover::new(
+            "Inline inspector",
+            crate::Button::new("Open inspector").min_width(180.0),
+            crate::Label::new("Details"),
+        )
+        .theme(theme),
+    ));
+    let closed = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let trigger = closed
+        .semantics
+        .iter()
+        .find(|node| {
+            node.role == SemanticsRole::Button && node.name.as_deref() == Some("Open inspector")
+        })
+        .expect("popover trigger semantics present")
+        .bounds;
+    runtime
+        .handle_event(
+            window_id,
+            primary_pointer(
+                PointerEventKind::Down,
+                Point::new(trigger.x() + 12.0, trigger.y() + trigger.height() * 0.5),
+                true,
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+
+    let opened = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let descriptor =
+        overlay_layer_descriptor(&opened).expect("popover overlay layer should appear");
+    assert_eq!(descriptor.properties.opacity, 0.0, "it still fades");
+    assert_eq!(descriptor.properties.translation.y, 0.0);
+    assert_eq!(descriptor.properties.scale, Vector::new(1.0, 1.0));
     Ok(())
 }
 

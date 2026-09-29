@@ -258,5 +258,6 @@ fn frame_intervals_ignore_the_first_frame_and_report_extremes() {
 
     assert!((intervals.average().expect("an average") - 10.0).abs() < 1e-9);
     assert!((intervals.worst().expect("a worst") - 12.0).abs() < 1e-9);
-    assert!(intervals.summary().starts_with("average 10.0 ms (100 fps)"));
+    assert!((intervals.median().expect("a median") - 12.0).abs() < 1e-9);
+    assert!(intervals.summary().starts_with("typically 12.0 ms (83 Hz)"));
 }

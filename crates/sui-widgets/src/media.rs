@@ -1,15 +1,15 @@
 use sui_core::{
     Color, ColorSpace, Event, ImageHandle, KeyState, Oklch, Path, PathBuilder, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
-    SemanticsValue, Size, WakeEvent, WidgetId,
+    SemanticsValue, Size, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
-use sui_runtime::{EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
+use sui_runtime::{EventCtx, FrameClock, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{Brush, GradientStop, ImageSource, StrokeStyle, WidgetShader};
 use sui_text::{FontFeature, TextStyle};
 
 use crate::{
-    ControlMetrics, DefaultTheme, MotionScalar, SemanticTone, ThemeDensity, ThemeTextToken,
+    ControlMetrics, DefaultTheme, Progress, SemanticTone, ThemeDensity, ThemeTextToken,
     text_align::paint_aligned_text,
 };
 
@@ -626,12 +626,6 @@ impl ColorSwatch {
             ctx.request_semantics();
         }
     }
-
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
 }
 
 impl Widget for ColorSwatch {
@@ -701,12 +695,6 @@ impl Widget for ColorSwatch {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -720,7 +708,7 @@ impl Widget for ColorSwatch {
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
-        let pressed_offset = self.press_animation.value * theme.interaction.pressed_offset;
+        let pressed_offset = self.press_animation.get(ctx) * theme.interaction.pressed_offset;
         let body = Rect::new(
             ctx.bounds().x(),
             ctx.bounds().y() + pressed_offset,
@@ -733,33 +721,33 @@ impl Widget for ColorSwatch {
         let inner_body = inset_rect(body, Insets::all(inner_inset));
         let color = self.current_color();
 
-        if self.focus_animation.value > 0.0 {
+        if self.focus_animation.get(ctx) > 0.0 {
             let focus_outset = metrics.focus_ring_outset;
             ctx.stroke(
                 rounded_rect_path(
                     ctx.bounds().inflate(focus_outset, focus_outset),
                     outer_radius + focus_outset,
                 ),
-                palette.focus_ring.with_alpha(self.focus_animation.value),
+                palette.focus_ring.with_alpha(self.focus_animation.get(ctx)),
                 StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
 
-        if self.press_animation.value > 0.0 {
+        if self.press_animation.get(ctx) > 0.0 {
             ctx.fill(
                 rounded_rect_path(ctx.bounds(), outer_radius),
                 mix_color(
                     palette.control_hover,
                     palette.control_active,
-                    theme.interaction.pressed_blend * self.press_animation.value,
+                    theme.interaction.pressed_blend * self.press_animation.get(ctx),
                 ),
             );
-        } else if self.hover_animation.value > 0.0 {
+        } else if self.hover_animation.get(ctx) > 0.0 {
             ctx.fill(
                 rounded_rect_path(ctx.bounds(), outer_radius),
                 palette
                     .control_hover
-                    .with_alpha(self.hover_animation.value * palette.control_hover.alpha),
+                    .with_alpha(self.hover_animation.get(ctx) * palette.control_hover.alpha),
             );
         }
 
@@ -775,7 +763,7 @@ impl Widget for ColorSwatch {
             rounded_rect_path(body, outer_radius),
             if ctx.is_focused() {
                 palette.border_focus
-            } else if self.hovered || self.hover_animation.value > 0.0 {
+            } else if self.hovered || self.hover_animation.get(ctx) > 0.0 {
                 palette.border_hover
             } else if self.read_only {
                 palette
@@ -1093,38 +1081,20 @@ impl ColorPalette {
         ctx.request_semantics();
     }
 
-    fn hover_amount_for(&self, index: usize) -> f32 {
+    fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    fn press_amount_for(&self, index: usize) -> f32 {
+    fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
-    }
-
-    fn advance_animations(&mut self, time: f64) -> bool {
-        let hover_animating = self.hover_animation.advance(time);
-        if !hover_animating
-            && self.hovered.is_none()
-            && self.hover_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.hover_visual = None;
-        }
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-        hover_animating | press_animating | self.focus_animation.advance(time)
     }
 }
 
@@ -1201,12 +1171,6 @@ impl Widget for ColorPalette {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -1232,14 +1196,14 @@ impl Widget for ColorPalette {
         let radius = metrics.corner_radius.min(swatch_size * 0.25);
         let selected = self.current_selected();
 
-        if self.focus_animation.value > 0.0 {
+        if self.focus_animation.get(ctx) > 0.0 {
             let focus_outset = metrics.focus_ring_outset;
             ctx.stroke(
                 rounded_rect_path(
                     ctx.bounds().inflate(focus_outset, focus_outset),
                     radius + focus_outset,
                 ),
-                palette.focus_ring.with_alpha(self.focus_animation.value),
+                palette.focus_ring.with_alpha(self.focus_animation.get(ctx)),
                 StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
@@ -1250,8 +1214,8 @@ impl Widget for ColorPalette {
             };
             let selected = selected == Some(index);
             let hovered = self.hovered == Some(index);
-            let hover_amount = self.hover_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let hover_amount = self.hover_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
             let pressed_offset = press_amount * interaction.pressed_offset;
             let body = Rect::new(
                 rect.x(),
@@ -3495,15 +3459,6 @@ impl Widget for SimpleColorPicker {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let (changed, active) = advance_scalar(&mut self.focus_animation, *time);
-                if changed {
-                    ctx.request_paint();
-                }
-                if active {
-                    ctx.request_animation_frame();
-                }
-            }
             _ => {}
         }
     }
@@ -3516,7 +3471,7 @@ impl Widget for SimpleColorPicker {
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
         let values = self.resolved_values();
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
 
         for (index, row) in self.resolved_rows(values).into_iter().enumerate() {
             let rect = self.slider_rect(ctx.bounds(), index);
@@ -3660,15 +3615,6 @@ impl Widget for ColorPicker {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let (changed, active) = advance_scalar(&mut self.focus_animation, *time);
-                if changed {
-                    ctx.request_paint();
-                }
-                if active {
-                    ctx.request_animation_frame();
-                }
-            }
             _ => {}
         }
     }
@@ -3686,7 +3632,7 @@ impl Widget for ColorPicker {
         let map = self.saturation_value_rect(ctx.bounds());
         let encoding = self.encoding_rect(ctx.bounds());
 
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
         paint_picker_header(
             ctx,
             self.current_swatch_rect(ctx.bounds()),
@@ -4626,7 +4572,8 @@ fn mix_color(from: Color, to: Color, amount: f32) -> Color {
     crate::animation::Interpolate::interpolate(from, to, amount)
 }
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = Progress;
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
@@ -4635,7 +4582,7 @@ fn set_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) -> bool {
-    animation.set_target_event(target, duration, easing, ctx)
+    animation.animate(target, crate::AnimationSpec::tween(duration, easing), ctx)
 }
 
 fn set_hover_animation_target(
@@ -4681,12 +4628,6 @@ fn set_focus_animation_target(
         theme.motion.focus_easing(),
         ctx,
     )
-}
-
-fn advance_scalar(animation: &mut AnimatedScalar, time: f64) -> (bool, bool) {
-    let previous = animation.value;
-    let active = animation.advance(time);
-    (animation.changed_since(previous), active)
 }
 
 fn fit_rect(bounds: Rect, source: Size, fit: ImageFit) -> Rect {
@@ -5539,7 +5480,7 @@ mod tests {
             primary_pointer(PointerEventKind::Move, position, false),
         )?;
         runtime.tick(hover_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_hover = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_hover).contains(&expected_hover),
@@ -5547,7 +5488,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_hover = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
 
@@ -5556,7 +5497,7 @@ mod tests {
             primary_pointer(PointerEventKind::Down, position, true),
         )?;
         runtime.tick(hover_duration + press_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_press = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_press).contains(&expected_press),
@@ -5564,7 +5505,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration + press_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_press = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_press).contains(&expected_press));
 
@@ -5816,7 +5757,7 @@ mod tests {
             primary_pointer(PointerEventKind::Move, position, false),
         )?;
         runtime.tick(hover_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_hover = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_hover).contains(&expected_hover),
@@ -5824,7 +5765,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_hover = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
 
@@ -5833,7 +5774,7 @@ mod tests {
             primary_pointer(PointerEventKind::Down, position, true),
         )?;
         runtime.tick(hover_duration + press_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_press = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_press).contains(&expected_press),
@@ -5841,7 +5782,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration + press_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_press = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_press).contains(&expected_press));
 
@@ -6431,7 +6372,7 @@ mod tests {
         let _ = runtime.render(window_id)?;
 
         runtime.tick(focus_duration * 0.5);
-        assert!(handle_ready_events(&mut runtime)? >= 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid = runtime.render(window_id)?;
         assert!(
             !solid_stroke_colors(&mid).contains(&theme.palette.focus_ring),
@@ -6439,7 +6380,7 @@ mod tests {
         );
 
         runtime.tick(focus_duration);
-        assert!(handle_ready_events(&mut runtime)? >= 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled = runtime.render(window_id)?;
         assert!(
             solid_stroke_colors(&settled).contains(&theme.palette.focus_ring),

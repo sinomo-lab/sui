@@ -1,5 +1,7 @@
 use crate::DefaultTheme;
 use crate::IconGlyph;
+use crate::Progress;
+use crate::animation::AnimationSpec;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
@@ -8,7 +10,6 @@ use crate::composites::indicators::{
     physical_pixels, rounded_rect_path, semibold_control_text_style, sliding_inset_rect,
     tab_indicator_rect, tab_panel_transition_translation, tab_state_visuals,
 };
-use crate::composites::popups::AnimatedScalar;
 use crate::composites::status::{
     SegmentedControlChange, SegmentedControlContextChange, segmented_control_item_id,
 };
@@ -30,7 +31,6 @@ use sui_core::SemanticsRole;
 use sui_core::SemanticsValue;
 use sui_core::Size;
 use sui_core::Vector;
-use sui_core::WakeEvent;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
 use sui_layout::Padding as Insets;
@@ -38,6 +38,7 @@ use sui_reactive::Observable;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::Command;
 use sui_runtime::EventCtx;
+use sui_runtime::FrameClock;
 use sui_runtime::MeasureCtx;
 use sui_runtime::PaintCtx;
 use sui_runtime::REACTIVE_CHANGED;
@@ -105,14 +106,14 @@ pub struct TabBar {
     pub(super) selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     pub(super) selected_source: Option<Arc<dyn Observable<Option<usize>>>>,
     pub(super) selection_from: usize,
-    pub(super) selection_animation: AnimatedScalar,
+    pub(super) selection_animation: Progress,
     pub(super) hovered: Option<usize>,
     pub(super) hover_visual: Option<usize>,
     pub(super) pressed: Option<usize>,
     pub(super) press_visual: Option<usize>,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) gap: Option<f32>,
     pub(super) label_measurements: Vec<TextMeasurement>,
     pub(super) content_widths: Vec<f32>,
@@ -131,14 +132,14 @@ impl TabBar {
             selected_reader: None,
             selected_source: None,
             selection_from: 0,
-            selection_animation: AnimatedScalar::new(1.0),
+            selection_animation: Progress::new(1.0),
             hovered: None,
             hover_visual: None,
             pressed: None,
             press_visual: None,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             gap: None,
             label_measurements: Vec::new(),
             content_widths: Vec::new(),
@@ -196,7 +197,7 @@ impl TabBar {
         self.selected_reader = None;
         self.selected_source = None;
         self.selection_from = index;
-        self.selection_animation = AnimatedScalar::new(1.0);
+        self.selection_animation = Progress::new(1.0);
         self
     }
 
@@ -286,17 +287,19 @@ impl TabBar {
     pub(super) fn start_selection_animation(&mut self, from: usize, to: usize, ctx: &mut EventCtx) {
         if self.tabs.is_empty() || from == to {
             self.selection_from = to;
-            self.selection_animation = AnimatedScalar::new(1.0);
+            self.selection_animation = Progress::new(1.0);
             return;
         }
 
         let theme = self.resolved_theme();
         self.selection_from = from.min(self.tabs.len() - 1);
-        self.selection_animation = AnimatedScalar::new(0.0);
-        self.selection_animation.set_movement_target_event(
+        self.selection_animation = Progress::new(0.0).movement();
+        self.selection_animation.animate(
             1.0,
-            theme.motion.tab_switch_duration(),
-            theme.motion.tab_switch_easing(),
+            AnimationSpec::tween(
+                theme.motion.tab_switch_duration(),
+                theme.motion.tab_switch_easing(),
+            ),
             ctx,
         );
         ctx.request_paint();
@@ -420,26 +423,6 @@ impl TabBar {
         self.set_hovered(Some(next), ctx);
     }
 
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        let selection_animating = self.selection_animation.advance(time);
-        let hover_animating = self.hover_animation.advance(time);
-        if !hover_animating
-            && self.hovered.is_none()
-            && self.hover_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.hover_visual = None;
-        }
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-        let focus_animating = self.focus_animation.advance(time);
-        selection_animating | hover_animating | press_animating | focus_animating
-    }
-
     pub(super) fn resolved_theme(&self) -> DefaultTheme {
         self.theme_reader
             .as_ref()
@@ -455,7 +438,7 @@ impl TabBar {
         self.hovered = hovered;
         if let Some(index) = hovered {
             self.hover_visual = Some(index);
-            self.hover_animation = AnimatedScalar::new(0.0);
+            self.hover_animation = Progress::new(0.0);
             set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
             self.hover_visual = None;
@@ -472,7 +455,7 @@ impl TabBar {
         self.pressed = pressed;
         if let Some(index) = pressed {
             self.press_visual = Some(index);
-            self.press_animation = AnimatedScalar::new(0.0);
+            self.press_animation = Progress::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
             self.press_visual = None;
@@ -481,17 +464,17 @@ impl TabBar {
         ctx.request_semantics();
     }
 
-    pub(super) fn hover_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
@@ -556,12 +539,6 @@ impl Widget for TabBar {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
             }
             _ => {}
         }
@@ -642,7 +619,7 @@ impl Widget for TabBar {
             palette.border,
         );
 
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_animation.get(ctx);
         for (index, tab) in self.tabs.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -650,15 +627,15 @@ impl Widget for TabBar {
             let selected = self.normalized_selected() == index;
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
-            let hover_amount = self.hover_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let hover_amount = self.hover_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
 
             // Hover and press remain local to each tab, but the steady selected
             // state stays flat so it does not compete with the underline.
             if (hovered
                 || pressed
-                || hover_amount > AnimatedScalar::EPSILON
-                || press_amount > AnimatedScalar::EPSILON)
+                || hover_amount > Progress::EPSILON
+                || press_amount > Progress::EPSILON)
                 && let Some((background, border)) =
                     tab_state_visuals(&theme, false, hovered, pressed, hover_amount, press_amount)
             {
@@ -672,7 +649,7 @@ impl Widget for TabBar {
                 );
             }
 
-            if selected && focus_progress > AnimatedScalar::EPSILON {
+            if selected && focus_progress > Progress::EPSILON {
                 draw_focus_ring_frame(
                     ctx,
                     rect,
@@ -732,7 +709,7 @@ impl Widget for TabBar {
             |index| self.tab_indicator_anchor_rect(ctx.bounds(), index),
             self.selection_from,
             self.normalized_selected(),
-            self.selection_animation.value,
+            self.selection_animation.get(ctx),
             Insets::ZERO,
             interaction.active_indicator_thickness,
         ) {
@@ -794,14 +771,14 @@ pub struct BrowserTabBar {
     pub(super) selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     pub(super) selection_from: Option<usize>,
     pub(super) selection_to: Option<usize>,
-    pub(super) selection_animation: AnimatedScalar,
+    pub(super) selection_animation: Progress,
     pub(super) hovered: Option<BrowserTabHit>,
     pub(super) hover_visual: Option<BrowserTabHit>,
     pub(super) pressed: Option<BrowserTabHit>,
     pub(super) press_visual: Option<BrowserTabHit>,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) label_measurements: Vec<TextMeasurement>,
     pub(super) widths: Vec<f32>,
     pub(super) on_change: Option<BrowserTabBarChange>,
@@ -823,14 +800,14 @@ impl BrowserTabBar {
             selected_reader: None,
             selection_from: None,
             selection_to: None,
-            selection_animation: AnimatedScalar::new(1.0),
+            selection_animation: Progress::new(1.0),
             hovered: None,
             hover_visual: None,
             pressed: None,
             press_visual: None,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             label_measurements: Vec::new(),
             widths: Vec::new(),
             on_change: None,
@@ -891,7 +868,7 @@ impl BrowserTabBar {
         self.selected = index;
         self.selection_from = index;
         self.selection_to = index;
-        self.selection_animation = AnimatedScalar::new(1.0);
+        self.selection_animation = Progress::new(1.0);
         self
     }
 
@@ -945,12 +922,10 @@ impl BrowserTabBar {
         }
         self.selected = self.resolved_selected_raw();
         let selected = self.normalized_selected();
-        if self.selection_animation.value >= 1.0 - AnimatedScalar::EPSILON
-            && self.selection_to != selected
-        {
+        if self.selection_to != selected {
             self.selection_from = selected;
             self.selection_to = selected;
-            self.selection_animation = AnimatedScalar::new(1.0);
+            self.selection_animation = Progress::new(1.0);
         }
     }
 
@@ -1014,15 +989,17 @@ impl BrowserTabBar {
         self.selection_to = to;
         if from.zip(to).is_some_and(|(from, to)| from != to) {
             let theme = self.resolved_theme();
-            self.selection_animation = AnimatedScalar::new(0.0);
-            self.selection_animation.set_movement_target_event(
+            self.selection_animation = Progress::new(0.0).movement();
+            self.selection_animation.animate(
                 1.0,
-                theme.motion.tab_switch_duration(),
-                theme.motion.tab_switch_easing(),
+                AnimationSpec::tween(
+                    theme.motion.tab_switch_duration(),
+                    theme.motion.tab_switch_easing(),
+                ),
                 ctx,
             );
         } else {
-            self.selection_animation = AnimatedScalar::new(1.0);
+            self.selection_animation = Progress::new(1.0);
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -1128,26 +1105,6 @@ impl BrowserTabBar {
         self.set_hovered(Some(BrowserTabHit::Tab(next)), ctx);
     }
 
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        let selection_animating = self.selection_animation.advance(time);
-        let hover_animating = self.hover_animation.advance(time);
-        if !hover_animating
-            && self.hovered.is_none()
-            && self.hover_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.hover_visual = None;
-        }
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-        let focus_animating = self.focus_animation.advance(time);
-        selection_animating | hover_animating | press_animating | focus_animating
-    }
-
     pub(super) fn set_hovered(&mut self, hovered: Option<BrowserTabHit>, ctx: &mut EventCtx) {
         if self.hovered == hovered {
             return;
@@ -1156,7 +1113,7 @@ impl BrowserTabBar {
         self.hovered = hovered;
         if let Some(hit) = hovered {
             self.hover_visual = Some(hit);
-            self.hover_animation = AnimatedScalar::new(0.0);
+            self.hover_animation = Progress::new(0.0);
             set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
             self.hover_visual = None;
@@ -1173,7 +1130,7 @@ impl BrowserTabBar {
         self.pressed = pressed;
         if let Some(hit) = pressed {
             self.press_visual = Some(hit);
-            self.press_animation = AnimatedScalar::new(0.0);
+            self.press_animation = Progress::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
             self.press_visual = None;
@@ -1182,17 +1139,17 @@ impl BrowserTabBar {
         ctx.request_semantics();
     }
 
-    pub(super) fn hover_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual.is_some_and(|hit| hit.index() == index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual.is_some_and(|hit| hit.index() == index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
@@ -1261,12 +1218,6 @@ impl Widget for BrowserTabBar {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -1303,7 +1254,7 @@ impl Widget for BrowserTabBar {
         let palette = theme.palette;
         let interaction = theme.interaction;
         let selected_index = self.normalized_selected();
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_animation.get(ctx);
 
         let clip_outset = physical_pixels(
             ctx,
@@ -1317,8 +1268,8 @@ impl Widget for BrowserTabBar {
             let selected = selected_index == Some(index);
             let hovered = self.hovered.is_some_and(|hit| hit.index() == index);
             let pressed = self.pressed.is_some_and(|hit| hit.index() == index);
-            let hover_amount = self.hover_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let hover_amount = self.hover_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
 
             if let Some((background, border)) = tab_state_visuals(
                 &theme,
@@ -1338,7 +1289,7 @@ impl Widget for BrowserTabBar {
                 );
             }
 
-            if selected && focus_progress > AnimatedScalar::EPSILON {
+            if selected && focus_progress > Progress::EPSILON {
                 draw_focus_ring_frame(
                     ctx,
                     rect,
@@ -1396,7 +1347,7 @@ impl Widget for BrowserTabBar {
 
         if let Some(selected) = selected_index {
             let progress = if self.selection_to == Some(selected) {
-                self.selection_animation.value
+                self.selection_animation.get(ctx)
             } else {
                 1.0
             };
@@ -1498,14 +1449,14 @@ pub struct SegmentedControl {
     pub(super) selected: usize,
     pub(super) selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     pub(super) selection_from: usize,
-    pub(super) selection_animation: AnimatedScalar,
+    pub(super) selection_animation: Progress,
     pub(super) hovered: Option<usize>,
     pub(super) hover_visual: Option<usize>,
     pub(super) pressed: Option<usize>,
     pub(super) press_visual: Option<usize>,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) label_measurements: Vec<TextMeasurement>,
     pub(super) on_change: Option<SegmentedControlChange>,
     pub(super) on_change_with_ctx: Option<SegmentedControlContextChange>,
@@ -1558,14 +1509,14 @@ impl SegmentedControl {
             selected: 0,
             selected_reader: None,
             selection_from: 0,
-            selection_animation: AnimatedScalar::new(1.0),
+            selection_animation: Progress::new(1.0),
             hovered: None,
             hover_visual: None,
             pressed: None,
             press_visual: None,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             label_measurements: Vec::new(),
             on_change: None,
             on_change_with_ctx: None,
@@ -1613,7 +1564,7 @@ impl SegmentedControl {
         self.selected = index;
         self.selected_reader = None;
         self.selection_from = index;
-        self.selection_animation = AnimatedScalar::new(1.0);
+        self.selection_animation = Progress::new(1.0);
         self
     }
 
@@ -1712,11 +1663,13 @@ impl SegmentedControl {
             let theme = self.resolved_theme();
             self.selection_from = selected;
             self.selected = index;
-            self.selection_animation = AnimatedScalar::new(0.0);
-            self.selection_animation.set_movement_target_event(
+            self.selection_animation = Progress::new(0.0).movement();
+            self.selection_animation.animate(
                 1.0,
-                theme.motion.tab_switch_duration(),
-                theme.motion.tab_switch_easing(),
+                AnimationSpec::tween(
+                    theme.motion.tab_switch_duration(),
+                    theme.motion.tab_switch_easing(),
+                ),
                 ctx,
             );
             let label = self.segments[index].label.clone();
@@ -1748,7 +1701,7 @@ impl SegmentedControl {
         self.hovered = hovered;
         if let Some(index) = hovered {
             self.hover_visual = Some(index);
-            self.hover_animation = AnimatedScalar::new(0.0);
+            self.hover_animation = Progress::new(0.0);
             set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
             self.hover_visual = None;
@@ -1765,7 +1718,7 @@ impl SegmentedControl {
         self.pressed = pressed;
         if let Some(index) = pressed {
             self.press_visual = Some(index);
-            self.press_animation = AnimatedScalar::new(0.0);
+            self.press_animation = Progress::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
             self.press_visual = None;
@@ -1774,40 +1727,20 @@ impl SegmentedControl {
         ctx.request_semantics();
     }
 
-    pub(super) fn hover_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
-    }
-
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        let selection_animating = self.selection_animation.advance(time);
-        let hover_animating = self.hover_animation.advance(time);
-        if !hover_animating
-            && self.hovered.is_none()
-            && self.hover_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.hover_visual = None;
-        }
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-        let focus_animating = self.focus_animation.advance(time);
-        selection_animating | hover_animating | press_animating | focus_animating
     }
 }
 
@@ -1871,12 +1804,6 @@ impl Widget for SegmentedControl {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -1929,7 +1856,7 @@ impl Widget for SegmentedControl {
                 |index| self.segment_rect(ctx.bounds(), index),
                 from,
                 selected,
-                self.selection_animation.value,
+                self.selection_animation.get(ctx),
                 Insets::all(2.0),
             );
             if let Some(thumb) = thumb {
@@ -1949,7 +1876,7 @@ impl Widget for SegmentedControl {
             None
         };
 
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_animation.get(ctx);
         for (index, segment) in self.segments.iter().enumerate() {
             let Some(rect) = self.segment_rect(ctx.bounds(), index) else {
                 continue;
@@ -1957,8 +1884,8 @@ impl Widget for SegmentedControl {
             let selected = self.normalized_selected() == index;
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
-            let hover_amount = self.hover_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let hover_amount = self.hover_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
 
             if !selected
                 && let Some((background, border)) =
@@ -1974,7 +1901,7 @@ impl Widget for SegmentedControl {
                 );
             }
 
-            if selected && focus_progress > AnimatedScalar::EPSILON {
+            if selected && focus_progress > Progress::EPSILON {
                 let focus_bounds = selected_thumb.unwrap_or_else(|| rect.inflate(-2.0, -2.0));
                 draw_focus_ring_frame(
                     ctx,
@@ -2076,14 +2003,14 @@ pub struct Tabs {
     pub(super) panels: WidgetChildren,
     pub(super) selected: usize,
     pub(super) selection_from: usize,
-    pub(super) selection_animation: AnimatedScalar,
+    pub(super) selection_animation: Progress,
     pub(super) hovered: Option<usize>,
     pub(super) hover_visual: Option<usize>,
     pub(super) pressed: Option<usize>,
     pub(super) press_visual: Option<usize>,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) label_measurements: Vec<TextMeasurement>,
     pub(super) widths: Vec<f32>,
     pub(super) gap: Option<f32>,
@@ -2101,14 +2028,14 @@ impl Tabs {
             panels: WidgetChildren::new(),
             selected: 0,
             selection_from: 0,
-            selection_animation: AnimatedScalar::new(1.0),
+            selection_animation: Progress::new(1.0),
             hovered: None,
             hover_visual: None,
             pressed: None,
             press_visual: None,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             label_measurements: Vec::new(),
             widths: Vec::new(),
             gap: None,
@@ -2134,7 +2061,7 @@ impl Tabs {
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = index;
         self.selection_from = index;
-        self.selection_animation = AnimatedScalar::new(1.0);
+        self.selection_animation = Progress::new(1.0);
         self
     }
 
@@ -2232,11 +2159,13 @@ impl Tabs {
             let theme = self.resolved_theme();
             self.selection_from = self.normalized_selected();
             self.selected = index;
-            self.selection_animation = AnimatedScalar::new(0.0);
-            self.selection_animation.set_movement_target_event(
+            self.selection_animation = Progress::new(0.0).movement();
+            self.selection_animation.animate(
                 1.0,
-                theme.motion.tab_switch_duration(),
-                theme.motion.tab_switch_easing(),
+                AnimationSpec::tween(
+                    theme.motion.tab_switch_duration(),
+                    theme.motion.tab_switch_easing(),
+                ),
                 ctx,
             );
             if let Some(on_change) = &mut self.on_change {
@@ -2254,26 +2183,6 @@ impl Tabs {
             .clamp(0, self.labels.len() as isize - 1) as usize;
         self.set_hovered(Some(next), ctx);
         self.select(next, ctx);
-    }
-
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        let selection_animating = self.selection_animation.advance(time);
-        let hover_animating = self.hover_animation.advance(time);
-        if !hover_animating
-            && self.hovered.is_none()
-            && self.hover_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.hover_visual = None;
-        }
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-        let focus_animating = self.focus_animation.advance(time);
-        selection_animating | hover_animating | press_animating | focus_animating
     }
 
     pub(super) fn selected_panel(&self) -> Option<&sui_runtime::WidgetPod> {
@@ -2300,7 +2209,7 @@ impl Tabs {
         self.hovered = hovered;
         if let Some(index) = hovered {
             self.hover_visual = Some(index);
-            self.hover_animation = AnimatedScalar::new(0.0);
+            self.hover_animation = Progress::new(0.0);
             set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
             self.hover_visual = None;
@@ -2317,7 +2226,7 @@ impl Tabs {
         self.pressed = pressed;
         if let Some(index) = pressed {
             self.press_visual = Some(index);
-            self.press_animation = AnimatedScalar::new(0.0);
+            self.press_animation = Progress::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
             self.press_visual = None;
@@ -2326,17 +2235,17 @@ impl Tabs {
         ctx.request_semantics();
     }
 
-    pub(super) fn hover_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
@@ -2405,12 +2314,6 @@ impl Widget for Tabs {
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
             }
             _ => {}
         }
@@ -2526,7 +2429,7 @@ impl Widget for Tabs {
             palette.border,
         );
 
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_animation.get(ctx);
         for (index, label) in self.labels.iter().enumerate() {
             let Some(rect) = self.tab_rect(ctx.bounds(), index) else {
                 continue;
@@ -2534,8 +2437,8 @@ impl Widget for Tabs {
             let selected = self.normalized_selected() == index;
             let hovered = self.hovered == Some(index);
             let pressed = self.pressed == Some(index);
-            let hover_amount = self.hover_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let hover_amount = self.hover_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
 
             // Underline tabs: the accent indicator carries selection.
             if let Some((background, border)) =
@@ -2551,7 +2454,7 @@ impl Widget for Tabs {
                 );
             }
 
-            if selected && focus_progress > AnimatedScalar::EPSILON {
+            if selected && focus_progress > Progress::EPSILON {
                 draw_focus_ring_frame(
                     ctx,
                     rect,
@@ -2586,7 +2489,7 @@ impl Widget for Tabs {
             |index| self.tab_rect(ctx.bounds(), index),
             self.selection_from,
             self.normalized_selected(),
-            self.selection_animation.value,
+            self.selection_animation.get(ctx),
             tab_padding,
             interaction.active_indicator_thickness,
         ) {
@@ -2610,7 +2513,7 @@ impl Widget for Tabs {
             let panel_translation = tab_panel_transition_translation(
                 self.selection_from,
                 self.normalized_selected(),
-                self.selection_animation.value,
+                self.selection_animation.get(ctx),
                 metrics,
             );
             if panel_translation == Vector::ZERO {

@@ -45,6 +45,7 @@ fn layered_frame(window: WindowId, revision: usize) -> SceneFrame {
             Vector::ZERO
         },
         opacity: if revision == 3 { 0.4 } else { 1.0 },
+        ..LayerProperties::default()
     };
     frame
         .scene

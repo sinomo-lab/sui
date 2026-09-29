@@ -15,9 +15,9 @@ use sui_core::{
 };
 use sui_render_wgpu::{FeatheringOptions, WgpuExternalTextureRegistry, WgpuRenderer};
 use sui_runtime::{
-    CommandSender, PresentationLatencyDiagnostics, Runtime, WindowIcon as RuntimeWindowIcon,
-    WindowPerformanceSnapshot, WindowRenderOptions, window_performance_snapshot,
-    window_render_options, window_scene_statistics_detail_mode,
+    CommandSender, FramePacing, PresentationLatencyDiagnostics, Runtime,
+    WindowIcon as RuntimeWindowIcon, WindowPerformanceSnapshot, WindowRenderOptions,
+    window_performance_snapshot, window_render_options, window_scene_statistics_detail_mode,
 };
 use web_time::Instant;
 use winit::{
@@ -69,6 +69,7 @@ const WEB_PNG_FAVICON_ID: &str = "sui-window-icon-png";
 #[cfg(target_arch = "wasm32")]
 const WEB_APPLE_TOUCH_ICON_ID: &str = "sui-window-apple-touch-icon";
 
+use crate::frame_pacing::FrameCadence;
 use crate::{
     AccessibilityBridge, WindowOutputDiagnostics, detect_window_display_capabilities,
     headless::PlatformWindow, map_window_color_management, map_window_stem_darkening,
@@ -979,6 +980,9 @@ impl DesktopApp {
                     android_back_down_seen: false,
                     ime_allowed: false,
                     scale_factor,
+                    refresh_interval: monitor_refresh_interval(&window),
+                    cadence: FrameCadence::default(),
+                    frame_pacing: FramePacing::Timer,
                     window,
                 },
             );
@@ -1046,6 +1050,7 @@ impl DesktopApp {
 
         let window_ids: Vec<_> = self.windows.keys().copied().collect();
         for window_id in window_ids.iter().copied() {
+            self.sync_frame_pacing(window_id)?;
             self.request_redraw_if_needed(window_id)?;
         }
 
@@ -1079,6 +1084,55 @@ impl DesktopApp {
         Ok(had_events)
     }
 
+    /// Pace animation frames by the display while the window presents with
+    /// vsync, and by the runtime's timer when it is hidden or unsynchronized
+    /// (a hidden window gets no redraws to pace by).
+    fn sync_frame_pacing(&mut self, window_id: WindowId) -> Result<()> {
+        let vsync = self.renderer.vsync_enabled();
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return Ok(());
+        };
+        let size = window.window.inner_size();
+        let presenting = !window.occluded
+            && window.window.is_minimized() != Some(true)
+            && size.width > 0
+            && size.height > 0;
+        let pacing = if vsync && presenting {
+            FramePacing::Display
+        } else {
+            FramePacing::Timer
+        };
+        if window.frame_pacing != pacing {
+            window.frame_pacing = pacing;
+            window.cadence = FrameCadence::default();
+            self.runtime.set_frame_pacing(window_id, pacing)?;
+        }
+        Ok(())
+    }
+
+    /// Start a display-paced animation frame before rendering, stamped with
+    /// the time the frame should reach the screen.
+    fn begin_display_paced_frame(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+    ) -> Result<()> {
+        let now = self.frame_clock;
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return Ok(());
+        };
+        if window.frame_pacing != FramePacing::Display
+            || !self.runtime.has_pending_animation_frames(window_id)?
+        {
+            return Ok(());
+        }
+        let frame_time = window.cadence.next(now, window.refresh_interval);
+        for event in self.runtime.begin_animation_frame(window_id, frame_time)? {
+            self.process_event(event_loop, window_id, event)?;
+        }
+        Ok(())
+    }
+
     fn request_redraw_if_needed(&mut self, window_id: WindowId) -> Result<()> {
         // A focused VSync window must keep presenting even when its retained UI
         // is unchanged. Otherwise windowed VRR can lower the whole monitor's
@@ -1088,7 +1142,14 @@ impl DesktopApp {
                 .windows
                 .get(&window_id)
                 .is_some_and(|window| window.focused);
-        if !self.runtime.needs_render(window_id)? && !keep_presenting {
+        // Display-paced animation needs a redraw to start its next frame,
+        // even before anything has been invalidated.
+        let animating = self
+            .windows
+            .get(&window_id)
+            .is_some_and(|window| window.frame_pacing == FramePacing::Display)
+            && self.runtime.has_pending_animation_frames(window_id)?;
+        if !self.runtime.needs_render(window_id)? && !keep_presenting && !animating {
             return Ok(());
         }
 
@@ -1217,6 +1278,7 @@ impl DesktopApp {
             // and timers do not freeze while the title bar or border is held.
             // Do not chase newly scheduled future deadlines in this callback.
             self.dispatch_ready_events(event_loop)?;
+            self.begin_display_paced_frame(event_loop, window_id)?;
         }
 
         let event_started = Instant::now();
@@ -1577,18 +1639,25 @@ impl DesktopApp {
                         .unwrap_or_else(|| physical_size_to_logical_size(size, 1.0)),
                 )),
             ),
-            WinitWindowEvent::Moved(position) => self.process_event(
-                event_loop,
-                window_id,
-                Event::Window(WindowEvent::Moved(Point::new(
-                    position.x as f32,
-                    position.y as f32,
-                ))),
-            ),
+            WinitWindowEvent::Moved(position) => {
+                // The window may now be on a monitor with another refresh rate.
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.refresh_interval = monitor_refresh_interval(&window.window);
+                }
+                self.process_event(
+                    event_loop,
+                    window_id,
+                    Event::Window(WindowEvent::Moved(Point::new(
+                        position.x as f32,
+                        position.y as f32,
+                    ))),
+                )
+            }
             WinitWindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let suggested_size = self.windows.get_mut(&window_id).map(|window| {
                     window.scale_factor = scale_factor;
                     window.display_capabilities_dirty = true;
+                    window.refresh_interval = monitor_refresh_interval(&window.window);
                     physical_size_to_logical_size(window.window.inner_size(), scale_factor)
                 });
                 self.process_event(
@@ -2611,6 +2680,16 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
     }
 }
 
+/// The refresh period of the monitor showing `window`, in seconds, when the
+/// platform reports it.
+fn monitor_refresh_interval(window: &Window) -> Option<f64> {
+    window
+        .current_monitor()
+        .and_then(|monitor| monitor.refresh_rate_millihertz())
+        .filter(|millihertz| *millihertz > 0)
+        .map(|millihertz| 1000.0 / f64::from(millihertz))
+}
+
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct WindowState {
     id: WindowId,
@@ -2636,6 +2715,10 @@ struct WindowState {
     android_back_down_seen: bool,
     ime_allowed: bool,
     scale_factor: f64,
+    /// The monitor's refresh period, when the platform reports it.
+    refresh_interval: Option<f64>,
+    cadence: FrameCadence,
+    frame_pacing: FramePacing,
     window: Arc<Window>,
 }
 

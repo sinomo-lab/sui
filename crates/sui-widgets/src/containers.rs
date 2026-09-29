@@ -3,8 +3,8 @@ use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use sui_core::{
     Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
     PointerButton, PointerEvent, PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction,
-    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WakeEvent,
-    WidgetId, WindowEvent,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
+    WindowEvent,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexMeasurePhase,
@@ -13,13 +13,13 @@ use sui_layout::{
 };
 use sui_reactive::Observable;
 use sui_runtime::{
-    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode,
-    PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, Widget, WidgetChildren, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, EventPhase, FrameClock, LayerOptions, MeasureCtx,
+    PaintBoundaryMode, PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, Widget,
+    WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
 
-use crate::{DefaultTheme, MotionScalar};
+use crate::DefaultTheme;
 
 pub struct Padding {
     insets: Insets,
@@ -2446,7 +2446,8 @@ struct ScrollBarMetrics {
     max_scroll: f32,
 }
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = crate::Progress;
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
@@ -2455,7 +2456,7 @@ fn set_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) -> bool {
-    animation.set_target_event(target, duration, easing, ctx)
+    animation.animate(target, crate::AnimationSpec::tween(duration, easing), ctx)
 }
 
 fn set_hover_animation_target(
@@ -2588,13 +2589,13 @@ impl ScrollBar {
         self.width.unwrap_or(theme.metrics.scroll_bar_thickness)
     }
 
-    fn resolved_track_width(&self) -> f32 {
+    fn resolved_track_width(&self, clock: &impl FrameClock) -> f32 {
         let expanded = self.resolved_width();
         match self.appearance {
             ScrollBarAppearance::Gutter => expanded,
             ScrollBarAppearance::Overlay => {
                 let collapsed = OVERLAY_SCROLL_BAR_IDLE_THICKNESS.min(expanded);
-                collapsed + (expanded - collapsed) * self.hover_animation.value.clamp(0.0, 1.0)
+                collapsed + (expanded - collapsed) * self.hover_animation.get(clock).clamp(0.0, 1.0)
             }
         }
     }
@@ -2610,8 +2611,8 @@ impl ScrollBar {
             .unwrap_or(*self.theme)
     }
 
-    fn track_rect(&self, bounds: Rect) -> Rect {
-        let width = self.resolved_track_width();
+    fn track_rect(&self, bounds: Rect, clock: &impl FrameClock) -> Rect {
+        let width = self.resolved_track_width(clock);
         match self.axis {
             ScrollBarAxis::Vertical => {
                 let x = match self.appearance {
@@ -2634,7 +2635,7 @@ impl ScrollBar {
         }
     }
 
-    fn metrics(&self, bounds: Rect) -> Option<ScrollBarMetrics> {
+    fn metrics(&self, bounds: Rect, clock: &impl FrameClock) -> Option<ScrollBarMetrics> {
         let viewport = self.state.viewport_size();
         let content = self.state.content_size();
         let viewport_extent = self.axis_size(viewport);
@@ -2644,7 +2645,7 @@ impl ScrollBar {
             return None;
         }
 
-        let track = self.track_rect(bounds);
+        let track = self.track_rect(bounds, clock);
         let track_extent = self.axis_rect_length(track);
         let ratio = (viewport_extent / content_extent).clamp(0.08, 1.0);
         let thumb_extent = (track_extent * ratio)
@@ -2749,25 +2750,6 @@ impl ScrollBar {
         }
     }
 
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let previous_hover = self.hover_animation.value;
-        let previous_drag = self.drag_animation.value;
-        let previous_focus = self.focus_animation.value;
-        let animating = self.hover_animation.advance(time)
-            | self.drag_animation.advance(time)
-            | self.focus_animation.advance(time);
-        let changed = self.hover_animation.changed_since(previous_hover)
-            || self.drag_animation.changed_since(previous_drag)
-            || self.focus_animation.changed_since(previous_focus);
-
-        if changed {
-            ctx.request_paint();
-        }
-        if animating {
-            ctx.request_animation_frame();
-        }
-    }
-
     fn request_dependents<C>(&self, ctx: &mut C, source_widget_id: WidgetId)
     where
         C: ScrollInvalidationCtx,
@@ -2839,7 +2821,7 @@ impl ScrollBar {
 
 impl Widget for ScrollBar {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        let metrics = self.metrics(ctx.bounds());
+        let metrics = self.metrics(ctx.bounds(), ctx);
 
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
@@ -2991,9 +2973,6 @@ impl Widget for ScrollBar {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
-            }
             _ => {}
         }
     }
@@ -3025,7 +3004,7 @@ impl Widget for ScrollBar {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let Some(metrics) = self.metrics(ctx.bounds()) else {
+        let Some(metrics) = self.metrics(ctx.bounds(), ctx) else {
             return;
         };
 
@@ -3037,9 +3016,9 @@ impl Widget for ScrollBar {
         let thumb_radius = (thumb.width() * 0.5).min(thumb.height() * 0.5);
         let interaction = self
             .hover_animation
-            .value
-            .max(self.drag_animation.value)
-            .max(self.focus_animation.value);
+            .get(ctx)
+            .max(self.drag_animation.get(ctx))
+            .max(self.focus_animation.get(ctx));
         let track_alpha = match self.appearance {
             ScrollBarAppearance::Gutter => 0.7,
             ScrollBarAppearance::Overlay => 0.08 + 0.32 * interaction,
@@ -3062,10 +3041,12 @@ impl Widget for ScrollBar {
                 mix_color(
                     palette.placeholder,
                     palette.border_strong,
-                    self.hover_animation.value.max(self.focus_animation.value),
+                    self.hover_animation
+                        .get(ctx)
+                        .max(self.focus_animation.get(ctx)),
                 ),
                 palette.text_muted,
-                self.drag_animation.value,
+                self.drag_animation.get(ctx),
             )
             .with_alpha(thumb_alpha),
         );
@@ -3074,7 +3055,7 @@ impl Widget for ScrollBar {
             mix_color(
                 palette.border.with_alpha(border_alpha),
                 palette.focus_ring,
-                self.focus_animation.value,
+                self.focus_animation.get(ctx),
             ),
             StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width).max(1.0)),
         );
@@ -3835,17 +3816,6 @@ impl ScrollView {
             }
         }
     }
-
-    fn advance_focus_animation(&mut self, time: f64, ctx: &mut EventCtx) {
-        let previous = self.focus_animation.value;
-        let animating = self.focus_animation.advance(time);
-        if self.focus_animation.changed_since(previous) {
-            ctx.request_paint();
-        }
-        if animating {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 pub struct VirtualScrollView {
@@ -4213,17 +4183,6 @@ impl VirtualScrollView {
         let offset_y = self.item_offsets.get(index).copied()?;
         Some(self.visible_range_for_offset(self.state.viewport_size().height, offset_y))
     }
-
-    fn advance_focus_animation(&mut self, time: f64, ctx: &mut EventCtx) {
-        let previous = self.focus_animation.value;
-        let animating = self.focus_animation.advance(time);
-        if self.focus_animation.changed_since(previous) {
-            ctx.request_paint();
-        }
-        if animating {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 impl Default for VirtualScrollView {
@@ -4291,10 +4250,6 @@ impl Widget for ScrollView {
                     && ctx.bounds().contains(pointer.position) =>
             {
                 ctx.request_focus();
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_focus_animation(*time, ctx);
-                ctx.set_handled();
             }
             _ => {}
         }
@@ -4555,10 +4510,6 @@ impl Widget for VirtualScrollView {
                     && ctx.bounds().contains(pointer.position) =>
             {
                 ctx.request_focus();
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_focus_animation(*time, ctx);
-                ctx.set_handled();
             }
             _ => {}
         }
@@ -8870,7 +8821,7 @@ mod tests {
             )
             .expect("mouse hover should be handled");
         runtime.tick(theme.motion.hover_duration());
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let hovered = runtime.render(window_id).expect("render should succeed");
         assert!(solid_fill_path_bounds(&hovered).iter().all(|path| {
             (path.width() - theme.metrics.scroll_bar_thickness).abs() <= f32::EPSILON
@@ -8901,12 +8852,12 @@ mod tests {
             .expect("hover event should be handled");
 
         runtime.tick(theme.motion.hover_duration() * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let mid_hover = runtime.render(window_id).expect("render should succeed");
         assert!(!solid_fill_colors(&mid_hover).contains(&expected_hover));
 
         runtime.tick(theme.motion.hover_duration());
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_hover = runtime.render(window_id).expect("render should succeed");
         assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
 
@@ -8919,12 +8870,12 @@ mod tests {
             .expect("drag event should be handled");
 
         runtime.tick(theme.motion.hover_duration() + theme.motion.press_duration() * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let mid_drag = runtime.render(window_id).expect("render should succeed");
         assert!(!solid_fill_colors(&mid_drag).contains(&expected_drag));
 
         runtime.tick(theme.motion.hover_duration() + theme.motion.press_duration());
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_drag = runtime.render(window_id).expect("render should succeed");
         assert!(solid_fill_colors(&settled_drag).contains(&expected_drag));
     }
@@ -8953,7 +8904,7 @@ mod tests {
         let _ = runtime.render(window_id).expect("render should succeed");
 
         runtime.tick(theme.motion.focus_duration() * 0.5);
-        assert!(handle_ready_events(&mut runtime) >= 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let mid_focus = runtime.render(window_id).expect("render should succeed");
         assert!(
             !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
@@ -8961,7 +8912,7 @@ mod tests {
         );
 
         runtime.tick(theme.motion.focus_duration() + 0.01);
-        assert!(handle_ready_events(&mut runtime) >= 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_focus = runtime.render(window_id).expect("render should succeed");
         let settled_strokes = solid_stroke_colors(&settled_focus);
         assert!(

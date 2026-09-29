@@ -1,7 +1,7 @@
 pub use sui_animation::*;
 
 use sui_core::{InvalidationKind, InvalidationRequest, InvalidationTarget};
-use sui_runtime::{EventCtx, motion_policy};
+use sui_runtime::{AnimateCtx, EventCtx, FrameClock, Motion, motion_policy};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationBindingInvalidation {
@@ -27,12 +27,112 @@ impl TimelineTick<'_> {
     }
 }
 
+/// A widget state value that a transition can be started on from an event:
+/// runtime-driven [`Progress`] or frame-driven [`MotionScalar`].
+pub(crate) trait StateMotion {
+    fn start(&mut self, target: f32, spec: AnimationSpec, ctx: &mut EventCtx) -> bool;
+}
+
+impl StateMotion for Progress {
+    fn start(&mut self, target: f32, spec: AnimationSpec, ctx: &mut EventCtx) -> bool {
+        self.animate(target, spec, ctx)
+    }
+}
+
+impl StateMotion for MotionScalar {
+    fn start(&mut self, target: f32, spec: AnimationSpec, ctx: &mut EventCtx) -> bool {
+        self.set_target_event_with(target, spec, ctx)
+    }
+}
+
+/// The scale popovers, menus, and select lists grow from as they appear.
+pub(crate) const ENTRANCE_SCALE: f32 = 0.96;
+
+/// An appearing surface's scale at `progress` (0 hidden, 1 shown), anchored
+/// at the edge nearest its trigger. Reduced motion shows it at full size.
+pub(crate) fn entrance_scale(progress: f32) -> f32 {
+    1.0 - (1.0 - ENTRANCE_SCALE) * motion_policy().entrance_offset(progress)
+}
+
 pub trait TimelineBindingSink {
     fn apply_animation_value(&mut self, binding: &AnimationBinding, value: AnimationValue) -> bool;
 }
 
+/// A 0-to-1 progress value for widget state (hover, press, focus, toggle),
+/// animated by the runtime.
+///
+/// Start a transition with [`Progress::animate`] and read the value for the
+/// frame being painted with [`Progress::get`]. The runtime repaints the widget
+/// until the transition ends, so the widget needs no animation-frame
+/// handling. Transitions follow the app's [`MotionPolicy`] and keep momentum
+/// when retargeted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Progress {
+    motion: Motion<f32>,
+}
+
+impl Progress {
+    pub const EPSILON: f32 = 1e-4;
+
+    pub const fn new(value: f32) -> Self {
+        Self {
+            motion: Motion::new(value),
+        }
+    }
+
+    /// Mark this as movement (a sliding indicator, for example): reduced
+    /// motion finishes it immediately.
+    pub const fn movement(mut self) -> Self {
+        self.motion = self.motion.movement();
+        self
+    }
+
+    /// Invalidate `kind` instead of paint while animating, such as
+    /// `Transform` or `Effect` for progress read in layer properties.
+    pub const fn invalidating(mut self, kind: InvalidationKind) -> Self {
+        self.motion = self.motion.invalidating(kind);
+        self
+    }
+
+    /// The value at the time of the frame `clock` is producing.
+    pub fn get(&self, clock: &impl FrameClock) -> f32 {
+        self.motion.get(clock)
+    }
+
+    /// The value at `time`.
+    pub fn at(&self, time: f64) -> f32 {
+        self.motion.at(time)
+    }
+
+    pub fn target(&self) -> f32 {
+        self.motion.target()
+    }
+
+    pub fn is_animating(&self, clock: &impl FrameClock) -> bool {
+        self.motion.is_animating(clock)
+    }
+
+    /// Whether anything shows at `clock`'s frame: the value is above zero,
+    /// heading above zero, or still animating.
+    pub fn is_presented(&self, clock: &impl FrameClock) -> bool {
+        self.get(clock) > Self::EPSILON || self.target() > Self::EPSILON || self.is_animating(clock)
+    }
+
+    /// Animate toward `target` (clamped to 0..=1) with `spec`. Returns
+    /// whether a transition started.
+    pub fn animate(&mut self, target: f32, spec: AnimationSpec, ctx: &mut impl AnimateCtx) -> bool {
+        ctx.animate(&mut self.motion, target.clamp(0.0, 1.0), spec)
+    }
+
+    /// Rest at `value` without animating.
+    pub fn jump_to(&mut self, value: f32) {
+        self.motion.jump_to(value.clamp(0.0, 1.0));
+    }
+}
+
 /// A 0-to-1 progress value for widget state transitions (hover, press,
-/// focus, reveal), driven by the runtime clock.
+/// focus, reveal) that the widget advances itself from animation frames.
+/// Prefer [`Progress`], which the runtime advances.
 ///
 /// Every transition follows the app's [`MotionPolicy`]: the time scale
 /// stretches it, and with motion off it finishes immediately. Transitions

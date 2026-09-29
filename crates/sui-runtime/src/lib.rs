@@ -67,9 +67,9 @@ pub use layout_work::{
 };
 pub use logo::{DEFAULT_SUI_LOGO_SVG, default_sui_logo_image};
 pub use motion::{
-    app_motion_preference, motion_policy, motion_time_scale, reset_motion_settings,
-    set_app_motion_preference, set_motion_time_scale, set_system_motion_preference,
-    system_motion_preference,
+    AnimateCtx, FrameClock, FramePacing, Motion, app_motion_preference, motion_policy,
+    motion_time_scale, reset_motion_settings, set_app_motion_preference, set_motion_time_scale,
+    set_system_motion_preference, system_motion_preference,
 };
 pub use overlay::{
     OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayDismissReason, OverlayDismissRequest,
@@ -331,10 +331,36 @@ impl Runtime {
     }
 
     /// Whether any widget in the window has asked for another animation
-    /// frame, meaning a transition is still running.
+    /// frame or has a [`Motion`] running, meaning a transition is in flight.
     pub fn has_pending_animation_frames(&self, window_id: WindowId) -> Result<bool> {
         let window = self.window(window_id)?;
         Ok(window.active_animated_widget_count() > 0)
+    }
+
+    /// Choose how the window's animation frames are timed. Platforms that
+    /// present with vsync use [`FramePacing::Display`] while the window is
+    /// visible, and [`FramePacing::Timer`] otherwise.
+    pub fn set_frame_pacing(&mut self, window_id: WindowId, pacing: FramePacing) -> Result<()> {
+        self.window_mut(window_id)?.frame_pacing = pacing;
+        Ok(())
+    }
+
+    pub fn frame_pacing(&self, window_id: WindowId) -> Result<FramePacing> {
+        Ok(self.window(window_id)?.frame_pacing)
+    }
+
+    /// Start a display-paced animation frame for the window and return the
+    /// frame events to dispatch. `frame_time` is when the frame is expected on
+    /// screen; widgets see it as the frame's time, so motion lines up with
+    /// what is displayed. Does nothing while no animation is running.
+    pub fn begin_animation_frame(
+        &mut self,
+        window_id: WindowId,
+        frame_time: f64,
+    ) -> Result<Vec<Event>> {
+        Ok(self
+            .window_mut(window_id)?
+            .begin_animation_frame(frame_time))
     }
 
     pub fn wake_async(&mut self, window_id: WindowId, token: AsyncWakeToken) -> Result<bool> {
@@ -1254,6 +1280,10 @@ struct WindowState {
     pending_async_wakeups: VecDeque<AsyncWakeToken>,
     requested_animation_frames: BTreeSet<WidgetId>,
     delivering_animation_frames: VecDeque<WidgetId>,
+    /// Widgets with a running [`Motion`], by the invalidation it needs, and
+    /// the frame time its transition ends.
+    active_motions: HashMap<(WidgetId, InvalidationKind), f64>,
+    frame_pacing: FramePacing,
     last_animation_frame_time: Option<f64>,
     next_animation_frame_index: u64,
     pending_animation_wake_count: usize,
@@ -1331,6 +1361,8 @@ impl WindowState {
             pending_async_wakeups: VecDeque::new(),
             requested_animation_frames: BTreeSet::new(),
             delivering_animation_frames: VecDeque::new(),
+            active_motions: HashMap::new(),
+            frame_pacing: FramePacing::Timer,
             last_animation_frame_time: None,
             next_animation_frame_index: 0,
             pending_animation_wake_count: 0,
@@ -2084,13 +2116,102 @@ impl WindowState {
         self.root.layer_composition_mode_for(widget_id)
     }
 
+    /// Whether a widget has asked for a frame or has a running [`Motion`].
+    fn wants_animation_frame(&self) -> bool {
+        !self.requested_animation_frames.is_empty() || !self.active_motions.is_empty()
+    }
+
+    /// When the runtime's own timer delivers the next animation frame. With
+    /// display pacing the platform starts frames instead.
     fn animation_frame_deadline(&self) -> Option<f64> {
-        (!self.requested_animation_frames.is_empty()).then_some(
+        (self.frame_pacing == FramePacing::Timer && self.wants_animation_frame()).then_some(
             self.last_animation_frame_time
                 .map_or(self.last_tick_time, |last| {
                     last + ANIMATION_FRAME_INTERVAL_SECONDS
                 }),
         )
+    }
+
+    /// The time the frame being produced represents: the latest animation
+    /// frame's (expected presentation) time, or the current time.
+    fn frame_time(&self) -> f64 {
+        self.last_animation_frame_time
+            .map_or(self.last_tick_time, |frame| frame.max(self.last_tick_time))
+    }
+
+    /// Start an animation frame at `frame_time`: deliver frame events to the
+    /// widgets that asked for one and invalidate widgets with running motion.
+    fn start_animation_frame(&mut self, frame_time: f64) -> Vec<Event> {
+        let frame_time = self
+            .last_animation_frame_time
+            .map_or(frame_time, |last| frame_time.max(last));
+        let delta = self
+            .last_animation_frame_time
+            .map(|last| frame_time - last)
+            .unwrap_or(0.0);
+        let frame_index = self.next_animation_frame_index;
+        self.next_animation_frame_index = self.next_animation_frame_index.saturating_add(1);
+
+        let requested = std::mem::take(&mut self.requested_animation_frames);
+        self.delivering_animation_frames
+            .extend(requested.iter().copied());
+        let events = requested
+            .iter()
+            .map(|_| {
+                Event::Wake(WakeEvent::AnimationFrame {
+                    time: frame_time,
+                    delta,
+                    frame_index,
+                })
+            })
+            .collect();
+        self.last_animation_frame_time = Some(frame_time);
+        self.tick_motions(frame_time);
+        if self.delivering_animation_frames.is_empty() && !self.wants_animation_frame() {
+            // Nothing will ask for the next frame, so its delta starts fresh.
+            self.last_animation_frame_time = None;
+        }
+        events
+    }
+
+    /// Invalidate every widget whose motion is still running at `frame_time`,
+    /// once more for motion that just ended, and forget finished motion.
+    fn tick_motions(&mut self, frame_time: f64) {
+        if self.active_motions.is_empty() {
+            return;
+        }
+        let mut invalidations = Vec::with_capacity(self.active_motions.len());
+        let graph = &self.graph;
+        self.active_motions.retain(|&(widget_id, kind), until| {
+            if !graph.contains(widget_id) {
+                return false;
+            }
+            invalidations.push(InvalidationRequest::new(
+                InvalidationTarget::Widget(widget_id),
+                kind,
+            ));
+            frame_time < *until
+        });
+        for request in &invalidations {
+            if let InvalidationTarget::Widget(widget_id) = request.target {
+                // The widget's own output changes with time; its children's
+                // does not, so cached child output stays valid.
+                *self
+                    .pending_local_output
+                    .entry((widget_id, request.kind))
+                    .or_default() += 1;
+            }
+        }
+        self.schedule.extend(&invalidations);
+        self.pending_invalidations.extend(invalidations);
+    }
+
+    /// Start a display-paced animation frame (see [`FramePacing::Display`]).
+    fn begin_animation_frame(&mut self, frame_time: f64) -> Vec<Event> {
+        if !self.wants_animation_frame() {
+            return Vec::new();
+        }
+        self.start_animation_frame(frame_time)
     }
 
     fn next_wakeup_time(&self) -> Option<f64> {
@@ -2120,6 +2241,7 @@ impl WindowState {
             .iter()
             .copied()
             .chain(self.delivering_animation_frames.iter().copied())
+            .chain(self.active_motions.keys().map(|(widget_id, _)| *widget_id))
             .collect::<BTreeSet<_>>()
             .len()
     }
@@ -2170,27 +2292,8 @@ impl WindowState {
             .animation_frame_deadline()
             .is_some_and(|deadline| deadline <= now)
         {
-            let delta = self
-                .last_animation_frame_time
-                .map(|last| (now - last).max(0.0))
-                .unwrap_or(0.0);
-            let frame_index = self.next_animation_frame_index;
-            self.next_animation_frame_index = self.next_animation_frame_index.saturating_add(1);
-
-            let requested = std::mem::take(&mut self.requested_animation_frames);
-            self.delivering_animation_frames
-                .extend(requested.iter().copied());
-            ready.extend(requested.iter().map(|_| {
-                Event::Wake(WakeEvent::AnimationFrame {
-                    time: now,
-                    delta,
-                    frame_index,
-                })
-            }));
-            self.last_animation_frame_time = Some(now);
-        } else if self.delivering_animation_frames.is_empty()
-            && self.requested_animation_frames.is_empty()
-        {
+            ready.extend(self.start_animation_frame(now));
+        } else if self.delivering_animation_frames.is_empty() && !self.wants_animation_frame() {
             self.last_animation_frame_time = None;
         }
 
@@ -2649,6 +2752,14 @@ impl WindowState {
                 WakeRequest::RequestAnimationFrame { target } => {
                     self.requested_animation_frames.insert(target);
                 }
+                WakeRequest::Motion {
+                    target,
+                    kind,
+                    until,
+                } => {
+                    let end = self.active_motions.entry((target, kind)).or_insert(until);
+                    *end = end.max(until);
+                }
             }
         }
     }
@@ -2815,9 +2926,7 @@ impl WindowState {
             }
             Event::Wake(WakeEvent::AnimationFrame { .. }) => {
                 self.delivering_animation_frames.pop_front();
-                if self.delivering_animation_frames.is_empty()
-                    && self.requested_animation_frames.is_empty()
-                {
+                if self.delivering_animation_frames.is_empty() && !self.wants_animation_frame() {
                     self.last_animation_frame_time = None;
                 }
             }
@@ -3733,7 +3842,8 @@ impl WindowState {
                 .as_ref()
                 .map(|frame| Arc::clone(&frame.image_registry))
                 .unwrap_or(image_registry),
-        );
+        )
+        .with_frame_time(self.frame_time());
         paint_ctx.output_cache = output_cache::OutputCache::scope(&self.output_cache);
         let _ = self
             .root
@@ -3759,6 +3869,7 @@ impl WindowState {
         let mut invalidations = Vec::new();
         let mut paint_bounds_by_widget = self.last_paint_bounds_by_widget.clone();
         let mut ime_composition_rect = baseline_ime_composition_rect;
+        let frame_time = self.frame_time();
 
         for &widget_id in dirty_layers {
             let Some(bounds) = self
@@ -3781,7 +3892,8 @@ impl WindowState {
                     .as_ref()
                     .map(|frame| Arc::clone(&frame.image_registry))
                     .unwrap_or_else(|| Arc::clone(&image_registry)),
-            );
+            )
+            .with_frame_time(self.frame_time());
             paint_ctx.output_cache = output_cache::OutputCache::scope(&self.output_cache);
             if !self
                 .root
@@ -3797,7 +3909,10 @@ impl WindowState {
                 layer_invalidations,
                 layer_ime_composition_rect,
             ) = paint_ctx.into_parts();
-            let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
+            let Some(descriptor) =
+                self.root
+                    .layer_descriptor_for(widget_id, &layer_scene, frame_time)
+            else {
                 return self.paint_full_scene(dpi_info, text_system, font_registry, image_registry);
             };
             if widget_id == self.root.id()
@@ -4107,12 +4222,16 @@ impl WindowState {
 
         let previous_layers = collect_scene_layers(previous_scene);
         let mut refreshes = Vec::new();
+        let frame_time = self.frame_time();
 
         for (widget_id, previous_descriptor) in previous_layers {
             let Some(layer_scene) = previous_scene.layer_scene(widget_id).cloned() else {
                 continue;
             };
-            let Some(descriptor) = self.root.layer_descriptor_for(widget_id, &layer_scene) else {
+            let Some(descriptor) =
+                self.root
+                    .layer_descriptor_for(widget_id, &layer_scene, frame_time)
+            else {
                 continue;
             };
             if descriptor.properties == previous_descriptor.properties {
@@ -4236,7 +4355,10 @@ impl WindowState {
             {
                 merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Ordering);
             }
-            if descriptor.properties.translation != previous.properties.translation {
+            if descriptor.properties.translation != previous.properties.translation
+                || descriptor.properties.scale != previous.properties.scale
+                || descriptor.properties.scale_anchor != previous.properties.scale_anchor
+            {
                 merge_layer_update_kind(&mut updates, *widget_id, SceneLayerUpdateKind::Transform);
             }
             if descriptor.properties.opacity != previous.properties.opacity {
@@ -4385,7 +4507,7 @@ impl WindowState {
             font_registry,
             image_registry,
             scope,
-            self.last_tick_time,
+            self.frame_time(),
         );
         measure_ctx.set_query_cache(self.measure_queries.clone());
         layout_work::record(|work| work.layout_passes += 1);
@@ -4406,7 +4528,7 @@ impl WindowState {
             self.id,
             self.root.id(),
             self.current_dpi_info(),
-            self.last_tick_time,
+            self.frame_time(),
             arrange_scope,
         );
         let arrange_started = layout_work::started();
@@ -4539,8 +4661,9 @@ impl WindowState {
             .retain(|widget_id| self.graph.contains(*widget_id));
         self.delivering_animation_frames
             .retain(|widget_id| self.graph.contains(*widget_id));
-        if self.requested_animation_frames.is_empty() && self.delivering_animation_frames.is_empty()
-        {
+        self.active_motions
+            .retain(|(widget_id, _), _| self.graph.contains(*widget_id));
+        if self.delivering_animation_frames.is_empty() && !self.wants_animation_frame() {
             self.last_animation_frame_time = None;
         }
 

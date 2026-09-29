@@ -222,21 +222,38 @@ Use a timer for a specific future deadline:
 3. Match the token in `Event::Wake(WakeEvent::Timer { .. })`.
 4. Cancel an obsolete token with `ctx.cancel_timer(token)`.
 
-For continuous motion, call `request_animation_frame()`, update animation state
-from the next `WakeEvent::AnimationFrame`, invalidate the changed presentation,
-and request another frame only while animation remains active. Do not run a
+For motion that runs on its own, such as a simulation or a looping
+indicator, call `request_animation_frame()`, update state from the next
+`WakeEvent::AnimationFrame`, invalidate the changed presentation, and request
+another frame only while the animation remains active. Transitions between
+states do not need this; the runtime can drive them (see below). Do not run a
 blocking loop inside `event` or `paint`.
 
 ### Animating Values
 
-Pick the value type by what drives it:
+Most widget motion is a transition between states: hover, press, focus, a
+toggle, a sliding indicator. Let the runtime drive it:
 
-- `MotionScalar` is a 0-to-1 progress value for widget state such as hover,
-  press, focus, or reveal. It runs on the runtime clock and applies the motion
-  policy for you.
-- `MotionValue<T>` animates any `Interpolate` value (numbers, points, rects,
-  colors, transforms) on an absolute clock.
-- `AnimatedValue<T>` does the same when you only have frame deltas.
+- `Progress` is a 0-to-1 value for widget state.
+- `Motion<T>` animates any `Interpolate` value (numbers, points, vectors,
+  rects, colors, transforms).
+
+Start a transition from an event, measure, or arrange context with
+`progress.animate(target, spec, ctx)` or `ctx.animate(&mut motion, target,
+spec)`, and read the value with `get(ctx)` while painting. The value is a
+function of time, so the widget handles no animation frames: the runtime
+invalidates it every frame until the transition ends, then once more at the
+end. By default that invalidation is `Paint`. A `Motion` read in
+`layer_properties_at` can invalidate `Transform` or `Effect` instead
+(`.invalidating(kind)`), which moves or fades a retained layer without
+repainting it. Mark motion that moves content with `.movement()` so reduced
+motion skips it.
+
+The frame-driven types remain for other cases:
+
+- `MotionScalar` and `MotionValue<T>` hold the same kind of transition but
+  are advanced by the widget from animation frames.
+- `AnimatedValue<T>` advances by frame deltas.
 - `SpringF32` is a physics spring for interactive motion, such as a dragged
   handle that springs home with the velocity of the fling.
 
@@ -261,7 +278,7 @@ use sui::PointerEventKind;
 
 /// A highlight that fades in while the pointer is over it.
 struct Highlight {
-    shown: MotionScalar,
+    shown: Progress,
 }
 
 impl Widget for Highlight {
@@ -269,26 +286,32 @@ impl Widget for Highlight {
         let hover = DefaultTheme::default().motion.hover_spec();
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Enter => {
-                self.shown.set_target_event_with(1.0, hover, ctx);
+                self.shown.animate(1.0, hover, ctx);
             }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
-                self.shown.set_target_event_with(0.0, hover, ctx);
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.shown.advance(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
+                self.shown.animate(0.0, hover, ctx);
             }
             _ => {}
         }
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.fill_bounds(Color::rgba(0.2, 0.45, 0.95, 0.3 * self.shown.value));
+        let shown = self.shown.get(ctx);
+        ctx.fill_bounds(Color::rgba(0.2, 0.45, 0.95, 0.3 * shown));
     }
 }
 ```
+
+### Frame Timing
+
+Animation frames carry the time they represent. On a display that presents
+with vsync, the platform starts one frame per refresh and stamps it with the
+time the frame is expected on screen, so motion lines up with the display
+instead of with event-loop timing. Hidden windows and headless hosts fall back
+to the runtime's own timer (`FramePacing::Timer`). While painting, read that
+time with `ctx.frame_time()`; `Motion::get(ctx)` uses it. Custom platform
+hosts choose the pacing with `Runtime::set_frame_pacing` and start
+display-paced frames with `Runtime::begin_animation_frame`.
 
 ### Reduced Motion and the Motion Policy
 
@@ -306,11 +329,11 @@ changes apply to the next animation.
   place instead of sliding, and sliding indicators jump.
 - `Off` finishes every transition immediately.
 
-`MotionScalar` applies the policy automatically. Use its `set_movement_target`
-and `set_movement_target_event` methods for transitions that move content, and
-`MotionPolicy::entrance_offset(progress)` for the distance a surface slides in.
-With `MotionValue`, pass `spec.with_policy(motion_policy())` or
-`spec.with_movement_policy(motion_policy())`. Delta-driven animation, such as a
+`Progress`, `Motion`, and `MotionScalar` apply the policy automatically; mark
+motion that moves content with `.movement()` (or use `MotionScalar`'s
+`set_movement_target` methods), and use `MotionPolicy::entrance_offset(progress)`
+for the distance a surface slides in. With `MotionValue`, pass
+`spec.with_policy(motion_policy())` or `spec.with_movement_policy(motion_policy())`. Delta-driven animation, such as a
 timeline player or a simulation, can follow the time scale with
 `motion_policy().scale_delta(delta)`.
 

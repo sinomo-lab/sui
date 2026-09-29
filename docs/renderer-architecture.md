@@ -31,7 +31,7 @@ Layer descriptors currently carry:
 - layer bounds
 - content bounds
 - paint bounds
-- presentation-only `LayerProperties` such as opacity and translation
+- presentation-only `LayerProperties`: opacity, translation, and scale around an anchor
 - composition mode hints
 - stack-surface ordering and transient ownership metadata where relevant
 

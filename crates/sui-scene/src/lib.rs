@@ -328,17 +328,30 @@ impl TextRenderPolicy {
     }
 }
 
+/// How a retained layer is presented without repainting it: faded, moved,
+/// and scaled. Changing these updates the composited layer only.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayerProperties {
     pub opacity: f32,
     pub translation: Vector,
+    /// Scale factors along x and y, applied around `scale_anchor` before
+    /// `translation`. `(1, 1)` presents the layer as painted.
+    pub scale: Vector,
+    /// The point scaling keeps fixed, as a fraction of the layer's bounds:
+    /// `(0.5, 0.5)` is the center, `(0.5, 0.0)` the middle of the top edge.
+    pub scale_anchor: Vector,
 }
 
 impl LayerProperties {
+    pub const IDENTITY_SCALE: Vector = Vector::new(1.0, 1.0);
+    pub const CENTER: Vector = Vector::new(0.5, 0.5);
+
     pub const fn new(opacity: f32, translation: Vector) -> Self {
         Self {
             opacity,
             translation,
+            scale: Self::IDENTITY_SCALE,
+            scale_anchor: Self::CENTER,
         }
     }
 
@@ -351,14 +364,80 @@ impl LayerProperties {
         self.translation = translation;
         self
     }
+
+    /// Scale uniformly by `scale` around the scale anchor.
+    pub const fn with_scale(mut self, scale: f32) -> Self {
+        self.scale = Vector::new(scale, scale);
+        self
+    }
+
+    /// Scale by `scale.x` horizontally and `scale.y` vertically.
+    pub const fn with_scale_xy(mut self, scale: Vector) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// Scale around this point, as a fraction of the layer's bounds.
+    pub const fn with_scale_anchor(mut self, anchor: Vector) -> Self {
+        self.scale_anchor = anchor;
+        self
+    }
+
+    pub fn is_scaled(&self) -> bool {
+        self.scale != Self::IDENTITY_SCALE
+    }
+
+    /// The point in window coordinates that scaling keeps fixed for a layer
+    /// laid out at `bounds`.
+    pub fn anchor_point(&self, bounds: Rect) -> Point {
+        Point::new(
+            bounds.x() + bounds.width() * self.scale_anchor.x,
+            bounds.y() + bounds.height() * self.scale_anchor.y,
+        )
+    }
+
+    /// Where `point` is presented for a layer laid out at `bounds`.
+    pub fn map_point(&self, bounds: Rect, point: Point) -> Point {
+        let anchor = self.anchor_point(bounds);
+        Point::new(
+            anchor.x + (point.x - anchor.x) * self.scale.x + self.translation.x,
+            anchor.y + (point.y - anchor.y) * self.scale.y + self.translation.y,
+        )
+    }
+
+    /// Where `rect` is presented for a layer laid out at `bounds`.
+    pub fn map_rect(&self, bounds: Rect, rect: Rect) -> Rect {
+        if !self.is_scaled() {
+            return rect.translate(self.translation);
+        }
+        let first = self.map_point(bounds, rect.origin);
+        let second = self.map_point(bounds, Point::new(rect.max_x(), rect.max_y()));
+        Rect::new(
+            first.x.min(second.x),
+            first.y.min(second.y),
+            (second.x - first.x).abs(),
+            (second.y - first.y).abs(),
+        )
+    }
+
+    /// The presentation as a transform of window coordinates, for a layer
+    /// laid out at `bounds`.
+    pub fn transform(&self, bounds: Rect) -> Transform {
+        let presented = self.map_point(bounds, Point::ZERO);
+        Transform::new(
+            self.scale.x,
+            0.0,
+            0.0,
+            self.scale.y,
+            presented.x,
+            presented.y,
+        )
+    }
 }
 
 impl Default for LayerProperties {
     fn default() -> Self {
-        Self {
-            opacity: 1.0,
-            translation: Vector::ZERO,
-        }
+        Self::new(1.0, Vector::ZERO)
     }
 }
 
@@ -469,15 +548,15 @@ impl SceneLayerDescriptor {
     }
 
     pub fn presented_bounds(&self) -> Rect {
-        self.bounds.translate(self.properties.translation)
+        self.properties.map_rect(self.bounds, self.bounds)
     }
 
     pub fn presented_content_bounds(&self) -> Rect {
-        self.content_bounds.translate(self.properties.translation)
+        self.properties.map_rect(self.bounds, self.content_bounds)
     }
 
     pub fn presented_paint_bounds(&self) -> Rect {
-        self.paint_bounds.translate(self.properties.translation)
+        self.properties.map_rect(self.bounds, self.paint_bounds)
     }
 }
 
@@ -1526,6 +1605,28 @@ mod tests {
     #[test]
     fn scene_frame_is_send_sync() {
         assert_send_sync::<SceneFrame>();
+    }
+
+    #[test]
+    fn layer_scale_maps_around_its_anchor() {
+        let bounds = Rect::new(100.0, 50.0, 200.0, 100.0);
+        let centered = LayerProperties::default().with_scale(0.5);
+
+        assert_eq!(
+            centered.map_rect(bounds, bounds),
+            Rect::new(150.0, 75.0, 100.0, 50.0)
+        );
+        let top = centered
+            .with_scale_anchor(Vector::new(0.5, 0.0))
+            .with_translation(Vector::new(0.0, 8.0));
+        assert_eq!(
+            top.map_rect(bounds, bounds),
+            Rect::new(150.0, 58.0, 100.0, 50.0)
+        );
+        let transform = top.transform(bounds);
+        let corner = transform.transform_point(Point::new(100.0, 50.0));
+        assert_eq!(corner, Point::new(150.0, 58.0));
+        assert!(!LayerProperties::default().is_scaled());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::ops::Range;
 use sui_core::{
     Color, EditableTextSemantics, Event, ImeEvent, KeyState, Path, Point, PointerButton,
     PointerEventKind, Rect, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsTextRange,
-    SemanticsValue, Size, Vector, WakeEvent, WindowEvent,
+    SemanticsValue, Size, Vector, WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_runtime::{
@@ -17,7 +17,7 @@ use sui_text::{
 };
 
 use crate::{
-    DefaultTheme, MotionScalar, ThemeColorScheme,
+    DefaultTheme, ThemeColorScheme,
     editable_text::{EditableTextController, EditableTextLineMode, paste_command},
     editor::{
         EditorCommand, EditorCommandResult, EditorDocument, EditorTextEdit,
@@ -952,21 +952,6 @@ impl TextSurface {
         }
     }
 
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let previous_hover = self.hover_animation.value;
-        let previous_focus = self.focus_animation.value;
-        let animating = self.hover_animation.advance(time) | self.focus_animation.advance(time);
-        let changed = self.hover_animation.changed_since(previous_hover)
-            || self.focus_animation.changed_since(previous_focus);
-
-        if changed {
-            ctx.request_paint();
-        }
-        if animating {
-            ctx.request_animation_frame();
-        }
-    }
-
     fn point_to_cursor(&self, bounds: Rect, position: Point) -> Option<TextCursor> {
         let content = self.content_rect(bounds);
         if !content.contains(position) {
@@ -1509,9 +1494,6 @@ impl Widget for TextSurface {
                 let result = self.editor.execute(EditorCommand::ClearComposition);
                 self.apply_editor_result(ctx, result);
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
-            }
             _ => {}
         }
     }
@@ -1839,8 +1821,8 @@ impl Widget for TextSurface {
         let palette = theme.palette;
         let metrics = theme.metrics;
         let content = self.content_rect(ctx.bounds());
-        let hover_progress = self.hover_animation.value;
-        let focus_progress = self.focus_animation.value;
+        let hover_progress = self.hover_animation.get(ctx);
+        let focus_progress = self.focus_animation.get(ctx);
         let base_background = if self.read_only {
             palette.surface
         } else {
@@ -2010,7 +1992,8 @@ impl Widget for TextSurface {
     }
 }
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = crate::Progress;
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
@@ -2019,7 +2002,7 @@ fn set_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) -> bool {
-    animation.set_target_event(target, duration, easing, ctx)
+    animation.animate(target, crate::AnimationSpec::tween(duration, easing), ctx)
 }
 
 fn set_hover_animation_target(
@@ -2324,7 +2307,7 @@ mod tests {
             .expect("hover event should be handled");
 
         runtime.tick(hover_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         // The field well stays put; hover strengthens the outline.
         let mid_hover = runtime.render(window_id).expect("render should succeed");
         assert_eq!(solid_fill_colors(&mid_hover)[0], theme.palette.field);
@@ -2333,7 +2316,7 @@ mod tests {
         assert!(!mid_hover_strokes.contains(&expected_hover));
 
         runtime.tick(hover_duration);
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_hover = runtime.render(window_id).expect("render should succeed");
         assert!(solid_stroke_colors(&settled_hover).contains(&expected_hover));
 
@@ -2345,12 +2328,12 @@ mod tests {
             .expect("focus event should be handled");
 
         runtime.tick(hover_duration + focus_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let mid_focus = runtime.render(window_id).expect("render should succeed");
         assert!(!solid_stroke_colors(&mid_focus).contains(&theme.palette.focus_ring));
 
         runtime.tick(hover_duration + focus_duration);
-        assert_eq!(handle_ready_events(&mut runtime), 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_focus = runtime.render(window_id).expect("render should succeed");
         assert_eq!(
             solid_fill_colors(&settled_focus)[0],

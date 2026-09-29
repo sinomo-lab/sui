@@ -70,7 +70,7 @@ pub(super) fn section(theme_reader: DevThemeReader) -> impl Widget {
             StageCard::new(
                 LAYER_STAGE_NAME,
                 "Layer transform",
-                "Each frame moves the chip's layer and asks for no repaint.",
+                "Each frame moves and scales the chip's layer; nothing is repainted for it.",
                 Rc::clone(&layer_counters),
                 Rc::clone(&theme_reader),
                 LayerStage::new(layer_counters, Rc::clone(&theme_reader)),
@@ -355,8 +355,12 @@ impl Widget for LayerChip {
     }
 
     fn layer_properties(&self) -> LayerProperties {
+        // The chip swells a little mid-travel: layer scale, like the
+        // translation, changes only the composited layer.
+        let value = self.shuttle.value();
         LayerProperties::default()
-            .with_translation(Vector::new(self.shuttle.value() * self.travel.get(), 0.0))
+            .with_translation(Vector::new(value * self.travel.get(), 0.0))
+            .with_scale(1.0 + 0.18 * (value.clamp(0.0, 1.0) * std::f32::consts::PI).sin())
     }
 }
 
@@ -439,11 +443,19 @@ impl FrameIntervals {
         self.samples.iter().copied().reduce(f64::max)
     }
 
+    /// The typical interval. When frames are paced by the display, this is
+    /// its refresh period.
+    pub(super) fn median(&self) -> Option<f64> {
+        let mut sorted = self.samples.iter().copied().collect::<Vec<_>>();
+        sorted.sort_by(f64::total_cmp);
+        sorted.get(sorted.len() / 2).copied()
+    }
+
     pub(super) fn summary(&self) -> String {
-        match (self.average(), self.worst()) {
-            (Some(average), Some(worst)) => format!(
-                "average {average:.1} ms ({:.0} fps) · worst {worst:.1} ms",
-                1000.0 / average
+        match (self.median(), self.average(), self.worst()) {
+            (Some(median), Some(average), Some(worst)) => format!(
+                "typically {median:.1} ms ({:.0} Hz) · average {average:.1} ms · worst {worst:.1} ms",
+                1000.0 / median
             ),
             _ => "waiting for frames".to_string(),
         }

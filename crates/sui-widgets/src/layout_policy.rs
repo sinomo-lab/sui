@@ -1,13 +1,13 @@
-use sui_animation::{Easing, Transition};
+use sui_animation::{AnimationSpec, Easing};
 use sui_core::{
-    Event, Point, Rect, SafeAreaInsets, SemanticsNode, SemanticsRole, Size, Vector, WakeEvent,
+    InvalidationKind, Point, Rect, SafeAreaInsets, SemanticsNode, SemanticsRole, Size, Vector,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, GridItem, GridLayout, GridPlacement, GridStyle, GridTrack,
     Padding, grid_layout,
 };
 use sui_runtime::{
-    ArrangeCtx, EventCtx, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx, SemanticsCtx,
+    ArrangeCtx, LayerOptions, MeasureCtx, Motion, PaintBoundaryMode, PaintCtx, SemanticsCtx,
     SingleChild, Widget, WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties};
@@ -496,8 +496,9 @@ pub struct LayoutTransition {
     duration: f64,
     easing: Easing,
     destination: Option<Point>,
-    translation: Vector,
-    transition: Option<Transition<Vector>>,
+    /// How far the child is presented from where it was last arranged; it
+    /// glides to zero after each move.
+    offset: Motion<Vector>,
 }
 
 impl LayoutTransition {
@@ -510,8 +511,9 @@ impl LayoutTransition {
             duration: 0.18,
             easing: Easing::EaseOut,
             destination: None,
-            translation: Vector::ZERO,
-            transition: None,
+            offset: Motion::new(Vector::ZERO)
+                .invalidating(InvalidationKind::Transform)
+                .movement(),
         }
     }
 
@@ -524,34 +526,9 @@ impl LayoutTransition {
         self.easing = easing;
         self
     }
-
-    fn sample(&self, time: f64) -> Vector {
-        self.transition
-            .map(|transition| transition.sample(time))
-            .unwrap_or(self.translation)
-    }
 }
 
 impl Widget for LayoutTransition {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        let Event::Wake(WakeEvent::AnimationFrame { time, .. }) = event else {
-            return;
-        };
-        let Some(transition) = self.transition else {
-            return;
-        };
-
-        self.translation = transition.sample(*time);
-        if transition.is_complete(*time) {
-            self.translation = Vector::ZERO;
-            self.transition = None;
-        } else {
-            ctx.request_animation_frame();
-        }
-        ctx.request_transform();
-        ctx.set_handled();
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.child.measure(ctx, constraints)
     }
@@ -560,22 +537,16 @@ impl Widget for LayoutTransition {
         if let Some(previous_destination) = self.destination
             && previous_destination != bounds.origin
         {
-            let visual_origin = previous_destination + self.sample(ctx.current_time());
-            self.translation = visual_origin - bounds.origin;
-            if self.duration <= f64::EPSILON || self.translation == Vector::ZERO {
-                self.translation = Vector::ZERO;
-                self.transition = None;
-            } else {
-                self.transition = Some(Transition::new(
-                    self.translation,
-                    Vector::ZERO,
-                    ctx.current_time(),
-                    self.duration,
-                    self.easing,
-                ));
-                ctx.request_animation_frame();
-                ctx.request_transform();
-            }
+            // Keep the child where it is on screen, then glide it into its
+            // new place. The runtime moves the layer; nothing repaints.
+            let visual_origin = previous_destination + self.offset.get(ctx);
+            self.offset.jump_to(visual_origin - bounds.origin);
+            ctx.animate(
+                &mut self.offset,
+                Vector::ZERO,
+                AnimationSpec::tween(self.duration, self.easing),
+            );
+            ctx.request_transform();
         }
         self.destination = Some(bounds.origin);
         self.child.arrange(ctx, bounds);
@@ -592,8 +563,8 @@ impl Widget for LayoutTransition {
         }
     }
 
-    fn layer_properties(&self) -> LayerProperties {
-        LayerProperties::default().with_translation(self.translation)
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        LayerProperties::default().with_translation(self.offset.at(frame_time))
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -620,7 +591,7 @@ fn aligned_start(alignment: Alignment, start: f32, available: f32, child: f32) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sui_core::{Color, DpiInfo, WindowEvent, WindowId};
+    use sui_core::{Color, DpiInfo, Event, WindowEvent, WindowId};
     use sui_reactive::Signal;
     use sui_runtime::{Application, WidgetPod, WindowBuilder};
 
@@ -780,6 +751,26 @@ mod tests {
         let graph = runtime.widget_graph(window).unwrap();
         assert_eq!(graph.nodes[1].bounds.x(), 60.0);
         assert_eq!(runtime.next_wakeup_time(window).unwrap(), Some(0.0));
+
+        // Midway, the child is presented between its old and new place by
+        // moving its layer.
+        runtime.tick(0.0);
+        let _ = runtime.drain_ready_events();
+        runtime.render(window).unwrap();
+        runtime.tick(0.09);
+        assert!(
+            runtime.drain_ready_events().is_empty(),
+            "no frame events needed"
+        );
+        let midway = runtime.render(window).unwrap();
+        let mut offsets = Vec::new();
+        midway.frame.scene.visit_layers(&mut |layer| {
+            offsets.push(layer.descriptor.properties.translation.x);
+        });
+        assert!(
+            offsets.iter().any(|x| *x < -1.0 && *x > -59.0),
+            "the layer glides toward its new place: {offsets:?}"
+        );
 
         runtime.tick(0.2);
         for (ready_window, event) in runtime.drain_ready_events() {

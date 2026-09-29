@@ -10,13 +10,13 @@ use std::{
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
     SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue, Size, ToggleState, Transform,
-    Vector, WakeEvent, WidgetId,
+    Vector, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_reactive::Signal;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild, Widget,
-    WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, FrameClock, MeasureCtx, PaintCtx, SemanticsCtx, SingleChild,
+    Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_text::{
     FontFeature, FontWeight, TextAlign, TextDocument, TextLayoutRequest, TextMeasurement,
@@ -24,7 +24,7 @@ use sui_text::{
 };
 
 use crate::{
-    DefaultTheme, MotionScalar, ThemeTextToken,
+    DefaultTheme, ThemeTextToken,
     collection::{
         CollectionAnchor, CollectionAnchorGravity, CollectionExtentIndex, CollectionWindow,
         ScrollAlignment, VirtualViewportSnapshot,
@@ -452,19 +452,6 @@ impl ListView {
         ctx.request_paint();
         ctx.request_semantics();
     }
-
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let (hover_changed, hover_active) = self.hover_motion.advance(time);
-        let (press_changed, press_active) = self.press_motion.advance(time);
-        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
-
-        if hover_changed || press_changed || focus_changed {
-            ctx.request_paint();
-        }
-        if hover_active || press_active || focus_active {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 impl Widget for ListView {
@@ -546,9 +533,6 @@ impl Widget for ListView {
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.set_handled();
                 }
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
@@ -751,7 +735,7 @@ impl Widget for ListView {
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
 
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
         ctx.push_clip_rect(viewport);
 
         for index in 0..self.items.len() {
@@ -764,8 +748,8 @@ impl Widget for ListView {
             }
             let row = Rect::new(viewport.x(), y, viewport.width(), row_height);
             let selected = self.current_selected() == Some(index);
-            let hover_amount = self.hover_motion.amount_for(&index);
-            let press_amount = self.press_motion.amount_for(&index);
+            let hover_amount = self.hover_motion.amount_for(&index, ctx);
+            let press_amount = self.press_motion.amount_for(&index, ctx);
 
             paint_data_row_state(
                 ctx,
@@ -1672,19 +1656,6 @@ impl LayerList {
         ctx.request_semantics();
     }
 
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let (hover_changed, hover_active) = self.hover_motion.advance(time);
-        let (press_changed, press_active) = self.press_motion.advance(time);
-        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
-
-        if hover_changed || press_changed || focus_changed {
-            ctx.request_paint();
-        }
-        if hover_active || press_active || focus_active {
-            ctx.request_animation_frame();
-        }
-    }
-
     fn paint_row(
         &self,
         ctx: &mut PaintCtx,
@@ -1704,8 +1675,8 @@ impl LayerList {
         let detail = layer.current_detail();
         let selected = self.current_selected() == Some(index);
         let row_hit = LayerListHit::Row(index);
-        let row_hover_amount = self.hover_motion.amount_for(&row_hit);
-        let row_press_amount = self.press_motion.amount_for(&row_hit);
+        let row_hover_amount = self.hover_motion.amount_for(&row_hit, ctx);
+        let row_press_amount = self.press_motion.amount_for(&row_hit, ctx);
         paint_data_row_state(
             ctx,
             row,
@@ -1722,8 +1693,8 @@ impl LayerList {
             self.visibility_rect(row),
             theme,
             visible,
-            self.hover_motion.amount_for(&visibility_hit),
-            self.press_motion.amount_for(&visibility_hit),
+            self.hover_motion.amount_for(&visibility_hit, ctx),
+            self.press_motion.amount_for(&visibility_hit, ctx),
         );
         let lock_hit = LayerListHit::Lock(index);
         paint_layer_lock_button(
@@ -1731,8 +1702,8 @@ impl LayerList {
             self.lock_rect(row),
             theme,
             locked,
-            self.hover_motion.amount_for(&lock_hit),
-            self.press_motion.amount_for(&lock_hit),
+            self.hover_motion.amount_for(&lock_hit, ctx),
+            self.press_motion.amount_for(&lock_hit, ctx),
         );
         paint_layer_thumbnail(
             ctx,
@@ -1883,9 +1854,6 @@ impl Widget for LayerList {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
-            }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
                     "ArrowUp" => self.move_selection(ctx, -1),
@@ -1955,7 +1923,7 @@ impl Widget for LayerList {
         let detail_style = caption_style(&theme);
         let active_row = self.reorder_drag.map(|drag| drag.row);
 
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
         ctx.push_clip_rect(viewport);
 
         for index in 0..self.layers.len() {
@@ -2499,19 +2467,6 @@ impl TreeView {
         ctx.request_paint();
         ctx.request_semantics();
     }
-
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let (hover_changed, hover_active) = self.hover_motion.advance(time);
-        let (press_changed, press_active) = self.press_motion.advance(time);
-        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
-
-        if hover_changed || press_changed || focus_changed {
-            ctx.request_paint();
-        }
-        if hover_active || press_active || focus_active {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 impl Widget for TreeView {
@@ -2609,9 +2564,6 @@ impl Widget for TreeView {
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.set_handled();
                 }
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 let rows = self.visible_rows.clone();
@@ -2881,7 +2833,7 @@ impl Widget for TreeView {
         let viewport = self.viewport_rect(ctx.bounds());
         let rows = &self.visible_rows;
 
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
         ctx.push_clip_rect(viewport);
 
         for (index, row) in rows.iter().enumerate() {
@@ -2896,10 +2848,10 @@ impl Widget for TreeView {
             let selected = self.selected.as_deref() == Some(row.path.as_slice());
             let hover_amount = self
                 .hover_motion
-                .amount_for_by(|path| path.as_slice() == row.path.as_slice());
+                .amount_for_by(|path| path.as_slice() == row.path.as_slice(), ctx);
             let press_amount = self
                 .press_motion
-                .amount_for_by(|path| path.as_slice() == row.path.as_slice());
+                .amount_for_by(|path| path.as_slice() == row.path.as_slice(), ctx);
 
             paint_data_row_state(
                 ctx,
@@ -3426,19 +3378,6 @@ impl Table {
         ctx.request_paint();
         ctx.request_semantics();
     }
-
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let (hover_changed, hover_active) = self.hover_motion.advance(time);
-        let (press_changed, press_active) = self.press_motion.advance(time);
-        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
-
-        if hover_changed || press_changed || focus_changed {
-            ctx.request_paint();
-        }
-        if hover_active || press_active || focus_active {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 impl Widget for Table {
@@ -3506,9 +3445,6 @@ impl Widget for Table {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
-            }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 if self.rows.is_empty() {
                     return;
@@ -3574,7 +3510,7 @@ impl Widget for Table {
         );
         let row_height = self.resolved_row_height();
 
-        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
             palette.control,
@@ -3620,8 +3556,8 @@ impl Widget for Table {
             let row_y = body.y() + (row_index as f32 * row_height) - self.scroll_y;
             let row_rect = Rect::new(body.x(), row_y, body.width(), row_height);
             let selected = self.current_selected() == Some(row_index);
-            let hover_amount = self.hover_motion.amount_for(&row_index);
-            let press_amount = self.press_motion.amount_for(&row_index);
+            let hover_amount = self.hover_motion.amount_for(&row_index, ctx);
+            let press_amount = self.press_motion.amount_for(&row_index, ctx);
             let background = if row_index % 2 == 0 {
                 palette.surface.with_alpha(0.88)
             } else {
@@ -4663,16 +4599,6 @@ impl VirtualTable {
             on_near_end();
         }
     }
-
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
-        if focus_changed {
-            ctx.request_paint();
-        }
-        if focus_active {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 impl Widget for VirtualTable {
@@ -4891,9 +4817,6 @@ impl Widget for VirtualTable {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
-            }
             _ => {}
         }
     }
@@ -4965,7 +4888,7 @@ impl Widget for VirtualTable {
         let header = self.header_rect(bounds);
         let selected = self.resolved_selected();
 
-        draw_surface(ctx, bounds, &theme, self.focus_animation.value);
+        draw_surface(ctx, bounds, &theme, self.focus_animation.get(ctx));
         ctx.fill(
             rounded_rect_path(header, metrics.corner_radius),
             palette.control,
@@ -5425,19 +5348,6 @@ impl Breadcrumb {
         ctx.request_paint();
         ctx.request_semantics();
     }
-
-    fn advance_animations(&mut self, time: f64, ctx: &mut EventCtx) {
-        let (hover_changed, hover_active) = self.hover_motion.advance(time);
-        let (press_changed, press_active) = self.press_motion.advance(time);
-        let (focus_changed, focus_active) = advance_scalar(&mut self.focus_animation, time);
-
-        if hover_changed || press_changed || focus_changed {
-            ctx.request_paint();
-        }
-        if hover_active || press_active || focus_active {
-            ctx.request_animation_frame();
-        }
-    }
 }
 
 impl Widget for Breadcrumb {
@@ -5533,9 +5443,6 @@ impl Widget for Breadcrumb {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_animations(*time, ctx);
-            }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 if self.items.is_empty() {
                     return;
@@ -5594,7 +5501,7 @@ impl Widget for Breadcrumb {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let bounds = ctx.bounds();
-        draw_surface(ctx, bounds, &theme, self.focus_animation.value);
+        draw_surface(ctx, bounds, &theme, self.focus_animation.get(ctx));
 
         ctx.push_clip_rect(bounds);
         for (index, item) in self.items.iter().enumerate() {
@@ -5607,8 +5514,8 @@ impl Widget for Breadcrumb {
 
             let current = self.normalized_current() == index;
             let focused = ctx.is_focused() && self.focused_index == index;
-            let hover_amount = self.hover_motion.amount_for(&index);
-            let press_amount = self.press_motion.amount_for(&index);
+            let hover_amount = self.hover_motion.amount_for(&index, ctx);
+            let press_amount = self.press_motion.amount_for(&index, ctx);
 
             if current
                 || focused
@@ -6387,7 +6294,8 @@ fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
         .filter(|rect| !rect.is_empty())
 }
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = crate::Progress;
 
 fn set_animation_target(
     animation: &mut AnimatedScalar,
@@ -6396,7 +6304,7 @@ fn set_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) -> bool {
-    animation.set_target_event(target, duration, easing, ctx)
+    animation.animate(target, crate::AnimationSpec::tween(duration, easing), ctx)
 }
 
 fn set_hover_animation_target(
@@ -6442,12 +6350,6 @@ fn set_focus_animation_target(
         theme.motion.focus_easing(),
         ctx,
     )
-}
-
-fn advance_scalar(animation: &mut AnimatedScalar, time: f64) -> (bool, bool) {
-    let previous = animation.value;
-    let active = animation.advance(time);
-    (animation.changed_since(previous), active)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -6509,7 +6411,7 @@ where
             }
             None => {
                 let changed = set_animation(&mut self.animation, 0.0, theme, ctx);
-                if !changed && !self.animation.is_presented() {
+                if !changed && !self.animation.is_presented(ctx) {
                     self.visual = None;
                 }
                 changed
@@ -6517,26 +6419,18 @@ where
         }
     }
 
-    fn amount_for(&self, key: &T) -> f32 {
-        self.amount_for_by(|visual| visual == key)
+    /// The amount for `key` at `clock`'s frame. The last target keeps its
+    /// fading amount until another takes over.
+    fn amount_for(&self, key: &T, clock: &impl FrameClock) -> f32 {
+        self.amount_for_by(|visual| visual == key, clock)
     }
 
-    fn amount_for_by(&self, matches: impl FnOnce(&T) -> bool) -> f32 {
+    fn amount_for_by(&self, matches: impl FnOnce(&T) -> bool, clock: &impl FrameClock) -> f32 {
         self.visual
             .as_ref()
             .filter(|visual| matches(visual))
-            .map(|_| self.animation.value)
+            .map(|_| self.animation.get(clock))
             .unwrap_or(0.0)
-    }
-
-    fn advance(&mut self, time: f64) -> (bool, bool) {
-        let previous = self.animation.value;
-        let active = self.animation.advance(time);
-        let changed = self.animation.changed_since(previous);
-        if !self.animation.is_presented() {
-            self.visual = None;
-        }
-        (changed, active)
     }
 }
 
@@ -7387,7 +7281,7 @@ mod tests {
             primary_pointer(PointerEventKind::Move, position, false),
         )?;
         runtime.tick(hover_duration * 0.5);
-        assert_eq!(handle_ready_events(runtime)?, 1);
+        assert_eq!(handle_ready_events(runtime)?, 0);
         let mid_hover = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_hover).contains(&expected_hover),
@@ -7395,7 +7289,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration);
-        assert_eq!(handle_ready_events(runtime)?, 1);
+        assert_eq!(handle_ready_events(runtime)?, 0);
         let settled_hover = runtime.render(window_id)?;
         assert!(
             solid_fill_colors(&settled_hover).contains(&expected_hover),
@@ -7407,7 +7301,7 @@ mod tests {
             primary_pointer(PointerEventKind::Down, position, true),
         )?;
         runtime.tick(hover_duration + press_duration * 0.5);
-        assert_eq!(handle_ready_events(runtime)?, 1);
+        assert_eq!(handle_ready_events(runtime)?, 0);
         let mid_press = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_press).contains(&expected_press),
@@ -7415,7 +7309,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration + press_duration);
-        assert_eq!(handle_ready_events(runtime)?, 1);
+        assert_eq!(handle_ready_events(runtime)?, 0);
         let settled_press = runtime.render(window_id)?;
         assert!(
             solid_fill_colors(&settled_press).contains(&expected_press),
@@ -7678,7 +7572,7 @@ mod tests {
             primary_pointer(PointerEventKind::Move, position, false),
         )?;
         runtime.tick(theme.motion.hover_duration());
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let hovered = runtime.render(window_id)?;
         let fills = solid_fill_colors(&hovered);
 

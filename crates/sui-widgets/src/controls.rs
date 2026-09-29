@@ -1,8 +1,8 @@
 mod interaction;
 use crate::{
-    ControlMetrics, ControlPalette, DefaultTheme, HdrThemeMode, Interpolate, MotionScalar,
-    ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole, WidgetLuminanceRole,
-    WidgetMaterialRole,
+    AnimationSpec, ControlMetrics, ControlPalette, DefaultTheme, HdrThemeMode, Interpolate,
+    MotionScalar, Progress, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole,
+    WidgetLuminanceRole, WidgetMaterialRole,
     editable_text::{
         CaretBlink, EditableTextController, EditableTextLineMode, TextChangeCallbacks,
         keyboard_text, single_line_text,
@@ -31,10 +31,10 @@ use sui_layout::{Axis, Constraints, IntrinsicSize, Padding as Insets};
 use sui_lucide::LucideIcon;
 use sui_reactive::Observable;
 use sui_runtime::{
-    ArrangeCtx, Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, OVERLAY_DISMISS_REQUEST,
-    OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind, OverlayOptions, PaintBoundaryMode,
-    PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget, WidgetPodMutVisitor,
-    WidgetPodVisitor,
+    ArrangeCtx, Command, EventCtx, EventPhase, FrameClock, LayerOptions, MeasureCtx,
+    OVERLAY_DISMISS_REQUEST, OverlayDismissPolicy, OverlayFocusBehavior, OverlayKind,
+    OverlayOptions, PaintBoundaryMode, PaintCtx, SemanticsCtx, SingleChild, StackSurfaceOptions,
+    Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
 use sui_text::{
@@ -447,7 +447,8 @@ enum SelectMenuPlacement {
     Above,
 }
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = Progress;
 
 fn request_child_invalidation(ctx: &mut EventCtx, widget_id: WidgetId, kind: InvalidationKind) {
     ctx.request(InvalidationRequest::new(
@@ -463,7 +464,7 @@ fn set_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) {
-    animation.set_target_event(target, duration, easing, ctx);
+    animation.animate(target, AnimationSpec::tween(duration, easing), ctx);
 }
 
 fn set_hover_animation_target(
@@ -522,6 +523,22 @@ fn set_focus_animation_target(
         target,
         theme.motion.focus_duration(),
         theme.motion.focus_easing(),
+        ctx,
+    );
+}
+
+/// Hover in the select menu, whose shared presentation state still advances
+/// from animation frames (it spans the select and its menu surface).
+fn set_menu_hover_target(
+    animation: &mut MotionScalar,
+    target: f32,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    animation.set_target_event(
+        target,
+        theme.motion.hover_duration(),
+        theme.motion.hover_easing(),
         ctx,
     );
 }
@@ -1263,13 +1280,9 @@ impl Widget for IconButton {
         let enabled = self.is_enabled();
         let theme = &self.theme;
         let reader = &self.theme_reader;
-        let activate = self.interaction.event(
-            ctx,
-            event,
-            enabled,
-            || reader.as_ref().map(|read| read()).unwrap_or(**theme),
-            &mut self.focus_animation,
-        );
+        let activate = self.interaction.event(ctx, event, enabled, || {
+            reader.as_ref().map(|read| read()).unwrap_or(**theme)
+        });
         if activate {
             self.activate(ctx);
             ctx.request_paint();
@@ -1290,11 +1303,11 @@ impl Widget for IconButton {
             .tone(self.tone)
             .selected(self.is_selected())
             .enabled(self.is_enabled())
-            .hover_progress(self.interaction.hover_progress())
-            .press_progress(self.interaction.press_progress())
+            .hover_progress(self.interaction.hover_progress(ctx))
+            .press_progress(self.interaction.press_progress(ctx))
             .focus_progress(
                 self.focus_animation
-                    .value
+                    .get(ctx)
                     .max(self.interaction.preview.focus()),
             )
             .icon_size(self.resolved_icon_size());
@@ -1623,12 +1636,17 @@ impl Button {
         )
     }
 
+    /// Visuals at rest (no hover or press in flight).
     #[cfg(test)]
     fn resolved_visuals(&self, focused: bool) -> ButtonVisuals {
-        self.resolved_visuals_with_focus_progress(focused as u8 as f32)
+        self.resolved_visuals_with_focus_progress(focused as u8 as f32, &0.0)
     }
 
-    fn resolved_visuals_with_focus_progress(&self, focus_progress: f32) -> ButtonVisuals {
+    fn resolved_visuals_with_focus_progress(
+        &self,
+        focus_progress: f32,
+        clock: &impl FrameClock,
+    ) -> ButtonVisuals {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let interaction = theme.interaction;
@@ -1639,12 +1657,12 @@ impl Button {
             0.0
         };
         let hover_progress = if enabled {
-            self.interaction.hover_progress() * interaction.hover_blend
+            self.interaction.hover_progress(clock) * interaction.hover_blend
         } else {
             0.0
         };
         let press_progress = if enabled {
-            self.interaction.press_progress() * interaction.pressed_blend
+            self.interaction.press_progress(clock) * interaction.pressed_blend
         } else {
             0.0
         };
@@ -1656,8 +1674,8 @@ impl Button {
                 self.appearance,
                 self.tone,
                 enabled,
-                self.interaction.hover_progress(),
-                self.interaction.press_progress(),
+                self.interaction.hover_progress(clock),
+                self.interaction.press_progress(clock),
             );
             let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
             let label_color = if enabled {
@@ -1805,13 +1823,9 @@ impl Widget for Button {
         let enabled = self.is_enabled();
         let theme = &self.theme;
         let reader = &self.theme_reader;
-        let activate = self.interaction.event(
-            ctx,
-            event,
-            enabled,
-            || reader.as_ref().map(|read| read()).unwrap_or(**theme),
-            &mut self.focus_animation,
-        );
+        let activate = self.interaction.event(ctx, event, enabled, || {
+            reader.as_ref().map(|read| read()).unwrap_or(**theme)
+        });
         if activate {
             self.activate(ctx);
             ctx.request_paint();
@@ -1867,8 +1881,9 @@ impl Widget for Button {
         let padding = self.resolved_padding();
         let visuals = self.resolved_visuals_with_focus_progress(
             self.focus_animation
-                .value
+                .get(ctx)
                 .max(self.interaction.preview.focus()),
+            ctx,
         );
         draw_control_frame(
             ctx,
@@ -2194,13 +2209,6 @@ impl Checkbox {
         }
     }
 
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.toggle_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
-
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
@@ -2229,16 +2237,16 @@ impl Checkbox {
             .unwrap_or(*self.theme)
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn press_value(&self) -> f32 {
-        self.press_animation.value.max(self.preview.press())
+    fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        self.press_animation.get(clock).max(self.preview.press())
     }
 
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -2329,12 +2337,6 @@ impl Widget for Checkbox {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -2369,10 +2371,10 @@ impl Widget for Checkbox {
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
-        let hover_progress = self.hover_value() * interaction.hover_blend;
-        let press_progress = self.press_value() * interaction.pressed_blend;
-        let toggle_progress = self.toggle_animation.value;
-        let focus_progress = self.focus_value();
+        let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
+        let press_progress = self.press_value(ctx) * interaction.pressed_blend;
+        let toggle_progress = self.toggle_animation.get(ctx);
+        let focus_progress = self.focus_value(ctx);
         let (framed_background, framed_border) =
             framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
         let frame_visuals = choice_frame_visuals(
@@ -2407,8 +2409,8 @@ impl Widget for Checkbox {
             &theme,
             indicator,
             CheckboxIndicatorVisual {
-                hover_progress: self.hover_value(),
-                press_progress: self.press_value(),
+                hover_progress: self.hover_value(ctx),
+                press_progress: self.press_value(ctx),
                 toggle_progress,
             },
         );
@@ -2622,21 +2624,23 @@ impl Switch {
         }
     }
 
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.toggle_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
-
-    fn resolved_visuals_for_state(&self, on: bool, focused: bool) -> SwitchVisuals {
+    fn resolved_visuals_for_state(
+        &self,
+        on: bool,
+        focused: bool,
+        clock: &impl FrameClock,
+    ) -> SwitchVisuals {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let interaction = theme.interaction;
-        let hover_t = self.hover_value() * interaction.hover_blend;
-        let press_t = self.press_value() * interaction.pressed_blend;
-        let (framed_background, framed_border) =
-            framed_choice_colors(&palette, self.hover_value(), press_t, focused as u8 as f32);
+        let hover_t = self.hover_value(clock) * interaction.hover_blend;
+        let press_t = self.press_value(clock) * interaction.pressed_blend;
+        let (framed_background, framed_border) = framed_choice_colors(
+            &palette,
+            self.hover_value(clock),
+            press_t,
+            focused as u8 as f32,
+        );
         let frame_visuals = choice_frame_visuals(
             &theme,
             self.appearance,
@@ -2700,19 +2704,19 @@ impl Switch {
     }
 
     fn resolved_visuals(&self, focused: bool) -> SwitchVisuals {
-        self.resolved_visuals_for_state(self.on, focused)
+        self.resolved_visuals_for_state(self.on, focused, &0.0)
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn press_value(&self) -> f32 {
-        self.press_animation.value.max(self.preview.press())
+    fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        self.press_animation.get(clock).max(self.preview.press())
     }
 
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -2803,12 +2807,6 @@ impl Widget for Switch {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -2847,14 +2845,20 @@ impl Widget for Switch {
         let track = switch_track_rect(ctx.bounds(), padding, metrics);
         let label_rect = switch_label_rect(ctx.bounds(), padding, metrics, gap);
         let visuals = self.resolved_visuals(ctx.is_focused() || self.preview.is_focused());
-        let off_visuals =
-            self.resolved_visuals_for_state(false, ctx.is_focused() || self.preview.is_focused());
-        let on_visuals =
-            self.resolved_visuals_for_state(true, ctx.is_focused() || self.preview.is_focused());
-        let hover_progress = self.hover_value() * interaction.hover_blend;
-        let press_progress = self.press_value() * interaction.pressed_blend;
-        let toggle_progress = self.toggle_animation.value;
-        let focus_progress = self.focus_value();
+        let off_visuals = self.resolved_visuals_for_state(
+            false,
+            ctx.is_focused() || self.preview.is_focused(),
+            ctx,
+        );
+        let on_visuals = self.resolved_visuals_for_state(
+            true,
+            ctx.is_focused() || self.preview.is_focused(),
+            ctx,
+        );
+        let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
+        let press_progress = self.press_value(ctx) * interaction.pressed_blend;
+        let toggle_progress = self.toggle_animation.get(ctx);
+        let focus_progress = self.focus_value(ctx);
 
         let (framed_background, framed_border) =
             framed_choice_colors(&palette, hover_progress, press_progress, focus_progress);
@@ -3158,23 +3162,16 @@ impl RadioButton {
         }
     }
 
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.toggle_animation.advance(time)
-            | self.focus_animation.advance(time)
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        self.press_animation.get(clock).max(self.preview.press())
     }
 
-    fn press_value(&self) -> f32 {
-        self.press_animation.value.max(self.preview.press())
-    }
-
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -3252,12 +3249,6 @@ impl Widget for RadioButton {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -3293,10 +3284,10 @@ impl Widget for RadioButton {
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
-        let hover_progress = self.hover_value() * interaction.hover_blend;
-        let press_progress = self.press_value() * interaction.pressed_blend;
-        let toggle_progress = self.toggle_animation.value;
-        let focus_progress = self.focus_value();
+        let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
+        let press_progress = self.press_value(ctx) * interaction.pressed_blend;
+        let toggle_progress = self.toggle_animation.get(ctx);
+        let focus_progress = self.focus_value(ctx);
         let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
         let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
         let label_rect = checkbox_label_rect(ctx.bounds(), layout_padding, indicator_size, gap);
@@ -3577,55 +3568,33 @@ impl RadioGroup {
         ctx.request_semantics();
     }
 
-    fn hover_progress_for(&self, index: usize) -> f32 {
+    /// Hover progress of row `index` at `clock`'s frame. The row that was
+    /// last hovered keeps the (fading) hover until another row takes it.
+    fn hover_progress_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    fn press_progress_for(&self, index: usize) -> f32 {
+    fn press_progress_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    fn selection_progress_for(&self, index: usize) -> f32 {
+    fn selection_progress_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         let selected = self.current_selected_index();
         if selected == Some(index) && self.selected_visual == Some(index) {
-            self.selection_animation.value
+            self.selection_animation.get(clock)
         } else if selected == Some(index) {
             1.0
         } else {
             0.0
         }
-    }
-
-    fn advance_animations(&mut self, time: f64) -> (bool, bool) {
-        let previous_hover = self.hover_animation.value;
-        let previous_press = self.press_animation.value;
-        let previous_selection = self.selection_animation.value;
-        let previous_focus = self.focus_animation.value;
-        let active = self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.selection_animation.advance(time)
-            | self.focus_animation.advance(time);
-        let changed = self.hover_animation.changed_since(previous_hover)
-            || self.press_animation.changed_since(previous_press)
-            || self.selection_animation.changed_since(previous_selection)
-            || self.focus_animation.changed_since(previous_focus);
-
-        if self.hovered.is_none() && !self.hover_animation.is_presented() {
-            self.hover_visual = None;
-        }
-        if self.pressed.is_none() && !self.press_animation.is_presented() {
-            self.press_visual = None;
-        }
-
-        (changed, active)
     }
 }
 
@@ -3723,16 +3692,6 @@ impl Widget for RadioGroup {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let (changed, active) = self.advance_animations(*time);
-                if changed {
-                    ctx.request_paint();
-                }
-                if active {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
-            }
             _ => {}
         }
     }
@@ -3767,7 +3726,7 @@ impl Widget for RadioGroup {
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
-        let focus_progress = self.focus_animation.value;
+        let focus_progress = self.focus_animation.get(ctx);
         let row_padding = Insets {
             top: 0.0,
             bottom: 0.0,
@@ -3797,9 +3756,9 @@ impl Widget for RadioGroup {
                 metrics.checkbox_indicator_size,
                 metrics.checkbox_gap,
             );
-            let hover_progress = self.hover_progress_for(index);
-            let press_progress = self.press_progress_for(index);
-            let selection_progress = self.selection_progress_for(index);
+            let hover_progress = self.hover_progress_for(index, ctx);
+            let press_progress = self.press_progress_for(index, ctx);
+            let selection_progress = self.selection_progress_for(index, ctx);
             let hover_amount = hover_progress * interaction.hover_blend;
             let press_amount = press_progress * interaction.pressed_blend;
             let (background, row_border) =
@@ -4077,22 +4036,16 @@ impl Slider {
         }
     }
 
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.drag_animation.advance(time)
-            | self.focus_animation.advance(time)
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn drag_value(&self, clock: &impl FrameClock) -> f32 {
+        self.drag_animation.get(clock).max(self.preview.press())
     }
 
-    fn drag_value(&self) -> f32 {
-        self.drag_animation.value.max(self.preview.press())
-    }
-
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -4210,12 +4163,6 @@ impl Widget for Slider {
                     ctx.set_handled();
                 }
             }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -4234,9 +4181,9 @@ impl Widget for Slider {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
-        let hover_progress = self.hover_value();
-        let drag_progress = self.drag_value();
-        let focus_progress = self.focus_value();
+        let hover_progress = self.hover_value(ctx);
+        let drag_progress = self.drag_value(ctx);
+        let focus_progress = self.focus_value(ctx);
         let value = self.resolved_value();
         let track = self.track_rect(ctx.bounds());
         let active = Rect::new(
@@ -4562,23 +4509,16 @@ impl NumberInput {
         }
     }
 
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.stepper_hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time)
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        self.press_animation.get(clock).max(self.preview.press())
     }
 
-    fn press_value(&self) -> f32 {
-        self.press_animation.value.max(self.preview.press())
-    }
-
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -4700,26 +4640,6 @@ impl Widget for NumberInput {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let previous_hover = self.hover_animation.value;
-                let previous_stepper_hover = self.stepper_hover_animation.value;
-                let previous_press = self.press_animation.value;
-                let previous_focus = self.focus_animation.value;
-                let animating = self.advance_animations(*time);
-                let changed = self.hover_animation.changed_since(previous_hover)
-                    || self
-                        .stepper_hover_animation
-                        .changed_since(previous_stepper_hover)
-                    || self.press_animation.changed_since(previous_press)
-                    || self.focus_animation.changed_since(previous_focus);
-                if changed {
-                    ctx.request_paint();
-                }
-                if animating {
-                    ctx.request_animation_frame();
-                }
-                ctx.set_handled();
-            }
             _ => {}
         }
     }
@@ -4753,16 +4673,17 @@ impl Widget for NumberInput {
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
         let text_style = self.text_style();
         let buffer = self.display_buffer();
-        let stepper_hover_progress = self.stepper_hover_animation.value * interaction.hover_blend;
-        let press_progress = self.press_value() * interaction.pressed_blend;
-        let focus_progress = self.focus_value();
+        let stepper_hover_progress =
+            self.stepper_hover_animation.get(ctx) * interaction.hover_blend;
+        let press_progress = self.press_value(ctx) * interaction.pressed_blend;
+        let focus_progress = self.focus_value(ctx);
         draw_control_frame(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
             metrics,
             mix_color(palette.field, palette.surface_focus, focus_progress),
-            field_border(&palette, self.hover_value(), focus_progress),
+            field_border(&palette, self.hover_value(ctx), focus_progress),
             (focus_progress > 0.0).then_some(
                 palette
                     .focus_ring
@@ -4829,12 +4750,12 @@ impl Widget for NumberInput {
             }
         }
         let increment_offset = if self.pressed_stepper == Some(NumberInputStepperPart::Increment) {
-            Vector::new(0.0, self.press_value() * interaction.pressed_offset)
+            Vector::new(0.0, self.press_value(ctx) * interaction.pressed_offset)
         } else {
             Vector::ZERO
         };
         let decrement_offset = if self.pressed_stepper == Some(NumberInputStepperPart::Decrement) {
-            Vector::new(0.0, self.press_value() * interaction.pressed_offset)
+            Vector::new(0.0, self.press_value(ctx) * interaction.pressed_offset)
         } else {
             Vector::ZERO
         };
@@ -5267,12 +5188,12 @@ impl TextArea {
         }
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -5430,20 +5351,6 @@ impl Widget for TextArea {
             Event::Wake(sui_core::WakeEvent::Timer { token, .. }) if self.caret.matches(*token) => {
                 self.caret.tick(ctx, self.focused);
             }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                let previous_hover = self.hover_animation.value;
-                let previous_focus = self.focus_animation.value;
-                let animating =
-                    self.hover_animation.advance(*time) | self.focus_animation.advance(*time);
-                let changed = self.hover_animation.changed_since(previous_hover)
-                    || self.focus_animation.changed_since(previous_focus);
-                if animating {
-                    ctx.request_animation_frame();
-                }
-                if changed {
-                    ctx.request_paint();
-                }
-            }
             _ => {}
         }
     }
@@ -5544,7 +5451,7 @@ impl Widget for TextArea {
         let metrics = theme.metrics;
         let padding = self.resolved_padding();
         let content = inset_rect(ctx.bounds(), padding);
-        let focus_progress = self.focus_value();
+        let focus_progress = self.focus_value(ctx);
 
         // Fields keep their well; hover strengthens the outline and focus adds
         // the accent ring.
@@ -5556,7 +5463,7 @@ impl Widget for TextArea {
                 metrics.corner_radius,
                 metrics,
                 background,
-                field_border(&palette, self.hover_value(), focus_progress),
+                field_border(&palette, self.hover_value(ctx), focus_progress),
                 (focus_progress > 0.0).then_some(
                     palette
                         .focus_ring
@@ -5672,10 +5579,10 @@ struct SelectMenuPresentationState {
     selected: Option<usize>,
     hovered: Option<usize>,
     hover_visual: Option<usize>,
-    hover_animation: AnimatedScalar,
+    hover_animation: MotionScalar,
     placement: SelectMenuPlacement,
     menu_bounds: Rect,
-    reveal: AnimatedScalar,
+    reveal: MotionScalar,
     /// Pinned open and laid out in flow; see [`Select::show_inline`].
     inline: bool,
 }
@@ -5688,10 +5595,10 @@ impl SelectMenuPresentationState {
             selected: None,
             hovered: None,
             hover_visual: None,
-            hover_animation: AnimatedScalar::new(0.0),
+            hover_animation: MotionScalar::new(0.0),
             placement: SelectMenuPlacement::Below,
             menu_bounds: Rect::ZERO,
-            reveal: AnimatedScalar::new(0.0),
+            reveal: MotionScalar::new(0.0),
             inline: false,
         }
     }
@@ -5723,19 +5630,19 @@ impl SelectMenuPresentationState {
             Some(index) => {
                 if self.hover_visual != Some(index) {
                     self.hover_visual = Some(index);
-                    self.hover_animation = AnimatedScalar::new(0.0);
+                    self.hover_animation = MotionScalar::new(0.0);
                 }
                 if animate {
-                    set_hover_animation_target(&mut self.hover_animation, 1.0, &self.theme, ctx);
+                    set_menu_hover_target(&mut self.hover_animation, 1.0, &self.theme, ctx);
                 } else {
-                    self.hover_animation = AnimatedScalar::new(1.0);
+                    self.hover_animation = MotionScalar::new(1.0);
                 }
             }
             None => {
                 if animate {
-                    set_hover_animation_target(&mut self.hover_animation, 0.0, &self.theme, ctx);
+                    set_menu_hover_target(&mut self.hover_animation, 0.0, &self.theme, ctx);
                 } else {
-                    self.hover_animation = AnimatedScalar::new(0.0);
+                    self.hover_animation = MotionScalar::new(0.0);
                     self.hover_visual = None;
                 }
             }
@@ -5749,7 +5656,7 @@ impl SelectMenuPresentationState {
         }
         self.hovered = hovered;
         self.hover_visual = hovered;
-        self.hover_animation = AnimatedScalar::new(hovered.is_some() as u8 as f32);
+        self.hover_animation = MotionScalar::new(hovered.is_some() as u8 as f32);
         true
     }
 
@@ -5772,19 +5679,22 @@ impl SelectMenuPresentationState {
     }
 
     fn layer_properties(&self) -> LayerProperties {
-        let direction = match self.placement {
-            SelectMenuPlacement::Below => -1.0,
-            SelectMenuPlacement::Above => 1.0,
+        // The list grows from the edge next to the field.
+        let (direction, anchor) = match self.placement {
+            SelectMenuPlacement::Below => (-1.0, Vector::new(0.5, 0.0)),
+            SelectMenuPlacement::Above => (1.0, Vector::new(0.5, 1.0)),
         };
-        LayerProperties {
-            opacity: self.reveal.value,
-            translation: Vector::new(
+        LayerProperties::new(
+            self.reveal.value,
+            Vector::new(
                 0.0,
                 self.theme.metrics.popover_reveal_offset
                     * sui_runtime::motion_policy().entrance_offset(self.reveal.value)
                     * direction,
             ),
-        }
+        )
+        .with_scale(crate::animation::entrance_scale(self.reveal.value))
+        .with_scale_anchor(anchor)
     }
 }
 
@@ -6037,7 +5947,7 @@ impl Select {
         } else {
             self.hovered_option = None;
         }
-        self.menu_state.borrow_mut().reveal = AnimatedScalar::new(expanded as u8 as f32);
+        self.menu_state.borrow_mut().reveal = MotionScalar::new(expanded as u8 as f32);
         self
     }
 
@@ -6287,7 +6197,7 @@ impl Select {
                 motion.entrance_easing(),
             )
         } else {
-            state.reveal = AnimatedScalar::new(0.0);
+            state.reveal = MotionScalar::new(0.0);
             false
         };
         let is_presented = state.is_presented();
@@ -6349,29 +6259,16 @@ impl Select {
         }
     }
 
-    fn advance_header_animations(&mut self, time: f64) -> (bool, bool) {
-        let previous_hover = self.hover_animation.value;
-        let previous_press = self.press_animation.value;
-        let previous_focus = self.focus_animation.value;
-        let animating = self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time);
-        let changed = self.hover_animation.changed_since(previous_hover)
-            || self.press_animation.changed_since(previous_press)
-            || self.focus_animation.changed_since(previous_focus);
-        (changed, animating)
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        self.press_animation.get(clock).max(self.preview.press())
     }
 
-    fn press_value(&self) -> f32 {
-        self.press_animation.value.max(self.preview.press())
-    }
-
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -6524,7 +6421,8 @@ impl Widget for Select {
                 ctx.set_handled();
             }
             Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let (header_changed, header_animating) = self.advance_header_animations(*time);
+                // Only the menu advances here; the header's hover, press, and
+                // focus are runtime-driven.
                 let surface_id = self.menu_surface.child().id();
                 let mut state = self.menu_state.borrow_mut();
                 let was_presented = state.is_presented();
@@ -6546,10 +6444,7 @@ impl Widget for Select {
                 if hover_changed {
                     request_child_invalidation(ctx, surface_id, InvalidationKind::Paint);
                 }
-                if header_changed {
-                    ctx.request_paint();
-                }
-                if animating || header_animating || hover_animating {
+                if animating || hover_animating {
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
@@ -6637,10 +6532,10 @@ impl Widget for Select {
         let header = self.header_rect(ctx.bounds());
         let label = self.current_label();
         let placeholder = self.current_value().is_none();
-        let hover_progress = self.hover_value() * interaction.hover_blend;
-        let press_progress = self.press_value() * interaction.pressed_blend;
-        let focus_progress = self.focus_value();
-        let content_offset = Vector::new(0.0, self.press_value() * interaction.pressed_offset);
+        let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
+        let press_progress = self.press_value(ctx) * interaction.pressed_blend;
+        let focus_progress = self.focus_value(ctx);
+        let content_offset = Vector::new(0.0, self.press_value(ctx) * interaction.pressed_offset);
         let text_style = if placeholder {
             theme.placeholder_text_style()
         } else {
@@ -6670,7 +6565,7 @@ impl Widget for Select {
             ),
             field_border(
                 &palette,
-                self.hover_value().max(hover_progress),
+                self.hover_value(ctx).max(hover_progress),
                 focus_progress,
             ),
             (focus_progress > 0.0).then_some(
@@ -7212,12 +7107,12 @@ impl TextInput {
         aligned_text_rect_for_text(ctx, content, text, style, line_height, 0.0)
     }
 
-    fn hover_value(&self) -> f32 {
-        self.hover_animation.value.max(self.preview.hover())
+    fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        self.hover_animation.get(clock).max(self.preview.hover())
     }
 
-    fn focus_value(&self) -> f32 {
-        self.focus_animation.value.max(self.preview.focus())
+    fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
@@ -7348,20 +7243,6 @@ impl Widget for TextInput {
             Event::Wake(sui_core::WakeEvent::Timer { token, .. }) if self.caret.matches(*token) => {
                 self.caret.tick(ctx, self.focused);
             }
-            Event::Wake(sui_core::WakeEvent::AnimationFrame { time, .. }) => {
-                let previous_hover = self.hover_animation.value;
-                let previous_focus = self.focus_animation.value;
-                let animating =
-                    self.hover_animation.advance(*time) | self.focus_animation.advance(*time);
-                let changed = self.hover_animation.changed_since(previous_hover)
-                    || self.focus_animation.changed_since(previous_focus);
-                if animating {
-                    ctx.request_animation_frame();
-                }
-                if changed {
-                    ctx.request_paint();
-                }
-            }
             _ => {}
         }
     }
@@ -7455,11 +7336,11 @@ impl Widget for TextInput {
         let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
-        let focus_progress = self.focus_value();
+        let focus_progress = self.focus_value(ctx);
         // Fields keep their well; hover strengthens the outline and focus adds
         // the accent ring.
         let background = field_background(&theme, self.read_only, focus_progress);
-        let border = field_border(&palette, self.hover_value(), focus_progress);
+        let border = field_border(&palette, self.hover_value(ctx), focus_progress);
         let full_content_rect = inset_rect(ctx.bounds(), padding);
         let content_rect = self.text_content_rect(ctx.bounds());
         let display_text = self.visible_text();

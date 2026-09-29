@@ -20,6 +20,7 @@ layout-diagnostics = []
 
 [dependencies]
 lru = { workspace = true }
+sui-animation = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
 sui-reactive = { workspace = true }

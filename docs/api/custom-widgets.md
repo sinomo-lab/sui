@@ -283,3 +283,9 @@ Advanced widgets can override `layer_options`, `layer_properties`, and stack
 host/surface options. Use these only for explicit retained paint boundaries,
 compositor transforms/effects, or overlay ordering. Ordinary widgets should
 keep the defaults and emit normal scene commands.
+
+`LayerProperties` presents a retained layer without repainting it: opacity,
+translation, and scale around an anchor (`with_scale`, `with_scale_anchor`,
+the anchor as a fraction of the layer's bounds). When they animate, override
+`layer_properties_at(frame_time)` and read a `Motion` that invalidates
+`Transform` or `Effect`, so each frame updates only the composited layer.

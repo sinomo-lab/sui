@@ -4382,12 +4382,10 @@ mod tests {
         let widget_book_tab = find_top_tab_button(&output.semantics, WIDGET_BOOK_TAB_LABEL);
         click_runtime_point(&mut runtime, window_id, center_of(widget_book_tab.bounds));
 
+        // The runtime drives the indicator: it needs no animation-frame
+        // events, only a frame at the new time.
         runtime.tick(switch_duration * 0.5);
-        let ready_events = dispatch_ready_events(&mut runtime);
-        assert!(
-            ready_events >= 1,
-            "tab switch should schedule at least one animation frame"
-        );
+        dispatch_ready_events(&mut runtime);
         let mid = runtime
             .render(window_id)
             .expect("dev application should render mid tab animation");

@@ -1529,7 +1529,7 @@ fn plain_choice_row_reveals_soft_hover_wash() -> Result<()> {
         primary_pointer(PointerEventKind::Move, Point::new(10.0, 10.0), false),
     )?;
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
 
     let hovered = runtime.render(window_id)?;
     assert!(solid_fill_colors(&hovered).contains(&expected_wash));
@@ -1878,7 +1878,7 @@ fn button_hover_animation_advances_over_multiple_frames() -> Result<()> {
     )?;
 
     runtime.tick(hover_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     let mid_background = solid_fill_colors(&mid)[0];
     assert_ne!(mid_background, rest_background);
@@ -1886,7 +1886,7 @@ fn button_hover_animation_advances_over_multiple_frames() -> Result<()> {
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let end = runtime.render(window_id)?;
     let end_background = solid_fill_colors(&end)[0];
     assert_eq!(end_background, settled_background);
@@ -1911,7 +1911,7 @@ fn button_press_changes_color_without_moving_content() -> Result<()> {
         primary_pointer(PointerEventKind::Down, point, true),
     )?;
     runtime.tick(press_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
 
     let pressed = runtime.render(window_id)?;
     assert_ne!(solid_fill_colors(&pressed)[0], rest_background);
@@ -1937,11 +1937,11 @@ fn switch_thumb_animation_tracks_progress_and_completion() -> Result<()> {
     )?;
 
     runtime.tick(toggle_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(toggle_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert_eq!(runtime.next_wakeup_time(window_id)?, None);
 
     let output = runtime.render(window_id)?;
@@ -1969,7 +1969,7 @@ fn switch_track_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_track = solid_fill_colors(&mid_hover)[1];
     let settled_hover_track = super::mix_color(
@@ -1981,7 +1981,7 @@ fn switch_track_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_hover_track, settled_hover_track);
 
     runtime.tick(hover_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let hover = runtime.render(window_id)?;
     assert_eq!(solid_fill_colors(&hover)[1], settled_hover_track);
 
@@ -1991,7 +1991,7 @@ fn switch_track_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time + (press_time * 0.5));
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime.render(window_id)?;
     let mid_press_track = solid_fill_colors(&mid_press)[1];
     let settled_press_track = super::mix_color(
@@ -2003,7 +2003,7 @@ fn switch_track_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_press_track, settled_press_track);
 
     runtime.tick(hover_time + press_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let press = runtime.render(window_id)?;
     assert_eq!(solid_fill_colors(&press)[1], settled_press_track);
     Ok(())
@@ -2020,11 +2020,11 @@ fn slider_thumb_hover_animation_requests_followup_frames_until_complete() -> Res
     )?;
 
     runtime.tick(hover_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert_eq!(runtime.next_wakeup_time(window_id)?, None);
     Ok(())
 }
@@ -2046,7 +2046,7 @@ fn select_header_hover_animation_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     // Mesh selects are dressed fields: the well stays on the field token
     // while hover animates the border toward border_hover.
@@ -2057,7 +2057,7 @@ fn select_header_hover_animation_uses_theme_motion() -> Result<()> {
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let end = runtime.render(window_id)?;
     assert!(solid_fill_colors(&end).contains(&theme.palette.field));
     assert!(solid_stroke_colors(&end).contains(&theme.palette.border_hover));
@@ -2165,7 +2165,7 @@ fn number_input_stepper_press_animation_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.handle_event(
@@ -2174,7 +2174,7 @@ fn number_input_stepper_press_animation_uses_theme_motion() -> Result<()> {
     )?;
     let press_mid_time = (hover_duration() * 0.5) + (press_duration() * 0.5);
     runtime.tick(press_mid_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.handle_event(
@@ -2182,7 +2182,7 @@ fn number_input_stepper_press_animation_uses_theme_motion() -> Result<()> {
         primary_pointer(PointerEventKind::Up, stepper_point, false),
     )?;
     runtime.tick(press_mid_time + focus_duration() + press_duration() + 0.01);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert_eq!(runtime.next_wakeup_time(window_id)?, None);
 
     let output = runtime.render(window_id)?;
@@ -2215,7 +2215,7 @@ fn text_input_hover_animation_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     // The field well stays put while the outline strengthens without
     // snapping.
@@ -2226,7 +2226,7 @@ fn text_input_hover_animation_uses_theme_motion() -> Result<()> {
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let end = runtime.render(window_id)?;
     assert_eq!(solid_fill_colors(&end)[0], theme.palette.field);
     assert!(solid_stroke_colors(&end).contains(&theme.palette.border_hover));
@@ -2245,11 +2245,11 @@ fn text_area_hover_animation_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert_eq!(runtime.next_wakeup_time(window_id)?, None);
     Ok(())
 }
@@ -2328,7 +2328,7 @@ fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_background = solid_fill_colors(&mid_hover)[0];
     let settled_hover_background = super::mix_color(
@@ -2340,7 +2340,7 @@ fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_hover_background, settled_hover_background);
 
     runtime.tick(hover_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let hover = runtime.render(window_id)?;
     assert_color_approx_eq(solid_fill_colors(&hover)[0], settled_hover_background);
 
@@ -2350,7 +2350,7 @@ fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time + (press_time * 0.5));
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime.render(window_id)?;
     let mid_press_background = solid_fill_colors(&mid_press)[0];
     let settled_press_background = super::mix_color(
@@ -2362,7 +2362,7 @@ fn icon_button_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_press_background, settled_press_background);
 
     runtime.tick(hover_time + press_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let press = runtime.render(window_id)?;
     assert_color_approx_eq(solid_fill_colors(&press)[0], settled_press_background);
     Ok(())
@@ -2385,7 +2385,7 @@ fn icon_button_pressed_animation_decays_after_release() -> Result<()> {
     )?;
 
     runtime.tick(press_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     let mid_background = solid_fill_colors(&mid)[0];
     assert_ne!(mid_background, theme.palette.control_active);
@@ -2393,14 +2393,14 @@ fn icon_button_pressed_animation_decays_after_release() -> Result<()> {
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(hover_duration());
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let end = runtime.render(window_id)?;
     let end_fills = solid_fill_colors(&end);
     assert_ne!(end_fills, solid_fill_colors(&mid));
     assert!(!end_fills.contains(&theme.palette.control_active));
     if runtime.next_wakeup_time(window_id)?.is_some() {
         runtime.tick(focus_duration());
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
     }
     assert_eq!(runtime.next_wakeup_time(window_id)?, None);
     Ok(())
@@ -2492,14 +2492,14 @@ fn checkbox_check_indicator_animation_progresses_deterministically() -> Result<(
     )?;
 
     runtime.tick(toggle_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     let fills = solid_fill_colors(&mid);
     assert!(!fills.is_empty());
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(toggle_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let end = runtime.render(window_id)?;
     let checkbox = end
         .semantics
@@ -2523,7 +2523,7 @@ fn checkbox_focus_border_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(focus_duration() * 0.5);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_focus = runtime.render(window_id)?;
     assert!(
         !solid_stroke_colors(&mid_focus).contains(&theme.palette.focus_ring),
@@ -2531,7 +2531,7 @@ fn checkbox_focus_border_uses_theme_motion() -> Result<()> {
     );
 
     runtime.tick(focus_duration());
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_focus = runtime.render(window_id)?;
     assert!(
         solid_stroke_colors(&settled_focus).contains(&theme.palette.focus_ring),
@@ -2552,7 +2552,7 @@ fn focused_control_ring_path_sits_outside_control_bounds() -> Result<()> {
         primary_pointer(PointerEventKind::Down, Point::new(16.0, 16.0), true),
     )?;
     runtime.tick(focus_duration());
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
 
     let output = runtime.render(window_id)?;
     let button = output
@@ -2591,7 +2591,7 @@ fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_background = solid_fill_colors(&mid_hover)[0];
     let settled_hover_background = super::mix_color(
@@ -2603,7 +2603,7 @@ fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_hover_background, settled_hover_background);
 
     runtime.tick(hover_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let hover = runtime.render(window_id)?;
     assert_color_approx_eq(solid_fill_colors(&hover)[0], settled_hover_background);
 
@@ -2613,7 +2613,7 @@ fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time + (press_time * 0.5));
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime.render(window_id)?;
     let mid_press_background = solid_fill_colors(&mid_press)[0];
     let settled_press_background = super::mix_color(
@@ -2625,7 +2625,7 @@ fn checkbox_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_press_background, settled_press_background);
 
     runtime.tick(hover_time + press_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let press = runtime.render(window_id)?;
     assert_color_approx_eq(solid_fill_colors(&press)[0], settled_press_background);
     Ok(())
@@ -2648,11 +2648,11 @@ fn radio_button_selection_animation_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(toggle_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     assert!(runtime.next_wakeup_time(window_id)?.is_some());
 
     runtime.tick(toggle_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let end = runtime.render(window_id)?;
     let radio = end
         .semantics
@@ -2679,7 +2679,7 @@ fn radio_button_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_indicator = solid_fill_colors(&mid_hover)[1];
     let settled_hover_indicator = super::mix_color(
@@ -2691,7 +2691,7 @@ fn radio_button_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_hover_indicator, settled_hover_indicator);
 
     runtime.tick(hover_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let hover = runtime.render(window_id)?;
     assert_color_approx_eq(solid_fill_colors(&hover)[1], settled_hover_indicator);
 
@@ -2701,7 +2701,7 @@ fn radio_button_hover_and_press_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time + (press_time * 0.5));
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime.render(window_id)?;
     let mid_press_indicator = solid_fill_colors(&mid_press)[1];
     let settled_press_indicator = super::mix_color(
@@ -2713,7 +2713,7 @@ fn radio_button_hover_and_press_use_theme_motion() -> Result<()> {
     assert_ne!(mid_press_indicator, settled_press_indicator);
 
     runtime.tick(hover_time + press_time);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let press = runtime.render(window_id)?;
     assert_color_approx_eq(solid_fill_colors(&press)[1], settled_press_indicator);
     Ok(())
@@ -2736,7 +2736,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(hover_time * 0.5);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_hover = runtime.render(window_id)?;
     let mid_hover_background = solid_fill_colors(&mid_hover)[0];
     let settled_hover_background = super::mix_color(
@@ -2748,7 +2748,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     assert_ne!(mid_hover_background, settled_hover_background);
 
     runtime.tick(hover_time);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let hover = runtime.render(window_id)?;
     assert_eq!(solid_fill_colors(&hover)[0], settled_hover_background);
 
@@ -2757,7 +2757,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
         primary_pointer(PointerEventKind::Down, row_point, true),
     )?;
     runtime.tick(hover_time + (press_time * 0.5));
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_press = runtime.render(window_id)?;
     let mid_press_background = solid_fill_colors(&mid_press)[0];
     let settled_press_background = super::mix_color(
@@ -2769,7 +2769,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     assert_ne!(mid_press_background, settled_press_background);
 
     runtime.tick(hover_time + press_time);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let press = runtime.render(window_id)?;
     assert_eq!(solid_fill_colors(&press)[0], settled_press_background);
 
@@ -2779,7 +2779,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     )?;
     let selection_start = hover_time + press_time;
     runtime.tick(selection_start + (toggle_time * 0.5));
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_selection = runtime.render(window_id)?;
     // The dot shares the white of the row face, so track it by its fading
     // alpha rather than by color alone.
@@ -2797,7 +2797,7 @@ fn radio_group_hover_press_and_selection_use_theme_motion() -> Result<()> {
     );
 
     runtime.tick(selection_start + toggle_time);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let selected = runtime.render(window_id)?;
     let selected_fills = solid_fill_colors(&selected);
     assert!(!fading_dot(&selected_fills));
@@ -2821,7 +2821,7 @@ fn radio_group_focus_ring_uses_theme_motion() -> Result<()> {
     )?;
 
     runtime.tick(focus_duration() * 0.5);
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid_focus = runtime.render(window_id)?;
     assert!(
         !solid_stroke_colors(&mid_focus).contains(&theme.palette.focus_ring),
@@ -2829,7 +2829,7 @@ fn radio_group_focus_ring_uses_theme_motion() -> Result<()> {
     );
 
     runtime.tick(focus_duration());
-    assert!(handle_ready_events(&mut runtime)? >= 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let settled_focus = runtime.render(window_id)?;
     assert!(
         solid_stroke_colors(&settled_focus).contains(&theme.palette.focus_ring),
@@ -3599,7 +3599,7 @@ fn text_input_focus_animation_settles_into_blink_timer_without_frame_spin() -> R
 
     let settled_at = focus_duration() + 0.01;
     runtime.tick(settled_at);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let next = runtime
         .next_wakeup_time(window_id)?
         .expect("caret blink timer should remain armed after focus settles");
@@ -3842,7 +3842,7 @@ fn text_area_focus_ring_animation_progresses_without_losing_ime_rect() -> Result
     assert!(initial.ime_composition_rect.is_some());
 
     runtime.tick(focus_duration() * 0.5);
-    assert_eq!(handle_ready_events(&mut runtime)?, 1);
+    assert_eq!(handle_ready_events(&mut runtime)?, 0);
     let mid = runtime.render(window_id)?;
     assert!(mid.ime_composition_rect.is_some());
     assert_ne!(solid_stroke_colors(&initial), solid_stroke_colors(&mid));

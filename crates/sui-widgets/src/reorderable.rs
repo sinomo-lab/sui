@@ -1,15 +1,15 @@
 use sui_core::{
     DragDropScope, DragEventKind, DragOutcome, DragPayload, DragSessionId, DropEffect, Event, Path,
     Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
-    Size, Transform, Vector, WakeEvent,
+    Size, Transform, Vector,
 };
 use sui_layout::Constraints;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, Widget, WidgetChildren,
-    WidgetPodMutVisitor, WidgetPodVisitor, motion_policy,
+    ArrangeCtx, EventCtx, FrameClock, MeasureCtx, Motion, PaintCtx, SemanticsCtx, Widget,
+    WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 
-use crate::{AnimationSpec, DefaultTheme, Easing, MotionValue};
+use crate::{AnimationSpec, DefaultTheme, Easing};
 
 const DEFAULT_DRAG_THRESHOLD: f32 = 4.0;
 const REORDERABLE_LIST_PAYLOAD_KIND: &str = "sui-widgets.reorderable-list";
@@ -49,66 +49,43 @@ struct ActiveReorderDrag {
     position: Point,
 }
 
+/// Where a row is presented while rows slide into a new order. The runtime
+/// animates it; rows sliding into place are movement, which reduced motion
+/// skips.
 #[derive(Debug, Clone, Copy)]
 struct RowMotion {
-    y: f32,
-    target_y: f32,
-    motion: MotionValue<f32>,
+    y: Motion<f32>,
 }
 
 impl RowMotion {
     fn new(y: f32) -> Self {
         Self {
-            y,
-            target_y: y,
-            motion: MotionValue::new(y),
+            y: Motion::new(y).movement(),
         }
     }
 
-    fn current_at(self, time: f64) -> f32 {
-        if self.motion.is_animating() {
-            self.motion.value(time)
-        } else {
-            self.y
-        }
+    fn at(&self, clock: &impl FrameClock) -> f32 {
+        self.y.get(clock)
     }
 
     fn jump_to(&mut self, y: f32) {
-        self.y = y;
-        self.target_y = y;
-        self.motion.jump_to(y);
+        self.y.jump_to(y);
     }
 
-    fn set_target(&mut self, target_y: f32, time: f64, duration: f64, easing: Easing) -> bool {
-        let current = self.current_at(time);
-        if (current - target_y).abs() <= 0.5 {
+    fn set_target(&mut self, target_y: f32, duration: f64, easing: Easing, ctx: &mut EventCtx) {
+        if (self.y.get(ctx) - target_y).abs() <= 0.5 && !self.y.is_animating(ctx) {
             self.jump_to(target_y);
-            return false;
+            return;
         }
-
-        self.y = current;
-        self.target_y = target_y;
-        // Rows sliding into place are movement, which reduced motion skips.
-        let spec = AnimationSpec::tween(duration, easing).with_movement_policy(motion_policy());
-        self.motion.animate_to(target_y, time, spec)
+        ctx.animate(
+            &mut self.y,
+            target_y,
+            AnimationSpec::tween(duration, easing),
+        );
     }
 
-    fn advance(&mut self, time: f64) -> bool {
-        if !self.motion.is_animating() {
-            return false;
-        }
-
-        let animating = self.motion.advance(time);
-        self.y = if animating {
-            self.motion.value(time)
-        } else {
-            self.target_y
-        };
-        animating
-    }
-
-    fn is_animating(&self) -> bool {
-        self.motion.is_animating()
+    fn is_animating(&self, clock: &impl FrameClock) -> bool {
+        self.y.is_animating(clock)
     }
 }
 
@@ -410,8 +387,6 @@ impl ReorderableList {
         let easing = self
             .animation_easing
             .unwrap_or(theme.motion.easing_standard);
-        let mut animating = false;
-
         for item in 0..self.row_motions.len() {
             if self.active_drag.is_some_and(|drag| drag.item == item) {
                 continue;
@@ -419,27 +394,13 @@ impl ReorderableList {
             let target_y = base_y + offsets.get(item).copied().unwrap_or(0.0);
             let motion = &mut self.row_motions[item];
             if animate {
-                animating |= motion.set_target(target_y, ctx.current_time(), duration, easing);
+                motion.set_target(target_y, duration, easing, ctx);
             } else {
                 motion.jump_to(target_y);
             }
         }
 
         ctx.request_paint();
-        if animating {
-            ctx.request_animation_frame();
-        }
-    }
-
-    fn advance_motions(&mut self, ctx: &mut EventCtx, time: f64) {
-        let mut animating = false;
-        for motion in &mut self.row_motions {
-            animating |= motion.advance(time);
-        }
-        ctx.request_paint();
-        if animating {
-            ctx.request_animation_frame();
-        }
     }
 
     fn reset_drag(&mut self, ctx: &mut EventCtx, animate: bool) {
@@ -579,9 +540,6 @@ impl Widget for ReorderableList {
                     _ => {}
                 }
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                self.advance_motions(ctx, *time);
-            }
             _ => {}
         }
     }
@@ -617,7 +575,7 @@ impl Widget for ReorderableList {
             let rect = Rect::new(bounds.x(), bounds.y() + offset, size.width, size.height);
             self.row_bounds[item] = rect;
             self.children.arrange_child(item, ctx, rect);
-            if !self.row_motions[item].is_animating() && self.active_drag.is_none() {
+            if !self.row_motions[item].is_animating(ctx) && self.active_drag.is_none() {
                 self.row_motions[item].jump_to(rect.y());
             }
         }
@@ -636,7 +594,7 @@ impl Widget for ReorderableList {
             let y = self
                 .row_motions
                 .get(item)
-                .map(|motion| motion.y)
+                .map(|motion| motion.at(ctx))
                 .unwrap_or(rect.y());
             ctx.translate(Vector::new(0.0, y - rect.y()));
             self.children.as_slice()[item].paint(ctx);

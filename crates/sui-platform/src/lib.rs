@@ -7,6 +7,7 @@ mod android_clipboard;
 mod desktop;
 mod display_capabilities;
 mod file_dialog;
+mod frame_pacing;
 mod headless;
 mod motion_preference;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]

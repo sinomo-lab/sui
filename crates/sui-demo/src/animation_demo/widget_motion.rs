@@ -123,7 +123,7 @@ pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
                 "Popover",
                 |theme| {
                     format!(
-                        "Fades and drops {:.0} px · {}",
+                        "Fades, drops {:.0} px, and grows from 96% · {}",
                         theme.metrics.popover_reveal_offset,
                         millis(theme.motion.entrance_duration())
                     )

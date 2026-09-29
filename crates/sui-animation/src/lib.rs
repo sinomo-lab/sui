@@ -839,6 +839,24 @@ where
         true
     }
 
+    /// When the running animations will all have finished, or `None` at rest.
+    pub fn end_time(&self) -> Option<f64> {
+        self.segments
+            .iter()
+            .flatten()
+            .map(|segment| segment.start_time + segment.spec.duration())
+            .reduce(f64::max)
+    }
+
+    /// Whether an animation is still running at `time`, without dropping
+    /// finished ones.
+    pub fn is_animating_at(&self, time: f64) -> bool {
+        self.segments
+            .iter()
+            .flatten()
+            .any(|segment| !segment.is_complete(time))
+    }
+
     /// Drop animations that have finished by `time`. Returns whether the
     /// value is still animating.
     pub fn advance(&mut self, time: f64) -> bool {

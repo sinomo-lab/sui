@@ -701,15 +701,15 @@ impl TooltipPresentationState {
             TooltipPlacement::Above => -1.0,
             TooltipPlacement::Below => 1.0,
         };
-        LayerProperties {
-            opacity: self.reveal.value,
-            translation: Vector::new(
+        LayerProperties::new(
+            self.reveal.value,
+            Vector::new(
                 0.0,
                 self.theme.metrics.tooltip_reveal_offset
                     * sui_runtime::motion_policy().entrance_offset(self.reveal.value)
                     * direction,
             ),
-        }
+        )
     }
 }
 
@@ -1099,14 +1099,17 @@ impl PopoverSurfaceState {
     }
 
     pub(super) fn layer_properties(&self) -> LayerProperties {
-        LayerProperties {
-            opacity: self.reveal.value,
-            translation: Vector::new(
+        // Drops into place below its trigger, growing from the top edge.
+        LayerProperties::new(
+            self.reveal.value,
+            Vector::new(
                 0.0,
                 -self.theme.metrics.popover_reveal_offset
                     * sui_runtime::motion_policy().entrance_offset(self.reveal.value),
             ),
-        }
+        )
+        .with_scale(crate::animation::entrance_scale(self.reveal.value))
+        .with_scale_anchor(Vector::new(0.5, 0.0))
     }
 
     pub(super) fn resolved_visuals(&self) -> PopoverVisuals {
@@ -1939,14 +1942,17 @@ impl ContextMenuPresentationState {
     }
 
     pub(super) fn layer_properties(&self) -> LayerProperties {
-        LayerProperties {
-            opacity: self.reveal.value,
-            translation: Vector::new(
+        // Drops into place below its trigger, growing from the top edge.
+        LayerProperties::new(
+            self.reveal.value,
+            Vector::new(
                 0.0,
                 -self.theme.metrics.popover_reveal_offset
                     * sui_runtime::motion_policy().entrance_offset(self.reveal.value),
             ),
-        }
+        )
+        .with_scale(crate::animation::entrance_scale(self.reveal.value))
+        .with_scale_anchor(Vector::new(0.5, 0.0))
     }
 
     pub(super) fn highlight_amount_for(&self, path: &[usize]) -> f32 {

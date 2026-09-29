@@ -18,12 +18,13 @@ use sui_runtime::{
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
 use crate::{
-    DefaultTheme, MotionScalar,
+    DefaultTheme,
     containers::{ScrollBar, ScrollState, ScrollView},
     text_align::paint_aligned_text,
 };
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = crate::Progress;
 type ThemeReader = std::rc::Rc<dyn Fn() -> DefaultTheme>;
 
 fn retained_subtree_contains(root: &WidgetPod, target: WidgetId) -> bool {
@@ -91,7 +92,7 @@ fn set_animation_target(
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) -> bool {
-    animation.set_target_event(target, duration, easing, ctx)
+    animation.animate(target, crate::AnimationSpec::tween(duration, easing), ctx)
 }
 
 fn set_hover_animation_target(
@@ -1669,12 +1670,6 @@ impl SplitView {
         ctx.request_semantics();
     }
 
-    fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.drag_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
-
     fn set_ratio_from_position(&mut self, bounds: Rect, position: Point) {
         let divider = self.resolved_divider_thickness();
         let total = (axis_main(self.axis, bounds.size) - divider).max(0.0);
@@ -1838,12 +1833,9 @@ impl Widget for SplitView {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
+            Event::Wake(WakeEvent::AnimationFrame { .. }) => {
+                // A frame after arrangement restores focus into a pane.
                 self.restore_pending_focus(ctx);
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
             }
             _ => {}
         }
@@ -1937,14 +1929,18 @@ impl Widget for SplitView {
         let hover_color = mix_color(
             palette.border,
             palette.border_hover,
-            self.hover_animation.value,
+            self.hover_animation.get(ctx),
         );
         let focus_color = mix_color(
             hover_color,
             palette.border_focus,
-            self.focus_animation.value,
+            self.focus_animation.get(ctx),
         );
-        let divider_color = mix_color(focus_color, palette.border_focus, self.drag_animation.value);
+        let divider_color = mix_color(
+            focus_color,
+            palette.border_focus,
+            self.drag_animation.get(ctx),
+        );
 
         ctx.fill_rect(divider_bounds, divider_color);
         if self.resolved_divider_thickness() > metrics.border_width.max(1.0) {
@@ -2887,7 +2883,7 @@ mod tests {
             primary_pointer(PointerEventKind::Move, divider_point, false),
         )?;
         runtime.tick(hover_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_hover = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_hover).contains(&expected_hover),
@@ -2895,7 +2891,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_hover = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_hover).contains(&expected_hover));
 
@@ -2904,7 +2900,7 @@ mod tests {
             primary_pointer(PointerEventKind::Down, divider_point, true),
         )?;
         runtime.tick(hover_duration + press_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_drag = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_drag).contains(&expected_drag),
@@ -2912,7 +2908,7 @@ mod tests {
         );
 
         runtime.tick(hover_duration + press_duration);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_drag = runtime.render(window_id)?;
         assert!(solid_fill_colors(&settled_drag).contains(&expected_drag));
 
@@ -2942,7 +2938,7 @@ mod tests {
         )?;
 
         runtime.tick(focus_duration * 0.5);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let mid_focus = runtime.render(window_id)?;
         assert!(
             !solid_fill_colors(&mid_focus).contains(&expected_focus),
@@ -2950,7 +2946,7 @@ mod tests {
         );
 
         runtime.tick(focus_duration + 0.01);
-        assert_eq!(handle_ready_events(&mut runtime)?, 1);
+        assert_eq!(handle_ready_events(&mut runtime)?, 0);
         let settled_focus = runtime.render(window_id)?;
         let settled_fills = solid_fill_colors(&settled_focus);
         assert!(

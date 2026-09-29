@@ -3,11 +3,11 @@ use crate::DecorativeHue;
 use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::SemanticTone;
+use crate::animation::{AnimationSpec, Progress, StateMotion};
 use crate::composites::indicators::{
     draw_control_frame, inset_rect, measure_text, mix_color, physical_pixels, rounded_rect_path,
     text_token_style,
 };
-use crate::composites::popups::AnimatedScalar;
 use crate::composites::surfaces::SurfaceElevation;
 use crate::controls::draw_icon_glyph;
 use crate::paint_theme_shadow;
@@ -26,7 +26,6 @@ use sui_core::SemanticsNode;
 use sui_core::SemanticsRole;
 use sui_core::SemanticsValue;
 use sui_core::Size;
-use sui_core::WakeEvent;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
 use sui_layout::Padding as Insets;
@@ -61,9 +60,9 @@ pub struct ActionCard {
     pub(super) min_height: Option<f32>,
     pub(super) hovered: bool,
     pub(super) pressed: bool,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) title_measurement: Option<TextMeasurement>,
     pub(super) description_measurement: Option<TextMeasurement>,
     pub(super) enabled: bool,
@@ -88,9 +87,9 @@ impl ActionCard {
             min_height: None,
             hovered: false,
             pressed: false,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             title_measurement: None,
             description_measurement: None,
             enabled: true,
@@ -243,22 +242,16 @@ impl ActionCard {
         ctx.request_semantics();
     }
 
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
-
     pub(super) fn clear_transient_state_for_hidden_bounds(&mut self, ctx: &mut ArrangeCtx) {
-        if !self.hovered && !self.pressed && !self.focus_animation.is_presented() {
+        if !self.hovered && !self.pressed && !self.focus_animation.is_presented(ctx) {
             return;
         }
 
         self.hovered = false;
         self.pressed = false;
-        self.hover_animation = AnimatedScalar::new(0.0);
-        self.press_animation = AnimatedScalar::new(0.0);
-        self.focus_animation = AnimatedScalar::new(0.0);
+        self.hover_animation = Progress::new(0.0);
+        self.press_animation = Progress::new(0.0);
+        self.focus_animation = Progress::new(0.0);
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -393,12 +386,6 @@ impl Widget for ActionCard {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -450,12 +437,12 @@ impl Widget for ActionCard {
         let metrics = theme.metrics;
         let enabled = self.is_enabled();
         let hover = if enabled {
-            self.hover_animation.value
+            self.hover_animation.get(ctx)
         } else {
             0.0
         };
         let press = if enabled {
-            self.press_animation.value
+            self.press_animation.get(ctx)
         } else {
             0.0
         };
@@ -506,10 +493,10 @@ impl Widget for ActionCard {
             metrics,
             background,
             border,
-            (self.focus_animation.value > AnimatedScalar::EPSILON && enabled).then_some(
+            (self.focus_animation.get(ctx) > Progress::EPSILON && enabled).then_some(
                 palette
                     .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
+                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.get(ctx)),
             ),
         );
 
@@ -734,17 +721,17 @@ impl Widget for ActionCard {
 }
 
 pub(super) fn set_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     duration: f64,
     easing: crate::Easing,
     ctx: &mut EventCtx,
 ) -> bool {
-    animation.set_target_event(target, duration, easing, ctx)
+    animation.start(target, AnimationSpec::tween(duration, easing), ctx)
 }
 
 pub(super) fn set_hover_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     theme: &DefaultTheme,
     ctx: &mut EventCtx,
@@ -759,7 +746,7 @@ pub(super) fn set_hover_animation_target(
 }
 
 pub(super) fn set_press_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     theme: &DefaultTheme,
     ctx: &mut EventCtx,
@@ -774,7 +761,7 @@ pub(super) fn set_press_animation_target(
 }
 
 pub(super) fn set_focus_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     theme: &DefaultTheme,
     ctx: &mut EventCtx,
@@ -789,7 +776,7 @@ pub(super) fn set_focus_animation_target(
 }
 
 pub(super) fn set_action_card_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     duration: f64,
     easing: crate::Easing,
@@ -799,7 +786,7 @@ pub(super) fn set_action_card_animation_target(
 }
 
 pub(super) fn set_action_card_hover_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     theme: &DefaultTheme,
     ctx: &mut EventCtx,
@@ -814,7 +801,7 @@ pub(super) fn set_action_card_hover_animation_target(
 }
 
 pub(super) fn set_action_card_press_animation_target(
-    animation: &mut AnimatedScalar,
+    animation: &mut impl StateMotion,
     target: f32,
     theme: &DefaultTheme,
     ctx: &mut EventCtx,
@@ -2387,9 +2374,9 @@ pub struct PanelSection {
     pub(super) expanded: bool,
     pub(super) hovered_header: bool,
     pub(super) pressed_header: bool,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
 }
 
 impl PanelSection {
@@ -2411,9 +2398,9 @@ impl PanelSection {
             expanded: true,
             hovered_header: false,
             pressed_header: false,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
         }
     }
 
@@ -2600,12 +2587,6 @@ impl PanelSection {
         ctx.request_paint();
         ctx.request_semantics();
     }
-
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        self.hover_animation.advance(time)
-            | self.press_animation.advance(time)
-            | self.focus_animation.advance(time)
-    }
 }
 
 impl Widget for PanelSection {
@@ -2669,12 +2650,6 @@ impl Widget for PanelSection {
                     }
                     _ => {}
                 }
-            }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
             }
             _ => {}
         }
@@ -2775,10 +2750,10 @@ impl Widget for PanelSection {
         let title_slot = self.title_rect(ctx.bounds(), header_height, title_height);
         if self.collapsible {
             let header_hit = self.header_hit_rect(ctx.bounds());
-            let hover_amount = self.hover_animation.value;
-            let press_amount = self.press_animation.value;
-            let focus_amount = self.focus_animation.value;
-            if focus_amount > AnimatedScalar::EPSILON {
+            let hover_amount = self.hover_animation.get(ctx);
+            let press_amount = self.press_animation.get(ctx);
+            let focus_amount = self.focus_animation.get(ctx);
+            if focus_amount > Progress::EPSILON {
                 let outset = physical_pixels(ctx, metrics.focus_ring_outset);
                 ctx.stroke(
                     rounded_rect_path(

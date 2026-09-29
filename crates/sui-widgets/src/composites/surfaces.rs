@@ -1,8 +1,8 @@
 use crate::DefaultTheme;
+use crate::Progress;
 use crate::SemanticTone;
 use crate::composites::forms::set_hover_animation_target;
 use crate::composites::indicators::{inset_rect, mix_color, physical_pixels, rounded_rect_path};
-use crate::composites::popups::AnimatedScalar;
 use crate::paint_theme_shadow;
 use sui_core::Color;
 use sui_core::Event;
@@ -11,7 +11,6 @@ use sui_core::Rect;
 use sui_core::SemanticsNode;
 use sui_core::SemanticsRole;
 use sui_core::Size;
-use sui_core::WakeEvent;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
 use sui_layout::Padding as Insets;
@@ -414,7 +413,7 @@ pub struct FramedField {
     pub(super) invalid: bool,
     pub(super) invalid_reader: Option<Box<dyn Fn() -> bool>>,
     pub(super) hovered: bool,
-    pub(super) hover_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
     pub(super) child: SingleChild,
 }
 
@@ -436,7 +435,7 @@ impl FramedField {
             invalid: false,
             invalid_reader: None,
             hovered: false,
-            hover_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
             child: SingleChild::new(child),
         }
     }
@@ -589,15 +588,6 @@ impl Widget for FramedField {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
                 self.set_hovered(false, ctx);
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                let previous = self.hover_animation.value;
-                if self.hover_animation.advance(*time) {
-                    ctx.request_animation_frame();
-                }
-                if self.hover_animation.changed_since(previous) {
-                    ctx.request_paint();
-                }
-            }
             _ => {}
         }
     }
@@ -646,7 +636,7 @@ impl Widget for FramedField {
         let interaction_border = mix_color(
             theme.palette.button_border,
             theme.palette.border_hover,
-            self.hover_animation.value,
+            self.hover_animation.get(ctx),
         );
         let border = if invalid {
             theme.semantic_tone_color(SemanticTone::Danger)

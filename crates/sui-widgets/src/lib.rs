@@ -34,10 +34,10 @@ pub use animation::{
     AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection, AnimationSpec,
     AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, Blink, Clip,
     CompiledClip, CompiledTimeline, CompiledTrack, Easing, Interpolate, Keyframe,
-    KeyframeSelection, LoopMode, MotionScalar, MotionValue, PlaybackState, Pulse, SampleBatch,
-    SampleBuffer, SampledAnimationValue, SharedCompiledTimeline, SpringF32, SpringSpec, Timeline,
-    TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, Track, Transition,
-    invalidation_for_animation_property,
+    KeyframeSelection, LoopMode, MotionScalar, MotionValue, PlaybackState, Progress, Pulse,
+    SampleBatch, SampleBuffer, SampledAnimationValue, SharedCompiledTimeline, SpringF32,
+    SpringSpec, Timeline, TimelineBindingSink, TimelinePlayer, TimelineSnap, TimelineTick, Track,
+    Transition, invalidation_for_animation_property,
 };
 pub use canvas::{
     Canvas, CanvasAppearance, CanvasGridStyle, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis,

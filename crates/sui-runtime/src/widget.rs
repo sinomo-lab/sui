@@ -15,9 +15,11 @@ use crate::{
     Command, CommandDelivery, CommandKey, CommandSender, CommandTarget,
     command::{QueuedCommand, queued_command},
     diagnostics::{WidgetTimingPhase, record_widget_timing},
+    motion::{FrameClock, Motion},
     overlay::OverlayOptions,
     reactive::{ObservationPhase, ObservationScope},
 };
+use sui_animation::{AnimationSpec, Interpolate};
 
 use sui_core::{
     AsyncWakeToken, Clipboard, Color, CursorGrabMode, DpiInfo, DragPayload, DragScopeId,
@@ -239,6 +241,15 @@ pub trait Widget {
 
     fn layer_properties(&self) -> LayerProperties {
         LayerProperties::default()
+    }
+
+    /// Layer properties for the frame shown at `frame_time`. Override this
+    /// instead of [`Widget::layer_properties`] when they come from [`Motion`]
+    /// values; the runtime refreshes them without repainting when the motion
+    /// invalidates `Transform` or `Effect`.
+    fn layer_properties_at(&self, frame_time: f64) -> LayerProperties {
+        let _ = frame_time;
+        self.layer_properties()
     }
 
     fn stack_host_options(&self) -> Option<StackHostOptions> {
@@ -1482,7 +1493,8 @@ impl WidgetPod {
             Arc::clone(&parent_ctx.font_registry),
             Arc::clone(&parent_ctx.image_registry),
             presentation_transform,
-        );
+        )
+        .with_frame_time(parent_ctx.frame_time);
         child_ctx.output_cache = output_cache.clone();
         let (mut scene, images, mut widget_paint_bounds, invalidations, mut ime_composition_rect) =
             if let Some(fragment) = cached {
@@ -1546,7 +1558,10 @@ impl WidgetPod {
             && presentation_transform.is_identity()
             && self.current_layer_options().emits_layer()
         {
-            parent_ctx.push_layer(self.build_layer_descriptor(&scene), scene);
+            parent_ctx.push_layer(
+                self.build_layer_descriptor(&scene, parent_ctx.frame_time),
+                scene,
+            );
         } else {
             parent_ctx.append_scene(scene);
         }
@@ -1571,8 +1586,11 @@ impl WidgetPod {
         &mut self,
         target: WidgetId,
         scene: &Scene,
+        frame_time: f64,
     ) -> Option<SceneLayerDescriptor> {
-        self.find_mut(target, &mut |pod| pod.build_layer_descriptor(scene))
+        self.find_mut(target, &mut |pod| {
+            pod.build_layer_descriptor(scene, frame_time)
+        })
     }
 
     pub fn semantics(&self, parent_ctx: &mut SemanticsCtx) {
@@ -2008,7 +2026,11 @@ impl WidgetPod {
         self.visit_children_mut(&mut visitor);
     }
 
-    pub(crate) fn build_layer_descriptor(&self, scene: &Scene) -> SceneLayerDescriptor {
+    pub(crate) fn build_layer_descriptor(
+        &self,
+        scene: &Scene,
+        frame_time: f64,
+    ) -> SceneLayerDescriptor {
         let options = self.current_layer_options();
         SceneLayerDescriptor::new(
             SceneLayerId::from_widget(self.id),
@@ -2025,7 +2047,7 @@ impl WidgetPod {
                 .paint_bounds()
                 .unwrap_or(self.layout_state.arranged_bounds),
         )
-        .with_properties(self.current_layer_properties())
+        .with_properties(self.current_layer_properties(frame_time))
         .with_clip_to_ancestors(matches!(
             options.composition_mode,
             LayerCompositionMode::Normal
@@ -2045,8 +2067,8 @@ impl WidgetPod {
         options
     }
 
-    pub(crate) fn current_layer_properties(&self) -> LayerProperties {
-        self.widget.layer_properties()
+    pub(crate) fn current_layer_properties(&self, frame_time: f64) -> LayerProperties {
+        self.widget.layer_properties_at(frame_time)
     }
 
     pub(crate) fn current_paint_boundary_mode(&self) -> PaintBoundaryMode {
@@ -2170,6 +2192,11 @@ pub(crate) enum WakeRequest {
     },
     RequestAnimationFrame {
         target: WidgetId,
+    },
+    Motion {
+        target: WidgetId,
+        kind: InvalidationKind,
+        until: f64,
     },
 }
 
@@ -2358,6 +2385,37 @@ impl EventCtx {
     /// The motion policy that transitions started now should follow.
     pub fn motion_policy(&self) -> MotionPolicy {
         crate::motion_policy()
+    }
+
+    /// Animate `motion` toward `target` with `spec`, under the motion
+    /// policy. The runtime invalidates this widget (with the motion's
+    /// invalidation kind) every frame until the transition ends; read the
+    /// value with `motion.get(ctx)`. Returns whether a transition started.
+    pub fn animate<T>(&mut self, motion: &mut Motion<T>, target: T, spec: AnimationSpec) -> bool
+    where
+        T: Interpolate + Copy + PartialEq,
+    {
+        let before = motion.target();
+        let until = motion.start(target, self.current_time, spec);
+        if before != target {
+            // The value may change right away (an instant jump under the
+            // motion policy), so repaint now as well as every frame.
+            self.request_widget(motion.invalidation());
+        }
+        if let Some(until) = until {
+            self.track_motion(until, motion.invalidation());
+        }
+        until.is_some()
+    }
+
+    /// Keep invalidating this widget with `kind` every animation frame until
+    /// `until` (in frame time), for presentation that is a function of time.
+    pub fn track_motion(&mut self, until: f64, kind: InvalidationKind) {
+        self.wake_requests.push(WakeRequest::Motion {
+            target: self.widget_id,
+            kind,
+            until,
+        });
     }
 
     pub const fn phase(&self) -> EventPhase {
@@ -2951,6 +3009,37 @@ impl MeasureCtx {
         crate::motion_policy()
     }
 
+    /// Animate `motion` toward `target` with `spec`, under the motion
+    /// policy. The runtime invalidates this widget (with the motion's
+    /// invalidation kind) every frame until the transition ends; read the
+    /// value with `motion.get(ctx)`. Returns whether a transition started.
+    pub fn animate<T>(&mut self, motion: &mut Motion<T>, target: T, spec: AnimationSpec) -> bool
+    where
+        T: Interpolate + Copy + PartialEq,
+    {
+        let before = motion.target();
+        let until = motion.start(target, self.current_time, spec);
+        if before != target {
+            // The value may change right away (an instant jump under the
+            // motion policy), so repaint now as well as every frame.
+            self.request_widget(motion.invalidation());
+        }
+        if let Some(until) = until {
+            self.track_motion(until, motion.invalidation());
+        }
+        until.is_some()
+    }
+
+    /// Keep invalidating this widget with `kind` every animation frame until
+    /// `until` (in frame time), for presentation that is a function of time.
+    pub fn track_motion(&mut self, until: f64, kind: InvalidationKind) {
+        self.wake_requests.push(WakeRequest::Motion {
+            target: self.widget_id,
+            kind,
+            until,
+        });
+    }
+
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
@@ -3130,6 +3219,37 @@ impl ArrangeCtx {
         crate::motion_policy()
     }
 
+    /// Animate `motion` toward `target` with `spec`, under the motion
+    /// policy. The runtime invalidates this widget (with the motion's
+    /// invalidation kind) every frame until the transition ends; read the
+    /// value with `motion.get(ctx)`. Returns whether a transition started.
+    pub fn animate<T>(&mut self, motion: &mut Motion<T>, target: T, spec: AnimationSpec) -> bool
+    where
+        T: Interpolate + Copy + PartialEq,
+    {
+        let before = motion.target();
+        let until = motion.start(target, self.current_time, spec);
+        if before != target {
+            // The value may change right away (an instant jump under the
+            // motion policy), so repaint now as well as every frame.
+            self.request_widget(motion.invalidation());
+        }
+        if let Some(until) = until {
+            self.track_motion(until, motion.invalidation());
+        }
+        until.is_some()
+    }
+
+    /// Keep invalidating this widget with `kind` every animation frame until
+    /// `until` (in frame time), for presentation that is a function of time.
+    pub fn track_motion(&mut self, until: f64, kind: InvalidationKind) {
+        self.wake_requests.push(WakeRequest::Motion {
+            target: self.widget_id,
+            kind,
+            until,
+        });
+    }
+
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
@@ -3214,6 +3334,46 @@ pub struct PaintCtx {
     widget_paint_bounds: HashMap<WidgetId, Rect>,
     invalidations: Vec<InvalidationRequest>,
     ime_composition_rect: Option<Rect>,
+    frame_time: f64,
+}
+
+macro_rules! impl_animate_ctx {
+    ($($ctx:ty),*) => {$(
+        impl crate::motion::AnimateCtx for $ctx {
+            fn animate<T>(&mut self, motion: &mut Motion<T>, target: T, spec: AnimationSpec) -> bool
+            where
+                T: Interpolate + Copy + PartialEq,
+            {
+                <$ctx>::animate(self, motion, target, spec)
+            }
+        }
+    )*};
+}
+
+impl_animate_ctx!(EventCtx, MeasureCtx, ArrangeCtx);
+
+impl FrameClock for PaintCtx {
+    fn frame_time(&self) -> f64 {
+        self.frame_time
+    }
+}
+
+impl FrameClock for EventCtx {
+    fn frame_time(&self) -> f64 {
+        self.current_time
+    }
+}
+
+impl FrameClock for MeasureCtx {
+    fn frame_time(&self) -> f64 {
+        self.current_time
+    }
+}
+
+impl FrameClock for ArrangeCtx {
+    fn frame_time(&self) -> f64 {
+        self.current_time
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3281,7 +3441,19 @@ impl PaintCtx {
             widget_paint_bounds: HashMap::new(),
             invalidations: Vec::new(),
             ime_composition_rect: None,
+            frame_time: 0.0,
         }
+    }
+
+    pub(crate) const fn with_frame_time(mut self, frame_time: f64) -> Self {
+        self.frame_time = frame_time;
+        self
+    }
+
+    /// The time this frame is expected on screen. Read [`Motion`] values at
+    /// this time (`motion.get(ctx)`).
+    pub const fn frame_time(&self) -> f64 {
+        self.frame_time
     }
 
     pub const fn window_id(&self) -> WindowId {
@@ -3644,7 +3816,8 @@ impl PaintCtx {
             Arc::clone(&self.font_registry),
             Arc::clone(&self.image_registry),
             presentation_transform,
-        );
+        )
+        .with_frame_time(self.frame_time);
         let output = paint(&mut child_ctx);
         let (scene, images, mut widget_paint_bounds, invalidations, ime_composition_rect) =
             child_ctx.into_parts();
@@ -3723,7 +3896,8 @@ impl PaintCtx {
             Arc::clone(&self.font_registry),
             Arc::clone(&self.image_registry),
             self.presentation_transform,
-        );
+        )
+        .with_frame_time(self.frame_time);
         child_ctx.output_cache = self.output_cache.clone();
         let output = paint(&mut child_ctx);
         self.output_reusable &= child_ctx.output_reusable;

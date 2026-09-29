@@ -4693,6 +4693,7 @@ name = "sinomo-ui-runtime"
 version = "0.3.0"
 dependencies = [
  "lru",
+ "sinomo-ui-animation",
  "sinomo-ui-core",
  "sinomo-ui-layout",
  "sinomo-ui-reactive",

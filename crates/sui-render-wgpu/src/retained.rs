@@ -21,6 +21,7 @@ use std::sync::Arc;
 use sui_core::Color;
 use sui_core::ColorSpace;
 use sui_core::Path as ScenePath;
+use sui_core::Point;
 use sui_core::Rect;
 use sui_core::Result;
 use sui_core::Size;
@@ -329,19 +330,90 @@ pub(crate) fn clip_stack_signature(clips: &[ResolvedClipPrimitive]) -> u64 {
     hasher.finish()
 }
 
-pub(crate) fn normalized_clip_stack_signature(
-    clips: &[ResolvedClipPrimitive],
-    normalization_origin: Vector,
-) -> u64 {
-    if normalization_origin == Vector::ZERO {
-        return clip_stack_signature(clips);
+/// A layer's presentation composed with its ancestors': opacity, and a
+/// per-axis scale followed by an offset that maps window points to where
+/// they are presented. Scale-and-offset maps stay closed under composition,
+/// so nested layers compose exactly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ComposedLayer {
+    pub(crate) opacity: f32,
+    pub(crate) scale: Vector,
+    pub(crate) offset: Vector,
+}
+
+impl Default for ComposedLayer {
+    fn default() -> Self {
+        Self {
+            opacity: 1.0,
+            scale: LayerProperties::IDENTITY_SCALE,
+            offset: Vector::ZERO,
+        }
+    }
+}
+
+impl ComposedLayer {
+    /// This presentation followed by a child layer's own properties, for a
+    /// child laid out at `bounds`.
+    pub(crate) fn then_layer(self, local: &LayerProperties, bounds: Rect) -> Self {
+        let own_offset = local.map_point(bounds, Point::ZERO).to_vector();
+        Self {
+            opacity: self.opacity * local.opacity,
+            scale: Vector::new(self.scale.x * local.scale.x, self.scale.y * local.scale.y),
+            offset: Vector::new(
+                self.scale.x * own_offset.x + self.offset.x,
+                self.scale.y * own_offset.y + self.offset.y,
+            ),
+        }
     }
 
-    let delta = Vector::new(-normalization_origin.x, -normalization_origin.y);
+    pub(crate) fn is_scaled(&self) -> bool {
+        self.scale != LayerProperties::IDENTITY_SCALE
+    }
+
+    pub(crate) fn transform(&self) -> Transform {
+        Transform::new(
+            self.scale.x,
+            0.0,
+            0.0,
+            self.scale.y,
+            self.offset.x,
+            self.offset.y,
+        )
+    }
+
+    pub(crate) fn map_point(&self, point: Point) -> Point {
+        Point::new(
+            point.x * self.scale.x + self.offset.x,
+            point.y * self.scale.y + self.offset.y,
+        )
+    }
+
+    pub(crate) fn map_rect(&self, rect: Rect) -> Rect {
+        if !self.is_scaled() {
+            return rect.translate(self.offset);
+        }
+        self.transform().transform_rect_bbox(rect)
+    }
+}
+
+/// A signature of the clips around a layer's content, in the layer's own
+/// unpresented coordinates, so moving or scaling the layer leaves it alone.
+/// `presentation` maps layer-local points (relative to the layer's origin)
+/// to window coordinates.
+pub(crate) fn normalized_clip_stack_signature(
+    clips: &[ResolvedClipPrimitive],
+    presentation: Transform,
+) -> u64 {
+    if presentation.is_identity() {
+        return clip_stack_signature(clips);
+    }
+    let Some(to_local) = presentation.inverse() else {
+        return clip_stack_signature(clips);
+    };
     let normalized = clips
         .iter()
         .cloned()
-        .map(|clip| translate_resolved_clip_primitive(clip, delta))
+        .map(|clip| transform_resolved_clip_primitive(clip, to_local))
         .collect::<Vec<_>>();
     clip_stack_signature(&normalized)
 }
@@ -409,7 +481,7 @@ pub(crate) struct RetainedRootNode {
 #[derive(Debug, Clone)]
 pub(crate) struct RetainedLayer {
     pub(crate) descriptor: sui_scene::SceneLayerDescriptor,
-    pub(crate) composed_properties: LayerProperties,
+    pub(crate) composed_properties: ComposedLayer,
     pub(crate) parent: Option<SceneLayerId>,
     pub(crate) children: Vec<SceneLayerId>,
     pub(crate) items: Vec<CompositionItem>,
@@ -433,7 +505,7 @@ pub(crate) struct PacketSnapshot {
 #[derive(Debug, Clone)]
 pub(crate) struct LayerSnapshot {
     pub(crate) descriptor: sui_scene::SceneLayerDescriptor,
-    pub(crate) composed_properties: LayerProperties,
+    pub(crate) composed_properties: ComposedLayer,
     pub(crate) parent: Option<SceneLayerId>,
     pub(crate) children: Vec<SceneLayerId>,
     pub(crate) items: Vec<CompositionItem>,
@@ -469,7 +541,7 @@ pub(crate) struct CompositionTraversalState {
     pub(crate) text_render_policy_stack: Vec<Option<TextRenderPolicy>>,
     pub(crate) clip_stack: Vec<(ResolvedClipPrimitive, ClipNodeId)>,
     pub(crate) effect_node: EffectNodeId,
-    pub(crate) composed_layer_properties: LayerProperties,
+    pub(crate) composed_layer_properties: ComposedLayer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -514,7 +586,7 @@ impl Default for CompositionTraversalState {
             text_render_policy_stack: Vec::new(),
             clip_stack: Vec::new(),
             effect_node: EffectNodeId::ROOT,
-            composed_layer_properties: LayerProperties::default(),
+            composed_layer_properties: ComposedLayer::default(),
         }
     }
 }
@@ -794,17 +866,15 @@ impl RetainedCompositorState {
                     == sui_scene::LayerCompositionMode::Scroll
                 {
                     Some(
-                        layer
-                            .descriptor
-                            .presented_bounds()
-                            .translate(state.composed_layer_properties.translation),
+                        state
+                            .composed_layer_properties
+                            .map_rect(layer.descriptor.presented_bounds()),
                     )
                 } else if layer.descriptor.is_stack_surface {
                     Some(
-                        layer
-                            .descriptor
-                            .presented_paint_bounds()
-                            .translate(state.composed_layer_properties.translation),
+                        state
+                            .composed_layer_properties
+                            .map_rect(layer.descriptor.presented_paint_bounds()),
                     )
                 } else {
                     None
@@ -906,7 +976,9 @@ impl RetainedCompositorState {
                         .all(|(clip, _)| matches!(clip, ResolvedClipPrimitive::Rect(_)));
                     state.text_background.observe(
                         command,
-                        Transform::translation_vector(state.composed_layer_properties.translation)
+                        state
+                            .composed_layer_properties
+                            .transform()
                             .then(state.current_transform),
                         clip,
                         rectangular_clip,
@@ -1024,8 +1096,9 @@ impl RetainedCompositorState {
         mut state: CompositionTraversalState,
         snapshot: &mut CompositorSnapshot,
     ) -> Result<LayerSnapshot> {
-        let composed_properties =
-            compose_layer_properties(state.composed_layer_properties, layer.descriptor.properties);
+        let composed_properties = state
+            .composed_layer_properties
+            .then_layer(&layer.descriptor.properties, layer.descriptor.bounds);
         state.composed_layer_properties = composed_properties;
         state.text_lcd_allowed &=
             layer.descriptor.composition_mode != sui_scene::LayerCompositionMode::Effect;
@@ -1040,7 +1113,8 @@ impl RetainedCompositorState {
         )?;
         let clip_signature = normalized_clip_stack_signature(
             &inherited_state.clip_stack,
-            layer.descriptor.bounds.origin.to_vector() + composed_properties.translation,
+            Transform::translation_vector(layer.descriptor.bounds.origin.to_vector())
+                .then(composed_properties.transform()),
         );
         let children = container
             .items
@@ -1351,7 +1425,9 @@ impl RetainedCompositorState {
 
     fn layer_packet_origins(&self, layer: &LayerSnapshot) -> (Vector, Vector) {
         let origin = layer.descriptor.bounds.origin.to_vector();
-        let local_origin = layer.descriptor.bounds.origin + layer.composed_properties.translation;
+        let local_origin = layer
+            .composed_properties
+            .map_point(layer.descriptor.bounds.origin);
         let transform = self
             .transforms
             .get(&layer.transform_node)
@@ -1614,14 +1690,15 @@ impl RetainedCompositorState {
                                         .layers
                                         .get(&layer_id)
                                         .map(|layer| {
-                                            let origin = layer.descriptor.bounds.origin.to_vector()
-                                                + layer.composed_properties.translation;
+                                            let origin = layer.descriptor.bounds.origin.to_vector();
                                             let world = self
                                                 .transforms
                                                 .get(&layer.transform_node)
                                                 .map_or(Transform::IDENTITY, |node| node.world);
                                             (
-                                                Transform::translation_vector(origin).then(world),
+                                                Transform::translation_vector(origin)
+                                                    .then(layer.composed_properties.transform())
+                                                    .then(world),
                                                 resolved_clip_primitives(
                                                     layer.clip_node,
                                                     &self.clips,
@@ -1691,14 +1768,15 @@ impl RetainedCompositorState {
                                     .layers
                                     .get(&layer_id)
                                     .map(|layer| {
-                                        let origin = layer.descriptor.bounds.origin.to_vector()
-                                            + layer.composed_properties.translation;
+                                        let origin = layer.descriptor.bounds.origin.to_vector();
                                         let world = self
                                             .transforms
                                             .get(&layer.transform_node)
                                             .map_or(Transform::IDENTITY, |node| node.world);
                                         (
-                                            Transform::translation_vector(origin).then(world),
+                                            Transform::translation_vector(origin)
+                                                .then(layer.composed_properties.transform())
+                                                .then(world),
                                             resolved_clip_primitives(layer.clip_node, &self.clips),
                                             layer.composed_properties.opacity,
                                         )
@@ -2124,6 +2202,27 @@ pub(crate) fn translate_resolved_raster_state(
     translated
 }
 
+/// `primitive` mapped by `transform`. Rect clips stay rects, which is exact
+/// for the scale-and-offset transforms layers use.
+pub(crate) fn transform_resolved_clip_primitive(
+    primitive: ResolvedClipPrimitive,
+    transform: Transform,
+) -> ResolvedClipPrimitive {
+    match primitive {
+        ResolvedClipPrimitive::Rect(rect) => {
+            ResolvedClipPrimitive::Rect(transform.transform_rect_bbox(rect))
+        }
+        ResolvedClipPrimitive::Path { path, bounds, .. } => {
+            let transformed_path = transform_scene_path(&path, transform);
+            ResolvedClipPrimitive::Path {
+                signature: hash_path(&transformed_path, Transform::IDENTITY),
+                path: transformed_path,
+                bounds: transform.transform_rect_bbox(bounds),
+            }
+        }
+    }
+}
+
 pub(crate) fn translate_resolved_clip_primitive(
     primitive: ResolvedClipPrimitive,
     delta: Vector,
@@ -2164,16 +2263,6 @@ pub(crate) fn descriptor_translation_delta(
     }
 
     Some(bounds_delta + (current.properties.translation - previous.properties.translation))
-}
-
-pub(crate) fn compose_layer_properties(
-    parent: LayerProperties,
-    local: LayerProperties,
-) -> LayerProperties {
-    LayerProperties::new(
-        parent.opacity * local.opacity,
-        parent.translation + local.translation,
-    )
 }
 
 pub(crate) fn packet_signature(
@@ -3108,6 +3197,57 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn scale_only_layer_updates_reuse_retained_content() {
+        let layer_id = WidgetId::new(54);
+        let descriptor = sui_scene::SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(layer_id),
+            layer_id,
+            Rect::new(8.0, 10.0, 80.0, 36.0),
+        )
+        .with_content_bounds(Rect::new(8.0, 10.0, 80.0, 36.0))
+        .with_paint_bounds(Rect::new(8.0, 10.0, 80.0, 36.0));
+        let mut frame = build_layer_frame(descriptor.clone(), SceneLayerUpdateKind::Content);
+        let mut text_engine = TextEngine::new().unwrap();
+        let mut compositor = RetainedCompositorState::default();
+        let first = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+        let first_content_version =
+            compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version;
+
+        let scaled = descriptor.with_properties(LayerProperties::default().with_scale(0.5));
+        frame = build_layer_frame(scaled, SceneLayerUpdateKind::Transform);
+        let second = compositor
+            .prepare_frame(&frame, &mut text_engine, DEFAULT_FEATHER_WIDTH)
+            .unwrap();
+
+        assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
+        assert_eq!(
+            compositor.layers[&SceneLayerId::from_widget(layer_id)].content_version,
+            first_content_version
+        );
+        let span = |vertices: &[_]| {
+            let xs = vertices
+                .iter()
+                .map(|vertex: &crate::gpu::Vertex| vertex.position[0])
+                .collect::<Vec<_>>();
+            let min = xs.iter().copied().fold(f32::INFINITY, f32::min);
+            let max = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            (min, max)
+        };
+        let (first_min, first_max) = span(&first.scene_vertices);
+        let (second_min, second_max) = span(&second.scene_vertices);
+        let ratio = (second_max - second_min) / (first_max - first_min);
+        assert!((ratio - 0.5).abs() < 0.02, "scaled to half: {ratio}");
+        let first_center = (first_min + first_max) * 0.5;
+        let second_center = (second_min + second_max) * 0.5;
+        assert!(
+            (first_center - second_center).abs() < 1e-3,
+            "scaling keeps the center"
+        );
+    }
+
+    #[test]
     fn affine_parent_transform_reuses_layer_local_packet() {
         let layer_id = WidgetId::new(153);
         let descriptor = sui_scene::SceneLayerDescriptor::new(
@@ -3290,7 +3430,11 @@ pub(crate) mod tests {
         );
         assert_eq!(
             child_layer.composed_properties,
-            LayerProperties::new(0.2, Vector::new(12.0, 6.0))
+            ComposedLayer {
+                opacity: 0.2,
+                scale: LayerProperties::IDENTITY_SCALE,
+                offset: Vector::new(12.0, 6.0),
+            }
         );
         assert!(
             child_clips.contains(&transitioned_parent.presented_paint_bounds()),

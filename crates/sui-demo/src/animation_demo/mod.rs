@@ -125,7 +125,7 @@ pub(crate) fn build_animation_demo_with_theme(theme_reader: DevThemeReader) -> i
             &theme_reader,
             UNDER_THE_HOOD_SECTION_NAME,
             "Under the hood",
-            "Moving a retained layer asks only for a transform update, which the renderer applies without repainting; painting at a new offset repaints every frame. Below, the time between animation frames.",
+            "Moving or scaling a retained layer asks only for a transform update, which the renderer applies without repainting; painting at a new offset repaints every frame. On a vsync display, animation frames follow its refresh.",
             under_the_hood::section(Rc::clone(&theme_reader)),
         ));
 

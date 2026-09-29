@@ -1,6 +1,7 @@
 use crate::ControlMetrics;
 use crate::DefaultTheme;
 use crate::IconGlyph;
+use crate::Progress;
 use crate::SemanticTone;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
@@ -10,7 +11,6 @@ use crate::composites::indicators::{
     physical_pixels, rounded_rect_path, semibold_control_text_style, text_token_style,
 };
 use crate::composites::painting::{EmptyStatePaint, paint_empty_state};
-use crate::composites::popups::AnimatedScalar;
 use crate::controls::draw_icon_glyph;
 use crate::text_align::paint_aligned_text;
 use crate::text_align::paint_aligned_text_contained;
@@ -27,11 +27,11 @@ use sui_core::SemanticsRole;
 use sui_core::SemanticsValue;
 use sui_core::Size;
 use sui_core::Vector;
-use sui_core::WakeEvent;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::EventCtx;
+use sui_runtime::FrameClock;
 use sui_runtime::MeasureCtx;
 use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
@@ -277,9 +277,9 @@ pub struct PresetStrip {
     pub(super) hover_visual: Option<usize>,
     pub(super) pressed: Option<usize>,
     pub(super) press_visual: Option<usize>,
-    pub(super) hover_animation: AnimatedScalar,
-    pub(super) press_animation: AnimatedScalar,
-    pub(super) focus_animation: AnimatedScalar,
+    pub(super) hover_animation: Progress,
+    pub(super) press_animation: Progress,
+    pub(super) focus_animation: Progress,
     pub(super) item_width: Option<f32>,
     pub(super) item_height: Option<f32>,
     pub(super) gap: Option<f32>,
@@ -301,9 +301,9 @@ impl PresetStrip {
             hover_visual: None,
             pressed: None,
             press_visual: None,
-            hover_animation: AnimatedScalar::new(0.0),
-            press_animation: AnimatedScalar::new(0.0),
-            focus_animation: AnimatedScalar::new(0.0),
+            hover_animation: Progress::new(0.0),
+            press_animation: Progress::new(0.0),
+            focus_animation: Progress::new(0.0),
             item_width: None,
             item_height: None,
             gap: None,
@@ -471,7 +471,7 @@ impl PresetStrip {
         self.hovered = hovered;
         if let Some(index) = hovered {
             self.hover_visual = Some(index);
-            self.hover_animation = AnimatedScalar::new(0.0);
+            self.hover_animation = Progress::new(0.0);
             set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
         } else if !set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx) {
             self.hover_visual = None;
@@ -488,7 +488,7 @@ impl PresetStrip {
         self.pressed = pressed;
         if let Some(index) = pressed {
             self.press_visual = Some(index);
-            self.press_animation = AnimatedScalar::new(0.0);
+            self.press_animation = Progress::new(0.0);
             set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
         } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
             self.press_visual = None;
@@ -497,40 +497,20 @@ impl PresetStrip {
         ctx.request_semantics();
     }
 
-    pub(super) fn hover_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.hover_visual == Some(index) {
-            self.hover_animation.value
+            self.hover_animation.get(clock)
         } else {
             0.0
         }
     }
 
-    pub(super) fn press_amount_for(&self, index: usize) -> f32 {
+    pub(super) fn press_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
         if self.press_visual == Some(index) {
-            self.press_animation.value
+            self.press_animation.get(clock)
         } else {
             0.0
         }
-    }
-
-    pub(super) fn advance_animations(&mut self, time: f64) -> bool {
-        let hover_animating = self.hover_animation.advance(time);
-        if !hover_animating
-            && self.hovered.is_none()
-            && self.hover_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.hover_visual = None;
-        }
-
-        let press_animating = self.press_animation.advance(time);
-        if !press_animating
-            && self.pressed.is_none()
-            && self.press_animation.value <= AnimatedScalar::EPSILON
-        {
-            self.press_visual = None;
-        }
-
-        hover_animating | press_animating | self.focus_animation.advance(time)
     }
 }
 
@@ -599,12 +579,6 @@ impl Widget for PresetStrip {
                 ctx.request_semantics();
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.advance_animations(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -646,12 +620,12 @@ impl Widget for PresetStrip {
         let selected = self.current_selected();
         let style = theme.text_style(palette.text);
 
-        if self.focus_animation.value > AnimatedScalar::EPSILON {
+        if self.focus_animation.get(ctx) > Progress::EPSILON {
             ctx.stroke(
                 rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), metrics.corner_radius + 2.0),
                 palette
                     .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.value),
+                    .with_alpha(palette.focus_ring.alpha * self.focus_animation.get(ctx)),
                 StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
             );
         }
@@ -662,8 +636,8 @@ impl Widget for PresetStrip {
             };
             let is_selected = selected == Some(index);
             let is_hovered = self.hovered == Some(index);
-            let hover_amount = self.hover_amount_for(index);
-            let press_amount = self.press_amount_for(index);
+            let hover_amount = self.hover_amount_for(index, ctx);
+            let press_amount = self.press_amount_for(index, ctx);
             let base_background = if is_selected {
                 palette.selection
             } else {

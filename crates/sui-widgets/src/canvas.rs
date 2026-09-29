@@ -8,7 +8,7 @@ use std::{
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, PathElement, Point, PointerButton, PointerEvent,
     PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, Transform, Vector, WakeEvent,
+    SemanticsRole, SemanticsValue, Size, Transform, Vector,
 };
 use sui_layout::Constraints;
 use sui_runtime::{
@@ -18,14 +18,15 @@ use sui_runtime::{
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
 use sui_text::{FontFeature, TextMeasurement, TextStyle};
 
-use crate::{DefaultTheme, animation::MotionScalar, text_align::paint_aligned_text};
+use crate::{DefaultTheme, text_align::paint_aligned_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
 const MIN_CANVAS_GRID_SCREEN_SPACING: f32 = 12.0;
 const PIXEL_CANVAS_HISTORY_LIMIT: usize = 32;
 const CANVAS_RULER_MAX_TICKS: usize = 400;
 
-type AnimatedScalar = MotionScalar;
+/// Widget state progress the runtime animates (see [`Progress`]).
+type AnimatedScalar = crate::Progress;
 
 fn set_focus_animation_target(
     animation: &mut AnimatedScalar,
@@ -33,12 +34,7 @@ fn set_focus_animation_target(
     theme: &DefaultTheme,
     ctx: &mut EventCtx,
 ) {
-    animation.set_target_event(
-        target,
-        theme.motion.focus_duration(),
-        theme.motion.focus_easing(),
-        ctx,
-    );
+    animation.animate(target, theme.motion.focus_spec(), ctx);
 }
 
 fn draw_focus_ring(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme, progress: f32) {
@@ -1135,12 +1131,6 @@ impl Widget for Canvas {
                 Self::request_interaction_update(ctx);
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.focus_animation.advance(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -1263,7 +1253,7 @@ impl Widget for Canvas {
             }
         }
         ctx.pop_clip();
-        draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -3077,12 +3067,6 @@ impl Widget for PixelCanvas {
                 Self::request_interaction_update(ctx);
                 ctx.set_handled();
             }
-            Event::Wake(WakeEvent::AnimationFrame { time, .. }) => {
-                if self.focus_animation.advance(*time) {
-                    ctx.request_animation_frame();
-                }
-                ctx.request_paint();
-            }
             _ => {}
         }
     }
@@ -3191,7 +3175,7 @@ impl Widget for PixelCanvas {
             StrokeStyle::new(1.0),
         );
         ctx.pop_clip();
-        draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.value);
+        draw_focus_ring(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -5007,7 +4991,7 @@ mod tests {
             .expect("focus event should be handled");
 
         runtime.tick(focus_duration * 0.5);
-        assert!(handle_ready_events(&mut runtime) >= 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let mid_focus = runtime.render(window_id).expect("render should succeed");
         assert!(
             !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
@@ -5015,7 +4999,7 @@ mod tests {
         );
 
         runtime.tick(focus_duration + 0.01);
-        assert!(handle_ready_events(&mut runtime) >= 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_focus = runtime.render(window_id).expect("render should succeed");
         let settled_strokes = solid_stroke_colors(&settled_focus);
         assert!(
@@ -5043,7 +5027,7 @@ mod tests {
             .expect("focus event should be handled");
 
         runtime.tick(focus_duration * 0.5);
-        assert!(handle_ready_events(&mut runtime) >= 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let mid_focus = runtime.render(window_id).expect("render should succeed");
         assert!(
             !contains_approx_color(&solid_stroke_colors(&mid_focus), theme.palette.focus_ring),
@@ -5051,7 +5035,7 @@ mod tests {
         );
 
         runtime.tick(focus_duration + 0.01);
-        assert!(handle_ready_events(&mut runtime) >= 1);
+        assert_eq!(handle_ready_events(&mut runtime), 0);
         let settled_focus = runtime.render(window_id).expect("render should succeed");
         let settled_strokes = solid_stroke_colors(&settled_focus);
         assert!(
