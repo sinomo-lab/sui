@@ -3346,6 +3346,8 @@ impl WindowState {
         let mut repaint_layers = Vec::new();
         let mut dirty_layers = Vec::new();
         let mut layer_updates = Vec::new();
+        // Work widgets asked for while painting belongs to the next frame.
+        let mut next_frame_invalidations = Vec::new();
         let root_repaint_covers_graph_changes =
             root_repaint_covers_graph_changes(self.root.id(), &invalidations);
         let previous_graph = if (self.schedule.measure || self.schedule.arrange)
@@ -3573,6 +3575,7 @@ impl WindowState {
             self.last_paint_bounds_by_widget = paint_bounds_by_widget;
             self.graph
                 .update_paint_bounds_from_snapshot(&self.last_paint_bounds_by_widget);
+            next_frame_invalidations.clone_from(&paint_invalidations);
             invalidations.extend(paint_invalidations);
             self.ime_composition_rect = ime_composition_rect;
             let previous_scene = self.last_frame.as_ref().map(|frame| &frame.scene);
@@ -3679,6 +3682,8 @@ impl WindowState {
         self.capture_inspector_diagnostics(&diagnostics);
 
         self.schedule.clear();
+        self.schedule.extend(&next_frame_invalidations);
+        self.pending_invalidations.extend(next_frame_invalidations);
 
         RenderOutput {
             title: self.title.clone(),

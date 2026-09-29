@@ -11,9 +11,10 @@ use sui_runtime::{
 };
 
 use crate::{
-    AccessibilityBridge, AccessibilitySnapshot, WindowOutputDiagnostics, map_window_stem_darkening,
-    map_window_text_coverage_policy, map_window_text_hinting, map_window_text_subpixel_order,
-    publish_window_output_diagnostics, resolve_sdr_content_brightness_nits,
+    AccessibilityBridge, AccessibilitySnapshot, WindowOutputDiagnostics,
+    map_window_color_management, map_window_stem_darkening, map_window_text_coverage_policy,
+    map_window_text_hinting, map_window_text_subpixel_order, publish_window_output_diagnostics,
+    resolve_sdr_content_brightness_nits,
 };
 
 #[derive(Debug, Clone)]
@@ -368,6 +369,16 @@ impl HeadlessPlatform {
                     active_render_options.use_system_sdr_content_brightness,
                     &display_capabilities_for_brightness,
                 );
+                self.renderer.set_window_color_management(
+                    window_id,
+                    map_window_color_management(
+                        active_render_options.color_management_mode,
+                        active_render_options.output_color_primaries,
+                        active_render_options.dynamic_range_mode,
+                        active_render_options.tone_mapping_mode,
+                        sdr_content_brightness_nits,
+                    ),
+                )?;
                 self.renderer.render(&output.frame)?;
                 let mut display_capabilities = self
                     .renderer
@@ -805,6 +816,72 @@ mod tests {
         fn paint(&self, ctx: &mut PaintCtx) {
             ctx.fill_bounds(Color::linear_rgba(4.0, 2.0, 0.5, 1.0));
         }
+    }
+
+    /// Records the tone mapping in the output diagnostics each time it is
+    /// measured, observing them.
+    struct DiagnosticsProbe {
+        seen: Rc<RefCell<Vec<Option<WindowToneMappingMode>>>>,
+    }
+
+    impl Widget for DiagnosticsProbe {
+        fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            let diagnostics =
+                ctx.observe(&crate::window_output_diagnostics_signal(ctx.window_id()));
+            self.seen
+                .borrow_mut()
+                .push(diagnostics.map(|diagnostics| diagnostics.requested_tone_mapping_mode));
+            constraints.clamp(Size::new(32.0, 16.0))
+        }
+    }
+
+    #[test]
+    fn widgets_observing_output_diagnostics_follow_presented_frames() -> Result<()> {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new()
+                    .title("Diagnostics")
+                    .root(DiagnosticsProbe {
+                        seen: Rc::clone(&seen),
+                    }),
+            )
+            .build()?;
+        let window_id = runtime.window_ids()[0];
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(false, 0.0)
+                .with_tone_mapping_mode(WindowToneMappingMode::Clamp),
+        );
+        let mut platform = HeadlessPlatform::new();
+        let _ = platform.run(&mut runtime)?;
+
+        // Measured before the first frame, then again once it was presented.
+        assert_eq!(
+            *seen.borrow(),
+            vec![None, Some(WindowToneMappingMode::Clamp)]
+        );
+        assert!(
+            !runtime.needs_render(window_id)?,
+            "unchanged diagnostics do not invalidate again"
+        );
+
+        set_window_render_options(
+            window_id,
+            WindowRenderOptions::new(false, 0.0)
+                .with_tone_mapping_mode(WindowToneMappingMode::Reinhard),
+        );
+        platform.dispatch_event(
+            &runtime,
+            window_id,
+            Event::Window(WindowEvent::RedrawRequested),
+        )?;
+        let _ = platform.run(&mut runtime)?;
+        assert_eq!(
+            seen.borrow().last().copied().flatten(),
+            Some(WindowToneMappingMode::Reinhard)
+        );
+        Ok(())
     }
 
     #[test]

@@ -3,96 +3,34 @@
 
 use sui::prelude::*;
 use sui::{
-    DisplayColorPrimaries, InvalidationKind, OutputStrategy, Rect, RequestedToneMappingMode,
-    SemanticsNode, SemanticsRole, WakeEvent, WindowId, WindowOutputDiagnostics,
-    WindowRenderOptions, WindowToneMappingMode, window_output_diagnostics, window_render_options,
+    DisplayColorPrimaries, OutputStrategy, Rect, RequestedToneMappingMode, SemanticsNode,
+    SemanticsRole, WindowOutputDiagnostics, WindowToneMappingMode,
+    window_output_diagnostics_signal,
 };
 
-use super::controls::output_options_changes;
 use crate::app::{DemoTextRole, DevThemeReader, demo_text_style};
 use crate::demo_support::DemoTextColor;
 
-/// How many frames a widget waits for diagnostics to catch up with a change
-/// before it stops asking.
-const MAX_FOLLOW_FRAMES: u32 = 120;
-
-/// The latest output diagnostics, for a widget that shows them.
-///
-/// Diagnostics describe the last presented frame, so after the output
-/// options change they trail by a frame or two. The widget asks for
-/// animation frames until they catch up, then is measured again with the
-/// new values. Changes made with the output controls start this; call
-/// [`refresh`](Self::refresh) from `measure` and [`on_event`](Self::on_event)
-/// from `event`.
+/// The window's output diagnostics, for a widget that shows them. The
+/// platform publishes them after each presented frame; a widget that calls
+/// [`refresh`](Self::refresh) from `measure` is measured again whenever they
+/// change.
 pub(crate) struct FollowedDiagnostics {
     shown: Option<WindowOutputDiagnostics>,
-    frames_waited: u32,
 }
 
 impl FollowedDiagnostics {
     pub(crate) fn new() -> Self {
-        Self {
-            shown: None,
-            frames_waited: 0,
-        }
+        Self { shown: None }
     }
 
-    /// Take the latest diagnostics, and keep watching while they trail the
-    /// window's options.
     pub(crate) fn refresh(&mut self, ctx: &mut MeasureCtx) {
-        ctx.observe_with(output_options_changes(), InvalidationKind::Measure);
-        let window_id = ctx.window_id();
-        self.shown = window_output_diagnostics(window_id);
-        if describes_window_options(window_id, self.shown.as_ref()) {
-            self.frames_waited = 0;
-        } else if self.frames_waited < MAX_FOLLOW_FRAMES {
-            ctx.request_animation_frame();
-        }
+        self.shown = ctx.observe(&window_output_diagnostics_signal(ctx.window_id()));
     }
 
     pub(crate) fn get(&self) -> Option<&WindowOutputDiagnostics> {
         self.shown.as_ref()
     }
-
-    /// Look again on the frames [`refresh`](Self::refresh) asked for.
-    pub(crate) fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if !matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
-            return;
-        }
-        let window_id = ctx.window_id();
-        let latest = window_output_diagnostics(window_id);
-        if latest != self.shown {
-            self.frames_waited = 0;
-            ctx.request_measure();
-            ctx.request_paint();
-            ctx.request_semantics();
-        } else if !describes_window_options(window_id, latest.as_ref())
-            && self.frames_waited < MAX_FOLLOW_FRAMES
-        {
-            self.frames_waited += 1;
-            ctx.request_animation_frame();
-        }
-    }
-}
-
-/// Whether `diagnostics` were produced with the window's current options.
-fn describes_window_options(
-    window_id: WindowId,
-    diagnostics: Option<&WindowOutputDiagnostics>,
-) -> bool {
-    let Some(diagnostics) = diagnostics else {
-        return false;
-    };
-    // Platforms fall back to these when a window has no options.
-    let options =
-        window_render_options(window_id).unwrap_or_else(|| WindowRenderOptions::new(false, 0.0));
-    diagnostics.requested_color_management_mode == options.color_management_mode
-        && diagnostics.requested_output_primaries == options.output_color_primaries
-        && diagnostics.requested_dynamic_range_mode == options.dynamic_range_mode
-        && diagnostics.requested_tone_mapping_mode == options.tone_mapping_mode
-        && diagnostics.configured_sdr_content_brightness_nits == options.sdr_content_brightness_nits
-        && diagnostics.use_system_sdr_content_brightness
-            == options.use_system_sdr_content_brightness
 }
 
 /// What an output does with colors beyond SDR white.
@@ -377,10 +315,6 @@ impl LiveText {
 }
 
 impl Widget for LiveText {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.diagnostics.on_event(ctx, event);
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
         self.text = (self.source)(self.diagnostics.get());

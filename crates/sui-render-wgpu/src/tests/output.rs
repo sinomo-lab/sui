@@ -82,6 +82,7 @@ pub(crate) fn hdr_png_capture_normalizes_native_hdr_reference_white() {
         DebugSdrVisualization::ToneMappedColor,
         2.5,
         DisplayColorPrimaries::Srgb,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
 
@@ -129,6 +130,7 @@ pub(crate) fn hdr_png_capture_preserves_srgb_bytes_after_hdr_scale_and_half_read
         DebugSdrVisualization::ToneMappedColor,
         reference_white,
         DisplayColorPrimaries::Srgb,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
 
@@ -252,6 +254,7 @@ pub(crate) fn hdr_png_capture_converts_display_p3_final_output_back_to_srgb() {
         DebugSdrVisualization::ToneMappedColor,
         203.0 / 80.0,
         DisplayColorPrimaries::DisplayP3,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
 
@@ -279,6 +282,7 @@ pub(crate) fn hdr_png_capture_visualizations_use_sdr_reference_white() {
         DebugSdrVisualization::ClipMask,
         2.0,
         DisplayColorPrimaries::Srgb,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
     assert_rgba_channels_near(&mask.pixels()[0..4], [0, 0, 0, 255], RGBA_CHANNEL_TOLERANCE);
@@ -293,6 +297,7 @@ pub(crate) fn hdr_png_capture_visualizations_use_sdr_reference_white() {
         DebugSdrVisualization::HeadroomHeatmap,
         2.0,
         DisplayColorPrimaries::Srgb,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
     assert!(heatmap.pixels()[4] >= heatmap.pixels()[0]);
@@ -316,6 +321,7 @@ pub(crate) fn hdr_debug_artifact_encoding_preserves_exr_and_maps_png_to_sdr() {
         },
         2.5,
         DisplayColorPrimaries::Srgb,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
     let DebugCaptureArtifact::SdrRgba8(png) = png else {
@@ -337,6 +343,7 @@ pub(crate) fn hdr_debug_artifact_encoding_preserves_exr_and_maps_png_to_sdr() {
         },
         2.5,
         DisplayColorPrimaries::Srgb,
+        crate::output::SdrFit::Clip,
     )
     .unwrap();
     let DebugCaptureArtifact::HdrLinearRgbaF32(exr) = exr else {
@@ -1090,5 +1097,67 @@ pub(crate) fn output_transform_shader_keeps_wide_gamut_and_fits_highlights() {
             fit_to_sdr([4.0, 2.0, 0.5], mode),
             &format!("orange highlight with {mode:?}"),
         );
+    }
+}
+
+#[test]
+pub(crate) fn offscreen_captures_fit_highlights_with_the_window_tone_mapping() {
+    let window_id = WindowId::new(4650);
+    let viewport = Size::new(16.0, 16.0);
+    let mut scene = Scene::new();
+    scene.push(SceneCommand::FillRect {
+        rect: Rect::new(0.0, 0.0, 16.0, 16.0),
+        brush: Color::linear_rgba(4.0, 2.0, 0.5, 1.0).into(),
+    });
+    let frame = SceneFrame {
+        window_id,
+        viewport,
+        surface_size: viewport,
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    };
+    let u8_of = crate::capture::linear_to_srgb_capture_u8;
+
+    for mode in [
+        RequestedToneMappingMode::Clamp,
+        RequestedToneMappingMode::Reinhard,
+    ] {
+        let mut renderer = WgpuRenderer::new();
+        renderer
+            .set_window_color_management(
+                window_id,
+                ColorManagementMode {
+                    tone_mapping: mode,
+                    ..ColorManagementMode::default()
+                },
+            )
+            .unwrap();
+        renderer.render(&frame).unwrap();
+        let expected = fit_to_sdr([4.0, 2.0, 0.5], mode);
+        let expected = [255, u8_of(expected[1]), u8_of(expected[2]), 255];
+
+        let screenshot = renderer.capture_last_frame_rgba(window_id).unwrap();
+        assert_rgba_pixel_near(&screenshot, 8, 8, expected, RGBA_CHANNEL_TOLERANCE);
+
+        // SDR previews of the HDR intermediate fit the same way.
+        let DebugCaptureArtifact::SdrRgba8(preview) = renderer
+            .capture_last_frame_debug(
+                window_id,
+                DebugCaptureRequest {
+                    stage: DebugCaptureStage::HdrIntermediate,
+                    encoding: DebugCaptureEncoding::Png,
+                    sdr_visualization: DebugSdrVisualization::ToneMappedColor,
+                },
+            )
+            .unwrap()
+        else {
+            panic!("a PNG capture is SDR");
+        };
+        assert_rgba_pixel_near(&preview, 8, 8, expected, RGBA_CHANNEL_TOLERANCE);
     }
 }

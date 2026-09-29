@@ -17,6 +17,7 @@ name = "sui_platform"
 
 [dependencies]
 sui-core = { workspace = true }
+sui-reactive = { workspace = true }
 sui-render-wgpu = { workspace = true }
 sui-runtime = { workspace = true }
 wgpu = { workspace = true }

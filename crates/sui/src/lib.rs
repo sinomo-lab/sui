@@ -95,6 +95,7 @@ pub use sui_platform::{
     HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker,
     WindowOutputDiagnostics, request_window_debug_capture, show_file_dialog,
     take_window_debug_capture, validate_accessibility_snapshot, window_output_diagnostics,
+    window_output_diagnostics_signal,
 };
 pub use sui_reactive::{
     Change as ObservableChange, Observable, Observer, Selector, Signal, SourceId, Subscription,

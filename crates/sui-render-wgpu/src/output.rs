@@ -435,7 +435,8 @@ impl WgpuRenderer {
             OutputStrategy::SdrSurface {
                 format: final_format,
             },
-            RequestedToneMappingMode::Clamp,
+            // Fit highlights as the window's own SDR output would.
+            self.window_color_management(frame.window_id).tone_mapping,
             ColorManagementMode::default().sdr_content_brightness_nits,
             None,
             &mut frame_stats,

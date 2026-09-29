@@ -56,6 +56,7 @@ pub use display_capabilities::{
     WindowOutputDiagnostics, clear_window_output_diagnostics, clear_window_output_diagnostics_all,
     detect_window_display_capabilities, publish_window_output_diagnostics,
     resolve_sdr_content_brightness_nits, window_output_diagnostics,
+    window_output_diagnostics_signal,
 };
 pub use file_dialog::{
     FileDialogFilter, FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection,

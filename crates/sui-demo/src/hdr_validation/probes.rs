@@ -244,10 +244,6 @@ fn multiple_label(multiple: f32) -> String {
 }
 
 impl Widget for HeadroomRamp {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.diagnostics.on_event(ctx, event);
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
         let style = label_style(&self.theme_reader);
@@ -415,10 +411,6 @@ impl HighlightCurvePlot {
 }
 
 impl Widget for HighlightCurvePlot {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.diagnostics.on_event(ctx, event);
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
         let style = label_style(&self.theme_reader);
@@ -634,10 +626,6 @@ impl HueFitGrid {
 }
 
 impl Widget for HueFitGrid {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.diagnostics.on_event(ctx, event);
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
         let style = label_style(&self.theme_reader);
@@ -777,10 +765,6 @@ impl GamutSplitTiles {
 }
 
 impl Widget for GamutSplitTiles {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.diagnostics.on_event(ctx, event);
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
         let count = GAMUT_PROBES.len() as f32;
@@ -930,10 +914,6 @@ impl ChromaticityDiagram {
 }
 
 impl Widget for ChromaticityDiagram {
-    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        self.diagnostics.on_event(ctx, event);
-    }
-
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.diagnostics.refresh(ctx);
         constraints.clamp(Self::SIZE)

@@ -6167,3 +6167,72 @@ fn motion_started_for_a_widget_before_it_joins_the_graph_still_runs() {
         "the child's layer fades: {opacities:?}"
     );
 }
+
+/// Paints `frames` times in a row by asking to paint again while painting,
+/// and asks once to be measured again.
+struct PaintsAgain {
+    paints: Rc<Cell<u32>>,
+    measures: Rc<Cell<u32>>,
+    frames: u32,
+    remeasure_on_paint: u32,
+}
+
+impl Widget for PaintsAgain {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.measures.set(self.measures.get() + 1);
+        constraints.clamp(Size::new(40.0, 20.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let paints = self.paints.get() + 1;
+        self.paints.set(paints);
+        ctx.fill_bounds(Color::rgba(0.2, 0.4, 0.6, 1.0));
+        if paints < self.frames {
+            ctx.request_paint();
+        }
+        if paints == self.remeasure_on_paint {
+            ctx.request(InvalidationRequest::new(
+                InvalidationTarget::Widget(ctx.widget_id()),
+                InvalidationKind::Measure,
+            ));
+        }
+    }
+}
+
+#[test]
+fn work_requested_while_painting_happens_on_the_next_frame() {
+    let paints = Rc::new(Cell::new(0));
+    let measures = Rc::new(Cell::new(0));
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().root(PaintsAgain {
+            paints: Rc::clone(&paints),
+            measures: Rc::clone(&measures),
+            frames: 3,
+            remeasure_on_paint: 2,
+        }))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+
+    let _ = runtime.render(window_id).unwrap();
+    assert_eq!(paints.get(), 1);
+    assert!(
+        runtime.needs_render(window_id).unwrap(),
+        "a paint request made while painting schedules another frame"
+    );
+    let measured_before = measures.get();
+
+    let _ = runtime.render(window_id).unwrap();
+    assert_eq!(paints.get(), 2);
+    let _ = runtime.render(window_id).unwrap();
+    assert_eq!(paints.get(), 3);
+    assert!(
+        measures.get() > measured_before,
+        "a measure request made while painting measures on the next frame"
+    );
+
+    assert!(
+        !runtime.needs_render(window_id).unwrap(),
+        "no more frames once the widget stops asking"
+    );
+}

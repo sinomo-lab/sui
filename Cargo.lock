@@ -4638,6 +4638,7 @@ dependencies = [
  "rfd",
  "sinomo-ui-core",
  "sinomo-ui-layout",
+ "sinomo-ui-reactive",
  "sinomo-ui-render-wgpu",
  "sinomo-ui-runtime",
  "unicode-segmentation",

@@ -4067,14 +4067,18 @@ impl PaintCtx {
         &mut self.scene
     }
 
+    /// Ask for work on the next frame. What a widget requests while painting
+    /// cannot change the frame being painted, so the runtime renders another.
     pub fn request(&mut self, request: InvalidationRequest) {
         self.invalidations.push(request);
     }
 
+    /// Paint this widget again on the next frame.
     pub fn request_paint(&mut self) {
         self.request_widget(InvalidationKind::Paint);
     }
 
+    /// Paint `rect` of this widget again on the next frame.
     pub fn request_paint_rect(&mut self, rect: Rect) {
         self.request(
             InvalidationRequest::new(

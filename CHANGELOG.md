@@ -307,6 +307,16 @@ Versioning, with the usual expectation that the API may change during the
   `RequestedToneMappingMode`.
 - Added `Checkbox::checked_when` for check state that other controls can also
   change.
+- Added `window_output_diagnostics_signal`, the window's output diagnostics as
+  a signal. Widgets that observe it are invalidated when a presented frame's
+  diagnostics change, instead of showing the values of whichever frame they
+  last happened to be measured in. The demo's Settings diagnostics panels and
+  the HDR validation page use it.
+- Screenshots, offscreen renders, and PNG previews of HDR captures now fit
+  highlights with the window's tone mapping instead of always clamping. The
+  headless platform passes each window's color management to the renderer,
+  which keeps it for windows without a surface
+  (`WgpuRenderer::window_color_management`).
 
 ### Redesigned HDR validation demo
 
@@ -334,6 +344,10 @@ Versioning, with the usual expectation that the API may change during the
 
 ### Fixes
 
+- Work a widget requests while painting (`PaintCtx::request_paint`,
+  `request_paint_rect`, and `request`) now happens on the next frame. The
+  runtime previously folded it into the frame being painted and dropped it,
+  so a widget asking to paint or measure again was never called.
 - A progress bar's value label now uses the tone's content color over the fill
   and body text over the track, so values below the midpoint stay readable.
 - Disabled ghost buttons no longer reveal their transparent border as a dark

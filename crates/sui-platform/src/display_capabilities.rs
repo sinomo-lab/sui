@@ -4,6 +4,7 @@ use std::{
 };
 
 use sui_core::WindowId;
+use sui_reactive::Signal;
 use sui_render_wgpu::{
     DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DisplayCapabilities, DisplayColorPrimaries, OutputStrategy,
 };
@@ -43,40 +44,71 @@ pub struct WindowOutputDiagnostics {
     pub active_output_strategy: OutputStrategy,
 }
 
-fn diagnostics_store() -> &'static RwLock<HashMap<WindowId, WindowOutputDiagnostics>> {
-    static STORE: OnceLock<RwLock<HashMap<WindowId, WindowOutputDiagnostics>>> = OnceLock::new();
+type DiagnosticsSignal = Signal<Option<WindowOutputDiagnostics>>;
+
+fn diagnostics_store() -> &'static RwLock<HashMap<WindowId, DiagnosticsSignal>> {
+    static STORE: OnceLock<RwLock<HashMap<WindowId, DiagnosticsSignal>>> = OnceLock::new();
     STORE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+/// Record the output diagnostics of the frame just presented for
+/// `window_id`. Widgets observing [`window_output_diagnostics_signal`] are
+/// invalidated when they differ from the last frame's.
 pub fn publish_window_output_diagnostics(
     window_id: WindowId,
     diagnostics: WindowOutputDiagnostics,
 ) {
-    let mut store = diagnostics_store()
-        .write()
-        .expect("window output diagnostics store lock should not be poisoned");
-    store.insert(window_id, diagnostics);
+    // Set outside the lock: observers run when the value changes.
+    window_output_diagnostics_signal(window_id).set(Some(diagnostics));
 }
 
+/// The output diagnostics of the last frame presented for `window_id`.
 pub fn window_output_diagnostics(window_id: WindowId) -> Option<WindowOutputDiagnostics> {
     let store = diagnostics_store()
         .read()
         .expect("window output diagnostics store lock should not be poisoned");
-    store.get(&window_id).cloned()
+    store.get(&window_id).and_then(Signal::get)
+}
+
+/// The output diagnostics of `window_id` as a signal, for widgets that show
+/// them: observe it with `MeasureCtx::observe` or `PaintCtx::observe` to be
+/// invalidated when a presented frame's diagnostics change. It holds `None`
+/// until the window's first frame is presented.
+pub fn window_output_diagnostics_signal(window_id: WindowId) -> DiagnosticsSignal {
+    if let Some(signal) = diagnostics_store()
+        .read()
+        .expect("window output diagnostics store lock should not be poisoned")
+        .get(&window_id)
+    {
+        return signal.clone();
+    }
+    diagnostics_store()
+        .write()
+        .expect("window output diagnostics store lock should not be poisoned")
+        .entry(window_id)
+        .or_insert_with(|| Signal::named("Window output diagnostics", None))
+        .clone()
 }
 
 pub fn clear_window_output_diagnostics(window_id: WindowId) {
-    let mut store = diagnostics_store()
+    let removed = diagnostics_store()
         .write()
-        .expect("window output diagnostics store lock should not be poisoned");
-    store.remove(&window_id);
+        .expect("window output diagnostics store lock should not be poisoned")
+        .remove(&window_id);
+    if let Some(signal) = removed {
+        signal.set(None);
+    }
 }
 
 pub fn clear_window_output_diagnostics_all() {
-    let mut store = diagnostics_store()
-        .write()
-        .expect("window output diagnostics store lock should not be poisoned");
-    store.clear();
+    let removed = std::mem::take(
+        &mut *diagnostics_store()
+            .write()
+            .expect("window output diagnostics store lock should not be poisoned"),
+    );
+    for signal in removed.into_values() {
+        signal.set(None);
+    }
 }
 
 pub fn resolve_sdr_content_brightness_nits(

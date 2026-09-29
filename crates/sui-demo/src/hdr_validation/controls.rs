@@ -4,14 +4,12 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    sync::OnceLock,
 };
 
 use sui::prelude::*;
 use sui::{
-    Signal, WindowColorManagementMode, WindowDynamicRangeMode, WindowId,
-    WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
-    set_window_render_options, window_render_options,
+    WindowColorManagementMode, WindowDynamicRangeMode, WindowId, WindowOutputColorPrimaries,
+    WindowRenderOptions, WindowToneMappingMode, set_window_render_options, window_render_options,
 };
 
 use crate::app::{DevThemeReader, clone_dev_theme_reader, default_render_options};
@@ -31,13 +29,6 @@ const TONE_MAPPING_MODE_OPTIONS: [&str; 3] = ["Automatic", "Clamp", "Reinhard"];
 
 const SDR_CONTENT_BRIGHTNESS_MIN_NITS: f64 = 48.0;
 const SDR_CONTENT_BRIGHTNESS_MAX_NITS: f64 = 1000.0;
-
-/// Changes whenever output options change through the controls. Widgets
-/// that describe the output observe it to look at the output again.
-pub(crate) fn output_options_changes() -> &'static Signal<u64> {
-    static CHANGES: OnceLock<Signal<u64>> = OnceLock::new();
-    CHANGES.get_or_init(|| Signal::named("Output options changes", 0))
-}
 
 /// Render options for one window, as the output controls edit them. Clones
 /// share the options, so Settings and the HDR validation page edit the same.
@@ -79,13 +70,13 @@ impl OutputOptions {
         *self.options.borrow()
     }
 
-    /// Change the options and apply them to the window.
+    /// Change the options and apply them to the window. The control making
+    /// the change repaints, so the next frame presents with them.
     pub(crate) fn update(&self, update: impl FnOnce(&mut WindowRenderOptions)) {
         update(&mut self.options.borrow_mut());
         if let Some(window_id) = self.window.get() {
             set_window_render_options(window_id, self.get().clamped());
         }
-        output_options_changes().update(|changes| *changes = changes.wrapping_add(1));
     }
 
     /// Apply changes to `window_id` from now on. Options made with

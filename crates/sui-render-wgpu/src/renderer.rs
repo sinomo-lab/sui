@@ -233,13 +233,26 @@ impl WgpuRenderer {
         window_id: WindowId,
         color_management: ColorManagementMode,
     ) -> Result<()> {
-        if let Some(surface) = self.surfaces.get_mut(&window_id) {
-            if surface.color_management == color_management {
-                return Ok(());
-            }
-            surface.color_management = color_management;
+        let Some(surface) = self.surfaces.get_mut(&window_id) else {
+            // Offscreen windows fit and capture with it too.
+            self.offscreen_color_management
+                .insert(window_id, color_management);
+            return Ok(());
+        };
+        if surface.color_management == color_management {
+            return Ok(());
         }
+        surface.color_management = color_management;
         self.configure_existing_surface(window_id)
+    }
+
+    /// The color management `window_id` renders with.
+    pub fn window_color_management(&self, window_id: WindowId) -> ColorManagementMode {
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| surface.color_management)
+            .or_else(|| self.offscreen_color_management.get(&window_id).copied())
+            .unwrap_or_default()
     }
 
     pub fn window_output_strategy(&self, window_id: WindowId) -> Option<OutputStrategy> {
@@ -340,6 +353,7 @@ impl WgpuRenderer {
         self.frame_resources.fragments.remove(&window_id);
         self.frame_resources.output_transforms.remove(&window_id);
         self.surfaces.remove(&window_id);
+        self.offscreen_color_management.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
         self.intermediate_targets.remove(&window_id);
         self.last_frames.remove(&window_id);
@@ -455,6 +469,7 @@ impl Default for WgpuRenderer {
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             intermediate_targets: HashMap::new(),
+            offscreen_color_management: HashMap::new(),
             frame_resources: FrameResources::default(),
         }
     }

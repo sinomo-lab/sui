@@ -30,6 +30,7 @@ use sui::{
     WidgetPodVisitor, WindowEvent, WindowId, WindowOutputDiagnostics, WindowRenderOptions,
     WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, default_sui_logo_image,
     paint_aligned_text, paint_single_line_aligned_text, prelude::*, window_output_diagnostics,
+    window_output_diagnostics_signal,
 };
 
 #[cfg(test)]
@@ -2319,6 +2320,12 @@ fn output_policy_label(strategy_debug: &str) -> &'static str {
     }
 }
 
+/// The window's output diagnostics, measuring the widget again whenever a
+/// presented frame changes them.
+fn observe_output_diagnostics(ctx: &MeasureCtx) -> Option<WindowOutputDiagnostics> {
+    ctx.observe(&window_output_diagnostics_signal(ctx.window_id()))
+}
+
 pub(crate) fn sdr_content_brightness_line(diagnostics: &WindowOutputDiagnostics) -> String {
     let source = if diagnostics.use_system_sdr_content_brightness
         && diagnostics.system_sdr_content_brightness_nits.is_some()
@@ -2367,8 +2374,8 @@ fn hdr_theme_inspection_lines(window_id: WindowId) -> Vec<String> {
     lines
 }
 
-fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
-    let Some(diagnostics) = window_output_diagnostics(window_id) else {
+fn output_diagnostics_lines(diagnostics: Option<&WindowOutputDiagnostics>) -> Vec<String> {
+    let Some(diagnostics) = diagnostics else {
         return vec!["Waiting for first presented frame…".to_string()];
     };
 
@@ -2389,7 +2396,7 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
             "Requested tone mapping: {:?}",
             diagnostics.requested_tone_mapping_mode
         ),
-        sdr_content_brightness_line(&diagnostics),
+        sdr_content_brightness_line(diagnostics),
         format!(
             "Detected primaries: {:?}",
             diagnostics.display_capabilities.preferred_primaries
@@ -2407,7 +2414,7 @@ fn output_diagnostics_lines(window_id: WindowId) -> Vec<String> {
                 .native_hdr_presentation_supported,
         ),
         format!("Active strategy: {:?}", diagnostics.active_output_strategy),
-        diagnostics.display_capabilities.notes,
+        diagnostics.display_capabilities.notes.clone(),
     ]
 }
 
@@ -2569,6 +2576,7 @@ impl HdrThemeInspectionPanel {
 
 impl Widget for HdrThemeInspectionPanel {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        observe_output_diagnostics(ctx);
         let theme = self.theme();
         let width = settings_panel_width(constraints.max.width);
         let lines = hdr_theme_inspection_lines(ctx.window_id());
@@ -2600,13 +2608,19 @@ impl Widget for HdrThemeInspectionPanel {
     }
 }
 
+/// The window's output diagnostics, as of the last presented frame.
 struct OutputDiagnosticsPanel {
     theme_reader: DevThemeReader,
+    /// Taken when measured, so painting and semantics match the layout.
+    lines: Vec<String>,
 }
 
 impl OutputDiagnosticsPanel {
     fn new(theme_reader: DevThemeReader) -> Self {
-        Self { theme_reader }
+        Self {
+            theme_reader,
+            lines: Vec::new(),
+        }
     }
 
     fn theme(&self) -> DefaultTheme {
@@ -2616,12 +2630,12 @@ impl OutputDiagnosticsPanel {
 
 impl Widget for OutputDiagnosticsPanel {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.lines = output_diagnostics_lines(observe_output_diagnostics(ctx).as_ref());
         let theme = self.theme();
         let width = settings_panel_width(constraints.max.width);
-        let lines = output_diagnostics_lines(ctx.window_id());
         let height = settings_panel_height(
             ctx,
-            &lines,
+            &self.lines,
             width,
             &settings_panel_title_style(theme),
             &settings_panel_body_style(theme),
@@ -2631,8 +2645,7 @@ impl Widget for OutputDiagnosticsPanel {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.theme();
-        let lines = output_diagnostics_lines(ctx.window_id());
-        paint_settings_panel(ctx, OUTPUT_DIAGNOSTICS_TITLE, &lines, theme);
+        paint_settings_panel(ctx, OUTPUT_DIAGNOSTICS_TITLE, &self.lines, theme);
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
@@ -2642,30 +2655,42 @@ impl Widget for OutputDiagnosticsPanel {
             ctx.bounds(),
         );
         node.name = Some(OUTPUT_DIAGNOSTICS_TITLE.to_string());
-        node.description = Some(output_diagnostics_lines(ctx.window_id()).join("\n"));
+        node.description = Some(self.lines.join("\n"));
         ctx.push(node);
     }
 }
 
+/// The SDR content brightness in use, as of the last presented frame.
 struct SdrContentBrightnessStatus {
     theme_reader: DevThemeReader,
+    /// Taken when measured, so painting and semantics match the layout.
+    text: Option<String>,
 }
 
 impl SdrContentBrightnessStatus {
     fn new(theme_reader: DevThemeReader) -> Self {
-        Self { theme_reader }
+        Self {
+            theme_reader,
+            text: None,
+        }
     }
 
     fn theme(&self) -> DefaultTheme {
         (self.theme_reader)()
     }
+
+    fn text(&self) -> &str {
+        self.text
+            .as_deref()
+            .unwrap_or("SDR content brightness: waiting for first frame")
+    }
 }
 
 impl Widget for SdrContentBrightnessStatus {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let text = window_output_diagnostics(ctx.window_id())
-            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
-            .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
+        self.text = observe_output_diagnostics(ctx)
+            .map(|diagnostics| sdr_content_brightness_line(&diagnostics));
+        let text = self.text().to_string();
         let theme = self.theme();
         let style = demo_text_style(
             theme,
@@ -2683,21 +2708,23 @@ impl Widget for SdrContentBrightnessStatus {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.theme();
-        let text = window_output_diagnostics(ctx.window_id())
-            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
-            .unwrap_or_else(|| "SDR content brightness: waiting for first frame".to_string());
         let style = demo_text_style(
             theme,
             DemoTextRole::Metadata,
             theme.palette.text.with_alpha(0.78),
         );
-        paint_aligned_text(ctx, ctx.bounds(), &text, &style, style.line_height, 0.0);
+        paint_aligned_text(
+            ctx,
+            ctx.bounds(),
+            self.text(),
+            &style,
+            style.line_height,
+            0.0,
+        );
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
-        let description = window_output_diagnostics(ctx.window_id())
-            .map(|diagnostics| sdr_content_brightness_line(&diagnostics))
-            .unwrap_or_else(|| "SDR content brightness waiting for first frame".to_string());
+        let description = self.text().to_string();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -4011,6 +4038,47 @@ mod tests {
             .with_name(crate::validation::COLOR_VALIDATION_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
+        Ok(())
+    }
+
+    #[test]
+    fn output_diagnostics_panel_follows_the_presented_output() -> Result<()> {
+        let app = TestApp::new(|| {
+            Application::new().window(WindowBuilder::new().title(OUTPUT_DIAGNOSTICS_TITLE).root(
+                OutputDiagnosticsPanel::new(crate::demo_support::default_theme_reader()),
+            ))
+        })?;
+        let window = app.main_window()?;
+        let description = |window: &TestWindow| -> Result<String> {
+            Ok(window
+                .snapshot()?
+                .accessibility
+                .nodes
+                .iter()
+                .find(|node| node.name.as_deref() == Some(OUTPUT_DIAGNOSTICS_TITLE))
+                .and_then(|node| node.description.clone())
+                .expect("the output diagnostics panel is exposed"))
+        };
+        window.run_until_idle()?;
+        assert!(
+            description(&window)?.contains("Requested tone mapping:"),
+            "the panel shows the first presented frame"
+        );
+
+        // Nothing but the output changes; the panel follows the next frame.
+        let options = sui::window_render_options(window.id())
+            .unwrap_or_else(default_render_options)
+            .with_tone_mapping_mode(WindowToneMappingMode::Reinhard);
+        sui::set_window_render_options(window.id(), options);
+        window
+            .locator(sui_testing::Selector::root())
+            .dispatch_event(Event::Window(WindowEvent::RedrawRequested))?;
+        window.run_until_idle()?;
+        let description = description(&window)?;
+        assert!(
+            description.contains("Requested tone mapping: Reinhard"),
+            "{description}"
+        );
         Ok(())
     }
 

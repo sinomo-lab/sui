@@ -129,6 +129,7 @@ pub(crate) fn hdr_image_to_sdr_rgba(
     visualization: DebugSdrVisualization,
     reference_white: f32,
     output_primaries: DisplayColorPrimaries,
+    fit: crate::output::SdrFit,
 ) -> Result<RgbaImage> {
     let reference_white = if reference_white.is_finite() && reference_white > 0.0 {
         reference_white
@@ -149,9 +150,9 @@ pub(crate) fn hdr_image_to_sdr_rgba(
             DebugSdrVisualization::ToneMappedColor => {
                 // Native HDR final targets store SDR white above 1.0. Divide that
                 // headroom back out, convert the output primaries to linear sRGB,
-                // then fit highlights as an SDR output would, keeping their hue.
+                // then fit highlights as the window's SDR output would.
                 // SDR-authored sRGB colors round back to their original PNG bytes.
-                let fitted = crate::output::SdrFit::Clip.apply(normalized);
+                let fitted = fit.apply(normalized.map(|channel| channel.max(0.0)));
                 pixels.extend_from_slice(&[
                     linear_to_srgb_capture_u8(fitted[0]),
                     linear_to_srgb_capture_u8(fitted[1]),
@@ -208,6 +209,7 @@ pub(crate) fn encode_hdr_debug_artifact(
     request: DebugCaptureRequest,
     sdr_reference_white: f32,
     output_primaries: DisplayColorPrimaries,
+    fit: crate::output::SdrFit,
 ) -> Result<DebugCaptureArtifact> {
     match request.encoding {
         DebugCaptureEncoding::Exr => Ok(DebugCaptureArtifact::HdrLinearRgbaF32(image)),
@@ -216,6 +218,7 @@ pub(crate) fn encode_hdr_debug_artifact(
             request.sdr_visualization,
             sdr_reference_white,
             output_primaries,
+            fit,
         )
         .map(DebugCaptureArtifact::SdrRgba8),
     }
@@ -279,7 +282,13 @@ impl WgpuRenderer {
             }
             DebugCaptureStage::HdrIntermediate => {
                 let image = self.capture_hdr_intermediate_rgba_f32(window_id)?;
-                encode_hdr_debug_artifact(image, request, 1.0, DisplayColorPrimaries::Srgb)
+                encode_hdr_debug_artifact(
+                    image,
+                    request,
+                    1.0,
+                    DisplayColorPrimaries::Srgb,
+                    self.sdr_preview_fit(window_id),
+                )
             }
         }
     }
@@ -348,6 +357,7 @@ impl WgpuRenderer {
                     request,
                     self.final_composed_sdr_reference_white(window_id),
                     self.final_composed_output_primaries(window_id),
+                    self.sdr_preview_fit(window_id),
                 )
             }
             other => Err(Error::new(format!(
@@ -376,6 +386,14 @@ impl WgpuRenderer {
         )?;
         let pixels = decode_rgba16f_pixels(&raw);
         HdrRgbaImage::new(target.size.0, target.size.1, pixels)
+    }
+
+    /// How SDR previews of HDR captures fit highlights: as the window's own
+    /// SDR output would.
+    pub(crate) fn sdr_preview_fit(&self, window_id: WindowId) -> crate::output::SdrFit {
+        crate::output::SdrFit::for_tone_mapping(
+            self.window_color_management(window_id).tone_mapping,
+        )
     }
 
     pub(crate) fn final_composed_sdr_reference_white(&self, window_id: WindowId) -> f32 {

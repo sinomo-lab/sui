@@ -84,7 +84,8 @@ test.
 
 The default is final-composed, PNG, tone-mapped color. An EXR request returns
 `DebugCaptureArtifact::HdrLinearRgbaF32`; a PNG request returns
-`DebugCaptureArtifact::SdrRgba8`.
+`DebugCaptureArtifact::SdrRgba8`. Tone-mapped PNGs, like screenshots, fit
+highlights with the window's tone mapping.
 
 `HdrIntermediate` answers whether scene content contains the expected
 extended-range signal. `FinalComposed` answers what remains after the selected
@@ -223,6 +224,12 @@ bug report. The useful fields include:
 Treat capability detection and renderer selection as separate questions. A
 display may report HDR while the active platform integration still uses a
 tone-mapped SDR fallback.
+
+Diagnostics describe the last presented frame, so they trail a change of
+options by a frame. A widget that shows them should read them with
+`ctx.observe(&window_output_diagnostics_signal(ctx.window_id()))` in `measure`
+(or `paint`), which invalidates it whenever a presented frame's diagnostics
+change.
 
 ## Validation workflow
 
