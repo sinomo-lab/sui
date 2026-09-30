@@ -292,9 +292,9 @@ impl ControlSize {
 
     const fn row_height(self) -> f32 {
         match self {
-            Self::Small => 30.0,
-            Self::Medium => 36.0,
-            Self::Large => 44.0,
+            Self::Small => 24.0,
+            Self::Medium => 28.0,
+            Self::Large => 36.0,
         }
     }
 
@@ -2167,6 +2167,8 @@ pub struct ControlMetrics {
     pub menu_padding: Insets,
     pub menu_item_padding: Insets,
     pub menu_shortcut_width: f32,
+    /// The narrowest a menu panel gets, however short its labels.
+    pub menu_min_width: f32,
     pub popover_padding: Insets,
     pub popover_gap: f32,
     pub popover_reveal_offset: f32,
@@ -2455,8 +2457,8 @@ impl ControlMetrics {
                 },
                 Insets::all(unit * 3.0),
                 unit * 2.0,
-                28.0,
-                Insets::all(unit),
+                24.0,
+                Insets::all(unit * 0.75),
                 Insets {
                     left: unit * 2.0,
                     top: unit * 0.5,
@@ -2488,26 +2490,26 @@ impl ControlMetrics {
                 14.0,
                 22.0,
                 Insets::all(unit * 0.5),
-                Insets::all(unit * 1.5),
+                Insets::all(unit * 0.75),
                 Insets {
-                    left: unit * 3.0,
+                    left: unit * 2.0,
                     top: unit * 0.5,
-                    right: unit * 2.0,
+                    right: unit * 1.5,
                     bottom: unit * 0.5,
                 },
                 12.0,
                 unit * 1.5,
                 unit * 2.0,
-                30.0,
-                38.0,
+                24.0,
+                28.0,
+                20.0,
                 22.0,
-                26.0,
-                30.0,
-                unit * 4.0,
+                24.0,
+                unit * 3.5,
                 10.0,
                 unit,
-                30.0,
-                28.0,
+                24.0,
+                24.0,
                 unit * 2.5,
                 28.0,
                 Insets {
@@ -2569,12 +2571,12 @@ impl ControlMetrics {
                 },
                 Insets::all(unit * 4.0),
                 unit * 3.0,
-                32.0,
-                Insets::all(unit * 1.5),
+                28.0,
+                Insets::all(unit),
                 Insets {
-                    left: unit * 3.0,
+                    left: unit * 2.5,
                     top: unit,
-                    right: unit * 3.0,
+                    right: unit * 2.5,
                     bottom: unit,
                 },
                 Insets::all(unit * 3.5),
@@ -2602,26 +2604,26 @@ impl ControlMetrics {
                 18.0,
                 18.0,
                 Insets::all(unit * 0.5),
-                Insets::all(unit * 2.0),
+                Insets::all(unit),
                 Insets {
-                    left: 14.0,
-                    top: unit,
-                    right: 10.0,
-                    bottom: unit,
+                    left: unit * 2.5,
+                    top: unit * 0.75,
+                    right: unit * 2.0,
+                    bottom: unit * 0.75,
                 },
                 14.0,
                 unit * 2.0,
                 unit * 3.0,
-                36.0,
-                40.0,
-                26.0,
-                34.0,
-                36.0,
-                18.0,
+                28.0,
+                32.0,
+                24.0,
+                28.0,
+                28.0,
+                16.0,
                 12.0,
                 6.0,
-                36.0,
-                34.0,
+                28.0,
+                28.0,
                 unit * 2.5,
                 36.0,
                 Insets {
@@ -2683,12 +2685,12 @@ impl ControlMetrics {
                 },
                 Insets::all(unit * 4.5),
                 unit * 3.5,
-                40.0,
-                Insets::all(unit * 1.75),
+                36.0,
+                Insets::all(unit * 1.5),
                 Insets {
-                    left: unit * 3.25,
+                    left: unit * 3.0,
                     top: unit * 1.5,
-                    right: unit * 3.25,
+                    right: unit * 3.0,
                     bottom: unit * 1.5,
                 },
                 Insets::all(unit * 4.0),
@@ -2716,26 +2718,26 @@ impl ControlMetrics {
                 22.0,
                 22.0,
                 Insets::all(unit * 0.75),
-                Insets::all(unit * 2.25),
+                Insets::all(unit * 1.5),
                 Insets {
-                    left: unit * 3.5,
-                    top: unit * 1.5,
-                    right: unit * 2.75,
-                    bottom: unit * 1.5,
+                    left: unit * 3.0,
+                    top: unit * 1.25,
+                    right: unit * 2.5,
+                    bottom: unit * 1.25,
                 },
                 16.0,
                 unit * 2.25,
                 unit * 3.5,
+                36.0,
                 40.0,
-                44.0,
+                28.0,
                 32.0,
-                38.0,
-                40.0,
-                22.0,
+                36.0,
+                20.0,
                 14.0,
                 unit * 1.5,
-                40.0,
-                38.0,
+                36.0,
+                36.0,
                 unit * 2.5,
                 40.0,
                 Insets {
@@ -3343,7 +3345,16 @@ impl ControlMetrics {
             menu_row_height,
             menu_padding,
             menu_item_padding,
-            menu_shortcut_width: 108.0,
+            menu_shortcut_width: match density {
+                ThemeDensity::Compact => 84.0,
+                ThemeDensity::Comfortable => 96.0,
+                ThemeDensity::Touch => 112.0,
+            },
+            menu_min_width: match density {
+                ThemeDensity::Compact => 144.0,
+                ThemeDensity::Comfortable => 160.0,
+                ThemeDensity::Touch => 200.0,
+            },
             popover_padding,
             popover_gap: unit * 2.0,
             popover_reveal_offset,
@@ -4236,9 +4247,9 @@ mod tests {
         assert_eq!(small.metrics.min_height, 28.0);
         assert_eq!(medium.metrics.min_height, 32.0);
         assert_eq!(large.metrics.min_height, 40.0);
-        assert_eq!(small.metrics.list_row_height, 30.0);
-        assert_eq!(medium.metrics.list_row_height, 36.0);
-        assert_eq!(large.metrics.list_row_height, 44.0);
+        assert_eq!(small.metrics.list_row_height, 24.0);
+        assert_eq!(medium.metrics.list_row_height, 28.0);
+        assert_eq!(large.metrics.list_row_height, 36.0);
         assert_eq!(small.metrics.touch_target_size, 44.0);
         assert_eq!(medium.metrics.touch_target_size, 44.0);
         assert_eq!(large.metrics.touch_target_size, 44.0);
@@ -4246,6 +4257,9 @@ mod tests {
         assert_eq!(medium.typography.body_font_size, base.text.base.size);
         assert_eq!(large.typography.body_font_size, base.text.lg.size);
         assert_eq!(large.text, base.text);
+        assert_eq!(small.metrics.menu_row_height, 24.0);
+        assert_eq!(medium.metrics.menu_row_height, 28.0);
+        assert_eq!(large.metrics.menu_row_height, 36.0);
     }
 
     #[test]
@@ -4635,11 +4649,18 @@ mod tests {
         assert_eq!(comfortable.metrics.touch_target_size, 44.0);
         assert_eq!(touch.metrics.touch_target_size, 44.0);
 
-        // Rows: 30 / 36 / 44.
-        assert_eq!(compact.metrics.list_row_height, 30.0);
-        assert_eq!(comfortable.metrics.list_row_height, 36.0);
-        assert_eq!(touch.metrics.list_row_height, 44.0);
-        assert_eq!(compact.metrics.table_row_height, 30.0);
+        // Rows: 24 / 28 / 36, shared by lists, trees, tables, and menus.
+        assert_eq!(compact.metrics.list_row_height, 24.0);
+        assert_eq!(comfortable.metrics.list_row_height, 28.0);
+        assert_eq!(touch.metrics.list_row_height, 36.0);
+        for theme in [&compact, &comfortable, &touch] {
+            assert_eq!(theme.metrics.tree_row_height, theme.metrics.list_row_height);
+            assert_eq!(
+                theme.metrics.table_row_height,
+                theme.metrics.list_row_height
+            );
+            assert_eq!(theme.metrics.menu_row_height, theme.metrics.list_row_height);
+        }
 
         // Control type follows Small / Medium / Large on the shared text ramp.
         assert_eq!(compact.typography.body_font_size, 13.0);

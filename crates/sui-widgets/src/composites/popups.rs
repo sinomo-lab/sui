@@ -17,7 +17,8 @@ use crate::composites::indicators::{
 };
 use crate::composites::toolbars::{
     MenuItem, context_menu_item_semantics_node, menu_item_semantics_node, menu_row_height,
-    menu_submenu_indicator_width, themed_menu_height_for_rows, virtual_menu_item_path_id,
+    menu_submenu_indicator_width, menu_width_for_items, themed_menu_height_for_rows,
+    virtual_menu_item_path_id,
 };
 use crate::controls::cap_resolved_hdr_style;
 use crate::overlay::OverlayAlignment;
@@ -113,8 +114,9 @@ pub struct Menu {
 
 impl Menu {
     pub fn new(name: impl Into<String>) -> Self {
+        let theme = DefaultTheme::default();
         Self {
-            theme: Box::new(DefaultTheme::default()),
+            theme: Box::new(theme),
             theme_reader: None,
             name: name.into(),
             items: Vec::new(),
@@ -125,7 +127,7 @@ impl Menu {
             highlight_animation: Progress::new(0.0),
             press_animation: Progress::new(0.0),
             focus_animation: Progress::new(0.0),
-            measured_width: 220.0,
+            measured_width: theme.metrics.menu_min_width,
             focus_on_pointer_down: true,
             on_activate: None,
             on_activate_with_ctx: None,
@@ -381,25 +383,7 @@ impl Widget for Menu {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let theme = self.resolved_theme();
-        let label_style = theme.body_text_style();
-        let shortcut_style = theme.placeholder_text_style();
-        let mut width: f32 = 0.0;
-        for item in &self.items {
-            let label = measure_text(ctx, item.label(), &label_style).width;
-            let shortcut = item
-                .shortcut
-                .as_ref()
-                .map(|text| measure_text(ctx, text, &shortcut_style).width)
-                .unwrap_or(0.0);
-            width = width.max(
-                label
-                    + shortcut
-                    + theme.metrics.menu_item_padding.left
-                    + theme.metrics.menu_item_padding.right
-                    + theme.metrics.menu_shortcut_width,
-            );
-        }
-        self.measured_width = width.max(220.0);
+        self.measured_width = menu_width_for_items(ctx, &theme, &self.items, false);
         let height = themed_menu_height_for_rows(&theme, self.row_height(), self.items.len());
         constraints.clamp(Size::new(
             self.measured_width,
@@ -447,12 +431,7 @@ impl Widget for Menu {
             };
 
             if item.separator_before {
-                let line = Rect::new(
-                    row.x(),
-                    row.y() - (metrics.menu_padding.top * 0.5),
-                    row.width(),
-                    1.0,
-                );
+                let line = Rect::new(row.x(), row.y() - 0.5, row.width(), 1.0);
                 ctx.fill(rounded_rect_path(line, 0.5), palette.border);
             }
 
@@ -2012,12 +1991,7 @@ impl Widget for ContextMenuSurface {
                 path.push(index);
 
                 if item.separator_before {
-                    let line = Rect::new(
-                        row.x(),
-                        row.y() - (metrics.menu_padding.top * 0.5),
-                        row.width(),
-                        1.0,
-                    );
+                    let line = Rect::new(row.x(), row.y() - 0.5, row.width(), 1.0);
                     ctx.fill(rounded_rect_path(line, 0.5), palette.border);
                 }
 
@@ -2584,31 +2558,7 @@ impl ContextMenu {
         ctx: &mut MeasureCtx,
         items: &[MenuItem],
     ) -> f32 {
-        let theme = self.resolved_theme();
-        let label_style = theme.body_text_style();
-        let shortcut_style = theme.placeholder_text_style();
-        let mut width: f32 = 220.0;
-        for item in items {
-            let label = measure_text(ctx, item.label(), &label_style).width;
-            let shortcut = item
-                .shortcut
-                .as_ref()
-                .map(|text| measure_text(ctx, text, &shortcut_style).width)
-                .unwrap_or(0.0);
-            width = width.max(
-                label
-                    + shortcut
-                    + theme.metrics.menu_item_padding.left
-                    + theme.metrics.menu_item_padding.right
-                    + theme.metrics.menu_shortcut_width
-                    + if item.has_submenu() {
-                        menu_submenu_indicator_width(&theme)
-                    } else {
-                        0.0
-                    },
-            );
-        }
-        width
+        menu_width_for_items(ctx, &self.resolved_theme(), items, true)
     }
 
     pub(super) fn resolved_theme(&self) -> DefaultTheme {

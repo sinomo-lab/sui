@@ -6928,23 +6928,13 @@ fn select_header_and_options_preserve_tall_measurement_centering() -> Result<()>
     )?;
 
     let expanded = runtime.render(window_id)?;
-    let select = expanded
-        .semantics
-        .iter()
-        .find(|node| node.role == SemanticsRole::ComboBox)
-        .expect("select semantics present after expand");
     let option_text = text_run_for(&expanded, option);
     let option_layout = shaped_text_layout_for(&expanded, option);
     let option_clip = draw_clip_rect_for(&expanded, option);
     let menu = overlay_layer_descriptor(&expanded).expect("select menu overlay present");
-    let row = Rect::new(
-        menu.bounds.x(),
-        menu.bounds.y(),
-        menu.bounds.width(),
-        select.bounds.height(),
-    );
+    let row = super::select_option_rect(&theme, menu.bounds, 0);
     let expected_option_clip =
-        super::horizontal_text_inset_rect(row, theme.metrics.text_input_padding);
+        super::horizontal_text_inset_rect(row, theme.metrics.menu_item_padding);
 
     assert_eq!(option_text.style.font_size, theme.typography.body_font_size);
     assert_eq!(
@@ -6983,11 +6973,6 @@ fn expanded_select_option_text_visual_center_matches_row_center() -> Result<()> 
     )?;
 
     let output = runtime.render(window_id)?;
-    let select = output
-        .semantics
-        .iter()
-        .find(|node| node.role == SemanticsRole::ComboBox)
-        .expect("select semantics present");
     let text = text_run_for(&output, "Automatic");
     let layout = TextSystem::new()
         .shape_text_run(&text, &FontRegistry::new())
@@ -6999,7 +6984,8 @@ fn expanded_select_option_text_visual_center_matches_row_center() -> Result<()> 
     let actual_visual_center =
         text.rect.y() + line.baseline + optical_visual_center(layout.measurement());
     let menu = overlay_layer_descriptor(&output).expect("select menu overlay present");
-    let row_center = menu.bounds.y() + (select.bounds.height() * 0.5);
+    let row = super::select_option_rect(&DefaultTheme::default(), menu.bounds, 0);
+    let row_center = row.y() + row.height() * 0.5;
 
     assert!((actual_visual_center - row_center).abs() < 0.75);
     Ok(())

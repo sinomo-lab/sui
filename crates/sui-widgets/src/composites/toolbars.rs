@@ -7,7 +7,8 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_frame, inset_rect, mix_color, physical_pixels, rect_center, rounded_rect_path,
+    draw_control_frame, inset_rect, measure_text, mix_color, physical_pixels, rect_center,
+    rounded_rect_path,
 };
 use crate::controls::draw_icon_glyph;
 use sui_core::Color;
@@ -151,6 +152,42 @@ pub(super) fn themed_menu_height_for_rows(
 
 pub(super) fn menu_submenu_indicator_width(theme: &DefaultTheme) -> f32 {
     menu_row_height(theme) * 0.55
+}
+
+/// How wide a menu panel needs to be to show `items` unclipped: the widest
+/// label with its shortcut column, and its submenu arrow when `submenus`,
+/// inside the row and panel padding. Never narrower than the theme allows.
+pub(super) fn menu_width_for_items(
+    ctx: &mut MeasureCtx,
+    theme: &DefaultTheme,
+    items: &[MenuItem],
+    submenus: bool,
+) -> f32 {
+    let metrics = theme.metrics;
+    let label_style = theme.body_text_style();
+    let content = items
+        .iter()
+        .map(|item| {
+            let label = measure_text(ctx, item.label(), &label_style).width.ceil();
+            let shortcut = if item.shortcut.is_some() {
+                metrics.menu_shortcut_width
+            } else {
+                0.0
+            };
+            let indicator = if submenus && item.has_submenu() {
+                menu_submenu_indicator_width(theme)
+            } else {
+                0.0
+            };
+            label + shortcut + indicator
+        })
+        .fold(0.0, f32::max);
+    (content
+        + metrics.menu_item_padding.left
+        + metrics.menu_item_padding.right
+        + metrics.menu_padding.left
+        + metrics.menu_padding.right)
+        .max(metrics.menu_min_width)
 }
 
 pub(super) fn menu_item_semantics_node(

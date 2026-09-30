@@ -5800,17 +5800,8 @@ impl SelectMenuPresentationState {
         self.reveal.is_presented()
     }
 
-    fn row_height(&self) -> f32 {
-        default_form_control_height(&self.theme)
-    }
-
     fn row_rect(&self, index: usize, bounds: Rect) -> Rect {
-        Rect::new(
-            bounds.x(),
-            bounds.y() + (index as f32 * self.row_height()),
-            bounds.width(),
-            self.row_height(),
-        )
+        select_option_rect(&self.theme, bounds, index)
     }
 
     /// Move the hover highlight to `hovered`, fading it on `surface`, the
@@ -5946,7 +5937,7 @@ impl Widget for SelectMenuSurface {
         let metrics = theme.metrics;
         let palette = theme.palette;
         let menu_radius = metrics.corner_radius + 2.0;
-        paint_theme_shadow(ctx, menu, [menu_radius; 4], &theme.shadows.box_shadow.md);
+        paint_theme_shadow(ctx, menu, [menu_radius; 4], &theme.shadows.box_shadow.lg);
         draw_control_shape(
             ctx,
             menu,
@@ -5976,11 +5967,11 @@ impl Widget for SelectMenuSurface {
                     )
                 };
                 ctx.fill(
-                    rounded_rect_path(row.inflate(-4.0, -4.0), metrics.corner_radius - 2.0),
+                    rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     background,
                 );
             }
-            let text_slot = horizontal_text_inset_rect(row, metrics.text_input_padding);
+            let text_slot = horizontal_text_inset_rect(row, metrics.menu_item_padding);
             ctx.push_clip_rect(text_slot);
             paint_text(ctx, text_slot, option, &text_style, TextAlign::Start);
             ctx.pop_clip();
@@ -6209,8 +6200,11 @@ impl Select {
     }
 
     fn menu_height(&self) -> f32 {
-        (self.options.len() as f32 * self.header_height())
-            .min(self.resolved_theme().metrics.select_menu_max_height)
+        let metrics = self.resolved_theme().metrics;
+        (metrics.menu_padding.top
+            + metrics.menu_padding.bottom
+            + self.options.len() as f32 * metrics.menu_row_height)
+            .min(metrics.select_menu_max_height)
     }
 
     fn menu_layout(&self, bounds: Rect, viewport: Size) -> (SelectMenuPlacement, Rect) {
@@ -6264,12 +6258,10 @@ impl Select {
     }
 
     fn option_rect(&self, bounds: Rect, viewport: Size, index: usize) -> Rect {
-        let menu = self.menu_rect(bounds, viewport);
-        Rect::new(
-            menu.x(),
-            menu.y() + (index as f32 * self.header_height()),
-            menu.width(),
-            self.header_height(),
+        select_option_rect(
+            &self.resolved_theme(),
+            self.menu_rect(bounds, viewport),
+            index,
         )
     }
 
@@ -7980,6 +7972,19 @@ fn switch_label_rect(bounds: Rect, padding: Insets, metrics: ControlMetrics, gap
         bounds.y(),
         (bounds.width() - (x - bounds.x()) - padding.right).max(0.0),
         bounds.height(),
+    )
+}
+
+/// Where a select dropdown lays out option `index` within `menu`: menu rows
+/// inside the menu padding, so dropdowns match menus.
+fn select_option_rect(theme: &DefaultTheme, menu: Rect, index: usize) -> Rect {
+    let padding = theme.metrics.menu_padding;
+    let row_height = theme.metrics.menu_row_height;
+    Rect::new(
+        menu.x() + padding.left,
+        menu.y() + padding.top + index as f32 * row_height,
+        (menu.width() - padding.left - padding.right).max(0.0),
+        row_height,
     )
 }
 

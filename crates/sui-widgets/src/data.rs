@@ -306,16 +306,8 @@ impl ListView {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        let theme = self.resolved_theme();
-        let base = self.row_height.unwrap_or(theme.metrics.list_row_height);
-        if self.items.iter().any(|item| item.detail.is_some()) {
-            base.max(two_line_row_height(
-                theme.body_text_style().line_height,
-                caption_style(&theme).line_height,
-            ))
-        } else {
-            base
-        }
+        self.row_height
+            .unwrap_or(self.resolved_theme().metrics.list_row_height)
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -661,7 +653,11 @@ impl Widget for ListView {
                         + trailing_gap
                         + trailing
                         + metrics.data_row_padding.right,
-                    base_row_height,
+                    if item.detail.is_some() {
+                        detail_row_height(&theme, base_row_height)
+                    } else {
+                        base_row_height
+                    },
                 )
             };
             content_width = content_width.max(row_width);
@@ -1315,8 +1311,17 @@ impl LayerList {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        self.row_height
-            .unwrap_or(self.resolved_theme().metrics.layer_row_height)
+        let theme = self.resolved_theme();
+        let base = self.row_height.unwrap_or(theme.metrics.layer_row_height);
+        if self
+            .layers
+            .iter()
+            .any(|layer| layer.current_detail().is_some())
+        {
+            detail_row_height(&theme, base)
+        } else {
+            base
+        }
     }
 
     fn row_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
@@ -2286,16 +2291,8 @@ impl TreeView {
     }
 
     fn resolved_row_height(&self) -> f32 {
-        let theme = self.resolved_theme();
-        let base = self.row_height.unwrap_or(theme.metrics.tree_row_height);
-        if self.visible_rows.iter().any(|row| row.detail.is_some()) {
-            base.max(two_line_row_height(
-                theme.body_text_style().line_height,
-                caption_style(&theme).line_height,
-            ))
-        } else {
-            base
-        }
+        self.row_height
+            .unwrap_or(self.resolved_theme().metrics.tree_row_height)
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -2749,13 +2746,18 @@ impl Widget for TreeView {
                 )
             } else {
                 let label = measure_text(ctx, &row.label, &label_style).width;
+                let height = if detail.is_some() {
+                    detail_row_height(&theme, base_row_height)
+                } else {
+                    base_row_height
+                };
                 let detail = detail
                     .as_deref()
                     .map(|detail| measure_text(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
                 (
                     label_start + label.max(detail) + metrics.data_row_padding.right,
-                    base_row_height,
+                    height,
                 )
             };
             content_width = content_width.max(row_width);
@@ -5839,6 +5841,15 @@ fn row_text_rects(
 
 fn two_line_row_height(primary_line_height: f32, secondary_line_height: f32) -> f32 {
     primary_line_height + secondary_line_height + TWO_LINE_ROW_TEXT_GAP
+}
+
+/// A row with detail text under its label: at least `base`, and tall enough
+/// for both lines. Rows without detail keep `base`.
+fn detail_row_height(theme: &DefaultTheme, base: f32) -> f32 {
+    base.max(two_line_row_height(
+        theme.body_text_style().line_height,
+        caption_style(theme).line_height,
+    ))
 }
 
 fn horizontal_inset_rect(rect: Rect, inset: f32) -> Rect {
