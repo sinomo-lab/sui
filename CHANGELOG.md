@@ -612,6 +612,10 @@ Versioning, with the usual expectation that the API may change during the
 
 ### Fixes
 
+- The focus ring around an open context menu or popover floats with it.
+  It was composited in page order, so content painted after the menu's
+  trigger covered it: only the parts of the ring outside that content
+  showed, as a border along one or two sides.
 - Adaptive layouts no longer move focus when they are first laid out. A
   `ResponsiveSidebar`, `AdaptiveView`, `ConstraintView`, or `MasterDetail`
   restored focus into the pane its first layout showed, taking focus from

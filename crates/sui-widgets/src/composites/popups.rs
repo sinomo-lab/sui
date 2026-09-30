@@ -1340,9 +1340,21 @@ impl Widget for PopoverFocusSurface {
     }
 
     fn layer_options(&self) -> LayerOptions {
+        let state = self.state.borrow();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: LayerCompositionMode::Normal,
+            // The ring sits beside the surface it outlines, not inside it,
+            // so it composites the same way: above the page while floating.
+            // Composited in page order, content painted after the trigger
+            // covered the ring wherever it overlapped.
+            composition_mode: if state.is_presented()
+                && state.focus_animation.is_presented()
+                && !state.inline
+            {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
         }
     }
 
@@ -2170,9 +2182,21 @@ impl Widget for ContextMenuFocusSurface {
     }
 
     fn layer_options(&self) -> LayerOptions {
+        let state = self.state.borrow();
         LayerOptions {
             paint_boundary: PaintBoundaryMode::Explicit,
-            composition_mode: LayerCompositionMode::Normal,
+            // The ring sits beside the surface it outlines, not inside it,
+            // so it composites the same way: above the page while floating.
+            // Composited in page order, content painted after the trigger
+            // covered the ring wherever it overlapped.
+            composition_mode: if state.is_presented()
+                && state.focus_animation.is_presented()
+                && !state.inline
+            {
+                LayerCompositionMode::Overlay
+            } else {
+                LayerCompositionMode::Normal
+            },
         }
     }
 

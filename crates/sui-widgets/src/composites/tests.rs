@@ -4965,24 +4965,30 @@ fn handle_ready_events(runtime: &mut Runtime) -> Result<usize, String> {
     Ok(count)
 }
 
-fn overlay_layer_descriptor(output: &RenderOutput) -> Option<SceneLayerDescriptor> {
-    let mut descriptor = None;
+/// The floating surface's layer: the last overlay layer that takes pointer
+/// input, passing over focus chrome drawn beside it, or the last overlay
+/// layer when none does, as with tooltips.
+fn overlay_layer(output: &RenderOutput) -> Option<(WidgetId, SceneLayerDescriptor)> {
+    let mut interactive = None;
+    let mut any = None;
     output.frame.scene.visit_layers(&mut |layer| {
         if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
-            descriptor = Some(layer.descriptor.clone());
+            let found = Some((layer.widget_id(), layer.descriptor.clone()));
+            if layer.descriptor.hit_test {
+                interactive = found.clone();
+            }
+            any = found;
         }
     });
-    descriptor
+    interactive.or(any)
+}
+
+fn overlay_layer_descriptor(output: &RenderOutput) -> Option<SceneLayerDescriptor> {
+    overlay_layer(output).map(|(_, descriptor)| descriptor)
 }
 
 fn overlay_layer_owner(output: &RenderOutput) -> Option<WidgetId> {
-    let mut owner = None;
-    output.frame.scene.visit_layers(&mut |layer| {
-        if layer.descriptor.composition_mode == LayerCompositionMode::Overlay {
-            owner = Some(layer.widget_id());
-        }
-    });
-    owner
+    overlay_layer(output).map(|(owner, _)| owner)
 }
 
 fn solid_fill_colors(output: &RenderOutput) -> Vec<Color> {
@@ -7496,9 +7502,11 @@ fn context_menu_focus_ring_uses_non_hit_test_retained_layer() -> Result<(), Stri
         1,
         "context menu focus chrome should be the only non-hit-test layer"
     );
+    // The ring floats with the menu, so content after the trigger cannot
+    // cover it.
     assert_eq!(
         focus_layers[0].composition_mode,
-        LayerCompositionMode::Normal
+        LayerCompositionMode::Overlay
     );
     let focus_owner = non_hit_test_layer_owners(&opened)
         .into_iter()
@@ -8517,7 +8525,7 @@ fn popover_focus_ring_animates_without_repainting_retained_content() -> Result<(
     );
     assert_eq!(
         open_focus_layers[0].composition_mode,
-        LayerCompositionMode::Normal
+        LayerCompositionMode::Overlay
     );
     assert_eq!(content.borrow().paint, 1);
 
