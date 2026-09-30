@@ -276,13 +276,6 @@ impl Drop for DesktopHarness {
     }
 }
 
-/// The harness's windows are never shown, so their frames reach no display.
-/// Presenting them without vertical sync keeps them from pacing the
-/// display's refresh while tests run.
-fn hidden_window_renderer() -> WgpuRenderer {
-    WgpuRenderer::default().with_vsync_enabled(false)
-}
-
 struct DesktopHarnessApp {
     runtime: sui::Runtime,
     renderer: WgpuRenderer,
@@ -297,7 +290,7 @@ impl DesktopHarnessApp {
     fn new() -> Self {
         Self {
             runtime: sui::Runtime::new(),
-            renderer: hidden_window_renderer(),
+            renderer: WgpuRenderer::default(),
             started_at: Instant::now(),
             frame_clock: 0.0,
             windows: HashMap::new(),
@@ -313,7 +306,7 @@ impl DesktopHarnessApp {
         self.windows.clear();
         self.host_to_runtime.clear();
         self.runtime = sui::Runtime::new();
-        self.renderer = hidden_window_renderer();
+        self.renderer = WgpuRenderer::default();
         self.started_at = Instant::now();
         self.frame_clock = 0.0;
         clear_window_performance_snapshots();
@@ -389,8 +382,10 @@ impl DesktopHarnessApp {
             let host_id = window.id();
             let scale_factor = window.scale_factor();
             let size = physical_size_to_logical_size(window.inner_size(), scale_factor);
-            self.renderer
-                .register_window(window_id, Arc::clone(&window))?;
+            // The window is never shown, so it gets no swapchain: its frames
+            // render offscreen. Presenting them would reach no display, yet a
+            // variable-refresh display can still follow their presents,
+            // dropping its refresh rate or stalling while tests run.
 
             self.host_to_runtime.insert(host_id, window_id);
             self.windows.insert(

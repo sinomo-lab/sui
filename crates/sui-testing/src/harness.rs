@@ -742,8 +742,8 @@ impl LiveHarnessApp {
     fn new() -> Self {
         Self {
             runtime: Runtime::new(),
-            renderer: WgpuRenderer::default().with_vsync_enabled(false),
-            vsync_enabled: false,
+            renderer: WgpuRenderer::default(),
+            vsync_enabled: true,
             window_visible: false,
             started_at: Instant::now(),
             frame_clock: 0.0,
@@ -793,10 +793,7 @@ impl LiveHarnessApp {
         vsync_enabled: bool,
         visible: bool,
     ) -> Result<()> {
-        // Hidden windows reach no display, so they never wait for vertical
-        // sync: presenting on vsync would pace the display's refresh by a
-        // window nobody sees.
-        self.vsync_enabled = vsync_enabled && visible;
+        self.vsync_enabled = vsync_enabled;
         self.window_visible = visible;
         self.reset_runtime_state();
         self.last_error = None;
@@ -847,8 +844,14 @@ impl LiveHarnessApp {
             let host_id = window.id();
             let scale_factor = window.scale_factor();
             let size = physical_size_to_logical_size(window.inner_size(), scale_factor);
-            self.renderer
-                .register_window(window_id, Arc::clone(&window))?;
+            // A hidden window gets no swapchain: its frames render offscreen.
+            // Presenting them would reach no display, yet a variable-refresh
+            // display can still follow their presents, dropping its refresh
+            // rate or stalling while tests run.
+            if self.window_visible {
+                self.renderer
+                    .register_window(window_id, Arc::clone(&window))?;
+            }
 
             self.host_to_runtime.insert(host_id, window_id);
             self.windows.insert(

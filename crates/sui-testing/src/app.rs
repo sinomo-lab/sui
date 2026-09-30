@@ -32,7 +32,7 @@ where
     A: IntoTestRuntime,
 {
     /// Wait for vertical sync when the app runs live and its windows are
-    /// shown. Hidden windows never wait for it.
+    /// shown. Hidden windows render offscreen and never present.
     pub fn vsync(mut self, enabled: bool) -> Self {
         self.vsync_enabled = enabled;
         self
