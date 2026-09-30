@@ -291,6 +291,8 @@ copy of each logical pane:
   from detail back to master in compact mode.
 - `FocusScope` and `FocusScopeState` are available for custom adaptive
   containers that need the same last-focused-or-first-focusable restoration.
+  `FocusScopeState::last_focused` is also the editor a toolbar should act on;
+  `last_focused_observable` follows it.
 
 `RebuildOnConstraints` remains available for genuinely disposable structure.
 It replaces its child subtree and therefore resets local editor, focus,

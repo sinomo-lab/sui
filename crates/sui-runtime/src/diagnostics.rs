@@ -1429,6 +1429,7 @@ pub fn clear_window_performance_snapshot(window_id: WindowId) {
 
     clear_window_render_options(window_id);
     crate::output_range::clear_window_output_color_range(window_id);
+    crate::command_history::clear_window_command_dispatches(window_id);
 }
 
 pub fn clear_window_performance_snapshots() {

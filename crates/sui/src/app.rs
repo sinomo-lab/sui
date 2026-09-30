@@ -365,6 +365,9 @@ impl ResourceRegistry<'_> {
 }
 
 /// Cloneable, thread-safe UI command handle for background work.
+///
+/// Each send returns the command's sequence number, as
+/// [`CommandSender`]'s do.
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 #[derive(Clone)]
 pub struct UiHandle {
@@ -390,11 +393,11 @@ impl UiHandle {
         self.commands.wake();
     }
 
-    pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T)
+    pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.commands.send(target, key, payload);
+        self.commands.send(target, key, payload)
     }
 
     pub fn send_widget<T>(
@@ -403,46 +406,52 @@ impl UiHandle {
         widget_id: crate::WidgetId,
         key: CommandKey<T>,
         payload: T,
-    ) where
+    ) -> u64
+    where
         T: Send + Sync + 'static,
     {
         self.commands
-            .send_widget(window_id, widget_id, key, payload);
+            .send_widget(window_id, widget_id, key, payload)
     }
 
-    pub fn send_focused<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T)
+    pub fn send_focused<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.commands.send_focused(window_id, key, payload);
+        self.commands.send_focused(window_id, key, payload)
     }
 
-    pub fn send_window<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T)
+    pub fn send_window<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.commands.send_window(window_id, key, payload);
+        self.commands.send_window(window_id, key, payload)
     }
 
-    pub fn send_application<T>(&self, key: CommandKey<T>, payload: T)
+    pub fn send_application<T>(&self, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.commands.send_application(key, payload);
+        self.commands.send_application(key, payload)
     }
 
-    pub fn broadcast_window<T>(&self, window_id: crate::WindowId, key: CommandKey<T>, payload: T)
+    pub fn broadcast_window<T>(
+        &self,
+        window_id: crate::WindowId,
+        key: CommandKey<T>,
+        payload: T,
+    ) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.commands.broadcast_window(window_id, key, payload);
+        self.commands.broadcast_window(window_id, key, payload)
     }
 
-    pub fn broadcast_application<T>(&self, key: CommandKey<T>, payload: T)
+    pub fn broadcast_application<T>(&self, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.commands.broadcast_application(key, payload);
+        self.commands.broadcast_application(key, payload)
     }
 }
 

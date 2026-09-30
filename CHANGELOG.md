@@ -572,6 +572,37 @@ Versioning, with the usual expectation that the API may change during the
   move with Alt and the arrow keys, keeping focus across columns, or from
   their menu, and Delete trashes one.
 
+### Command history, focus-keeping buttons, and a redesigned Commands demo
+
+- `window_command_dispatches_signal(window_id)` holds a window's latest
+  command dispatches, up to `COMMAND_HISTORY_LENGTH` (64), as a signal a
+  widget can observe: the samples the performance snapshot and inspector
+  record, with each command's sequence, target, and delivery, the listeners
+  that ran, whether one handled it, and whether it was delivered at all. The
+  history is dropped when its window closes.
+- `CommandSender` and `UiHandle` sends return the command's sequence number,
+  which handlers see as `Command::sequence` and the history records. A send
+  used as a `()` expression, such as a match arm, needs a semicolon.
+- `Button::focus_on_press(false)` and `IconButton::focus_on_press(false)` make
+  clicking the button leave focus where it is, so a toolbar button can act on
+  the editor being typed in without taking focus or its selection. The button
+  stays focusable: Tab reaches it, Enter and Space press it, and assistive
+  technology can focus and activate it, which leaves focus alone too. Custom
+  widgets do the same with `EventCtx::keep_focus`.
+- `FocusScopeState::last_focused_observable` follows the widget in a scope
+  that had focus last, the editor a toolbar acts on.
+- The demo's Commands page is redesigned. A trace under the header lists the
+  window's dispatches as they happen, from its dispatch history. A route map
+  sends a ping to a widget, the focused widget, a closed widget, the window,
+  or the application, directed or broadcast, or wakes the controllers, from
+  the UI thread or a worker; named application and window controllers, whose
+  switches decide whether they handle it, a target card, and a notes field
+  light up with what each did, and a line says whether the runtime delivered
+  it at all. An edit toolbar sends text commands to the editor used last
+  without taking focus, and an export on a worker thread reports each
+  thumbnail to its progress bar with `send_widget` and its end to the window
+  with `send_window`, and can be cancelled.
+
 ### Breaking: shadows and glows
 
 - A shadow's `blur` is the CSS blur radius: the box's edge is blurred by a

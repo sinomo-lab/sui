@@ -1230,6 +1230,16 @@ impl IconButton {
         self
     }
 
+    /// Whether clicking or tapping the button focuses it. On by default. Off,
+    /// a press leaves focus where it is, so a toolbar button can act on the
+    /// editor being typed in without taking focus from it. The button stays
+    /// focusable: Tab still reaches it, Enter and Space press it, and
+    /// assistive technology can still focus and activate it.
+    pub fn focus_on_press(mut self, focus: bool) -> Self {
+        self.interaction.focus_on_press = focus;
+        self
+    }
+
     pub fn on_press<F>(mut self, on_press: F) -> Self
     where
         F: FnMut() + 'static,
@@ -1571,6 +1581,16 @@ impl Button {
     /// Pins hover, press, or focus visuals; see [`InteractionPreview`].
     pub fn interaction_preview(mut self, preview: InteractionPreview) -> Self {
         self.interaction.preview = preview;
+        self
+    }
+
+    /// Whether clicking or tapping the button focuses it. On by default. Off,
+    /// a press leaves focus where it is, so a toolbar button can act on the
+    /// editor being typed in without taking focus from it. The button stays
+    /// focusable: Tab still reaches it, Enter and Space press it, and
+    /// assistive technology can still focus and activate it.
+    pub fn focus_on_press(mut self, focus: bool) -> Self {
+        self.interaction.focus_on_press = focus;
         self
     }
 

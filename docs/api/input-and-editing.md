@@ -111,6 +111,30 @@ ctx.post_command(editor_id, TEXT_COMMAND, TextCommand::Paste);
 `TextArea`, and `TextSurface`. Posting the command after a context-menu action
 keeps focus and editor ownership in one place.
 
+A toolbar that acts on the editor being typed in should leave focus there.
+Build its buttons with `focus_on_press(false)`, and send to the editor a
+`FocusScope` around the editors last gave focus to:
+
+```rust,ignore
+let editors = FocusScopeState::new();
+let copy = Button::new("Copy").focus_on_press(false).on_press_with_ctx({
+    let editors = editors.clone();
+    move |ctx| {
+        if let Some(editor) = editors.last_focused() {
+            ctx.post_command(editor, TEXT_COMMAND, TextCommand::Copy);
+        }
+    }
+});
+let fields = FocusScope::new(editor_column).state(editors);
+```
+
+Clicking the button then leaves the selection it copies in place. The button
+stays focusable: Tab reaches it, Enter and Space press it, and assistive
+technology can focus and activate it. An editor that receives a text command
+without focus takes focus back, so pressing a toolbar button from the keyboard
+returns to the editor. `FocusScopeState::last_focused_observable` follows the
+same widget, for a label saying which editor the toolbar acts on.
+
 ## Shared Selection Scope
 
 Each editable field works without a `SelectionScope`. Create and clone a scope

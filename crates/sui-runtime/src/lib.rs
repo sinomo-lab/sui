@@ -2,6 +2,7 @@
 
 mod app;
 mod command;
+mod command_history;
 mod diagnostics;
 mod layout_work;
 mod logo;
@@ -45,6 +46,7 @@ pub use command::{
     CommandTarget,
 };
 use command::{CommandInvalidation, CommandListeners, QueuedCommand};
+pub use command_history::{COMMAND_HISTORY_LENGTH, window_command_dispatches_signal};
 pub use diagnostics::{
     CacheMetrics, CacheMetricsDelta, CommandDispatchSample, FramePhase, FramePhaseSample,
     InvalidationTraceSample, PresentationLatencyDiagnostics, ReactiveInvalidationSample,
@@ -227,7 +229,7 @@ impl Runtime {
         match delivery {
             CommandDelivery::Directed => self.command_sender.send(target, key, payload),
             CommandDelivery::Broadcast => self.command_sender.broadcast(target, key, payload),
-        }
+        };
         self.process_commands();
     }
 
@@ -626,10 +628,12 @@ impl Runtime {
                     let Some(dispatch) =
                         self.windows[index].dispatch_direct_command(widget_id, queued)
                     else {
-                        push_trace(
-                            &mut self.windows[index].pending_command_diagnostics,
-                            command_sample(queued, Vec::new(), false, false),
-                        );
+                        self.windows[index].record_command_dispatch(command_sample(
+                            queued,
+                            Vec::new(),
+                            false,
+                            false,
+                        ));
                         return;
                     };
                     let (handlers, handled) = {
@@ -654,10 +658,8 @@ impl Runtime {
                     self.windows[index]
                         .pending_invalidations
                         .extend(invalidations);
-                    push_trace(
-                        &mut self.windows[index].pending_command_diagnostics,
-                        command_sample(queued, handlers, handled, true),
-                    );
+                    self.windows[index]
+                        .record_command_dispatch(command_sample(queued, handlers, handled, true));
                 }
             }
             CommandTarget::FocusedWidget(window_id) => {
@@ -667,19 +669,23 @@ impl Runtime {
                     .position(|window| window.id == window_id)
                 {
                     let Some(target) = self.windows[index].focus.focused_widget else {
-                        push_trace(
-                            &mut self.windows[index].pending_command_diagnostics,
-                            command_sample(queued, Vec::new(), false, false),
-                        );
+                        self.windows[index].record_command_dispatch(command_sample(
+                            queued,
+                            Vec::new(),
+                            false,
+                            false,
+                        ));
                         return;
                     };
                     let Some(dispatch) =
                         self.windows[index].dispatch_direct_command(target, queued)
                     else {
-                        push_trace(
-                            &mut self.windows[index].pending_command_diagnostics,
-                            command_sample(queued, Vec::new(), false, false),
-                        );
+                        self.windows[index].record_command_dispatch(command_sample(
+                            queued,
+                            Vec::new(),
+                            false,
+                            false,
+                        ));
                         return;
                     };
                     let handled = { dispatch.handled };
@@ -701,10 +707,12 @@ impl Runtime {
                     self.windows[index]
                         .pending_invalidations
                         .extend(invalidations);
-                    push_trace(
-                        &mut self.windows[index].pending_command_diagnostics,
-                        command_sample(queued, vec!["focused widget".to_string()], handled, true),
-                    );
+                    self.windows[index].record_command_dispatch(command_sample(
+                        queued,
+                        vec!["focused widget".to_string()],
+                        handled,
+                        true,
+                    ));
                 }
             }
             CommandTarget::Window(window_id) => {
@@ -804,10 +812,10 @@ impl Runtime {
             handled,
         };
         if let Some(index) = delivery_window {
-            push_trace(&mut self.windows[index].pending_command_diagnostics, sample);
+            self.windows[index].record_command_dispatch(sample);
         } else {
             for window in &mut self.windows {
-                push_trace(&mut window.pending_command_diagnostics, sample.clone());
+                window.record_command_dispatch(sample.clone());
             }
         }
     }
@@ -1701,6 +1709,13 @@ impl WindowState {
         self.schedule.extend(&invalidations);
         self.pending_invalidations.extend(invalidations);
         handled
+    }
+
+    /// Keep a command dispatch for the next frame's diagnostics and in the
+    /// window's live history.
+    fn record_command_dispatch(&mut self, sample: CommandDispatchSample) {
+        command_history::record_window_command_dispatch(self.id, sample.clone());
+        push_trace(&mut self.pending_command_diagnostics, sample);
     }
 
     fn record_event_invalidations(&mut self, invalidations: &[InvalidationRequest], event: &Event) {
@@ -2605,10 +2620,12 @@ impl WindowState {
                 };
                 let Some(dispatch) = self.dispatch_direct_command(widget_id, &request.command)
                 else {
-                    push_trace(
-                        &mut self.pending_command_diagnostics,
-                        command_sample(&request.command, Vec::new(), false, false),
-                    );
+                    self.record_command_dispatch(command_sample(
+                        &request.command,
+                        Vec::new(),
+                        false,
+                        false,
+                    ));
                     continue;
                 };
                 self.record_command_invalidations(
@@ -2626,15 +2643,12 @@ impl WindowState {
                 self.apply_drag_requests(dispatch.drag_requests, invalidations);
                 self.apply_posted_events(dispatch.posted_events, invalidations);
                 posted.extend(dispatch.posted_commands);
-                push_trace(
-                    &mut self.pending_command_diagnostics,
-                    command_sample(
-                        &request.command,
-                        vec!["widget target".to_string()],
-                        dispatch.handled,
-                        true,
-                    ),
-                );
+                self.record_command_dispatch(command_sample(
+                    &request.command,
+                    vec!["widget target".to_string()],
+                    dispatch.handled,
+                    true,
+                ));
                 if let Some(focus_request) = dispatch.focus_request {
                     let effects = self.apply_focus_request(focus_request);
                     self.apply_event_effects(effects, invalidations);
@@ -3307,6 +3321,7 @@ impl WindowState {
         let next_focus = match request {
             FocusRequest::Focus(widget_id) => Some(widget_id),
             FocusRequest::Clear => None,
+            FocusRequest::Keep => return EventEffects::default(),
         };
 
         if self.focus.focused_widget == next_focus {
@@ -3414,6 +3429,7 @@ impl WindowState {
             {
                 return request;
             }
+            FocusRequest::Keep => return request,
             FocusRequest::Focus(_) | FocusRequest::Clear => {}
         }
 

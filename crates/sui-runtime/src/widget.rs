@@ -488,6 +488,7 @@ struct FocusScopeStateInner {
 pub struct FocusScopeState {
     inner: Arc<Mutex<FocusScopeStateInner>>,
     restore_revision: Signal<u64>,
+    last_focused_signal: Signal<Option<WidgetId>>,
 }
 
 impl FocusScopeState {
@@ -495,11 +496,24 @@ impl FocusScopeState {
         Self {
             inner: Arc::new(Mutex::new(FocusScopeStateInner::default())),
             restore_revision: Signal::named("FocusScopeState::restore", 0),
+            last_focused_signal: Signal::named("FocusScopeState::last_focused", None),
         }
     }
 
+    /// The widget in the scope that had focus last, which may since have
+    /// moved elsewhere. Commands for "the editor you were using", such as a
+    /// toolbar's, go to it.
     pub fn last_focused(&self) -> Option<WidgetId> {
         self.lock_inner().last_focused
+    }
+
+    /// [`Self::last_focused`] as a value to observe, so a widget showing it
+    /// follows focus into the scope.
+    pub fn last_focused_observable(
+        &self,
+    ) -> impl Observable<Option<WidgetId>> + Clone + Send + Sync + 'static {
+        self.last_focused_signal
+            .select_named("FocusScopeState::last_focused", |widget| *widget)
     }
 
     pub fn request_restore(&self) -> bool {
@@ -527,6 +541,7 @@ impl FocusScopeState {
             inner.restore_requested = false;
             restore_was_requested
         };
+        self.last_focused_signal.set(None);
         if restore_was_requested {
             self.restore_revision
                 .update(|revision| *revision = revision.wrapping_add(1));
@@ -534,7 +549,17 @@ impl FocusScopeState {
     }
 
     fn remember(&self, widget_id: WidgetId) {
-        self.lock_inner().last_focused = Some(widget_id);
+        let changed = {
+            let mut inner = self.lock_inner();
+            let changed = inner.last_focused != Some(widget_id);
+            inner.last_focused = Some(widget_id);
+            changed
+        };
+        // Set outside the lock, and only on a change: scopes remember focus
+        // on every event and paint.
+        if changed {
+            self.last_focused_signal.set(Some(widget_id));
+        }
     }
 
     fn restore_requested(&self) -> bool {
@@ -2207,6 +2232,8 @@ where
 pub(crate) enum FocusRequest {
     Focus(WidgetId),
     Clear,
+    /// Leave focus where it is, overriding the runtime's default.
+    Keep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2585,6 +2612,14 @@ impl EventCtx {
 
     pub fn clear_focus(&mut self) {
         self.focus_request = Some(FocusRequest::Clear);
+    }
+
+    /// Leave focus where it is. A pointer press otherwise focuses the widget
+    /// pressed, or clears focus when it cannot take it; a toolbar button that
+    /// acts on an editor keeps the editor focused this way. Tab and
+    /// assistive technology still focus the widget as usual.
+    pub fn keep_focus(&mut self) {
+        self.focus_request = Some(FocusRequest::Keep);
     }
 
     pub fn schedule_timer_at(&mut self, deadline: f64) -> TimerToken {

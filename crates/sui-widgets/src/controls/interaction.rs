@@ -53,6 +53,9 @@ pub(super) struct PressInteraction {
     pub(super) hover_animation: Progress,
     pub(super) press_animation: Progress,
     pub(super) preview: InteractionPreview,
+    /// Whether a pointer press focuses the control, or leaves focus where it
+    /// is.
+    pub(super) focus_on_press: bool,
 }
 
 impl Default for PressInteraction {
@@ -63,6 +66,7 @@ impl Default for PressInteraction {
             hover_animation: Progress::new(0.0),
             press_animation: Progress::new(0.0),
             preview: InteractionPreview::None,
+            focus_on_press: true,
         }
     }
 }
@@ -118,7 +122,11 @@ impl PressInteraction {
                 set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
                 set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
-                ctx.request_focus();
+                if self.focus_on_press {
+                    ctx.request_focus();
+                } else {
+                    ctx.keep_focus();
+                }
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();

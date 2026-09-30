@@ -1338,6 +1338,175 @@ fn button_releases_primary_press_on_unlabelled_pointer_up() -> Result<()> {
     Ok(())
 }
 
+/// A text field above a button, with the ids and centers of both.
+fn editor_and_button(
+    button: Button,
+) -> Result<(
+    Runtime,
+    sui_core::WindowId,
+    (WidgetId, Point),
+    (WidgetId, Point),
+)> {
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .spacing(8.0)
+            .with_child(TextInput::new("Notes").value("draft"))
+            .with_child(button),
+    );
+    let output = runtime.render(window_id)?;
+    let node = |name: &str| {
+        let node = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} has semantics"));
+        (node.id, super::rect_center(node.bounds))
+    };
+    Ok((runtime, window_id, node("Notes"), node("Bold")))
+}
+
+fn click(runtime: &mut Runtime, window_id: sui_core::WindowId, at: Point) -> Result<()> {
+    runtime.handle_event(window_id, primary_pointer(PointerEventKind::Down, at, true))?;
+    runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, at, false))
+}
+
+#[test]
+fn a_button_that_does_not_focus_on_press_leaves_the_editor_focused() -> Result<()> {
+    let presses = Rc::new(Cell::new(0));
+    let on_press = Rc::clone(&presses);
+    let (mut runtime, window_id, (_, editor_at), (_, button_at)) = editor_and_button(
+        Button::new("Bold")
+            .focus_on_press(false)
+            .on_press(move || on_press.set(on_press.get() + 1)),
+    )?;
+    click(&mut runtime, window_id, editor_at)?;
+    let editor = runtime
+        .focused_widget(window_id)?
+        .expect("the editor focuses");
+
+    click(&mut runtime, window_id, button_at)?;
+
+    assert_eq!(presses.get(), 1);
+    assert_eq!(runtime.focused_widget(window_id)?, Some(editor));
+    Ok(())
+}
+
+#[test]
+fn a_button_that_focuses_on_press_takes_focus_from_the_editor() -> Result<()> {
+    let (mut runtime, window_id, (_, editor_at), (_, button_at)) =
+        editor_and_button(Button::new("Bold"))?;
+    click(&mut runtime, window_id, editor_at)?;
+    let editor = runtime.focused_widget(window_id)?;
+
+    click(&mut runtime, window_id, button_at)?;
+
+    assert_ne!(runtime.focused_widget(window_id)?, editor);
+    Ok(())
+}
+
+#[test]
+fn a_button_that_does_not_focus_on_press_is_still_reached_and_pressed_by_keyboard() -> Result<()> {
+    let presses = Rc::new(Cell::new(0));
+    let on_press = Rc::clone(&presses);
+    let (mut runtime, window_id, (_, editor_at), (button, _)) = editor_and_button(
+        Button::new("Bold")
+            .focus_on_press(false)
+            .on_press(move || on_press.set(on_press.get() + 1)),
+    )?;
+    click(&mut runtime, window_id, editor_at)?;
+
+    runtime.handle_event(
+        window_id,
+        Event::Keyboard(KeyboardEvent::new("Tab", KeyState::Pressed)),
+    )?;
+    let output = runtime.render(window_id)?;
+    let node = output
+        .semantics
+        .iter()
+        .find(|node| node.id == button)
+        .expect("the button has semantics");
+    assert!(node.state.focused, "Tab reaches the button");
+
+    runtime.handle_event(
+        window_id,
+        Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+    )?;
+    assert_eq!(presses.get(), 1, "Enter presses it");
+    Ok(())
+}
+
+#[test]
+fn assistive_technology_can_focus_and_activate_a_button_that_does_not_focus_on_press() -> Result<()>
+{
+    let presses = Rc::new(Cell::new(0));
+    let on_press = Rc::clone(&presses);
+    let (mut runtime, window_id, (_, editor_at), (button, _)) = editor_and_button(
+        Button::new("Bold")
+            .focus_on_press(false)
+            .on_press(move || on_press.set(on_press.get() + 1)),
+    )?;
+    let output = runtime.render(window_id)?;
+    let node = output
+        .semantics
+        .iter()
+        .find(|node| node.id == button)
+        .expect("the button has semantics");
+    assert!(node.actions.contains(&SemanticsAction::Focus));
+    assert!(node.actions.contains(&SemanticsAction::Activate));
+
+    click(&mut runtime, window_id, editor_at)?;
+    let editor = runtime.focused_widget(window_id)?;
+    assert!(runtime.handle_semantics_action(
+        window_id,
+        button,
+        SemanticsActionRequest::Activate
+    )?);
+    assert_eq!(presses.get(), 1);
+    assert_eq!(
+        runtime.focused_widget(window_id)?,
+        editor,
+        "activating leaves focus in the editor"
+    );
+
+    assert!(runtime.handle_semantics_action(window_id, button, SemanticsActionRequest::Focus)?);
+    assert_ne!(
+        runtime.focused_widget(window_id)?,
+        editor,
+        "focusing moves focus"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_icon_button_that_does_not_focus_on_press_leaves_the_editor_focused() -> Result<()> {
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .spacing(8.0)
+            .with_child(TextInput::new("Notes"))
+            .with_child(IconButton::new(IconGlyph::Undo, "Undo").focus_on_press(false)),
+    );
+    let output = runtime.render(window_id)?;
+    let center = |name: &str| {
+        super::rect_center(
+            output
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .expect("semantics")
+                .bounds,
+        )
+    };
+    let (editor_at, button_at) = (center("Notes"), center("Undo"));
+    click(&mut runtime, window_id, editor_at)?;
+    let editor = runtime.focused_widget(window_id)?;
+    assert!(editor.is_some());
+
+    click(&mut runtime, window_id, button_at)?;
+
+    assert_eq!(runtime.focused_widget(window_id)?, editor);
+    Ok(())
+}
+
 #[test]
 fn disabled_button_exposes_semantics_and_ignores_activation() -> Result<()> {
     let activations = Rc::new(RefCell::new(0usize));

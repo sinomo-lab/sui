@@ -266,6 +266,9 @@ impl CommandHub {
 ///
 /// Enqueueing a command wakes the platform loop. [`wake`](Self::wake) only
 /// schedules the runtime; it never synthesizes a widget event.
+///
+/// Each send returns the command's sequence number, which its handlers see as
+/// [`Command::sequence`] and dispatch diagnostics record.
 #[derive(Clone)]
 pub struct CommandSender {
     hub: Arc<CommandHub>,
@@ -282,18 +285,18 @@ impl CommandSender {
         self.hub.wake();
     }
 
-    pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T)
+    pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.enqueue(target, CommandDelivery::Directed, key, payload);
+        self.enqueue(target, CommandDelivery::Directed, key, payload)
     }
 
-    pub fn broadcast<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T)
+    pub fn broadcast<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.enqueue(target, CommandDelivery::Broadcast, key, payload);
+        self.enqueue(target, CommandDelivery::Broadcast, key, payload)
     }
 
     pub fn send_widget<T>(
@@ -302,7 +305,8 @@ impl CommandSender {
         widget_id: WidgetId,
         key: CommandKey<T>,
         payload: T,
-    ) where
+    ) -> u64
+    where
         T: Send + Sync + 'static,
     {
         self.send(
@@ -312,42 +316,42 @@ impl CommandSender {
             },
             key,
             payload,
-        );
+        )
     }
 
-    pub fn send_focused<T>(&self, window_id: WindowId, key: CommandKey<T>, payload: T)
+    pub fn send_focused<T>(&self, window_id: WindowId, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.send(CommandTarget::FocusedWidget(window_id), key, payload);
+        self.send(CommandTarget::FocusedWidget(window_id), key, payload)
     }
 
-    pub fn send_window<T>(&self, window_id: WindowId, key: CommandKey<T>, payload: T)
+    pub fn send_window<T>(&self, window_id: WindowId, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.send(CommandTarget::Window(window_id), key, payload);
+        self.send(CommandTarget::Window(window_id), key, payload)
     }
 
-    pub fn send_application<T>(&self, key: CommandKey<T>, payload: T)
+    pub fn send_application<T>(&self, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.send(CommandTarget::Application, key, payload);
+        self.send(CommandTarget::Application, key, payload)
     }
 
-    pub fn broadcast_window<T>(&self, window_id: WindowId, key: CommandKey<T>, payload: T)
+    pub fn broadcast_window<T>(&self, window_id: WindowId, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.broadcast(CommandTarget::Window(window_id), key, payload);
+        self.broadcast(CommandTarget::Window(window_id), key, payload)
     }
 
-    pub fn broadcast_application<T>(&self, key: CommandKey<T>, payload: T)
+    pub fn broadcast_application<T>(&self, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,
     {
-        self.broadcast(CommandTarget::Application, key, payload);
+        self.broadcast(CommandTarget::Application, key, payload)
     }
 
     fn enqueue<T>(
@@ -356,11 +360,14 @@ impl CommandSender {
         delivery: CommandDelivery,
         key: CommandKey<T>,
         payload: T,
-    ) where
+    ) -> u64
+    where
         T: Send + Sync + 'static,
     {
-        self.hub
-            .enqueue(queued_command(target, delivery, key, payload));
+        let command = queued_command(target, delivery, key, payload);
+        let sequence = command.sequence;
+        self.hub.enqueue(command);
+        sequence
     }
 
     pub(crate) fn set_waker(&self, waker: Option<Arc<ExternalWaker>>) {

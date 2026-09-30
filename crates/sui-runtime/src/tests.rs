@@ -10,15 +10,17 @@ use std::{
 };
 
 use super::{
-    Application, ArrangeCtx, Command, CommandController, CommandCtx, CommandKey, CommandTarget,
-    EventCtx, EventPhase, EventRoutePhase, FocusScope, FocusScopeState, FocusState, FramePacing,
-    FrameSchedule, LayerOptions, MeasureCtx, Motion, OVERLAY_DISMISS_REQUEST, OverlayDismissReason,
-    OverlayFocusBehavior, OverlayKind, OverlayOptions, OverlayTraceKind, PaintBoundaryMode,
-    PaintCtx, RenderOutput, Runtime, SceneStatisticsDetailMode, SemanticsCtx, SingleChild,
-    StackSurfaceOptions, Widget, WidgetChildren, WidgetDiagnosticsCtx, WidgetGraphSnapshot,
-    WidgetNodeSnapshot, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon,
-    WindowRenderOptions, root_repaint_covers_graph_changes, set_window_render_options,
-    set_window_scene_statistics_detail_mode, window_render_options,
+    Application, ArrangeCtx, COMMAND_HISTORY_LENGTH, Command, CommandController, CommandCtx,
+    CommandDelivery, CommandKey, CommandTarget, EventCtx, EventPhase, EventRoutePhase, FocusScope,
+    FocusScopeState, FocusState, FramePacing, FrameSchedule, LayerOptions, MeasureCtx, Motion,
+    OVERLAY_DISMISS_REQUEST, OverlayDismissReason, OverlayFocusBehavior, OverlayKind,
+    OverlayOptions, OverlayTraceKind, PaintBoundaryMode, PaintCtx, RenderOutput, Runtime,
+    SceneStatisticsDetailMode, SemanticsCtx, SingleChild, StackSurfaceOptions, Widget,
+    WidgetChildren, WidgetDiagnosticsCtx, WidgetGraphSnapshot, WidgetNodeSnapshot,
+    WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder, WindowIcon, WindowRenderOptions,
+    root_repaint_covers_graph_changes, set_window_render_options,
+    set_window_scene_statistics_detail_mode, window_command_dispatches_signal,
+    window_render_options,
 };
 use sui_core::{
     AsyncWakeToken, Color, CursorGrabMode, CustomEvent, DragEventKind, DragOutcome, DragPayload,
@@ -30,7 +32,7 @@ use sui_core::{
     WindowEvent,
 };
 use sui_layout::Constraints;
-use sui_reactive::Signal;
+use sui_reactive::{Observable, Observer, Signal};
 use sui_scene::{
     LayerCompositionMode, LayerProperties, RegisteredExternalImage, RegisteredImage, Scene,
     SceneCommand, SceneLayerUpdateKind,
@@ -544,6 +546,61 @@ fn focus_scope_restores_the_last_focused_descendant() {
     }
 
     assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(target));
+}
+
+#[test]
+fn focus_scope_last_focused_can_be_observed() {
+    let state = FocusScopeState::new();
+    let last_focused = state.last_focused_observable();
+    let changes = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&changes);
+    let _subscription = last_focused.subscribe(Observer::new(move |_| {
+        observed.fetch_add(1, Ordering::Relaxed);
+    }));
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new().title("Focus Scope").root(
+                FocusScope::new(FocusLeaf {
+                    counters: Rc::new(RefCell::new(Counters::default())),
+                })
+                .state(state.clone()),
+            ),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    let target = runtime
+        .render(window_id)
+        .unwrap()
+        .semantics
+        .into_iter()
+        .find(|node| node.name.as_deref() == Some("focus-leaf"))
+        .unwrap()
+        .id;
+    assert_eq!(last_focused.get(), None);
+
+    assert!(
+        runtime
+            .handle_semantics_action(window_id, target, SemanticsActionRequest::Focus)
+            .unwrap()
+    );
+    let _ = runtime.render(window_id).unwrap();
+    assert_eq!(last_focused.get(), Some(target));
+    assert_eq!(changes.load(Ordering::Relaxed), 1);
+
+    // Focus leaving the scope does not forget it, and repaints do not notify.
+    assert!(
+        runtime
+            .handle_semantics_action(window_id, target, SemanticsActionRequest::Blur)
+            .unwrap()
+    );
+    let _ = runtime.render(window_id).unwrap();
+    assert_eq!(last_focused.get(), Some(target));
+    assert_eq!(changes.load(Ordering::Relaxed), 1);
+
+    state.clear();
+    assert_eq!(last_focused.get(), None);
+    assert_eq!(changes.load(Ordering::Relaxed), 2);
 }
 
 struct TestRoot {
@@ -5167,6 +5224,87 @@ fn focused_command_without_focus_is_dropped_instead_of_targeting_the_root() {
             && sample.target == CommandTarget::FocusedWidget(window_id)
             && !sample.delivered
     }));
+}
+
+#[test]
+fn window_command_history_records_each_dispatch_with_the_sequence_its_send_returned() {
+    let mut runtime = Application::new()
+        .on_command(TEST_COMMAND, |_, _| {})
+        .window(
+            WindowBuilder::new()
+                .on_command(TEST_COMMAND, |ctx, _| ctx.set_handled())
+                .root(CommandRoot {
+                    commands: Arc::new(AtomicUsize::new(0)),
+                    custom_events: Arc::new(AtomicUsize::new(0)),
+                }),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    runtime.render(window_id).unwrap();
+    let history = window_command_dispatches_signal(window_id);
+    let changes = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&changes);
+    let _subscription = history.subscribe(Observer::new(move |_| {
+        observed.fetch_add(1, Ordering::Relaxed);
+    }));
+    let sender = runtime.command_sender();
+
+    let handled = sender.send_window(window_id, TEST_COMMAND, 1);
+    let missing = sender.send_widget(window_id, WidgetId::new(u64::MAX), TEST_COMMAND, 2);
+    let broadcast = sender.broadcast_application(TEST_COMMAND, 3);
+    assert!(handled < missing && missing < broadcast);
+    assert_eq!(changes.load(Ordering::Relaxed), 0, "nothing is sent yet");
+    runtime.process_commands();
+
+    let samples = history.get();
+    let sample = |sequence: u64| {
+        samples
+            .iter()
+            .find(|sample| sample.sequence == sequence)
+            .unwrap_or_else(|| panic!("command {sequence} is in {samples:?}"))
+    };
+    assert!(sample(handled).delivered && sample(handled).handled);
+    assert_eq!(
+        sample(handled).target,
+        CommandTarget::Window(window_id),
+        "{samples:?}"
+    );
+    assert!(!sample(missing).delivered);
+    assert_eq!(sample(broadcast).delivery, CommandDelivery::Broadcast);
+    assert!(changes.load(Ordering::Relaxed) >= 3);
+}
+
+#[test]
+fn window_command_history_keeps_the_latest_dispatches_until_its_window_closes() {
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .on_command(TEST_COMMAND, |ctx, _| ctx.set_handled())
+                .root(CommandRoot {
+                    commands: Arc::new(AtomicUsize::new(0)),
+                    custom_events: Arc::new(AtomicUsize::new(0)),
+                }),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    let sender = runtime.command_sender();
+    let sequences = (0..COMMAND_HISTORY_LENGTH as u32 + 5)
+        .map(|value| sender.send_window(window_id, TEST_COMMAND, value))
+        .collect::<Vec<_>>();
+    runtime.process_commands();
+
+    let history = window_command_dispatches_signal(window_id);
+    let kept = history
+        .get()
+        .iter()
+        .map(|sample| sample.sequence)
+        .collect::<Vec<_>>();
+    assert_eq!(kept, sequences[5..]);
+
+    runtime.remove_window(window_id).unwrap();
+    assert!(history.get().is_empty());
 }
 
 #[test]

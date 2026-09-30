@@ -197,7 +197,10 @@ target in performance-sensitive components.
 
 `EventCtx` also exposes interaction services:
 
-- `request_focus()` and `clear_focus()` change keyboard focus.
+- `request_focus()` and `clear_focus()` change keyboard focus. A pointer press
+  focuses the widget pressed, or clears focus when it cannot take it;
+  `keep_focus()` leaves focus where it is instead, for a control that acts on
+  what has focus, as `Button::focus_on_press(false)` does.
 - `request_pointer_capture(pointer_id)` keeps a drag routed to the widget;
   release it with `release_pointer_capture(pointer_id)`.
 - `clipboard_text()` and `set_clipboard_text(...)` use the platform clipboard
@@ -471,6 +474,9 @@ runtime. Clone the sender before moving it into worker-owned code; use
 | `Window(window_id)` | `Window::on_command` and window controllers |
 | `Application` | `App::on_command` and application controllers |
 
+Each send returns the command's sequence number, which handlers see as
+`Command::sequence` and dispatch diagnostics record.
+
 A directed command stops after a handler calls `ctx.set_handled()`. A broadcast
 continues through all matching handlers. `broadcast_application` first reaches
 application handlers and then every live window, making it the application-wide
@@ -484,6 +490,15 @@ commands and a scheduler-only wake hook. `CommandController::wake` is invoked by
 synthesizes `Event::Custom` at a root widget. A controller can request measure,
 arrange, paint, semantics, or animation work through `CommandCtx`, and can attach
 a diagnostic reason with `request_window_with_reason`.
+
+`window_command_dispatches_signal(window_id)` holds the window's latest
+dispatches, up to `COMMAND_HISTORY_LENGTH`, as a signal an in-app tool can
+observe. Each `CommandDispatchSample` names the command and its payload type,
+its sequence, target, and delivery, the listeners that ran, whether one
+handled it, and whether it was delivered at all. Controllers appear under
+`CommandController::debug_name`, which is worth overriding with a readable
+name; closure subscriptions appear under their type name. An application
+command is recorded in every window's history.
 
 The performance inspector shows command routing and invalidations from the
 latest frame. The application inspector additionally retains bounded command,
@@ -502,5 +517,8 @@ Run the complete interactive sample with:
 cargo run -p sinomo-ui --example commands
 ```
 
-The `Commands` card in `sinomo-ui-demo` exposes the same routes and shows their
-live subscriber state alongside the performance inspector's routing trace.
+The `Commands` page in `sinomo-ui-demo` sends a command down each route, from
+the UI thread or a worker, to named application and window controllers, and
+shows what each did and the window's dispatch history as it happens. It also
+has a focus-keeping edit toolbar and an export that reports its progress from
+a worker thread.

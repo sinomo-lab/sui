@@ -32,16 +32,11 @@ use crate::animation_demo::{
     WIDGET_MOTION_SECTION_NAME,
 };
 use crate::animation_demo::{ANIMATION_DEMO_TAB_LABEL, build_animation_demo_with_theme};
+use crate::command_demo::{
+    self, COMMAND_DEMO_TAB_LABEL, CommandDemoState, build_command_demo_with_theme,
+};
 #[cfg(test)]
-use crate::command_demo::{
-    APPLICATION_BROADCAST_BUTTON, APPLICATION_COMMAND_BUTTON, BACKGROUND_COMMAND_BUTTON,
-    COMMAND_DEMO_SCROLL_NAME, WAKE_CONTROLLERS_BUTTON, WINDOW_COMMAND_BUTTON,
-};
-use crate::command_demo::{
-    COMMAND_DEMO_TAB_LABEL, CommandDemoState, CommandDemoWakeController,
-    DEMO_APPLICATION_BROADCAST, DEMO_APPLICATION_COMMAND, DEMO_WINDOW_COMMAND,
-    build_command_demo_with_theme,
-};
+use crate::command_demo::{COMMAND_DEMO_SCROLL_NAME, SEND_LABEL};
 #[cfg(test)]
 use crate::drag_drop_demo::DRAG_DROP_DEMO_SCROLL_NAME;
 use crate::drag_drop_demo::{DRAG_DROP_TAB_LABEL, build_drag_drop_demo_with_theme};
@@ -1728,7 +1723,7 @@ fn build_dev_demo_entries(
             let theme = Rc::clone(&theme_reader);
             DevDemo::lazy(
                 COMMAND_DEMO_TAB_LABEL,
-                "Typed window and application commands, multicast, and worker delivery.",
+                "Routes traced live, a toolbar that leaves focus alone, and worker progress.",
                 IconGlyph::Send,
                 DecorativeHue::Red,
                 move || build_command_demo_with_theme(command_demo_state, theme),
@@ -1876,32 +1871,14 @@ fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
         register_dev_application_resources(&mut resources);
     }
 
-    let application_state = command_demo_state.clone();
-    let application_broadcast_state = command_demo_state.clone();
-    let window_state = command_demo_state.clone();
-    let window_broadcast_state = command_demo_state.clone();
-
-    app.on_command(DEMO_APPLICATION_COMMAND, move |ctx, message| {
-        application_state.record_application_command(message);
-        ctx.set_handled();
-    })
-    .on_command(DEMO_APPLICATION_BROADCAST, move |_, message| {
-        application_broadcast_state.record_application_broadcast(message);
-    })
-    .window(
-        Window::new(WINDOW_TITLE)
-            .controller(CommandDemoWakeController::new(command_demo_state))
-            .on_command(DEMO_WINDOW_COMMAND, move |ctx, message| {
-                window_state.record_window_command(message);
-                ctx.set_handled();
-            })
-            .on_command(DEMO_APPLICATION_BROADCAST, move |_, message| {
-                window_broadcast_state.record_window_broadcast(message);
-            })
-            .root(
-                LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root)
-                    .performance_overlay_enabled_when(move || performance_overlay_reader()),
-            ),
+    // The Commands page's listeners live with the application and the window.
+    command_demo::install(
+        app,
+        Window::new(WINDOW_TITLE).root(
+            LivePerformanceRoot::new(WINDOW_TITLE, WINDOW_DESCRIPTION, root)
+                .performance_overlay_enabled_when(move || performance_overlay_reader()),
+        ),
+        &command_demo_state,
     )
     .into_application()
 }
@@ -7421,20 +7398,7 @@ final_max_luminance={final_max_luminance}
     }
 
     #[test]
-    fn dev_workspace_command_demo_exercises_scopes_multicast_and_wake_separation() -> Result<()> {
-        fn contains_text(window: &TestWindow, needle: &str) -> Result<bool> {
-            let snapshot = window.snapshot()?;
-            Ok(snapshot.accessibility.nodes.iter().any(|node| {
-                node.name
-                    .as_deref()
-                    .is_some_and(|value| value.contains(needle))
-                    || matches!(
-                        &node.value,
-                        Some(SemanticsValue::Text(value)) if value.contains(needle)
-                    )
-            }))
-        }
-
+    fn dev_workspace_command_demo_has_its_listeners_installed() -> Result<()> {
         let app = TestApp::new(|| {
             build_dev_application_with_initial_demo_and_render_options(
                 Some(COMMAND_DEMO_TAB_LABEL),
@@ -7444,59 +7408,30 @@ final_max_luminance={final_max_luminance}
         })?;
         let window = app.main_window()?;
         assert_dev_shell_active_tab(&window, COMMAND_DEMO_TAB_LABEL)?;
-
         window
             .get_by_role(SemanticsRole::ScrollView)
             .with_name(COMMAND_DEMO_SCROLL_NAME)
             .expect()
             .to_be_visible()?;
-        for button in [
-            WINDOW_COMMAND_BUTTON,
-            APPLICATION_COMMAND_BUTTON,
-            APPLICATION_BROADCAST_BUTTON,
-            BACKGROUND_COMMAND_BUTTON,
-            WAKE_CONTROLLERS_BUTTON,
-        ] {
-            window
-                .get_by_role(SemanticsRole::Button)
-                .with_name(button)
-                .expect()
-                .to_be_visible()?;
-        }
 
+        // The page sends to the window's listeners by default.
         window
             .get_by_role(SemanticsRole::Button)
-            .with_name(WINDOW_COMMAND_BUTTON)
+            .with_name(SEND_LABEL)
             .click()?;
-        assert!(contains_text(&window, "Window subscriber received #1")?);
-
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(APPLICATION_COMMAND_BUTTON)
-            .click()?;
-        assert!(contains_text(
-            &window,
-            "Application subscriber received #2"
-        )?);
-
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(APPLICATION_BROADCAST_BUTTON)
-            .click()?;
-        assert!(contains_text(
-            &window,
-            "Application multicast subscriber received #3"
-        )?);
-        assert!(contains_text(
-            &window,
-            "Window multicast subscriber received the same #3"
-        )?);
-
-        window
-            .get_by_role(SemanticsRole::Button)
-            .with_name(WAKE_CONTROLLERS_BUTTON)
-            .click()?;
-        assert!(contains_text(&window, "no custom widget event was sent")?);
+        window.run_until_idle()?;
+        let snapshot = window.snapshot()?;
+        let controller = snapshot
+            .accessibility
+            .nodes
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Window controller"))
+            .expect("the window controller is on the map");
+        assert!(
+            matches!(&controller.value, Some(SemanticsValue::Text(status)) if status.ends_with("handled it")),
+            "{:?}",
+            controller.value
+        );
         Ok(())
     }
 
