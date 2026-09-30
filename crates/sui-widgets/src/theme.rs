@@ -1049,8 +1049,9 @@ pub fn paint_theme_shadow(
 
 /// Paint the inset layers of a [`ThemeShadow`] inside a rounded-rect surface.
 /// Call it after filling the surface and before painting its border and
-/// content, as CSS draws inset shadows. Outer layers are left for
-/// [`paint_theme_shadow`].
+/// content, as CSS draws inset shadows. Pass the surface inside its border as
+/// `rect`, as CSS does, or the border covers the thinnest layers. Outer layers
+/// are left for [`paint_theme_shadow`].
 pub fn paint_theme_inset_shadow(
     paint: &mut sui_runtime::PaintCtx,
     rect: sui_core::Rect,

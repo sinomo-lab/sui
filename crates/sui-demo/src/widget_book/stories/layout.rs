@@ -236,7 +236,8 @@ impl Widget for ColorSwatch {
 }
 
 /// A see-through box casting a shadow with `placement`: behind shows through
-/// the fill, outside leaves the box clear.
+/// the fill, outside leaves the box clear. The shadow takes the accent color
+/// so it shows on dark backgrounds too, where a black one would not.
 struct Translucent {
     theme: DefaultTheme,
     placement: ShadowPlacement,
@@ -255,18 +256,13 @@ impl Widget for Translucent {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let bounds = ctx.bounds();
-        let shadow = ShadowParams::new(
-            0.0,
-            8.0,
-            18.0,
-            0.0,
-            self.theme.palette.text.with_alpha(0.45),
-        )
-        .with_placement(self.placement);
+        let palette = self.theme.palette;
+        let shadow = ShadowParams::new(0.0, 8.0, 18.0, 0.0, palette.accent.with_alpha(0.6))
+            .with_placement(self.placement);
         ctx.draw_shadow(bounds, [10.0; 4], shadow);
         ctx.fill(
             Path::rounded_rect(bounds, 10.0),
-            self.theme.palette.accent.with_alpha(0.3),
+            palette.text.with_alpha(0.12),
         );
     }
 }

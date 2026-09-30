@@ -133,6 +133,42 @@ fn a_surface_shadow_replaces_its_elevation_and_draws_inset_layers_over_its_fill(
 }
 
 #[test]
+fn a_surface_draws_inset_shadows_inside_its_border() {
+    let theme = DefaultTheme::default();
+    let output = render(
+        Surface::field(SizedBox::new().width(80.0).height(40.0))
+            .name("Field")
+            .theme(theme)
+            .radius(8.0)
+            .shadow(|_| ThemeShadow::single(layer(1.0, 0.0, true))),
+    );
+    let face = output
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some("Field"))
+        .expect("the surface is in the semantics tree")
+        .bounds;
+    let mut inset = None;
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::FillRoundedRect {
+            rect,
+            radii,
+            shadow: Some(shadow),
+            ..
+        } = command
+            && shadow.placement == ShadowPlacement::Inside
+        {
+            inset = Some((*rect, radii[0]));
+        }
+    });
+    let (inset, inset_radius) = inset.expect("the surface draws its inset shadow");
+    // The border is stroked on the surface's edge, so half of it lies inside.
+    let half = theme.metrics.border_width.max(1.0) * 0.5;
+    assert_eq!(inset, face.inflate(-half, -half));
+    assert_eq!(inset_radius, 8.0 - half);
+}
+
+#[test]
 fn surfaces_glow_only_where_the_theme_glows() {
     let glowing = |theme: DefaultTheme| {
         shadows(&render(

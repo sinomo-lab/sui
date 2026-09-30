@@ -366,11 +366,12 @@ impl Widget for Surface {
         } else {
             ctx.fill_rect(bounds, background);
         }
+        let stroke_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
         if let Some(shadow) = &shadow {
-            paint_theme_inset_shadow(ctx, bounds, [radius; 4], shadow);
+            let (inside, inside_radius) = inside_border(bounds, radius, self.border, stroke_width);
+            paint_theme_inset_shadow(ctx, inside, [inside_radius; 4], shadow);
         }
 
-        let stroke_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
         match self.border {
             SurfaceBorder::None => {}
             SurfaceBorder::All => {
@@ -505,6 +506,35 @@ impl ShadowBox {
             .map(|theme| theme())
             .unwrap_or(*self.theme)
     }
+}
+
+/// The part of a surface inside its border, with its corner radius, where
+/// inset shadows go so the border doesn't cover them, as in CSS. A full
+/// border is stroked on the edge, half of it inside; a one-side border is
+/// drawn wholly inside that edge.
+fn inside_border(
+    bounds: Rect,
+    radius: f32,
+    border: SurfaceBorder,
+    stroke_width: f32,
+) -> (Rect, f32) {
+    let half = stroke_width * 0.5;
+    let (left, top, right, bottom) = match border {
+        SurfaceBorder::None => (0.0, 0.0, 0.0, 0.0),
+        SurfaceBorder::All => (half, half, half, half),
+        SurfaceBorder::Top => (0.0, stroke_width, 0.0, 0.0),
+        SurfaceBorder::Right => (0.0, 0.0, stroke_width, 0.0),
+        SurfaceBorder::Bottom => (0.0, 0.0, 0.0, stroke_width),
+        SurfaceBorder::Left => (stroke_width, 0.0, 0.0, 0.0),
+    };
+    let inside = Rect::new(
+        bounds.x() + left,
+        bounds.y() + top,
+        (bounds.width() - left - right).max(0.0),
+        (bounds.height() - top - bottom).max(0.0),
+    );
+    let widest = left.max(top).max(right).max(bottom);
+    (inside, (radius - widest).max(0.0))
 }
 
 impl Widget for ShadowBox {
