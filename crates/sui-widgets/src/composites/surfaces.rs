@@ -2,7 +2,10 @@ use crate::DefaultTheme;
 use crate::Progress;
 use crate::SemanticTone;
 use crate::composites::forms::set_hover_animation_target;
-use crate::composites::indicators::{inset_rect, mix_color, physical_pixels, rounded_rect_path};
+use crate::composites::indicators::{
+    draw_focus_ring_frame, inset_rect, mix_color, physical_pixels, rounded_rect_path,
+};
+use crate::frame::{draw_control_shape, snap_to_pixels, snap_width_to_pixels, stroke_border};
 use crate::{
     GlowTone, ThemeShadow, paint_theme_glow, paint_theme_inset_shadow, paint_theme_shadow,
 };
@@ -26,7 +29,6 @@ use sui_runtime::Widget;
 use sui_runtime::WidgetPod;
 use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
-use sui_scene::StrokeStyle;
 
 /// Chooses a shadow from a theme, so it follows theme changes.
 type ShadowToken = Box<dyn Fn(&DefaultTheme) -> ThemeShadow>;
@@ -342,7 +344,7 @@ impl Widget for Surface {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let theme = self.resolved_theme();
-        let bounds = ctx.bounds();
+        let bounds = snap_to_pixels(ctx, ctx.bounds());
         let radius = self.radius.min(bounds.width().min(bounds.height()) * 0.5);
 
         let shadow = match (&self.shadow, self.elevation) {
@@ -366,7 +368,10 @@ impl Widget for Surface {
         } else {
             ctx.fill_rect(bounds, background);
         }
-        let stroke_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
+        let stroke_width = snap_width_to_pixels(
+            ctx,
+            physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+        );
         if let Some(shadow) = &shadow {
             let (inside, inside_radius) = inside_border(bounds, radius, self.border, stroke_width);
             paint_theme_inset_shadow(ctx, inside, [inside_radius; 4], shadow);
@@ -374,13 +379,7 @@ impl Widget for Surface {
 
         match self.border {
             SurfaceBorder::None => {}
-            SurfaceBorder::All => {
-                ctx.stroke(
-                    rounded_rect_path(bounds, radius),
-                    border,
-                    StrokeStyle::new(stroke_width),
-                );
-            }
+            SurfaceBorder::All => stroke_border(ctx, bounds, radius, stroke_width, border),
             SurfaceBorder::Top => ctx.fill_rect(
                 Rect::new(bounds.x(), bounds.y(), bounds.width(), stroke_width),
                 border,
@@ -509,19 +508,17 @@ impl ShadowBox {
 }
 
 /// The part of a surface inside its border, with its corner radius, where
-/// inset shadows go so the border doesn't cover them, as in CSS. A full
-/// border is stroked on the edge, half of it inside; a one-side border is
-/// drawn wholly inside that edge.
+/// inset shadows go so the border doesn't cover them, as in CSS. Borders lie
+/// wholly inside the surface's edge.
 fn inside_border(
     bounds: Rect,
     radius: f32,
     border: SurfaceBorder,
     stroke_width: f32,
 ) -> (Rect, f32) {
-    let half = stroke_width * 0.5;
     let (left, top, right, bottom) = match border {
         SurfaceBorder::None => (0.0, 0.0, 0.0, 0.0),
-        SurfaceBorder::All => (half, half, half, half),
+        SurfaceBorder::All => (stroke_width, stroke_width, stroke_width, stroke_width),
         SurfaceBorder::Top => (0.0, stroke_width, 0.0, 0.0),
         SurfaceBorder::Right => (0.0, 0.0, stroke_width, 0.0),
         SurfaceBorder::Bottom => (0.0, 0.0, 0.0, stroke_width),
@@ -833,22 +830,25 @@ impl Widget for FramedField {
             theme.palette.surface_focus,
             focused as u8 as f32,
         );
-        ctx.fill(rounded_rect_path(bounds, radius), background);
-        ctx.stroke(
-            rounded_rect_path(bounds, radius),
+        draw_control_shape(
+            ctx,
+            bounds,
+            radius,
+            physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+            background,
             border,
-            StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
         );
         if focused {
-            let outset = physical_pixels(ctx, theme.metrics.focus_ring_outset);
-            ctx.stroke(
-                rounded_rect_path(bounds.inflate(outset, outset), radius + outset),
+            draw_focus_ring_frame(
+                ctx,
+                bounds,
+                radius,
+                theme.metrics,
                 if invalid {
                     theme.semantic_tone_color(SemanticTone::Danger)
                 } else {
                     theme.palette.focus_ring
                 },
-                StrokeStyle::new(physical_pixels(ctx, theme.metrics.focus_ring_width)),
             );
         }
         self.child.paint(ctx);

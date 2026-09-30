@@ -7,11 +7,12 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_shape, inset_rect, measure_text, mix_color, numeric_text_style_if_numeric,
-    physical_pixels, rounded_rect_path, semibold_control_text_style, text_token_style,
+    inset_rect, measure_text, mix_color, numeric_text_style_if_numeric, physical_pixels,
+    rounded_rect_path, semibold_control_text_style, text_token_style,
 };
 use crate::composites::painting::{EmptyStatePaint, paint_empty_state};
 use crate::controls::draw_icon_glyph;
+use crate::frame::draw_control_shape;
 use crate::text_align::paint_aligned_text_contained;
 use crate::text_align::paint_text;
 use sui_core::Color;

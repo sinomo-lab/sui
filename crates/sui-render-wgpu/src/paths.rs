@@ -124,14 +124,22 @@ pub(crate) fn append_stroked_path(
     stroke: StrokeStyle,
     path_cache: &mut PathMeshCache,
     viewport: Size,
+    scale_factor: f32,
     feather_width: f32,
 ) -> Result<Option<u64>> {
     if path.is_empty() || viewport.is_empty() {
         return Ok(None);
     }
 
+    // No stroke is drawn thinner than one physical pixel. A wider minimum
+    // would spread a one-pixel border across its neighbors on scaled outputs.
+    let hairline = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor.recip()
+    } else {
+        1.0
+    };
     let stroke = StrokeStyle {
-        width: stroke.width.max(1.0),
+        width: stroke.width.max(hairline),
         ..stroke
     };
     let line_width = stroke.width;

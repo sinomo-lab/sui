@@ -6,14 +6,15 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_frame, draw_control_shape, draw_focus_ring_frame, inset_rect, measure_text,
-    physical_pixels, rounded_rect_path, semibold_control_text_style, sliding_inset_rect,
-    tab_indicator_rect, tab_panel_transition_translation, tab_state_visuals,
+    draw_control_frame, draw_focus_ring_frame, inset_rect, measure_text, physical_pixels,
+    rounded_rect_path, semibold_control_text_style, sliding_inset_rect, tab_indicator_rect,
+    tab_panel_transition_translation, tab_state_visuals,
 };
 use crate::composites::status::{
     SegmentedControlChange, SegmentedControlContextChange, segmented_control_item_id,
 };
 use crate::controls::draw_icon_glyph;
+use crate::frame::draw_control_shape;
 use crate::paint_theme_shadow;
 use crate::text_align::paint_text;
 use std::sync::Arc;

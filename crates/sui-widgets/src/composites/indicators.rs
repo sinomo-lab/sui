@@ -10,6 +10,7 @@ use crate::ThemeTextToken;
 use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
+use crate::frame::{draw_control_shape, snap_to_pixels};
 use crate::paint_theme_glow;
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
@@ -1090,6 +1091,7 @@ pub(super) fn draw_focus_ring_frame(
     metrics: ControlMetrics,
     focus_ring: Color,
 ) {
+    let bounds = snap_to_pixels(ctx, bounds);
     let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
     ctx.stroke(
         rounded_rect_path(
@@ -1099,19 +1101,6 @@ pub(super) fn draw_focus_ring_frame(
         focus_ring,
         StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
     );
-}
-
-pub(super) fn draw_control_shape(
-    ctx: &mut PaintCtx,
-    bounds: Rect,
-    radius: f32,
-    border_width: f32,
-    background: Color,
-    border: Color,
-) {
-    let shape = rounded_rect_path(bounds, radius);
-    ctx.fill(shape.clone(), background);
-    ctx.stroke(shape, border, StrokeStyle::new(border_width));
 }
 
 pub(super) fn mix_color(left: Color, right: Color, amount: f32) -> Color {

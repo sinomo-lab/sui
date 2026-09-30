@@ -9,6 +9,7 @@ use crate::{
         keyboard_text, single_line_text,
     },
     editor::{EditorCommand, EditorCommandResult, selection_range},
+    frame::{draw_control_shape, snap_to_pixels},
     overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
     paint_theme_glow, paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
@@ -8153,7 +8154,10 @@ fn draw_choice_control_frame(
     }
 
     if visuals.background.alpha > f32::EPSILON {
-        ctx.fill(rounded_rect_path(bounds, radius), visuals.background);
+        ctx.fill(
+            rounded_rect_path(snap_to_pixels(ctx, bounds), radius),
+            visuals.background,
+        );
     }
     draw_control_focus_ring(ctx, bounds, radius, metrics, focus_ring);
 }
@@ -8166,6 +8170,7 @@ fn draw_control_focus_ring(
     focus_ring: Option<Color>,
 ) {
     if let Some(focus_ring) = focus_ring {
+        let bounds = snap_to_pixels(ctx, bounds);
         let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
         ctx.stroke(
             rounded_rect_path(
@@ -8175,25 +8180,6 @@ fn draw_control_focus_ring(
             focus_ring,
             StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
         );
-    }
-}
-
-fn draw_control_shape(
-    ctx: &mut PaintCtx,
-    bounds: Rect,
-    radius: f32,
-    border_width: f32,
-    background: Color,
-    border: Color,
-) {
-    let fill_shape = rounded_rect_path(bounds, radius);
-    ctx.fill(fill_shape, background);
-
-    if border_width > 0.0 {
-        let inset = border_width * 0.5;
-        let stroke_shape =
-            rounded_rect_path(bounds.inflate(-inset, -inset), (radius - inset).max(0.0));
-        ctx.stroke(stroke_shape, border, StrokeStyle::new(border_width));
     }
 }
 

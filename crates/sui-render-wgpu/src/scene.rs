@@ -314,6 +314,7 @@ impl SceneDrawOpBuilder<'_> {
                     *stroke,
                     self.path_cache,
                     viewport,
+                    self.frame.scale_factor,
                     self.feather_width,
                 )?;
                 if !self.scratch_vertices.is_empty() {

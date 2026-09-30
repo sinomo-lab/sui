@@ -162,10 +162,10 @@ fn a_surface_draws_inset_shadows_inside_its_border() {
         }
     });
     let (inset, inset_radius) = inset.expect("the surface draws its inset shadow");
-    // The border is stroked on the surface's edge, so half of it lies inside.
-    let half = theme.metrics.border_width.max(1.0) * 0.5;
-    assert_eq!(inset, face.inflate(-half, -half));
-    assert_eq!(inset_radius, 8.0 - half);
+    // The border lies wholly inside the surface's edge.
+    let border = theme.metrics.border_width.max(1.0);
+    assert_eq!(inset, face.inflate(-border, -border));
+    assert_eq!(inset_radius, 8.0 - border);
 }
 
 #[test]
