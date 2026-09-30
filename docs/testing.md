@@ -69,10 +69,17 @@ After an action or while waiting on an expectation, the harness repeatedly:
 
 This is why tests should not use ad hoc sleeps. The harness already knows how to drive the real runtime to a stable state.
 
-`TestApp::new` runs the app live when a display is available and headless
-otherwise. Either way it presents frames through the same routine as the
-desktop platform, so render options, output diagnostics, and debug captures
-behave as they do in the app.
+`TestApp::new` runs the app headless: its windows render offscreen, and every
+headless app in a test process shares one GPU device and its compiled
+pipelines, so tests start quickly and run in parallel. It presents frames
+through the same routine as the desktop platform, so render options, output
+diagnostics, and debug captures behave as they do in the app.
+
+A test that needs real windows on the platform's event loop, such as frame
+pacing or native input, asks for them with `TestApp::builder(...).live(true)`
+or `.visible(true)`. Live apps run one at a time. Set `SUI_TEST_BACKEND=live`
+to run every test live, for instance to check the headless results on the
+desktop platform.
 
 ### Simulate a display
 

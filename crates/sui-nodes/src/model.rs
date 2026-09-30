@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use sui_core::{Point, Rect, Size};
+use sui_core::{Color, Point, Rect, Size};
 
 macro_rules! string_id {
     ($name:ident) => {
@@ -69,6 +69,8 @@ pub enum HandlePosition {
     Bottom,
 }
 
+/// A connection point on a node: an input (target) or output (source) on
+/// one of its sides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Handle {
     pub id: HandleId,
@@ -77,6 +79,12 @@ pub struct Handle {
     /// Normalized position along the selected side.
     pub offset: f32,
     pub connectable: bool,
+    /// The name the graph shows beside the handle and gives screen readers.
+    pub label: Option<String>,
+    /// The handle's color, in place of the graph's source or target handle
+    /// color. Edges leaving a colored source handle take its color too, so
+    /// an application can color handles by the type of value they carry.
+    pub color: Option<Color>,
 }
 
 impl Handle {
@@ -87,6 +95,8 @@ impl Handle {
             position,
             offset: 0.5,
             connectable: true,
+            label: None,
+            color: None,
         }
     }
 
@@ -106,6 +116,24 @@ impl Handle {
     pub fn connectable(mut self, connectable: bool) -> Self {
         self.connectable = connectable;
         self
+    }
+
+    /// Name the handle, as the graph shows it beside the handle and screen
+    /// readers announce it.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Color the handle, and the edges that leave it.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// The handle's label, or its id.
+    pub fn name(&self) -> &str {
+        self.label.as_deref().unwrap_or(self.id.as_str())
     }
 }
 

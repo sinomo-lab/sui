@@ -15,6 +15,9 @@ include = ["**/*.rs", "Cargo.toml", "README.md"]
 
 [lib]
 name = "sui_webview"
+# The example in the crate docs is covered by examples/embedded.rs, which
+# `cargo test` builds.
+doctest = false
 
 [features]
 default = []

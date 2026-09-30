@@ -28,6 +28,7 @@ use crate::overlay::place_overlay;
 use crate::paint_theme_shadow;
 use crate::resolve_widget_hdr_style;
 use crate::text_align::paint_text;
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 use sui_core::Color;
@@ -54,6 +55,7 @@ use sui_core::WidgetId;
 use sui_layout::Constraints;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::Command;
+use sui_runtime::CommandKey;
 use sui_runtime::EventCtx;
 use sui_runtime::EventPhase;
 use sui_runtime::FrameClock;
@@ -62,6 +64,7 @@ use sui_runtime::MeasureCtx;
 use sui_runtime::OVERLAY_DISMISS_REQUEST;
 use sui_runtime::OutputColorRange;
 use sui_runtime::OverlayDismissPolicy;
+use sui_runtime::OverlayDismissReason;
 use sui_runtime::OverlayFocusBehavior;
 use sui_runtime::OverlayKind;
 use sui_runtime::OverlayOptions;
@@ -2216,6 +2219,52 @@ impl Widget for ContextMenuFocusSurface {
     }
 }
 
+/// Opens a [`ContextMenu`] from code, at a point. For a trigger that decides
+/// for itself when a menu is asked for, such as a canvas that pans with the
+/// right button and wants a menu only for a right-click that does not drag:
+/// it handles the press, and opens the menu with [`Self::open_at`].
+#[derive(Clone, Default)]
+pub struct ContextMenuHandle {
+    menu: Rc<Cell<Option<WidgetId>>>,
+}
+
+/// Where to open a menu, and the widget to give focus back to when it closes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OpenContextMenu {
+    position: Point,
+    return_focus: Option<WidgetId>,
+}
+
+static OPEN_CONTEXT_MENU: CommandKey<OpenContextMenu> = CommandKey::new("sui.context-menu.open");
+
+impl ContextMenuHandle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Open the menu at `position`, in window coordinates, once the current
+    /// event is handled; if it is open, it moves there. The menu's items are
+    /// read again, so a provider given with [`ContextMenu::items_when`] can
+    /// list what applies where it opened. If the widget handling the event
+    /// has focus, the menu gives focus back to it when it closes, unless a
+    /// click elsewhere closes it. Returns `false` if the menu has not been
+    /// laid out yet.
+    pub fn open_at(&self, ctx: &mut EventCtx, position: Point) -> bool {
+        let Some(menu) = self.menu.get() else {
+            return false;
+        };
+        ctx.post_command(
+            menu,
+            OPEN_CONTEXT_MENU,
+            OpenContextMenu {
+                position,
+                return_focus: ctx.is_focused().then(|| ctx.widget_id()),
+            },
+        );
+        true
+    }
+}
+
 pub struct ContextMenu {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -2245,6 +2294,10 @@ pub struct ContextMenu {
     pub(super) on_activate_path: Option<Box<dyn FnMut(Vec<usize>, MenuItem)>>,
     pub(super) on_activate_path_with_ctx:
         Option<Box<dyn FnMut(&mut EventCtx, Vec<usize>, MenuItem)>>,
+    pub(super) handle: Option<ContextMenuHandle>,
+    /// The widget that opened the menu through its handle, which gets focus
+    /// back when the menu closes.
+    pub(super) return_focus: Option<WidgetId>,
 }
 
 impl ContextMenu {
@@ -2283,6 +2336,8 @@ impl ContextMenu {
             on_activate_with_ctx: None,
             on_activate_path: None,
             on_activate_path_with_ctx: None,
+            handle: None,
+            return_focus: None,
         }
     }
 
@@ -2297,6 +2352,12 @@ impl ContextMenu {
         F: Fn() -> DefaultTheme + 'static,
     {
         self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    /// Let `handle` open this menu from code; see [`ContextMenuHandle`].
+    pub fn handle(mut self, handle: ContextMenuHandle) -> Self {
+        self.handle = Some(handle);
         self
     }
 
@@ -2796,6 +2857,9 @@ impl ContextMenu {
         }
         if !open {
             self.open_position = None;
+            if let Some(widget) = self.return_focus.take() {
+                ctx.request_focus_for(widget);
+            }
         }
 
         self.open = open;
@@ -2878,8 +2942,26 @@ impl ContextMenu {
 
 impl Widget for ContextMenu {
     fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
-        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.open {
+        if let Some(request) = command.get(OVERLAY_DISMISS_REQUEST)
+            && self.open
+        {
+            // A click elsewhere puts focus where it clicked.
+            if request.reason == OverlayDismissReason::OutsidePointer {
+                self.return_focus = None;
+            }
             self.set_open(ctx, false);
+            ctx.set_handled();
+        } else if let Some(open) = command.get(OPEN_CONTEXT_MENU) {
+            // Reopen where asked, reading the items again.
+            self.return_focus = None;
+            self.set_open(ctx, false);
+            let origin = ctx.bounds().origin;
+            self.open_position = self
+                .anchors_to_pointer()
+                .then(|| Point::new(open.position.x - origin.x, open.position.y - origin.y));
+            self.return_focus = open.return_focus;
+            self.set_open(ctx, true);
+            ctx.request_focus();
             ctx.set_handled();
         }
     }
@@ -3091,6 +3173,9 @@ impl Widget for ContextMenu {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(handle) = &self.handle {
+            handle.menu.set(Some(ctx.widget_id()));
+        }
         {
             let mut state = self.surface_state.borrow_mut();
             let state = &mut *state;

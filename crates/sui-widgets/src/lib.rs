@@ -57,7 +57,7 @@ pub use collection::{
 pub use composites::{
     ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, BusyIndicator, CalloutPaint,
     CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill,
-    CommandButtonPaint, CommandGroup, CommandPalette, ContextMenu, CoverageDots,
+    CommandButtonPaint, CommandGroup, CommandPalette, ContextMenu, ContextMenuHandle, CoverageDots,
     CoverageDotsConfig, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, Drawer, EmptyState,
     EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem,
     Modal, PanelSection, PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment,

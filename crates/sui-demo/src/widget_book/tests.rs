@@ -190,26 +190,55 @@ fn page_items_follow_the_registry() {
     assert_eq!(story_and_category_titles(), expected);
 }
 
-#[test]
-fn every_story_renders_in_every_builtin_theme() -> Result<()> {
-    for (theme_name, theme) in builtin_themes() {
-        for story in stories() {
-            let sections = (story.build)(&StoryCtx::new(theme));
-            assert!(!sections.is_empty(), "{} has no specimens", story.title);
-            let (mut runtime, window_id) =
-                build_runtime(Size::new(1120.0, 1400.0), story_block(story, theme))?;
-            let output = runtime.render(window_id)?;
-            let region = named(&output.semantics, &story.region_name())
-                .unwrap_or_else(|| panic!("{} renders its block in {theme_name}", story.title));
-            assert!(
-                region.bounds.width() > 0.0 && region.bounds.height() > 80.0,
-                "{} block is empty in {theme_name}: {:?}",
-                story.title,
-                region.bounds
-            );
-        }
+/// Every story renders a block in the theme named `theme_name`. A test per
+/// theme, so the themes render in parallel.
+fn every_story_renders_in(theme_name: &str) -> Result<()> {
+    let theme = builtin_themes()
+        .into_iter()
+        .find(|(name, _)| *name == theme_name)
+        .map(|(_, theme)| theme)
+        .expect("a built-in theme");
+    for story in stories() {
+        let sections = (story.build)(&StoryCtx::new(theme));
+        assert!(!sections.is_empty(), "{} has no specimens", story.title);
+        let (mut runtime, window_id) =
+            build_runtime(Size::new(1120.0, 1400.0), story_block(story, theme))?;
+        let output = runtime.render(window_id)?;
+        let region = named(&output.semantics, &story.region_name())
+            .unwrap_or_else(|| panic!("{} renders its block in {theme_name}", story.title));
+        assert!(
+            region.bounds.width() > 0.0 && region.bounds.height() > 80.0,
+            "{} block is empty in {theme_name}: {:?}",
+            story.title,
+            region.bounds
+        );
     }
     Ok(())
+}
+
+#[test]
+fn every_story_renders_in_light() -> Result<()> {
+    every_story_renders_in("light")
+}
+
+#[test]
+fn every_story_renders_in_dark() -> Result<()> {
+    every_story_renders_in("dark")
+}
+
+#[test]
+fn every_story_renders_in_neutral() -> Result<()> {
+    every_story_renders_in("neutral")
+}
+
+#[test]
+fn every_story_renders_in_neutral_dark() -> Result<()> {
+    every_story_renders_in("neutral dark")
+}
+
+#[test]
+fn every_story_renders_in_void() -> Result<()> {
+    every_story_renders_in("void")
 }
 
 #[test]

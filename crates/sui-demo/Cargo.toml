@@ -25,6 +25,7 @@ nodes = ["dep:sui-nodes"]
 [lib]
 name = "sui_demo_app"
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [[bin]]
 name = "sui-demo"

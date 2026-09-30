@@ -6409,6 +6409,70 @@ fn context_menu_row_label_visual_center_matches_row_center() -> Result<(), Strin
     Ok(())
 }
 
+/// A canvas that decides for itself when to open its menu: on a press,
+/// at a fixed point.
+struct OpensItsMenu {
+    menu: super::ContextMenuHandle,
+    at: Point,
+}
+
+impl Widget for OpensItsMenu {
+    fn event(&mut self, ctx: &mut sui_runtime::EventCtx, event: &Event) {
+        if let Event::Pointer(pointer) = event
+            && pointer.kind == PointerEventKind::Down
+        {
+            assert!(self.menu.open_at(ctx, self.at));
+            ctx.set_handled();
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(320.0, 240.0))
+    }
+}
+
+#[test]
+fn a_context_menu_handle_opens_the_menu_where_it_is_told() {
+    let menu = super::ContextMenuHandle::new();
+    let opened = Rc::new(Cell::new(0));
+    let reads = Rc::clone(&opened);
+    let at = Point::new(40.0, 60.0);
+    let (mut runtime, window_id) = build_runtime(
+        ContextMenu::new(
+            "Canvas menu",
+            OpensItsMenu {
+                menu: menu.clone(),
+                at,
+            },
+        )
+        .handle(menu)
+        .items_when(move || {
+            reads.set(reads.get() + 1);
+            vec![MenuItem::new("Rename"), MenuItem::new("Duplicate")]
+        }),
+    );
+    runtime.render(window_id).unwrap();
+    let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(20.0, 20.0));
+    down.pointer_id = 1;
+    down.button = Some(PointerButton::Primary);
+    runtime
+        .handle_event(window_id, Event::Pointer(down))
+        .unwrap();
+
+    let output = runtime.render(window_id).unwrap();
+    let rename = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some("Rename"))
+        .expect("the menu is open");
+    assert!(
+        (rename.bounds.x() - at.x).abs() < 16.0 && (rename.bounds.y() - at.y).abs() < 16.0,
+        "the menu opens at {at:?}: {:?}",
+        rename.bounds
+    );
+    assert_eq!(opened.get(), 1, "its items are read as it opens");
+}
+
 #[test]
 fn context_menu_primary_activation_owns_interactive_trigger_click() {
     let trigger_activations = Rc::new(Cell::new(0));

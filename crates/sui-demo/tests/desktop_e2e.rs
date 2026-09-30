@@ -3915,6 +3915,7 @@ fn virtual_scroll_runtime_scene_is_history_independent_for_same_offset() -> Resu
 }
 
 #[test]
+#[ignore = "benchmark of scrolling the widget book on the desktop; run with --ignored"]
 fn widget_book_scroll_fps_benchmark() -> Result<()> {
     if skip_without_desktop_display("widget_book_scroll_fps_benchmark") {
         return Ok(());

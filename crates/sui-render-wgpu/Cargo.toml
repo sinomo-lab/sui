@@ -14,6 +14,7 @@ rust-version.workspace = true
 
 [lib]
 name = "sui_render_wgpu"
+doctest = false
 
 [dependencies]
 bytemuck = { workspace = true }

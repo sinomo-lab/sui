@@ -19,8 +19,8 @@ and similar details. Application state usually lives outside the widget in an
 Connect external state through two complementary APIs:
 
 - An observable binding such as `Label::text_from`,
-  `TabBar::selected_from`, or `SwitchView::selected_from` subscribes the
-  retained widget to targeted automatic invalidation.
+  `TabBar::selected_from`, `Button::enabled_from`, or `SwitchView::selected_from`
+  subscribes the retained widget to targeted automatic invalidation.
 - A reader builder such as `Label::text_when`, `Slider::value_when`,
   `Select::selected_when`, `Button::enabled_when`, or `SwitchView::selected_when`
   reads the current value when the relevant runtime phase runs. Readers remain

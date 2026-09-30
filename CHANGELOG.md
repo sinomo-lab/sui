@@ -603,6 +603,70 @@ Versioning, with the usual expectation that the API may change during the
   thumbnail to its progress bar with `send_widget` and its end to the window
   with `send_window`, and can be cancelled.
 
+### Faster tests
+
+- `TestApp` runs apps headless on every platform unless asked otherwise, so
+  UI tests run in parallel instead of one at a time through real windows. A
+  test that needs real windows, such as frame pacing or native input, asks for
+  them with `TestAppBuilder::live(true)` or `visible(true)`; set
+  `SUI_TEST_BACKEND=live` to run every test live. Tests that relied on the live
+  backend by default need `live(true)`.
+- Renderers without a window share one GPU device and the pipelines compiled
+  on it. Acquiring a device and compiling pipelines took over a second for
+  every headless test app and offscreen capture; after the first, they start
+  in milliseconds.
+- Workspace crates no longer run doc tests, which only re-analyzed each crate:
+  the two crate-level examples are also example programs that `cargo test`
+  builds.
+- The widget book renders every story in each theme in a test per theme, and
+  the desktop widget book scroll benchmark runs only when asked for. A full
+  workspace test run takes about a quarter of the time it did.
+
+### Node graph editing: typed ports, undo, copy and paste, and context menus
+
+- `Handle::label` names a connection point: the graph draws the name inside
+  the node beside it, and screen readers announce each handle with its node and
+  connections. `Handle::color` colors a handle, and edges leaving a colored
+  source handle take its color, so ports can show the type of value they carry.
+  `NodeGraphConfig::handle_labels` turns the drawn names off.
+- `NodeGraph::connection_rule` accepts or refuses connections with a reason.
+  A connection being dragged snaps to the nearest handle within
+  `NodeGraphConfig::connection_radius`; handles that would take it are ringed
+  and the rest dim, and over a refusing handle the line turns the danger color
+  with the reason beside the pointer. Dropping it there emits
+  `NodeGraphEvent::ConnectionRefused`. A reconnected edge is checked against
+  the graph without it. `is_valid_connection` still takes a yes or no.
+- `NodeGraphState::with_history` keeps undo steps: `undo`, `redo`,
+  `history_status`, `history_observable`, `undo_group`, `begin_undo_group`,
+  `end_undo_group`, and `merge_undo`, which merges edits that arrive one at a
+  time, such as a slider drag, into one step. Selection, the viewport, and
+  measured sizes are not steps; a drag or a resize is one. The graph undoes and
+  redoes with Control+Z, Control+Shift+Z, and Control+Y.
+- `copy_selection` and `paste_clipboard` copy selected nodes with their
+  descendants and the edges between them, and paste them with fresh ids as one
+  step. The state's own clipboard backs `copy`, `cut`, `paste`, and
+  `duplicate`, and Control+C, +X, +V, and +D.
+- A right-click that does not drag, the Menu key, or Shift+F10 asks for a
+  context menu for what is under the pointer or focused, selecting it first:
+  `NodeGraph::on_context_menu` and `NodeGraphEvent::ContextMenu`. A right-drag
+  still pans. New events report copies, pastes, undo, and redo.
+- `NodeGraphEvent` has new variants, and `NodeGraphConfig` and `Handle` have
+  new fields: exhaustive matches on the events, and struct literals without
+  `..Default::default()`, need updating.
+- `ContextMenuHandle` opens a `ContextMenu` from code at a point, for triggers
+  that decide for themselves when a menu is asked for, and gives focus back to
+  the widget that opened it when the menu closes.
+- `Button::enabled_from` and `IconButton::enabled_from` follow an observable
+  enabled state, repainting when it changes.
+- The demo's Node graphs page is a color lab. Color and number nodes feed mix,
+  lighten, and contrast nodes, and previews show the results, recomputed as
+  you drag a slider in a node or rewire the graph. Ports are typed; the lab
+  refuses a mismatched type, a loop, or a second edge into an input, and says
+  which. A toolbar, context menus, and the keyboard add, undo, redo, copy,
+  paste, duplicate, delete, and restyle; an inspector renames nodes and shows
+  what reaches each input, or restyles and animates an edge; a log follows what
+  happened.
+
 ### Breaking: shadows and glows
 
 - A shadow's `blur` is the CSS blur radius: the box's edge is blurred by a

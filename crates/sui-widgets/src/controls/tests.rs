@@ -1508,6 +1508,46 @@ fn an_icon_button_that_does_not_focus_on_press_leaves_the_editor_focused() -> Re
 }
 
 #[test]
+fn a_button_follows_an_observed_enabled_state_on_its_own() -> Result<()> {
+    let enabled = Signal::new(false);
+    let presses = Rc::new(Cell::new(0));
+    let on_press = Rc::clone(&presses);
+    let (mut runtime, window_id) = build_runtime(
+        Button::new("Undo")
+            .enabled_from(enabled.clone())
+            .on_press(move || on_press.set(on_press.get() + 1)),
+    );
+    let disabled = |runtime: &mut Runtime| -> Result<bool> {
+        Ok(runtime
+            .render(window_id)?
+            .semantics
+            .into_iter()
+            .find(|node| node.role == SemanticsRole::Button)
+            .expect("the button has semantics")
+            .state
+            .disabled)
+    };
+    assert!(disabled(&mut runtime)?);
+
+    enabled.set(true);
+    runtime.process_reactive_updates();
+    assert!(
+        !disabled(&mut runtime)?,
+        "it repaints when the state changes"
+    );
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Down, Point::new(12.0, 12.0), true),
+    )?;
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Up, Point::new(12.0, 12.0), false),
+    )?;
+    assert_eq!(presses.get(), 1);
+    Ok(())
+}
+
+#[test]
 fn disabled_button_exposes_semantics_and_ignores_activation() -> Result<()> {
     let activations = Rc::new(RefCell::new(0usize));
     let on_press = Rc::clone(&activations);

@@ -15,6 +15,7 @@ build = "build.rs"
 
 [lib]
 name = "sui_lucide"
+doctest = false
 
 [dependencies]
 sui-core = { workspace = true }

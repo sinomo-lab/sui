@@ -151,6 +151,24 @@ pub enum NodeGraphEvent {
         nodes: Vec<NodeId>,
         edges: Vec<EdgeId>,
     },
+    /// A connection or reconnection was dropped on a handle that refused
+    /// it, with the reason the graph's rule or model gave.
+    ConnectionRefused {
+        connection: Connection,
+        reason: String,
+    },
+    /// A context menu was asked for: a right-click that did not drag, or
+    /// the Menu key or Shift+F10. `position` is where to open the menu.
+    ContextMenu {
+        target: NodeGraphHit,
+        position: Point,
+    },
+    /// Nodes were copied to the state's clipboard.
+    Copied(Vec<NodeId>),
+    /// Nodes were pasted or duplicated from the keyboard.
+    Pasted(Vec<NodeId>),
+    Undone,
+    Redone,
 }
 
 /// Renderer-independent hit result for applications that attach their own
@@ -230,6 +248,11 @@ pub struct NodeGraphConfig {
     pub retain_node_world: bool,
     /// Minimum visible uniform custom-node count needed to create a layer.
     pub retained_node_world_min: usize,
+    /// How far from a handle, in screen pixels, a connection being dragged
+    /// snaps to it.
+    pub connection_radius: f32,
+    /// Show handle labels beside their handles.
+    pub handle_labels: bool,
 }
 
 impl Default for NodeGraphConfig {
@@ -272,6 +295,8 @@ impl Default for NodeGraphConfig {
             retained_edge_world_max: 4_096,
             retain_node_world: true,
             retained_node_world_min: 128,
+            connection_radius: 24.0,
+            handle_labels: true,
         }
     }
 }
@@ -293,6 +318,7 @@ impl NodeGraphConfig {
                 .retained_edge_world_max
                 .max(self.retained_edge_world_min),
             retained_node_world_min: self.retained_node_world_min.max(1),
+            connection_radius: self.connection_radius.max(0.0),
             snap_to_grid: self
                 .snap_to_grid
                 .map(|size| Size::new(size.width.max(1.0), size.height.max(1.0))),
@@ -369,6 +395,9 @@ enum Interaction {
     Pan {
         pointer_id: u64,
         last_position: Point,
+        /// Where a right-press started, while it has not moved far enough
+        /// to be a drag: releasing it asks for a context menu.
+        click_origin: Option<Point>,
     },
     DragNodes {
         pointer_id: u64,
@@ -543,7 +572,29 @@ impl Interaction {
 }
 
 type ChangeCallback = Box<dyn FnMut(NodeGraphEvent)>;
-type ConnectionValidator<N, E> = Box<dyn Fn(&Connection, &GraphModel<N, E>) -> bool>;
+type ConnectionRule<N, E> = Box<dyn Fn(&Connection, &GraphModel<N, E>) -> Result<(), String>>;
+type ContextMenuCallback = Box<dyn FnMut(&mut EventCtx, NodeGraphHit, Point)>;
+
+/// The handle a connection being dragged has snapped to, and whether it
+/// takes the connection.
+#[derive(Debug, Clone)]
+struct ConnectionCandidate {
+    connection: Connection,
+    /// Where the handle is, in screen coordinates, and its side.
+    position: Point,
+    side: HandlePosition,
+    verdict: Result<(), String>,
+}
+
+/// How a handle looks while a connection is dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HandleEmphasis {
+    Normal,
+    /// It would take the connection.
+    Available,
+    /// It would not.
+    Dimmed,
+}
 type EdgeFactory<E> = Box<dyn FnMut(Connection) -> Edge<E>>;
 type NodePaintFn<N> = dyn Fn(&mut PaintCtx, &Node<N>, NodePaintContext);
 type EdgePaintFn<E> = dyn Fn(&mut PaintCtx, &Edge<E>, EdgePaintContext);
@@ -574,7 +625,15 @@ pub struct NodeGraph<N = (), E = ()> {
     arranged_once: bool,
     next_edge_id: u64,
     on_change: Option<ChangeCallback>,
-    connection_validator: Option<ConnectionValidator<N, E>>,
+    connection_validator: Option<ConnectionRule<N, E>>,
+    /// The handle the connection being dragged snaps to.
+    connection_candidate: Option<ConnectionCandidate>,
+    /// While an edge is reconnected: the graph without it, which the new
+    /// connection is checked against, and its connection before the drag.
+    reconnect_base: Option<(Arc<GraphModel<N, E>>, Connection)>,
+    /// Which handles take the connection being dragged, as they are asked.
+    handle_verdicts: RefCell<HashMap<(NodeId, HandleId, HandleKind), bool>>,
+    on_context_menu: Option<ContextMenuCallback>,
     edge_factory: Option<EdgeFactory<E>>,
     node_painter: Option<NodePainter<N>>,
     edge_painter: Option<EdgePainter<E>>,
@@ -623,6 +682,10 @@ where
             next_edge_id: 1,
             on_change: None,
             connection_validator: None,
+            connection_candidate: None,
+            reconnect_base: None,
+            handle_verdicts: RefCell::new(HashMap::new()),
+            on_context_menu: None,
             edge_factory: None,
             node_painter: None,
             edge_painter: None,
@@ -679,11 +742,42 @@ where
         self
     }
 
-    pub fn is_valid_connection<F>(mut self, validator: F) -> Self
+    pub fn is_valid_connection<F>(self, validator: F) -> Self
     where
         F: Fn(&Connection, &GraphModel<N, E>) -> bool + 'static,
     {
-        self.connection_validator = Some(Box::new(validator));
+        self.connection_rule(move |connection, graph| {
+            if validator(connection, graph) {
+                Ok(())
+            } else {
+                Err("This connection is not allowed".to_string())
+            }
+        })
+    }
+
+    /// Decide which connections the graph accepts, and say why it refuses
+    /// the others. While a connection is dragged, handles that would refuse
+    /// it dim, and the reason shows beside the pointer when it snaps to one;
+    /// dropping it there emits [`NodeGraphEvent::ConnectionRefused`]. A
+    /// reconnected edge is checked against the graph without it.
+    pub fn connection_rule<F>(mut self, rule: F) -> Self
+    where
+        F: Fn(&Connection, &GraphModel<N, E>) -> Result<(), String> + 'static,
+    {
+        self.connection_validator = Some(Box::new(rule));
+        self
+    }
+
+    /// Called when a context menu is asked for, with what it is for and
+    /// where to open it, in window coordinates. Right-clicking an element
+    /// that is not selected selects it first, so the menu acts on it. A
+    /// context menu opened here with [`sui_widgets::ContextMenuHandle`]
+    /// lists what applies to the target.
+    pub fn on_context_menu<F>(mut self, on_context_menu: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, NodeGraphHit, Point) + 'static,
+    {
+        self.on_context_menu = Some(Box::new(on_context_menu));
         self
     }
 
@@ -806,6 +900,7 @@ where
                     self.emit(NodeGraphEvent::NodesChanged(changes));
                 }
                 self.emit(NodeGraphEvent::NodeDragStopped(dragged_ids));
+                self.state.end_undo_group();
             }
             Interaction::ResizeNode { node, .. } => {
                 let snapshot = self.state.snapshot();
@@ -821,6 +916,7 @@ where
                     }]));
                     self.emit(NodeGraphEvent::NodeResizeStopped { id, position, size });
                 }
+                self.state.end_undo_group();
             }
             Interaction::Marquee { .. } => self.emit(NodeGraphEvent::SelectionEnded),
             Interaction::Connect { .. } => {
@@ -833,6 +929,7 @@ where
                 });
             }
         }
+        self.end_connection();
         self.hovered_handle = None;
     }
 
@@ -942,6 +1039,7 @@ where
                         self.interaction = Some(Interaction::Pan {
                             pointer_id,
                             last_position: position,
+                            click_origin: None,
                         });
                         ctx.request_pointer_capture(pointer_id);
                         self.emit(NodeGraphEvent::ViewportChangeStarted(self.state.viewport()));
@@ -982,6 +1080,243 @@ where
                 edge.target_handle = connection.target_handle.clone();
                 return edge;
             }
+        }
+    }
+
+    /// Whether `graph` accepts `connection`: the model's own checks, then
+    /// the application's rule.
+    fn connection_verdict(
+        &self,
+        graph: &GraphModel<N, E>,
+        connection: &Connection,
+    ) -> Result<(), String> {
+        graph
+            .validate_connection(connection)
+            .map_err(|error| error.to_string())?;
+        self.connection_validator
+            .as_ref()
+            .map_or(Ok(()), |rule| rule(connection, graph))
+    }
+
+    /// The connection dropping the current drag on `handle` would make.
+    fn candidate_connection(&self, node: &Node<N>, handle: &Handle) -> Option<Connection> {
+        match self.interaction.as_ref()? {
+            Interaction::Connect {
+                source,
+                source_handle,
+                ..
+            } => (handle.kind == HandleKind::Target).then(|| Connection {
+                source: source.clone(),
+                source_handle: Some(source_handle.clone()),
+                target: node.id.clone(),
+                target_handle: Some(handle.id.clone()),
+            }),
+            Interaction::ReconnectEdge { endpoint, .. } => {
+                if handle.kind != *endpoint {
+                    return None;
+                }
+                let (_, original) = self.reconnect_base.as_ref()?;
+                let mut connection = original.clone();
+                match endpoint {
+                    HandleKind::Source => {
+                        connection.source = node.id.clone();
+                        connection.source_handle = Some(handle.id.clone());
+                    }
+                    HandleKind::Target => {
+                        connection.target = node.id.clone();
+                        connection.target_handle = Some(handle.id.clone());
+                    }
+                }
+                Some(connection)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether dropping the current drag on `handle` would connect. A
+    /// reconnection is judged against the graph without the edge it moves.
+    fn candidate_verdict(
+        &self,
+        graph: &GraphModel<N, E>,
+        node: &Node<N>,
+        handle: &Handle,
+    ) -> Option<(Connection, Result<(), String>)> {
+        if !node.connectable || !handle.connectable || node.hidden {
+            return None;
+        }
+        let connection = self.candidate_connection(node, handle)?;
+        let graph = self
+            .reconnect_base
+            .as_ref()
+            .map_or(graph, |(base, _)| base.as_ref());
+        let verdict = self.connection_verdict(graph, &connection);
+        Some((connection, verdict))
+    }
+
+    /// How `handle` looks while a connection is dragged: handles that would
+    /// take it stand out, and the rest dim.
+    fn handle_emphasis(
+        &self,
+        graph: &GraphModel<N, E>,
+        node: &Node<N>,
+        handle: &Handle,
+    ) -> HandleEmphasis {
+        match &self.interaction {
+            Some(Interaction::Connect {
+                source,
+                source_handle,
+                ..
+            }) if *source == node.id
+                && *source_handle == handle.id
+                && handle.kind == HandleKind::Source =>
+            {
+                return HandleEmphasis::Normal;
+            }
+            Some(Interaction::Connect { .. } | Interaction::ReconnectEdge { .. }) => {}
+            _ => return HandleEmphasis::Normal,
+        }
+        let key = (node.id.clone(), handle.id.clone(), handle.kind);
+        let cached = self.handle_verdicts.borrow().get(&key).copied();
+        let available = cached.unwrap_or_else(|| {
+            let available = self
+                .candidate_verdict(graph, node, handle)
+                .is_some_and(|(_, verdict)| verdict.is_ok());
+            self.handle_verdicts.borrow_mut().insert(key, available);
+            available
+        });
+        if available {
+            HandleEmphasis::Available
+        } else {
+            HandleEmphasis::Dimmed
+        }
+    }
+
+    /// Snap the connection being dragged to the nearest handle that could
+    /// end it, within the connection radius of `position`.
+    fn update_connection_candidate(
+        &mut self,
+        snapshot: &GraphSnapshot<N, E>,
+        bounds: Rect,
+        position: Point,
+    ) {
+        let kind = match &self.interaction {
+            Some(Interaction::Connect { .. }) => HandleKind::Target,
+            Some(Interaction::ReconnectEdge { endpoint, .. }) => *endpoint,
+            _ => {
+                self.connection_candidate = None;
+                return;
+            }
+        };
+        let radius = self
+            .config
+            .connection_radius
+            .max(handle_hit_radius(snapshot.viewport.zoom));
+        let hit = nearest_handle(snapshot, bounds, position, kind, radius);
+        self.hovered_handle = hit
+            .as_ref()
+            .map(|hit| (hit.node.id.clone(), hit.handle.id.clone(), hit.handle.kind));
+        self.connection_candidate = hit.and_then(|hit| {
+            let (connection, verdict) =
+                self.candidate_verdict(&snapshot.graph, hit.node, hit.handle)?;
+            Some(ConnectionCandidate {
+                connection,
+                position: hit.position,
+                side: hit.handle.position,
+                verdict,
+            })
+        });
+    }
+
+    fn end_connection(&mut self) {
+        self.connection_candidate = None;
+        self.reconnect_base = None;
+        self.handle_verdicts.borrow_mut().clear();
+    }
+
+    /// Ask for a context menu for `target` at `position`, selecting the
+    /// target first if it is not already selected.
+    fn open_context_menu(&mut self, ctx: &mut EventCtx, target: NodeGraphHit, position: Point) {
+        let config = self.config.normalized();
+        let mut changes = ElementChanges::default();
+        if config.elements_selectable {
+            let snapshot = self.state.snapshot();
+            match &target {
+                NodeGraphHit::Node(id) | NodeGraphHit::Handle { node: id, .. } => {
+                    if snapshot
+                        .graph
+                        .node(id)
+                        .is_some_and(|node| node.selectable && !node.selected)
+                    {
+                        self.state.update(|snapshot| {
+                            apply_node_selection(snapshot.graph_mut(), id, false, &mut changes);
+                        });
+                    }
+                }
+                NodeGraphHit::Edge(id) => {
+                    if snapshot
+                        .graph
+                        .edge(id)
+                        .is_some_and(|edge| edge.selectable && !edge.selected)
+                    {
+                        self.state.update(|snapshot| {
+                            apply_edge_selection(snapshot.graph_mut(), id, false, &mut changes);
+                        });
+                    }
+                }
+                NodeGraphHit::Pane => {}
+            }
+        }
+        emit_element_changes(self, changes);
+        self.emit(NodeGraphEvent::ContextMenu {
+            target: target.clone(),
+            position,
+        });
+        if let Some(on_context_menu) = &mut self.on_context_menu {
+            on_context_menu(ctx, target, position);
+        }
+        self.request_update(ctx);
+    }
+
+    /// What a context menu from the keyboard is for, and where it opens:
+    /// the focused element, else the first selected one, else the pane.
+    fn keyboard_context_target(
+        &self,
+        snapshot: &GraphSnapshot<N, E>,
+        bounds: Rect,
+    ) -> (NodeGraphHit, Point) {
+        let element = self.focused_element.clone().or_else(|| {
+            snapshot
+                .graph
+                .selected_node_ids()
+                .into_iter()
+                .next()
+                .map(FocusedElement::Node)
+                .or_else(|| {
+                    snapshot
+                        .graph
+                        .selected_edge_ids()
+                        .into_iter()
+                        .next()
+                        .map(FocusedElement::Edge)
+                })
+        });
+        let located = match element {
+            Some(FocusedElement::Node(id)) => snapshot
+                .graph
+                .absolute_node_bounds(&id)
+                .map(|flow| (NodeGraphHit::Node(id), flow)),
+            Some(FocusedElement::Edge(id)) => snapshot
+                .spatial
+                .edge_bounds(&id)
+                .map(|flow| (NodeGraphHit::Edge(id), flow)),
+            None => None,
+        };
+        match located {
+            Some((target, flow)) => (
+                target,
+                center(snapshot.viewport.flow_rect_to_screen(bounds, flow)),
+            ),
+            None => (NodeGraphHit::Pane, center(bounds)),
         }
     }
 
@@ -1027,6 +1362,10 @@ where
                 let Some(geometry) = edge_geometry_from_lookup(&node_lookup, edge) else {
                     continue;
                 };
+                let color = node_lookup
+                    .get(&edge.source)
+                    .and_then(|(node, _)| source_handle_color(node, edge))
+                    .unwrap_or(color);
                 scene.push(SceneCommand::StrokePath {
                     path: geometry.path.clone(),
                     brush: Brush::Solid(color),
@@ -1133,7 +1472,7 @@ where
                     } else if self.hovered_edge.as_ref() == Some(&edge.id) {
                         appearance.edge_selected.with_alpha(0.72)
                     } else {
-                        appearance.edge
+                        edge_source_color(&snapshot.graph, edge).unwrap_or(appearance.edge)
                     },
                 })
             })
@@ -1519,6 +1858,8 @@ where
                 self.interaction = Some(Interaction::Pan {
                     pointer_id: pointer.pointer_id,
                     last_position: pointer.position,
+                    click_origin: (pointer.button == Some(PointerButton::Secondary))
+                        .then_some(pointer.position),
                 });
                 self.emit(NodeGraphEvent::ViewportChangeStarted(snapshot.viewport));
                 ctx.request_focus();
@@ -1542,6 +1883,8 @@ where
                 if config.nodes_resizable
                     && let Some(hit) = resize_hit
                 {
+                    // The whole resize is one undo step.
+                    self.state.begin_undo_group();
                     self.interaction = Some(Interaction::ResizeNode {
                         pointer_id: pointer.pointer_id,
                         node: hit.node.id.clone(),
@@ -1557,6 +1900,10 @@ where
                 } else if config.edges_reconnectable
                     && let Some(hit) = reconnect_hit
                 {
+                    let mut base = snapshot.graph.as_ref().clone();
+                    base.remove_edge(&hit.edge.id);
+                    self.end_connection();
+                    self.reconnect_base = Some((Arc::new(base), hit.edge.connection()));
                     self.interaction = Some(Interaction::ReconnectEdge {
                         pointer_id: pointer.pointer_id,
                         edge: hit.edge.id.clone(),
@@ -1573,6 +1920,7 @@ where
                     && let Some(hit) =
                         source_hit.filter(|hit| hit.node.connectable && hit.handle.connectable)
                 {
+                    self.end_connection();
                     self.interaction = Some(Interaction::Connect {
                         pointer_id: pointer.pointer_id,
                         source: hit.node.id.clone(),
@@ -1631,6 +1979,8 @@ where
                                             .unwrap_or(Rect::ZERO)
                                     },
                                 );
+                            // The whole drag is one undo step.
+                            self.state.begin_undo_group();
                             self.emit(NodeGraphEvent::NodeDragStarted(
                                 origins.iter().map(|(id, _)| id.clone()).collect(),
                             ));
@@ -1686,6 +2036,7 @@ where
                     self.interaction = Some(Interaction::Pan {
                         pointer_id: pointer.pointer_id,
                         last_position: pointer.position,
+                        click_origin: None,
                     });
                 }
 
@@ -1754,15 +2105,29 @@ where
                     Interaction::Pan {
                         pointer_id,
                         last_position,
+                        click_origin,
                     } => {
+                        // A right-press is a click until it moves this far.
+                        let click_origin = click_origin
+                            .filter(|origin| vector_length(pointer.position - *origin) <= 4.0);
+                        let delta = if click_origin.is_some() {
+                            Vector::ZERO
+                        } else {
+                            pointer.position - last_position
+                        };
                         let mut viewport = snapshot.viewport;
-                        viewport.pan_by(pointer.position - last_position);
+                        viewport.pan_by(delta);
                         if self.state.set_viewport(viewport) {
                             self.emit(NodeGraphEvent::ViewportChanged(viewport));
                         }
                         self.interaction = Some(Interaction::Pan {
                             pointer_id,
-                            last_position: pointer.position,
+                            last_position: if click_origin.is_some() {
+                                last_position
+                            } else {
+                                pointer.position
+                            },
+                            click_origin,
                         });
                     }
                     Interaction::DragNodes {
@@ -1888,13 +2253,6 @@ where
                         source_side,
                         ..
                     } => {
-                        self.hovered_handle = hit_handle(
-                            &snapshot,
-                            bounds,
-                            pointer.position,
-                            Some(HandleKind::Target),
-                        )
-                        .map(|hit| (hit.node.id.clone(), hit.handle.id.clone(), hit.handle.kind));
                         self.interaction = Some(Interaction::Connect {
                             pointer_id,
                             source,
@@ -1903,6 +2261,7 @@ where
                             source_side,
                             current: pointer.position,
                         });
+                        self.update_connection_candidate(&snapshot, bounds, pointer.position);
                     }
                     Interaction::ReconnectEdge {
                         pointer_id,
@@ -1912,10 +2271,6 @@ where
                         fixed_side,
                         ..
                     } => {
-                        self.hovered_handle =
-                            hit_handle(&snapshot, bounds, pointer.position, Some(endpoint)).map(
-                                |hit| (hit.node.id.clone(), hit.handle.id.clone(), hit.handle.kind),
-                            );
                         self.interaction = Some(Interaction::ReconnectEdge {
                             pointer_id,
                             edge,
@@ -1924,6 +2279,7 @@ where
                             fixed_side,
                             current: pointer.position,
                         });
+                        self.update_connection_candidate(&snapshot, bounds, pointer.position);
                     }
                 }
                 if auto_pan_enabled
@@ -1955,9 +2311,17 @@ where
                     return;
                 }
                 let cancelled = pointer.kind == PointerEventKind::Cancel;
+                let mut context_menu = None;
                 match interaction {
-                    Interaction::Pan { .. } => {
+                    Interaction::Pan { click_origin, .. } => {
                         self.emit(NodeGraphEvent::ViewportChangeEnded(self.state.viewport()));
+                        if click_origin.is_some() && !cancelled {
+                            context_menu = Some(node_graph_hit_test(
+                                &snapshot,
+                                ctx.bounds(),
+                                pointer.position,
+                            ));
+                        }
                     }
                     Interaction::DragNodes { origins, .. } => {
                         let current = self.state.snapshot();
@@ -1977,6 +2341,7 @@ where
                             self.emit(NodeGraphEvent::NodesChanged(changes));
                         }
                         self.emit(NodeGraphEvent::NodeDragStopped(dragged_ids));
+                        self.state.end_undo_group();
                     }
                     Interaction::ResizeNode { node, .. } => {
                         let current = self.state.snapshot();
@@ -1993,6 +2358,7 @@ where
                                 size: node.size,
                             });
                         }
+                        self.state.end_undo_group();
                     }
                     Interaction::Marquee {
                         start,
@@ -2020,32 +2386,15 @@ where
                     Interaction::Marquee { .. } => {
                         self.emit(NodeGraphEvent::SelectionEnded);
                     }
-                    Interaction::Connect {
-                        source,
-                        source_handle,
-                        ..
-                    } if !cancelled => {
+                    Interaction::Connect { .. } if !cancelled => {
+                        self.update_connection_candidate(&snapshot, ctx.bounds(), pointer.position);
                         let mut completed = None;
-                        let target = hit_handle(
-                            &snapshot,
-                            ctx.bounds(),
-                            pointer.position,
-                            Some(HandleKind::Target),
-                        );
-                        if let Some(target) =
-                            target.filter(|hit| hit.node.connectable && hit.handle.connectable)
-                        {
-                            let connection = Connection {
-                                source,
-                                source_handle: Some(source_handle),
-                                target: target.node.id.clone(),
-                                target_handle: Some(target.handle.id.clone()),
-                            };
-                            let valid = snapshot.graph.validate_connection(&connection).is_ok()
-                                && self.connection_validator.as_ref().is_none_or(|validator| {
-                                    validator(&connection, &snapshot.graph)
-                                });
-                            if valid {
+                        match self.connection_candidate.take() {
+                            Some(ConnectionCandidate {
+                                connection,
+                                verdict: Ok(()),
+                                ..
+                            }) => {
                                 completed = Some(connection.clone());
                                 self.emit(NodeGraphEvent::Connect(connection.clone()));
                                 let edge = if let Some(factory) = &mut self.edge_factory {
@@ -2060,6 +2409,14 @@ where
                                     ]));
                                 }
                             }
+                            Some(ConnectionCandidate {
+                                connection,
+                                verdict: Err(reason),
+                                ..
+                            }) => {
+                                self.emit(NodeGraphEvent::ConnectionRefused { connection, reason });
+                            }
+                            None => {}
                         }
                         self.emit(NodeGraphEvent::ConnectionEnded {
                             connection: completed,
@@ -2068,30 +2425,15 @@ where
                     Interaction::Connect { .. } => {
                         self.emit(NodeGraphEvent::ConnectionEnded { connection: None });
                     }
-                    Interaction::ReconnectEdge { edge, endpoint, .. } if !cancelled => {
+                    Interaction::ReconnectEdge { edge, .. } if !cancelled => {
+                        self.update_connection_candidate(&snapshot, ctx.bounds(), pointer.position);
                         let mut completed = None;
-                        let handle =
-                            hit_handle(&snapshot, ctx.bounds(), pointer.position, Some(endpoint));
-                        if let (Some(old_edge), Some(handle)) = (
-                            snapshot.graph.edge(&edge),
-                            handle.filter(|hit| hit.node.connectable && hit.handle.connectable),
-                        ) {
-                            let mut connection = old_edge.connection();
-                            match endpoint {
-                                HandleKind::Source => {
-                                    connection.source = handle.node.id.clone();
-                                    connection.source_handle = Some(handle.handle.id.clone());
-                                }
-                                HandleKind::Target => {
-                                    connection.target = handle.node.id.clone();
-                                    connection.target_handle = Some(handle.handle.id.clone());
-                                }
-                            }
-                            let valid = snapshot.graph.validate_connection(&connection).is_ok()
-                                && self.connection_validator.as_ref().is_none_or(|validator| {
-                                    validator(&connection, &snapshot.graph)
-                                });
-                            if valid {
+                        match self.connection_candidate.take() {
+                            Some(ConnectionCandidate {
+                                connection,
+                                verdict: Ok(()),
+                                ..
+                            }) => {
                                 let replacement = connection.clone();
                                 if self
                                     .state
@@ -2107,6 +2449,14 @@ where
                                     ]));
                                 }
                             }
+                            Some(ConnectionCandidate {
+                                connection,
+                                verdict: Err(reason),
+                                ..
+                            }) => {
+                                self.emit(NodeGraphEvent::ConnectionRefused { connection, reason });
+                            }
+                            None => {}
                         }
                         self.emit(NodeGraphEvent::EdgeReconnectEnded {
                             id: edge,
@@ -2122,7 +2472,11 @@ where
                 }
                 self.interaction = None;
                 self.hovered_handle = None;
+                self.end_connection();
                 ctx.release_pointer_capture(pointer.pointer_id);
+                if let Some(target) = context_menu {
+                    self.open_context_menu(ctx, target, pointer.position);
+                }
                 self.request_update(ctx);
                 ctx.set_handled();
             }
@@ -2301,6 +2655,66 @@ where
                         });
                         emit_element_changes(self, changes);
                     }
+                    "z" | "Z" if key.modifiers.control || key.modifiers.meta => {
+                        if key.modifiers.shift {
+                            if self.state.redo() {
+                                self.emit(NodeGraphEvent::Redone);
+                            }
+                        } else if self.state.undo() {
+                            self.emit(NodeGraphEvent::Undone);
+                        }
+                    }
+                    "y" | "Y" if key.modifiers.control || key.modifiers.meta => {
+                        if self.state.redo() {
+                            self.emit(NodeGraphEvent::Redone);
+                        }
+                    }
+                    "c" | "C" if key.modifiers.control || key.modifiers.meta => {
+                        let selected = snapshot.graph.selected_node_ids();
+                        if self.state.copy() {
+                            self.emit(NodeGraphEvent::Copied(selected));
+                        }
+                    }
+                    "x" | "X"
+                        if (key.modifiers.control || key.modifiers.meta)
+                            && config.delete_key_enabled =>
+                    {
+                        let selected = snapshot.graph.selected_node_ids();
+                        if self.state.copy() {
+                            self.emit(NodeGraphEvent::Copied(selected));
+                            let mut changes = ElementChanges::default();
+                            self.state.update(|snapshot| {
+                                delete_selected(snapshot.graph_mut(), &mut changes);
+                            });
+                            emit_element_changes(self, changes);
+                        }
+                    }
+                    "v" | "V" if key.modifiers.control || key.modifiers.meta => {
+                        if let Ok(pasted) = self.state.paste()
+                            && !pasted.is_empty()
+                        {
+                            self.emit(NodeGraphEvent::Pasted(pasted));
+                            self.emit_selection();
+                        }
+                    }
+                    "d" | "D" if key.modifiers.control || key.modifiers.meta => {
+                        if let Ok(pasted) = self.state.duplicate()
+                            && !pasted.is_empty()
+                        {
+                            self.emit(NodeGraphEvent::Pasted(pasted));
+                            self.emit_selection();
+                        }
+                    }
+                    "ContextMenu" => {
+                        let (target, position) =
+                            self.keyboard_context_target(&snapshot, ctx.bounds());
+                        self.open_context_menu(ctx, target, position);
+                    }
+                    "F10" if key.modifiers.shift => {
+                        let (target, position) =
+                            self.keyboard_context_target(&snapshot, ctx.bounds());
+                        self.open_context_menu(ctx, target, position);
+                    }
                     "a" | "A" if key.modifiers.control || key.modifiers.meta => {
                         let mut changes = ElementChanges::default();
                         self.state.update(|snapshot| {
@@ -2421,7 +2835,8 @@ where
         }
 
         if !measured_sizes.is_empty() {
-            self.state.update_authoritative(|snapshot| {
+            // Sizes the graph measured are not edits to undo.
+            self.state.update_untracked(|snapshot| {
                 for (id, size) in &measured_sizes {
                     if let Some(node) = snapshot.graph_mut().node_mut(id) {
                         node.size = *size;
@@ -2635,9 +3050,14 @@ where
         }
         paint_connection(
             ctx,
-            self.interaction.as_ref(),
-            appearance,
-            self.config.connection_line_kind,
+            ConnectionPaint {
+                interaction: self.interaction.as_ref(),
+                candidate: self.connection_candidate.as_ref(),
+                appearance,
+                theme: &theme,
+                kind: self.config.connection_line_kind,
+                bounds,
+            },
         );
         paint_nodes(
             ctx,
@@ -2655,16 +3075,21 @@ where
                     .then(|| self.node_world_layers[1].id()),
             },
         );
+        let emphasis =
+            |node: &Node<N>, handle: &Handle| self.handle_emphasis(&snapshot.graph, node, handle);
         paint_node_overlays(
             ctx,
             &snapshot,
             bounds,
             NodeOverlayOptions {
                 appearance,
+                theme: &theme,
                 hovered_handle: self.hovered_handle.as_ref(),
                 nodes_resizable: self.config.nodes_resizable,
+                handle_labels: self.config.handle_labels,
                 focused_node,
                 indices: &self.visible_node_indices,
+                emphasis: &emphasis,
             },
         );
         if let Some(Interaction::Marquee { start, current, .. }) = self.interaction {
@@ -2687,7 +3112,7 @@ where
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Canvas, ctx.bounds());
         node.name = Some(self.name.clone());
         node.description = Some(if self.built_in_events {
-            "Node graph editor. Arrow keys move selected nodes; Delete removes selected elements; Home fits the graph."
+            "Node graph editor. Arrow keys move selected nodes; Delete removes selected elements; Control+Z and Control+Shift+Z undo and redo; Control+C, Control+X, Control+V, and Control+D copy, cut, paste, and duplicate; the Menu key or Shift+F10 opens a context menu; Home fits the graph."
                 .to_string()
         } else {
             "Paint-only node graph surface controlled by application state.".to_string()
@@ -2751,6 +3176,60 @@ where
                 node.actions.push(SemanticsAction::Custom("Delete".into()));
             }
             ctx.push(node);
+        }
+
+        for index in &self.visible_node_indices {
+            let Some(graph_node) = snapshot.graph.nodes.get(*index) else {
+                continue;
+            };
+            if graph_node.hidden {
+                continue;
+            }
+            let parent = element_semantics_id(
+                ctx.widget_id(),
+                &FocusedElement::Node(graph_node.id.clone()),
+            );
+            let node_name = graph_node
+                .aria_label
+                .as_deref()
+                .unwrap_or(&graph_node.label);
+            let radius = handle_hit_radius(snapshot.viewport.zoom);
+            for handle in &graph_node.handles {
+                let position = snapshot.viewport.flow_to_screen(
+                    ctx.bounds(),
+                    handle_position(&snapshot.graph, graph_node, handle),
+                );
+                let mut node = SemanticsNode::new(
+                    handle_semantics_id(ctx.widget_id(), &graph_node.id, handle),
+                    SemanticsRole::GenericContainer,
+                    Rect::new(
+                        position.x - radius,
+                        position.y - radius,
+                        radius * 2.0,
+                        radius * 2.0,
+                    ),
+                );
+                node.parent = Some(parent);
+                node.name = Some(handle.name().to_string());
+                let connections = snapshot
+                    .graph
+                    .handle_connections(&graph_node.id, handle.kind, Some(&handle.id))
+                    .len();
+                node.description = Some(format!(
+                    "{} of {node_name}, {}",
+                    match handle.kind {
+                        HandleKind::Source => "Output",
+                        HandleKind::Target => "Input",
+                    },
+                    match connections {
+                        0 => "not connected".to_string(),
+                        1 => "1 connection".to_string(),
+                        count => format!("{count} connections"),
+                    }
+                ));
+                node.state.disabled = !handle.connectable;
+                ctx.push(node);
+            }
         }
 
         for index in &self.visible_edge_indices {
@@ -2855,6 +3334,27 @@ fn element_semantics_id(owner: WidgetId, element: &FocusedElement) -> WidgetId {
     }
     const LOW_MASK: u64 = (1_u64 << 49) - 1;
     WidgetId::new((tag << 49) | (hash & LOW_MASK))
+}
+
+/// A stable semantics id for a handle, distinct from every element's.
+fn handle_semantics_id(owner: WidgetId, node: &NodeId, handle: &Handle) -> WidgetId {
+    let kind = match handle.kind {
+        HandleKind::Source => 1_u8,
+        HandleKind::Target => 2_u8,
+    };
+    let mut hash = 0xcbf29ce484222325_u64 ^ owner.get();
+    for byte in node
+        .as_str()
+        .bytes()
+        .chain([0])
+        .chain(handle.id.as_str().bytes())
+        .chain([kind])
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    const LOW_MASK: u64 = (1_u64 << 49) - 1;
+    WidgetId::new((6_u64 << 49) | (hash & LOW_MASK))
 }
 
 fn semantics_element_for<N, E>(
@@ -3423,6 +3923,55 @@ fn hit_handle<'a, N, E>(
                 })
             })
         })
+}
+
+/// The nearest connectable handle of `kind` within `radius` screen pixels of
+/// `position`.
+fn nearest_handle<'a, N, E>(
+    snapshot: &'a GraphSnapshot<N, E>,
+    bounds: Rect,
+    position: Point,
+    kind: HandleKind,
+    radius: f32,
+) -> Option<HandleHit<'a, N>> {
+    let flow_position = snapshot.viewport.screen_to_flow(bounds, position);
+    let flow_radius = radius / snapshot.viewport.zoom.max(0.001);
+    let query = Rect::new(
+        flow_position.x - flow_radius,
+        flow_position.y - flow_radius,
+        flow_radius * 2.0,
+        flow_radius * 2.0,
+    );
+    let mut nearest: Option<(f32, HandleHit<'a, N>)> = None;
+    for index in snapshot.spatial.query_node_indices(query) {
+        let Some(node) = snapshot.graph.nodes.get(index) else {
+            continue;
+        };
+        if node.hidden || !node.connectable {
+            continue;
+        }
+        for handle in node
+            .handles
+            .iter()
+            .filter(|handle| handle.kind == kind && handle.connectable)
+        {
+            let handle_position = snapshot
+                .viewport
+                .flow_to_screen(bounds, handle_position(&snapshot.graph, node, handle));
+            let distance = vector_length(position - handle_position);
+            if distance <= radius && nearest.as_ref().is_none_or(|(best, _)| distance < *best) {
+                nearest = Some((
+                    distance,
+                    HandleHit {
+                        node,
+                        handle,
+                        position: handle_position,
+                    },
+                ));
+            }
+        }
+    }
+    nearest.map(|(_, hit)| hit)
 }
 
 /// Hit-test graph elements without invoking the built-in interaction system.
@@ -4221,7 +4770,7 @@ fn paint_edges<N, E>(
         } else if hovered {
             appearance.edge_selected.with_alpha(0.72)
         } else {
-            appearance.edge
+            edge_source_color(&snapshot.graph, edge).unwrap_or(appearance.edge)
         };
         let width = if edge.selected || focused {
             2.5
@@ -4297,56 +4846,156 @@ fn paint_edges<N, E>(
     }
 }
 
-fn paint_connection(
-    ctx: &mut PaintCtx,
-    interaction: Option<&Interaction>,
+struct ConnectionPaint<'a> {
+    interaction: Option<&'a Interaction>,
+    candidate: Option<&'a ConnectionCandidate>,
     appearance: ResolvedAppearance,
+    theme: &'a DefaultTheme,
     kind: EdgeKind,
-) {
-    let geometry = match interaction {
+    bounds: Rect,
+}
+
+/// The connection being dragged: to the pointer, or to the handle it snapped
+/// to, in the accent color where the handle takes it and the danger color
+/// with the reason where it does not.
+fn paint_connection(ctx: &mut PaintCtx, options: ConnectionPaint<'_>) {
+    let ConnectionPaint {
+        interaction,
+        candidate,
+        appearance,
+        theme,
+        kind,
+        bounds,
+    } = options;
+    let (geometry, pointer) = match interaction {
         Some(Interaction::Connect {
             source_position,
             source_side,
             current,
             ..
-        }) => make_edge_geometry(
-            *source_position,
-            *source_side,
-            *current,
-            opposite_side(*source_side),
-            kind,
-            EdgePathOptions::default(),
-        ),
+        }) => {
+            let (end, end_side) = candidate
+                .map_or((*current, opposite_side(*source_side)), |candidate| {
+                    (candidate.position, candidate.side)
+                });
+            (
+                make_edge_geometry(
+                    *source_position,
+                    *source_side,
+                    end,
+                    end_side,
+                    kind,
+                    EdgePathOptions::default(),
+                ),
+                *current,
+            )
+        }
         Some(Interaction::ReconnectEdge {
             endpoint,
             fixed_position,
             fixed_side,
             current,
             ..
-        }) => match endpoint {
-            HandleKind::Source => make_edge_geometry(
-                *current,
-                opposite_side(*fixed_side),
-                *fixed_position,
-                *fixed_side,
-                kind,
-                EdgePathOptions::default(),
-            ),
-            HandleKind::Target => make_edge_geometry(
-                *fixed_position,
-                *fixed_side,
-                *current,
-                opposite_side(*fixed_side),
-                kind,
-                EdgePathOptions::default(),
-            ),
-        },
+        }) => {
+            let (moving, moving_side) = candidate
+                .map_or((*current, opposite_side(*fixed_side)), |candidate| {
+                    (candidate.position, candidate.side)
+                });
+            let geometry = match endpoint {
+                HandleKind::Source => make_edge_geometry(
+                    moving,
+                    moving_side,
+                    *fixed_position,
+                    *fixed_side,
+                    kind,
+                    EdgePathOptions::default(),
+                ),
+                HandleKind::Target => make_edge_geometry(
+                    *fixed_position,
+                    *fixed_side,
+                    moving,
+                    moving_side,
+                    kind,
+                    EdgePathOptions::default(),
+                ),
+            };
+            (geometry, *current)
+        }
         _ => return,
     };
-    ctx.stroke(
-        geometry.path,
-        appearance.edge_selected.with_alpha(0.86),
-        StrokeStyle::new(2.0),
+    let verdict = candidate.map(|candidate| &candidate.verdict);
+    let color = match verdict {
+        Some(Ok(())) => appearance.selection,
+        Some(Err(_)) => theme.palette.danger,
+        None => appearance.edge_selected.with_alpha(0.86),
+    };
+    ctx.stroke(geometry.path, color, StrokeStyle::new(2.0));
+    if let Some(Err(reason)) = verdict {
+        paint_refusal(ctx, theme, bounds, pointer, reason);
+    }
+}
+
+/// Why the handle under a connection refuses it, in a note beside the
+/// pointer.
+fn paint_refusal(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    bounds: Rect,
+    pointer: Point,
+    reason: &str,
+) {
+    let style = TextStyle {
+        font_size: theme.text.xs.size,
+        line_height: theme.text.xs.line_height,
+        color: theme.palette.danger_soft_text,
+        ..theme.body_text_style()
+    };
+    let size = ctx
+        .measure_text(reason.to_string(), style.clone())
+        .ok()
+        .map(|measurement| measurement.bounds.size)
+        .unwrap_or(Size::new(reason.len() as f32 * 6.5, style.line_height));
+    let mut note = Rect::new(
+        pointer.x + 14.0,
+        pointer.y + 14.0,
+        size.width + 12.0,
+        size.height + 6.0,
+    );
+    if note.max_x() > bounds.max_x() {
+        note = Rect::new(
+            pointer.x - 14.0 - note.width(),
+            note.y(),
+            note.width(),
+            note.height(),
+        );
+    }
+    if note.max_y() > bounds.max_y() {
+        note = Rect::new(
+            note.x(),
+            pointer.y - 14.0 - note.height(),
+            note.width(),
+            note.height(),
+        );
+    }
+    ctx.fill_rrect_bordered(
+        note,
+        [6.0; 4],
+        theme.palette.danger_soft,
+        Border {
+            width: 1.0,
+            color: theme.palette.danger_border,
+        },
+    );
+    // Room past the measured width, so rounding cannot wrap the last word.
+    ctx.draw_text(
+        Rect::new(
+            note.x() + 6.0,
+            note.y() + 3.0,
+            size.width + style.font_size,
+            size.height,
+        ),
+        reason.to_string(),
+        style,
     );
 }
 
@@ -4552,26 +5201,34 @@ fn paint_default_node_body<N>(
     }
 }
 
-struct NodeOverlayOptions<'a> {
+type HandleEmphasisFn<'a, N> = dyn Fn(&Node<N>, &Handle) -> HandleEmphasis + 'a;
+
+struct NodeOverlayOptions<'a, N> {
     appearance: ResolvedAppearance,
+    theme: &'a DefaultTheme,
     hovered_handle: Option<&'a (NodeId, HandleId, HandleKind)>,
     nodes_resizable: bool,
+    handle_labels: bool,
     focused_node: Option<&'a NodeId>,
     indices: &'a [usize],
+    emphasis: &'a HandleEmphasisFn<'a, N>,
 }
 
 fn paint_node_overlays<N, E>(
     ctx: &mut PaintCtx,
     snapshot: &GraphSnapshot<N, E>,
     bounds: Rect,
-    options: NodeOverlayOptions<'_>,
+    options: NodeOverlayOptions<'_, N>,
 ) {
     let NodeOverlayOptions {
         appearance,
+        theme,
         hovered_handle,
         nodes_resizable,
+        handle_labels,
         focused_node,
         indices,
+        emphasis,
     } = options;
     for index in indices {
         let Some(node) = snapshot.graph.nodes.get(*index) else {
@@ -4612,10 +5269,18 @@ fn paint_node_overlays<N, E>(
             let hovered = hovered_handle.is_some_and(|(node_id, handle_id, kind)| {
                 node_id == &node.id && handle_id == &handle.id && *kind == handle.kind
             });
-            let color = match handle.kind {
+            let emphasis = emphasis(node, handle);
+            let color = handle.color.unwrap_or(match handle.kind {
                 HandleKind::Source => appearance.source_handle,
                 HandleKind::Target => appearance.target_handle,
-            };
+            });
+            if emphasis == HandleEmphasis::Available {
+                ctx.stroke(
+                    Path::circle(position, radius + 3.5),
+                    appearance.selection.with_alpha(0.72),
+                    StrokeStyle::new(1.5),
+                );
+            }
             if hovered {
                 ctx.fill(
                     Path::circle(position, radius + 3.0),
@@ -4630,18 +5295,103 @@ fn paint_node_overlays<N, E>(
                     radius * 2.0,
                 ),
                 [radius; 4],
-                if handle.connectable {
-                    color
-                } else {
+                if !handle.connectable {
                     color.with_alpha(0.38)
+                } else if emphasis == HandleEmphasis::Dimmed {
+                    color.with_alpha(0.25)
+                } else {
+                    color
                 },
                 Border {
                     width: 1.25,
                     color: appearance.background,
                 },
             );
+            if handle_labels && let Some(label) = &handle.label {
+                paint_handle_label(
+                    ctx,
+                    theme,
+                    rect,
+                    position,
+                    radius,
+                    handle.position,
+                    label,
+                    snapshot.viewport.zoom,
+                    emphasis == HandleEmphasis::Dimmed,
+                );
+            }
         }
     }
+}
+
+/// A handle's label, inside its node beside the handle, scaled with the
+/// graph and left out when too small to read.
+#[allow(clippy::too_many_arguments)]
+fn paint_handle_label(
+    ctx: &mut PaintCtx,
+    theme: &DefaultTheme,
+    node_rect: Rect,
+    anchor: Point,
+    radius: f32,
+    side: HandlePosition,
+    label: &str,
+    zoom: f32,
+    dimmed: bool,
+) {
+    let font_size = theme.text.xs.size * zoom;
+    if font_size < 7.0 {
+        return;
+    }
+    let style = TextStyle {
+        font_size,
+        line_height: theme.text.xs.line_height * zoom,
+        color: theme
+            .palette
+            .text_muted
+            .with_alpha(if dimmed { 0.45 } else { 1.0 }),
+        ..theme.body_text_style()
+    };
+    let size = ctx
+        .measure_text(label.to_string(), style.clone())
+        .ok()
+        .map(|measurement| measurement.bounds.size)
+        .unwrap_or(Size::new(
+            label.len() as f32 * font_size * 0.55,
+            style.line_height,
+        ));
+    let gap = radius + 4.0 * zoom;
+    let origin = match side {
+        HandlePosition::Left => Point::new(anchor.x + gap, anchor.y - size.height * 0.5),
+        HandlePosition::Right => {
+            Point::new(anchor.x - gap - size.width, anchor.y - size.height * 0.5)
+        }
+        HandlePosition::Top => Point::new(anchor.x - size.width * 0.5, anchor.y + gap),
+        HandlePosition::Bottom => {
+            Point::new(anchor.x - size.width * 0.5, anchor.y - gap - size.height)
+        }
+    };
+    // Room past the measured width, so rounding cannot wrap the last letter.
+    let room = Size::new(size.width + font_size, size.height);
+    ctx.push_clip_rect(node_rect);
+    ctx.draw_text(
+        Rect::from_origin_size(origin, room),
+        label.to_string(),
+        style,
+    );
+    ctx.pop_clip();
+}
+
+/// The color an edge takes from its source handle, if that handle has one.
+fn edge_source_color<N, E>(graph: &GraphModel<N, E>, edge: &Edge<E>) -> Option<Color> {
+    source_handle_color(graph.node(&edge.source)?, edge)
+}
+
+fn source_handle_color<N, E>(node: &Node<N>, edge: &Edge<E>) -> Option<Color> {
+    let handle = match &edge.source_handle {
+        Some(id) => node.handle_by_id(id, HandleKind::Source),
+        None => node.first_handle(HandleKind::Source),
+    }?;
+    handle.color.map(|color| color.with_alpha(0.82))
 }
 
 fn paint_marker(
@@ -6763,6 +7513,440 @@ mod tests {
                 .any(|(_, event)| matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })))
         );
         Ok(())
+    }
+
+    fn canvas_bounds(runtime: &mut Runtime, window_id: sui_core::WindowId) -> Rect {
+        runtime
+            .render(window_id)
+            .unwrap()
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Canvas)
+            .expect("graph semantics")
+            .bounds
+    }
+
+    fn handle_on_screen<N, E>(
+        state: &NodeGraphState<N, E>,
+        bounds: Rect,
+        node: &str,
+        handle: &str,
+        kind: HandleKind,
+    ) -> Point
+    where
+        N: Clone + PartialEq + 'static,
+        E: Clone + PartialEq + 'static,
+    {
+        let snapshot = state.snapshot();
+        let node = snapshot.graph.node(&NodeId::from(node)).unwrap();
+        let handle = node.handle_by_id(&HandleId::from(handle), kind).unwrap();
+        snapshot
+            .viewport
+            .flow_to_screen(bounds, handle_position(&snapshot.graph, node, handle))
+    }
+
+    fn secondary_pointer(kind: PointerEventKind, position: Point, pressed: bool) -> Event {
+        let mut pointer = match primary_pointer(kind, position, pressed) {
+            Event::Pointer(pointer) => pointer,
+            _ => unreachable!(),
+        };
+        pointer.button = Some(PointerButton::Secondary);
+        pointer.buttons = if pressed {
+            let mut buttons = PointerButtons::NONE;
+            buttons.insert(PointerButton::Secondary);
+            buttons
+        } else {
+            PointerButtons::NONE
+        };
+        Event::Pointer(pointer)
+    }
+
+    fn key(name: &str, control: bool, shift: bool) -> Event {
+        let mut key = sui_core::KeyboardEvent::new(name, KeyState::Pressed);
+        key.modifiers.control = control;
+        key.modifiers.shift = shift;
+        Event::Keyboard(key)
+    }
+
+    fn drag(
+        runtime: &mut Runtime,
+        window_id: sui_core::WindowId,
+        from: Point,
+        to: Point,
+    ) -> sui_core::Result<()> {
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, from, true),
+        )?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Move, to, true))?;
+        runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, to, false))
+    }
+
+    const COLOR_PORT: Color = Color::rgba(0.6, 0.3, 0.9, 1.0);
+    const NUMBER_PORT: Color = Color::rgba(0.95, 0.65, 0.1, 1.0);
+
+    /// A color source and a node with a color input and a number input.
+    fn typed_state() -> NodeGraphState<(), ()> {
+        NodeGraphState::new(
+            vec![
+                Node::new("color", Point::new(20.0, 40.0), ()).handles([Handle::source(
+                    "out",
+                    HandlePosition::Right,
+                )
+                .label("color")
+                .color(COLOR_PORT)]),
+                Node::new("mix", Point::new(360.0, 40.0), ())
+                    .label("Mix")
+                    .size(Size::new(180.0, 120.0))
+                    .handles([
+                        Handle::target("a", HandlePosition::Left)
+                            .offset(0.3)
+                            .label("a")
+                            .color(COLOR_PORT),
+                        Handle::target("t", HandlePosition::Left)
+                            .offset(0.7)
+                            .label("t")
+                            .color(NUMBER_PORT),
+                    ]),
+            ],
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    /// Colors must match: `a` takes colors, `t` numbers.
+    fn typed_rule(connection: &Connection, _graph: &GraphModel<(), ()>) -> Result<(), String> {
+        match connection.target_handle.as_ref().map(HandleId::as_str) {
+            Some("t") => Err("A color can't feed the number input t".to_string()),
+            _ => Ok(()),
+        }
+    }
+
+    #[test]
+    fn handles_show_their_color_and_are_named_for_screen_readers() -> sui_core::Result<()> {
+        let (mut runtime, window_id) = build_runtime(typed_state());
+        let output = runtime.render(window_id)?;
+
+        let input = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("t"))
+            .expect("the t handle has semantics");
+        assert_eq!(
+            input.description.as_deref(),
+            Some("Input of Mix, not connected")
+        );
+        let mut fills = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRoundedRect {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                fills.push(*color);
+            }
+        });
+        assert!(fills.contains(&COLOR_PORT) && fills.contains(&NUMBER_PORT));
+        Ok(())
+    }
+
+    #[test]
+    fn edges_take_the_color_of_their_source_handle() -> sui_core::Result<()> {
+        let state = typed_state();
+        state
+            .add_edge(Edge::new("edge", "color", "mix", ()).handles("out", "a"))
+            .unwrap();
+        let (mut runtime, window_id) = build_runtime(state);
+        let output = runtime.render(window_id)?;
+        let mut strokes = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::StrokePath {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                strokes.push(*color);
+            }
+        });
+        assert!(
+            strokes.contains(&COLOR_PORT.with_alpha(0.82)),
+            "{strokes:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_connection_snaps_to_a_nearby_handle_and_a_refusal_says_why() -> sui_core::Result<()> {
+        let state = typed_state();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let log = Rc::clone(&events);
+        let (mut runtime, window_id) = build_runtime_with_graph(
+            NodeGraph::new("Graph", state.clone())
+                .connection_rule(typed_rule)
+                .on_change(move |event| log.borrow_mut().push(event)),
+        );
+        let bounds = canvas_bounds(&mut runtime, window_id);
+        let out = handle_on_screen(&state, bounds, "color", "out", HandleKind::Source);
+        let a = handle_on_screen(&state, bounds, "mix", "a", HandleKind::Target);
+        let t = handle_on_screen(&state, bounds, "mix", "t", HandleKind::Target);
+
+        // Dropped beside the handle, not on it.
+        drag(&mut runtime, window_id, out, a + Vector::new(-14.0, 4.0))?;
+        let graph = state.graph();
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.edges[0].target_handle, Some(HandleId::from("a")));
+
+        // Not a double-click.
+        runtime.tick(1.0);
+        drag(&mut runtime, window_id, out, t)?;
+        assert_eq!(state.graph().edges.len(), 1, "t refuses it");
+        assert!(events.borrow().iter().any(|event| matches!(
+            event,
+            NodeGraphEvent::ConnectionRefused { reason, connection }
+                if reason == "A color can't feed the number input t"
+                    && connection.target_handle == Some(HandleId::from("t"))
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn a_connection_being_dragged_dims_the_handles_that_refuse_it() -> sui_core::Result<()> {
+        let state = typed_state();
+        let (mut runtime, window_id) = build_runtime_with_graph(
+            NodeGraph::new("Graph", state.clone()).connection_rule(typed_rule),
+        );
+        let bounds = canvas_bounds(&mut runtime, window_id);
+        let out = handle_on_screen(&state, bounds, "color", "out", HandleKind::Source);
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, out, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Move, Point::new(300.0, 300.0), true),
+        )?;
+        let output = runtime.render(window_id)?;
+        let mut fills = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRoundedRect {
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                fills.push(*color);
+            }
+        });
+        assert!(fills.contains(&NUMBER_PORT.with_alpha(0.25)), "t dims");
+        assert!(fills.contains(&COLOR_PORT), "a stays bright");
+        Ok(())
+    }
+
+    #[test]
+    fn a_reconnection_is_checked_against_the_graph_without_its_edge() -> sui_core::Result<()> {
+        // Each input takes one edge.
+        let state = NodeGraphState::<(), ()>::new(
+            vec![
+                Node::new("source", Point::new(20.0, 40.0), ()),
+                Node::new("target", Point::new(360.0, 40.0), ()),
+            ],
+            vec![{
+                let mut edge = Edge::new("edge", "source", "target", ());
+                edge.selected = true;
+                edge
+            }],
+        )
+        .unwrap();
+        let (mut runtime, window_id) = build_runtime_with_graph(
+            NodeGraph::new("Graph", state.clone()).connection_rule(|connection, graph| {
+                if graph
+                    .incoming_edges(&connection.target)
+                    .iter()
+                    .any(|edge| edge.target_handle == connection.target_handle)
+                {
+                    Err("That input already has a connection".to_string())
+                } else {
+                    Ok(())
+                }
+            }),
+        );
+        let bounds = canvas_bounds(&mut runtime, window_id);
+        let end = handle_on_screen(&state, bounds, "target", "target", HandleKind::Target);
+        drag(&mut runtime, window_id, end, end + Vector::new(-3.0, 3.0))?;
+        let edges = state.graph().edges;
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            edges[0].target,
+            NodeId::from("target"),
+            "dropped back on its own input"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_right_click_asks_for_a_context_menu_and_selects_what_it_is_for() -> sui_core::Result<()> {
+        let state = NodeGraphState::<(), ()>::from_model(graph());
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let record = Rc::clone(&asked);
+        let (mut runtime, window_id) = build_runtime_with_graph(
+            NodeGraph::new("Graph", state.clone()).on_context_menu(move |_, target, position| {
+                record.borrow_mut().push((target, position));
+            }),
+        );
+        let bounds = canvas_bounds(&mut runtime, window_id);
+        let node = state
+            .snapshot()
+            .viewport
+            .flow_to_screen(bounds, Point::new(60.0, 60.0));
+        runtime.handle_event(
+            window_id,
+            secondary_pointer(PointerEventKind::Down, node, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            secondary_pointer(PointerEventKind::Up, node, false),
+        )?;
+        assert_eq!(
+            asked.borrow().as_slice(),
+            &[(NodeGraphHit::Node(NodeId::from("source")), node)]
+        );
+        assert!(state.node(&NodeId::from("source")).unwrap().selected);
+
+        // A right-drag pans instead.
+        let viewport = state.viewport();
+        let pane = Point::new(bounds.max_x() - 20.0, bounds.max_y() - 20.0);
+        runtime.handle_event(
+            window_id,
+            secondary_pointer(PointerEventKind::Down, pane, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            secondary_pointer(PointerEventKind::Move, pane + Vector::new(-40.0, 0.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            secondary_pointer(PointerEventKind::Up, pane + Vector::new(-40.0, 0.0), false),
+        )?;
+        assert_eq!(asked.borrow().len(), 1);
+        assert_ne!(state.viewport(), viewport);
+
+        // The Menu key asks for the selected node's menu.
+        runtime.handle_event(window_id, key("ContextMenu", false, false))?;
+        assert_eq!(asked.borrow().len(), 2);
+        assert_eq!(
+            asked.borrow()[1].0,
+            NodeGraphHit::Node(NodeId::from("source"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn keyboard_shortcuts_undo_redo_copy_paste_and_duplicate() -> sui_core::Result<()> {
+        let state = NodeGraphState::<(), ()>::from_model(graph()).with_history(20);
+        let (mut runtime, window_id) = build_runtime(state.clone());
+        let bounds = canvas_bounds(&mut runtime, window_id);
+        let node = state
+            .snapshot()
+            .viewport
+            .flow_to_screen(bounds, Point::new(60.0, 60.0));
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, node, true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, node, false),
+        )?;
+        assert!(!state.can_undo(), "selecting is not a step");
+
+        runtime.handle_event(window_id, key("d", true, false))?;
+        assert!(state.node(&NodeId::from("source-copy")).is_some());
+        runtime.handle_event(window_id, key("z", true, false))?;
+        assert!(state.node(&NodeId::from("source-copy")).is_none());
+        runtime.handle_event(window_id, key("z", true, true))?;
+        assert!(state.node(&NodeId::from("source-copy")).is_some());
+
+        runtime.handle_event(window_id, key("c", true, false))?;
+        runtime.handle_event(window_id, key("v", true, false))?;
+        assert!(
+            state.node(&NodeId::from("source-copy-2")).is_some(),
+            "{:?}",
+            state
+                .graph()
+                .nodes
+                .iter()
+                .map(|node| &node.id)
+                .collect::<Vec<_>>()
+        );
+        runtime.handle_event(window_id, key("y", true, false))?;
+        assert_eq!(state.graph().nodes.len(), 4, "nothing to redo");
+        Ok(())
+    }
+
+    #[test]
+    fn a_drag_is_one_undo_step() -> sui_core::Result<()> {
+        let state = NodeGraphState::<(), ()>::from_model(graph()).with_history(20);
+        let (mut runtime, window_id) = build_runtime(state.clone());
+        let bounds = canvas_bounds(&mut runtime, window_id);
+        let viewport = state.viewport();
+        let start = viewport.flow_to_screen(bounds, Point::new(60.0, 60.0));
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, start, true),
+        )?;
+        for step in 1..=4 {
+            runtime.handle_event(
+                window_id,
+                primary_pointer(
+                    PointerEventKind::Move,
+                    start + Vector::new(20.0 * step as f32, 0.0),
+                    true,
+                ),
+            )?;
+        }
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, start + Vector::new(80.0, 0.0), false),
+        )?;
+        assert_eq!(state.history_status().undo_steps, 1);
+        assert!(state.undo());
+        assert_eq!(
+            state.node(&NodeId::from("source")).unwrap().position,
+            Point::new(20.0, 40.0)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sizes_the_graph_measures_are_not_undo_steps() -> sui_core::Result<()> {
+        let state = NodeGraphState::<(), ()>::new(
+            vec![
+                Node::new("custom", Point::ZERO, ())
+                    .kind("custom")
+                    .content_sized(Size::new(40.0, 40.0), Size::new(400.0, 400.0)),
+            ],
+            Vec::new(),
+        )
+        .unwrap()
+        .with_history(20);
+        let (mut runtime, window_id) = build_runtime_with_graph(
+            NodeGraph::new("Graph", state.clone())
+                .node_type("custom", |_, _| SizedBoxLike(Size::new(120.0, 60.0))),
+        );
+        runtime.render(window_id)?;
+        assert_eq!(
+            state.node(&NodeId::from("custom")).unwrap().size,
+            Size::new(120.0, 60.0)
+        );
+        assert!(!state.can_undo());
+        Ok(())
+    }
+
+    struct SizedBoxLike(Size);
+
+    impl Widget for SizedBoxLike {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(self.0)
+        }
     }
 
     fn node_benchmark_document() -> (Vec<Node<()>>, Vec<Edge<()>>) {

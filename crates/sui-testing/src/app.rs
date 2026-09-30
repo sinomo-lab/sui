@@ -12,10 +12,17 @@ const SETTLE_STEP: f64 = 1.0 / 60.0;
 use crate::{harness::Harness, window::TestWindow};
 
 /// Options for a [`TestApp`], from [`TestApp::builder`].
+///
+/// Apps run headless unless asked to run live: their windows render
+/// offscreen, sharing one GPU device, so tests run in parallel. A live app
+/// opens real windows on the platform's event loop, one app at a time; ask
+/// for one with [`Self::live`] or [`Self::visible`], or run every test live
+/// by setting `SUI_TEST_BACKEND=live`.
 pub struct TestAppBuilder<F> {
     build: F,
     vsync_enabled: bool,
     visible: bool,
+    live: bool,
     display_capabilities: Option<DisplayCapabilities>,
 }
 
@@ -24,14 +31,23 @@ where
     F: FnOnce() -> A + Send + 'static,
     A: IntoTestRuntime,
 {
+    /// Wait for vertical sync when the app runs live.
     pub fn vsync(mut self, enabled: bool) -> Self {
         self.vsync_enabled = enabled;
         self
     }
 
-    /// Show the app's windows on screen when it runs live.
+    /// Show the app's windows on screen, which runs it live.
     pub fn visible(mut self, visible: bool) -> Self {
         self.visible = visible;
+        self
+    }
+
+    /// Run the app in real windows on the platform's event loop, as frame
+    /// pacing and native input tests need, rather than headless. Live apps
+    /// run one at a time. Where there is no display, the app runs headless.
+    pub fn live(mut self, live: bool) -> Self {
+        self.live = live;
         self
     }
 
@@ -51,7 +67,7 @@ where
                 capabilities,
                 30.0,
             )?,
-            None if live_backend_available() => {
+            None if (self.live || self.visible || live_by_default()) && display_available() => {
                 let build = self.build;
                 Harness::new_live_with_options(
                     move || build().into_test_runtime(),
@@ -145,6 +161,7 @@ impl TestApp {
             build,
             vsync_enabled: true,
             visible: false,
+            live: false,
             display_capabilities: None,
         }
     }
@@ -313,7 +330,12 @@ impl TestApp {
     }
 }
 
-fn live_backend_available() -> bool {
+/// Whether `SUI_TEST_BACKEND=live` asks for every app to run live.
+fn live_by_default() -> bool {
+    std::env::var("SUI_TEST_BACKEND").as_deref() == Ok("live")
+}
+
+fn display_available() -> bool {
     #[cfg(target_os = "linux")]
     {
         std::env::var_os("WAYLAND_DISPLAY").is_some()

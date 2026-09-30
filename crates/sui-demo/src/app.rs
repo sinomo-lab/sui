@@ -52,8 +52,8 @@ use crate::markdown_demo::{
 };
 #[cfg(all(feature = "nodes", test))]
 use crate::nodes_demo::{
-    NODES_ADD_NODE_BUTTON, NODES_DEMO_NAME, NODES_MAIN_GRAPH_NAME, NODES_MINIMAP_NAME,
-    NODES_SCRATCH_GRAPH_NAME, NODES_SIDEBAR_SCROLL_NAME, NODES_STATS_NAME, NODES_STATUS_NAME,
+    NODES_ADD_NODE_BUTTON, NODES_DEMO_NAME, NODES_INSPECTOR_NAME, NODES_LOG_NAME,
+    NODES_MAIN_GRAPH_NAME, NODES_MINIMAP_NAME,
 };
 #[cfg(feature = "nodes")]
 use crate::nodes_demo::{NODES_TAB_LABEL, build_nodes_demo_with_theme};
@@ -1714,7 +1714,7 @@ fn build_dev_demo_entries(
         #[cfg(feature = "nodes")]
         themed_demo!(
             NODES_TAB_LABEL,
-            "Custom nodes, subflows, resizing, reconnection, and a minimap.",
+            "A color lab: typed ports, live values, undo, copy and paste, and menus.",
             IconGlyph::Workflow,
             DecorativeHue::Green,
             |theme| build_nodes_demo_with_theme(theme)
@@ -6757,12 +6757,9 @@ final_max_luminance={final_max_luminance}
             (SemanticsRole::GenericContainer, NODES_DEMO_NAME),
             (SemanticsRole::Canvas, NODES_MAIN_GRAPH_NAME),
             (SemanticsRole::Canvas, NODES_MINIMAP_NAME),
-            (SemanticsRole::Canvas, NODES_SCRATCH_GRAPH_NAME),
-            (SemanticsRole::ScrollView, NODES_SIDEBAR_SCROLL_NAME),
             (SemanticsRole::Button, NODES_ADD_NODE_BUTTON),
-            (SemanticsRole::Button, "Run node"),
-            (SemanticsRole::Text, NODES_STATS_NAME),
-            (SemanticsRole::Text, NODES_STATUS_NAME),
+            (SemanticsRole::Text, NODES_INSPECTOR_NAME),
+            (SemanticsRole::Text, NODES_LOG_NAME),
         ] {
             assert!(
                 !find(role, name).bounds.is_empty(),
@@ -6825,8 +6822,8 @@ final_max_luminance={final_max_luminance}
                     .accessibility
                     .nodes
                     .iter()
-                    .find(|node| node.name.as_deref() == Some("Resizable pipeline group"))
-                    .expect("pipeline group semantics");
+                    .find(|node| node.name.as_deref() == Some("Brand palette group"))
+                    .expect("palette group semantics");
                 let select = Point::new(group.bounds.x() + 20.0, group.bounds.max_y() - 20.0);
                 let mut down = PointerEvent::new(PointerEventKind::Down, select);
                 down.pointer_id = 91;
@@ -6854,7 +6851,7 @@ final_max_luminance={final_max_luminance}
                 let selected = window
                     .snapshot_now()
                     .expect("capture selected pipeline group snapshot");
-                for name in ["Resizable pipeline group", "Normalize"] {
+                for name in ["Brand palette group", "Brand"] {
                     assert!(
                         selected.accessibility.nodes.iter().any(|node| {
                             node.name.as_deref() == Some(name) && node.state.selected

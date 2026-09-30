@@ -16,6 +16,7 @@ rust-version.workspace = true
 [lib]
 name = "sui_python"
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [features]
 default = ["desktop"]

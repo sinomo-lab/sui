@@ -35,7 +35,11 @@ pub(crate) fn analytic_path_buffer_size<T>(capacity: usize) -> u64 {
     capacity.max(1) as u64 * std::mem::size_of::<T>() as u64
 }
 
+#[derive(Clone)]
 pub(crate) struct SharedRenderer {
+    /// Whether this is the device renderers without a window share; see
+    /// `crate::device::OFFSCREEN`.
+    pub(crate) offscreen: bool,
     pub(crate) collect_pipeline_timings: bool,
     pub(crate) pipeline_create_time_us: u64,
     pub(crate) pipeline_create_count: usize,
@@ -175,152 +179,136 @@ impl SharedRenderer {
         } else {
             self.sdr_fit
         };
-        self.pipelines
-            .entry((format, kind, fit))
-            .or_insert_with(|| {
-                let fit_constants = [("SDR_FIT", f64::from(fit.shader_value()))];
-                let started = self.collect_pipeline_timings.then(web_time::Instant::now);
-                let shader_label = match kind {
-                    PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
-                        "SUI solid scene shader"
-                    }
-                    PipelineKind::Textured | PipelineKind::TexturedClipped => {
-                        "SUI textured scene shader"
-                    }
-                    PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
-                        "SUI text atlas shader"
-                    }
-                    PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
-                        "SUI analytic path shader"
-                    }
-                    PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
-                        "SUI widget shader"
-                    }
-                    PipelineKind::RoundedRect | PipelineKind::RoundedRectClipped => {
-                        "SUI rounded rect shader"
-                    }
-                    PipelineKind::GradientRect | PipelineKind::GradientRectClipped => {
-                        "SUI gradient rect shader"
-                    }
-                    PipelineKind::OutputTransform => "SUI output transform shader",
-                };
-                let shader_source = match kind {
-                    PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
-                        SHADER_SOURCE
-                    }
-                    PipelineKind::Textured | PipelineKind::TexturedClipped => {
-                        TEXTURED_SHADER_SOURCE
-                    }
-                    PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
-                        if self.dual_source_blending_enabled =>
-                    {
-                        TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE
-                    }
-                    PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
-                        TEXT_ATLAS_SHADER_SOURCE
-                    }
-                    PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
-                        ANALYTIC_PATH_SHADER_SOURCE
-                    }
-                    PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
-                        WIDGET_SHADER_SOURCE
-                    }
-                    PipelineKind::RoundedRect | PipelineKind::RoundedRectClipped => {
-                        ROUNDED_RECT_SHADER_SOURCE
-                    }
-                    PipelineKind::GradientRect | PipelineKind::GradientRectClipped => {
-                        GRADIENT_RECT_SHADER_SOURCE
-                    }
-                    PipelineKind::OutputTransform => OUTPUT_TRANSFORM_SHADER_SOURCE,
-                };
-                let shader = self
-                    .device
-                    .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(shader_label),
-                        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-                    });
+        let key = (format, kind, fit);
+        let offscreen = self.offscreen;
+        let created = !self.pipelines.contains_key(&key);
+        let pipeline = self.pipelines.entry(key).or_insert_with(|| {
+            let fit_constants = [("SDR_FIT", f64::from(fit.shader_value()))];
+            let started = self.collect_pipeline_timings.then(web_time::Instant::now);
+            let shader_label = match kind {
+                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
+                    "SUI solid scene shader"
+                }
+                PipelineKind::Textured | PipelineKind::TexturedClipped => {
+                    "SUI textured scene shader"
+                }
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => "SUI text atlas shader",
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
+                    "SUI analytic path shader"
+                }
+                PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
+                    "SUI widget shader"
+                }
+                PipelineKind::RoundedRect | PipelineKind::RoundedRectClipped => {
+                    "SUI rounded rect shader"
+                }
+                PipelineKind::GradientRect | PipelineKind::GradientRectClipped => {
+                    "SUI gradient rect shader"
+                }
+                PipelineKind::OutputTransform => "SUI output transform shader",
+            };
+            let shader_source = match kind {
+                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
+                    SHADER_SOURCE
+                }
+                PipelineKind::Textured | PipelineKind::TexturedClipped => TEXTURED_SHADER_SOURCE,
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+                    if self.dual_source_blending_enabled =>
+                {
+                    TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE
+                }
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                    TEXT_ATLAS_SHADER_SOURCE
+                }
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
+                    ANALYTIC_PATH_SHADER_SOURCE
+                }
+                PipelineKind::WidgetShader | PipelineKind::WidgetShaderClipped => {
+                    WIDGET_SHADER_SOURCE
+                }
+                PipelineKind::RoundedRect | PipelineKind::RoundedRectClipped => {
+                    ROUNDED_RECT_SHADER_SOURCE
+                }
+                PipelineKind::GradientRect | PipelineKind::GradientRectClipped => {
+                    GRADIENT_RECT_SHADER_SOURCE
+                }
+                PipelineKind::OutputTransform => OUTPUT_TRANSFORM_SHADER_SOURCE,
+            };
+            let shader = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(shader_label),
+                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+                });
 
-                let depth_stencil = match kind {
-                    PipelineKind::Solid
-                    | PipelineKind::Textured
-                    | PipelineKind::TextAtlas
-                    | PipelineKind::AnalyticPath
-                    | PipelineKind::WidgetShader
-                    | PipelineKind::RoundedRect
-                    | PipelineKind::GradientRect
-                    | PipelineKind::OutputTransform => None,
-                    PipelineKind::Clipped
-                    | PipelineKind::TexturedClipped
-                    | PipelineKind::TextAtlasClipped
-                    | PipelineKind::AnalyticPathClipped
-                    | PipelineKind::WidgetShaderClipped
-                    | PipelineKind::RoundedRectClipped
-                    | PipelineKind::GradientRectClipped => Some(wgpu::DepthStencilState {
-                        format: STENCIL_FORMAT,
-                        depth_write_enabled: Some(false),
-                        depth_compare: Some(wgpu::CompareFunction::Always),
-                        stencil: wgpu::StencilState {
-                            front: wgpu::StencilFaceState {
-                                compare: wgpu::CompareFunction::Equal,
-                                fail_op: wgpu::StencilOperation::Keep,
-                                depth_fail_op: wgpu::StencilOperation::Keep,
-                                pass_op: wgpu::StencilOperation::Keep,
-                            },
-                            back: wgpu::StencilFaceState {
-                                compare: wgpu::CompareFunction::Equal,
-                                fail_op: wgpu::StencilOperation::Keep,
-                                depth_fail_op: wgpu::StencilOperation::Keep,
-                                pass_op: wgpu::StencilOperation::Keep,
-                            },
-                            read_mask: u32::MAX,
-                            write_mask: 0,
+            let depth_stencil = match kind {
+                PipelineKind::Solid
+                | PipelineKind::Textured
+                | PipelineKind::TextAtlas
+                | PipelineKind::AnalyticPath
+                | PipelineKind::WidgetShader
+                | PipelineKind::RoundedRect
+                | PipelineKind::GradientRect
+                | PipelineKind::OutputTransform => None,
+                PipelineKind::Clipped
+                | PipelineKind::TexturedClipped
+                | PipelineKind::TextAtlasClipped
+                | PipelineKind::AnalyticPathClipped
+                | PipelineKind::WidgetShaderClipped
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRectClipped => Some(wgpu::DepthStencilState {
+                    format: STENCIL_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Keep,
                         },
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    PipelineKind::ClipMask => Some(wgpu::DepthStencilState {
-                        format: STENCIL_FORMAT,
-                        depth_write_enabled: Some(false),
-                        depth_compare: Some(wgpu::CompareFunction::Always),
-                        stencil: wgpu::StencilState {
-                            front: wgpu::StencilFaceState {
-                                compare: wgpu::CompareFunction::Equal,
-                                fail_op: wgpu::StencilOperation::Keep,
-                                depth_fail_op: wgpu::StencilOperation::Keep,
-                                pass_op: wgpu::StencilOperation::IncrementClamp,
-                            },
-                            back: wgpu::StencilFaceState {
-                                compare: wgpu::CompareFunction::Equal,
-                                fail_op: wgpu::StencilOperation::Keep,
-                                depth_fail_op: wgpu::StencilOperation::Keep,
-                                pass_op: wgpu::StencilOperation::IncrementClamp,
-                            },
-                            read_mask: u32::MAX,
-                            write_mask: u32::MAX,
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Keep,
                         },
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                };
-                let blend = match kind {
-                    PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
-                        if self.dual_source_blending_enabled =>
-                    {
-                        wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Src1,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrc1,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }
-                    }
-                    PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => wgpu::BlendState {
+                        read_mask: u32::MAX,
+                        write_mask: 0,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                PipelineKind::ClipMask => Some(wgpu::DepthStencilState {
+                    format: STENCIL_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::IncrementClamp,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::IncrementClamp,
+                        },
+                        read_mask: u32::MAX,
+                        write_mask: u32::MAX,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+            };
+            let blend = match kind {
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+                    if self.dual_source_blending_enabled =>
+                {
+                    wgpu::BlendState {
                         color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            src_factor: wgpu::BlendFactor::Src1,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc1,
                             operation: wgpu::BlendOperation::Add,
                         },
                         alpha: wgpu::BlendComponent {
@@ -328,197 +316,204 @@ impl SharedRenderer {
                             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                             operation: wgpu::BlendOperation::Add,
                         },
-                    },
-                    PipelineKind::OutputTransform => wgpu::BlendState::REPLACE,
-                    PipelineKind::Solid
-                    | PipelineKind::Clipped
-                    | PipelineKind::Textured
-                    | PipelineKind::TexturedClipped
-                    | PipelineKind::AnalyticPath
-                    | PipelineKind::AnalyticPathClipped
-                    | PipelineKind::WidgetShader
-                    | PipelineKind::WidgetShaderClipped
-                    | PipelineKind::RoundedRect
-                    | PipelineKind::RoundedRectClipped
-                    | PipelineKind::GradientRect
-                    | PipelineKind::GradientRectClipped
-                    | PipelineKind::ClipMask => wgpu::BlendState::ALPHA_BLENDING,
-                };
-                let fragment_targets = [Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(blend),
-                    write_mask: if kind == PipelineKind::ClipMask {
-                        wgpu::ColorWrites::empty()
-                    } else {
-                        wgpu::ColorWrites::ALL
-                    },
-                })];
-                let layout = match kind {
-                    PipelineKind::Textured
-                    | PipelineKind::TexturedClipped
-                    | PipelineKind::TextAtlas
-                    | PipelineKind::TextAtlasClipped => {
-                        let is_text = matches!(
-                            kind,
-                            PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
-                        );
-                        // Text samples a texture_2d_array (one layer per atlas page); images use a
-                        // plain texture_2d. They therefore need different bind group layouts.
-                        let bind_group_layout = if is_text {
-                            &self.text_atlas_array_bind_group_layout
-                        } else {
-                            &self.image_bind_group_layout
-                        };
-                        Some(
-                            self.device
-                                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                                    label: Some(if is_text {
-                                        "SUI text atlas pipeline layout"
-                                    } else {
-                                        "SUI textured scene pipeline layout"
-                                    }),
-                                    bind_group_layouts: &[Some(bind_group_layout)],
-                                    immediate_size: 0,
-                                }),
-                        )
                     }
-                    PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => Some(
+                }
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                },
+                PipelineKind::OutputTransform => wgpu::BlendState::REPLACE,
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::Textured
+                | PipelineKind::TexturedClipped
+                | PipelineKind::AnalyticPath
+                | PipelineKind::AnalyticPathClipped
+                | PipelineKind::WidgetShader
+                | PipelineKind::WidgetShaderClipped
+                | PipelineKind::RoundedRect
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRect
+                | PipelineKind::GradientRectClipped
+                | PipelineKind::ClipMask => wgpu::BlendState::ALPHA_BLENDING,
+            };
+            let fragment_targets = [Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(blend),
+                write_mask: if kind == PipelineKind::ClipMask {
+                    wgpu::ColorWrites::empty()
+                } else {
+                    wgpu::ColorWrites::ALL
+                },
+            })];
+            let layout = match kind {
+                PipelineKind::Textured
+                | PipelineKind::TexturedClipped
+                | PipelineKind::TextAtlas
+                | PipelineKind::TextAtlasClipped => {
+                    let is_text = matches!(
+                        kind,
+                        PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+                    );
+                    // Text samples a texture_2d_array (one layer per atlas page); images use a
+                    // plain texture_2d. They therefore need different bind group layouts.
+                    let bind_group_layout = if is_text {
+                        &self.text_atlas_array_bind_group_layout
+                    } else {
+                        &self.image_bind_group_layout
+                    };
+                    Some(
                         self.device
                             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                                label: Some("SUI analytic path pipeline layout"),
-                                bind_group_layouts: &[Some(&self.analytic_path_bind_group_layout)],
+                                label: Some(if is_text {
+                                    "SUI text atlas pipeline layout"
+                                } else {
+                                    "SUI textured scene pipeline layout"
+                                }),
+                                bind_group_layouts: &[Some(bind_group_layout)],
                                 immediate_size: 0,
                             }),
-                    ),
-                    PipelineKind::OutputTransform => Some(self.device.create_pipeline_layout(
-                        &wgpu::PipelineLayoutDescriptor {
-                            label: Some("SUI output transform pipeline layout"),
-                            bind_group_layouts: &[Some(&self.output_transform_bind_group_layout)],
-                            immediate_size: 0,
-                        },
-                    )),
-                    PipelineKind::Solid
-                    | PipelineKind::Clipped
-                    | PipelineKind::WidgetShader
-                    | PipelineKind::WidgetShaderClipped
-                    | PipelineKind::RoundedRect
-                    | PipelineKind::RoundedRectClipped
-                    | PipelineKind::GradientRect
-                    | PipelineKind::GradientRectClipped
-                    | PipelineKind::ClipMask => None,
-                };
-                let compact_vertex_layouts = [Some(CompactVertex::layout())];
-                let solid_vertex_layouts = [Some(SolidVertex::layout())];
-                let extended_vertex_layouts = [
-                    Some(TextAtlasQuadVertex::layout()),
-                    Some(ExtendedQuadInstance::layout()),
-                ];
-                let analytic_vertex_layouts = [
-                    Some(TextAtlasQuadVertex::layout()),
-                    Some(AnalyticQuadInstance::layout()),
-                ];
-                let text_vertex_layouts = [
-                    Some(TextAtlasQuadVertex::layout()),
-                    Some(TextAtlasInstance::layout()),
-                ];
-                let vertex_buffers = match kind {
-                    PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
-                        &text_vertex_layouts[..]
-                    }
-                    PipelineKind::OutputTransform => &[][..],
-                    PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
-                        &solid_vertex_layouts[..]
-                    }
-                    PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
-                        &analytic_vertex_layouts[..]
-                    }
-                    PipelineKind::RoundedRect
-                    | PipelineKind::RoundedRectClipped
-                    | PipelineKind::GradientRect
-                    | PipelineKind::GradientRectClipped => &extended_vertex_layouts[..],
-                    _ => &compact_vertex_layouts[..],
-                };
-
-                let pipeline =
-                    self.device
-                        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                            label: Some(match kind {
-                                PipelineKind::Solid => "SUI solid scene pipeline",
-                                PipelineKind::Clipped => "SUI clipped scene pipeline",
-                                PipelineKind::Textured => "SUI textured scene pipeline",
-                                PipelineKind::TexturedClipped => {
-                                    "SUI clipped textured scene pipeline"
-                                }
-                                PipelineKind::TextAtlas => "SUI text atlas pipeline",
-                                PipelineKind::TextAtlasClipped => "SUI clipped text atlas pipeline",
-                                PipelineKind::AnalyticPath => "SUI analytic path pipeline",
-                                PipelineKind::AnalyticPathClipped => {
-                                    "SUI clipped analytic path pipeline"
-                                }
-                                PipelineKind::WidgetShader => "SUI widget shader pipeline",
-                                PipelineKind::WidgetShaderClipped => {
-                                    "SUI clipped widget shader pipeline"
-                                }
-                                PipelineKind::RoundedRect => "SUI rounded rect pipeline",
-                                PipelineKind::RoundedRectClipped => {
-                                    "SUI clipped rounded rect pipeline"
-                                }
-                                PipelineKind::GradientRect => "SUI gradient rect pipeline",
-                                PipelineKind::GradientRectClipped => {
-                                    "SUI clipped gradient rect pipeline"
-                                }
-                                PipelineKind::ClipMask => "SUI clip mask pipeline",
-                                PipelineKind::OutputTransform => "SUI output transform pipeline",
-                            }),
-                            layout: layout.as_ref(),
-                            vertex: wgpu::VertexState {
-                                module: &shader,
-                                entry_point: Some("vs_main"),
-                                buffers: vertex_buffers,
-                                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                            },
-                            primitive: wgpu::PrimitiveState::default(),
-                            depth_stencil,
-                            multisample: wgpu::MultisampleState::default(),
-                            fragment: match kind {
-                                PipelineKind::Solid
-                                | PipelineKind::Clipped
-                                | PipelineKind::Textured
-                                | PipelineKind::TexturedClipped
-                                | PipelineKind::TextAtlas
-                                | PipelineKind::TextAtlasClipped
-                                | PipelineKind::AnalyticPath
-                                | PipelineKind::AnalyticPathClipped
-                                | PipelineKind::WidgetShader
-                                | PipelineKind::WidgetShaderClipped
-                                | PipelineKind::RoundedRect
-                                | PipelineKind::RoundedRectClipped
-                                | PipelineKind::GradientRect
-                                | PipelineKind::GradientRectClipped
-                                | PipelineKind::ClipMask
-                                | PipelineKind::OutputTransform => Some(wgpu::FragmentState {
-                                    module: &shader,
-                                    entry_point: Some("fs_main"),
-                                    targets: &fragment_targets,
-                                    compilation_options: wgpu::PipelineCompilationOptions {
-                                        constants: if fit == SdrFit::None {
-                                            &[]
-                                        } else {
-                                            &fit_constants
-                                        },
-                                        ..wgpu::PipelineCompilationOptions::default()
-                                    },
-                                }),
-                            },
-                            multiview_mask: None,
-                            cache: None,
-                        });
-                if let Some(started) = started {
-                    self.pipeline_create_time_us += started.elapsed().as_micros() as u64;
-                    self.pipeline_create_count += 1;
+                    )
                 }
-                pipeline
-            })
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => Some(
+                    self.device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("SUI analytic path pipeline layout"),
+                            bind_group_layouts: &[Some(&self.analytic_path_bind_group_layout)],
+                            immediate_size: 0,
+                        }),
+                ),
+                PipelineKind::OutputTransform => Some(self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("SUI output transform pipeline layout"),
+                        bind_group_layouts: &[Some(&self.output_transform_bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::WidgetShader
+                | PipelineKind::WidgetShaderClipped
+                | PipelineKind::RoundedRect
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRect
+                | PipelineKind::GradientRectClipped
+                | PipelineKind::ClipMask => None,
+            };
+            let compact_vertex_layouts = [Some(CompactVertex::layout())];
+            let solid_vertex_layouts = [Some(SolidVertex::layout())];
+            let extended_vertex_layouts = [
+                Some(TextAtlasQuadVertex::layout()),
+                Some(ExtendedQuadInstance::layout()),
+            ];
+            let analytic_vertex_layouts = [
+                Some(TextAtlasQuadVertex::layout()),
+                Some(AnalyticQuadInstance::layout()),
+            ];
+            let text_vertex_layouts = [
+                Some(TextAtlasQuadVertex::layout()),
+                Some(TextAtlasInstance::layout()),
+            ];
+            let vertex_buffers = match kind {
+                PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped => {
+                    &text_vertex_layouts[..]
+                }
+                PipelineKind::OutputTransform => &[][..],
+                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
+                    &solid_vertex_layouts[..]
+                }
+                PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
+                    &analytic_vertex_layouts[..]
+                }
+                PipelineKind::RoundedRect
+                | PipelineKind::RoundedRectClipped
+                | PipelineKind::GradientRect
+                | PipelineKind::GradientRectClipped => &extended_vertex_layouts[..],
+                _ => &compact_vertex_layouts[..],
+            };
+
+            let pipeline = self
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(match kind {
+                        PipelineKind::Solid => "SUI solid scene pipeline",
+                        PipelineKind::Clipped => "SUI clipped scene pipeline",
+                        PipelineKind::Textured => "SUI textured scene pipeline",
+                        PipelineKind::TexturedClipped => "SUI clipped textured scene pipeline",
+                        PipelineKind::TextAtlas => "SUI text atlas pipeline",
+                        PipelineKind::TextAtlasClipped => "SUI clipped text atlas pipeline",
+                        PipelineKind::AnalyticPath => "SUI analytic path pipeline",
+                        PipelineKind::AnalyticPathClipped => "SUI clipped analytic path pipeline",
+                        PipelineKind::WidgetShader => "SUI widget shader pipeline",
+                        PipelineKind::WidgetShaderClipped => "SUI clipped widget shader pipeline",
+                        PipelineKind::RoundedRect => "SUI rounded rect pipeline",
+                        PipelineKind::RoundedRectClipped => "SUI clipped rounded rect pipeline",
+                        PipelineKind::GradientRect => "SUI gradient rect pipeline",
+                        PipelineKind::GradientRectClipped => "SUI clipped gradient rect pipeline",
+                        PipelineKind::ClipMask => "SUI clip mask pipeline",
+                        PipelineKind::OutputTransform => "SUI output transform pipeline",
+                    }),
+                    layout: layout.as_ref(),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: vertex_buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: match kind {
+                        PipelineKind::Solid
+                        | PipelineKind::Clipped
+                        | PipelineKind::Textured
+                        | PipelineKind::TexturedClipped
+                        | PipelineKind::TextAtlas
+                        | PipelineKind::TextAtlasClipped
+                        | PipelineKind::AnalyticPath
+                        | PipelineKind::AnalyticPathClipped
+                        | PipelineKind::WidgetShader
+                        | PipelineKind::WidgetShaderClipped
+                        | PipelineKind::RoundedRect
+                        | PipelineKind::RoundedRectClipped
+                        | PipelineKind::GradientRect
+                        | PipelineKind::GradientRectClipped
+                        | PipelineKind::ClipMask
+                        | PipelineKind::OutputTransform => Some(wgpu::FragmentState {
+                            module: &shader,
+                            entry_point: Some("fs_main"),
+                            targets: &fragment_targets,
+                            compilation_options: wgpu::PipelineCompilationOptions {
+                                constants: if fit == SdrFit::None {
+                                    &[]
+                                } else {
+                                    &fit_constants
+                                },
+                                ..wgpu::PipelineCompilationOptions::default()
+                            },
+                        }),
+                    },
+                    multiview_mask: None,
+                    cache: None,
+                });
+            if let Some(started) = started {
+                self.pipeline_create_time_us += started.elapsed().as_micros() as u64;
+                self.pipeline_create_count += 1;
+            }
+            pipeline
+        });
+        if created && offscreen {
+            crate::device::share_offscreen_pipeline(key, pipeline);
+        }
+        pipeline
     }
 }
 

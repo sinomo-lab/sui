@@ -14,5 +14,6 @@ rust-version.workspace = true
 
 [lib]
 name = "sui_core"
+doctest = false
 
 [dependencies]

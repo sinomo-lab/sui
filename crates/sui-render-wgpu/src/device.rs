@@ -1,6 +1,7 @@
 use crate::WgpuRenderer;
-use crate::gpu::SharedRenderer;
 use crate::gpu::TextAtlasQuadVertex;
+use crate::gpu::{PipelineKind, SharedRenderer};
+use crate::output::SdrFit;
 use crate::resources::create_text_atlas_array_bind_group_layout;
 use std::collections::HashMap;
 use sui_core::Error;
@@ -167,6 +168,7 @@ impl SharedRenderer {
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
         Self {
+            offscreen: false,
             collect_pipeline_timings: true,
             pipeline_create_time_us: 0,
             pipeline_create_count: 0,
@@ -269,14 +271,41 @@ impl WgpuRenderer {
         let shared = Self::acquire_shared(&self.instance, compatible_surface, None)?;
         self.install_shared(shared);
         if let Some(started) = started {
-            let elapsed = started.elapsed().as_micros() as u64;
+            // At least a microsecond marks the frame that prepared the
+            // device, even one it only took from the shared device.
+            let elapsed = (started.elapsed().as_micros() as u64).max(1);
             self.pending_device_prepare_time_us += elapsed;
             self.pending_device_wait_time_us += elapsed;
         }
         Ok(())
     }
 
+    /// A device for this renderer. Renderers without a window share one,
+    /// with the pipelines compiled on it: acquiring a device and compiling
+    /// pipelines takes most of a second, which each offscreen renderer, such
+    /// as a headless test's or a capture's, would otherwise pay again.
     fn acquire_shared(
+        instance: &wgpu::Instance,
+        compatible_surface: Option<&wgpu::Surface<'_>>,
+        cancelled: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<SharedRenderer> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if compatible_surface.is_none() {
+            let mut offscreen = OFFSCREEN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(shared) = offscreen.as_ref() {
+                return Ok(shared.clone());
+            }
+            let mut shared = Self::acquire_device(instance, None, cancelled)?;
+            shared.offscreen = true;
+            *offscreen = Some(shared.clone());
+            return Ok(shared);
+        }
+        Self::acquire_device(instance, compatible_surface, cancelled)
+    }
+
+    fn acquire_device(
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
         cancelled: Option<&std::sync::atomic::AtomicBool>,
@@ -410,6 +439,31 @@ pub(crate) fn default_wgpu_instance() -> wgpu::Instance {
         descriptor.backends -= wgpu::Backends::GL;
     }
     wgpu::Instance::new(descriptor)
+}
+
+/// The device renderers without a window share, and the pipelines compiled
+/// on it so far.
+#[cfg(not(target_arch = "wasm32"))]
+static OFFSCREEN: std::sync::Mutex<Option<SharedRenderer>> = std::sync::Mutex::new(None);
+
+/// Keep a pipeline an offscreen renderer compiled for the renderers after it.
+pub(crate) fn share_offscreen_pipeline(
+    key: (wgpu::TextureFormat, PipelineKind, SdrFit),
+    pipeline: &wgpu::RenderPipeline,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(shared) = OFFSCREEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_mut()
+    {
+        shared
+            .pipelines
+            .entry(key)
+            .or_insert_with(|| pipeline.clone());
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (key, pipeline);
 }
 
 #[cfg(test)]

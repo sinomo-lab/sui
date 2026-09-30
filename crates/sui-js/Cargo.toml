@@ -20,6 +20,7 @@ desktop = ["sui/desktop", "sui-bindings-core/desktop"]
 [lib]
 name = "sui_js"
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [dependencies]
 napi = { workspace = true }

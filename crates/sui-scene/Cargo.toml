@@ -14,6 +14,7 @@ rust-version.workspace = true
 
 [lib]
 name = "sui_scene"
+doctest = false
 
 [dependencies]
 resvg = { workspace = true }

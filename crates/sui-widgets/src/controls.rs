@@ -1118,6 +1118,7 @@ pub struct IconButton {
     selected_reader: Option<Box<dyn Fn() -> bool>>,
     enabled: bool,
     enabled_reader: Option<Box<dyn Fn() -> bool>>,
+    enabled_source: Option<Arc<dyn Observable<bool>>>,
     interaction: PressInteraction,
     focus_animation: AnimatedScalar,
     on_press: Option<Box<dyn FnMut()>>,
@@ -1150,6 +1151,7 @@ impl IconButton {
             selected_reader: None,
             enabled: true,
             enabled_reader: None,
+            enabled_source: None,
             interaction: PressInteraction::default(),
             focus_animation: AnimatedScalar::new(0.0),
             on_press: None,
@@ -1213,6 +1215,7 @@ impl IconButton {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self.enabled_reader = None;
+        self.enabled_source = None;
         self
     }
 
@@ -1221,6 +1224,19 @@ impl IconButton {
         F: Fn() -> bool + 'static,
     {
         self.enabled_reader = Some(Box::new(enabled));
+        self.enabled_source = None;
+        self
+    }
+
+    /// Enable the button while `enabled` holds, and repaint it when that
+    /// changes. Unlike [`Self::enabled_when`], the button follows the value
+    /// without anything else asking it to repaint.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled_source = Some(Arc::new(enabled));
+        self.enabled_reader = None;
         self
     }
 
@@ -1286,10 +1302,21 @@ impl IconButton {
     }
 
     fn is_enabled(&self) -> bool {
+        if let Some(source) = &self.enabled_source {
+            return source.get();
+        }
         self.enabled_reader
             .as_ref()
             .map(|enabled| enabled())
             .unwrap_or(self.enabled)
+    }
+
+    /// Repaint and re-announce the button when an observed enabled state
+    /// changes.
+    fn observe_enabled<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
+        if let Some(source) = &self.enabled_source {
+            observe(source.as_ref());
+        }
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
@@ -1327,6 +1354,7 @@ impl Widget for IconButton {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        self.observe_enabled(|source| ctx.observe(source));
         let theme = self.resolved_theme();
         let style = IconButtonPaint::new()
             .appearance(self.appearance)
@@ -1357,6 +1385,7 @@ impl Widget for IconButton {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.observe_enabled(|source| ctx.observe(source));
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(self.label.clone());
         node.description = self.semantic_description.clone();
@@ -1408,6 +1437,7 @@ pub struct Button {
     label_layout: Option<PersistentTextLayout>,
     enabled: bool,
     enabled_reader: Option<Box<dyn Fn() -> bool>>,
+    enabled_source: Option<Arc<dyn Observable<bool>>>,
     glow: bool,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
@@ -1447,6 +1477,7 @@ impl Button {
             label_layout: None,
             enabled: true,
             enabled_reader: None,
+            enabled_source: None,
             glow: true,
             on_press: None,
             on_press_with_ctx: None,
@@ -1567,6 +1598,7 @@ impl Button {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self.enabled_reader = None;
+        self.enabled_source = None;
         self
     }
 
@@ -1575,6 +1607,19 @@ impl Button {
         F: Fn() -> bool + 'static,
     {
         self.enabled_reader = Some(Box::new(enabled));
+        self.enabled_source = None;
+        self
+    }
+
+    /// Enable the button while `enabled` holds, and repaint it when that
+    /// changes. Unlike [`Self::enabled_when`], the button follows the value
+    /// without anything else asking it to repaint.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled_source = Some(Arc::new(enabled));
+        self.enabled_reader = None;
         self
     }
 
@@ -1623,10 +1668,21 @@ impl Button {
     }
 
     fn is_enabled(&self) -> bool {
+        if let Some(source) = &self.enabled_source {
+            return source.get();
+        }
         self.enabled_reader
             .as_ref()
             .map(|enabled| enabled())
             .unwrap_or(self.enabled)
+    }
+
+    /// Repaint and re-announce the button when an observed enabled state
+    /// changes.
+    fn observe_enabled<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
+        if let Some(source) = &self.enabled_source {
+            observe(source.as_ref());
+        }
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -1883,7 +1939,9 @@ impl Button {
 
 impl Widget for Button {
     fn supports_output_reuse(&self) -> bool {
-        self.theme_reader.is_none() && self.enabled_reader.is_none()
+        self.theme_reader.is_none()
+            && self.enabled_reader.is_none()
+            && self.enabled_source.is_none()
     }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         let enabled = self.is_enabled();
@@ -1941,6 +1999,7 @@ impl Widget for Button {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
+        self.observe_enabled(|source| ctx.observe(source));
         let theme = self.resolved_theme();
         let metrics = theme.metrics;
         let text_style = self.resolved_text_style();
@@ -2000,6 +2059,7 @@ impl Widget for Button {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.observe_enabled(|source| ctx.observe(source));
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Button, ctx.bounds());
         node.name = Some(
             self.semantic_name

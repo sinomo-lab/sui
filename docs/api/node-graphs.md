@@ -203,9 +203,15 @@ The default editor supports:
   reversing toward the canvas pauses auto-pan on that axis;
 - Control/Command click multi-selection;
 - Shift-drag marquee selection, with full or partial containment modes;
-- source-to-target handle dragging with connection validation;
+- source-to-target handle dragging that snaps to the nearest handle and
+  shows, while dragging, which handles would take the connection;
 - Backspace/Delete removal, Control/Command+A selection, arrow-key nudging,
   plus/minus zoom, Escape clearing, and Home fit-to-view;
+- Control/Command+Z undo and Control/Command+Shift+Z or +Y redo, when the
+  state keeps history;
+- Control/Command+C, +X, +V, and +D copy, cut, paste, and duplicate;
+- a context menu from a right-click that does not drag, or from the Menu key
+  or Shift+F10;
 - straight, step, and cubic Bézier edges with optional labels and end markers;
 - smooth-step and simple-Bézier paths, configurable curvature and corner
   radius, start/end marker shapes, animated edge particles, explicit z-order,
@@ -228,9 +234,107 @@ application controllers that need an editing journal or persistence boundary.
 dangling endpoints, missing typed handles, and disabled handles. Removing a
 node cascades its incident edges.
 
-Use `NodeGraph::is_valid_connection` for application rules such as preventing
-self-links or cycles. Use `edge_factory` to construct application-specific edge
-data when a user completes a connection.
+Use `NodeGraph::connection_rule` for application rules such as typed ports,
+preventing cycles, or one edge per input. The rule returns why it refuses a
+connection:
+
+```rust,ignore
+let graph = NodeGraph::new("Pipeline", state).connection_rule(|connection, graph| {
+    if creates_cycle(graph, connection) {
+        return Err("That would make a loop".to_string());
+    }
+    Ok(())
+});
+```
+
+While a connection is dragged, it snaps to the nearest handle within
+`NodeGraphConfig::connection_radius`. Handles that would take it are ringed
+and the rest dim; over one that refuses it, the line turns the danger color
+and the reason shows beside the pointer. Dropping it there emits
+`NodeGraphEvent::ConnectionRefused` with the reason. A reconnected edge is
+checked against the graph without it, so a rule that allows one edge per input
+lets an edge drop back where it was. `is_valid_connection` is the same with a
+yes or no. Use `edge_factory` to construct application-specific edge data when
+a user completes a connection.
+
+## Typed connection points
+
+`Handle::label` names a handle: the graph draws the name inside the node beside
+the handle, and screen readers announce it with its node and connections.
+`Handle::color` colors a handle in place of the graph's source and target
+colors, and edges leaving a colored source handle take its color. Together they
+show what type of value a port carries:
+
+```rust,ignore
+Node::new("mix", Point::new(340.0, 96.0), data).handles([
+    Handle::target("a", HandlePosition::Left).offset(0.4).label("a").color(COLOR_PORT),
+    Handle::target("t", HandlePosition::Left).offset(0.8).label("t").color(NUMBER_PORT),
+    Handle::source("out", HandlePosition::Right).label("color").color(COLOR_PORT),
+])
+```
+
+Set `NodeGraphConfig::handle_labels` to `false` for a node widget that draws
+its own port names; the labels still name the handles for screen readers.
+
+## Undo and redo
+
+`NodeGraphState::with_history(limit)` keeps up to `limit` steps. Every edit is a
+step: adding, removing, moving, resizing, connecting, and changing data,
+labels, or styles. Selecting and panning are not, and neither are sizes the
+graph measures for content-sized nodes. A drag or a resize is one step.
+`undo` and `redo` restore the graph and keep the viewport; `history_observable`
+follows how many steps each can take, for toolbar buttons.
+
+Group several edits into one step with `undo_group`, or with
+`begin_undo_group` and `end_undo_group` around an interaction. For edits that
+arrive one at a time, such as typing a name or dragging a slider inside a node,
+`merge_undo(key, ...)` merges each into the last step while the key stays the
+same and nothing else is recorded:
+
+```rust,ignore
+slider.on_change(move |value| {
+    state.merge_undo(format!("{id} opacity"), || {
+        state.update_node_data(&id, |data| data.opacity = value as f32)
+    });
+});
+```
+
+In a controlled state, the proposals the owner accepts are the steps; undo and
+redo replace the graph directly, returning to graphs the owner accepted.
+
+## Copy and paste
+
+`copy_selection` takes the selected nodes, their descendants, and the edges
+between them; `paste_clipboard` adds them back at an offset with fresh ids, as
+one undo step, selected as they were. A copied child whose parent was not
+copied pastes into the same parent, or where it was if the parent is gone. The
+state also keeps a clipboard of its own for `copy`, `cut`, `paste`, and
+`duplicate`, which the keyboard shortcuts use; each paste lands a step further
+from the last.
+
+## Context menus
+
+A right-click that does not drag, or the Menu key or Shift+F10, asks for a
+context menu: the graph selects what it is for, if that is not selected, emits
+`NodeGraphEvent::ContextMenu`, and calls `NodeGraph::on_context_menu` with the
+target and where to open. A right-drag still pans. Open a SUI `ContextMenu`
+around the graph from there with a `ContextMenuHandle`, listing what applies to
+the target; when the menu closes, the graph has focus again for its shortcuts:
+
+```rust,ignore
+let menu = ContextMenuHandle::new();
+let target = Rc::new(RefCell::new(NodeGraphHit::Pane));
+let graph = NodeGraph::new("Pipeline", state).on_context_menu({
+    let (menu, target) = (menu.clone(), Rc::clone(&target));
+    move |ctx, hit, position| {
+        *target.borrow_mut() = hit;
+        menu.open_at(ctx, position);
+    }
+});
+let editor = ContextMenu::new("Pipeline menu", graph)
+    .handle(menu)
+    .items_when(move || items_for(&target.borrow()));
+```
 
 `NodeGraphAppearance`, `NodeControlsAppearance`, and `NodeMiniMapAppearance`
 own optional color overrides. Unset fields resolve from semantic `DefaultTheme`
@@ -259,12 +363,17 @@ The default development workspace includes a comprehensive example:
 cargo run -p sinomo-ui-demo
 ```
 
-Open `Node graphs`. The primary graph is controlled and automatically accepts
-proposed snapshots; the sidebar exposes document/index revisions and lifecycle
-events. It also includes a pannable minimap and a second uncontrolled graph
-using a canvas-backed paint-only surface with retained node widgets. The demo
-keeps `nodes` as a distinct feature even though it is enabled by default, so
-specialized builds can disable the dependency.
+Open `Node graphs`: a color lab. Color and number nodes feed Mix, Lighten, and
+Contrast nodes, and Preview and Gradient nodes show the results, recomputed as
+you drag a slider inside a node or rewire the graph. Ports are typed and
+colored by type; the lab's rule refuses a number for a color, a loop, or a
+second edge into an input, and says which. A toolbar adds nodes and undoes,
+redoes, copies, pastes, duplicates, deletes, and restyles edges; right-clicking
+a node, an edge, or the canvas opens a menu for it; an inspector renames the
+selected node and shows what reaches each input, or restyles and animates the
+selected edge; a minimap gives an overview; and a log follows what happened.
+The demo keeps `nodes` as a distinct feature even though it is enabled by
+default, so specialized builds can disable the dependency.
 
 ## Performance diagnostics
 
@@ -287,8 +396,8 @@ remeasure retained widgets.
 The edge-world diagnostic compares direct and retained rendering for 1,024
 edges and reports runtime, renderer, packet-build, and path-command costs.
 
-To profile the actual five-node example, including its custom widgets and demo
-shell, run this PowerShell command:
+To profile the actual color lab, including its custom widgets and demo shell,
+run this PowerShell command:
 
 ```powershell
 $env:SUI_PROFILE_WIDGET_TIMINGS = '1'

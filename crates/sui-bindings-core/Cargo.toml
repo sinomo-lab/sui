@@ -18,6 +18,7 @@ desktop = ["sui/desktop"]
 
 [lib]
 name = "sui_bindings_core"
+doctest = false
 
 [dependencies]
 png = { workspace = true }

@@ -154,10 +154,13 @@ Use high-level locator actions for normal user flows. Direct event dispatch is
 appropriate for a custom pointer kind, exact modifier state, window lifecycle
 event, or runtime boundary that no high-level action represents.
 
-`TestApp::new` uses the live backend when a display is available and otherwise
-falls back to the headless harness. `TestApp::from_runtime` is the explicit
-headless path. `new_no_vsync` and `new_visible_no_vsync` are useful when a live
-test needs controlled presentation timing.
+`TestApp::new` runs headless, sharing one GPU device with the process's other
+headless apps, so tests run in parallel. `TestApp::builder(...).live(true)` or
+`.visible(true)` runs an app in real windows on the platform's event loop, one
+at a time, where a display is available; `SUI_TEST_BACKEND=live` runs every
+test that way. `TestApp::from_runtime` builds the headless harness from a
+runtime directly. `new_visible_no_vsync` is useful when a live test needs
+controlled presentation timing.
 
 ## Screenshots and Diagnostic Artifacts
 
