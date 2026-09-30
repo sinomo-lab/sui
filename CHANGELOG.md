@@ -745,6 +745,9 @@ Versioning, with the usual expectation that the API may change during the
 
 ### Fixes
 
+- A context menu's submenu covers the focus ring of the menu it opened from.
+  Every panel's ring was drawn above all the panels, so the menu's ring ran
+  across its submenu.
 - The focus ring around an open context menu or popover floats with it.
   It was composited in page order, so content painted after the menu's
   trigger covered it: only the parts of the ring outside that content

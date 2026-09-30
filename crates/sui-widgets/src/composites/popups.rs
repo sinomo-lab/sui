@@ -2171,16 +2171,31 @@ impl Widget for ContextMenuFocusSurface {
         let metrics = state.theme.metrics;
         let palette = state.theme.palette;
         let offset = state.paint_offset(ctx.bounds());
-        for panel in &state.panels {
-            draw_focus_ring_frame(
-                ctx,
-                panel.frame_rect.translate(offset),
-                metrics.corner_radius + 2.0,
-                metrics,
-                palette
-                    .focus_ring
-                    .with_alpha(palette.focus_ring.alpha * progress),
-            );
+        let color = palette
+            .focus_ring
+            .with_alpha(palette.focus_ring.alpha * progress);
+        // How far a ring reaches outside its panel: its stroke is centered
+        // on a path outset from the panel.
+        let reach = metrics.focus_ring_outset + metrics.focus_ring_width * 0.5;
+        let frames = state
+            .panels
+            .iter()
+            .map(|panel| panel.frame_rect.translate(offset))
+            .collect::<Vec<_>>();
+        let covers = frames
+            .iter()
+            .map(|frame| frame.inflate(reach, reach))
+            .collect::<Vec<_>>();
+        for (index, frame) in frames.iter().enumerate() {
+            // A submenu covers the panel it opened from, ring and all. This
+            // layer is above every panel, so each ring shows only outside
+            // the panels opened after its own, and their rings.
+            let ring = frame.inflate(reach + 2.0, reach + 2.0);
+            for visible in rects_outside(ring, &covers[index + 1..]) {
+                ctx.push_clip_rect(visible);
+                draw_focus_ring_frame(ctx, *frame, metrics.corner_radius + 2.0, metrics, color);
+                ctx.pop_clip();
+            }
         }
     }
 
@@ -2217,6 +2232,48 @@ impl Widget for ContextMenuFocusSurface {
             },
         )
     }
+}
+
+/// The parts of `bounds` outside every one of `holes`, as rects that do not
+/// overlap.
+fn rects_outside(bounds: Rect, holes: &[Rect]) -> Vec<Rect> {
+    let mut parts = vec![bounds];
+    for hole in holes {
+        parts = parts
+            .into_iter()
+            .flat_map(|part| {
+                let Some(overlap) = part.intersection(*hole) else {
+                    return vec![part];
+                };
+                // Above and below the hole across the part, then beside it.
+                [
+                    Rect::new(part.x(), part.y(), part.width(), overlap.y() - part.y()),
+                    Rect::new(
+                        part.x(),
+                        overlap.max_y(),
+                        part.width(),
+                        part.max_y() - overlap.max_y(),
+                    ),
+                    Rect::new(
+                        part.x(),
+                        overlap.y(),
+                        overlap.x() - part.x(),
+                        overlap.height(),
+                    ),
+                    Rect::new(
+                        overlap.max_x(),
+                        overlap.y(),
+                        part.max_x() - overlap.max_x(),
+                        overlap.height(),
+                    ),
+                ]
+                .into_iter()
+                .filter(|piece| piece.width() > 0.0 && piece.height() > 0.0)
+                .collect()
+            })
+            .collect();
+    }
+    parts
 }
 
 /// Opens a [`ContextMenu`] from code, at a point. For a trigger that decides

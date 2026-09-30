@@ -6788,6 +6788,106 @@ fn context_menu_pointer_opens_submenu_and_activates_leaf_path() {
 }
 
 #[test]
+fn a_submenu_covers_the_focus_ring_of_the_menu_it_opened_from() {
+    let theme = DefaultTheme::default();
+    let (mut runtime, window_id) = build_runtime(
+        SizedBox::new().width(480.0).height(320.0).with_child(
+            ContextMenu::new("Actions menu", crate::Button::new("Actions"))
+                .theme(theme)
+                .activation_button(PointerButton::Primary)
+                .anchor_to_pointer(false)
+                .items([
+                    MenuItem::new("Open"),
+                    MenuItem::new("Move to")
+                        .submenu([MenuItem::new("Archive"), MenuItem::new("Shared")]),
+                    MenuItem::new("Close"),
+                ]),
+        ),
+    );
+    let closed = runtime.render(window_id).unwrap();
+    let trigger = closed
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Actions"))
+        .expect("the trigger")
+        .bounds;
+    let at = super::rect_center(trigger);
+    runtime
+        .handle_event(window_id, primary_pointer(PointerEventKind::Down, at, true))
+        .unwrap();
+    runtime
+        .handle_event(window_id, primary_pointer(PointerEventKind::Up, at, false))
+        .unwrap();
+    let opened = runtime.render(window_id).unwrap();
+    let owner = opened
+        .semantics
+        .iter()
+        .find(|node| node.name.as_deref() == Some("Move to"))
+        .expect("the submenu's owner")
+        .id;
+    assert!(
+        runtime
+            .handle_semantics_action(window_id, owner, SemanticsActionRequest::Expand)
+            .unwrap()
+    );
+    runtime.tick(theme.motion.focus_duration() + 0.01);
+    handle_ready_events(&mut runtime).unwrap();
+    let output = runtime.render(window_id).unwrap();
+    let row = |name: &str| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::MenuItem && node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} is shown"))
+            .bounds
+    };
+    let (root, submenu) = (row("Open"), row("Archive"));
+
+    // Each focus ring stroke, with the clip it is drawn in.
+    let mut clips = vec![Rect::new(-1.0e6, -1.0e6, 2.0e6, 2.0e6)];
+    let mut rings = Vec::new();
+    output
+        .frame
+        .scene
+        .visit_commands(&mut |command| match command {
+            SceneCommand::PushClip { rect } => clips.push(*rect),
+            SceneCommand::PushClipPath { path } => clips.push(path.bounds()),
+            SceneCommand::PopClip => {
+                clips.pop();
+            }
+            SceneCommand::StrokePath {
+                path,
+                brush: Brush::Solid(color),
+                ..
+            } if (color.alpha - theme.palette.focus_ring.alpha).abs() < 0.01
+                && (color.blue - theme.palette.focus_ring.blue).abs() < 0.01
+                && (color.red - theme.palette.focus_ring.red).abs() < 0.01 =>
+            {
+                rings.push((path.bounds(), *clips.last().unwrap()));
+            }
+            _ => {}
+        });
+    let root_rings = rings
+        .iter()
+        .filter(|(bounds, _)| bounds.contains(super::rect_center(root)))
+        .collect::<Vec<_>>();
+    assert!(!root_rings.is_empty(), "the menu has a ring: {rings:?}");
+    assert!(
+        rings
+            .iter()
+            .any(|(bounds, _)| bounds.contains(super::rect_center(submenu))),
+        "the submenu has a ring: {rings:?}"
+    );
+    for (_, clip) in root_rings {
+        assert!(
+            clip.intersection(submenu)
+                .is_none_or(|overlap| overlap.width() <= 0.0 || overlap.height() <= 0.0),
+            "the menu's ring is drawn over its submenu: clip {clip:?}, submenu row {submenu:?}"
+        );
+    }
+}
+
+#[test]
 fn context_menu_keyboard_enters_and_leaves_submenus() {
     let activated_path = Rc::new(RefCell::new(None));
     let recorded_path = Rc::clone(&activated_path);
