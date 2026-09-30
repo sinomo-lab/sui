@@ -97,7 +97,7 @@ pub use docking::{
     DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
     DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
 };
-pub use drag_drop::{DragDropHost, Draggable, DropTarget};
+pub use drag_drop::{DragDropHost, Draggable, DropHover, DropTarget};
 pub use hdr_theme::{
     EffectToken, HdrColorRoles, HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens,
     HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, MaterialToken, ResolvedEffectStyle,

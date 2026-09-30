@@ -23,9 +23,9 @@ use sui_animation::{AnimationSpec, Interpolate};
 
 use sui_core::{
     AsyncWakeToken, Clipboard, Color, CursorGrabMode, DpiInfo, DragPayload, DragScopeId,
-    DragSessionId, DropEffect, Event, ImageHandle, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, MotionPolicy, Path, Point, Rect, SemanticsNode, Size, TimerToken,
-    Transform, Vector, WakeEvent, WidgetId, WindowId,
+    DragSessionId, DropEffect, DropEffects, Event, ImageHandle, InvalidationKind,
+    InvalidationRequest, InvalidationTarget, MotionPolicy, Path, Point, Rect, SemanticsNode, Size,
+    TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, LayoutContext};
 use sui_reactive::{Observable, Signal};
@@ -482,7 +482,8 @@ struct FocusScopeStateInner {
 ///
 /// Presentation policies call [`Self::request_restore`] when a previously
 /// hidden pane or route becomes visible. The associated scope performs the
-/// focus change on its next runtime wake without rebuilding its child subtree.
+/// focus change on its next runtime wake without rebuilding its child subtree,
+/// unless focus is by then on a widget outside the scope.
 #[derive(Clone, Debug)]
 pub struct FocusScopeState {
     inner: Arc<Mutex<FocusScopeStateInner>>,
@@ -629,7 +630,12 @@ impl Widget for FocusScope {
         {
             let target = self.restore_target();
             self.state.complete_restore();
-            if let Some(target) = target {
+            // Restoring recovers focus that hiding content lost. Focus the
+            // person has since put somewhere else stays there.
+            let focused_elsewhere = ctx
+                .focused_widget_id()
+                .is_some_and(|focused| !pod_contains(self.child.child(), focused));
+            if !focused_elsewhere && let Some(target) = target {
                 ctx.request_focus_for(target);
                 ctx.request_paint();
                 ctx.request_semantics();
@@ -1903,6 +1909,7 @@ impl WidgetPod {
                         .presentation_transform
                         .transform_point(request.position);
                 }
+                DragRequest::RefreshTargets => {}
             }
         }
         EventDispatch {
@@ -2260,13 +2267,14 @@ pub(crate) struct BeginDragRequest {
     pub source: WidgetId,
     pub position: Point,
     pub payload: DragPayload,
-    pub allowed_effect: DropEffect,
+    pub allowed_effects: DropEffects,
     pub preview_label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum DragRequest {
     Begin(BeginDragRequest),
+    RefreshTargets,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2654,13 +2662,17 @@ impl EventCtx {
         });
     }
 
+    /// Start a drag of `payload` with the pointer `pointer_id`. The source
+    /// allows `allowed_effects`: a single [`DropEffect`] or a
+    /// [`DropEffects`] set, whose [`DropEffects::default_effect`] applies
+    /// when no modifier key asks for another.
     pub fn begin_drag(
         &mut self,
         scope_id: DragScopeId,
         pointer_id: u64,
         position: Point,
         payload: DragPayload,
-        allowed_effect: DropEffect,
+        allowed_effects: impl Into<DropEffects>,
         preview_label: Option<String>,
     ) -> DragSessionId {
         let session_id = DragSessionId::new(NEXT_DRAG_SESSION_ID.fetch_add(1, Ordering::Relaxed));
@@ -2672,10 +2684,17 @@ impl EventCtx {
                 source: self.widget_id,
                 position,
                 payload,
-                allowed_effect,
+                allowed_effects: allowed_effects.into(),
                 preview_label,
             }));
         session_id
+    }
+
+    /// Ask the runtime to work out again which drop targets an active drag is
+    /// over, as content moved under a pointer that did not. Scroll views call
+    /// this when they scroll during a drag.
+    pub fn refresh_drag_targets(&mut self) {
+        self.drag_requests.push(DragRequest::RefreshTargets);
     }
 
     pub fn accept_drop(&mut self, effect: DropEffect) {

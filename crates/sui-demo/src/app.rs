@@ -1690,14 +1690,14 @@ fn build_dev_demo_entries(
         ),
         themed_demo!(
             LAYOUT_TAB_LABEL,
-            "Grid, intrinsic sizing, container queries, panes, and adaptive workspaces.",
+            "Flex, grid, container queries, panes, and safe areas, in frames you can resize.",
             IconGlyph::LayoutDashboard,
             DecorativeHue::Teal,
             |theme| build_layout_demo_with_theme(theme)
         ),
         themed_demo!(
             DRAG_DROP_TAB_LABEL,
-            "Drag-and-drop payloads, targets, scopes, and the preview overlay.",
+            "A board of cards, assets to attach, drop zones that refuse, and a log of each drag.",
             IconGlyph::Move,
             DecorativeHue::Cyan,
             |theme| build_drag_drop_demo_with_theme(theme)

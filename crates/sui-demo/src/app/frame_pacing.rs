@@ -54,7 +54,7 @@ fn drag_drop_frame_pacing_benchmark() -> Result<()> {
         .accessibility
         .nodes
         .iter()
-        .find(|node| node.name.as_deref() == Some("Text source Invoice #1042"))
+        .find(|node| node.name.as_deref() == Some("Shelf item Hero.png"))
         .expect("drag source")
         .bounds;
     for phase in ["settle", "idle", "move", "redraw", "drag"] {

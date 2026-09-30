@@ -245,7 +245,16 @@ let root = DragDropHost::new(scope, content)
 ```
 
 Internal drag previews also participate in the overlay stack, are never hit
-tested, and do not take focus.
+tested, and do not take focus. `DragDropHost::preview` returns the widget to
+draw under the pointer for a drag, such as a lifted card, or `None` to keep the
+label.
+
+A source allows one effect or several (`Draggable::effects`). Targets usually
+accept `drag.preferred_effect()`, which follows the platform's modifier keys
+(Control copies and Shift moves; Option and Command on macOS) and changes when
+those keys do, without the pointer moving. `DropTarget::on_hover_state` says
+whether a target accepts or refuses the drag over it. Escape cancels a drag,
+and scroll views scroll while a drag is held near their edges.
 
 ## Inspector Diagnostics
 

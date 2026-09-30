@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use crate::{ImageHandle, Point, Rect, WidgetId};
+use crate::{ImageHandle, Modifiers, Point, Rect, WidgetId};
 
 static NEXT_DRAG_SCOPE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -89,6 +89,86 @@ impl DropEffect {
 
     pub const fn is_some(self) -> bool {
         !self.is_none()
+    }
+
+    /// The effect the held modifier keys ask for, by the platform's
+    /// convention: on macOS Option copies, Command moves and both link;
+    /// elsewhere Control copies, Shift moves and both link. `None` when no
+    /// modifier asks for an effect.
+    pub const fn for_modifiers(modifiers: Modifiers) -> Option<Self> {
+        let (copy, moving) = if cfg!(target_os = "macos") {
+            (modifiers.alt, modifiers.meta)
+        } else {
+            (modifiers.control, modifiers.shift)
+        };
+        match (copy, moving) {
+            (true, true) => Some(Self::Link),
+            (true, false) => Some(Self::Copy),
+            (false, true) => Some(Self::Move),
+            (false, false) => None,
+        }
+    }
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::Copy => 1,
+            Self::Move => 2,
+            Self::Link => 4,
+        }
+    }
+}
+
+/// A set of drop effects, such as every effect a drag source allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DropEffects(u8);
+
+impl DropEffects {
+    pub const NONE: Self = Self(0);
+    pub const COPY: Self = Self(1);
+    pub const MOVE: Self = Self(2);
+    pub const LINK: Self = Self(4);
+    pub const ALL: Self = Self(7);
+
+    pub const fn contains(self, effect: DropEffect) -> bool {
+        effect.is_some() && self.0 & effect.bit() != 0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// This set with `effect` added.
+    pub const fn with(self, effect: DropEffect) -> Self {
+        Self(self.0 | effect.bit())
+    }
+
+    /// The effect a drop takes when no modifier key asks for another: move,
+    /// then copy, then link, whichever the set holds first.
+    pub const fn default_effect(self) -> DropEffect {
+        if self.contains(DropEffect::Move) {
+            DropEffect::Move
+        } else if self.contains(DropEffect::Copy) {
+            DropEffect::Copy
+        } else if self.contains(DropEffect::Link) {
+            DropEffect::Link
+        } else {
+            DropEffect::None
+        }
+    }
+}
+
+impl From<DropEffect> for DropEffects {
+    fn from(effect: DropEffect) -> Self {
+        Self::NONE.with(effect)
+    }
+}
+
+impl std::ops::BitOr for DropEffects {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
     }
 }
 
@@ -225,10 +305,33 @@ pub struct DragEvent {
     pub position: Point,
     pub start_position: Point,
     pub payload: DragPayload,
+    /// The effect a drop takes when no modifier key asks for another.
     pub allowed_effect: DropEffect,
+    /// Every effect the source allows, including [`Self::allowed_effect`].
+    pub allowed_effects: DropEffects,
     pub accepted_effect: DropEffect,
     pub preview_label: Option<Arc<str>>,
     pub outcome: Option<DragOutcome>,
+    /// The modifier keys held when the event was sent. The runtime sends
+    /// targets a fresh `Over` when they change, so an `accept` callback can
+    /// follow them.
+    pub modifiers: Modifiers,
+}
+
+impl DragEvent {
+    /// The effect the held modifier keys ask for; see
+    /// [`DropEffect::for_modifiers`].
+    pub const fn requested_effect(&self) -> Option<DropEffect> {
+        DropEffect::for_modifiers(self.modifiers)
+    }
+
+    /// The effect to accept this drag with: the one the modifier keys ask
+    /// for when the source allows it, otherwise the source's default.
+    pub fn preferred_effect(&self) -> DropEffect {
+        self.requested_effect()
+            .filter(|effect| self.allowed_effects.contains(*effect))
+            .unwrap_or(self.allowed_effect)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,6 +344,7 @@ pub struct DragPreview {
     pub start_position: Point,
     pub payload: DragPayload,
     pub allowed_effect: DropEffect,
+    pub allowed_effects: DropEffects,
     pub preview_label: Option<Arc<str>>,
 }
 

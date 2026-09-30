@@ -1,10 +1,10 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use sui_core::{
-    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Path, Point,
-    PointerButton, PointerEvent, PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction,
-    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
-    WindowEvent,
+    Color, DragEvent, DragEventKind, Event, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, KeyState, Path, Point, PointerButton, PointerEvent, PointerEventKind,
+    PointerKind, Rect, ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode,
+    SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexMeasurePhase,
@@ -2105,6 +2105,95 @@ impl ScrollAxes {
 
 const TOUCH_SCROLL_DRAG_THRESHOLD: f32 = 4.0;
 
+/// How close to a scroll view's edge a drag starts scrolling it.
+const DRAG_AUTO_SCROLL_EDGE: f32 = 40.0;
+/// How fast a drag at the very edge scrolls, in pixels a second.
+const DRAG_AUTO_SCROLL_SPEED: f32 = 1_200.0;
+
+/// Scrolling a scroll view while a drag hovers near its edges.
+#[derive(Debug, Clone, Copy)]
+struct DragAutoScroll {
+    enabled: bool,
+    /// Pixels a second; zero when the drag is not near an edge.
+    velocity: Vector,
+}
+
+impl Default for DragAutoScroll {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            velocity: Vector::ZERO,
+        }
+    }
+}
+
+impl DragAutoScroll {
+    fn is_scrolling(&self) -> bool {
+        self.velocity != Vector::ZERO
+    }
+
+    fn stop(&mut self) {
+        self.velocity = Vector::ZERO;
+    }
+
+    /// Follow `drag` over a scroll view showing `viewport`, which scrolls
+    /// along the axes marked in `axes` (horizontal, vertical).
+    fn follow(&mut self, ctx: &mut EventCtx, drag: &DragEvent, viewport: Rect, axes: (bool, bool)) {
+        if !self.enabled {
+            return;
+        }
+        let was_scrolling = self.is_scrolling();
+        match drag.kind {
+            DragEventKind::Enter | DragEventKind::Over => {
+                let speed = |scrolls: bool, position: f32, start: f32, end: f32| {
+                    if scrolls {
+                        drag_edge_speed(position, start, end)
+                    } else {
+                        0.0
+                    }
+                };
+                self.velocity = Vector::new(
+                    speed(axes.0, drag.position.x, viewport.x(), viewport.max_x()),
+                    speed(axes.1, drag.position.y, viewport.y(), viewport.max_y()),
+                );
+            }
+            DragEventKind::Leave if drag.target == Some(ctx.widget_id()) => self.stop(),
+            DragEventKind::Drop | DragEventKind::End => self.stop(),
+            DragEventKind::Leave => {}
+        }
+        if self.is_scrolling() && !was_scrolling {
+            ctx.request_animation_frame();
+        }
+    }
+
+    /// How far to scroll for a frame `delta` seconds after the last one.
+    fn step(&self, delta: f64) -> Vector {
+        // A long gap, like the first frame after a pause, would jump.
+        let seconds = delta.clamp(0.0, 1.0 / 20.0) as f32;
+        Vector::new(self.velocity.x * seconds, self.velocity.y * seconds)
+    }
+}
+
+/// Signed scrolling speed for a drag at `position` along an axis whose
+/// visible span is `start..end`: faster the closer it is to either edge.
+fn drag_edge_speed(position: f32, start: f32, end: f32) -> f32 {
+    let zone = DRAG_AUTO_SCROLL_EDGE.min((end - start) / 4.0);
+    if zone <= 0.0 {
+        return 0.0;
+    }
+    let ramp = |distance: f32| {
+        let closeness = 1.0 - (distance / zone).clamp(0.0, 1.0);
+        closeness * closeness * DRAG_AUTO_SCROLL_SPEED
+    };
+    if position < start + zone {
+        -ramp(position - start)
+    } else if position > end - zone {
+        ramp(end - position)
+    } else {
+        0.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TouchScrollGesture {
     pointer_id: u64,
@@ -3350,6 +3439,7 @@ pub struct ScrollView {
     scroll_bars: bool,
     bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
+    drag_auto_scroll: DragAutoScroll,
     child: SingleChild,
 }
 
@@ -3378,6 +3468,7 @@ impl ScrollView {
             scroll_bars: true,
             bars: None,
             touch_scroll: None,
+            drag_auto_scroll: DragAutoScroll::default(),
             child: SingleChild::new(child),
         }
     }
@@ -3501,6 +3592,12 @@ impl ScrollView {
     /// Compatibility name for `scroll_bars`. Built-in bars reserve layout space.
     pub fn overlay_scroll_bars(self, enabled: bool) -> Self {
         self.scroll_bars(enabled)
+    }
+
+    /// Whether a drag held near an edge scrolls the view. On by default.
+    pub fn auto_scroll_on_drag(mut self, enabled: bool) -> Self {
+        self.drag_auto_scroll.enabled = enabled;
+        self
     }
 
     /// Show built-in scrollbars in their own gutters when content overflows.
@@ -3777,6 +3874,7 @@ impl ScrollView {
                 InvalidationKind::Transform,
             ));
             ctx.request_semantics();
+            ctx.refresh_drag_targets();
             true
         } else {
             false
@@ -3835,6 +3933,7 @@ pub struct VirtualScrollView {
     scroll_bars: bool,
     bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
+    drag_auto_scroll: DragAutoScroll,
     children: WidgetChildren,
 }
 
@@ -3858,6 +3957,7 @@ impl VirtualScrollView {
             scroll_bars: true,
             bars: None,
             touch_scroll: None,
+            drag_auto_scroll: DragAutoScroll::default(),
             children: WidgetChildren::new(),
         }
     }
@@ -3905,6 +4005,12 @@ impl VirtualScrollView {
     /// Compatibility name for `scroll_bars`. Built-in bars reserve layout space.
     pub fn overlay_scroll_bars(self, enabled: bool) -> Self {
         self.scroll_bars(enabled)
+    }
+
+    /// Whether a drag held near an edge scrolls the view. On by default.
+    pub fn auto_scroll_on_drag(mut self, enabled: bool) -> Self {
+        self.drag_auto_scroll.enabled = enabled;
+        self
     }
 
     /// Show built-in scrollbars in their own gutters when content overflows.
@@ -4122,6 +4228,7 @@ impl VirtualScrollView {
                 ));
             }
             ctx.request_semantics();
+            ctx.refresh_drag_targets();
             true
         } else {
             false
@@ -4214,6 +4321,25 @@ impl Widget for ScrollView {
                     .unwrap_or(pointer.delta);
                 if self.scroll_by(viewport, Vector::new(-delta.x, -delta.y), ctx) {
                     ctx.set_handled();
+                }
+            }
+            Event::Drag(drag) if ctx.phase() != EventPhase::Capture => {
+                let axes = (
+                    self.overflow_x.is_scrollable(),
+                    self.overflow_y.is_scrollable(),
+                );
+                let visible = self.viewport_rect(ctx.bounds());
+                self.drag_auto_scroll.follow(ctx, drag, visible, axes);
+            }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. })
+                if self.drag_auto_scroll.is_scrolling() =>
+            {
+                let step = self.drag_auto_scroll.step(*delta);
+                // The first frame of a run has no time behind it yet.
+                if step == Vector::ZERO || self.scroll_by(viewport, step, ctx) {
+                    ctx.request_animation_frame();
+                } else {
+                    self.drag_auto_scroll.stop();
                 }
             }
             Event::Keyboard(key)
@@ -4479,6 +4605,20 @@ impl Widget for VirtualScrollView {
                     .unwrap_or(pointer.delta);
                 if self.scroll_by(viewport, -delta.y, ctx) {
                     ctx.set_handled();
+                }
+            }
+            Event::Drag(drag) if ctx.phase() != EventPhase::Capture => {
+                self.drag_auto_scroll
+                    .follow(ctx, drag, viewport, (false, true));
+            }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. })
+                if self.drag_auto_scroll.is_scrolling() =>
+            {
+                let step = self.drag_auto_scroll.step(*delta).y;
+                if step == 0.0 || self.scroll_by(viewport, step, ctx) {
+                    ctx.request_animation_frame();
+                } else {
+                    self.drag_auto_scroll.stop();
                 }
             }
             Event::Keyboard(key)

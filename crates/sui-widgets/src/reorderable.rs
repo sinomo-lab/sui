@@ -1,20 +1,29 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use sui_core::{
-    DragDropScope, DragEventKind, DragOutcome, DragPayload, DragSessionId, DropEffect, Event, Path,
-    Point, PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
-    Size, Transform, Vector,
+    DragDropScope, DragEventKind, DragOutcome, DragPayload, DragSessionId, DropEffect, Event,
+    KeyState, KeyboardEvent, Path, Point, PointerButton, PointerEventKind, Rect, SemanticsAction,
+    SemanticsLiveRegion, SemanticsNode, SemanticsRole, SemanticsValue, Size, Transform, Vector,
+    WidgetId,
 };
 use sui_layout::Constraints;
 use sui_runtime::{
-    ArrangeCtx, EventCtx, FrameClock, MeasureCtx, Motion, PaintCtx, SemanticsCtx, Widget,
-    WidgetChildren, WidgetPodMutVisitor, WidgetPodVisitor,
+    ArrangeCtx, EventCtx, EventPhase, FrameClock, MeasureCtx, Motion, PaintCtx, SemanticsCtx,
+    Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
+use sui_scene::StrokeStyle;
 
 use crate::{AnimationSpec, DefaultTheme, Easing};
 
 const DEFAULT_DRAG_THRESHOLD: f32 = 4.0;
 const REORDERABLE_LIST_PAYLOAD_KIND: &str = "sui-widgets.reorderable-list";
+/// Tags the ids of the status nodes that announce keyboard moves.
+const SYNTHETIC_REORDER_STATUS_TAG: u64 = 7_u64 << 60;
+
+static NEXT_REORDER_STATUS_ID: AtomicU64 = AtomicU64::new(1);
 
 type ReorderCallback = Box<dyn FnMut(&mut EventCtx, ReorderableListChange)>;
+type ItemName = Box<dyn Fn(usize) -> String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReorderableListChange {
@@ -110,6 +119,13 @@ pub struct ReorderableList {
     content_y: f32,
     content_height: f32,
     on_reorder: Option<ReorderCallback>,
+    item_name: Option<ItemName>,
+    /// The row, by position, that the keyboard acts on while the list has
+    /// focus.
+    current: usize,
+    /// What the last keyboard move did, for assistive technology.
+    announcement: Option<String>,
+    status_id: WidgetId,
 }
 
 impl ReorderableList {
@@ -135,6 +151,13 @@ impl ReorderableList {
             content_y: 0.0,
             content_height: 0.0,
             on_reorder: None,
+            item_name: None,
+            current: 0,
+            announcement: None,
+            status_id: WidgetId::new(
+                SYNTHETIC_REORDER_STATUS_TAG
+                    | NEXT_REORDER_STATUS_ID.fetch_add(1, Ordering::Relaxed),
+            ),
         }
     }
 
@@ -207,8 +230,118 @@ impl ReorderableList {
         self
     }
 
+    /// Names item `index` (in the order items were added) when announcing a
+    /// keyboard move, such as "Moved Draft to position 2 of 4". Items are
+    /// "Item 1", "Item 2"… otherwise.
+    pub fn item_name<F>(mut self, name: F) -> Self
+    where
+        F: Fn(usize) -> String + 'static,
+    {
+        self.item_name = Some(Box::new(name));
+        self
+    }
+
     pub fn order(&self) -> &[usize] {
         &self.order
+    }
+
+    fn name_of(&self, item: usize) -> String {
+        self.item_name
+            .as_ref()
+            .map_or_else(|| format!("Item {}", item + 1), |name| name(item))
+    }
+
+    /// The row, by position, whose widget holds `focused`.
+    fn row_holding(&self, focused: WidgetId) -> Option<usize> {
+        let item = self
+            .children
+            .as_slice()
+            .iter()
+            .position(|row| pod_contains(row, focused))?;
+        self.visual_index_of(item)
+    }
+
+    /// Keys that move rows: Alt+Up and Alt+Down move the row with focus one
+    /// place, Alt+Home and Alt+End to either end. While the list itself has
+    /// focus, Up, Down, Home and End choose the row the keys act on.
+    fn handle_key(&mut self, ctx: &mut EventCtx, key: &KeyboardEvent) {
+        if key.state != KeyState::Pressed
+            || key.is_composing
+            || ctx.phase() == EventPhase::Capture
+            || self.order.is_empty()
+            || self.active_drag.is_some()
+        {
+            return;
+        }
+        let list_focused = ctx.is_focused();
+        let row = if list_focused {
+            self.current.min(self.order.len() - 1)
+        } else if let Some(row) = ctx
+            .focused_widget_id()
+            .and_then(|focused| self.row_holding(focused))
+        {
+            row
+        } else {
+            return;
+        };
+        let last = self.order.len() - 1;
+        let modifiers = key.modifiers;
+        let plain = !modifiers.any();
+        let only_alt = modifiers.alt && !modifiers.control && !modifiers.shift && !modifiers.meta;
+        let destination = |key: &str| match key {
+            "ArrowUp" => Some(row.saturating_sub(1)),
+            "ArrowDown" => Some((row + 1).min(last)),
+            "Home" => Some(0),
+            "End" => Some(last),
+            _ => None,
+        };
+        let Some(to) = destination(key.key.as_str()) else {
+            return;
+        };
+        if only_alt {
+            self.move_row(ctx, row, to);
+            ctx.set_handled();
+        } else if plain && list_focused {
+            if to != self.current {
+                self.current = to;
+                ctx.request_paint();
+                ctx.request_semantics();
+            }
+            ctx.set_handled();
+        }
+    }
+
+    /// Move the row at position `from` to position `to`, as a keyboard move.
+    fn move_row(&mut self, ctx: &mut EventCtx, from: usize, to: usize) {
+        self.current = to;
+        let item = self.order[from];
+        let count = self.order.len();
+        self.announcement = Some(if from == to {
+            format!(
+                "{} is already at position {} of {count}",
+                self.name_of(item),
+                to + 1
+            )
+        } else {
+            format!(
+                "Moved {} to position {} of {count}",
+                self.name_of(item),
+                to + 1
+            )
+        });
+        ctx.request_semantics();
+        ctx.request_paint();
+        if from == to {
+            return;
+        }
+        self.order.remove(from);
+        self.order.insert(to, item);
+        // Rows slide from where they were drawn to their new places.
+        self.retarget_row_motions(ctx, true);
+        ctx.request_arrange();
+        if let Some(callback) = &mut self.on_reorder {
+            callback(ctx, ReorderableListChange { item, from, to });
+        }
     }
 
     pub fn scope_ref(&self) -> &DragDropScope {
@@ -430,6 +563,7 @@ impl ReorderableList {
                 to = self.order.len();
             }
             self.order.insert(to, item);
+            self.current = to;
             if let Some(callback) = &mut self.on_reorder {
                 callback(ctx, ReorderableListChange { item, from, to });
             }
@@ -451,13 +585,17 @@ impl ReorderableList {
 impl Widget for ReorderableList {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
+            Event::Keyboard(key) => self.handle_key(ctx, key),
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
                     && pointer.button == Some(PointerButton::Primary)
                     && ctx.phase() != sui_runtime::EventPhase::Capture =>
             {
                 if let Some(press) = self.press_at(pointer.pointer_id, pointer.position) {
+                    // Keys act on the row last pressed.
+                    self.current = press.from;
                     self.press = Some(press);
+                    ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
                     ctx.set_handled();
                 }
@@ -619,16 +757,59 @@ impl Widget for ReorderableList {
             ctx.push_transform(Transform::translation(0.0, y - rect.y()));
             self.children.as_slice()[item].paint(ctx);
             ctx.pop_transform();
+        } else if ctx.is_focused()
+            && let Some(item) = self.order.get(self.current).copied()
+        {
+            // The row the keyboard acts on, drawn inside the list's clip.
+            let theme = self.resolved_theme();
+            let width = ctx
+                .dpi()
+                .physical_pixels_to_logical(theme.metrics.focus_ring_width.max(1.0));
+            let rect = self.row_bounds.get(item).copied().unwrap_or(Rect::ZERO);
+            let y = self
+                .row_motions
+                .get(item)
+                .map_or(rect.y(), |motion| motion.at(ctx));
+            let ring = Rect::new(rect.x(), y, rect.width(), rect.height())
+                .inflate(-width * 0.5, -width * 0.5);
+            ctx.stroke(
+                Path::rounded_rect(ring, theme.metrics.corner_radius),
+                theme.palette.focus_ring,
+                StrokeStyle::new(width),
+            );
         }
 
         ctx.pop_clip();
     }
 
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
     fn semantics(&self, ctx: &mut SemanticsCtx) {
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::List, ctx.bounds());
         node.name = Some(self.name.clone());
+        node.description = Some(
+            "Alt+Up and Alt+Down move the focused row; Alt+Home and Alt+End move it to either end"
+                .to_string(),
+        );
+        if let Some(item) = self.order.get(self.current).copied() {
+            node.value = Some(SemanticsValue::Text(format!(
+                "{}, position {} of {}",
+                self.name_of(item),
+                self.current + 1,
+                self.order.len()
+            )));
+        }
         node.actions = vec![SemanticsAction::Focus];
         ctx.push(node);
+        if let Some(announcement) = &self.announcement {
+            let mut status = SemanticsNode::new(self.status_id, SemanticsRole::Status, Rect::ZERO);
+            status.parent = Some(ctx.widget_id());
+            status.name = Some(announcement.clone());
+            status.live_region = Some(SemanticsLiveRegion::Polite);
+            ctx.push(status);
+        }
         self.children.semantics(ctx);
     }
 
@@ -641,12 +822,43 @@ impl Widget for ReorderableList {
     }
 }
 
+/// Whether `target` is `root` or one of its descendants.
+fn pod_contains(root: &WidgetPod, target: WidgetId) -> bool {
+    struct Finder {
+        target: WidgetId,
+        found: bool,
+    }
+
+    impl WidgetPodVisitor for Finder {
+        fn visit(&mut self, child: &WidgetPod) {
+            if self.found {
+                return;
+            }
+            if child.id() == self.target {
+                self.found = true;
+            } else {
+                child.visit_children(self);
+            }
+        }
+    }
+
+    if root.id() == target {
+        return true;
+    }
+    let mut finder = Finder {
+        target,
+        found: false,
+    };
+    root.visit_children(&mut finder);
+    finder.found
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::*;
-    use crate::SizedBox;
+    use crate::{Button, SizedBox, Stack};
     use sui_core::{Modifiers, PointerButtons, PointerEvent, PointerKind, Result, WindowId};
     use sui_runtime::{Application, Runtime, WindowBuilder};
 
@@ -720,6 +932,152 @@ mod tests {
                 from: 0,
                 to: 2
             }]
+        );
+        Ok(())
+    }
+
+    fn key(name: &str, alt: bool) -> Event {
+        let mut event = KeyboardEvent::new(name, KeyState::Pressed);
+        event.modifiers.alt = alt;
+        Event::Keyboard(event)
+    }
+
+    const NAMES: [&str; 3] = ["Draft", "Review", "Ship"];
+
+    fn status(runtime: &Runtime, window_id: WindowId) -> Option<String> {
+        runtime
+            .semantics(window_id)
+            .ok()?
+            .iter()
+            .find(|node| node.role == SemanticsRole::Status)
+            .and_then(|node| node.name.clone())
+    }
+
+    #[test]
+    fn alt_arrows_move_the_row_the_keyboard_is_on() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let list = ReorderableList::new("Tasks")
+            .spacing(0.0)
+            .item(SizedBox::new().width(120.0).height(30.0))
+            .item(SizedBox::new().width(120.0).height(30.0))
+            .item(SizedBox::new().width(120.0).height(30.0))
+            .item_name(|item| NAMES[item].to_string())
+            .on_reorder({
+                let changes = Rc::clone(&changes);
+                move |change| changes.borrow_mut().push(change)
+            });
+        let (mut runtime, window_id) = build_runtime(list);
+        let _ = runtime.render(window_id)?;
+
+        // Pressing a row focuses the list with the keyboard on that row.
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Down, Point::new(10.0, 15.0), true),
+        )?;
+        runtime.handle_event(
+            window_id,
+            primary_pointer(PointerEventKind::Up, Point::new(10.0, 15.0), false),
+        )?;
+        let list_node = |runtime: &Runtime| {
+            runtime
+                .semantics(window_id)
+                .unwrap()
+                .iter()
+                .find(|node| node.role == SemanticsRole::List)
+                .cloned()
+                .unwrap()
+        };
+        let _ = runtime.render(window_id)?;
+        assert_eq!(
+            runtime.focused_widget(window_id)?,
+            Some(list_node(&runtime).id)
+        );
+
+        runtime.handle_event(window_id, key("ArrowDown", false))?;
+        let _ = runtime.render(window_id)?;
+        assert_eq!(
+            list_node(&runtime).value,
+            Some(SemanticsValue::Text("Review, position 2 of 3".to_string()))
+        );
+        assert!(changes.borrow().is_empty(), "plain arrows only choose");
+
+        runtime.handle_event(window_id, key("ArrowDown", true))?;
+        let _ = runtime.render(window_id)?;
+        assert_eq!(
+            status(&runtime, window_id).as_deref(),
+            Some("Moved Review to position 3 of 3")
+        );
+        runtime.handle_event(window_id, key("Home", true))?;
+        let _ = runtime.render(window_id)?;
+        assert_eq!(
+            status(&runtime, window_id).as_deref(),
+            Some("Moved Review to position 1 of 3")
+        );
+        runtime.handle_event(window_id, key("ArrowUp", true))?;
+        let _ = runtime.render(window_id)?;
+        assert_eq!(
+            status(&runtime, window_id).as_deref(),
+            Some("Review is already at position 1 of 3")
+        );
+
+        assert_eq!(
+            &*changes.borrow(),
+            &[
+                ReorderableListChange {
+                    item: 1,
+                    from: 1,
+                    to: 2
+                },
+                ReorderableListChange {
+                    item: 1,
+                    from: 2,
+                    to: 0
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn alt_arrows_move_the_row_holding_focus() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let row = |name: &'static str| Stack::horizontal().with_child(Button::new(name));
+        let list = ReorderableList::new("Tasks")
+            .item(row("Draft"))
+            .item(row("Review"))
+            .item(row("Ship"))
+            .on_reorder({
+                let changes = Rc::clone(&changes);
+                move |change| changes.borrow_mut().push(change)
+            });
+        let (mut runtime, window_id) = build_runtime(list);
+        let _ = runtime.render(window_id)?;
+        let ship = runtime
+            .semantics(window_id)?
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Ship"))
+            .map(|node| node.id)
+            .unwrap();
+        runtime.handle_semantics_action(
+            window_id,
+            ship,
+            sui_core::SemanticsActionRequest::Focus,
+        )?;
+        assert_eq!(runtime.focused_widget(window_id)?, Some(ship));
+
+        runtime.handle_event(window_id, key("ArrowUp", true))?;
+        assert_eq!(
+            &*changes.borrow(),
+            &[ReorderableListChange {
+                item: 2,
+                from: 2,
+                to: 1
+            }]
+        );
+        assert_eq!(
+            runtime.focused_widget(window_id)?,
+            Some(ship),
+            "focus stays"
         );
         Ok(())
     }

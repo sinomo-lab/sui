@@ -17,7 +17,7 @@ pub use color::{Color, ColorSpace, Oklch};
 pub use dpi::{DpiInfo, SafeAreaInsets};
 pub use drag::{
     DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload, DragPreview, DragScopeId,
-    DragSessionId, DropEffect,
+    DragSessionId, DropEffect, DropEffects,
 };
 pub use error::{Error, Result};
 pub use event::{

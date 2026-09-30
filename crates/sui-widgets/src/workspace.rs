@@ -101,6 +101,9 @@ pub struct AdaptiveView {
     compact: SingleChild,
     medium: SingleChild,
     expanded: SingleChild,
+    /// Whether a layout has chosen a class yet. The first choice reports
+    /// the class but moves no focus.
+    classified: bool,
     on_class_change: Option<Box<dyn FnMut(AdaptiveClass)>>,
 }
 
@@ -123,6 +126,7 @@ impl AdaptiveView {
             compact_scope,
             medium_scope,
             expanded_scope,
+            classified: false,
             on_class_change: None,
         }
     }
@@ -161,15 +165,18 @@ impl AdaptiveView {
     }
 
     fn activate(&mut self, class: AdaptiveClass) {
-        if self.active == class {
+        let first = !std::mem::replace(&mut self.classified, true);
+        if self.active == class && !first {
             return;
         }
         self.active = class;
-        match class {
-            AdaptiveClass::Compact => self.compact_scope.request_restore(),
-            AdaptiveClass::Medium => self.medium_scope.request_restore(),
-            AdaptiveClass::Expanded => self.expanded_scope.request_restore(),
-        };
+        if !first {
+            match class {
+                AdaptiveClass::Compact => self.compact_scope.request_restore(),
+                AdaptiveClass::Medium => self.medium_scope.request_restore(),
+                AdaptiveClass::Expanded => self.expanded_scope.request_restore(),
+            };
+        }
         if let Some(on_class_change) = &mut self.on_class_change {
             on_class_change(class);
         }
@@ -333,6 +340,8 @@ pub struct ConstraintView {
     fallback_focus: FocusScopeState,
     fallback: SingleChild,
     active: Option<usize>,
+    /// Whether a layout has picked a branch yet.
+    selected: bool,
 }
 
 impl ConstraintView {
@@ -346,6 +355,7 @@ impl ConstraintView {
             fallback: SingleChild::new(FocusScope::new(fallback).state(fallback_focus.clone())),
             fallback_focus,
             active: None,
+            selected: false,
         }
     }
 
@@ -380,7 +390,10 @@ impl ConstraintView {
             .branches
             .iter()
             .position(|branch| branch.query.matches(constraints));
-        if self.active == active {
+        // The first layout picks a branch without moving focus into it.
+        let first = !std::mem::replace(&mut self.selected, true);
+        if self.active == active || first {
+            self.active = active;
             return;
         }
         self.active = active;
@@ -512,6 +525,7 @@ pub struct ResponsiveSidebar {
     rail_width: f32,
     overlay_width: f32,
     mode: ResponsiveSidebarMode,
+    mode_chosen: bool,
     sidebar_frame: Rect,
     content_frame: Rect,
     sidebar_scope: FocusScopeState,
@@ -543,6 +557,7 @@ impl ResponsiveSidebar {
             rail_width: 56.0,
             overlay_width: 320.0,
             mode: ResponsiveSidebarMode::OverlayClosed,
+            mode_chosen: false,
             sidebar_frame: Rect::ZERO,
             content_frame: Rect::ZERO,
             sidebar: SingleChild::new(FocusScope::new(sidebar).state(sidebar_scope.clone())),
@@ -644,16 +659,20 @@ impl ResponsiveSidebar {
     }
 
     fn activate(&mut self, mode: ResponsiveSidebarMode) {
-        if self.mode == mode {
+        // The first layout reports its mode but moves no focus.
+        let first = !std::mem::replace(&mut self.mode_chosen, true);
+        if self.mode == mode && !first {
             return;
         }
         self.mode = mode;
-        match mode {
-            ResponsiveSidebarMode::OverlayOpen
-            | ResponsiveSidebarMode::Rail
-            | ResponsiveSidebarMode::Inline => self.sidebar_scope.request_restore(),
-            ResponsiveSidebarMode::OverlayClosed => self.content_scope.request_restore(),
-        };
+        if !first {
+            match mode {
+                ResponsiveSidebarMode::OverlayOpen
+                | ResponsiveSidebarMode::Rail
+                | ResponsiveSidebarMode::Inline => self.sidebar_scope.request_restore(),
+                ResponsiveSidebarMode::OverlayClosed => self.content_scope.request_restore(),
+            };
+        }
         if let Some(on_mode_change) = &mut self.on_mode_change {
             on_mode_change(mode);
         }
@@ -908,6 +927,8 @@ pub struct MasterDetail {
     split_state: SplitState,
     split_snapshot: SplitStateSnapshot,
     compact: bool,
+    /// Whether a layout has chosen between one pane and both yet.
+    measured: bool,
     master_frame: Rect,
     detail_frame: Rect,
     master_scope: FocusScopeState,
@@ -932,6 +953,7 @@ impl MasterDetail {
             split_snapshot: split_state.snapshot(),
             split_state,
             compact: true,
+            measured: false,
             master_frame: Rect::ZERO,
             detail_frame: Rect::ZERO,
             master: SingleChild::new(FocusScope::new(master).state(master_scope.clone())),
@@ -1007,7 +1029,9 @@ impl Widget for MasterDetail {
         let was_compact = self.compact;
         self.compact =
             self.breakpoints.classify(constraint_width(constraints)) == AdaptiveClass::Compact;
-        if self.compact != was_compact {
+        // The first layout settles the policy without moving focus.
+        let first = !std::mem::replace(&mut self.measured, true);
+        if self.compact != was_compact && !first {
             if self.compact {
                 match self.route {
                     MasterDetailRoute::Master => self.master_scope.request_restore(),
@@ -1270,5 +1294,114 @@ mod tests {
         state.set_expanded(false);
         let _ = render_named(&mut runtime);
         assert_eq!(modes.borrow().last(), Some(&ResponsiveSidebarMode::Rail));
+    }
+
+    /// A pane that takes focus.
+    struct FocusPane(&'static str);
+
+    impl Widget for FocusPane {
+        fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+            constraints.clamp(Size::new(320.0, 180.0))
+        }
+
+        fn accepts_focus(&self) -> bool {
+            true
+        }
+
+        fn semantics(&self, ctx: &mut SemanticsCtx) {
+            let mut node = SemanticsNode::new(
+                ctx.widget_id(),
+                SemanticsRole::GenericContainer,
+                ctx.bounds(),
+            );
+            node.name = Some(self.0.to_string());
+            node.actions = vec![sui_core::SemanticsAction::Focus];
+            ctx.push(node);
+        }
+    }
+
+    /// Render, then deliver the frames widgets asked for.
+    fn settle(runtime: &mut Runtime) -> Vec<(String, sui_core::WidgetId)> {
+        let names = render_named(runtime);
+        for (window_id, event) in runtime.drain_ready_events() {
+            runtime.handle_event(window_id, event).unwrap();
+        }
+        let _ = render_named(runtime);
+        names
+    }
+
+    fn id_of(names: &[(String, sui_core::WidgetId)], name: &str) -> sui_core::WidgetId {
+        names
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| panic!("{name} is laid out"))
+    }
+
+    #[test]
+    fn responsive_sidebar_reports_its_first_mode_without_taking_focus() {
+        let state = ResponsiveSidebarState::new();
+        let modes = Rc::new(RefCell::new(Vec::new()));
+        let recorded_modes = Rc::clone(&modes);
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new().title("Sidebar").root(
+                    ResponsiveSidebar::new(FocusPane("sidebar"), FocusPane("content"))
+                        .state(state.clone())
+                        .on_mode_change(move |mode| recorded_modes.borrow_mut().push(mode)),
+                ),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        resize(&mut runtime, 500.0);
+        let _ = settle(&mut runtime);
+
+        // The mode it starts in is reported even though nothing changed.
+        assert_eq!(&*modes.borrow(), &[ResponsiveSidebarMode::OverlayClosed]);
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+
+        // Opening the overlay later does move focus into it.
+        state.open_overlay();
+        let _ = settle(&mut runtime);
+        let _ = settle(&mut runtime);
+        assert!(runtime.focused_widget(window_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn restoring_focus_leaves_focus_that_moved_elsewhere() {
+        let mut runtime = Application::new()
+            .window(
+                WindowBuilder::new().title("Sidebar").root(
+                    crate::Stack::vertical()
+                        .with_child(FocusPane("outside"))
+                        .with_child(ResponsiveSidebar::new(
+                            FocusPane("sidebar"),
+                            FocusPane("content"),
+                        )),
+                ),
+            )
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        resize(&mut runtime, 800.0);
+        let names = settle(&mut runtime);
+        let outside = id_of(&names, "outside");
+        assert!(
+            runtime
+                .handle_semantics_action(
+                    window_id,
+                    outside,
+                    sui_core::SemanticsActionRequest::Focus
+                )
+                .unwrap()
+        );
+
+        // Narrowing hides the docked sidebar and asks the content to take
+        // focus back, but focus was never in the sidebar.
+        resize(&mut runtime, 500.0);
+        let _ = settle(&mut runtime);
+        let _ = settle(&mut runtime);
+        assert_eq!(runtime.focused_widget(window_id).unwrap(), Some(outside));
     }
 }

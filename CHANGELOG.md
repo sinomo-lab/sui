@@ -512,6 +512,66 @@ Versioning, with the usual expectation that the API may change during the
 - Finding the line of an offset while an input method composes is a binary
   search instead of a scan.
 
+### Drag and drop
+
+- Drags carry the modifier keys held. `DragEvent::modifiers` is updated from
+  pointer and key events, and targets get a fresh `Over` when the keys
+  change without the pointer moving, so what they accept can follow them.
+  `DropEffect::for_modifiers` reads the platform convention (Control copies,
+  Shift moves, both link; Option, Command, and both on macOS), and
+  `DragEvent::preferred_effect` picks the effect they ask for when the source
+  allows it.
+- Breaking: sources can allow several effects. Added `DropEffects`,
+  `Draggable::effects`, and `DragEvent::allowed_effects` and
+  `DragPreview::allowed_effects`; `allowed_effect` is now the effect a drop
+  takes when no key asks for another. `EventCtx::begin_drag` takes
+  `impl Into<DropEffects>`, so a single `DropEffect` still works. Code that
+  builds `DragEvent` or `DragPreview` values needs the new fields.
+- Escape cancels a drag, and losing window focus cancels it too; the source
+  now hears the cancelled `End` instead of the drag vanishing.
+- `ScrollView` and `VirtualScrollView` scroll while a drag is held near an
+  edge, faster closer to it; `auto_scroll_on_drag(false)` turns this off.
+  Targets under a pointer that did not move update as content scrolls under
+  it: scroll views call the new `EventCtx::refresh_drag_targets`.
+- `DragDropHost::preview` builds the widget drawn under the pointer for a
+  drag, such as a lifted card, in place of the label. Previews follow the
+  pointer in the host's coordinates, so a source inside scrolled content no
+  longer draws its label off by the scroll offset.
+- `DropTarget::on_hover_state` reports `DropHover`: idle, accepting with the
+  effect, or refusing a drag in its scope, so a target can show that
+  something cannot land there.
+- `ReorderableList` moves rows with the keyboard. Alt+Up and Alt+Down move
+  the row that has focus, or the list's current row, one place, and Alt+Home
+  and Alt+End move it to either end; Up, Down, Home, and End choose the
+  current row while the list has focus. Each move reports through
+  `on_reorder` and is announced by a status node, naming rows with
+  `item_name`. The list now takes focus.
+- The test harness's pointer events carry the modifiers they are given, and
+  key events update the modifiers later pointer events report, as on a
+  desktop. Both were dropped, so tests could not hold a key while dragging.
+
+### Redesigned Layout and Drag and drop demos
+
+- Layout shows its examples in frames whose width you set with a slider,
+  Phone, Tablet, and Desktop presets, or by dragging a frame's edge; the
+  widths the examples change at are marked under the slider, and Show sizes
+  labels tiles with their sizes. A flex playground lays out five tiles by
+  direction, justification, alignment, gap, and wrapping, with each tile
+  switching between fixed, growing, and capped when pressed, and shows the
+  builder code. A grid takes a sizing mode per column and reads each track's
+  resolved width. The responsive examples name the container query rule that
+  matched and the sidebar's mode, and the master-detail back button shows
+  only when one pane shows at a time. Panes read their widths and reset; a
+  phone shows its safe area insets, with a keyboard to raise them.
+- Drag and drop is a board: a shelf of assets and text snippets, three
+  columns of cards to reorder and move between (hold Ctrl to copy), assets
+  that attach to a card and snippets that join its note, a trash with undo,
+  a text-only field that visibly refuses anything else, a palette locked in
+  its own scope, and files from the desktop that become cards. An event log
+  follows each drag from start to drop or cancel, numbered by session. Cards
+  move with Alt and the arrow keys, keeping focus across columns, or from
+  their menu, and Delete trashes one.
+
 ### Breaking: text painting helpers
 
 - Replaced `paint_aligned_text` with `paint_text` and
@@ -552,6 +612,14 @@ Versioning, with the usual expectation that the API may change during the
 
 ### Fixes
 
+- Adaptive layouts no longer move focus when they are first laid out. A
+  `ResponsiveSidebar`, `AdaptiveView`, `ConstraintView`, or `MasterDetail`
+  restored focus into the pane its first layout showed, taking focus from
+  nothing on a page that had just opened. `ResponsiveSidebar::on_mode_change`
+  and `AdaptiveView::on_class_change` now report the first mode and class.
+- A `FocusScope` restores focus only when focus was lost, not when it is on a
+  widget outside the scope. Resizing across a breakpoint while typing in
+  another field moved focus into the pane that appeared.
 - Widgets that layout moves while an event is handled, before the next frame
   renders, are drawn where they went. A widget in a retained layer kept its
   old position until another event: the demo's open-demo button stayed where

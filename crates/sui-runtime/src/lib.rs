@@ -26,10 +26,10 @@ use std::{
 use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, CursorGrabMode, CustomEvent, DirtyRegion,
     DragEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect,
-    Error, Event, FontHandle, ImageHandle, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, KeyState, Point, PointerButton, PointerButtons, PointerEvent,
-    PointerEventKind, Rect, Result, SemanticsActionRequest, SemanticsEvent, SemanticsNode, Size,
-    TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
+    DropEffects, Error, Event, FontHandle, ImageHandle, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
+    PointerEvent, PointerEventKind, Rect, Result, SemanticsActionRequest, SemanticsEvent,
+    SemanticsNode, Size, TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -1192,8 +1192,9 @@ struct ActiveDrag {
     start_position: Point,
     position: Point,
     payload: DragPayload,
-    allowed_effect: DropEffect,
+    allowed_effects: DropEffects,
     preview_label: Option<Arc<str>>,
+    modifiers: Modifiers,
     hover_path: Vec<WidgetId>,
     accepted_target: Option<WidgetId>,
     accepted_effect: DropEffect,
@@ -1209,8 +1210,9 @@ impl ActiveDrag {
             start_position: request.position,
             position: request.position,
             payload: request.payload,
-            allowed_effect: request.allowed_effect,
+            allowed_effects: request.allowed_effects,
             preview_label: request.preview_label.map(Arc::from),
+            modifiers: Modifiers::NONE,
             hover_path: Vec::new(),
             accepted_target: None,
             accepted_effect: DropEffect::None,
@@ -1235,10 +1237,12 @@ impl ActiveDrag {
             position,
             start_position: self.start_position,
             payload: self.payload.clone(),
-            allowed_effect: self.allowed_effect,
+            allowed_effect: self.allowed_effects.default_effect(),
+            allowed_effects: self.allowed_effects,
             accepted_effect,
             preview_label: self.preview_label.clone(),
             outcome,
+            modifiers: self.modifiers,
         })
     }
 }
@@ -1285,6 +1289,9 @@ struct WindowState {
     last_pointer_events: HashMap<u64, PointerEvent>,
     pointer_hover_paths: HashMap<u64, Vec<WidgetId>>,
     active_drag: Option<ActiveDrag>,
+    /// Content under an active drag may have moved; the next event updates
+    /// which targets the drag is over before it is handled.
+    drag_targets_stale: bool,
     scheduled_timers: Vec<ScheduledTimer>,
     delivering_timers: HashMap<TimerToken, WidgetId>,
     async_wake_targets: HashMap<AsyncWakeToken, WidgetId>,
@@ -1375,6 +1382,7 @@ impl WindowState {
             last_pointer_events: HashMap::new(),
             pointer_hover_paths: HashMap::new(),
             active_drag: None,
+            drag_targets_stale: false,
             scheduled_timers: Vec::new(),
             delivering_timers: HashMap::new(),
             async_wake_targets: HashMap::new(),
@@ -1549,8 +1557,38 @@ impl WindowState {
             self.cancel_all_pointer_captures(&mut invalidations);
             self.pointer_capture.clear();
             self.last_pointer_events.clear();
-            self.active_drag = None;
+            let position = self.active_drag.as_ref().map(|drag| drag.position);
+            if let Some(position) = position {
+                let effects = self.finish_active_drag(position, true);
+                self.apply_event_effects(effects, &mut invalidations);
+            }
             self.reset_cursor_state();
+        }
+        if self.drag_targets_stale {
+            // Content moved under the pointer, for example by auto-scrolling,
+            // since the last drag update. Layout for that ran before this
+            // event, so hit testing sees where things are now.
+            self.drag_targets_stale = false;
+            // A move or release of the drag's own pointer updates it anyway.
+            if !matches!(
+                &event,
+                Event::Pointer(pointer)
+                    if self.is_drag_pointer(pointer)
+                        && matches!(pointer.kind, PointerEventKind::Move | PointerEventKind::Up)
+            ) {
+                let effects = self.refresh_active_drag();
+                self.apply_event_effects(effects, &mut invalidations);
+            }
+        }
+        if let Event::Keyboard(key) = &event
+            && self.active_drag.is_some()
+            && self.handle_drag_key_event(key, &mut invalidations)
+        {
+            self.finish_event(&event);
+            self.record_event_invalidations(&invalidations, &event);
+            self.schedule.extend(&invalidations);
+            self.pending_invalidations.extend(invalidations);
+            return true;
         }
         let mut skip_primary_route = false;
         if let Event::Pointer(pointer) = &event {
@@ -2619,8 +2657,52 @@ impl WindowState {
                         InvalidationKind::Paint,
                     ));
                 }
+                DragRequest::RefreshTargets => {
+                    self.drag_targets_stale = self.active_drag.is_some();
+                }
             }
         }
+    }
+
+    fn is_drag_pointer(&self, pointer: &PointerEvent) -> bool {
+        self.active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+    }
+
+    /// Update the targets of the active drag where its pointer is now.
+    fn refresh_active_drag(&mut self) -> EventEffects {
+        let Some(position) = self.active_drag.as_ref().map(|drag| drag.position) else {
+            return EventEffects::default();
+        };
+        let hit_target = self.pointer_hit_target(position);
+        self.update_active_drag(position, hit_target)
+    }
+
+    /// Keys pressed during a drag: Escape cancels it, and a change to the
+    /// held modifiers sends the targets a fresh `Over` so they can change the
+    /// effect they accept. Returns whether the drag consumed the key.
+    fn handle_drag_key_event(
+        &mut self,
+        key: &KeyboardEvent,
+        invalidations: &mut Vec<InvalidationRequest>,
+    ) -> bool {
+        let Some(drag) = self.active_drag.as_mut() else {
+            return false;
+        };
+        if key.state == KeyState::Pressed && key.key == "Escape" && !key.is_composing {
+            let position = drag.position;
+            let effects = self.finish_active_drag(position, true);
+            self.apply_event_effects(effects, invalidations);
+            return true;
+        }
+        let modifiers = drag_key_modifiers(key);
+        if drag.modifiers != modifiers {
+            drag.modifiers = modifiers;
+            let effects = self.refresh_active_drag();
+            self.apply_event_effects(effects, invalidations);
+        }
+        false
     }
 
     fn handle_drag_pointer_event(
@@ -2628,14 +2710,13 @@ impl WindowState {
         pointer: &PointerEvent,
         hit_target: Option<WidgetId>,
     ) -> EventEffects {
-        if self
-            .active_drag
-            .as_ref()
-            .is_none_or(|drag| drag.pointer_id != pointer.pointer_id)
-        {
+        if !self.is_drag_pointer(pointer) {
             return EventEffects::default();
         }
 
+        if let Some(drag) = self.active_drag.as_mut() {
+            drag.modifiers = pointer.modifiers;
+        }
         match pointer.kind {
             PointerEventKind::Move => self.update_active_drag(pointer.position, hit_target),
             PointerEventKind::Up => {
@@ -2735,6 +2816,7 @@ impl WindowState {
         let Some(active) = self.active_drag.take() else {
             return EventEffects::default();
         };
+        self.drag_targets_stale = false;
 
         let mut effects = EventEffects::default();
         let outcome = if !cancelled {
@@ -5658,6 +5740,21 @@ fn inspector_event_kind(event: &Event) -> &'static str {
         Event::Window(_) => "window",
         Event::Custom(_) => "custom",
     }
+}
+
+/// The modifiers held after `key`, which may itself press or release one.
+/// Platforms differ in whether a modifier key's own event reports it held.
+fn drag_key_modifiers(key: &KeyboardEvent) -> Modifiers {
+    let mut modifiers = key.modifiers;
+    let pressed = key.state == KeyState::Pressed;
+    match key.key.as_str() {
+        "Shift" => modifiers.shift = pressed,
+        "Control" => modifiers.control = pressed,
+        "Alt" | "AltGraph" => modifiers.alt = pressed,
+        "Meta" | "Super" => modifiers.meta = pressed,
+        _ => {}
+    }
+    modifiers
 }
 
 fn nearest_drop_acceptance(

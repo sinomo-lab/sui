@@ -87,6 +87,8 @@ enum HostInputEvent {
     MouseWheel {
         delta: ScrollDelta,
     },
+    /// The keys held changed, as winit reports with `ModifiersChanged`.
+    ModifiersChanged(Modifiers),
     Pointer(PointerEvent),
     Keyboard {
         key: String,
@@ -1363,6 +1365,11 @@ impl LiveHarnessApp {
                 }
                 self.process_event(event_loop, window_id, Event::Pointer(pointer))?;
             }
+            HostInputEvent::ModifiersChanged(modifiers) => {
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.pointer.modifiers = modifiers;
+                }
+            }
             HostInputEvent::Keyboard {
                 key,
                 code,
@@ -1371,6 +1378,11 @@ impl LiveHarnessApp {
                 repeat,
                 modifiers,
             } => {
+                // A platform reports the modifiers a key leaves held, which
+                // later pointer events carry.
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window.pointer.modifiers = modifiers;
+                }
                 self.process_event(
                     event_loop,
                     window_id,
@@ -1732,7 +1744,9 @@ fn map_runtime_event_to_host_inputs(event: Event) -> Result<Vec<HostInputEvent>>
                 return Ok(vec![HostInputEvent::Pointer(pointer)]);
             }
 
-            let mut events = Vec::new();
+            // The platform tracks held keys apart from pointer input; a
+            // dispatched event's modifiers stand for what is held.
+            let mut events = vec![HostInputEvent::ModifiersChanged(pointer.modifiers)];
             match pointer.kind {
                 PointerEventKind::Enter => events.push(HostInputEvent::CursorEntered),
                 PointerEventKind::Leave => events.push(HostInputEvent::CursorLeft),
