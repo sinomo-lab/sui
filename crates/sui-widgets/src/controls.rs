@@ -1,8 +1,8 @@
 mod interaction;
 use crate::animation::Reveal;
 use crate::{
-    AnimationSpec, ControlMetrics, ControlPalette, DefaultTheme, HdrThemeMode, Interpolate,
-    Progress, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole,
+    AnimationSpec, ControlMetrics, ControlPalette, DefaultTheme, GlowTone, HdrThemeMode,
+    Interpolate, Progress, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole,
     WidgetLuminanceRole, WidgetMaterialRole,
     editable_text::{
         CaretBlink, EditableTextController, EditableTextLineMode, TextChangeCallbacks,
@@ -10,7 +10,7 @@ use crate::{
     },
     editor::{EditorCommand, EditorCommandResult, selection_range},
     overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
-    paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
+    paint_theme_glow, paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
     text_align::{
         HorizontalTextAlignmentMode, VerticalAlign, aligned_text_rect_for_layout,
@@ -1398,6 +1398,7 @@ pub struct Button {
     label_layout: Option<PersistentTextLayout>,
     enabled: bool,
     enabled_reader: Option<Box<dyn Fn() -> bool>>,
+    glow: bool,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
@@ -1436,12 +1437,14 @@ impl Button {
             label_layout: None,
             enabled: true,
             enabled_reader: None,
+            glow: true,
             on_press: None,
             on_press_with_ctx: None,
         }
     }
 
     /// Creates a filled accent button for the primary action on a surface.
+    /// Where the theme glows, as dark themes do, it glows with the accent.
     pub fn primary(label: impl Into<String>) -> Self {
         Self::new(label).primary_action()
     }
@@ -1654,6 +1657,21 @@ impl Button {
             self.min_width.unwrap_or(theme.metrics.button_min_width),
             self.min_height.unwrap_or(theme.metrics.min_height),
         )
+    }
+
+    /// Whether the primary action glows where the theme glows. On by default;
+    /// other buttons never glow.
+    pub fn glow(mut self, glow: bool) -> Self {
+        self.glow = glow;
+        self
+    }
+
+    /// The primary action is a live signal: enabled, it glows with the accent.
+    fn glows(&self) -> bool {
+        self.glow
+            && self.is_enabled()
+            && self.appearance == ButtonAppearance::Filled
+            && self.tone == SemanticTone::Accent
     }
 
     /// Visuals at rest (no hover or press in flight).
@@ -1914,6 +1932,10 @@ impl Widget for Button {
             ctx,
             ctx.output_color_range(),
         );
+        if self.glows() {
+            let glow = theme.glow_for_output(GlowTone::Accent, ctx.output_color_range());
+            paint_theme_glow(ctx, ctx.bounds(), [metrics.corner_radius; 4], &glow);
+        }
         draw_control_frame(
             ctx,
             ctx.bounds(),

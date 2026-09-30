@@ -200,6 +200,7 @@ pub use values::binding_surface_border_from_name;
 pub use values::binding_surface_elevation_from_name;
 pub use values::binding_surface_role_from_name;
 pub use values::binding_tooltip_placement_from_name;
+pub use values::{binding_shadow_placement_from_name, binding_shadow_placement_name};
 pub use widget_descriptor::BindingWidget;
 
 #[cfg(test)]

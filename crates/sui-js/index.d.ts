@@ -522,13 +522,28 @@ export class AnimationEditor {
   readonly scroll: number;
 }
 
+export type ShadowPlacement = "behind" | "outside" | "inside";
+
 export class Shadow {
-  constructor(offsetX: number, offsetY: number, blur: number, spread: number, color: Color);
+  /**
+   * `blur` is the CSS blur radius. `placement` is `"behind"` (the default),
+   * `"outside"` for a glow that leaves the box clear, or `"inside"` for an
+   * inset shadow.
+   */
+  constructor(
+    offsetX: number,
+    offsetY: number,
+    blur: number,
+    spread: number,
+    color: Color,
+    placement?: ShadowPlacement,
+  );
   readonly offsetX: number;
   readonly offsetY: number;
   readonly blur: number;
   readonly spread: number;
   readonly color: Color;
+  readonly placement: ShadowPlacement;
 }
 
 export class Constraints {

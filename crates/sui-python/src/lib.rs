@@ -64,6 +64,7 @@ use sui_bindings_core::{
 };
 use sui_bindings_core::{
     BindingAnimationMarker, BindingStagger, binding_loop_mode_from_name, binding_loop_mode_name,
+    binding_shadow_placement_from_name, binding_shadow_placement_name,
     binding_stagger_origin_from_name,
 };
 use sui_crate::{
@@ -1792,39 +1793,64 @@ pub struct PyShadow {
     pub spread: f32,
     #[pyo3(get)]
     pub color: PyColor,
+    pub placement: sui_crate::ShadowPlacement,
 }
 
 #[pymethods]
 impl PyShadow {
+    /// `placement` is `"behind"`, `"outside"` for a glow that leaves the box
+    /// clear, or `"inside"` for an inset shadow.
     #[new]
-    #[pyo3(signature = (offset_x, offset_y, blur, spread, color))]
-    pub const fn new(offset_x: f32, offset_y: f32, blur: f32, spread: f32, color: PyColor) -> Self {
-        Self {
+    #[pyo3(signature = (offset_x, offset_y, blur, spread, color, placement = "behind"))]
+    pub fn new(
+        offset_x: f32,
+        offset_y: f32,
+        blur: f32,
+        spread: f32,
+        color: PyColor,
+        placement: &str,
+    ) -> PyResult<Self> {
+        let placement = binding_shadow_placement_from_name(placement).ok_or_else(|| {
+            PyValueError::new_err(format!("unknown shadow placement '{placement}'"))
+        })?;
+        Ok(Self {
             offset_x,
             offset_y,
             blur,
             spread,
             color,
-        }
+            placement,
+        })
+    }
+
+    #[getter]
+    fn placement(&self) -> &'static str {
+        binding_shadow_placement_name(self.placement)
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "Shadow({}, {}, {}, {}, {:?})",
-            self.offset_x, self.offset_y, self.blur, self.spread, self.color
+            "Shadow({}, {}, {}, {}, {:?}, placement={:?})",
+            self.offset_x,
+            self.offset_y,
+            self.blur,
+            self.spread,
+            self.color,
+            binding_shadow_placement_name(self.placement)
         )
     }
 }
 
 impl From<PyShadow> for ShadowParams {
     fn from(value: PyShadow) -> Self {
-        Self {
-            offset_x: value.offset_x,
-            offset_y: value.offset_y,
-            blur: value.blur,
-            spread: value.spread,
-            color: value.color.into(),
-        }
+        Self::new(
+            value.offset_x,
+            value.offset_y,
+            value.blur,
+            value.spread,
+            value.color.into(),
+        )
+        .with_placement(value.placement)
     }
 }
 

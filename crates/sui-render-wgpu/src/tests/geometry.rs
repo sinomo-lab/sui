@@ -932,13 +932,13 @@ pub(crate) fn rounded_rect_primitives_render_to_png_capture() {
             width: 3.0,
             color: Color::rgba(0.95, 0.97, 1.0, 1.0),
         }),
-        shadow: Some(ShadowParams {
-            offset_x: 0.0,
-            offset_y: 6.0,
-            blur: 8.0,
-            spread: 1.0,
-            color: Color::rgba(0.0, 0.0, 0.0, 0.55),
-        }),
+        shadow: Some(ShadowParams::new(
+            0.0,
+            6.0,
+            8.0,
+            1.0,
+            Color::rgba(0.0, 0.0, 0.0, 0.55),
+        )),
     });
     scene.push(SceneCommand::PopClip);
 

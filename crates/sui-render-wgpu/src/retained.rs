@@ -2467,6 +2467,7 @@ pub(crate) fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHas
                     shadow.blur.to_bits().hash(hasher);
                     shadow.spread.to_bits().hash(hasher);
                     hash_color(shadow.color, hasher);
+                    shadow.placement.hash(hasher);
                 }
                 None => 0u8.hash(hasher),
             }

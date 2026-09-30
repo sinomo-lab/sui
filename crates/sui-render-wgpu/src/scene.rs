@@ -529,16 +529,19 @@ impl SceneDrawOpBuilder<'_> {
                 border,
                 shadow,
             } => {
-                // Submission order is z-order: paint the soft shadow first so the fill
-                // (and its border) draw on top of it.
-                if let Some(shadow) = shadow {
+                // Submission order is z-order: a shadow around the box goes
+                // first so the fill (and its border) draw on top of it; one
+                // inside the box goes over the fill.
+                let inside =
+                    shadow.filter(|shadow| shadow.placement == sui_scene::ShadowPlacement::Inside);
+                if let Some(shadow) = shadow.filter(|_| inside.is_none()) {
                     self.scratch_vertices.clear();
                     append_rounded_rect_shadow(
                         &mut self.scratch_vertices,
                         state,
                         *rect,
                         *radii,
-                        *shadow,
+                        shadow,
                         viewport,
                         self.feather_width,
                     );
@@ -592,6 +595,24 @@ impl SceneDrawOpBuilder<'_> {
                         // borders are only honored for solid rounded-rect fills.
                         let _ = border;
                     }
+                }
+                if let Some(shadow) = inside {
+                    self.scratch_vertices.clear();
+                    append_rounded_rect_shadow(
+                        &mut self.scratch_vertices,
+                        state,
+                        *rect,
+                        *radii,
+                        shadow,
+                        viewport,
+                        self.feather_width,
+                    );
+                    push_draw_op(
+                        draw_ops,
+                        DrawOpKind::RoundedRect,
+                        &self.scratch_vertices,
+                        state,
+                    );
                 }
                 diagnostics.rect_command_count += 1;
                 Ok(())

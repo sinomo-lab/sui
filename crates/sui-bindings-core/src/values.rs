@@ -15,6 +15,7 @@ use sui::MenuItem;
 use sui::SafeAreaEdges;
 use sui::SegmentedControlItem;
 use sui::SemanticTone;
+use sui::ShadowPlacement;
 use sui::SimpleColorPickerMode;
 use sui::StatusBarSegment;
 use sui::SurfaceBorder;
@@ -683,6 +684,23 @@ pub fn binding_surface_elevation_from_name(value: &str) -> Option<SurfaceElevati
         "medium" | "md" => Some(SurfaceElevation::Medium),
         "large" | "lg" => Some(SurfaceElevation::Large),
         _ => None,
+    }
+}
+
+pub fn binding_shadow_placement_from_name(value: &str) -> Option<ShadowPlacement> {
+    match normalize_binding_name(value).as_str() {
+        "behind" | "drop" | "outer" => Some(ShadowPlacement::Behind),
+        "outside" | "glow" => Some(ShadowPlacement::Outside),
+        "inside" | "inset" | "inner" => Some(ShadowPlacement::Inside),
+        _ => None,
+    }
+}
+
+pub fn binding_shadow_placement_name(placement: ShadowPlacement) -> &'static str {
+    match placement {
+        ShadowPlacement::Behind => "behind",
+        ShadowPlacement::Outside => "outside",
+        ShadowPlacement::Inside => "inside",
     }
 }
 

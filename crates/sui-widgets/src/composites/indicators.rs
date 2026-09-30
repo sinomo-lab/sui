@@ -1,5 +1,6 @@
 use crate::ControlMetrics;
 use crate::DefaultTheme;
+use crate::GlowTone;
 use crate::IconGlyph;
 use crate::Interpolate;
 use crate::Progress;
@@ -9,6 +10,7 @@ use crate::ThemeTextToken;
 use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
+use crate::paint_theme_glow;
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
 use sui_core::Color;
@@ -831,6 +833,9 @@ impl Widget for Spinner {
         let theme = self.resolved_theme();
         let palette = theme.palette;
         let indicator = self.indicator_rect(ctx.bounds());
+        // Busy is a live signal: the indicator glows where the theme glows.
+        let glow = theme.glow_for_output(GlowTone::Accent, ctx.output_color_range());
+        paint_theme_glow(ctx, indicator, [indicator.width() * 0.5; 4], &glow);
         let center = rect_center(indicator);
         let radius = indicator.width().min(indicator.height()) * 0.4;
         let dot_radius = (indicator.width() * 0.09).max(1.5);

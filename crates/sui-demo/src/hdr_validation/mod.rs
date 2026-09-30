@@ -333,7 +333,7 @@ fn ui_modes_section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     section(
         theme_reader,
         "HDR in UI",
-        "The same controls under each HDR theme mode. The theme mode decides how far accents may rise above SDR white; the output decides whether the display shows it.",
+        "The same controls, and the glow live signals wear, under each HDR theme mode. The theme mode decides how far accents and glows may rise above SDR white; the output decides whether the display shows it.",
         body()
             .alignment(Alignment::Stretch)
             .with_child(ui_modes::ui_mode_columns())

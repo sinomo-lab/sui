@@ -292,6 +292,37 @@ For a one-off widget variation, prefer the widget's appearance, tone, color,
 padding, or text-style builder instead of cloning and mutating an entire token
 set.
 
+## Shadows and glows
+
+`theme.shadows` holds CSS-style shadow scales: `box_shadow` for elevation,
+`inset`, `drop`, and `text`, each a `ThemeShadow` of up to two layers. A
+layer's `blur` is the CSS blur radius. `theme.glows` holds the halos live
+signals wear: `accent` for live and primary signals and `secondary` for voice.
+Light themes have no glows.
+
+Surfaces cast shadows by elevation or by token, and glow by tone. A
+`ShadowBox` does the same around a child that paints its own face:
+
+```rust,ignore
+Surface::panel(content).radius(12.0).shadow(|theme| theme.shadows.box_shadow.lg);
+Surface::field(content).radius(8.0).shadow(|theme| theme.shadows.inset.sm);
+Surface::panel(content).radius(12.0).glow(GlowTone::Accent);
+ShadowBox::new(image).radius(12.0).shadow(|theme| theme.shadows.box_shadow.md);
+```
+
+Custom widgets paint them with `paint_theme_shadow` before their fill,
+`paint_theme_inset_shadow` after it, and `paint_theme_glow`. Resolve a glow for
+the window's output with `theme.glow_for_output(tone, ctx.output_color_range())`:
+on HDR outputs, where the theme's HDR mode allows, the halo takes the tone's HDR
+color. Enabled primary buttons and busy spinners glow in themes that have
+glows; `Button::glow(false)` turns a primary button's glow off.
+
+At the lowest level, `PaintCtx::draw_shadow` takes a `ShadowParams`. Its
+`placement` puts the shadow behind its box (`Behind`, as CSS `box-shadow`),
+around it only (`Outside`, leaving the box clear, for glows and translucent
+surfaces), or inside it (`Inside`, as CSS `inset`). The renderer draws the
+Gaussian blur of the rounded box, scaled with the current transform.
+
 ## Application Theme Extensions
 
 The facade-level `Theme` combines a `DefaultTheme`, top-level foreground and

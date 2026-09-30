@@ -337,13 +337,7 @@ fn paint_command_builder_validates_and_resolves_image_commands() {
 fn paint_command_builder_records_rich_low_level_commands() {
     let path = Path::circle(Point::new(8.0, 8.0), 4.0);
     let local = BindingImageHandle::local(3);
-    let shadow = ShadowParams {
-        offset_x: 1.0,
-        offset_y: 2.0,
-        blur: 3.0,
-        spread: 0.5,
-        color: Color::rgba(0.0, 0.0, 0.0, 0.5),
-    };
+    let shadow = ShadowParams::new(1.0, 2.0, 3.0, 0.5, Color::rgba(0.0, 0.0, 0.0, 0.5));
 
     let mut builder = PaintCommandBuilder::new();
     builder

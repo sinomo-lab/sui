@@ -91,6 +91,7 @@ pub use status::StatusBarHost;
 pub use status::StatusBarSegment;
 pub use status::paint_status_badge;
 pub use surfaces::FramedField;
+pub use surfaces::ShadowBox;
 pub use surfaces::Surface;
 pub use surfaces::SurfaceAppearance;
 pub use surfaces::SurfaceBorder;
@@ -115,5 +116,7 @@ use crate::composites::navigation::{browser_tab_close_semantics_id, browser_tab_
 #[cfg(test)]
 use crate::composites::status::status_bar_segment_id;
 
+#[cfg(test)]
+mod shadow_tests;
 #[cfg(test)]
 mod tests;

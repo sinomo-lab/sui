@@ -5,7 +5,10 @@ use sui_layout::Padding as Insets;
 use sui_text::{FontFamilyStack, TextStyle};
 
 use crate::animation::{AnimationSpec, Easing, Stagger};
-use crate::hdr_theme::HdrThemeTokens;
+use crate::hdr_theme::{
+    HdrThemeTokens, WidgetColorRole, WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole,
+    resolve_widget_hdr_style,
+};
 
 /// Motion design tokens: a shared vocabulary of animation durations and easing
 /// curves so widgets and applications animate consistently.
@@ -994,19 +997,32 @@ impl ThemeShadowLayer {
     /// Convert this theme shadow layer into the renderer primitive
     /// [`sui_scene::ShadowParams`] consumed by `PaintCtx::draw_shadow`.
     pub fn to_shadow_params(&self) -> sui_scene::ShadowParams {
-        sui_scene::ShadowParams {
-            offset_x: self.offset_x,
-            offset_y: self.offset_y,
-            blur: self.blur,
-            spread: self.spread,
-            color: self.color,
+        let shadow = sui_scene::ShadowParams::new(
+            self.offset_x,
+            self.offset_y,
+            self.blur,
+            self.spread,
+            self.color,
+        );
+        if self.inset {
+            shadow.with_placement(sui_scene::ShadowPlacement::Inside)
+        } else {
+            shadow
         }
     }
 
     /// An outer (drop) shadow casts beyond the surface edge; an inset layer
-    /// renders an inner shadow. Only outer layers are paintable today.
+    /// renders an inner shadow, with [`paint_theme_inset_shadow`].
     pub const fn is_outer(&self) -> bool {
         !self.inset
+    }
+}
+
+impl ThemeShadow {
+    /// The layers in painting order: `second` first, so `first` ends up on
+    /// top, as CSS `box-shadow` stacks its first-listed shadow topmost.
+    fn painting_order(&self) -> impl Iterator<Item = ThemeShadowLayer> {
+        self.second.into_iter().chain(self.first)
     }
 }
 
@@ -1015,7 +1031,7 @@ impl ThemeShadowLayer {
 /// `first` layer on top — matching CSS `box-shadow`, where the first-listed
 /// shadow is topmost.
 ///
-/// Inset layers are skipped: inner shadows are future work.
+/// Inset layers are left for [`paint_theme_inset_shadow`].
 ///
 /// The caller MUST invoke this BEFORE filling the surface background and BEFORE
 /// pushing any clip tight to the widget, so the soft shadow renders behind the
@@ -1026,19 +1042,45 @@ pub fn paint_theme_shadow(
     radii: [f32; 4],
     shadow: &ThemeShadow,
 ) {
-    // Draw the tighter `second` layer first, then the wider/more-diffuse `first`
-    // layer on top (CSS box-shadow order: the first-listed shadow is topmost).
-    if let Some(layer) = shadow.second
-        && layer.is_outer()
-    {
+    for layer in shadow.painting_order().filter(ThemeShadowLayer::is_outer) {
         paint.draw_shadow(rect, radii, layer.to_shadow_params());
-        // inset layers are inner shadows -> future work
     }
-    if let Some(layer) = shadow.first
-        && layer.is_outer()
-    {
+}
+
+/// Paint the inset layers of a [`ThemeShadow`] inside a rounded-rect surface.
+/// Call it after filling the surface and before painting its border and
+/// content, as CSS draws inset shadows. Outer layers are left for
+/// [`paint_theme_shadow`].
+pub fn paint_theme_inset_shadow(
+    paint: &mut sui_runtime::PaintCtx,
+    rect: sui_core::Rect,
+    radii: [f32; 4],
+    shadow: &ThemeShadow,
+) {
+    for layer in shadow.painting_order().filter(|layer| !layer.is_outer()) {
         paint.draw_shadow(rect, radii, layer.to_shadow_params());
-        // inset layers are inner shadows -> future work
+    }
+}
+
+/// Paint a glow around a rounded rect: each layer of `glow` as a halo outside
+/// the rect only, so the rect itself stays clear. It can be painted before the
+/// rect's fill or after it; a translucent fill does not show the halo through
+/// it. Resolve a theme glow for the output with
+/// [`DefaultTheme::glow_for_output`].
+pub fn paint_theme_glow(
+    paint: &mut sui_runtime::PaintCtx,
+    rect: sui_core::Rect,
+    radii: [f32; 4],
+    glow: &ThemeShadow,
+) {
+    for layer in glow.painting_order() {
+        paint.draw_shadow(
+            rect,
+            radii,
+            layer
+                .to_shadow_params()
+                .with_placement(sui_scene::ShadowPlacement::Outside),
+        );
     }
 }
 
@@ -1308,10 +1350,21 @@ impl ThemeShadows {
     }
 }
 
+/// Which of the theme's glows to draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GlowTone {
+    /// The primary color's halo, for live and primary signals.
+    #[default]
+    Accent,
+    /// The secondary color's halo, for voice and duplex signals.
+    Secondary,
+}
+
 /// Glow tokens: soft zero-offset halos reserved for **live signals** (streaming,
 /// voice, busy indicators, the primary action). Mesh keeps Light glow-free
 /// (light does not glow on paper), gives Dark full glows, and damps Void to
-/// protect OLED panels. Paint with [`paint_theme_shadow`].
+/// protect OLED panels. Paint with [`paint_theme_glow`], after resolving them
+/// for the output with [`DefaultTheme::glow_for_output`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeGlows {
     /// Accent-hued glow: live/primary signals (`--sm-glow-accent`).
@@ -1355,6 +1408,13 @@ impl ThemeGlows {
         Self {
             accent: ThemeShadow::empty(),
             secondary: ThemeShadow::empty(),
+        }
+    }
+
+    pub fn get(&self, tone: GlowTone) -> ThemeShadow {
+        match tone {
+            GlowTone::Accent => self.accent,
+            GlowTone::Secondary => self.secondary,
         }
     }
 }
@@ -3690,6 +3750,46 @@ impl DefaultTheme {
         }
     }
 
+    /// The theme's `tone` glow as it should look on `output`.
+    ///
+    /// Where the theme's HDR mode and the output allow it, each halo takes the
+    /// HDR variant of the tone's color, as bright as an emissive indicator may
+    /// be, or its wide-gamut variant on a wide-gamut output, keeping the halo's
+    /// own alpha. Elsewhere, and whenever the theme turns HDR effects off, the
+    /// glow is the theme's token. Light themes have no glow.
+    pub fn glow_for_output(
+        &self,
+        tone: GlowTone,
+        output: Option<sui_runtime::OutputColorRange>,
+    ) -> ThemeShadow {
+        let glow = self.glows.get(tone);
+        let role = match tone {
+            GlowTone::Accent => WidgetColorRole::Accent,
+            GlowTone::Secondary => WidgetColorRole::Secondary,
+        };
+        let style = resolve_widget_hdr_style(
+            &self.hdr.limited_to(output),
+            role,
+            WidgetLuminanceRole::EmissiveIndicator,
+            WidgetMaterialRole::Flat,
+            Some(WidgetEffectRole::Glow),
+        );
+        if style.effect.is_none() {
+            return glow;
+        }
+        let color = crate::controls::apply_hdr_policy_cap(style.color, style.peak_lift);
+        let lit = |layer: Option<ThemeShadowLayer>| {
+            layer.map(|layer| ThemeShadowLayer {
+                color: color.with_alpha(layer.color.alpha),
+                ..layer
+            })
+        };
+        ThemeShadow {
+            first: lit(glow.first),
+            second: lit(glow.second),
+        }
+    }
+
     /// The complete role set for a semantic tone. `Neutral` resolves to the
     /// neutral button face: white with an outline in light themes, a raised
     /// fill in dark themes, always with full-strength ink.
@@ -3838,10 +3938,59 @@ fn shadow_layer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Color, ControlSize, ControlTypography, DecorativeHue, DefaultTheme, SemanticTone,
+        Color, ControlSize, ControlTypography, DecorativeHue, DefaultTheme, GlowTone, SemanticTone,
         ThemeColorScheme, ThemeColors, ThemeDensity, ThemeShadow, ThemeTextScale, rgb8,
     };
     use crate::hdr_theme::HdrThemeMode;
+    use sui_core::ColorSpace;
+    use sui_runtime::OutputColorRange;
+
+    #[test]
+    fn glows_brighten_to_the_accents_hdr_color_where_the_output_and_theme_allow() {
+        assert_eq!(
+            DefaultTheme::light().glow_for_output(GlowTone::Accent, None),
+            ThemeShadow::empty(),
+            "light themes have no glow"
+        );
+        let dark = DefaultTheme::dark();
+        assert_eq!(
+            dark.glow_for_output(GlowTone::Accent, Some(OutputColorRange::HighDynamicRange)),
+            dark.glows.accent,
+            "the theme's token while its HDR mode is off"
+        );
+
+        let mut hdr = dark;
+        hdr.hdr.mode = HdrThemeMode::FullHdr;
+        let token = dark.glows.accent.first.unwrap();
+        let bright = hdr
+            .glow_for_output(GlowTone::Accent, Some(OutputColorRange::HighDynamicRange))
+            .first
+            .unwrap();
+        assert_eq!(bright.color.space, ColorSpace::LinearDisplayP3);
+        assert_eq!(bright.color.alpha, token.color.alpha);
+        assert_eq!(bright.blur, token.blur);
+        let wide = hdr
+            .glow_for_output(GlowTone::Accent, Some(OutputColorRange::WideGamut))
+            .first
+            .unwrap();
+        assert_eq!(wide.color.space, ColorSpace::DisplayP3);
+        assert_eq!(
+            hdr.glow_for_output(GlowTone::Accent, Some(OutputColorRange::Standard)),
+            dark.glows.accent,
+            "a standard output gets the token"
+        );
+        assert_ne!(
+            hdr.glow_for_output(
+                GlowTone::Secondary,
+                Some(OutputColorRange::HighDynamicRange)
+            )
+            .first
+            .unwrap()
+            .color,
+            bright.color,
+            "the secondary glow takes the secondary color"
+        );
+    }
 
     #[test]
     fn default_theme_uses_body_text_scale_for_typography() {

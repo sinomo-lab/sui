@@ -1,5 +1,5 @@
 use sui::prelude::*;
-use sui::{SemanticTone, StatusBadge};
+use sui::{GlowTone, SemanticTone, ShadowBox, ShadowParams, ShadowPlacement, StatusBadge};
 
 use super::super::SPLIT_VIEW_NAME;
 use super::super::registry::{Category, Story, StoryCtx};
@@ -7,7 +7,7 @@ use super::super::specimen::{Section, boxed, example, strip};
 use super::sized;
 use crate::app::{DemoTextRole, demo_text_style};
 
-pub(super) const STORIES: [Story; 7] = [
+pub(super) const STORIES: [Story; 8] = [
     Story {
         id: "surface",
         title: "Surface",
@@ -16,6 +16,15 @@ pub(super) const STORIES: [Story; 7] = [
         keywords: "panel card background elevation shadow",
         category: Category::Layout,
         build: surface,
+    },
+    Story {
+        id: "shadows-and-glows",
+        title: "Shadows and glows",
+        api: "Surface::shadow, Surface::glow, ShadowBox, paint_theme_glow",
+        summary: "Theme shadows around and inside boxes, and the glows live signals wear.",
+        keywords: "shadow elevation inset glow halo box-shadow",
+        category: Category::Layout,
+        build: shadows_and_glows,
     },
     Story {
         id: "separator",
@@ -72,6 +81,195 @@ pub(super) const STORIES: [Story; 7] = [
         build: scroll_view,
     },
 ];
+
+fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
+    let theme = ctx.theme;
+    let card = |label: &str| {
+        SizedBox::new()
+            .width(104.0)
+            .height(64.0)
+            .with_child(Align::center(Label::new(label).style(demo_text_style(
+                theme,
+                DemoTextRole::Supporting,
+                theme.palette.text_muted,
+            ))))
+    };
+    type Token = fn(&DefaultTheme) -> ThemeShadow;
+    let box_shadows: [(&str, Token); 7] = [
+        ("2xs", |theme| theme.shadows.box_shadow._2xs),
+        ("xs", |theme| theme.shadows.box_shadow.xs),
+        ("sm", |theme| theme.shadows.box_shadow.sm),
+        ("md", |theme| theme.shadows.box_shadow.md),
+        ("lg", |theme| theme.shadows.box_shadow.lg),
+        ("xl", |theme| theme.shadows.box_shadow.xl),
+        ("2xl", |theme| theme.shadows.box_shadow._2xl),
+    ];
+    let inset_shadows: [(&str, Token); 4] = [
+        ("2xs", |theme| theme.shadows.inset._2xs),
+        ("xs", |theme| theme.shadows.inset.xs),
+        ("sm", |theme| theme.shadows.inset.sm),
+        ("Deeper", |_| {
+            ThemeShadow::single(ThemeShadowLayer {
+                offset_x: 0.0,
+                offset_y: 3.0,
+                blur: 10.0,
+                spread: 0.0,
+                color: Color::BLACK.with_alpha(0.35),
+                inset: true,
+            })
+        }),
+    ];
+    let glow_caption = if theme.glows.accent.first.is_some() {
+        "Glows"
+    } else {
+        "Glows: none in light themes"
+    };
+    vec![
+        strip(
+            theme,
+            "Box shadows",
+            box_shadows
+                .into_iter()
+                .map(|(label, token)| {
+                    (
+                        label,
+                        boxed(
+                            Surface::panel(card(label))
+                                .radius(10.0)
+                                .shadow(token)
+                                .theme(theme),
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        strip(
+            theme,
+            "Inset shadows",
+            inset_shadows
+                .into_iter()
+                .map(|(label, token)| {
+                    (
+                        label,
+                        boxed(
+                            Surface::field(card(label))
+                                .radius(10.0)
+                                .shadow(token)
+                                .theme(theme),
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        strip(
+            theme,
+            glow_caption,
+            vec![
+                (
+                    "Accent",
+                    boxed(
+                        Surface::panel(card("Live"))
+                            .radius(10.0)
+                            .glow(GlowTone::Accent)
+                            .theme(theme),
+                    ),
+                ),
+                (
+                    "Secondary",
+                    boxed(
+                        Surface::panel(card("Voice"))
+                            .radius(32.0)
+                            .glow(GlowTone::Secondary)
+                            .theme(theme),
+                    ),
+                ),
+                (
+                    "Primary action",
+                    boxed(Button::primary("Publish").theme(theme)),
+                ),
+                (
+                    "Busy",
+                    boxed(Spinner::new("Syncing").label("Syncing").theme(theme)),
+                ),
+                (
+                    "Shadow box",
+                    boxed(
+                        ShadowBox::new(ColorSwatch(
+                            theme.decorative.get(DecorativeHue::Violet).solid,
+                        ))
+                        .radius(12.0)
+                        .shadow(|theme| theme.shadows.box_shadow.md)
+                        .glow(GlowTone::Secondary)
+                        .theme(theme),
+                    ),
+                ),
+            ],
+        ),
+        strip(
+            theme,
+            "Under a translucent fill",
+            vec![
+                (
+                    "Behind",
+                    boxed(Translucent::new(theme, ShadowPlacement::Behind)),
+                ),
+                (
+                    "Outside",
+                    boxed(Translucent::new(theme, ShadowPlacement::Outside)),
+                ),
+            ],
+        ),
+    ]
+}
+
+/// A block of one color that paints its own face, for [`ShadowBox`].
+struct ColorSwatch(Color);
+
+impl Widget for ColorSwatch {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(64.0, 64.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        ctx.fill(Path::rounded_rect(ctx.bounds(), 12.0), self.0);
+    }
+}
+
+/// A see-through box casting a shadow with `placement`: behind shows through
+/// the fill, outside leaves the box clear.
+struct Translucent {
+    theme: DefaultTheme,
+    placement: ShadowPlacement,
+}
+
+impl Translucent {
+    fn new(theme: DefaultTheme, placement: ShadowPlacement) -> Self {
+        Self { theme, placement }
+    }
+}
+
+impl Widget for Translucent {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(104.0, 64.0))
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let bounds = ctx.bounds();
+        let shadow = ShadowParams::new(
+            0.0,
+            8.0,
+            18.0,
+            0.0,
+            self.theme.palette.text.with_alpha(0.45),
+        )
+        .with_placement(self.placement);
+        ctx.draw_shadow(bounds, [10.0; 4], shadow);
+        ctx.fill(
+            Path::rounded_rect(bounds, 10.0),
+            self.theme.palette.accent.with_alpha(0.3),
+        );
+    }
+}
 
 fn surface(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;

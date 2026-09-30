@@ -10,6 +10,7 @@ mod packets;
 mod pipeline_profile;
 mod prepared_cache;
 mod scroll_layers;
+mod shadows;
 mod support;
 mod text;
 mod uploads;

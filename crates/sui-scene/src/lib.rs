@@ -14,21 +14,80 @@ pub struct Border {
     pub color: Color,
 }
 
+/// Where a shadow falls relative to the rounded box that casts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ShadowPlacement {
+    /// Around the box and beneath it, as CSS `box-shadow`. A fill drawn over
+    /// the box hides the part beneath it.
+    #[default]
+    Behind,
+    /// Around the box only, leaving the box clear. The shadow looks the same
+    /// under a translucent fill, and it can be drawn over the box: a glow.
+    Outside,
+    /// Inside the box, along its edges, as CSS `box-shadow: inset`.
+    Inside,
+}
+
+/// A soft shadow of a rounded box, as CSS `box-shadow` describes one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShadowParams {
     pub offset_x: f32,
     pub offset_y: f32,
+    /// The blur radius, as in CSS: the shadow's edge is blurred by a Gaussian
+    /// whose standard deviation is half of it.
     pub blur: f32,
+    /// How far the shadow's box grows past the casting box before it is
+    /// blurred; an inside shadow's box shrinks by it instead.
     pub spread: f32,
     pub color: Color,
+    pub placement: ShadowPlacement,
 }
 
 impl ShadowParams {
-    /// logical-px reach beyond the rect edge; used to inflate the shadow quad & bounds.
+    /// A shadow drawn behind its box.
+    pub const fn new(offset_x: f32, offset_y: f32, blur: f32, spread: f32, color: Color) -> Self {
+        Self {
+            offset_x,
+            offset_y,
+            blur,
+            spread,
+            color,
+            placement: ShadowPlacement::Behind,
+        }
+    }
+
+    /// A glow: a halo with no offset, drawn outside its box only.
+    pub const fn glow(blur: f32, spread: f32, color: Color) -> Self {
+        Self::new(0.0, 0.0, blur, spread, color).with_placement(ShadowPlacement::Outside)
+    }
+
+    /// An inner shadow, as CSS `box-shadow: inset`.
+    pub const fn inset(offset_x: f32, offset_y: f32, blur: f32, spread: f32, color: Color) -> Self {
+        Self::new(offset_x, offset_y, blur, spread, color).with_placement(ShadowPlacement::Inside)
+    }
+
+    pub const fn with_placement(mut self, placement: ShadowPlacement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    /// The Gaussian's standard deviation.
+    pub fn sigma(&self) -> f32 {
+        self.blur.max(0.0) * 0.5
+    }
+
+    /// Logical-pixel reach beyond the box's edge, where the Gaussian has all
+    /// but faded out; used to size the shadow's quad and bounds. An inside
+    /// shadow stays within its box.
     pub fn extent(&self) -> f32 {
-        3.0 * self.blur.max(0.0)
-            + self.spread.max(0.0)
-            + self.offset_x.abs().max(self.offset_y.abs())
+        match self.placement {
+            ShadowPlacement::Inside => 0.0,
+            ShadowPlacement::Behind | ShadowPlacement::Outside => {
+                3.0 * self.sigma()
+                    + self.spread.max(0.0)
+                    + self.offset_x.abs().max(self.offset_y.abs())
+            }
+        }
     }
 }
 
@@ -1128,14 +1187,14 @@ impl SceneBoundsState {
             ),
             SceneCommand::FillRoundedRect { rect, shadow, .. } => {
                 let bounds = match shadow {
-                    Some(shadow) => {
+                    Some(shadow) if shadow.placement != ShadowPlacement::Inside => {
                         let extent = shadow.extent();
                         let shadow_rect = rect
                             .inflate(extent, extent)
                             .translate(Vector::new(shadow.offset_x, shadow.offset_y));
                         rect.union(shadow_rect)
                     }
-                    None => *rect,
+                    Some(_) | None => *rect,
                 };
                 self.apply_rect(bounds)
             }
@@ -1582,8 +1641,8 @@ mod tests {
         Brush, ImageRegistry, ImageSource, LayerCompositionMode, LayerProperties,
         RegisteredExternalImage, RegisteredImage, RegisteredImageFormat, Scene, SceneBoundsSummary,
         SceneCommand, SceneFrame, SceneLayer, SceneLayerDescriptor, SceneLayerId, SceneLayerUpdate,
-        SceneLayerUpdateKind, StrokeStyle, TextRenderCoveragePolicy, TextRenderMode,
-        TextRenderPolicy, TextSubpixelOrder, WidgetShader,
+        SceneLayerUpdateKind, ShadowParams, ShadowPlacement, StrokeStyle, TextRenderCoveragePolicy,
+        TextRenderMode, TextRenderPolicy, TextSubpixelOrder, WidgetShader,
     };
     use std::sync::Arc;
     use sui_core::{
@@ -2066,6 +2125,42 @@ mod tests {
             assert_bounds_summary_matches_commands(&edited);
             assert_bounds_summary_matches_commands(&scene);
         }
+    }
+
+    #[test]
+    fn shadows_reach_three_deviations_of_half_their_blur_except_inside() {
+        let rect = Rect::new(20.0, 20.0, 40.0, 30.0);
+        let bounds = |shadow: ShadowParams| {
+            let mut scene = Scene::new();
+            scene.push(SceneCommand::FillRoundedRect {
+                rect,
+                radii: [4.0; 4],
+                brush: Brush::Solid(Color::WHITE),
+                border: None,
+                shadow: Some(shadow),
+            });
+            scene.content_bounds()
+        };
+        let black = Color::BLACK;
+        // Blur 8 is a deviation of 4: 12 px of reach, plus the spread, moved
+        // by the offset.
+        let behind = ShadowParams::new(0.0, 6.0, 8.0, 2.0, black);
+        assert_eq!(behind.sigma(), 4.0);
+        assert_eq!(behind.extent(), 12.0 + 2.0 + 6.0);
+        assert_eq!(
+            bounds(behind),
+            Some(rect.union(rect.inflate(20.0, 20.0).translate(Vector::new(0.0, 6.0))))
+        );
+        let glow = ShadowParams::glow(8.0, 0.0, black);
+        assert_eq!(glow.placement, ShadowPlacement::Outside);
+        assert_eq!(bounds(glow), Some(rect.inflate(12.0, 12.0)));
+        let inset = ShadowParams::inset(0.0, 6.0, 8.0, 2.0, black);
+        assert_eq!(inset.extent(), 0.0);
+        assert_eq!(
+            bounds(inset),
+            Some(rect),
+            "an inset shadow stays in its box"
+        );
     }
 
     #[test]

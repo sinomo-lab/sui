@@ -2,7 +2,7 @@
 //! far each mode lets UI accents rise above SDR white.
 
 use sui::prelude::*;
-use sui::{GridTrack, HdrThemeMode};
+use sui::{GlowTone, GridTrack, HdrThemeMode};
 
 use crate::app::{DemoTextRole, demo_text_style};
 use crate::demo_support::NamedSection;
@@ -69,6 +69,21 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
                         DemoTextRole::Metadata,
                         theme.palette.placeholder,
                     ))),
+            )
+            // A live signal's glow takes the accent's HDR color where the
+            // mode allows, as bright as an emissive indicator.
+            .with_child(
+                Surface::field(Padding::all(
+                    8.0,
+                    Label::new(format!("{title} live signal")).style(demo_text_style(
+                        theme,
+                        DemoTextRole::Metadata,
+                        theme.palette.text,
+                    )),
+                ))
+                .radius(14.0)
+                .glow(GlowTone::Accent)
+                .theme(theme),
             ),
     )
 }

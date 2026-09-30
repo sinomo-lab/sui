@@ -572,6 +572,44 @@ Versioning, with the usual expectation that the API may change during the
   move with Alt and the arrow keys, keeping focus across columns, or from
   their menu, and Delete trashes one.
 
+### Breaking: shadows and glows
+
+- A shadow's `blur` is the CSS blur radius: the box's edge is blurred by a
+  Gaussian whose deviation is half of it, as browsers draw the Tailwind-style
+  tokens the theme's shadows come from. Shadows used the blur as the
+  deviation with a steeper falloff, so they were softer and shorter than
+  their tokens. The renderer now draws the Gaussian blur of the rounded box,
+  integrated across the box exactly, so a small box's shadow or glow is as
+  faint as the blur makes it instead of solid under the box.
+- `ShadowParams` gains `placement`: `Behind` its box, as before; `Outside`
+  it only, leaving the box clear so a translucent fill does not show the
+  shadow through it and a glow can be drawn over the box; or `Inside` it, as
+  CSS `inset`, drawn over the box's fill. Added `ShadowParams::new`, `glow`,
+  `inset`, and `with_placement`. Code that builds `ShadowParams` literally
+  needs the new field.
+- Inset theme shadows are painted: `ThemeShadowLayer::to_shadow_params` keeps
+  `inset`, and `paint_theme_inset_shadow` draws the inset layers that
+  `paint_theme_shadow` leaves out.
+- Glows: `paint_theme_glow` draws a theme glow around a rounded rect, and
+  `DefaultTheme::glow_for_output` resolves the `accent` or `secondary` glow
+  (`GlowTone`) for an output. On HDR outputs, where the theme's HDR mode
+  allows, the halo takes the tone's HDR color, as bright as an emissive
+  indicator may be. `ThemeGlows` is exported.
+- `Surface::shadow` casts a shadow chosen from the surface's theme in place of
+  its elevation's, with inset layers over its fill, and `Surface::glow` adds a
+  theme glow. `ShadowBox` casts shadows and a glow around a child that paints
+  its own face.
+- Enabled primary buttons and busy spinners glow in themes that have glows,
+  which dark themes do; `Button::glow(false)` turns a button's glow off.
+- Shadow offsets, blur, and spread, and the corner radii of rounded
+  rectangles, scale with the current transform. Corners kept their radius in
+  screen pixels, so zoomed or scaled content had corners too round or too
+  sharp for its size.
+- The JavaScript and Python `Shadow` classes take a `placement` of
+  `"behind"`, `"outside"`, or `"inside"`.
+- The widget book has a Shadows and glows story, and the HDR validation
+  page's mode cards show a glowing live signal.
+
 ### Breaking: text painting helpers
 
 - Replaced `paint_aligned_text` with `paint_text` and

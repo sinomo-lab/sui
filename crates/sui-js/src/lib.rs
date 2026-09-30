@@ -62,6 +62,7 @@ use sui_bindings_core::{
 };
 use sui_bindings_core::{
     BindingAnimationMarker, BindingStagger, binding_loop_mode_from_name, binding_loop_mode_name,
+    binding_shadow_placement_from_name, binding_shadow_placement_name,
     binding_stagger_origin_from_name,
 };
 use sui_crate::{
@@ -1950,19 +1951,40 @@ pub struct JsShadow {
     blur: f64,
     spread: f64,
     color: JsColor,
+    placement: sui_crate::ShadowPlacement,
 }
 
 #[napi]
 impl JsShadow {
+    /// `placement` is `"behind"` (the default), `"outside"` for a glow that
+    /// leaves the box clear, or `"inside"` for an inset shadow.
     #[napi(constructor)]
-    pub fn new(offset_x: f64, offset_y: f64, blur: f64, spread: f64, color: &JsColor) -> Self {
-        Self {
+    pub fn new(
+        offset_x: f64,
+        offset_y: f64,
+        blur: f64,
+        spread: f64,
+        color: &JsColor,
+        placement: Option<String>,
+    ) -> Result<Self> {
+        let placement = match placement {
+            Some(name) => binding_shadow_placement_from_name(&name)
+                .ok_or_else(|| napi_invalid_arg(format!("unknown shadow placement '{name}'")))?,
+            None => sui_crate::ShadowPlacement::Behind,
+        };
+        Ok(Self {
             offset_x,
             offset_y,
             blur,
             spread,
             color: *color,
-        }
+            placement,
+        })
+    }
+
+    #[napi(getter)]
+    pub fn placement(&self) -> &'static str {
+        binding_shadow_placement_name(self.placement)
     }
 
     #[napi(getter, js_name = "offsetX")]
@@ -1993,13 +2015,14 @@ impl JsShadow {
 
 impl From<JsShadow> for ShadowParams {
     fn from(value: JsShadow) -> Self {
-        Self {
-            offset_x: value.offset_x as f32,
-            offset_y: value.offset_y as f32,
-            blur: value.blur as f32,
-            spread: value.spread as f32,
-            color: value.color.into(),
-        }
+        Self::new(
+            value.offset_x as f32,
+            value.offset_y as f32,
+            value.blur as f32,
+            value.spread as f32,
+            value.color.into(),
+        )
+        .with_placement(value.placement)
     }
 }
 
@@ -5458,7 +5481,41 @@ mod tests {
         builder.quad_to(&JsPoint::new(48.0, 56.0), &JsPoint::new(60.0, 48.0));
         builder.close();
         let custom_path = builder.build();
-        let shadow = JsShadow::new(2.0, 3.0, 4.0, 1.0, &JsColor::new(0.0, 0.0, 0.0, Some(0.35)));
+        let shadow = JsShadow::new(
+            2.0,
+            3.0,
+            4.0,
+            1.0,
+            &JsColor::new(0.0, 0.0, 0.0, Some(0.35)),
+            None,
+        )
+        .unwrap();
+        let glow = JsShadow::new(
+            0.0,
+            0.0,
+            8.0,
+            0.0,
+            &JsColor::new(0.2, 0.5, 1.0, Some(0.5)),
+            Some("outside".to_string()),
+        )
+        .unwrap();
+        assert_eq!(shadow.placement(), "behind");
+        assert_eq!(glow.placement(), "outside");
+        assert_eq!(
+            ShadowParams::from(glow).placement,
+            sui_crate::ShadowPlacement::Outside
+        );
+        assert!(
+            JsShadow::new(
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                &JsColor::new(0.0, 0.0, 0.0, None),
+                Some("sideways".to_string()),
+            )
+            .is_err()
+        );
 
         paint
             .push_clip_path(&JsPath::rect(&paint.bounds()))

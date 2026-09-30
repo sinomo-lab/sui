@@ -3,7 +3,9 @@ use crate::Progress;
 use crate::SemanticTone;
 use crate::composites::forms::set_hover_animation_target;
 use crate::composites::indicators::{inset_rect, mix_color, physical_pixels, rounded_rect_path};
-use crate::paint_theme_shadow;
+use crate::{
+    GlowTone, ThemeShadow, paint_theme_glow, paint_theme_inset_shadow, paint_theme_shadow,
+};
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::PointerEventKind;
@@ -25,6 +27,9 @@ use sui_runtime::WidgetPod;
 use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
 use sui_scene::StrokeStyle;
+
+/// Chooses a shadow from a theme, so it follows theme changes.
+type ShadowToken = Box<dyn Fn(&DefaultTheme) -> ThemeShadow>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceRole {
@@ -75,6 +80,8 @@ pub struct Surface {
     pub(super) tone: SemanticTone,
     pub(super) border: SurfaceBorder,
     pub(super) elevation: SurfaceElevation,
+    pub(super) shadow: Option<ShadowToken>,
+    pub(super) glow: Option<GlowTone>,
     pub(super) radius: f32,
     pub(super) padding: Insets,
     pub(super) fill_width: bool,
@@ -96,6 +103,8 @@ impl Surface {
             tone: SemanticTone::Neutral,
             border: SurfaceBorder::None,
             elevation: SurfaceElevation::None,
+            shadow: None,
+            glow: None,
             radius: 0.0,
             padding: Insets::ZERO,
             fill_width: false,
@@ -179,6 +188,28 @@ impl Surface {
 
     pub fn elevation(mut self, elevation: SurfaceElevation) -> Self {
         self.elevation = elevation;
+        self
+    }
+
+    /// Casts the shadow `shadow` chooses from the surface's theme, in place of
+    /// its elevation's. Inset layers are drawn inside the surface, over its
+    /// fill, as CSS draws them:
+    ///
+    /// ```ignore
+    /// Surface::field(child).shadow(|theme| theme.shadows.inset.sm)
+    /// ```
+    pub fn shadow<F>(mut self, shadow: F) -> Self
+    where
+        F: Fn(&DefaultTheme) -> ThemeShadow + 'static,
+    {
+        self.shadow = Some(Box::new(shadow));
+        self
+    }
+
+    /// Surrounds the surface with the theme's `tone` glow, brighter on HDR
+    /// outputs where the theme allows it. Light themes have no glow.
+    pub fn glow(mut self, tone: GlowTone) -> Self {
+        self.glow = Some(tone);
         self
     }
 
@@ -314,14 +345,19 @@ impl Widget for Surface {
         let bounds = ctx.bounds();
         let radius = self.radius.min(bounds.width().min(bounds.height()) * 0.5);
 
-        let shadow = match self.elevation {
-            SurfaceElevation::None => None,
-            SurfaceElevation::Small => Some(&theme.shadows.box_shadow.sm),
-            SurfaceElevation::Medium => Some(&theme.shadows.box_shadow.md),
-            SurfaceElevation::Large => Some(&theme.shadows.box_shadow.lg),
+        let shadow = match (&self.shadow, self.elevation) {
+            (Some(shadow), _) => Some(shadow(&theme)),
+            (None, SurfaceElevation::None) => None,
+            (None, SurfaceElevation::Small) => Some(theme.shadows.box_shadow.sm),
+            (None, SurfaceElevation::Medium) => Some(theme.shadows.box_shadow.md),
+            (None, SurfaceElevation::Large) => Some(theme.shadows.box_shadow.lg),
         };
-        if let Some(shadow) = shadow {
+        if let Some(shadow) = &shadow {
             paint_theme_shadow(ctx, bounds, [radius; 4], shadow);
+        }
+        if let Some(tone) = self.glow {
+            let glow = theme.glow_for_output(tone, ctx.output_color_range());
+            paint_theme_glow(ctx, bounds, [radius; 4], &glow);
         }
 
         let (background, border) = self.resolved_colors(&theme);
@@ -329,6 +365,9 @@ impl Widget for Surface {
             ctx.fill(rounded_rect_path(bounds, radius), background);
         } else {
             ctx.fill_rect(bounds, background);
+        }
+        if let Some(shadow) = &shadow {
+            paint_theme_inset_shadow(ctx, bounds, [radius; 4], shadow);
         }
 
         let stroke_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
@@ -382,6 +421,120 @@ impl Widget for Surface {
             node.name = Some(name.clone());
             ctx.push(node);
         }
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
+}
+
+/// Casts shadows and a glow around its child, as a rounded box the size of the
+/// child. For anything box-shaped that paints its own face, such as an image
+/// or a custom widget, where [`Surface`] would paint one too.
+///
+/// Outer shadows and the glow go beneath the child; inset shadows go over it.
+pub struct ShadowBox {
+    theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    radius: f32,
+    shadow: Option<ShadowToken>,
+    glow: Option<GlowTone>,
+    child: SingleChild,
+}
+
+impl ShadowBox {
+    pub fn new<W>(child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        Self {
+            theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
+            radius: 0.0,
+            shadow: None,
+            glow: None,
+            child: SingleChild::new(child),
+        }
+    }
+
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    /// The box's corner radius, limited to half its shorter side.
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = radius.max(0.0);
+        self
+    }
+
+    /// Casts the shadow `shadow` chooses from the theme, such as
+    /// `|theme| theme.shadows.box_shadow.md`.
+    pub fn shadow<F>(mut self, shadow: F) -> Self
+    where
+        F: Fn(&DefaultTheme) -> ThemeShadow + 'static,
+    {
+        self.shadow = Some(Box::new(shadow));
+        self
+    }
+
+    /// Surrounds the box with the theme's `tone` glow, brighter on HDR outputs
+    /// where the theme allows it. Light themes have no glow.
+    pub fn glow(mut self, tone: GlowTone) -> Self {
+        self.glow = Some(tone);
+        self
+    }
+
+    fn resolved_theme(&self) -> DefaultTheme {
+        self.theme_reader
+            .as_ref()
+            .map(|theme| theme())
+            .unwrap_or(*self.theme)
+    }
+}
+
+impl Widget for ShadowBox {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let theme = self.resolved_theme();
+        let bounds = ctx.bounds();
+        let radii = [self.radius.min(bounds.width().min(bounds.height()) * 0.5); 4];
+        let shadow = self.shadow.as_ref().map(|shadow| shadow(&theme));
+        if let Some(shadow) = &shadow {
+            paint_theme_shadow(ctx, bounds, radii, shadow);
+        }
+        if let Some(tone) = self.glow {
+            let glow = theme.glow_for_output(tone, ctx.output_color_range());
+            paint_theme_glow(ctx, bounds, radii, &glow);
+        }
+        self.child.paint(ctx);
+        if let Some(shadow) = &shadow {
+            paint_theme_inset_shadow(ctx, bounds, radii, shadow);
+        }
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
         self.child.semantics(ctx);
     }
 

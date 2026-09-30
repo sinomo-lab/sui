@@ -361,6 +361,20 @@ pub(crate) fn clipped_screen_quad(state: &SceneRasterState, rect: Rect) -> Optio
     }
 }
 
+/// How much `transform` scales lengths, taken from how it scales areas, so
+/// corner radii and shadows keep their proportions under zoom.
+pub(crate) fn transform_length_scale(transform: Transform) -> f32 {
+    (transform.xx * transform.yy - transform.xy * transform.yx)
+        .abs()
+        .sqrt()
+}
+
+/// Corner radii given in scene units, in screen units under `transform`.
+pub(crate) fn scaled_radii(radii: [f32; 4], transform: Transform) -> [f32; 4] {
+    let scale = transform_length_scale(transform);
+    radii.map(|radius| radius * scale)
+}
+
 /// Clamp per-corner radii to half the smaller rect dimension so the SDF stays valid.
 pub(crate) fn clamp_radii(radii: [f32; 4], half_w: f32, half_h: f32) -> [f32; 4] {
     let limit = half_w.min(half_h).max(0.0);
@@ -398,7 +412,7 @@ pub(crate) fn append_rounded_rect_fill(
     let Some(screen_quad) = clipped_screen_quad(state, transformed.inflate(fringe, fringe)) else {
         return;
     };
-    let radii = clamp_radii(radii, half_w, half_h);
+    let radii = clamp_radii(scaled_radii(radii, state.current_transform), half_w, half_h);
 
     let (border_w, border_color) = match border {
         Some(border) => (border.width.max(0.0), shader_color(border.color)),
@@ -418,9 +432,27 @@ pub(crate) fn append_rounded_rect_fill(
     );
 }
 
-/// Soft drop shadow for a rounded rectangle. `mode` in the shader is SHADOW (1). The
-/// shadow quad is the rect inflated by its blur/spread/offset extent and shifted by the
-/// offset; the fragment shader re-centers via the local offset in p2.zw.
+/// Shader modes for [`append_rounded_rect_shadow`], one per
+/// [`sui_scene::ShadowPlacement`].
+const RR_MODE_SHADOW_BEHIND: f32 = 1.0;
+const RR_MODE_SHADOW_OUTSIDE: f32 = 2.0;
+const RR_MODE_SHADOW_INSIDE: f32 = 3.0;
+
+/// The narrowest blur a shadow is drawn with, so a shadow without blur still
+/// has an antialiased edge.
+const MIN_SHADOW_SIGMA: f32 = 0.35;
+
+/// Soft shadow of a rounded rectangle: the rounded box grown (or, inside,
+/// shrunk) by the spread, offset, and blurred by a Gaussian, which the shader
+/// integrates exactly across the box and closely along it.
+///
+/// The shader receives the casting box in `p0` and `radii` as a fill does,
+/// `[spread, sigma, offset x, offset y]` in `p2`, and the shadow box's corner
+/// radii in the border-color slot. A shadow outside its box is knocked out
+/// where the box is; one inside is drawn only within it.
+///
+/// The transform scales the shadow with its box: its offset turns and
+/// stretches with it, and blur and spread scale by its area scale.
 ///
 /// CLIP NOTE: the shadow op inherits the active clip just like any other op, so callers
 /// that want a shadow to bleed outside a tight self-clip must paint the shadow BEFORE
@@ -434,10 +466,11 @@ pub(crate) fn append_rounded_rect_shadow(
     viewport: Size,
     feather: f32,
 ) {
-    if rect.is_empty() || viewport.is_empty() {
+    if rect.is_empty() || viewport.is_empty() || shadow.color.alpha <= 0.0 {
         return;
     }
-    let transformed = state.current_transform.transform_rect_bbox(rect);
+    let transform = state.current_transform;
+    let transformed = transform.transform_rect_bbox(rect);
     if transformed.width() <= 0.0 || transformed.height() <= 0.0 {
         return;
     }
@@ -445,17 +478,55 @@ pub(crate) fn append_rounded_rect_shadow(
     let half_w = transformed.width() * 0.5;
     let half_h = transformed.height() * 0.5;
     let center = Point::new(transformed.x() + half_w, transformed.y() + half_h);
-    let spread = shadow.spread.max(0.0);
-    let ext = shadow.extent();
-    // The shadow's rounded box is the fill box grown by `spread`; coverage is sampled in
-    // the same center-origin local space, offset by the shadow displacement.
-    let radii = clamp_radii(radii, half_w + spread, half_h + spread);
-    let Some(screen_quad) = clipped_screen_quad(
-        state,
-        transformed
-            .inflate(ext, ext)
-            .translate(Vector::new(shadow.offset_x, shadow.offset_y)),
-    ) else {
+    let radii = clamp_radii(scaled_radii(radii, transform), half_w, half_h);
+    let scale = transform_length_scale(transform);
+    let offset = transform.transform_vector(Vector::new(shadow.offset_x, shadow.offset_y));
+    let spread = if shadow.spread.is_finite() {
+        shadow.spread * scale
+    } else {
+        0.0
+    };
+    let sigma = (shadow.sigma() * scale).max(MIN_SHADOW_SIGMA);
+
+    let (mode, box_half, box_radii, quad) = match shadow.placement {
+        sui_scene::ShadowPlacement::Inside => {
+            // The box that is blurred is the hole the shadow surrounds.
+            let box_half = [(half_w - spread).max(0.0), (half_h - spread).max(0.0)];
+            let box_radii = radii.map(|radius| (radius - spread).max(0.0));
+            let fringe = analytic_coverage_outset(feather);
+            (
+                RR_MODE_SHADOW_INSIDE,
+                box_half,
+                box_radii,
+                transformed.inflate(fringe, fringe),
+            )
+        }
+        placement => {
+            let box_half = [(half_w + spread).max(0.0), (half_h + spread).max(0.0)];
+            // Rounded corners grow with the box, as CSS spreads them; square
+            // ones stay square.
+            let box_radii = radii.map(|radius| {
+                if radius > 0.0 {
+                    (radius + spread).max(0.0)
+                } else {
+                    0.0
+                }
+            });
+            let reach = 3.0 * sigma + spread.max(0.0);
+            let mode = if placement == sui_scene::ShadowPlacement::Outside {
+                RR_MODE_SHADOW_OUTSIDE
+            } else {
+                RR_MODE_SHADOW_BEHIND
+            };
+            (
+                mode,
+                box_half,
+                box_radii,
+                transformed.inflate(reach, reach).translate(offset),
+            )
+        }
+    };
+    let Some(screen_quad) = clipped_screen_quad(state, quad) else {
         return;
     };
 
@@ -465,10 +536,10 @@ pub(crate) fn append_rounded_rect_shadow(
         center,
         viewport,
         shader_color(shadow.color),
-        [half_w + spread, half_h + spread, 1.0, feather],
+        [half_w, half_h, mode, feather],
         radii,
-        [0.0, shadow.blur, shadow.offset_x, shadow.offset_y],
-        [0.0; 4],
+        [spread, sigma, offset.x, offset.y],
+        clamp_radii(box_radii, box_half[0], box_half[1]),
     );
 }
 
@@ -514,7 +585,7 @@ pub(crate) fn append_gradient_rect(
     let Some(screen_quad) = clipped_screen_quad(state, transformed.inflate(fringe, fringe)) else {
         return;
     };
-    let radii = clamp_radii(radii, half_w, half_h);
+    let radii = clamp_radii(scaled_radii(radii, state.current_transform), half_w, half_h);
     let params = [half_w, half_h, GRADIENT_BAND_NONE, feather];
 
     // Gradient axis end-points in screen space, and the point at `offset` along it.

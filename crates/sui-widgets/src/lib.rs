@@ -62,8 +62,8 @@ pub use composites::{
     EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem,
     Modal, PanelSection, PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment,
     PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
-    SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, SheetState,
-    SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost,
+    SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, ShadowBox,
+    SheetState, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost,
     StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole,
     TabBar, TabBarItem, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
     TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
@@ -149,13 +149,13 @@ pub use text_surface::{
 };
 pub use theme::{
     ControlMetrics, ControlPalette, ControlSize, ControlStateMetrics, ControlTypography,
-    DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme, NeutralRamp, SemanticTone,
-    SurfacePalette, ThemeAspectRatios, ThemeBlurScale, ThemeBoxShadowScale, ThemeBreakpoints,
-    ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity, ThemeDropShadowScale,
-    ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeInsetShadowScale, ThemeLeading,
-    ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows,
-    ThemeTextScale, ThemeTextShadowScale, ThemeTextToken, ThemeTracking, ToneRoles,
-    paint_theme_shadow,
+    DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme, GlowTone, NeutralRamp,
+    SemanticTone, SurfacePalette, ThemeAspectRatios, ThemeBlurScale, ThemeBoxShadowScale,
+    ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
+    ThemeDropShadowScale, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights, ThemeGlows,
+    ThemeInsetShadowScale, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
+    ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextShadowScale, ThemeTextToken,
+    ThemeTracking, ToneRoles, paint_theme_glow, paint_theme_inset_shadow, paint_theme_shadow,
 };
 pub use workspace::{
     AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, ConstraintOrientation, ConstraintQuery,
