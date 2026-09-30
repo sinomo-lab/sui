@@ -266,6 +266,14 @@ pub(crate) struct Readback {
 }
 
 impl Readback {
+    /// Whether the copy has come back, successfully or not.
+    fn is_back(&self) -> bool {
+        self.mapped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+
     /// The pixels, tightly packed, once the copy is back; `None` while it is
     /// still on its way.
     fn bytes(&self) -> Option<Result<Vec<u8>>> {
@@ -304,6 +312,11 @@ enum CaptureDecoding {
 }
 
 /// A capture whose pixels are being copied back.
+/// How long [`WgpuRenderer::wait_for_readbacks_until`] waits for a copy to be
+/// reported before leaving the caller to say it did not finish.
+#[cfg(not(target_arch = "wasm32"))]
+const READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub(crate) struct InFlightCapture {
     id: DebugCaptureId,
     pub(crate) window_id: WindowId,
@@ -449,7 +462,11 @@ impl WgpuRenderer {
     /// cannot wait, so this is native-only.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_debug_captures(&self) -> Result<()> {
-        self.wait_for_readbacks()
+        self.wait_for_readbacks_until(|| {
+            self.debug_captures_in_flight
+                .iter()
+                .all(|capture| capture.readback.is_back())
+        })
     }
 
     fn render_last_frame_for_capture(
@@ -552,7 +569,7 @@ impl WgpuRenderer {
             bytes_per_pixel,
             "SUI debug capture readback",
         )?;
-        self.wait_for_readbacks()?;
+        self.wait_for_readbacks_until(|| readback.is_back())?;
         InFlightCapture {
             id: DebugCaptureId(0),
             window_id,
@@ -716,18 +733,36 @@ impl WgpuRenderer {
         })
     }
 
-    /// Wait for the GPU to finish the readbacks it was given. Browsers
-    /// return at once, before they finish.
-    fn wait_for_readbacks(&self) -> Result<()> {
+    /// Wait for the GPU to finish the readbacks it was given, until `back`
+    /// says the ones the caller wants have been reported. Renderers without
+    /// a window share their device across threads, and another thread's poll
+    /// can collect a finished copy and still be reporting it when this poll
+    /// returns, so this polls again until the report is in, for at most
+    /// [`READBACK_TIMEOUT`]. Browsers return at once, before they finish.
+    fn wait_for_readbacks_until(&self, back: impl Fn() -> bool) -> Result<()> {
         let shared = self
             .shared
             .as_ref()
             .ok_or_else(|| Error::new("renderer has not initialized a wgpu device yet"))?;
-        shared
-            .device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map(|_| ())
-            .map_err(|error| Error::new(format!("failed to wait for a readback: {error}")))
+        let poll = || {
+            shared
+                .device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map(|_| ())
+                .map_err(|error| Error::new(format!("failed to wait for a readback: {error}")))
+        };
+        poll()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let deadline = std::time::Instant::now() + READBACK_TIMEOUT;
+            while !back() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                poll()?;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = back;
+        Ok(())
     }
 
     /// Copy `texture` back, waiting for the GPU.
@@ -739,7 +774,7 @@ impl WgpuRenderer {
         label: &'static str,
     ) -> Result<Vec<u8>> {
         let readback = self.start_readback(texture, size, bytes_per_pixel, label)?;
-        self.wait_for_readbacks()?;
+        self.wait_for_readbacks_until(|| readback.is_back())?;
         readback
             .bytes()
             .unwrap_or_else(|| Err(Error::new("the readback did not finish")))
