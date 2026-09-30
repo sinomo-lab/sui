@@ -742,8 +742,8 @@ impl LiveHarnessApp {
     fn new() -> Self {
         Self {
             runtime: Runtime::new(),
-            renderer: WgpuRenderer::default(),
-            vsync_enabled: true,
+            renderer: WgpuRenderer::default().with_vsync_enabled(false),
+            vsync_enabled: false,
             window_visible: false,
             started_at: Instant::now(),
             frame_clock: 0.0,
@@ -793,7 +793,10 @@ impl LiveHarnessApp {
         vsync_enabled: bool,
         visible: bool,
     ) -> Result<()> {
-        self.vsync_enabled = vsync_enabled;
+        // Hidden windows reach no display, so they never wait for vertical
+        // sync: presenting on vsync would pace the display's refresh by a
+        // window nobody sees.
+        self.vsync_enabled = vsync_enabled && visible;
         self.window_visible = visible;
         self.reset_runtime_state();
         self.last_error = None;
