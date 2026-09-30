@@ -17,9 +17,10 @@ use sui_runtime::{
     SemanticsCtx, StackSurfaceOptions, Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{Border, Brush, Scene, SceneCommand, StrokeStyle};
-use sui_text::TextStyle;
+use sui_text::{TextAlign, TextStyle};
 use sui_widgets::{
     CanvasGridStyle, CanvasSurface, CanvasZoomBehavior, CanvasZoomContext, DefaultTheme,
+    paint_text_line,
 };
 
 use crate::node_widget::RetainedNodeWidgets;
@@ -4944,22 +4945,23 @@ fn paint_refusal(
     pointer: Point,
     reason: &str,
 ) {
+    const PADDING: f32 = 8.0;
     let style = TextStyle {
         font_size: theme.text.xs.size,
         line_height: theme.text.xs.line_height,
         color: theme.palette.danger_soft_text,
         ..theme.body_text_style()
     };
-    let size = ctx
+    let width = ctx
         .measure_text(reason.to_string(), style.clone())
         .ok()
-        .map(|measurement| measurement.bounds.size)
-        .unwrap_or(Size::new(reason.len() as f32 * 6.5, style.line_height));
+        .map(|measurement| measurement.bounds.width())
+        .unwrap_or(reason.len() as f32 * 6.5);
     let mut note = Rect::new(
         pointer.x + 14.0,
         pointer.y + 14.0,
-        size.width + 12.0,
-        size.height + 6.0,
+        width + PADDING * 2.0,
+        style.line_height + PADDING,
     );
     if note.max_x() > bounds.max_x() {
         note = Rect::new(
@@ -4977,6 +4979,8 @@ fn paint_refusal(
             note.height(),
         );
     }
+    // Opaque beneath the tint, so edges behind the note do not show through.
+    ctx.fill_rrect(note, [6.0; 4], theme.palette.surface_raised);
     ctx.fill_rrect_bordered(
         note,
         [6.0; 4],
@@ -4986,16 +4990,17 @@ fn paint_refusal(
             color: theme.palette.danger_border,
         },
     );
-    // Room past the measured width, so rounding cannot wrap the last word.
-    ctx.draw_text(
+    paint_text_line(
+        ctx,
         Rect::new(
-            note.x() + 6.0,
-            note.y() + 3.0,
-            size.width + style.font_size,
-            size.height,
+            note.x() + PADDING,
+            note.y(),
+            note.width() - PADDING * 2.0,
+            note.height(),
         ),
-        reason.to_string(),
-        style,
+        reason,
+        &style,
+        TextAlign::Start,
     );
 }
 
@@ -5324,8 +5329,8 @@ fn paint_node_overlays<N, E>(
     }
 }
 
-/// A handle's label, inside its node beside the handle, scaled with the
-/// graph and left out when too small to read.
+/// A handle's label, inside its node beside the handle and centered on it,
+/// scaled with the graph and left out when too small to read.
 #[allow(clippy::too_many_arguments)]
 fn paint_handle_label(
     ctx: &mut PaintCtx,
@@ -5351,33 +5356,48 @@ fn paint_handle_label(
             .with_alpha(if dimmed { 0.45 } else { 1.0 }),
         ..theme.body_text_style()
     };
-    let size = ctx
-        .measure_text(label.to_string(), style.clone())
-        .ok()
-        .map(|measurement| measurement.bounds.size)
-        .unwrap_or(Size::new(
-            label.len() as f32 * font_size * 0.55,
-            style.line_height,
-        ));
+    let height = style.line_height;
     let gap = radius + 4.0 * zoom;
-    let origin = match side {
-        HandlePosition::Left => Point::new(anchor.x + gap, anchor.y - size.height * 0.5),
-        HandlePosition::Right => {
-            Point::new(anchor.x - gap - size.width, anchor.y - size.height * 0.5)
-        }
-        HandlePosition::Top => Point::new(anchor.x - size.width * 0.5, anchor.y + gap),
-        HandlePosition::Bottom => {
-            Point::new(anchor.x - size.width * 0.5, anchor.y - gap - size.height)
-        }
+    // Beside a side handle, a row centered on it; below or above a top or
+    // bottom handle, a row centered across it.
+    let across = (anchor.x - node_rect.x())
+        .min(node_rect.max_x() - anchor.x)
+        .max(0.0);
+    let (row, align) = match side {
+        HandlePosition::Left => (
+            Rect::new(
+                anchor.x + gap,
+                anchor.y - height * 0.5,
+                (node_rect.max_x() - anchor.x - gap).max(0.0),
+                height,
+            ),
+            TextAlign::Start,
+        ),
+        HandlePosition::Right => (
+            Rect::new(
+                node_rect.x(),
+                anchor.y - height * 0.5,
+                (anchor.x - gap - node_rect.x()).max(0.0),
+                height,
+            ),
+            TextAlign::End,
+        ),
+        HandlePosition::Top => (
+            Rect::new(anchor.x - across, anchor.y + gap, across * 2.0, height),
+            TextAlign::Center,
+        ),
+        HandlePosition::Bottom => (
+            Rect::new(
+                anchor.x - across,
+                anchor.y - gap - height,
+                across * 2.0,
+                height,
+            ),
+            TextAlign::Center,
+        ),
     };
-    // Room past the measured width, so rounding cannot wrap the last letter.
-    let room = Size::new(size.width + font_size, size.height);
     ctx.push_clip_rect(node_rect);
-    ctx.draw_text(
-        Rect::from_origin_size(origin, room),
-        label.to_string(),
-        style,
-    );
+    paint_text_line(ctx, row, label, &style, align);
     ctx.pop_clip();
 }
 
@@ -7647,6 +7667,41 @@ mod tests {
             }
         });
         assert!(fills.contains(&COLOR_PORT) && fills.contains(&NUMBER_PORT));
+        Ok(())
+    }
+
+    #[test]
+    fn handle_labels_center_on_their_handles() -> sui_core::Result<()> {
+        let (mut runtime, window_id) = build_runtime(typed_state());
+        let output = runtime.render(window_id)?;
+        for name in ["a", "t", "color"] {
+            let handle = output
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .expect("the handle has semantics")
+                .bounds;
+            let handle_y = handle.y() + handle.height() * 0.5;
+            let mut label_center = None;
+            output.frame.scene.visit_commands(&mut |command| {
+                if let SceneCommand::DrawShapedText(run) = command
+                    && let Some(layout) = run.resolve(output.frame.text_layout_registry.as_ref())
+                    && layout.text() == name
+                {
+                    // Where the capital letters' middle is, as text centers.
+                    let measurement = layout.measurement();
+                    let baseline = layout.lines()[0].baseline;
+                    let cap = measurement.cap_height.unwrap_or(measurement.ascent);
+                    label_center =
+                        Some(run.origin.y + baseline + (measurement.descent * 0.5 - cap) * 0.5);
+                }
+            });
+            let label_center = label_center.expect("the label is drawn");
+            assert!(
+                (label_center - handle_y).abs() < 0.75,
+                "{name}: label centers at {label_center}, its handle at {handle_y}"
+            );
+        }
         Ok(())
     }
 
