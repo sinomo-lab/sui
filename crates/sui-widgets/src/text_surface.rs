@@ -141,6 +141,18 @@ pub struct TextSurfaceStatus {
     pub text_len: usize,
 }
 
+/// Where [`TextSurface::shape_lines_on_screen`] reads a line's text.
+enum LineSource<'a> {
+    /// The document.
+    Document,
+    /// The document, with `line` replaced by `text` as an input method
+    /// composes on it.
+    Composition { line: usize, text: &'a str },
+    /// Lines of the displayed text, split while an input method composes
+    /// across lines.
+    Lines(&'a [String]),
+}
+
 pub struct TextSurface {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -170,6 +182,10 @@ pub struct TextSurface {
     line_layouts: Vec<Option<PersistentTextLayout>>,
     line_offsets: Vec<usize>,
     line_lengths: Vec<usize>,
+    /// With wrapping, where each cached line starts, and after the last
+    /// entry the height of them all. Empty without wrapping, where every
+    /// line takes one slot.
+    line_tops: Vec<f32>,
     line_layout_box_size: Option<Size>,
     line_layout_style: Option<TextStyle>,
     line_layout_revision: u64,
@@ -213,6 +229,7 @@ impl TextSurface {
             line_layouts: Vec::new(),
             line_offsets: Vec::new(),
             line_lengths: Vec::new(),
+            line_tops: Vec::new(),
             line_layout_box_size: None,
             line_layout_style: None,
             line_layout_revision: u64::MAX,
@@ -683,9 +700,14 @@ impl TextSurface {
 
         let composition_active = self.editor.composition().is_some();
         let line_style = self.display_text_style();
+        // Wrapped lines take as many rows as they need.
         let line_box_size = Size::new(
             self.layout_box_width(available_width),
-            line_style.line_height.max(1.0),
+            if self.wrap == TextWrap::NoWrap {
+                line_style.line_height.max(1.0)
+            } else {
+                f32::INFINITY
+            },
         );
         let viewport_height = if constraints.max.height.is_finite() {
             (constraints.max.height - padding.top - padding.bottom).max(0.0)
@@ -693,13 +715,12 @@ impl TextSurface {
             (min_size.height - padding.top - padding.bottom).max(line_style.line_height)
         };
         self.viewport_height = viewport_height;
-        let cache_lines_individually = self.wrap == TextWrap::NoWrap;
         let mut line_layout_failed = false;
 
         if !composition_active {
             let document = self.editor.document();
             let line_count = document.line_count();
-            if cache_lines_individually && line_count > 1 {
+            if line_count > 1 {
                 let can_reuse_lines = self.line_layout_revision != u64::MAX
                     && self.line_layout_box_size == Some(line_box_size)
                     && self.line_layout_style.as_ref() == Some(&line_style)
@@ -728,40 +749,18 @@ impl TextSurface {
                     );
                 }
 
-                let visible_lines = self.prefetched_line_range(viewport_height);
-                let caret_line =
-                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
-                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
-                lines_to_shape.extend(visible_lines);
-                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
-                    lines_to_shape.push(caret_line);
-                }
-
-                for index in lines_to_shape {
-                    if self.line_layouts[index].is_some() {
-                        continue;
-                    }
-                    let line_range = document.line_range(index);
-                    match self.shape_line_layout(
-                        ctx,
-                        None,
-                        document.line_text(index),
-                        line_range,
-                        line_box_size,
-                        line_style.clone(),
-                    ) {
-                        Ok(layout) => self.line_layouts[index] = Some(layout),
-                        Err(_) => {
-                            line_layout_failed = true;
-                            break;
-                        }
-                    }
-                }
+                line_layout_failed = !self.shape_lines_on_screen(
+                    ctx,
+                    viewport_height,
+                    line_box_size,
+                    &line_style,
+                    LineSource::Document,
+                );
 
                 if !line_layout_failed {
                     self.line_layout_box_size = Some(line_box_size);
                     self.line_layout_style = Some(line_style.clone());
-                    self.line_layout_revision = document.revision();
+                    self.line_layout_revision = self.editor.document().revision();
                     self.line_layout_style_revision = self.style_revision;
                     self.layout = None;
                     self.editor.clear_document_dirty();
@@ -777,8 +776,7 @@ impl TextSurface {
             }
         } else {
             let single_line_composition = self.single_line_composition_display_line();
-            if cache_lines_individually
-                && self.editor.document().line_count() > 1
+            if self.editor.document().line_count() > 1
                 && let Some((composition_line, composition_line_text)) = single_line_composition
             {
                 self.reconcile_single_line_composition_layouts(
@@ -788,46 +786,16 @@ impl TextSurface {
                     &line_style,
                 );
 
-                let visible_lines = self.prefetched_line_range(viewport_height);
-                let caret_line =
-                    self.line_index_for_offset(self.display_selection().focus.utf8_offset);
-                let line_count = self.editor.document().line_count();
-                let mut lines_to_shape = Vec::with_capacity(visible_lines.len().saturating_add(1));
-                lines_to_shape.extend(visible_lines);
-                if caret_line < line_count && !lines_to_shape.contains(&caret_line) {
-                    lines_to_shape.push(caret_line);
-                }
-
-                for index in lines_to_shape {
-                    if self.line_layouts[index].is_some() {
-                        continue;
-                    }
-                    let line_range = if index == composition_line {
-                        self.line_offsets[index]
-                            ..self.line_offsets[index] + self.line_lengths[index]
-                    } else {
-                        self.editor.document().line_range(index)
-                    };
-                    let line_text = if index == composition_line {
-                        composition_line_text.as_str()
-                    } else {
-                        self.editor.document().line_text(index)
-                    };
-                    match self.shape_line_layout(
-                        ctx,
-                        None,
-                        line_text,
-                        line_range,
-                        line_box_size,
-                        line_style.clone(),
-                    ) {
-                        Ok(layout) => self.line_layouts[index] = Some(layout),
-                        Err(_) => {
-                            line_layout_failed = true;
-                            break;
-                        }
-                    }
-                }
+                line_layout_failed = !self.shape_lines_on_screen(
+                    ctx,
+                    viewport_height,
+                    line_box_size,
+                    &line_style,
+                    LineSource::Composition {
+                        line: composition_line,
+                        text: &composition_line_text,
+                    },
+                );
 
                 if !line_layout_failed {
                     self.line_layout_box_size = Some(line_box_size);
@@ -840,7 +808,7 @@ impl TextSurface {
                 let display_text = self.display_text();
                 let (line_texts, line_offsets, line_lengths) =
                     split_lines_with_offsets(&display_text);
-                if cache_lines_individually && line_texts.len() > 1 {
+                if line_texts.len() > 1 {
                     self.reconcile_composition_line_layouts(
                         &line_texts,
                         line_offsets,
@@ -849,37 +817,13 @@ impl TextSurface {
                         &line_style,
                     );
 
-                    let visible_lines = self.prefetched_line_range(viewport_height);
-                    let caret_line =
-                        self.line_index_for_offset(self.display_selection().focus.utf8_offset);
-                    let mut lines_to_shape =
-                        Vec::with_capacity(visible_lines.len().saturating_add(1));
-                    lines_to_shape.extend(visible_lines);
-                    if caret_line < line_texts.len() && !lines_to_shape.contains(&caret_line) {
-                        lines_to_shape.push(caret_line);
-                    }
-
-                    for index in lines_to_shape {
-                        if self.line_layouts[index].is_some() {
-                            continue;
-                        }
-                        let line_range = self.line_offsets[index]
-                            ..self.line_offsets[index] + self.line_lengths[index];
-                        match self.shape_line_layout(
-                            ctx,
-                            None,
-                            &line_texts[index],
-                            line_range,
-                            line_box_size,
-                            line_style.clone(),
-                        ) {
-                            Ok(layout) => self.line_layouts[index] = Some(layout),
-                            Err(_) => {
-                                line_layout_failed = true;
-                                break;
-                            }
-                        }
-                    }
+                    line_layout_failed = !self.shape_lines_on_screen(
+                        ctx,
+                        viewport_height,
+                        line_box_size,
+                        &line_style,
+                        LineSource::Lines(&line_texts),
+                    );
 
                     if !line_layout_failed {
                         self.line_layout_box_size = Some(line_box_size);
@@ -908,6 +852,9 @@ impl TextSurface {
             self.line_layout_style = None;
             self.line_layout_revision = u64::MAX;
             self.line_layout_style_revision = u64::MAX;
+        }
+        if !self.has_line_layout_cache() {
+            self.line_tops.clear();
         }
 
         self.layout = if !self.has_line_layout_cache() {
@@ -1051,11 +998,141 @@ impl TextSurface {
         );
     }
 
+    /// Shape the lines on screen, a few more above and below, and the
+    /// caret's line, reading line text from `source`. Returns false when
+    /// shaping failed.
+    ///
+    /// With wrapping, a line shaped for the first time can take more rows
+    /// than the one it was counted as. The first line on screen stays where
+    /// it is, and lines that come into view are shaped in turn.
+    fn shape_lines_on_screen(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        viewport_height: f32,
+        line_box_size: Size,
+        line_style: &TextStyle,
+        source: LineSource<'_>,
+    ) -> bool {
+        self.rebuild_line_tops();
+        let anchor = self.scroll_anchor();
+        let line_count = self.line_count();
+        let caret_line = self.line_index_for_offset(self.display_selection().focus.utf8_offset);
+        let mut lines = self
+            .prefetched_line_range(viewport_height)
+            .collect::<Vec<_>>();
+        if caret_line < line_count && !lines.contains(&caret_line) {
+            lines.push(caret_line);
+        }
+
+        for _ in 0..4 {
+            for index in lines {
+                if self.line_layouts[index].is_some() {
+                    continue;
+                }
+                let document = self.editor.document();
+                let (text, range) = match &source {
+                    LineSource::Composition { line, text } if *line == index => (
+                        *text,
+                        self.line_offsets[index]
+                            ..self.line_offsets[index] + self.line_lengths[index],
+                    ),
+                    LineSource::Document | LineSource::Composition { .. } => {
+                        (document.line_text(index), document.line_range(index))
+                    }
+                    LineSource::Lines(texts) => (
+                        texts[index].as_str(),
+                        self.line_offsets[index]
+                            ..self.line_offsets[index] + self.line_lengths[index],
+                    ),
+                };
+                match self.shape_line_layout(
+                    ctx,
+                    None,
+                    text,
+                    range,
+                    line_box_size,
+                    line_style.clone(),
+                ) {
+                    Ok(layout) => self.line_layouts[index] = Some(layout),
+                    Err(_) => return false,
+                }
+            }
+            if self.wrap == TextWrap::NoWrap {
+                break;
+            }
+            self.rebuild_line_tops();
+            if let Some(anchor) = anchor {
+                self.restore_scroll_anchor(anchor);
+            }
+            lines = self
+                .visible_line_range(viewport_height)
+                .filter(|index| self.line_layouts[*index].is_none())
+                .collect();
+            if lines.is_empty() {
+                break;
+            }
+        }
+        true
+    }
+
+    /// With wrapping, recompute where each line starts. Lines not shaped yet
+    /// count as one row, which never overstates them, so the lines shaped
+    /// around the screen always cover it.
+    fn rebuild_line_tops(&mut self) {
+        if self.wrap == TextWrap::NoWrap || !self.has_line_layout_cache() {
+            self.line_tops.clear();
+            return;
+        }
+        let slot_height = self.line_height();
+        let mut tops = std::mem::take(&mut self.line_tops);
+        tops.clear();
+        tops.reserve(self.line_layouts.len() + 1);
+        let mut top = 0.0;
+        for layout in &self.line_layouts {
+            tops.push(top);
+            top += layout.as_ref().map_or(slot_height, |layout| {
+                layout.measurement().height.max(slot_height)
+            });
+        }
+        tops.push(top);
+        self.line_tops = tops;
+    }
+
+    /// The first line on screen and how far into it the view starts.
+    fn scroll_anchor(&self) -> Option<(usize, f32)> {
+        if self.line_tops.is_empty() {
+            return None;
+        }
+        let scroll_y = self.editor.scroll_y();
+        let line = self.line_index_for_y(scroll_y);
+        Some((line, scroll_y - self.line_top_for(line, 0.0)))
+    }
+
+    fn restore_scroll_anchor(&mut self, (line, offset): (usize, f32)) {
+        let scroll_x = self.editor.scroll_x();
+        let scroll_y = (self.line_top_for(line, 0.0) + offset).max(0.0);
+        self.editor.set_scroll(scroll_x, scroll_y);
+    }
+
+    /// Where line `index` starts, given the height of a line's slot, which
+    /// only matters without wrapping.
+    fn line_top_for(&self, index: usize, slot_height: f32) -> f32 {
+        if self.line_tops.is_empty() {
+            return index as f32 * slot_height;
+        }
+        self.line_tops
+            .get(index)
+            .or(self.line_tops.last())
+            .copied()
+            .unwrap_or(0.0)
+    }
+
     fn invalidate_line_layouts(&mut self) {
         self.layout = None;
         self.line_layouts.clear();
         self.line_offsets.clear();
         self.line_lengths.clear();
+        self.line_tops.clear();
         self.line_layout_box_size = None;
         self.line_layout_style = None;
         self.line_layout_revision = u64::MAX;
@@ -1334,10 +1411,24 @@ impl TextSurface {
 
         let target = if self.has_line_layout_cache() {
             let line_index = self.line_index_for_offset(focus);
-            if to_start {
-                self.line_offsets[line_index]
-            } else {
-                self.line_offsets[line_index] + self.line_lengths[line_index]
+            let line_start = self.line_offsets[line_index];
+            let row = self
+                .line_layouts
+                .get(line_index)
+                .filter(|_| self.line_tops.len() > 1)
+                .and_then(Option::as_ref)
+                .and_then(|layout| {
+                    let caret = layout.caret(TextCursor::new(focus.saturating_sub(line_start)));
+                    layout
+                        .lines()
+                        .get(caret.line_index)
+                        .map(|row| row.byte_range.clone())
+                });
+            match row {
+                Some(row) if to_start => line_start + row.start,
+                Some(row) => line_start + row.end.min(self.line_lengths[line_index]),
+                None if to_start => line_start,
+                None => line_start + self.line_lengths[line_index],
             }
         } else if let Some(layout) = self.layout.as_ref() {
             let caret = layout.caret(TextCursor::new(focus));
@@ -1361,6 +1452,40 @@ impl TextSurface {
         })
     }
 
+    /// Move the caret `delta_rows` rows on screen from `caret`, which can
+    /// stay within a wrapped line.
+    fn move_by_rows(
+        &mut self,
+        caret: Rect,
+        preferred_x: f32,
+        delta_rows: isize,
+        extend: bool,
+    ) -> EditorCommandResult {
+        let style = self.resolved_text_style();
+        let slot_height = self.line_slot_height_for_style(&style);
+        let bottom = self.line_top_for(self.line_count(), slot_height);
+        let target_y =
+            (caret.y() + caret.height() * 0.5 + delta_rows as f32 * style.line_height.max(1.0))
+                .clamp(0.0, (bottom - 0.5).max(0.0));
+        let target_line = self.line_index_for_y(target_y);
+        let local_offset = if let Some(Some(layout)) = self.line_layouts.get(target_line) {
+            let y =
+                target_y - self.line_origin_y(target_line, layout, style.line_height, slot_height);
+            layout
+                .hit_test_point(Point::new(preferred_x, y))
+                .utf8_offset
+                .min(self.line_lengths[target_line])
+        } else {
+            self.estimate_inline_offset_for_x(target_line, preferred_x)
+        };
+        let result = self.editor.execute(EditorCommand::MoveTo {
+            offset: self.line_offsets[target_line] + local_offset,
+            extend,
+        });
+        self.editor.set_preferred_x(Some(preferred_x));
+        result
+    }
+
     fn move_vertical(
         &mut self,
         delta_lines: isize,
@@ -1378,6 +1503,9 @@ impl TextSurface {
                 return EditorCommandResult::default();
             };
             let preferred_x = self.editor.preferred_x().unwrap_or(caret.x());
+            if self.line_tops.len() > 1 {
+                return self.move_by_rows(caret, preferred_x, delta_lines, extend);
+            }
             let line_index = self.line_index_for_offset(focus) as isize + delta_lines;
             let target_line =
                 line_index.clamp(0, self.line_count().saturating_sub(1) as isize) as usize;
@@ -1586,11 +1714,15 @@ impl TextSurface {
             let local_y = position.y - content.y() + self.editor.scroll_y();
             let line_index = self.line_index_for_y(local_y);
             let local_offset = if let Some(Some(layout)) = self.line_layouts.get(line_index) {
-                let line = layout.lines().first()?;
-                let local = layout.hit_test_point(Point::new(
-                    local_x,
-                    line.rect.y() + (line.rect.height() * 0.5),
-                ));
+                let y = if self.line_tops.len() > 1 {
+                    let style = self.resolved_text_style();
+                    let slot_height = self.line_slot_height_for_style(&style);
+                    local_y - self.line_origin_y(line_index, layout, style.line_height, slot_height)
+                } else {
+                    let line = layout.lines().first()?;
+                    line.rect.y() + (line.rect.height() * 0.5)
+                };
+                let local = layout.hit_test_point(Point::new(local_x, y));
                 local.utf8_offset.min(self.line_lengths[line_index])
             } else {
                 self.estimate_inline_offset_for_x(line_index, local_x)
@@ -1615,9 +1747,16 @@ impl TextSurface {
                 return 0..0;
             }
 
-            let line_height = self.line_height().max(1.0);
             let visible_top = (self.editor.scroll_y() - overdraw).max(0.0);
             let visible_bottom = self.editor.scroll_y() + viewport_height + overdraw;
+            if self.line_tops.len() > 1 {
+                let start = self.line_index_for_y(visible_top);
+                let end = (self.line_index_for_y(visible_bottom) + 1)
+                    .min(self.line_count())
+                    .max(start + usize::from(start < self.line_count()));
+                return start.min(self.line_count())..end;
+            }
+            let line_height = self.line_height().max(1.0);
             let start = (visible_top / line_height).floor() as usize;
             let end = ((visible_bottom / line_height).ceil() as usize + 1)
                 .min(self.line_count())
@@ -1710,7 +1849,8 @@ impl TextSurface {
         }
 
         let previous = (self.editor.scroll_x(), self.editor.scroll_y());
-        let Some(caret) = self.caret_rect_for_cursor(self.display_selection().focus) else {
+        let focus = self.display_selection().focus;
+        let Some(caret) = self.caret_rect_for_cursor(focus) else {
             return false;
         };
         let mut scroll_x = self.editor.scroll_x();
@@ -1731,7 +1871,21 @@ impl TextSurface {
         }
         self.editor.set_scroll(scroll_x, scroll_y);
         let _ = self.clamp_scroll_to_bounds(viewport);
-        previous != (self.editor.scroll_x(), self.editor.scroll_y())
+        let scrolled = previous != (self.editor.scroll_x(), self.editor.scroll_y());
+        // Wrapped lines not shaped yet are only estimated, the caret's or
+        // those on screen with it: reveal the caret again once measuring has
+        // shaped them. Callers refresh the view, which measures, when lines
+        // on screen are not shaped.
+        let estimated = self.line_tops.len() > 1
+            && (!self.visible_line_layouts_are_ready(viewport.height)
+                || self
+                    .line_layouts
+                    .get(self.line_index_for_offset(focus.utf8_offset))
+                    .is_none_or(Option::is_none));
+        if estimated {
+            self.reveal_caret = true;
+        }
+        estimated || scrolled
     }
 
     fn scroll_by(&mut self, bounds: Rect, delta: Vector) -> bool {
@@ -1793,6 +1947,13 @@ impl TextSurface {
         base_line_height: f32,
         slot_height: f32,
     ) -> f32 {
+        if self.line_tops.len() > 1 {
+            // A wrapped line is as tall as its rows, and at least a slot.
+            let top = self.line_top_for(line_index, slot_height);
+            let extent = self.line_top_for(line_index + 1, slot_height) - top;
+            return top
+                + (extent - self.line_layout_height(layout, base_line_height)).max(0.0) * 0.5;
+        }
         line_index as f32 * slot_height
             + self.line_layout_y_offset(layout, base_line_height, slot_height)
     }
@@ -1807,15 +1968,17 @@ impl TextSurface {
                 .min(self.line_count().saturating_sub(1));
         }
         self.line_offsets
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, start)| **start <= offset)
-            .map(|(index, _)| index)
-            .unwrap_or(0)
+            .partition_point(|start| *start <= offset)
+            .saturating_sub(1)
     }
 
     fn line_index_for_y(&self, y: f32) -> usize {
+        if self.line_tops.len() > 1 {
+            // Each entry after the first is where a line ends.
+            return self.line_tops[1..]
+                .partition_point(|bottom| *bottom <= y)
+                .min(self.line_count().saturating_sub(1));
+        }
         let line_height = self.line_height().max(1.0);
         ((y / line_height).floor() as usize).min(self.line_count().saturating_sub(1))
     }
@@ -1833,9 +1996,15 @@ impl TextSurface {
     fn estimated_caret_rect_for_line(&self, line_index: usize, local_offset: usize) -> Rect {
         let style = self.resolved_text_style();
         let average_advance = (style.font_size * 0.55).max(1.0);
+        let mut x = average_advance * local_offset as f32;
+        if self.wrap != TextWrap::NoWrap
+            && let Some(size) = self.line_layout_box_size
+        {
+            x = x.min(size.width);
+        }
         Rect::new(
-            average_advance * local_offset as f32,
-            line_index as f32 * self.line_height(),
+            x,
+            self.line_top_for(line_index, self.line_slot_height_for_style(&style)),
             1.0,
             style.line_height.max(1.0),
         )
@@ -1862,7 +2031,13 @@ impl TextSurface {
         self.layout.as_ref().map(|layout| layout.caret(cursor).rect)
     }
 
-    fn selection_rects_for_display(&self, selection: &TextSelection) -> Vec<Rect> {
+    /// The rectangles covering `selection` on the lines in `lines`. Only
+    /// the lines drawn need them: a selection can span the whole document.
+    fn selection_rects_for_display(
+        &self,
+        selection: &TextSelection,
+        lines: Range<usize>,
+    ) -> Vec<Rect> {
         if self.has_line_layout_cache() {
             let mut rects = Vec::new();
             let range = selection_range(selection, self.display_text_len());
@@ -1870,12 +2045,18 @@ impl TextSurface {
                 return rects;
             }
 
-            let start_line = self.line_index_for_offset(range.start);
+            let start_line = self.line_index_for_offset(range.start).max(lines.start);
             let end_line = self
                 .line_index_for_offset(range.end)
-                .min(self.line_count().saturating_sub(1));
-            let base_line_height = self.resolved_text_style().line_height;
-            let slot_height = self.line_height();
+                .min(self.line_count().saturating_sub(1))
+                .min(lines.end.saturating_sub(1));
+            if lines.is_empty() || start_line > end_line {
+                return rects;
+            }
+            let style = self.resolved_text_style();
+            let base_line_height = style.line_height;
+            let slot_height = self.line_slot_height_for_style(&style);
+            let estimated_advance = (style.font_size * 0.55).max(1.0);
             for line_index in start_line..=end_line {
                 let line_start = self.line_offsets[line_index];
                 let line_end = line_start + self.line_lengths[line_index];
@@ -1888,13 +2069,12 @@ impl TextSurface {
                 let local_range = selection_start.saturating_sub(line_start)
                     ..selection_end.saturating_sub(line_start);
                 let Some(Some(layout)) = self.line_layouts.get(line_index) else {
-                    let start = self.estimated_caret_rect_for_line(line_index, local_range.start);
-                    let end = self.estimated_caret_rect_for_line(line_index, local_range.end);
+                    // Estimated as `estimated_caret_rect_for_line` does.
                     rects.push(Rect::new(
-                        start.x(),
-                        start.y(),
-                        (end.x() - start.x()).max(1.0),
-                        start.height(),
+                        estimated_advance * local_range.start as f32,
+                        self.line_top_for(line_index, slot_height),
+                        (estimated_advance * local_range.len() as f32).max(1.0),
+                        base_line_height.max(1.0),
                     ));
                     continue;
                 };
@@ -1928,6 +2108,10 @@ impl TextSurface {
             .filter_map(|layout| layout.as_ref())
             .map(|layout| layout.measurement().width)
             .fold(0.0_f32, f32::max);
+        if let Some(height) = self.line_tops.last() {
+            // Wrapped lines fit the width they were shaped for.
+            return Size::new(measured_width, *height);
+        }
         Size::new(
             estimated_width.max(measured_width),
             self.line_count() as f32 * self.line_height(),
@@ -1952,10 +2136,20 @@ impl Widget for TextSurface {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        let size = self.measure_surface(ctx, constraints);
-        if std::mem::take(&mut self.reveal_caret) {
-            let _ = self.ensure_caret_visible(Rect::new(0.0, 0.0, size.width, size.height));
+        let mut size = self.measure_surface(ctx, constraints);
+        // Revealing the caret can scroll to lines not shaped yet, and shaping
+        // wrapped lines can move the caret again; a few rounds settle it.
+        for _ in 0..3 {
+            if !std::mem::take(&mut self.reveal_caret) {
+                break;
+            }
+            let scrolled = self.ensure_caret_visible(Rect::new(0.0, 0.0, size.width, size.height));
+            if !scrolled || self.visible_line_layouts_are_ready(self.viewport_height) {
+                break;
+            }
+            size = self.measure_surface(ctx, constraints);
         }
+        self.reveal_caret = false;
         self.publish_status();
         size
     }
@@ -2005,7 +2199,8 @@ impl Widget for TextSurface {
             content.y() - self.editor.scroll_y(),
         );
         let line_range = self.visible_line_range(content.height());
-        let selection_rects = self.selection_rects_for_display(&display_selection);
+        let selection_rects =
+            self.selection_rects_for_display(&display_selection, line_range.clone());
         let current_caret = self.caret_rect_for_cursor(display_selection.focus);
         let current_line_index = self.line_index_for_offset(display_selection.focus.utf8_offset);
         let base_line_height = self.resolved_text_style().line_height;
@@ -2017,7 +2212,9 @@ impl Widget for TextSurface {
             // Wrapped text has no fixed line slots: the caret's line is where
             // the caret is.
             let line_y = match current_caret {
-                Some(caret) if !self.has_line_layout_cache() => caret.y(),
+                Some(caret) if self.wrap != TextWrap::NoWrap || !self.has_line_layout_cache() => {
+                    caret.y()
+                }
                 _ => current_line_index as f32 * slot_height,
             };
             let line_rect = Rect::new(content.x(), origin.y + line_y, content.width(), slot_height);
@@ -2562,7 +2759,7 @@ mod tests {
     }
 
     #[test]
-    fn text_surface_word_wrap_shapes_full_document_layout() {
+    fn text_surface_wraps_each_line_in_its_own_layout() {
         let value = "alpha beta gamma delta epsilon zeta eta theta iota\nsecond wrapped line";
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
@@ -2572,19 +2769,30 @@ mod tests {
 
         let output = runtime.render(window_id).expect("render should succeed");
         let shaped = shaped_text_commands(&output);
+        let layouts = shaped
+            .iter()
+            .map(|text| {
+                text.resolve(output.frame.text_layout_registry.as_ref())
+                    .expect("wrapped line layout should resolve")
+            })
+            .collect::<Vec<_>>();
 
+        assert_eq!(layouts.len(), 2, "each line is laid out on its own");
         assert_eq!(
-            shaped.len(),
-            1,
-            "wrapped text should be submitted as a document layout, not cached logical lines"
+            layouts[0].text(),
+            "alpha beta gamma delta epsilon zeta eta theta iota"
         );
-        let layout = shaped[0]
-            .resolve(output.frame.text_layout_registry.as_ref())
-            .expect("wrapped text layout should resolve");
-        assert_eq!(layout.text(), value);
+        assert_eq!(layouts[1].text(), "second wrapped line");
         assert!(
-            layout.lines().len() > value.lines().count(),
-            "word wrapping should produce more visual lines than logical document lines"
+            layouts[0].lines().len() > 1,
+            "the first line wraps onto more than one row"
+        );
+        // The second line starts below every row of the first.
+        assert!(
+            shaped[1].origin.y >= shaped[0].origin.y + layouts[0].measurement().height - 0.5,
+            "{:?} {:?}",
+            shaped[0].origin,
+            shaped[1].origin
         );
     }
 
@@ -2860,10 +3068,10 @@ mod tests {
         let caret = geometry_surface
             .caret_rect_for_cursor(TextCursor::new(0))
             .expect("caret should resolve");
-        let selection = geometry_surface.selection_rects_for_display(&TextSelection::new(
-            TextCursor::new(0),
-            TextCursor::new("tiny".len()),
-        ));
+        let selection = geometry_surface.selection_rects_for_display(
+            &TextSelection::new(TextCursor::new(0), TextCursor::new("tiny".len())),
+            0..2,
+        );
 
         assert_approx_eq(caret.y(), first_origin_y + local_caret.y());
         assert_eq!(selection.len(), local_selection.len());
@@ -3021,6 +3229,41 @@ mod tests {
         assert_eq!(status.get().composition.as_deref(), Some("世界"));
     }
 
+    #[test]
+    fn selecting_everything_draws_only_the_selection_on_screen() {
+        let text = (0..5_000)
+            .map(|line| format!("line {line:04} with some text to select"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (mut runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(320.0, 160.0))
+                .with_child(TextSurface::new("Editor").value(text)),
+        );
+        runtime.render(window_id).expect("render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(24.0, 24.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("a"))
+            .expect("select all should succeed");
+        let output = runtime.render(window_id).expect("render should succeed");
+
+        let selection = DefaultTheme::default().palette.selection;
+        let fills = solid_fill_colors(&output)
+            .into_iter()
+            .filter(|color| *color == selection)
+            .count();
+        assert!(fills > 0, "the selection is drawn");
+        assert!(
+            fills < 20,
+            "only the selected lines on screen are drawn, not all 5,000: {fills}"
+        );
+    }
+
     /// The rectangles of the runs drawn in `output`, in their layouts.
     fn laid_out_runs(output: &RenderOutput) -> Vec<Rect> {
         shaped_text_commands(output)
@@ -3086,9 +3329,152 @@ mod tests {
             .iter()
             .filter_map(|text| text.resolve(output.frame.text_layout_registry.as_ref()))
             .collect::<Vec<_>>();
-        assert_eq!(layouts.len(), 1);
-        assert_eq!(layouts[0].text(), text);
-        assert_eq!(layouts[0].lines().len(), 3);
+        assert_eq!(
+            layouts
+                .iter()
+                .map(|layout| layout.text())
+                .collect::<Vec<_>>(),
+            ["alpha", "beta", "gamma"]
+        );
+    }
+
+    /// A surface of `lines` long lines that wrap onto several rows.
+    fn wrapped_runtime(
+        lines: usize,
+        status: &sui_reactive::Signal<super::TextSurfaceStatus>,
+    ) -> (Runtime, WindowId, String) {
+        let text = (0..lines)
+            .map(|line| {
+                format!(
+                    "{line:04} the quick brown fox jumps over the lazy dog and keeps running far away"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (runtime, window_id) = build_runtime(
+            crate::SizedBox::new()
+                .size(Size::new(220.0, 160.0))
+                .with_child(
+                    TextSurface::new("Editor")
+                        .value(text.clone())
+                        .wrap(TextWrap::Word)
+                        .status(status.clone()),
+                ),
+        );
+        (runtime, window_id, text)
+    }
+
+    #[test]
+    fn wrapped_text_shapes_only_the_lines_on_screen() {
+        let status = sui_reactive::Signal::new(super::TextSurfaceStatus::default());
+        let (mut runtime, window_id, _) = wrapped_runtime(2_000, &status);
+        set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+        let output = runtime.render(window_id).expect("render should succeed");
+
+        assert!(
+            shaped_text_commands(&output).len() < 12,
+            "only lines on screen are drawn"
+        );
+        assert!(
+            output.diagnostics.text_caches.runtime_layout.misses < 60,
+            "only lines near the screen are laid out, not all 2,000: {} misses",
+            output.diagnostics.text_caches.runtime_layout.misses
+        );
+        let on_screen = status.get().visible_lines;
+        assert_eq!(on_screen.start, 0);
+        assert!(
+            on_screen.len() < 8,
+            "long lines take several rows: {on_screen:?}"
+        );
+    }
+
+    #[test]
+    fn wrapped_rows_are_navigated_like_lines() {
+        let status = sui_reactive::Signal::new(super::TextSurfaceStatus::default());
+        let (mut runtime, window_id, text) = wrapped_runtime(40, &status);
+        runtime.render(window_id).expect("render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, Point::new(20.0, 20.0), false),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("Home"))
+            .expect("moving to the start should succeed");
+        let first_line = text.split('\n').next().expect("a first line");
+
+        // Down moves to the next row of the same line.
+        runtime
+            .handle_event(window_id, key_event("ArrowDown"))
+            .expect("moving down should succeed");
+        let down = status.get();
+        assert_eq!(down.caret_line, 1, "still on the first line");
+        assert!(down.caret_column > 1);
+        // End stops at the end of that row, before the end of the line.
+        runtime
+            .handle_event(window_id, key_event("End"))
+            .expect("moving to the end of the row should succeed");
+        let row_end = status.get();
+        assert_eq!(row_end.caret_line, 1);
+        assert!(row_end.caret_column < first_line.chars().count() + 1);
+        // Home goes back to the start of the row.
+        runtime
+            .handle_event(window_id, key_event("Home"))
+            .expect("moving to the start of the row should succeed");
+        assert_eq!(
+            status.get().caret_column,
+            down.caret_column.min(status.get().caret_column)
+        );
+        assert!(status.get().caret_column > 1);
+
+        // Enough rows down reaches the second line.
+        for _ in 0..8 {
+            runtime
+                .handle_event(window_id, key_event("ArrowDown"))
+                .expect("moving down should succeed");
+        }
+        assert!(status.get().caret_line > 1);
+    }
+
+    #[test]
+    fn wrapped_text_keeps_the_caret_on_screen_at_the_end() {
+        let status = sui_reactive::Signal::new(super::TextSurfaceStatus::default());
+        let (mut runtime, window_id, _) = wrapped_runtime(500, &status);
+        runtime.render(window_id).expect("render should succeed");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, Point::new(20.0, 20.0), true),
+            )
+            .expect("focus click should succeed");
+        runtime
+            .handle_event(window_id, command_key_event("End"))
+            .expect("moving to the end should succeed");
+        let output = runtime.render(window_id).expect("render should succeed");
+
+        let end = status.get();
+        assert_eq!(end.caret_line, 500);
+        assert!(
+            end.visible_lines.contains(&499),
+            "the last line is on screen: {:?}",
+            end.visible_lines
+        );
+        let drawn = shaped_text_commands(&output)
+            .iter()
+            .filter_map(|text| text.resolve(output.frame.text_layout_registry.as_ref()))
+            .map(|layout| layout.text().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            drawn.iter().any(|line| line.starts_with("0499 ")),
+            "the last line is drawn: {drawn:?}"
+        );
     }
 
     #[test]

@@ -457,7 +457,51 @@ pub struct TextLine {
     pub(crate) clusters: Vec<TextClusterGeometry>,
 }
 
+/// A rectangle for each horizontal piece, spanning `line`'s height.
+fn pieces_to_rects(line: &TextLine, pieces: &[(f32, f32)], rects: &mut Vec<Rect>) {
+    for (left, right) in pieces {
+        rects.push(Rect::new(
+            *left,
+            line.rect.y(),
+            (right - left).max(0.0),
+            line.rect.height(),
+        ));
+    }
+}
+
 impl TextLine {
+    /// The horizontal extents on screen of the text in `range`, left to
+    /// right, with touching pieces merged. Text in mixed directions can
+    /// cover several separate pieces.
+    fn selected_pieces(&self, range: Range<usize>) -> Vec<(f32, f32)> {
+        let mut pieces = self
+            .clusters
+            .iter()
+            .filter(|cluster| cluster.range.start < range.end && cluster.range.end > range.start)
+            .map(|cluster| {
+                // Part of a cluster, such as a ligature, takes its share.
+                let span = cluster.range.len().max(1) as f32;
+                let x_at = |offset: usize| {
+                    let t =
+                        (offset.saturating_sub(cluster.range.start) as f32 / span).clamp(0.0, 1.0);
+                    cluster.x_start + (cluster.x_end - cluster.x_start) * t
+                };
+                let a = x_at(range.start.max(cluster.range.start));
+                let b = x_at(range.end.min(cluster.range.end));
+                (a.min(b), a.max(b))
+            })
+            .collect::<Vec<_>>();
+        pieces.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let mut merged: Vec<(f32, f32)> = Vec::with_capacity(pieces.len());
+        for (left, right) in pieces {
+            match merged.last_mut() {
+                Some(last) if left <= last.1 + 0.5 => last.1 = last.1.max(right),
+                _ => merged.push((left, right)),
+            }
+        }
+        merged
+    }
+
     pub(crate) fn x_for_offset(&self, offset: usize) -> f32 {
         if self.clusters.is_empty() {
             return self.rect.x();
@@ -912,16 +956,14 @@ impl TextLayout {
                 continue;
             }
 
-            let x0 = line.x_for_offset(line_start);
-            let x1 = line.x_for_offset(line_end);
-            let left = x0.min(x1);
-            let right = x0.max(x1);
-            rects.push(Rect::new(
-                left,
-                line.rect.y(),
-                (right - left).max(0.0),
-                line.rect.height(),
-            ));
+            let pieces = line.selected_pieces(line_start..line_end);
+            if pieces.is_empty() {
+                let x0 = line.x_for_offset(line_start);
+                let x1 = line.x_for_offset(line_end);
+                pieces_to_rects(line, &[(x0.min(x1), x0.max(x1))], &mut rects);
+            } else {
+                pieces_to_rects(line, &pieces, &mut rects);
+            }
         }
 
         let bounds = rects

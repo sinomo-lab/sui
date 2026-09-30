@@ -209,17 +209,26 @@ ranges. Its public configuration includes:
   styling, preview styling, or an application-defined overlay kind;
 - `selection_scope` for coordinated selection with other widgets.
 
-The surface maintains an indexed line table and indexed style ranges. In
-unwrapped multiline mode it keeps persistent layouts per line, invalidates the
-affected line coverage after edits, and shapes only the visible window plus
-the caret line. Scrolling therefore does not require shaping every line.
+The surface maintains an indexed line table and indexed style ranges. A
+document of more than one line keeps a persistent layout per line, wrapped or
+not: edits invalidate only the lines they touch, and measuring shapes only the
+lines on screen, a few around them, and the caret's line. Scrolling, typing,
+and resizing therefore cost the lines on screen, not the document. A
+single-line document keeps one layout and submits a `DrawShapedTextWindow`
+for its visible rows.
 
-For wrapped text and smaller documents, the surface retains one persistent
-layout, with a paragraph per line, and submits a `DrawShapedTextWindow` for
-the visible lines. In both modes it clips to the viewport. Wrapped lines
-start at the start edge of the surface's direction; unwrapped lines have no
-right edge to align to, so they start at the left in either direction, as in
-code editors, and the direction orders their runs. Selection rectangles, current-line fill,
+Wrapped lines take as many rows as they need. A line not shaped yet counts as
+one row until it is; when lines above the view turn out taller, the first
+line on screen stays in place instead of the view jumping. Up and Down move
+by rows on screen, Home and End go to the ends of a row, and clicks land on
+the row under the pointer. Selections are drawn only on the lines on screen,
+as a rectangle per piece: text in mixed directions can make one selection
+several pieces on a row.
+
+Wrapped lines start at the start edge of the surface's direction; unwrapped
+lines have no right edge to align to, so they start at the left in either
+direction, as in code editors, and the direction orders their runs. The
+surface clips to the viewport. Selection rectangles, current-line fill,
 caret, and IME composition position are painted separately from the text
 instances, so caret and selection changes do not rewrite the document text.
 

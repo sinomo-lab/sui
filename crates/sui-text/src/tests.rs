@@ -1159,3 +1159,67 @@ fn resolved_faces_name_their_family() {
     let not_a_font = crate::ResolvedTextFace::from_bytes(std::sync::Arc::from(&[0_u8; 4][..]), 0);
     assert_eq!(not_a_font.family_name(), None);
 }
+
+#[test]
+fn selection_covers_the_selected_text_in_mixed_directions() {
+    let system = TextSystem::new();
+    // "abc " is bytes 0..4, the Hebrew word 4..12, and " def" 12..16.
+    let text = "abc \u{5e9}\u{5dc}\u{5d5}\u{5dd} def";
+    let layout_in = |direction: TextDirection| {
+        let document = TextDocument {
+            paragraphs: vec![TextParagraph {
+                style: TextParagraphStyle {
+                    direction,
+                    ..Default::default()
+                },
+                spans: vec![TextSpan::new(text, TextStyle::new(Color::WHITE))],
+            }],
+        };
+        system
+            .layout_document(
+                TextLayoutRequest::new(document).with_box_size(Size::new(400.0, 40.0)),
+                &FontRegistry::new(),
+            )
+            .unwrap()
+    };
+    let extent = |layout: &crate::TextLayout, range: std::ops::Range<usize>| {
+        layout
+            .glyphs()
+            .iter()
+            .filter(|glyph| range.contains(&glyph.cluster))
+            .map(|glyph| (glyph.origin_x, glyph.origin_x + glyph.advance.x))
+            .fold((f32::MAX, f32::MIN), |(left, right), (a, b)| {
+                (left.min(a.min(b)), right.max(a.max(b)))
+            })
+    };
+
+    // The English run at the end of a right-to-left paragraph.
+    let rtl = layout_in(TextDirection::RightToLeft);
+    let rects = rtl.selection_rects(13..16);
+    let (left, right) = extent(&rtl, 13..16);
+    assert_eq!(rects.len(), 1, "{rects:?}");
+    assert!(
+        (rects[0].x() - left).abs() < 0.5,
+        "{rects:?} vs {left}..{right}"
+    );
+    assert!(
+        (rects[0].max_x() - right).abs() < 0.5,
+        "{rects:?} vs {left}..{right}"
+    );
+
+    // "c " and the first two Hebrew letters: the Hebrew reads right to left,
+    // so the selection is two pieces with the rest of the word between them.
+    let ltr = layout_in(TextDirection::LeftToRight);
+    let rects = ltr.selection_rects(2..8);
+    let hebrew = extent(&ltr, 4..12);
+    assert_eq!(rects.len(), 2, "{rects:?}");
+    assert!(
+        (rects[0].x() - extent(&ltr, 2..3).0).abs() < 0.5,
+        "{rects:?}"
+    );
+    assert!(
+        (rects[1].max_x() - hebrew.1).abs() < 0.5,
+        "{rects:?} vs {hebrew:?}"
+    );
+    assert!(rects[1].x() > hebrew.0 + 1.0, "{rects:?} vs {hebrew:?}");
+}

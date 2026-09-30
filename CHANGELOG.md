@@ -465,6 +465,28 @@ Versioning, with the usual expectation that the API may change during the
 - `ResolvedTextFace::family_name` reads a face's family from its name table.
   `ImageSampling` and `ImagePixelSnap` are exported from `sui`.
 
+### Large documents in TextSurface
+
+- Wrapped text is laid out a line at a time, like unwrapped text, so
+  measuring shapes only the lines on screen, a few around them, and the
+  caret's line. It used to lay the whole document out again for every edit
+  and resize. In the Text editor's 20,000-line document, turning wrapping on
+  and each keystroke after took about 2.5 s and now take milliseconds.
+- A wrapped line not shaped yet counts as one row until it is. When lines
+  above the view turn out taller, the first line on screen stays in place,
+  and the caret is revealed again once the lines it moved past are shaped.
+  Up and Down move by rows on screen, Home and End go to the ends of a row,
+  and clicks land on the row under the pointer.
+- Selections are drawn only on the lines on screen. Selecting a whole large
+  document computed rectangles for every selected line on every frame:
+  about 75 ms a frame at 20,000 lines, now a few.
+- Selections are drawn as a rectangle per piece of text on a row, so
+  mixed-direction text is highlighted where it is. A row was one rectangle
+  between the ends of the selection, which in a right-to-left paragraph could
+  cover the wrong words or none.
+- Finding the line of an offset while an input method composes is a binary
+  search instead of a scan.
+
 ### Breaking: text painting helpers
 
 - Replaced `paint_aligned_text` with `paint_text` and
