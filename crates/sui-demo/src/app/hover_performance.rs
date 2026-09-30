@@ -5,7 +5,7 @@ use sui::{
 };
 
 fn picker_cards(nodes: &[SemanticsNode]) -> [SemanticsNode; 2] {
-    [WIDGET_BOOK_TAB_LABEL, THEMES_TAB_LABEL].map(|name| {
+    [WIDGET_BOOK_TAB_LABEL, THEME_EDITOR_TAB_LABEL].map(|name| {
         nodes
             .iter()
             .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some(name))

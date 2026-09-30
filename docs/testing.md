@@ -170,7 +170,6 @@ The artifact command writes to `target/ui-artifacts/sui-demo/widget-book`:
 - `overview-light/` and `overview-dark/`: the top of the page in each theme;
 - `narrow-light/`: a window below the rail breakpoint, filtered to buttons;
 - `stories/<id>/light.png` and `dark.png`: every registered story's block;
-- `themes-page/`: the Themes page;
 - `hdr-validation/`: HDR captures of the color validation surface.
 
 Ordinary `sinomo-ui-demo` tests do not run this slow artifact generator.

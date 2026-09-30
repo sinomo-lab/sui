@@ -3,6 +3,7 @@ use std::{
     rc::Rc,
 };
 
+use crate::hdr_theme_mode::set_hdr_theme_mode;
 use crate::hdr_validation::build_hdr_validation_surface;
 use crate::live_performance::LivePerformanceRoot;
 use crate::settings::{
@@ -11,7 +12,6 @@ use crate::settings::{
 use crate::text_editor::build_text_editor_surface_with_theme;
 use crate::text_rendering::build_text_rendering_page;
 use crate::text_shaping::build_text_shaping_surface_with_theme;
-use crate::theme_demo::{build_theme_demo_surface_with_theme, set_hdr_theme_lab_mode};
 #[cfg(test)]
 use crate::widget_book::build_widget_book_gallery;
 use crate::widget_book::{build_widget_book_gallery_with_theme, register_widget_book_images};
@@ -93,7 +93,6 @@ const DEV_WEB_FALLBACK_FONTS: &[(&str, &[u8])] = &[
     ),
 ];
 const WIDGET_BOOK_TAB_LABEL: &str = "Widget book";
-const THEMES_TAB_LABEL: &str = "Themes";
 const TEXT_RENDERING_TAB_LABEL: &str = "Text rendering";
 const TEXT_SHAPING_TAB_LABEL: &str = "Scripts and shaping";
 const TEXT_EDITOR_TAB_LABEL: &str = "Text editor";
@@ -542,7 +541,7 @@ impl DevBrowserShell {
     }
 
     fn with_initial_demo(render_options: WindowRenderOptions, initial_demo: Option<&str>) -> Self {
-        set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
+        set_hdr_theme_mode(HdrThemeMode::Disabled);
         let state = DevShellState::new();
         let tab_scroll_state = ScrollState::new();
         let tab_scroll_to_end = Rc::new(Cell::new(false));
@@ -1622,113 +1621,106 @@ fn build_dev_demo_entries(
         themed_demo!(
             WIDGET_BOOK_TAB_LABEL,
             "Every component and its variations on one page.",
-            IconGlyph::MoreHorizontal,
+            IconGlyph::Blocks,
             DecorativeHue::Blue,
             |theme| build_widget_book_gallery_with_theme(theme)
         ),
         themed_demo!(
-            THEMES_TAB_LABEL,
-            "Theme previews and HDR theme mode comparisons.",
-            IconGlyph::PaintBucket,
-            DecorativeHue::Violet,
-            |theme| build_theme_demo_surface_with_theme(theme)
-        ),
-        themed_demo!(
             THEME_EDITOR_TAB_LABEL,
-            "Edit foundational theme tokens and preview every change in real time.",
-            IconGlyph::PaintBucket,
+            "Edit a theme's colors and tokens and preview every change live.",
+            IconGlyph::Palette,
             DecorativeHue::Magenta,
             |theme| build_theme_editor_demo(theme, Some(app_theme.clone()))
         ),
         themed_demo!(
             ANIMATION_DEMO_TAB_LABEL,
-            "Curves, springs, interruption, widget motion, a timeline editor, and render cost.",
+            "Curves, springs, interruption, a timeline editor, and render cost.",
             IconGlyph::Sparkles,
             DecorativeHue::Cyan,
             |theme| build_animation_demo_with_theme(theme)
         ),
         themed_demo!(
             TEXT_RENDERING_TAB_LABEL,
-            "The window's text settings, render policies compared under a magnifier, and what each setting should do.",
-            IconGlyph::ActualSize,
-            DecorativeHue::Blue,
+            "Text settings and render policies, compared under a magnifier.",
+            IconGlyph::Type,
+            DecorativeHue::Violet,
             |theme| build_text_rendering_page(theme, text_options)
         ),
         themed_demo!(
             TEXT_SHAPING_TAB_LABEL,
-            "Samples of every script that check themselves on this system, mixed directions, line breaking, and metrics.",
-            IconGlyph::Search,
+            "Every script checked on this system, mixed directions, and line breaks.",
+            IconGlyph::Languages,
             DecorativeHue::Red,
             |theme| build_text_shaping_surface_with_theme(theme)
         ),
         themed_demo!(
             TEXT_EDITOR_TAB_LABEL,
-            "An editor with code, mixed-direction, input method, and large documents, and an inspector for the caret and selection.",
-            IconGlyph::Restore,
-            DecorativeHue::Violet,
+            "Code, mixed-direction, input method, and large documents, with an inspector.",
+            IconGlyph::FileCode,
+            DecorativeHue::Teal,
             |theme| build_text_editor_surface_with_theme(theme)
         ),
         themed_demo!(
             MARKDOWN_RENDER_TAB_LABEL,
-            "Incremental Markdown, cross-block selection, code, attachments, and structured results.",
-            IconGlyph::File,
+            "Incremental Markdown, cross-block selection, code, attachments, and results.",
+            IconGlyph::FileText,
             DecorativeHue::Green,
             |theme| build_markdown_render_demo_with_theme(theme)
         ),
         themed_demo!(
             SHRINKWRAP_TAB_LABEL,
             "Animated container width, text wrapping, and tightly fitted chat bubbles.",
-            IconGlyph::FitView,
-            DecorativeHue::Teal,
+            IconGlyph::Chat,
+            DecorativeHue::Blue,
             |theme| build_shrinkwrap_demo_with_theme(theme)
         ),
         themed_demo!(
             EDITORIAL_TAB_LABEL,
             "Responsive columns and text flowing around moving, draggable obstacles.",
-            IconGlyph::FitView,
+            IconGlyph::Newspaper,
             DecorativeHue::Amber,
             |theme| build_editorial_demo_with_theme(theme)
         ),
         themed_demo!(
             HDR_VALIDATION_TAB_LABEL,
-            "Headroom, highlight fitting, wide gamut, and banding probes, with output controls and capture.",
-            IconGlyph::Maximize,
-            DecorativeHue::Amber,
+            "Headroom, highlight fitting, wide gamut, and banding, with capture.",
+            IconGlyph::Sun,
+            DecorativeHue::Orange,
             |theme| build_hdr_validation_surface(theme, options)
         ),
         themed_demo!(
             LAYOUT_TAB_LABEL,
-            "Grid, intrinsic sizing, container queries, resizable panes, adaptive workspaces, and safe areas.",
-            IconGlyph::Maximize,
+            "Grid, intrinsic sizing, container queries, panes, and adaptive workspaces.",
+            IconGlyph::LayoutDashboard,
             DecorativeHue::Teal,
             |theme| build_layout_demo_with_theme(theme)
         ),
         themed_demo!(
             DRAG_DROP_TAB_LABEL,
-            "Internal drag-and-drop payloads, targets, scopes, and preview overlay.",
-            IconGlyph::Send,
+            "Drag-and-drop payloads, targets, scopes, and the preview overlay.",
+            IconGlyph::Move,
             DecorativeHue::Cyan,
             |theme| build_drag_drop_demo_with_theme(theme)
         ),
         themed_demo!(
             PAINT_TAB_LABEL,
-            "Pixel canvas painting workspace with editor-style panels.",
+            "A pixel canvas painting workspace with editor-style panels.",
             IconGlyph::Brush,
             DecorativeHue::Magenta,
             |theme| build_paint_demo_with_theme(theme)
         ),
         themed_demo!(
             VECTOR_EDITOR_TAB_LABEL,
-            "Vector canvas drawing and editing demo.",
-            IconGlyph::ChevronRight,
-            DecorativeHue::Orange,
+            "Shapes and paths on an artboard, with layers and properties.",
+            IconGlyph::PenTool,
+            DecorativeHue::Violet,
             |theme| build_vector_editor_demo_with_theme(theme)
         ),
         #[cfg(feature = "nodes")]
         themed_demo!(
             NODES_TAB_LABEL,
-            "Controlled and uncontrolled node editors with retained custom nodes, subflows, spatial indexing, resizing, reconnection, semantics, and advanced viewport behavior.",
-            IconGlyph::ScreenShare,
+            "Custom nodes, subflows, resizing, reconnection, and a minimap.",
+            IconGlyph::Workflow,
             DecorativeHue::Green,
             |theme| build_nodes_demo_with_theme(theme)
         ),
@@ -1736,7 +1728,7 @@ fn build_dev_demo_entries(
             let theme = Rc::clone(&theme_reader);
             DevDemo::lazy(
                 COMMAND_DEMO_TAB_LABEL,
-                "Typed window and application commands, multicast, worker delivery, and controller wakes.",
+                "Typed window and application commands, multicast, and worker delivery.",
                 IconGlyph::Send,
                 DecorativeHue::Red,
                 move || build_command_demo_with_theme(command_demo_state, theme),
@@ -1748,8 +1740,9 @@ fn build_dev_demo_entries(
 pub(crate) fn dev_demo_label_for_slug(slug: &str) -> Option<&'static str> {
     match slug {
         "widget-book" | "widgets" => Some(WIDGET_BOOK_TAB_LABEL),
-        "themes" | "theme" => Some(THEMES_TAB_LABEL),
-        "theme-editor" | "theme-edit" | "theme-builder" => Some(THEME_EDITOR_TAB_LABEL),
+        "theme-editor" | "theme-edit" | "theme-builder" | "themes" | "theme" => {
+            Some(THEME_EDITOR_TAB_LABEL)
+        }
         "animation" | "animations" | "animation-demo" => Some(ANIMATION_DEMO_TAB_LABEL),
         "commands" | "command-routing" | "application-commands" => Some(COMMAND_DEMO_TAB_LABEL),
         "shrinkwrap" | "shrinkwrap-chat" => Some(SHRINKWRAP_TAB_LABEL),
@@ -1915,6 +1908,7 @@ fn finish_dev_application_with_performance_overlay_reader<W: Widget + 'static>(
 
 fn register_dev_application_resources(resources: &mut sui::ResourceRegistry<'_>) {
     register_widget_book_images(resources);
+    crate::markdown_demo::register_rich_document_images(resources);
     #[cfg(target_arch = "wasm32")]
     register_dev_web_fallback_fonts(resources);
     resources
@@ -2222,7 +2216,7 @@ mod tests {
     }
 
     fn build_floating_widget_book_test_application(widget_book_bounds: Rect) -> Application {
-        set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
+        set_hdr_theme_mode(HdrThemeMode::Disabled);
         let workspace = FloatingWorkspaceState::new();
         let mut views = FloatingWorkspace::new(workspace).name("Widget book floating regression");
         views.push_view(
@@ -2236,7 +2230,7 @@ mod tests {
     fn build_floating_color_imagery_test_application(widget_book_bounds: Rect) -> Application {
         const WIDGET_BOOK_TEST_IMAGE_HANDLE: ImageHandle = ImageHandle::new(1);
 
-        set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
+        set_hdr_theme_mode(HdrThemeMode::Disabled);
         let workspace = FloatingWorkspaceState::new();
         let mut views = FloatingWorkspace::new(workspace).name("Widget book floating regression");
         let gallery = ScrollView::vertical(Padding::all(
@@ -2797,7 +2791,7 @@ mod tests {
         );
         for button in [
             WIDGET_BOOK_TAB_LABEL,
-            THEMES_TAB_LABEL,
+            THEME_EDITOR_TAB_LABEL,
             HDR_VALIDATION_TAB_LABEL,
             COMMAND_DEMO_TAB_LABEL,
             LAYOUT_TAB_LABEL,
@@ -3001,14 +2995,15 @@ mod tests {
         let output = runtime
             .render(window_id)
             .expect("dev application should render picker again");
-        let themes_card = find_picker_button(&output.semantics, THEMES_TAB_LABEL);
-        click_runtime_point(&mut runtime, window_id, center_of(themes_card.bounds));
+        let theme_editor_card = find_picker_button(&output.semantics, THEME_EDITOR_TAB_LABEL);
+        click_runtime_point(&mut runtime, window_id, center_of(theme_editor_card.bounds));
 
         let output = runtime
             .render(window_id)
             .expect("dev application should render two top tabs");
-        let from =
-            top_tab_indicator_rect(find_top_tab_button(&output.semantics, THEMES_TAB_LABEL).bounds);
+        let from = top_tab_indicator_rect(
+            find_top_tab_button(&output.semantics, THEME_EDITOR_TAB_LABEL).bounds,
+        );
         let to = top_tab_indicator_rect(
             find_top_tab_button(&output.semantics, WIDGET_BOOK_TAB_LABEL).bounds,
         );
@@ -5853,7 +5848,7 @@ final_max_luminance={final_max_luminance}
     fn closing_a_tab_moves_the_open_button_after_the_remaining_tabs() -> Result<()> {
         let app = TestApp::new(|| build_dev_application().build())?;
         let window = app.main_window()?;
-        open_dev_shell_demo(&window, THEMES_TAB_LABEL)?;
+        open_dev_shell_demo(&window, THEME_EDITOR_TAB_LABEL)?;
         window
             .get_by_role(SemanticsRole::Button)
             .with_name("Open demo")
@@ -5873,10 +5868,10 @@ final_max_luminance={final_max_luminance}
 
         let snapshot = window.snapshot()?;
         let after = open_button(&snapshot);
-        let themes = find_named_node(&snapshot, SemanticsRole::Button, THEMES_TAB_LABEL).bounds;
+        let tab = find_named_node(&snapshot, SemanticsRole::Button, THEME_EDITOR_TAB_LABEL).bounds;
         assert!(
-            after.x() > themes.max_x() && after.x() < themes.max_x() + 24.0,
-            "the open button follows the remaining tab: {after:?}, tab {themes:?}"
+            after.x() > tab.max_x() && after.x() < tab.max_x() + 24.0,
+            "the open button follows the remaining tab: {after:?}, tab {tab:?}"
         );
         // It is drawn there too, not left where it was.
         let center = |rect: Rect| {
@@ -6195,7 +6190,7 @@ final_max_luminance={final_max_luminance}
         let window = app.main_window()?;
         open_dev_shell_settings(&window)?;
 
-        let mode = crate::theme_demo::hdr_theme_lab_mode();
+        let mode = crate::hdr_theme_mode::hdr_theme_mode();
         let select = semantic_text_value(
             &window,
             SemanticsRole::ComboBox,

@@ -867,7 +867,7 @@ fn build_decision_node(
                     .style_when(demo_text_style_when(
                         &theme_reader,
                         DemoTextRole::Metadata,
-                        |theme| theme.palette.warning_text,
+                        |theme| theme.surfaces.warn_text,
                     )),
             )
             .with_child(

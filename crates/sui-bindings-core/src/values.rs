@@ -572,6 +572,17 @@ pub fn binding_icon_glyph_from_name(value: &str) -> Option<IconGlyph> {
         "phoneoff" => Some(IconGlyph::PhoneOff),
         "monitor" => Some(IconGlyph::Monitor),
         "screenshare" => Some(IconGlyph::ScreenShare),
+        "blocks" => Some(IconGlyph::Blocks),
+        "palette" => Some(IconGlyph::Palette),
+        "type" | "text" => Some(IconGlyph::Type),
+        "languages" => Some(IconGlyph::Languages),
+        "filecode" => Some(IconGlyph::FileCode),
+        "newspaper" => Some(IconGlyph::Newspaper),
+        "sun" => Some(IconGlyph::Sun),
+        "layoutdashboard" | "layout" => Some(IconGlyph::LayoutDashboard),
+        "move" => Some(IconGlyph::Move),
+        "pentool" => Some(IconGlyph::PenTool),
+        "workflow" => Some(IconGlyph::Workflow),
         _ => None,
     }
 }
@@ -628,6 +639,17 @@ pub fn binding_icon_glyph_name(glyph: IconGlyph) -> &'static str {
         IconGlyph::PhoneOff => "phone-off",
         IconGlyph::Monitor => "monitor",
         IconGlyph::ScreenShare => "screen-share",
+        IconGlyph::Blocks => "blocks",
+        IconGlyph::Palette => "palette",
+        IconGlyph::Type => "type",
+        IconGlyph::Languages => "languages",
+        IconGlyph::FileCode => "file-code",
+        IconGlyph::Newspaper => "newspaper",
+        IconGlyph::Sun => "sun",
+        IconGlyph::LayoutDashboard => "layout-dashboard",
+        IconGlyph::Move => "move",
+        IconGlyph::PenTool => "pen-tool",
+        IconGlyph::Workflow => "workflow",
     }
 }
 

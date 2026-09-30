@@ -61,12 +61,6 @@ pub(crate) fn paint_table_cell(
 
 pub(crate) const GALLERY_TEXT_MAX_WIDTH: f32 = 980.0;
 pub(crate) const GALLERY_CONTENT_MAX_WIDTH: f32 = 1180.0;
-pub(crate) const ROOT_GALLERY_PADDING: Insets = Insets {
-    left: 24.0,
-    top: 0.0,
-    right: 24.0,
-    bottom: 0.0,
-};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum DemoTextColor {

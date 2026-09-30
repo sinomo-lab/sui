@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use web_time::Instant;
 
@@ -9,10 +9,12 @@ use sui::{
 };
 use sui_text::{PersistentTextLayout, TextDocument, TextLayoutRequest};
 
-use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader, demo_text_style};
+use crate::app::{DemoTextRole, DevThemeReader, clone_dev_theme_reader, dev_theme_color};
+use crate::demo_support::{DemoTextColor, demo_label};
 
 pub(crate) const EDITORIAL_TAB_LABEL: &str = "Editorial engine";
 const NAME: &str = "Editorial text flow";
+pub(crate) const EDITORIAL_SCROLL_NAME: &str = "Editorial article";
 #[cfg(test)]
 const LINE_HEIGHT: f32 = 26.0;
 const MIN_SLOT: f32 = 54.0;
@@ -230,6 +232,24 @@ fn flow_article(
                         "editorial line layout did not advance at a UTF-8 boundary",
                     ));
                 }
+                // A slot an obstacle narrowed too far for the next word would
+                // split it; leave it empty instead. Whole columns still may,
+                // or a word wider than the column could never be placed.
+                let splits_word = text[..consumed]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|before| before.is_ascii_alphanumeric())
+                    && text[consumed..]
+                        .chars()
+                        .next()
+                        .is_some_and(|after| after.is_ascii_alphanumeric());
+                if splits_word && (slot.end - slot.start) < column.width() - 0.5 {
+                    continue;
+                }
+                // The space a line breaks at belongs to it, so the next line
+                // starts flush with its slot.
+                let consumed = consumed
+                    + (text[consumed..].len() - text[consumed..].trim_start_matches(' ').len());
                 let start = cursor.byte;
                 cursor.byte += consumed;
                 lines.push(FlowLine {
@@ -263,8 +283,82 @@ fn editorial_text_style(
     }
 }
 
+/// The article scrolls when it is longer than the window, with its status
+/// line kept in view below it.
 pub(crate) fn build_editorial_demo_with_theme(theme: DevThemeReader) -> impl Widget {
-    Editorial::new(Signal::named("Editorial motion", Motion::default()), theme)
+    let viewport = Rc::new(Cell::new(0.0));
+    let status = Signal::named("Editorial status", String::new());
+    let article = Editorial::new(
+        Signal::named("Editorial motion", Motion::default()),
+        Rc::clone(&theme),
+    )
+    .viewport_hint(Rc::clone(&viewport))
+    .status(status.clone());
+    let footer = Background::new(
+        (theme)().surfaces.window_subtle,
+        Padding::new(
+            Insets {
+                left: 32.0,
+                top: 8.0,
+                right: 32.0,
+                bottom: 8.0,
+            },
+            demo_label(&theme, "", DemoTextRole::Metadata, DemoTextColor::Muted).text_from(status),
+        ),
+    )
+    .brush_when(dev_theme_color(&theme, |theme| {
+        theme.surfaces.window_subtle
+    }));
+    Flex::vertical()
+        .align_items(Alignment::Stretch)
+        .with_item(
+            ViewportHint {
+                height: viewport,
+                child: SingleChild::new(
+                    ScrollView::vertical(article)
+                        .name(EDITORIAL_SCROLL_NAME)
+                        .theme_when(clone_dev_theme_reader(&theme)),
+                ),
+            },
+            FlexItem::fill(),
+        )
+        .with_child(footer)
+}
+
+/// Tells the article how tall the view is, which the scroll view it sits in
+/// does not.
+struct ViewportHint {
+    height: Rc<Cell<f32>>,
+    child: SingleChild,
+}
+
+impl Widget for ViewportHint {
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if constraints.max.height.is_finite() {
+            self.height.set(constraints.max.height);
+        }
+        self.child.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.child.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.child.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.child.semantics(ctx);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.child.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.child.visit_children_mut(visitor);
+    }
 }
 
 struct Drag {
@@ -281,6 +375,9 @@ struct Editorial {
     controls: WidgetPod,
     controls_size: Size,
     size: Size,
+    /// Where the circles move: the article's first screen.
+    stage: Rect,
+    /// All of the article's columns, as tall as its text needs.
     body: Rect,
     columns: Vec<Rect>,
     circles: Vec<Circle>,
@@ -294,6 +391,9 @@ struct Editorial {
     cursor: Cursor,
     reflow_ms: f64,
     drag: Option<Drag>,
+    /// How tall the view is, when a scroll view gives no height.
+    viewport: Rc<Cell<f32>>,
+    status: Option<Signal<String>>,
 }
 
 impl Editorial {
@@ -339,6 +439,7 @@ impl Editorial {
             controls: WidgetPod::new(controls),
             controls_size: Size::ZERO,
             size: Size::ZERO,
+            stage: Rect::ZERO,
             body: Rect::ZERO,
             columns: Vec::new(),
             circles: Vec::new(),
@@ -352,7 +453,20 @@ impl Editorial {
             cursor: Cursor::default(),
             reflow_ms: 0.0,
             drag: None,
+            viewport: Rc::new(Cell::new(0.0)),
+            status: None,
         }
+    }
+
+    fn viewport_hint(mut self, height: Rc<Cell<f32>>) -> Self {
+        self.viewport = height;
+        self
+    }
+
+    /// Keep `status` up to date with the columns, lines, and reflow time.
+    fn status(mut self, status: Signal<String>) -> Self {
+        self.status = Some(status);
+        self
     }
 
     fn margin(&self) -> f32 {
@@ -382,7 +496,7 @@ impl Widget for Editorial {
         match event {
             Event::Wake(WakeEvent::AnimationFrame { delta, .. }) => {
                 if self.state.get().active() {
-                    self.state.update(|state| state.advance(*delta, self.body));
+                    self.state.update(|state| state.advance(*delta, self.stage));
                     ctx.request_animation_frame();
                 }
                 ctx.set_handled();
@@ -424,13 +538,13 @@ impl Widget for Editorial {
                     drag.moved |= delta.x * delta.x + delta.y * delta.y > 16.0;
                     self.state.update(|state| {
                         let orb = &mut state.orbs[drag.index];
-                        let radius = orb_circle(*orb, self.body).radius;
-                        let x = radius / self.body.width().max(1.0);
-                        let y = radius / self.body.height().max(1.0);
+                        let radius = orb_circle(*orb, self.stage).radius;
+                        let x = radius / self.stage.width().max(1.0);
+                        let y = radius / self.stage.height().max(1.0);
                         orb.position = Point::new(
-                            (drag.original.x + delta.x / self.body.width().max(1.0))
+                            (drag.original.x + delta.x / self.stage.width().max(1.0))
                                 .clamp(x, 1.0 - x),
-                            (drag.original.y + delta.y / self.body.height().max(1.0))
+                            (drag.original.y + delta.y / self.stage.height().max(1.0))
                                 .clamp(y, 1.0 - y),
                         );
                     });
@@ -486,18 +600,21 @@ impl Widget for Editorial {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.size = constraints.clamp(Size::new(
+        let viewport_height = if constraints.max.height.is_finite() {
+            constraints.max.height
+        } else if self.viewport.get() > 0.0 {
+            self.viewport.get()
+        } else {
+            780.0
+        };
+        self.size = Size::new(
             if constraints.max.width.is_finite() {
                 constraints.max.width
             } else {
                 1100.0
             },
-            if constraints.max.height.is_finite() {
-                constraints.max.height
-            } else {
-                780.0
-            },
-        ));
+            viewport_height,
+        );
         let margin = self.margin();
         let width = (self.size.width - margin * 2.0).max(1.0);
         self.controls_size = self.controls.measure(
@@ -543,12 +660,11 @@ impl Widget for Editorial {
             .as_ref()
             .map_or(80.0, |layout| layout.measurement().height);
         let body_top = margin + self.controls_size.height + 16.0 + title_height + 20.0;
-        self.body = Rect::new(
+        self.stage = Rect::new(
             margin,
             body_top,
             width,
-            (self.size.height - body_top - theme.text.xs.line_height - theme.spacing * 4.0)
-                .max(0.0),
+            (viewport_height - body_top - margin).max(0.0),
         );
         let count = if self.size.width >= 1080.0 {
             3
@@ -559,16 +675,18 @@ impl Widget for Editorial {
         };
         let gap = 28.0;
         let column_width = ((width - gap * (count - 1) as f32) / count as f32).max(1.0);
-        self.columns = (0..count)
-            .map(|index| {
-                Rect::new(
-                    margin + index as f32 * (column_width + gap),
-                    body_top,
-                    column_width,
-                    self.body.height(),
-                )
-            })
-            .collect();
+        let columns = |height: f32| -> Vec<Rect> {
+            (0..count)
+                .map(|index| {
+                    Rect::new(
+                        margin + index as f32 * (column_width + gap),
+                        body_top,
+                        column_width,
+                        height,
+                    )
+                })
+                .collect()
+        };
         self.blocked_rects.clear();
         let cap_width = self
             .drop_cap
@@ -584,7 +702,7 @@ impl Widget for Editorial {
                 .map_or(line_height * 3.0, |layout| layout.measurement().height),
         ));
         self.quote_bounds = None;
-        if count > 1 && self.body.height() > 260.0 {
+        if count > 1 && self.stage.height() > 260.0 {
             let quote_width = column_width * 0.68;
             self.quote = ctx
                 .layout()
@@ -600,12 +718,12 @@ impl Widget for Editorial {
                 .as_ref()
                 .map_or(90.0, |layout| layout.measurement().height + 20.0);
             let rect = Rect::new(
-                self.columns[1].max_x() - quote_width,
-                body_top + self.body.height() * 0.42,
+                margin + 2.0 * column_width + gap - quote_width,
+                body_top + self.stage.height() * 0.42,
                 quote_width,
                 height,
             );
-            if rect.max_y() < self.body.max_y() {
+            if rect.max_y() < self.stage.max_y() {
                 self.quote_bounds = Some(rect);
                 self.blocked_rects.push(rect.inflate(8.0, 6.0));
             }
@@ -614,22 +732,48 @@ impl Widget for Editorial {
         self.circles = motion
             .orbs
             .iter()
-            .map(|orb| orb_circle(*orb, self.body))
+            .map(|orb| orb_circle(*orb, self.stage))
             .collect();
-        let result = flow_article(
-            &self.columns,
-            &self.circles,
-            &self.blocked_rects,
-            &self.lines,
-            line_height,
-            |text, width, handle| {
-                ctx.layout().layout_document_persistent(
-                    handle,
-                    TextLayoutRequest::new(TextDocument::from_plain_text(text, body_style.clone()))
+        // Fill the first screen, and grow the columns until the whole story
+        // fits, estimating the rest from the lines laid out so far.
+        let total: usize = ARTICLE.iter().map(|paragraph| paragraph.len()).sum();
+        let mut height = self.stage.height().max(line_height * 4.0);
+        let mut result = Err(sui::Error::new("editorial text was not laid out"));
+        for _ in 0..8 {
+            self.columns = columns(height);
+            result = flow_article(
+                &self.columns,
+                &self.circles,
+                &self.blocked_rects,
+                &self.lines,
+                line_height,
+                |text, width, handle| {
+                    ctx.layout().layout_document_persistent(
+                        handle,
+                        TextLayoutRequest::new(TextDocument::from_plain_text(
+                            text,
+                            body_style.clone(),
+                        ))
                         .with_box_size(Size::new(width, line_height)),
-                )
-            },
-        );
+                    )
+                },
+            );
+            let Ok((lines, cursor)) = &result else {
+                break;
+            };
+            if cursor.paragraph >= ARTICLE.len() {
+                break;
+            }
+            let laid_out = ARTICLE[..cursor.paragraph]
+                .iter()
+                .map(|paragraph| paragraph.len())
+                .sum::<usize>()
+                + cursor.byte;
+            let per_line = (laid_out / lines.len().max(1)).max(1);
+            let rows = ((total - laid_out) / per_line + 1).div_ceil(count) as f32;
+            let paragraph_gaps = (ARTICLE.len() - cursor.paragraph).div_ceil(count) as f32;
+            height += rows * line_height + paragraph_gaps * 9.0 + line_height;
+        }
         if let Ok((lines, cursor)) = result {
             self.lines = lines;
             self.cursor = cursor;
@@ -637,8 +781,34 @@ impl Widget for Editorial {
             self.lines.clear();
             self.cursor = Cursor::default();
         }
+        // The columns end at their last line.
+        let text_bottom = self
+            .lines
+            .iter()
+            .map(|line| line.bounds.max_y())
+            .fold(body_top, f32::max);
+        self.body = Rect::new(margin, body_top, width, text_bottom - body_top);
+        self.size.height = self.size.height.max(text_bottom + margin);
+        self.size = constraints.clamp(self.size);
         self.reflow_ms = started.elapsed().as_secs_f64() * 1000.0;
-        if motion.active() && self.body.height() > 0.0 {
+        if let Some(status) = &self.status {
+            let plural = |count: usize, noun: &str| {
+                format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+            };
+            let mut text = format!(
+                "{} · {} · Reflow {:.1} ms",
+                plural(self.columns.len(), "column"),
+                plural(self.lines.len(), "line"),
+                self.reflow_ms
+            );
+            if self.size.width >= 700.0 {
+                text.push_str(" · Drag circles · Click to pause · Space: play/pause · R: reset");
+            } else {
+                text.push_str(" · Drag / tap circles");
+            }
+            status.set(text);
+        }
+        if motion.active() && self.stage.height() > 0.0 {
             ctx.request_animation_frame();
         }
         self.size
@@ -715,44 +885,12 @@ impl Widget for Editorial {
         }
         if let (Some(rect), Some(quote)) = (self.quote_bounds, &self.quote) {
             let rect = rect.translate(offset);
-            ctx.fill_rect(rect, theme.surfaces.panel);
             ctx.fill_rect(
                 Rect::new(rect.x(), rect.y(), 2.0, rect.height()),
                 theme.palette.accent,
             );
             ctx.draw_persistent_text_layout(Point::new(rect.x() + 12.0, rect.y() + 10.0), quote);
         }
-        let status_height = theme.text.xs.line_height + theme.spacing * 2.0;
-        ctx.fill_rect(
-            Rect::new(
-                offset.x,
-                offset.y + self.size.height - status_height,
-                self.size.width,
-                status_height,
-            ),
-            theme.surfaces.window_subtle,
-        );
-        let mut status = format!(
-            "{} columns · {} lines · Reflow {:.2} ms",
-            self.columns.len(),
-            self.lines.len(),
-            self.reflow_ms
-        );
-        if self.size.width >= 700.0 {
-            status.push_str(" · Drag circles · Click to pause · Space: play/pause · R: reset");
-        } else {
-            status.push_str(" · Drag / tap circles");
-        }
-        ctx.draw_text(
-            Rect::new(
-                offset.x + self.margin(),
-                offset.y + self.size.height - status_height + theme.spacing,
-                (self.size.width - self.margin() * 2.0).max(1.0),
-                theme.text.xs.line_height,
-            ),
-            status,
-            demo_text_style(theme, DemoTextRole::Metadata, theme.palette.text_muted),
-        );
         ctx.pop_clip();
     }
 
@@ -975,6 +1113,14 @@ mod tests {
                 assert_eq!(line.paragraph, cursor.paragraph);
                 assert_eq!(line.consumed.start, cursor.byte);
                 assert!(line.consumed.end > line.consumed.start);
+                let text = &ARTICLE[line.paragraph][line.consumed.clone()];
+                assert!(!text.starts_with(' '), "lines start at a word");
+                let rest = &ARTICLE[line.paragraph][line.consumed.end..];
+                assert!(
+                    !(text.ends_with(|c: char| c.is_ascii_alphanumeric())
+                        && rest.starts_with(|c: char| c.is_ascii_alphanumeric())),
+                    "{text:?} ends inside a word"
+                );
                 actual.push_str(&ARTICLE[line.paragraph][line.consumed.clone()]);
                 cursor.byte = line.consumed.end;
                 if cursor.byte == ARTICLE[cursor.paragraph].len() {
@@ -1086,6 +1232,56 @@ mod tests {
             crate::app::dev_demo_label_for_slug("editorial"),
             Some(EDITORIAL_TAB_LABEL)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_whole_article_is_laid_out_and_scrolls_when_it_is_longer_than_the_view() -> sui::Result<()>
+    {
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Editorial engine").root(
+                build_editorial_demo_with_theme(crate::app::default_dev_theme_reader()),
+            ))
+            .build()?;
+        let window = runtime.window_ids()[0];
+        for width in [360.0, 800.0, 1280.0] {
+            runtime.handle_event(
+                window,
+                Event::Window(WindowEvent::Resized(Size::new(width, 900.0))),
+            )?;
+            let output = runtime.render(window)?;
+            let article = output
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(NAME))
+                .expect("the article is on the page");
+            assert_eq!(
+                article.value,
+                Some(SemanticsValue::Text(ARTICLE.concat())),
+                "every paragraph is laid out at {width} px"
+            );
+            let scroll = output
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(EDITORIAL_SCROLL_NAME))
+                .expect("the article scrolls");
+            if width < 700.0 {
+                assert!(
+                    article.bounds.height() > scroll.bounds.height(),
+                    "in one column the article is taller than the view"
+                );
+            }
+            let status = output
+                .semantics
+                .iter()
+                .find(|node| {
+                    node.name
+                        .as_deref()
+                        .is_some_and(|name| name.contains(" · Reflow "))
+                })
+                .expect("the status line is in view");
+            assert!(status.bounds.max_y() <= 900.0 + 0.5);
+        }
         Ok(())
     }
 

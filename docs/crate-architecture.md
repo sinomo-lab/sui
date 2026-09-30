@@ -255,8 +255,9 @@ This crate launches the desktop app used for manual runtime, widget, and
 renderer validation. Its `widget_book` module owns the built-in widget gallery:
 a story registry, one module of stories per category, the page and rail, and
 visual artifact generation. Sibling modules own the benchmark surfaces
-(`benchmarks`), text and color validation surfaces (`validation`), the Themes
-page and HDR theme lab (`theme_demo`), the live performance overlay
+(`benchmarks`), the text pages (`text_rendering`, `text_shaping`, and
+`text_editor`), the HDR validation page (`hdr_validation`), the HDR theme mode
+the demo previews (`hdr_theme_mode`), the live performance overlay
 (`live_performance`), and the other demos.
 
 ## Directional Rules

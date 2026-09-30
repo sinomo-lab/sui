@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use sui::{
-    Event as SuiEvent, EventPhase, KeyState, SemanticRegion, WidgetPodMutVisitor, WidgetPodVisitor,
-    prelude::*,
+    Event as SuiEvent, EventPhase, ImageHandle, KeyState, RegisteredImage, ResourceRegistry,
+    SemanticRegion, WidgetPodMutVisitor, WidgetPodVisitor, prelude::*,
 };
 
 use crate::app::{
@@ -15,6 +15,10 @@ pub(crate) const MARKDOWN_RENDER_SCROLL_NAME: &str = "Rich document demo";
 pub(crate) const MARKDOWN_RENDER_SCROLL_BAR_NAME: &str = "Rich document demo vertical scroll bar";
 pub(crate) const MARKDOWN_SOURCE_EDITOR_NAME: &str = "Markdown source";
 pub(crate) const MARKDOWN_RENDER_COOLDOWN_SECONDS: f64 = 0.5;
+
+/// The frame-time sparkline the sample document shows inline.
+pub(crate) const FRAME_TREND_IMAGE: ImageHandle = ImageHandle::new(0x5355_4900_0000_0002);
+const FRAME_TREND_SOURCE: &str = "asset:frame-trend";
 
 const MARKDOWN_PANEL_MIN_WIDTH: f32 = 320.0;
 const MARKDOWN_PANEL_GAP: f32 = 16.0;
@@ -39,8 +43,68 @@ document.append_markdown("\n\nFirst retained block");
 document.append_markdown("\n\nSecond incremental block");
 ```
 
-![Renderer-neutral chart](asset:release-chart)
+Frame time this week ![frame time trend](asset:frame-trend) stayed under budget.
 "##;
+
+/// Register the images the sample document shows. Call this while
+/// configuring app resources.
+pub(crate) fn register_rich_document_images(resources: &mut ResourceRegistry<'_>) {
+    resources
+        .image(FRAME_TREND_IMAGE, frame_trend_image())
+        .expect("the frame time sparkline should register exactly once");
+}
+
+/// A sparkline of a week of frame times: an antialiased line over a faint
+/// wash, on a transparent background so it sits on either theme. It is
+/// drawn in place of its alt text, so it is wide and short like a word.
+fn frame_trend_image() -> RegisteredImage {
+    const WIDTH: usize = 240;
+    const HEIGHT: usize = 48;
+    const SAMPLES: [f32; 12] = [
+        0.55, 0.62, 0.48, 0.70, 0.66, 0.40, 0.52, 0.35, 0.44, 0.30, 0.38, 0.26,
+    ];
+    const LINE: [f32; 3] = [0.20, 0.47, 0.96];
+    let inset = 5.0;
+    let point = |index: usize| {
+        let x = inset + index as f32 * (WIDTH as f32 - inset * 2.0) / (SAMPLES.len() - 1) as f32;
+        let y = inset + (1.0 - SAMPLES[index]) * (HEIGHT as f32 - inset * 2.0);
+        (x, y)
+    };
+    let mut pixels = vec![0_u8; WIDTH * HEIGHT * 4];
+    for row in 0..HEIGHT {
+        for column in 0..WIDTH {
+            let (px, py) = (column as f32 + 0.5, row as f32 + 0.5);
+            // Distance to the polyline, and the line's height at this column.
+            let mut distance = f32::MAX;
+            let mut line_y = HEIGHT as f32;
+            for index in 0..SAMPLES.len() - 1 {
+                let (x0, y0) = point(index);
+                let (x1, y1) = point(index + 1);
+                let (dx, dy) = (x1 - x0, y1 - y0);
+                let t = (((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+                let (cx, cy) = (x0 + dx * t, y0 + dy * t);
+                distance = distance.min(((px - cx).powi(2) + (py - cy).powi(2)).sqrt());
+                if px >= x0 && px <= x1 {
+                    line_y = y0 + dy * (px - x0) / dx;
+                }
+            }
+            let stroke = (2.2 - distance).clamp(0.0, 1.0);
+            let wash = if py > line_y && px >= inset && px <= WIDTH as f32 - inset {
+                0.16
+            } else {
+                0.0
+            };
+            let alpha = stroke + wash * (1.0 - stroke);
+            let offset = (row * WIDTH + column) * 4;
+            for (channel, value) in LINE.iter().enumerate() {
+                pixels[offset + channel] = (value * 255.0).round() as u8;
+            }
+            pixels[offset + 3] = (alpha * 255.0).round() as u8;
+        }
+    }
+    RegisteredImage::from_rgba8(WIDTH as u32, HEIGHT as u32, pixels)
+        .expect("the frame time sparkline is valid RGBA data")
+}
 
 #[derive(Clone)]
 struct MarkdownDemoState {
@@ -272,6 +336,9 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
                     .theme(*theme)
                     .on_link(move |destination| {
                         link_activity.set(format!("Link routed to the application: {destination}"));
+                    })
+                    .image_resolver(|image| {
+                        (image.source == FRAME_TREND_SOURCE).then_some(FRAME_TREND_IMAGE)
                     })
                     .on_image(move |source| {
                         image_activity.set(format!("Image action requested for {source}"));
@@ -569,6 +636,39 @@ mod tests {
             .map(RichDocumentBlock::plain_text)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn rich_document_demo_draws_its_inline_image() {
+        let theme_reader: DevThemeReader = Rc::new(DefaultTheme::default);
+        let mut application = Application::new();
+        application
+            .register_image(FRAME_TREND_IMAGE, frame_trend_image())
+            .expect("the sparkline should register");
+        let mut runtime = application
+            .window(
+                WindowBuilder::new().title("Rich document image").root(
+                    SizedBox::new()
+                        .size(Size::new(1400.0, 2400.0))
+                        .with_child(build_markdown_render_demo_with_theme(theme_reader)),
+                ),
+            )
+            .build()
+            .expect("rich document demo runtime should build");
+        let output = runtime
+            .render(runtime.window_ids()[0])
+            .expect("rich document demo should render");
+        let mut draws = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawImage { rect, source, .. } = command
+                && source.image == FRAME_TREND_IMAGE
+            {
+                draws.push(*rect);
+            }
+        });
+        assert_eq!(draws.len(), 1, "the sparkline is drawn once");
+        // It takes the place of its alt text: wide and about a line tall.
+        assert!(draws[0].width() > draws[0].height() * 2.0, "{:?}", draws[0]);
     }
 
     #[test]

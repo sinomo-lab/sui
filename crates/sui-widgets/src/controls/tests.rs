@@ -2449,6 +2449,17 @@ fn editor_icon_glyphs_paint_visible_ink() {
         IconGlyph::PhoneOff,
         IconGlyph::Monitor,
         IconGlyph::ScreenShare,
+        IconGlyph::Blocks,
+        IconGlyph::Palette,
+        IconGlyph::Type,
+        IconGlyph::Languages,
+        IconGlyph::FileCode,
+        IconGlyph::Newspaper,
+        IconGlyph::Sun,
+        IconGlyph::LayoutDashboard,
+        IconGlyph::Move,
+        IconGlyph::PenTool,
+        IconGlyph::Workflow,
     ] {
         let output = render(IconButton::new(glyph, "Editor command"));
         assert!(

@@ -3,7 +3,7 @@
 
 use std::{
     cell::RefCell,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -104,27 +104,6 @@ pub(crate) fn unique_visual_artifact_test_dir(name: &str) -> PathBuf {
     ))
 }
 
-pub(crate) fn solid_fill_max_channel(output: &RenderOutput) -> f32 {
-    let mut max_channel = 0.0_f32;
-    output
-        .frame
-        .scene
-        .visit_commands(&mut |command| match command {
-            SceneCommand::FillRect {
-                brush: Brush::Solid(color),
-                ..
-            }
-            | SceneCommand::FillPath {
-                brush: Brush::Solid(color),
-                ..
-            } => {
-                max_channel = max_channel.max(color.red.max(color.green.max(color.blue)));
-            }
-            _ => {}
-        });
-    max_channel
-}
-
 pub(crate) fn solid_fill_colors(output: &RenderOutput) -> Vec<sui::Color> {
     let mut colors = Vec::new();
     output
@@ -142,22 +121,6 @@ pub(crate) fn solid_fill_colors(output: &RenderOutput) -> Vec<sui::Color> {
             _ => {}
         });
     colors
-}
-
-#[cfg(feature = "artifacts")]
-pub(crate) fn viewport_size(window: &TestWindow) -> Result<Size> {
-    let snapshot = window.snapshot()?;
-    if let Some(scene) = snapshot.scene_summary {
-        return Ok(scene.viewport);
-    }
-
-    snapshot
-        .accessibility
-        .nodes
-        .iter()
-        .find(|node| node.role == SemanticsRole::Window)
-        .map(|node| node.bounds.size)
-        .ok_or_else(|| sui::Error::new("window viewport is missing from snapshot"))
 }
 
 #[cfg(feature = "artifacts")]
@@ -376,34 +339,6 @@ pub(crate) fn next_headless_benchmark_frame(
 }
 
 #[cfg(feature = "artifacts")]
-pub(crate) fn set_window_scale_factor(
-    window: &TestWindow,
-    scale_factor: f64,
-    raw_dpi: f32,
-) -> Result<()> {
-    let viewport = viewport_size(window)?;
-    window
-        .root()
-        .dispatch_event(Event::Window(WindowEvent::ScaleFactorChanged {
-            scale_factor,
-            raw_dpi: Some(raw_dpi),
-            suggested_size: Some(viewport),
-        }))?;
-    window
-        .root()
-        .dispatch_event(Event::Window(WindowEvent::Resized(viewport)))?;
-    window.run_until_idle()
-}
-
-#[cfg(feature = "artifacts")]
-pub(crate) fn write_screenshot(
-    path: impl AsRef<Path>,
-    screenshot: &sui_testing::Screenshot,
-) -> Result<()> {
-    screenshot.write_png(path)
-}
-
-#[cfg(feature = "artifacts")]
 pub(crate) const SCREENSHOT_CHANNEL_TOLERANCE: u8 = 1;
 
 #[cfg(feature = "artifacts")]
@@ -450,17 +385,6 @@ pub(crate) fn screenshot_diff_image(
         .collect::<Vec<_>>();
 
     sui_testing::Screenshot::new(left.width(), left.height(), pixels)
-}
-
-#[cfg(feature = "artifacts")]
-pub(crate) fn normalize_screenshot_pair(
-    left: &sui_testing::Screenshot,
-    right: &sui_testing::Screenshot,
-) -> Result<(sui_testing::Screenshot, sui_testing::Screenshot)> {
-    let width = left.width().min(right.width()) as f32;
-    let height = left.height().min(right.height()) as f32;
-    let crop = sui::Rect::new(0.0, 0.0, width, height);
-    Ok((left.crop(crop)?, right.crop(crop)?))
 }
 
 #[cfg(feature = "artifacts")]

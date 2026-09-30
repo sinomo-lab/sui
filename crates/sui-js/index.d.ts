@@ -67,7 +67,18 @@ export type IconGlyph =
   | "phone"
   | "phone-off"
   | "monitor"
-  | "screen-share";
+  | "screen-share"
+  | "blocks"
+  | "palette"
+  | "type"
+  | "languages"
+  | "file-code"
+  | "newspaper"
+  | "sun"
+  | "layout-dashboard"
+  | "move"
+  | "pen-tool"
+  | "workflow";
 export type NativeBackend =
   | "cpu"
   | "wgpu"

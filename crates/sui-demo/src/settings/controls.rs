@@ -10,7 +10,7 @@ use sui::{
 
 use super::options::RenderOptions;
 use crate::app::{DevThemeReader, clone_dev_theme_reader};
-use crate::theme_demo::{hdr_theme_lab_mode, set_hdr_theme_lab_mode};
+use crate::hdr_theme_mode::{hdr_theme_mode, set_hdr_theme_mode};
 
 pub(crate) const COLOR_MANAGEMENT_MODE_NAME: &str = "Color management";
 pub(crate) const OUTPUT_PRIMARIES_NAME: &str = "Output primaries";
@@ -311,11 +311,11 @@ pub(crate) fn hdr_theme_mode_select(theme_reader: &DevThemeReader, place: Place)
         .selected_when(|| {
             HDR_THEME_MODES
                 .iter()
-                .position(|mode| *mode == hdr_theme_lab_mode())
+                .position(|mode| *mode == hdr_theme_mode())
         })
         .on_change(|index, _| {
             if let Some(mode) = HDR_THEME_MODES.get(index) {
-                set_hdr_theme_lab_mode(*mode);
+                set_hdr_theme_mode(*mode);
             }
         })
 }

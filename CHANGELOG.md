@@ -465,6 +465,31 @@ Versioning, with the usual expectation that the API may change during the
 - `ResolvedTextFace::family_name` reads a face's family from its name table.
   `ImageSampling` and `ImagePixelSnap` are exported from `sui`.
 
+### Demo quick fixes
+
+- The Themes page is gone. The HDR validation page already compares the
+  controls under each HDR theme mode, and its preset gallery repeated the
+  Theme editor's presets; the `themes` demo name opens the Theme editor. The
+  mode the demo previews moved from `sui_demo_app::theme_demo` to
+  `sui_demo_app::hdr_theme_mode` (`hdr_theme_mode` and `set_hdr_theme_mode`),
+  and visual artifacts no longer write `themes-page/`.
+- `IconGlyph` gains `Blocks`, `Palette`, `Type`, `Languages`, `FileCode`,
+  `Newspaper`, `Sun`, `LayoutDashboard`, `Move`, `PenTool`, and `Workflow`,
+  with binding names such as `file-code` and `layout-dashboard`. The demo
+  picker gives each demo its own icon, and every description fits its card.
+- The Editorial engine lays out the whole article and scrolls when it is
+  longer than the window, with its status line in a footer that stays in
+  view; the circles move within the first screen. Lines no longer start with
+  the space the previous line broke at, which indented them by a space, and
+  a slot a circle narrows too far for the next word is left empty instead of
+  splitting the word. The pull quote no longer hides the circles behind it.
+- Rich documents registers an image for its sample document, a frame-time
+  sparkline drawn inline in a sentence; the chart it referred to never
+  resolved, so only its alt text showed.
+- The Node graphs decision node's subtitle is legible on dark themes. It
+  used `palette.warning_text`, text for a warning fill, where plain surfaces
+  need `surfaces.warn_text`.
+
 ### Large documents in TextSurface
 
 - Wrapped text is laid out a line at a time, like unwrapped text, so

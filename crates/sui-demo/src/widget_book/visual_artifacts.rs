@@ -27,7 +27,6 @@ use crate::hdr_validation::report::{
     final_output_sdr_white, output_diagnostics_report, write_capture_bundle,
 };
 use crate::hdr_validation::{COLOR_VALIDATION_VIEW_TITLE, build_color_validation_application};
-use crate::theme_demo::build_theme_demo_application;
 
 /// Window size for story captures: wide enough for the rail and every
 /// specimen grid, tall enough that most stories fit in one screenshot.
@@ -86,17 +85,6 @@ pub(crate) fn write_visual_artifacts_to(output_root: &Path) -> Result<PathBuf> {
         window.run_until_idle()?;
         window.capture_artifacts()?.write_to_dir(&narrow_dir)?;
         rename_window_artifacts(&narrow_dir)?;
-    }
-
-    {
-        let themes_dir = output_root.join("themes-page");
-        create_dir(&themes_dir)?;
-        let themes = TestApp::new(|| build_theme_demo_application().build())?;
-        themes
-            .main_window()?
-            .capture_artifacts()?
-            .write_to_dir(&themes_dir)?;
-        rename_window_artifacts(&themes_dir)?;
     }
 
     write_hdr_validation_artifacts(output_root)?;

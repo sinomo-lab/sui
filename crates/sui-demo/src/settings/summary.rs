@@ -11,8 +11,8 @@ use sui::{
 
 use super::controls::hdr_theme_mode_label;
 use crate::app::{DevThemeReader, clone_dev_theme_reader};
+use crate::hdr_theme_mode::hdr_theme_mode_signal;
 use crate::hdr_validation::OutputSummary;
-use crate::theme_demo::hdr_theme_lab_mode_signal;
 
 pub(crate) const OUTPUT_ROW_NAME: &str = "Output";
 pub(crate) const SDR_WHITE_ROW_NAME: &str = "SDR white";
@@ -107,7 +107,7 @@ impl Widget for OutputSummaryRows {
         let window_id = ctx.window_id();
         let diagnostics = ctx.observe(&window_output_diagnostics_signal(window_id));
         let range = ctx.observe(&window_output_color_range_signal(window_id));
-        let mode = ctx.observe(&hdr_theme_lab_mode_signal());
+        let mode = ctx.observe(&hdr_theme_mode_signal());
         *self.rows.borrow_mut() = Rows::of(diagnostics.as_ref(), range, mode);
         self.content.measure(ctx, constraints)
     }

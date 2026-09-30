@@ -98,6 +98,18 @@ pub enum IconGlyph {
     PhoneOff,
     Monitor,
     ScreenShare,
+    // Subject glyphs for launchers and navigation.
+    Blocks,
+    Palette,
+    Type,
+    Languages,
+    FileCode,
+    Newspaper,
+    Sun,
+    LayoutDashboard,
+    Move,
+    PenTool,
+    Workflow,
 }
 
 impl IconGlyph {
@@ -153,6 +165,17 @@ impl IconGlyph {
             Self::PhoneOff => LucideIcon::PhoneOff,
             Self::Monitor => LucideIcon::Monitor,
             Self::ScreenShare => LucideIcon::ScreenShare,
+            Self::Blocks => LucideIcon::Blocks,
+            Self::Palette => LucideIcon::Palette,
+            Self::Type => LucideIcon::Type,
+            Self::Languages => LucideIcon::Languages,
+            Self::FileCode => LucideIcon::FileCode,
+            Self::Newspaper => LucideIcon::Newspaper,
+            Self::Sun => LucideIcon::Sun,
+            Self::LayoutDashboard => LucideIcon::LayoutDashboard,
+            Self::Move => LucideIcon::Move,
+            Self::PenTool => LucideIcon::PenTool,
+            Self::Workflow => LucideIcon::Workflow,
         }
     }
 }
@@ -208,6 +231,17 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
     IconGlyph::PhoneOff,
     IconGlyph::Monitor,
     IconGlyph::ScreenShare,
+    IconGlyph::Blocks,
+    IconGlyph::Palette,
+    IconGlyph::Type,
+    IconGlyph::Languages,
+    IconGlyph::FileCode,
+    IconGlyph::Newspaper,
+    IconGlyph::Sun,
+    IconGlyph::LayoutDashboard,
+    IconGlyph::Move,
+    IconGlyph::PenTool,
+    IconGlyph::Workflow,
 ];
 
 pub fn register_builtin_icon_resources(

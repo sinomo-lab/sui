@@ -6,8 +6,8 @@ use sui::{GridTrack, HdrThemeMode};
 
 use crate::app::{DemoTextRole, demo_text_style};
 use crate::demo_support::NamedSection;
-use crate::theme_demo::{
-    EmissiveIndicator, ThemePreviewCardFrame, hdr_theme_lab_theme, hdr_theme_mode_title,
+use crate::hdr_theme_mode::{
+    EmissiveIndicator, ThemedCardFrame, hdr_mode_preview_theme, hdr_theme_mode_title,
 };
 
 pub(crate) const UI_MODES_NAME: &str = "HDR theme mode columns";
@@ -20,9 +20,9 @@ const MODES: [HdrThemeMode; 4] = [
 ];
 
 fn mode_card(mode: HdrThemeMode) -> impl Widget {
-    let theme = hdr_theme_lab_theme(mode);
+    let theme = hdr_mode_preview_theme(mode);
     let title = hdr_theme_mode_title(mode);
-    ThemePreviewCardFrame::new(
+    ThemedCardFrame::new(
         theme,
         Stack::vertical()
             .spacing(10.0)

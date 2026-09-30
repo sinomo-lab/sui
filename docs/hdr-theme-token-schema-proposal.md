@@ -333,4 +333,5 @@ presentation work is tracked separately in the
 - Pilot consumers: `crates/sui-widgets/src/controls.rs` and
   `crates/sui-widgets/src/composites.rs`
 - Top-level re-exports and typed theme extensions: `crates/sui/src/lib.rs`
-- Themes page lab: `crates/sui-demo/src/theme_demo.rs`
+- Demo comparison of the modes: `crates/sui-demo/src/hdr_validation/ui_modes.rs`,
+  with the preview theme in `crates/sui-demo/src/hdr_theme_mode.rs`

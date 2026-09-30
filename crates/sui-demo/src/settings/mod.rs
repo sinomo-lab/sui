@@ -12,7 +12,7 @@ use sui::prelude::*;
 use sui::{EventCtx, HdrThemeMode};
 
 use crate::app::{DevThemeReader, clone_dev_theme_reader};
-use crate::theme_demo::set_hdr_theme_lab_mode;
+use crate::hdr_theme_mode::set_hdr_theme_mode;
 use controls::*;
 use options::OptionFlag;
 pub(crate) use options::{RenderOptions, RenderOptionsScope, default_render_options};
@@ -54,7 +54,7 @@ pub(crate) fn settings_view(
         .appearance(ButtonAppearance::Outline)
         .on_press(move || {
             reset_options.update(|options| *options = default_render_options());
-            set_hdr_theme_lab_mode(HdrThemeMode::Disabled);
+            set_hdr_theme_mode(HdrThemeMode::Disabled);
         });
     let content = Padding::all(
         PADDING,

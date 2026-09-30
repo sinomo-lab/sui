@@ -170,7 +170,7 @@ fn picker_frame_pacing_vsync_hdr_benchmark() -> Result<()> {
     if let Some(output) = window_output_diagnostics(window.id()) {
         println!("PACING_OUTPUT {:?}", output.active_output_strategy);
     }
-    let cards = [WIDGET_BOOK_TAB_LABEL, THEMES_TAB_LABEL].map(|name| {
+    let cards = [WIDGET_BOOK_TAB_LABEL, THEME_EDITOR_TAB_LABEL].map(|name| {
         initial
             .accessibility
             .nodes
