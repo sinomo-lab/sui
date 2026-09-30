@@ -22,8 +22,8 @@ use sui_runtime::{
     ArrangeCtx, EventCtx, MeasureCtx, PaintCtx, SemanticsCtx, StackHostOptions, StackOrderPolicy,
     Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::StrokeStyle;
 
+use crate::frame::{snap_to_pixels, stroke_border};
 use crate::{DefaultTheme, text_align::paint_text_line};
 
 const MAX_DOCK_DEPTH: usize = 64;
@@ -1825,7 +1825,7 @@ impl DockWorkspace {
         }
 
         if group.is_floating() {
-            ctx.stroke_rect(group.bounds, palette.border, StrokeStyle::new(1.0));
+            stroke_border(ctx, group.bounds, 0.0, 1.0, palette.border);
             let handle = floating_resize_rect(group.bounds);
             ctx.fill_rect(handle, palette.border.with_alpha(0.72));
             ctx.fill_rect(
@@ -1857,8 +1857,9 @@ impl DockWorkspace {
             width,
             height,
         );
+        let bounds = snap_to_pixels(ctx, bounds);
         ctx.fill_rect(bounds, theme.palette.surface_raised.with_alpha(0.96));
-        ctx.stroke_rect(bounds, theme.palette.accent, StrokeStyle::new(1.5));
+        stroke_border(ctx, bounds, 0.0, 1.5, theme.palette.accent);
         let text = self
             .panel(panel)
             .map(|entry| entry.title.as_str())
@@ -1967,14 +1968,16 @@ fn paint_drop_targets(ctx: &mut PaintCtx, candidate: &DockDropCandidate, theme: 
                 theme.palette.control_active.with_alpha(0.20)
             },
         );
-        ctx.stroke_rect(
+        stroke_border(
+            ctx,
             bounds,
+            0.0,
+            if selected { 2.0 } else { 1.0 },
             if selected {
                 theme.palette.accent
             } else {
                 theme.palette.border_focus.with_alpha(0.72)
             },
-            StrokeStyle::new(if selected { 2.0 } else { 1.0 }),
         );
     }
 }

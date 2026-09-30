@@ -2,10 +2,11 @@ use crate::DefaultTheme;
 use crate::Progress;
 use crate::SemanticTone;
 use crate::composites::forms::set_hover_animation_target;
-use crate::composites::indicators::{
-    draw_focus_ring_frame, inset_rect, mix_color, physical_pixels, rounded_rect_path,
+use crate::composites::indicators::{inset_rect, mix_color, rounded_rect_path};
+use crate::frame::{
+    draw_control_shape, draw_focus_ring, physical_pixels, snap_to_pixels, snap_width_to_pixels,
+    stroke_border,
 };
-use crate::frame::{draw_control_shape, snap_to_pixels, snap_width_to_pixels, stroke_border};
 use crate::{
     GlowTone, ThemeShadow, paint_theme_glow, paint_theme_inset_shadow, paint_theme_shadow,
 };
@@ -839,7 +840,7 @@ impl Widget for FramedField {
             border,
         );
         if focused {
-            draw_focus_ring_frame(
+            draw_focus_ring(
                 ctx,
                 bounds,
                 radius,

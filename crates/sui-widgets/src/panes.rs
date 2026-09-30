@@ -18,6 +18,7 @@ use sui_runtime::{
 };
 use sui_scene::{LayerCompositionMode, StrokeStyle};
 
+use crate::frame::{physical_pixels, stroke_border};
 use crate::{
     ButtonAppearance, DefaultTheme, IconButton, IconGlyph,
     containers::{ScrollBar, ScrollState, ScrollView},
@@ -1065,7 +1066,13 @@ impl Widget for FloatingViewSurface {
         }
         self.host.paint(ctx);
         if !view.maximized {
-            ctx.stroke_rect(ctx.bounds(), palette.border, StrokeStyle::new(border_width));
+            stroke_border(
+                ctx,
+                ctx.bounds(),
+                0.0,
+                physical_pixels(ctx, border_width),
+                palette.border,
+            );
             let handle = floating_view_resize_handle_rect(&theme, ctx.bounds());
             let accent = palette.border.with_alpha(0.95);
             let first_length = (metrics.floating_view_resize_handle_size * 0.56).max(6.0);

@@ -6,11 +6,9 @@ use crate::SemanticTone;
 use crate::animation::AnimationSpec;
 use crate::animation::Reveal;
 use crate::composites::forms::set_focus_animation_target;
-use crate::composites::indicators::{
-    draw_control_frame, draw_focus_ring_frame, measure_text, physical_pixels, rounded_rect_path,
-    text_token_style,
-};
+use crate::composites::indicators::{draw_control_frame, measure_text, text_token_style};
 use crate::composites::popups::request_child_invalidation;
+use crate::frame::{draw_focus_ring, physical_pixels, stroke_border};
 use crate::paint_theme_shadow;
 use crate::text_align::paint_text;
 use std::cell::RefCell;
@@ -55,7 +53,6 @@ use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
 use sui_scene::LayerCompositionMode;
 use sui_scene::LayerProperties;
-use sui_scene::StrokeStyle;
 use sui_text::TextStyle;
 use sui_text::{TextAlign, TextMeasurement};
 
@@ -149,7 +146,7 @@ impl Widget for DialogFocusSurface {
             return;
         }
         let metrics = state.theme.metrics;
-        draw_focus_ring_frame(
+        draw_focus_ring(
             ctx,
             ctx.bounds(),
             metrics.corner_radius + 3.0,
@@ -1585,14 +1582,15 @@ impl Widget for SideSheet {
         ctx.fill_rect(border, theme.palette.border);
         let focus = self.focus_animation.get(ctx);
         if focus > Progress::EPSILON {
-            let inset = physical_pixels(ctx, theme.metrics.focus_ring_width) * 0.5;
-            ctx.stroke(
-                rounded_rect_path(sheet.inflate(-inset, -inset), 0.0),
+            stroke_border(
+                ctx,
+                sheet,
+                0.0,
+                physical_pixels(ctx, theme.metrics.focus_ring_width),
                 theme
                     .palette
                     .focus_ring
                     .with_alpha(theme.palette.focus_ring.alpha * focus),
-                StrokeStyle::new(physical_pixels(ctx, theme.metrics.focus_ring_width)),
             );
         }
 

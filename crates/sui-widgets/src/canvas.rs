@@ -18,6 +18,7 @@ use sui_runtime::{
 use sui_scene::{ImageSampling, ImageSource, RegisteredImage, StrokeStyle};
 use sui_text::{FontFeature, TextAlign, TextMeasurement, TextStyle};
 
+use crate::frame::{physical_pixels, stroke_border};
 use crate::{DefaultTheme, text_align::paint_text};
 
 const AXIS_ALIGNED_EPSILON: f32 = 0.0001;
@@ -43,26 +44,16 @@ fn draw_focus_ring(ctx: &mut PaintCtx, bounds: Rect, theme: &DefaultTheme, progr
     }
 
     let metrics = theme.metrics;
-    let outset = physical_pixels(ctx, metrics.focus_ring_outset);
-    ctx.stroke(
-        Path::rounded_rect(
-            bounds.inflate(outset, outset),
-            metrics.corner_radius + outset,
-        ),
+    crate::frame::draw_focus_ring(
+        ctx,
+        bounds,
+        metrics.corner_radius,
+        metrics,
         theme
             .palette
             .focus_ring
             .with_alpha(theme.palette.focus_ring.alpha * progress),
-        StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
     );
-}
-
-fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
-    if value <= 0.0 {
-        return 0.0;
-    }
-
-    ctx.dpi().physical_pixels_to_logical(value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1190,9 +1181,12 @@ impl Widget for Canvas {
             .grid_spacing(theme.metrics.canvas_grid_step)
             .grid_style(CanvasGridStyle::Lines)
             .paint_background(ctx, ctx.bounds(), background, grid);
-        ctx.stroke_bounds(
+        stroke_border(
+            ctx,
+            ctx.bounds(),
+            0.0,
+            physical_pixels(ctx, theme.metrics.border_width),
             theme.surfaces.border,
-            StrokeStyle::new(theme.metrics.border_width),
         );
         ctx.push_clip_rect(ctx.bounds());
         paint_canvas_axes(
@@ -3116,9 +3110,12 @@ impl Widget for PixelCanvas {
         let [background, _, document_edge, shadow_near, shadow_far, grid] =
             self.appearance.resolve(&theme);
         ctx.fill_bounds(background);
-        ctx.stroke_bounds(
+        stroke_border(
+            ctx,
+            ctx.bounds(),
+            0.0,
+            physical_pixels(ctx, theme.metrics.border_width),
             theme.surfaces.border,
-            StrokeStyle::new(theme.metrics.border_width),
         );
         ctx.push_clip_rect(ctx.bounds());
         let transform = self

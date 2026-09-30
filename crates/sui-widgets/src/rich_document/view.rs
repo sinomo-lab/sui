@@ -17,7 +17,6 @@ use sui_runtime::{
     ArrangeCtx, Command, EventCtx, EventPhase, MeasureCtx, PaintCtx, SemanticsCtx, Widget,
     WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::StrokeStyle;
 use sui_text::{
     FontStyle, FontWeight, PersistentTextLayout, TextDocument, TextLayoutRequest, TextParagraph,
     TextSpan, TextStyle,
@@ -28,6 +27,7 @@ use super::{
     RichDocumentModel, RichDocumentSpan, RichDocumentStatus, RichInlineImage, RichInlineKind,
     RichSyntaxHighlighter, RichSyntaxSpan, RichSyntaxTokenKind,
 };
+use crate::frame::{snap_to_pixels, stroke_border};
 use crate::{DefaultTheme, TextCommand, ThemeTextToken};
 
 const BLOCK_GAP: f32 = 8.0;
@@ -1237,12 +1237,9 @@ impl Widget for DefaultBlockView {
                 );
             }
             RichDocumentBlockKind::CodeBlock { language, .. } => {
-                ctx.fill_rect(bounds, self.theme.surfaces.window_subtle);
-                ctx.stroke_rect(
-                    bounds,
-                    self.theme.surfaces.border_subtle,
-                    StrokeStyle::new(1.0),
-                );
+                let frame = snap_to_pixels(ctx, bounds);
+                ctx.fill_rect(frame, self.theme.surfaces.window_subtle);
+                stroke_border(ctx, frame, 0.0, 1.0, self.theme.surfaces.border_subtle);
                 ctx.fill_rect(
                     Rect::new(bounds.x(), bounds.y(), bounds.width(), CODE_HEADER_HEIGHT),
                     self.theme.surfaces.surface_2,
@@ -1271,13 +1268,15 @@ impl Widget for DefaultBlockView {
                 );
             }
             RichDocumentBlockKind::Attachment(_) => {
-                ctx.fill_rect(bounds, self.theme.palette.control);
-                ctx.stroke_rect(bounds, self.theme.palette.border, StrokeStyle::new(1.0));
+                let frame = snap_to_pixels(ctx, bounds);
+                ctx.fill_rect(frame, self.theme.palette.control);
+                stroke_border(ctx, frame, 0.0, 1.0, self.theme.palette.border);
             }
             RichDocumentBlockKind::Extension(extension) => {
                 let (background, _) = self.status_colors(extension.status);
-                ctx.fill_rect(bounds, background);
-                ctx.stroke_rect(bounds, self.theme.palette.border, StrokeStyle::new(1.0));
+                let frame = snap_to_pixels(ctx, bounds);
+                ctx.fill_rect(frame, background);
+                stroke_border(ctx, frame, 0.0, 1.0, self.theme.palette.border);
                 let expanded = self
                     .state
                     .inner

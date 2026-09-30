@@ -10,7 +10,7 @@ use crate::ThemeTextToken;
 use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
-use crate::frame::{draw_control_shape, snap_to_pixels};
+use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels, stroke_border};
 use crate::paint_theme_glow;
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
@@ -30,7 +30,6 @@ use sui_runtime::MeasureCtx;
 use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
 use sui_runtime::Widget;
-use sui_scene::StrokeStyle;
 use sui_text::FontWeight;
 use sui_text::TextMeasurement;
 use sui_text::TextStyle;
@@ -123,10 +122,12 @@ pub fn paint_coverage_dots_with_config(
             if index < config.current.min(shown) {
                 ctx.fill(rounded_rect_path(dot_rect, dot * 0.5), tone_color);
             } else {
-                ctx.stroke(
-                    rounded_rect_path(dot_rect, dot * 0.5),
+                stroke_border(
+                    ctx,
+                    dot_rect,
+                    dot * 0.5,
+                    physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
                     theme.palette.border,
-                    StrokeStyle::new(theme.metrics.border_width.max(1.0)),
                 );
             }
             x += dot + gap;
@@ -1080,27 +1081,8 @@ pub(super) fn draw_control_frame(
     );
 
     if let Some(focus_ring) = focus_ring {
-        draw_focus_ring_frame(ctx, bounds, radius, metrics, focus_ring);
+        draw_focus_ring(ctx, bounds, radius, metrics, focus_ring);
     }
-}
-
-pub(super) fn draw_focus_ring_frame(
-    ctx: &mut PaintCtx,
-    bounds: Rect,
-    radius: f32,
-    metrics: ControlMetrics,
-    focus_ring: Color,
-) {
-    let bounds = snap_to_pixels(ctx, bounds);
-    let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
-    ctx.stroke(
-        rounded_rect_path(
-            bounds.inflate(focus_ring_outset, focus_ring_outset),
-            radius + focus_ring_outset,
-        ),
-        focus_ring,
-        StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
-    );
 }
 
 pub(super) fn mix_color(left: Color, right: Color, amount: f32) -> Color {
@@ -1129,17 +1111,13 @@ pub(super) fn draw_popover_arrival_overlay(
     )
     .with_alpha((0.16 + (arrival_effect.intensity * 0.12)).clamp(0.0, 0.30));
 
-    ctx.fill(
-        rounded_rect_path(overlay_rect, overlay_radius),
+    draw_control_shape(
+        ctx,
+        overlay_rect,
+        overlay_radius,
+        physical_pixels(ctx, 1.0),
         overlay_fill,
-    );
-    ctx.stroke(
-        rounded_rect_path(
-            overlay_rect.inflate(-overlay_inset * 0.5, -overlay_inset * 0.5),
-            (overlay_radius - (overlay_inset * 0.5)).max(0.0),
-        ),
         stroke_color,
-        StrokeStyle::new(physical_pixels(ctx, 1.0)),
     );
 }
 
@@ -1163,11 +1141,4 @@ pub(super) fn tooltip_tail(trigger: Rect, bubble: Rect, placement: TooltipPlacem
         }
     }
     builder.build()
-}
-
-pub(super) fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
-    if value <= 0.0 {
-        return 0.0;
-    }
-    ctx.dpi().physical_pixels_to_logical(value)
 }

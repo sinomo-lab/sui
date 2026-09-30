@@ -8,6 +8,9 @@ use sui_runtime::{EventCtx, FrameClock, MeasureCtx, PaintCtx, SemanticsCtx, Widg
 use sui_scene::{Brush, GradientStop, ImageSource, StrokeStyle, WidgetShader};
 use sui_text::{FontFeature, TextAlign, TextStyle};
 
+use crate::frame::{
+    draw_control_shape, draw_focus_ring, physical_pixels, snap_to_pixels, stroke_border,
+};
 use crate::{
     ControlMetrics, DefaultTheme, Progress, SemanticTone, ThemeDensity, ThemeTextToken,
     text_align::paint_text_line,
@@ -213,10 +216,12 @@ impl Widget for Image {
         ctx.pop_clip();
 
         if self.show_border {
-            ctx.stroke(
-                rounded_rect_path(bounds, corner_radius),
+            stroke_border(
+                ctx,
+                bounds,
+                corner_radius,
+                physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
                 theme.palette.border,
-                StrokeStyle::new(theme.metrics.border_width.max(1.0)),
             );
         }
     }
@@ -722,14 +727,12 @@ impl Widget for ColorSwatch {
         let color = self.current_color();
 
         if self.focus_animation.get(ctx) > 0.0 {
-            let focus_outset = metrics.focus_ring_outset;
-            ctx.stroke(
-                rounded_rect_path(
-                    ctx.bounds().inflate(focus_outset, focus_outset),
-                    outer_radius + focus_outset,
-                ),
+            draw_focus_ring(
+                ctx,
+                ctx.bounds(),
+                outer_radius,
+                metrics,
                 palette.focus_ring.with_alpha(self.focus_animation.get(ctx)),
-                StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
 
@@ -759,8 +762,11 @@ impl Widget for ColorSwatch {
             &theme,
         );
         ctx.fill(rounded_rect_path(inner_body, inner_radius), color);
-        ctx.stroke(
-            rounded_rect_path(body, outer_radius),
+        stroke_border(
+            ctx,
+            body,
+            outer_radius,
+            physical_pixels(ctx, metrics.border_width.max(1.0)),
             if ctx.is_focused() {
                 palette.border_focus
             } else if self.hovered || self.hover_animation.get(ctx) > 0.0 {
@@ -772,7 +778,6 @@ impl Widget for ColorSwatch {
             } else {
                 palette.border
             },
-            StrokeStyle::new(metrics.border_width.max(1.0)),
         );
     }
 
@@ -1197,14 +1202,12 @@ impl Widget for ColorPalette {
         let selected = self.current_selected();
 
         if self.focus_animation.get(ctx) > 0.0 {
-            let focus_outset = metrics.focus_ring_outset;
-            ctx.stroke(
-                rounded_rect_path(
-                    ctx.bounds().inflate(focus_outset, focus_outset),
-                    radius + focus_outset,
-                ),
+            draw_focus_ring(
+                ctx,
+                ctx.bounds(),
+                radius,
+                metrics,
                 palette.focus_ring.with_alpha(self.focus_animation.get(ctx)),
-                StrokeStyle::new(metrics.focus_ring_width.max(1.0)),
             );
         }
 
@@ -1230,11 +1233,14 @@ impl Widget for ColorPalette {
             } else {
                 palette.border
             };
-            let ring_width = if selected {
-                metrics.border_width.max(1.0) + 1.0
-            } else {
-                metrics.border_width.max(1.0)
-            };
+            let ring_width = physical_pixels(
+                ctx,
+                if selected {
+                    metrics.border_width.max(1.0) + 1.0
+                } else {
+                    metrics.border_width.max(1.0)
+                },
+            );
             let fill_inset = if selected {
                 metrics.color_palette_selected_swatch_inset
             } else {
@@ -1282,11 +1288,7 @@ impl Widget for ColorPalette {
                 rounded_rect_path(fill_rect, (radius - fill_inset).max(0.0)),
                 swatch.color,
             );
-            ctx.stroke(
-                rounded_rect_path(body, radius),
-                ring,
-                StrokeStyle::new(ring_width),
-            );
+            stroke_border(ctx, body, radius, ring_width, ring);
         }
     }
 
@@ -1506,20 +1508,21 @@ impl Widget for BrushPreview {
             .color
             .with_alpha((spec.color.alpha * spec.opacity).clamp(0.0, 1.0));
 
-        ctx.fill(
-            rounded_rect_path(bounds, metrics.corner_radius),
+        draw_control_shape(
+            ctx,
+            bounds,
+            metrics.corner_radius,
+            physical_pixels(ctx, metrics.border_width.max(1.0)),
             palette.surface_raised,
-        );
-        ctx.stroke(
-            rounded_rect_path(bounds, metrics.corner_radius),
             palette.border,
-            StrokeStyle::new(metrics.border_width.max(1.0)),
         );
         draw_checkerboard(ctx, swatch, metrics.brush_preview_checker_size, &theme);
-        ctx.stroke(
-            rounded_rect_path(swatch, metrics.indicator_corner_radius),
+        stroke_border(
+            ctx,
+            swatch,
+            metrics.indicator_corner_radius,
+            physical_pixels(ctx, metrics.border_width.max(1.0)),
             palette.border.with_alpha(0.70),
-            StrokeStyle::new(metrics.border_width.max(1.0)),
         );
         paint_brush_preview_mark(ctx, swatch, spec, preview_color);
 
@@ -3997,19 +4000,25 @@ fn paint_picker_header(
     let palette = theme.palette;
     let metrics = theme.metrics;
     let radius = metrics.indicator_corner_radius;
+    let current_rect = snap_to_pixels(ctx, current_rect);
+    let previous_rect = snap_to_pixels(ctx, previous_rect);
     draw_checkerboard(ctx, current_rect, metrics.color_swatch_checker_size, theme);
     draw_checkerboard(ctx, previous_rect, metrics.color_swatch_checker_size, theme);
     ctx.fill(rounded_rect_path(current_rect, radius), current);
     ctx.fill(rounded_rect_path(previous_rect, radius), previous);
-    ctx.stroke(
-        rounded_rect_path(current_rect, radius),
+    stroke_border(
+        ctx,
+        current_rect,
+        radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         palette.border_focus,
-        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
-    ctx.stroke(
-        rounded_rect_path(previous_rect, radius),
+    stroke_border(
+        ctx,
+        previous_rect,
+        radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         palette.border,
-        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 }
 
@@ -4065,10 +4074,12 @@ fn paint_saturation_value_plane(
             max_value,
         },
     );
-    ctx.stroke_rect(
+    stroke_border(
+        ctx,
         rect,
+        0.0,
+        1.0,
         theme.surfaces.color_picker_plane_border,
-        StrokeStyle::new(1.0),
     );
     let sdr_marker = Rect::new(
         rect.x(),
@@ -4111,11 +4122,7 @@ fn paint_saturation_bar(
 }
 
 fn paint_bar_border(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme) {
-    ctx.stroke_rect(
-        rect,
-        theme.surfaces.color_picker_bar_border,
-        StrokeStyle::new(1.0),
-    );
+    stroke_border(ctx, rect, 0.0, 1.0, theme.surfaces.color_picker_bar_border);
 }
 
 fn paint_value_bar(
@@ -4364,11 +4371,13 @@ fn paint_dropdown(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, label: &
         rect.width() - padding.left.max(theme.spacing * 2.0) - metrics.icon_size - theme.spacing,
         rect.height(),
     );
-    ctx.fill(rounded_rect_path(rect, radius), theme.palette.control);
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
+        theme.palette.control,
         theme.palette.border_focus,
-        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.push_clip_rect(text_slot);
     paint_text_line(ctx, text_slot, label, &style, TextAlign::Start);
@@ -4390,14 +4399,13 @@ fn paint_encoding_menu(
     let metrics = theme.metrics;
     let radius = metrics.corner_radius;
     let text = theme.text.xs;
-    ctx.fill(
-        rounded_rect_path(rect, radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         theme.palette.surface_raised,
-    );
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
         theme.palette.border_focus,
-        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 
     for (index, space) in ColorPicker::ENCODING_OPTIONS.iter().copied().enumerate() {
@@ -4465,14 +4473,13 @@ fn paint_hex_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, value: 
         rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
         rect.height(),
     );
-    ctx.fill(
-        rounded_rect_path(rect, metrics.corner_radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        metrics.corner_radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         theme.palette.control,
-    );
-    ctx.stroke(
-        rounded_rect_path(rect, metrics.corner_radius),
         theme.palette.border,
-        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.push_clip_rect(text_slot);
     paint_text_line(ctx, text_slot, value, &style, TextAlign::Start);
@@ -4490,15 +4497,14 @@ fn paint_disabled_field(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, va
         rect.width() - (padding.left + padding.right).max(theme.spacing * 4.0),
         rect.height(),
     );
-    ctx.fill(
-        rounded_rect_path(rect, metrics.corner_radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        metrics.corner_radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         mix_color(theme.palette.control, theme.palette.surface, 0.5)
             .with_alpha(theme.interaction.disabled_opacity),
-    );
-    ctx.stroke(
-        rounded_rect_path(rect, metrics.corner_radius),
         theme.palette.border,
-        StrokeStyle::new(metrics.border_width.max(1.0)),
     );
     ctx.push_clip_rect(text_slot);
     paint_text_line(ctx, text_slot, value, &style, TextAlign::Start);
@@ -4649,31 +4655,28 @@ fn paint_marker(ctx: &mut PaintCtx, center: Point, color: Color, theme: &Default
 
 fn draw_surface(ctx: &mut PaintCtx, rect: Rect, theme: &DefaultTheme, focus_progress: f32) {
     let focus_progress = focus_progress.clamp(0.0, 1.0);
-    ctx.fill(
-        rounded_rect_path(rect, theme.metrics.corner_radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        theme.metrics.corner_radius,
+        physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
         theme.palette.surface,
-    );
-    ctx.stroke(
-        rounded_rect_path(rect, theme.metrics.corner_radius),
         mix_color(
             theme.palette.border,
             theme.palette.border_focus,
             focus_progress,
         ),
-        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
     );
     if focus_progress > AnimatedScalar::EPSILON {
-        let outset = theme.metrics.focus_ring_outset;
-        ctx.stroke(
-            rounded_rect_path(
-                rect.inflate(outset, outset),
-                theme.metrics.corner_radius + outset,
-            ),
+        draw_focus_ring(
+            ctx,
+            rect,
+            theme.metrics.corner_radius,
+            theme.metrics,
             theme
                 .palette
                 .focus_ring
                 .with_alpha(theme.palette.focus_ring.alpha * focus_progress),
-            StrokeStyle::new(theme.metrics.focus_ring_width.max(1.0)),
         );
     }
 }

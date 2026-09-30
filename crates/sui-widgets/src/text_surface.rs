@@ -11,12 +11,13 @@ use sui_runtime::{
     Command, EventCtx, EventPhase, LayerOptions, MeasureCtx, PaintBoundaryMode, PaintCtx,
     SemanticsCtx, Widget,
 };
-use sui_scene::{LayerCompositionMode, StrokeStyle};
+use sui_scene::LayerCompositionMode;
 use sui_text::{
     PersistentTextLayout, TextAlign, TextCursor, TextDirection, TextDocument, TextLayoutRequest,
     TextParagraph, TextSelection, TextSpan, TextStyle, TextWrap,
 };
 
+use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::{
     DefaultTheme, ThemeColorScheme,
     editable_text::{EditableTextController, EditableTextLineMode, paste_command},
@@ -2173,21 +2174,25 @@ impl Widget for TextSurface {
             focus_progress,
         );
 
-        draw_surface_frame(
+        draw_control_shape(
             ctx,
             ctx.bounds(),
             metrics.corner_radius,
-            metrics.border_width,
+            physical_pixels(ctx, metrics.border_width),
             background,
             border,
-            (focus_progress > AnimatedScalar::EPSILON).then_some(
+        );
+        if focus_progress > AnimatedScalar::EPSILON {
+            draw_focus_ring(
+                ctx,
+                ctx.bounds(),
+                metrics.corner_radius,
+                metrics,
                 palette
                     .focus_ring
                     .with_alpha(palette.focus_ring.alpha * focus_progress),
-            ),
-            metrics.focus_ring_width,
-            metrics.focus_ring_outset,
-        );
+            );
+        }
 
         if !self.has_line_layout_cache() && self.layout.is_none() {
             return;
@@ -2387,48 +2392,6 @@ fn inset_rect(rect: Rect, padding: Insets) -> Rect {
         (rect.width() - padding.left - padding.right).max(0.0),
         (rect.height() - padding.top - padding.bottom).max(0.0),
     )
-}
-
-fn draw_surface_frame(
-    ctx: &mut PaintCtx,
-    bounds: Rect,
-    radius: f32,
-    border_width: f32,
-    background: Color,
-    border: Color,
-    focus_ring: Option<Color>,
-    focus_ring_width: f32,
-    focus_ring_outset: f32,
-) {
-    let fill = Path::rounded_rect(bounds, radius);
-    ctx.fill(fill, background);
-
-    if border_width > 0.0 {
-        let width = physical_pixels(ctx, border_width);
-        let inset = width * 0.5;
-        ctx.stroke(
-            Path::rounded_rect(bounds.inflate(-inset, -inset), (radius - inset).max(0.0)),
-            border,
-            StrokeStyle::new(width),
-        );
-    }
-
-    if let Some(focus_ring) = focus_ring {
-        let outset = physical_pixels(ctx, focus_ring_outset);
-        ctx.stroke(
-            Path::rounded_rect(bounds.inflate(outset, outset), radius + outset),
-            focus_ring,
-            StrokeStyle::new(physical_pixels(ctx, focus_ring_width)),
-        );
-    }
-}
-
-fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
-    if value <= 0.0 {
-        return 0.0;
-    }
-
-    ctx.dpi().physical_pixels_to_logical(value)
 }
 
 fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {

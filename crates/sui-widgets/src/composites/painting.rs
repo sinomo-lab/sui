@@ -3,11 +3,11 @@ use crate::IconGlyph;
 use crate::SemanticTone;
 use crate::ThemeTextToken;
 use crate::composites::indicators::{
-    measure_text, mix_color, numeric_text_style_if_numeric, physical_pixels, rounded_rect_path,
-    text_token_style,
+    measure_text, mix_color, numeric_text_style_if_numeric, rounded_rect_path, text_token_style,
 };
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::draw_icon_glyph;
+use crate::frame::{draw_control_shape, physical_pixels, snap_to_pixels, stroke_border};
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
 use sui_core::Color;
@@ -23,7 +23,6 @@ use sui_runtime::MeasureCtx;
 use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
 use sui_runtime::Widget;
-use sui_scene::StrokeStyle;
 use sui_text::FontWeight;
 use sui_text::TextAlign;
 use sui_text::TextDocument;
@@ -377,11 +376,13 @@ pub fn paint_command_button(
         .corner_radius
         .min(rect.height() * 0.35)
         .max(0.0);
-    ctx.fill(rounded_rect_path(rect, radius), fill);
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+        fill,
         border,
-        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
     );
 
     let icon_size = (rect.height() - 14.0).clamp(12.0, 16.0);
@@ -712,11 +713,13 @@ pub fn paint_callout(
     let rail = style.rail_color.unwrap_or(tone_color);
     let radius = style.radius.unwrap_or(theme.radius.md).max(0.0);
 
-    ctx.fill(rounded_rect_path(rect, radius), fill);
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+        fill,
         border,
-        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
     );
 
     let rail_width = style.rail_width.max(0.0).min(rect.width());
@@ -864,11 +867,13 @@ pub fn paint_action_tile(
         .min(rect.height() * 0.28)
         .max(0.0);
     let radius = style.radius.unwrap_or(radius).max(0.0);
-    ctx.fill(rounded_rect_path(rect, radius), background);
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+        background,
         border,
-        StrokeStyle::new(theme.metrics.border_width.max(1.0)),
     );
 
     let padding_x = style
@@ -1255,12 +1260,12 @@ pub fn paint_code_panel(
         .max(0.0);
     let border_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
 
-    let panel_shape = rounded_rect_path(rect, radius);
-    ctx.fill(panel_shape.clone(), fill);
+    let frame = snap_to_pixels(ctx, rect);
+    ctx.fill(rounded_rect_path(frame, radius), fill);
 
     let header_height = style.header_height.clamp(0.0, rect.height());
     if header_height > 0.0 {
-        let header_rect = Rect::new(rect.x(), rect.y(), rect.width(), header_height);
+        let header_rect = Rect::new(frame.x(), frame.y(), frame.width(), header_height);
         let header_radius = radius.min(header_height * 0.5);
         ctx.fill(rounded_rect_path(header_rect, header_radius), header_fill);
         if header_height > header_radius {
@@ -1291,7 +1296,7 @@ pub fn paint_code_panel(
         }
     }
 
-    ctx.stroke(panel_shape, border, StrokeStyle::new(border_width));
+    stroke_border(ctx, frame, radius, border_width, border);
 
     Rect::new(
         rect.x() + style.content_padding.left,
@@ -1427,12 +1432,13 @@ pub fn paint_section_panel(
         .min(rect.width().min(rect.height()) * 0.5)
         .max(0.0);
     let header_height = style.header_height.clamp(0.0, rect.height());
-    let shape = rounded_rect_path(rect, radius);
-    ctx.fill(shape.clone(), fill);
-    ctx.stroke(
-        shape,
+    draw_control_shape(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+        fill,
         border,
-        StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
     );
 
     let header_rect = Rect::new(rect.x(), rect.y(), rect.width(), header_height);

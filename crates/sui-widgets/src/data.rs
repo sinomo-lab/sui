@@ -23,6 +23,7 @@ use sui_text::{
     TextStyle, TextWrap,
 };
 
+use crate::frame::{draw_control_shape, physical_pixels, snap_to_pixels, stroke_border};
 use crate::{
     DefaultTheme, ThemeTextToken,
     collection::{
@@ -3579,10 +3580,12 @@ impl Widget for Table {
                 hover_amount,
                 press_amount,
             );
-            ctx.stroke_rect(
+            stroke_border(
+                ctx,
                 row_rect,
+                0.0,
+                metrics.table_separator_width.max(1.0),
                 palette.border.with_alpha(metrics.table_row_border_opacity),
-                sui_scene::StrokeStyle::new(metrics.table_separator_width.max(1.0)),
             );
 
             let mut cell_x = row_rect.x();
@@ -5713,14 +5716,13 @@ pub(crate) fn draw_surface(
 ) {
     let palette = theme.palette;
     let metrics = theme.metrics;
-    ctx.fill(
-        rounded_rect_path(rect, metrics.corner_radius),
+    draw_control_shape(
+        ctx,
+        rect,
+        metrics.corner_radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         palette.surface,
-    );
-    ctx.stroke(
-        rounded_rect_path(rect, metrics.corner_radius),
         palette.border,
-        sui_scene::StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 }
 
@@ -6658,6 +6660,7 @@ fn paint_layer_thumbnail(
     let palette = theme.palette;
     let metrics = theme.metrics;
     let radius = metrics.layer_thumbnail_radius;
+    let rect = snap_to_pixels(ctx, rect);
     ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
     let fill = inset_rect(rect, Insets::all(metrics.layer_thumbnail_inset));
     ctx.fill(
@@ -6671,14 +6674,16 @@ fn paint_layer_thumbnail(
             color.with_alpha(color.alpha * metrics.layer_thumbnail_disabled_opacity)
         },
     );
-    ctx.stroke(
-        rounded_rect_path(rect, radius),
+    stroke_border(
+        ctx,
+        rect,
+        radius,
+        physical_pixels(ctx, metrics.border_width.max(1.0)),
         palette.border.with_alpha(if visible {
             1.0
         } else {
             metrics.layer_thumbnail_disabled_border_opacity
         }),
-        sui_scene::StrokeStyle::new(metrics.border_width.max(1.0)),
     );
 }
 

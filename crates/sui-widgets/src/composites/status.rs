@@ -7,12 +7,12 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    inset_rect, measure_text, mix_color, numeric_text_style_if_numeric, physical_pixels,
-    rounded_rect_path, semibold_control_text_style, text_token_style,
+    inset_rect, measure_text, mix_color, numeric_text_style_if_numeric, rounded_rect_path,
+    semibold_control_text_style, text_token_style,
 };
 use crate::composites::painting::{EmptyStatePaint, paint_empty_state};
 use crate::controls::draw_icon_glyph;
-use crate::frame::draw_control_shape;
+use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::text_align::paint_aligned_text_contained;
 use crate::text_align::paint_text;
 use sui_core::Color;
@@ -622,12 +622,14 @@ impl Widget for PresetStrip {
         let style = theme.text_style(palette.text);
 
         if self.focus_animation.get(ctx) > Progress::EPSILON {
-            ctx.stroke(
-                rounded_rect_path(ctx.bounds().inflate(2.0, 2.0), metrics.corner_radius + 2.0),
+            draw_focus_ring(
+                ctx,
+                ctx.bounds(),
+                metrics.corner_radius,
+                metrics,
                 palette
                     .focus_ring
                     .with_alpha(palette.focus_ring.alpha * self.focus_animation.get(ctx)),
-                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
             );
         }
 

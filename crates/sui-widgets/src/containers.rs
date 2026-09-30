@@ -17,9 +17,10 @@ use sui_runtime::{
     PaintBoundaryMode, PaintCtx, REACTIVE_CHANGED, SemanticsCtx, SingleChild, Widget,
     WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::{Brush, LayerCompositionMode, StrokeStyle};
+use sui_scene::{Brush, LayerCompositionMode};
 
 use crate::DefaultTheme;
+use crate::frame::{physical_pixels, snap_to_pixels, stroke_border};
 
 pub struct Padding {
     insets: Insets,
@@ -3124,6 +3125,7 @@ impl Widget for ScrollBar {
             Path::rounded_rect(track, track_radius),
             palette.control_active.with_alpha(track_alpha),
         );
+        let thumb = snap_to_pixels(ctx, thumb);
         ctx.fill(
             Path::rounded_rect(thumb, thumb_radius),
             mix_color(
@@ -3139,14 +3141,16 @@ impl Widget for ScrollBar {
             )
             .with_alpha(thumb_alpha),
         );
-        ctx.stroke(
-            Path::rounded_rect(thumb, thumb_radius),
+        stroke_border(
+            ctx,
+            thumb,
+            thumb_radius,
+            physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
             mix_color(
                 palette.border.with_alpha(border_alpha),
                 palette.focus_ring,
                 self.focus_animation.get(ctx),
             ),
-            StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width).max(1.0)),
         );
     }
 
@@ -4996,14 +5000,6 @@ where
             InvalidationKind::Transform,
         ));
     }
-}
-
-fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
-    if value <= 0.0 {
-        return 0.0;
-    }
-
-    ctx.dpi().physical_pixels_to_logical(value)
 }
 
 fn inset_constraints(constraints: Constraints, insets: Insets) -> Constraints {

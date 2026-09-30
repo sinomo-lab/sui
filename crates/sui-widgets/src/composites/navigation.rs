@@ -6,15 +6,14 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_frame, draw_focus_ring_frame, inset_rect, measure_text, physical_pixels,
-    rounded_rect_path, semibold_control_text_style, sliding_inset_rect, tab_indicator_rect,
-    tab_panel_transition_translation, tab_state_visuals,
+    draw_control_frame, inset_rect, measure_text, rounded_rect_path, semibold_control_text_style,
+    sliding_inset_rect, tab_indicator_rect, tab_panel_transition_translation, tab_state_visuals,
 };
 use crate::composites::status::{
     SegmentedControlChange, SegmentedControlContextChange, segmented_control_item_id,
 };
 use crate::controls::draw_icon_glyph;
-use crate::frame::draw_control_shape;
+use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::paint_theme_shadow;
 use crate::text_align::paint_text;
 use std::sync::Arc;
@@ -653,7 +652,7 @@ impl Widget for TabBar {
             }
 
             if selected && focus_progress > Progress::EPSILON {
-                draw_focus_ring_frame(
+                draw_focus_ring(
                     ctx,
                     rect,
                     metrics.corner_radius,
@@ -1388,7 +1387,7 @@ impl Widget for BrowserTabBar {
             }
 
             if selected && focus_progress > Progress::EPSILON {
-                draw_focus_ring_frame(
+                draw_focus_ring(
                     ctx,
                     rect,
                     theme.metrics.corner_radius,
@@ -2014,7 +2013,7 @@ impl Widget for SegmentedControl {
 
             if selected && focus_progress > Progress::EPSILON {
                 let focus_bounds = selected_thumb.unwrap_or_else(|| rect.inflate(-2.0, -2.0));
-                draw_focus_ring_frame(
+                draw_focus_ring(
                     ctx,
                     focus_bounds,
                     (focus_bounds.height() * 0.5).min(radius),
@@ -2565,7 +2564,7 @@ impl Widget for Tabs {
             }
 
             if selected && focus_progress > Progress::EPSILON {
-                draw_focus_ring_frame(
+                draw_focus_ring(
                     ctx,
                     rect,
                     metrics.corner_radius,

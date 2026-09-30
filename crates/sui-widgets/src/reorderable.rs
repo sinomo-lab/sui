@@ -11,8 +11,8 @@ use sui_runtime::{
     ArrangeCtx, EventCtx, EventPhase, FrameClock, MeasureCtx, Motion, PaintCtx, SemanticsCtx,
     Widget, WidgetChildren, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
-use sui_scene::StrokeStyle;
 
+use crate::frame::stroke_border;
 use crate::{AnimationSpec, DefaultTheme, Easing};
 
 const DEFAULT_DRAG_THRESHOLD: f32 = 4.0;
@@ -770,12 +770,12 @@ impl Widget for ReorderableList {
                 .row_motions
                 .get(item)
                 .map_or(rect.y(), |motion| motion.at(ctx));
-            let ring = Rect::new(rect.x(), y, rect.width(), rect.height())
-                .inflate(-width * 0.5, -width * 0.5);
-            ctx.stroke(
-                Path::rounded_rect(ring, theme.metrics.corner_radius),
+            stroke_border(
+                ctx,
+                Rect::new(rect.x(), y, rect.width(), rect.height()),
+                theme.metrics.corner_radius,
+                width,
                 theme.palette.focus_ring,
-                StrokeStyle::new(width),
             );
         }
 

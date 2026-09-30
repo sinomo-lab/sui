@@ -5,11 +5,11 @@ use crate::IconGlyph;
 use crate::SemanticTone;
 use crate::animation::{AnimationSpec, Progress, StateMotion};
 use crate::composites::indicators::{
-    draw_control_frame, inset_rect, measure_text, mix_color, physical_pixels, rounded_rect_path,
-    text_token_style,
+    draw_control_frame, inset_rect, measure_text, mix_color, rounded_rect_path, text_token_style,
 };
 use crate::composites::surfaces::SurfaceElevation;
 use crate::controls::draw_icon_glyph;
+use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::paint_theme_shadow;
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
@@ -41,7 +41,6 @@ use sui_runtime::Widget;
 use sui_runtime::WidgetChildren;
 use sui_runtime::WidgetPodMutVisitor;
 use sui_runtime::WidgetPodVisitor;
-use sui_scene::StrokeStyle;
 use sui_text::TextMeasurement;
 use sui_text::TextStyle;
 use sui_text::{FontWeight, TextAlign};
@@ -527,18 +526,17 @@ impl Widget for ActionCard {
                 icon_box_size,
                 icon_box_size,
             );
-            ctx.fill(
-                rounded_rect_path(icon_box, metrics.corner_radius),
+            draw_control_shape(
+                ctx,
+                icon_box,
+                metrics.corner_radius,
+                physical_pixels(ctx, 1.0),
                 icon_fill,
-            );
-            ctx.stroke(
-                rounded_rect_path(icon_box, metrics.corner_radius),
                 if enabled {
                     icon_border
                 } else {
                     icon_border.with_alpha(0.5)
                 },
-                StrokeStyle::new(physical_pixels(ctx, 1.0)),
             );
             let icon_size = metrics
                 .action_card_icon_size
@@ -2261,12 +2259,13 @@ impl Widget for FormSection {
 
         let background = theme.surfaces.panel;
         let border = theme.surfaces.border;
-        let shape = rounded_rect_path(card, radius);
-        ctx.fill(shape.clone(), background);
-        ctx.stroke(
-            shape,
+        draw_control_shape(
+            ctx,
+            card,
+            radius,
+            physical_pixels(ctx, theme.metrics.border_width.max(1.0)),
+            background,
             border,
-            StrokeStyle::new(physical_pixels(ctx, theme.metrics.border_width.max(1.0))),
         );
 
         let content = inset_rect(card, self.resolved_padding(metrics));
@@ -2735,17 +2734,15 @@ impl Widget for PanelSection {
             let press_amount = self.press_animation.get(ctx);
             let focus_amount = self.focus_animation.get(ctx);
             if focus_amount > Progress::EPSILON {
-                let outset = physical_pixels(ctx, metrics.focus_ring_outset);
-                ctx.stroke(
-                    rounded_rect_path(
-                        header_hit.inflate(outset, outset),
-                        metrics.indicator_corner_radius + outset,
-                    ),
+                draw_focus_ring(
+                    ctx,
+                    header_hit,
+                    metrics.indicator_corner_radius,
+                    metrics,
                     theme
                         .palette
                         .focus_ring
                         .with_alpha(theme.palette.focus_ring.alpha * focus_amount),
-                    StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
                 );
             }
             let hover_alpha = (theme.interaction.hover_blend * 0.07 * hover_amount).min(0.08);

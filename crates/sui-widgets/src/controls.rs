@@ -9,7 +9,7 @@ use crate::{
         keyboard_text, single_line_text,
     },
     editor::{EditorCommand, EditorCommandResult, selection_range},
-    frame::{draw_control_shape, snap_to_pixels},
+    frame::{draw_control_shape, draw_focus_ring, physical_pixels, snap_to_pixels},
     overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
     paint_theme_glow, paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
@@ -2197,7 +2197,7 @@ fn paint_checkbox_indicator_visual(
         ctx,
         rect,
         metrics.indicator_corner_radius,
-        metrics.border_width,
+        physical_pixels(ctx, metrics.border_width),
         indicator_background,
         indicator_border,
     );
@@ -3942,16 +3942,14 @@ impl Widget for RadioGroup {
         };
 
         if focus_progress > AnimatedScalar::EPSILON {
-            let outset = physical_pixels(ctx, metrics.focus_ring_outset);
-            ctx.stroke(
-                rounded_rect_path(
-                    ctx.bounds().inflate(outset, outset),
-                    metrics.corner_radius + outset,
-                ),
+            draw_focus_ring(
+                ctx,
+                ctx.bounds(),
+                metrics.corner_radius,
+                metrics,
                 palette
                     .focus_ring
                     .with_alpha(palette.focus_ring.alpha * focus_progress),
-                StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
             );
         }
 
@@ -8170,16 +8168,7 @@ fn draw_control_focus_ring(
     focus_ring: Option<Color>,
 ) {
     if let Some(focus_ring) = focus_ring {
-        let bounds = snap_to_pixels(ctx, bounds);
-        let focus_ring_outset = physical_pixels(ctx, metrics.focus_ring_outset);
-        ctx.stroke(
-            rounded_rect_path(
-                bounds.inflate(focus_ring_outset, focus_ring_outset),
-                radius + focus_ring_outset,
-            ),
-            focus_ring,
-            StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
-        );
+        draw_focus_ring(ctx, bounds, radius, metrics, focus_ring);
     }
 }
 
@@ -8258,14 +8247,6 @@ fn checkbox_label_rect(bounds: Rect, padding: Insets, indicator_size: f32, gap: 
     let width = (bounds.width() - padding.left - padding.right - indicator_size - gap).max(0.0);
     let content = inset_rect(bounds, padding);
     Rect::new(x, content.y(), width, content.height())
-}
-
-fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
-    if value <= 0.0 {
-        return 0.0;
-    }
-
-    ctx.dpi().physical_pixels_to_logical(value)
 }
 
 fn rect_is_finite(rect: Rect) -> bool {

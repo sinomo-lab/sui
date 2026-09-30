@@ -1,4 +1,5 @@
 use super::*;
+use crate::frame::stroke_border;
 
 pub struct Label {
     text: String,
@@ -939,10 +940,12 @@ impl Widget for Link {
         }
 
         if ctx.is_focused() && self.is_enabled() {
-            ctx.stroke_rect(
+            stroke_border(
+                ctx,
                 bounds.inflate(physical_pixels(ctx, 2.0), physical_pixels(ctx, 1.0)),
+                0.0,
+                physical_pixels(ctx, 1.0),
                 theme.palette.focus_ring,
-                StrokeStyle::new(physical_pixels(ctx, 1.0)),
             );
         }
     }

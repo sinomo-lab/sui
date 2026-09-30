@@ -12,8 +12,8 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_frame, draw_focus_ring_frame, draw_popover_arrival_overlay, inset_rect,
-    measure_text, mix_color, rounded_rect_path, text_token_style, tooltip_tail,
+    draw_control_frame, draw_popover_arrival_overlay, inset_rect, measure_text, mix_color,
+    rounded_rect_path, text_token_style, tooltip_tail,
 };
 use crate::composites::toolbars::{
     MenuItem, context_menu_item_semantics_node, menu_item_semantics_node, menu_row_height,
@@ -21,6 +21,7 @@ use crate::composites::toolbars::{
     virtual_menu_item_path_id,
 };
 use crate::controls::cap_resolved_hdr_style;
+use crate::frame::draw_focus_ring;
 use crate::overlay::OverlayAlignment;
 use crate::overlay::OverlayPlacement;
 use crate::overlay::OverlayPlacementRequest;
@@ -1312,7 +1313,7 @@ impl Widget for PopoverFocusSurface {
         }
 
         let metrics = state.theme.metrics;
-        draw_focus_ring_frame(
+        draw_focus_ring(
             ctx,
             ctx.bounds(),
             metrics.corner_radius + 2.0,
@@ -2167,7 +2168,7 @@ impl Widget for ContextMenuFocusSurface {
             let ring = frame.inflate(reach + 2.0, reach + 2.0);
             for visible in rects_outside(ring, &covers[index + 1..]) {
                 ctx.push_clip_rect(visible);
-                draw_focus_ring_frame(ctx, *frame, metrics.corner_radius + 2.0, metrics, color);
+                draw_focus_ring(ctx, *frame, metrics.corner_radius + 2.0, metrics, color);
                 ctx.pop_clip();
             }
         }

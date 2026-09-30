@@ -7,10 +7,10 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_frame, inset_rect, measure_text, mix_color, physical_pixels, rect_center,
-    rounded_rect_path,
+    draw_control_frame, inset_rect, measure_text, mix_color, rect_center,
 };
 use crate::controls::draw_icon_glyph;
+use crate::frame::{draw_control_shape, physical_pixels};
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::KeyState;
@@ -843,9 +843,14 @@ impl Widget for CommandGroup {
             .min(ctx.bounds().width().min(ctx.bounds().height()) * 0.5);
         let background = self.background.unwrap_or(theme.palette.surface_raised);
         let border = self.border.unwrap_or(theme.palette.border);
-        let shape = rounded_rect_path(ctx.bounds(), radius);
-        ctx.fill(shape.clone(), background);
-        ctx.stroke(shape, border, StrokeStyle::new(physical_pixels(ctx, 1.0)));
+        draw_control_shape(
+            ctx,
+            ctx.bounds(),
+            radius,
+            physical_pixels(ctx, 1.0),
+            background,
+            border,
+        );
         self.children.paint(ctx);
     }
 
