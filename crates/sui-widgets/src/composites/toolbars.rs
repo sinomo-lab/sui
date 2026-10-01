@@ -93,13 +93,13 @@ impl MenuItem {
         self.enabled(false)
     }
 
-    pub fn destructive(mut self) -> Self {
-        self.destructive = true;
+    pub fn destructive(mut self, destructive: bool) -> Self {
+        self.destructive = destructive;
         self
     }
 
-    pub fn separator_before(mut self) -> Self {
-        self.separator_before = true;
+    pub fn separator_before(mut self, separator_before: bool) -> Self {
+        self.separator_before = separator_before;
         self
     }
 

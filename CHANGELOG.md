@@ -160,6 +160,16 @@ Versioning, with the usual expectation that the API may change during the
 - `Flex` reads each child's layout settings with `flex_item`, `flex_items`,
   `flex_items_mut`, and `set_flex_item`; `item`, `items`, `items_mut`, and
   `set_item` are deprecated.
+- Breaking: single on/off settings take a `bool`, so `false` can turn one back
+  off: `fill_width` on `Surface`, `FieldGroup`, `FormSection`, and
+  `FramedField`; `Surface::fill_height`; `Padding::fill_child_width` and
+  `fill_child_height`; `Label::single_line`; `MenuItem::destructive` and
+  `separator_before`; `activate_with_child` on `ListItem` and `TreeItem`;
+  `appear` on `Presence` and `KeyedStack`; `PixelCanvas::fit_on_first_layout`;
+  and `TextCellPaint::numeric`. Pass `true` where you called them without an
+  argument. `Image::without_border()` is deprecated in favor of
+  `show_border(false)`, and `PanelSection::collapsed()` in favor of
+  `expanded(false)`.
 - Breaking (bindings): the JavaScript and Python bindings, which are not
   published yet, use the same words as Rust: `gap` instead of `spacing` on
   `Stack`, `Toolbar`, `FieldGroup`, `ToolPalette`, `CommandGroup`,

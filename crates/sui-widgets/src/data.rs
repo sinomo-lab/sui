@@ -133,14 +133,14 @@ impl ListItem {
     /// Let otherwise unhandled pointer presses on the [`Self::child`] content
     /// activate the owning list row. Interactive descendants still receive
     /// the event first.
-    pub fn activate_with_child(mut self) -> Self {
-        self.activate_with_child = true;
+    pub fn activate_with_child(mut self, activate_with_child: bool) -> Self {
+        self.activate_with_child = activate_with_child;
         self
     }
 
     #[deprecated(note = "use `activate_with_child`")]
     pub fn activate_with_content(self) -> Self {
-        self.activate_with_child()
+        self.activate_with_child(true)
     }
 
     pub fn child<W>(mut self, child: W) -> Self
@@ -2350,14 +2350,14 @@ impl TreeItem {
 
     /// Let otherwise unhandled pointer presses on custom content activate the
     /// owning tree row. Interactive descendants still receive the event first.
-    pub fn activate_with_child(mut self) -> Self {
-        self.activate_with_content = true;
+    pub fn activate_with_child(mut self, activate_with_child: bool) -> Self {
+        self.activate_with_content = activate_with_child;
         self
     }
 
     #[deprecated(note = "use `activate_with_child`")]
     pub fn activate_with_content(self) -> Self {
-        self.activate_with_child()
+        self.activate_with_child(true)
     }
 
     /// Replace the built-in label/detail presentation with arbitrary retained
@@ -6541,8 +6541,8 @@ impl TextCellPaint {
         self
     }
 
-    pub const fn numeric(mut self) -> Self {
-        self.numeric = true;
+    pub const fn numeric(mut self, numeric: bool) -> Self {
+        self.numeric = numeric;
         self
     }
 
@@ -8991,7 +8991,7 @@ mod tests {
         let item = ListItem::new("Asset")
             .semantic_name("Asset row")
             .description("Selectable asset row")
-            .activate_with_child()
+            .activate_with_child(true)
             .child(row);
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new().width(260.0).height(80.0).child(
@@ -9049,7 +9049,7 @@ mod tests {
     fn list_item_child_respects_explicit_row_height() -> Result<()> {
         let row_changes = Rc::new(RefCell::new(Vec::new()));
         let on_row = Rc::clone(&row_changes);
-        let item = ListItem::new("Tall asset").activate_with_child().child(
+        let item = ListItem::new("Tall asset").activate_with_child(true).child(
             SizedBox::new()
                 .height(180.0)
                 .child(Label::new("Tall custom row")),
@@ -10870,7 +10870,7 @@ mod tests {
                     .weight(FontWeight::MEDIUM)
                     .padding(10.0, 18.0)
                     .alignment(TableColumnAlignment::End)
-                    .numeric(),
+                    .numeric(true),
             );
         }
     }

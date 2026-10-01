@@ -378,7 +378,7 @@ fn color_editor(token: Token, state: ThemeEditorState, shell: DevThemeReader) ->
         )
         .theme_when(clone_dev_theme_reader(&shell))
         .padding(Insets::all(12.0))
-        .fill_width(),
+        .fill_width(true),
     )
 }
 
@@ -463,7 +463,7 @@ impl ScaleRow {
                     DemoTextRole::Supporting,
                     DemoTextColor::Muted,
                 )
-                .single_line(),
+                .single_line(true),
             )
         });
         let slider = Slider::new(self.name)

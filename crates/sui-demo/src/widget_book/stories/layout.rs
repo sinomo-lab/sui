@@ -432,7 +432,7 @@ fn form_section(ctx: &StoryCtx) -> Vec<Section> {
             FormSection::new(
                 "Publish settings",
                 FieldGroup::new()
-                    .fill_width()
+                    .fill_width(true)
                     .gap(10.0)
                     .with_child(
                         FormRow::new(
@@ -507,7 +507,7 @@ fn panel_section(ctx: &StoryCtx) -> Vec<Section> {
                             .with_child(
                                 PanelSection::new("Effects", details("Glow", "Drop shadow"))
                                     .collapsible(true)
-                                    .collapsed()
+                                    .expanded(false)
                                     .theme(theme),
                             ),
                     )

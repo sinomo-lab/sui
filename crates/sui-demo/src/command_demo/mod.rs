@@ -161,7 +161,7 @@ fn trace(
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
     .padding(Insets::all(12.0))
-    .fill_width()
+    .fill_width(true)
 }
 
 /// The last lines of the trace. A run of dispatches that read the same,
@@ -295,7 +295,7 @@ where
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
     .padding(Insets::all(12.0))
-    .fill_width()
+    .fill_width(true)
 }
 
 type BuildForWindow = Box<dyn FnOnce(WindowId) -> Box<dyn Widget>>;

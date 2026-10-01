@@ -71,8 +71,8 @@ fn build_elevation_scene(theme: DefaultTheme) -> Application {
             .item(
                 MenuItem::new("Delete layer")
                     .shortcut("Del")
-                    .separator_before()
-                    .destructive(),
+                    .separator_before(true)
+                    .destructive(true),
             ),
     );
 

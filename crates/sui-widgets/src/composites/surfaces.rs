@@ -238,13 +238,13 @@ impl Surface {
         self
     }
 
-    pub fn fill_width(mut self) -> Self {
-        self.fill_width = true;
+    pub fn fill_width(mut self, fill_width: bool) -> Self {
+        self.fill_width = fill_width;
         self
     }
 
-    pub fn fill_height(mut self) -> Self {
-        self.fill_height = true;
+    pub fn fill_height(mut self, fill_height: bool) -> Self {
+        self.fill_height = fill_height;
         self
     }
 
@@ -666,8 +666,8 @@ impl FramedField {
         self
     }
 
-    pub fn fill_width(mut self) -> Self {
-        self.fill_width = true;
+    pub fn fill_width(mut self, fill_width: bool) -> Self {
+        self.fill_width = fill_width;
         self
     }
 

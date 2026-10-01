@@ -101,13 +101,13 @@ impl Padding {
         self.insets
     }
 
-    pub fn fill_child_width(mut self) -> Self {
-        self.fill_child_width = true;
+    pub fn fill_child_width(mut self, fill_child_width: bool) -> Self {
+        self.fill_child_width = fill_child_width;
         self
     }
 
-    pub fn fill_child_height(mut self) -> Self {
-        self.fill_child_height = true;
+    pub fn fill_child_height(mut self, fill_child_height: bool) -> Self {
+        self.fill_child_height = fill_child_height;
         self
     }
 
@@ -6564,11 +6564,26 @@ mod tests {
                     },
                     FixedBox::new(Size::new(20.0, 10.0), Color::rgba(0.2, 0.3, 0.4, 1.0)),
                 )
-                .fill_child_height(),
+                .fill_child_height(true),
             ),
         );
 
         assert_eq!(graph.nodes[2].bounds, Rect::new(8.0, 5.0, 80.0, 68.0));
+    }
+
+    #[test]
+    fn padding_fill_flags_turn_off_with_false() {
+        let child = || FixedBox::new(Size::new(20.0, 10.0), Color::rgba(0.2, 0.3, 0.4, 1.0));
+        let padding = Padding::all(4.0, child())
+            .fill_child()
+            .fill_child_height(false);
+        assert!(padding.fill_child_width);
+        assert!(!padding.fill_child_height);
+
+        let padding = Padding::all(4.0, child())
+            .fill_child_width(true)
+            .fill_child_width(false);
+        assert!(!padding.fill_child_width);
     }
 
     #[test]

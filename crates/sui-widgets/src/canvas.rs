@@ -2233,8 +2233,8 @@ impl PixelCanvas {
         self
     }
 
-    pub fn fit_on_first_layout(mut self) -> Self {
-        self.fit_on_first_layout = true;
+    pub fn fit_on_first_layout(mut self, fit_on_first_layout: bool) -> Self {
+        self.fit_on_first_layout = fit_on_first_layout;
         self.initial_fit_applied = false;
         self
     }
@@ -5926,7 +5926,7 @@ mod tests {
         let output = render(
             PixelCanvas::new("Paint", 1920, 1080)
                 .state(state.clone())
-                .fit_on_first_layout(),
+                .fit_on_first_layout(true),
         );
 
         assert_eq!(pixel_canvas_zoom_percent(&output), 25.0);

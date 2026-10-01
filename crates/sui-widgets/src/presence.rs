@@ -325,8 +325,8 @@ impl Presence {
     }
 
     /// Animate in when first laid out, if shown then.
-    pub fn appear(mut self) -> Self {
-        self.appear = true;
+    pub fn appear(mut self, appear: bool) -> Self {
+        self.appear = appear;
         self
     }
 
@@ -659,8 +659,8 @@ where
     }
 
     /// Animate the first items in too, instead of showing them at once.
-    pub fn appear(mut self) -> Self {
-        self.appear = true;
+    pub fn appear(mut self, appear: bool) -> Self {
+        self.appear = appear;
         self
     }
 
@@ -1122,7 +1122,7 @@ mod tests {
 
     #[test]
     fn presence_can_animate_in_when_it_first_appears() {
-        let root = Flex::vertical().with_child(Presence::new(Block(30.0)).appear());
+        let root = Flex::vertical().with_child(Presence::new(Block(30.0)).appear(true));
         let (mut runtime, window) = app(root);
         let enter = DefaultTheme::default().motion.entrance_spec().duration();
         let presence = nodes_named(&graph(&runtime, window), "Presence")[0].id;

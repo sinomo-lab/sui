@@ -484,7 +484,7 @@ fn pixel_canvas(ctx: &StoryCtx) -> Vec<Section> {
             })
             .state(PixelCanvasState::new())
             .desired_size(Size::new(360.0, 180.0))
-            .fit_on_first_layout()
+            .fit_on_first_layout(true)
             .theme(theme),
         ),
     )]

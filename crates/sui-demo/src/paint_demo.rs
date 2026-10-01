@@ -621,7 +621,7 @@ fn build_paint_canvas_stage(
                                 .paper_color(PAINT_PAPER_COLOR)
                                 .state(paint_state)
                                 .desired_size(Size::new(960.0, 620.0))
-                                .fit_on_first_layout(),
+                                .fit_on_first_layout(true),
                             ),
                     ),
             )),
@@ -797,7 +797,7 @@ fn build_paint_properties_panel(
                     )
                     .theme_when(clone_dev_theme_reader(&theme_reader))
                     .collapsible(true)
-                    .collapsed(),
+                    .expanded(false),
                 ),
         ))
         .name(PAINT_SCROLL_NAME),

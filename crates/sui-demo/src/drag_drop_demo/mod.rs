@@ -289,7 +289,7 @@ fn drag_preview(page: &Page, dragged: &DragPreview) -> Option<Box<dyn Widget>> {
                     .theme_when(clone_dev_theme_reader(theme_reader))
                     .elevation(SurfaceElevation::Medium)
                     .padding(Insets::all(12.0))
-                    .fill_width(),
+                    .fill_width(true),
                 ),
             ))
         }
@@ -306,7 +306,7 @@ fn drag_preview(page: &Page, dragged: &DragPreview) -> Option<Box<dyn Widget>> {
                     .theme_when(clone_dev_theme_reader(theme_reader))
                     .elevation(SurfaceElevation::Medium)
                     .padding(Insets::all(10.0))
-                    .fill_width(),
+                    .fill_width(true),
                 ),
             ))
         }
@@ -371,7 +371,7 @@ fn event_log(page: &Page) -> impl Widget + use<> {
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
     .padding(Insets::all(12.0))
-    .fill_width()
+    .fill_width(true)
 }
 
 /// An icon, a name, and a badge in a row.
@@ -422,7 +422,7 @@ fn shelf_chip(theme_reader: &DevThemeReader, icon: IconGlyph, name: &str, badge:
     .name(format!("Shelf item {name}"))
     .theme_when(clone_dev_theme_reader(theme_reader))
     .padding(Insets::all(8.0))
-    .fill_width()
+    .fill_width(true)
 }
 
 fn shelf(page: &Page) -> impl Widget + use<> {
@@ -485,7 +485,7 @@ fn shelf(page: &Page) -> impl Widget + use<> {
         .name(SHELF_NAME)
         .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(14.0))
-        .fill_width()
+        .fill_width(true)
 }
 
 fn board_view(page: &Page) -> impl Widget + use<> {
@@ -550,7 +550,7 @@ fn column_view(page: &Page, column: Column) -> impl Widget + use<> {
     .name(format!("{} column", column.name()))
     .theme_when(clone_dev_theme_reader(theme_reader))
     .padding(Insets::all(12.0))
-    .fill_width()
+    .fill_width(true)
 }
 
 /// Space between the last card and the column's drop zone.
@@ -824,9 +824,13 @@ fn card_menu(page: &Page, card: &Signal<Card>) -> impl Widget + use<> {
                 }
             })
             .collect();
-        items.push(MenuItem::new("Move up").separator_before());
+        items.push(MenuItem::new("Move up").separator_before(true));
         items.push(MenuItem::new("Move down"));
-        items.push(MenuItem::new("Delete").separator_before().destructive());
+        items.push(
+            MenuItem::new("Delete")
+                .separator_before(true)
+                .destructive(true),
+        );
         items
     })
     .on_activate(move |index, _| match index {
@@ -1191,7 +1195,7 @@ fn locked_palette(page: &Page) -> impl Widget + use<> {
         )
         .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(14.0))
-        .fill_width(),
+        .fill_width(true),
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
 }

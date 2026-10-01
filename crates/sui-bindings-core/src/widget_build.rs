@@ -1209,9 +1209,7 @@ impl BindingWidget {
                 if let Some(size) = size {
                     swatch = swatch.size(*size);
                 }
-                if *read_only {
-                    swatch = swatch.read_only(true);
-                }
+                swatch = swatch.read_only(*read_only);
                 if let Some(action) = action.clone() {
                     let errors = errors.clone();
                     swatch = swatch.on_press(move |_| {
@@ -1549,9 +1547,7 @@ impl BindingWidget {
                 if let Some(min_height) = min_height {
                     field = field.min_height(*min_height);
                 }
-                if *fill_width {
-                    field = field.fill_width();
-                }
+                field = field.fill_width(*fill_width);
                 if matches!(focused, BindingBool::State(_)) {
                     let focused = focused.clone();
                     field = field.focused_when(move || focused.resolve());
@@ -1908,13 +1904,7 @@ impl BindingWidget {
                 if let Some(padding) = padding {
                     surface = surface.padding(Insets::all(padding.max(0.0)));
                 }
-                if *fill_width && *fill_height {
-                    surface = surface.fill();
-                } else if *fill_width {
-                    surface = surface.fill_width();
-                } else if *fill_height {
-                    surface = surface.fill_height();
-                }
+                surface = surface.fill_width(*fill_width).fill_height(*fill_height);
                 BindingRuntimeWidget::new(themed_widget!(surface, errors))
             }
             BindingWidgetKind::ExternalSurface {
@@ -2022,9 +2012,7 @@ impl BindingWidget {
                 if *collapse {
                     presence = presence.collapse(sui::Axis::Vertical);
                 }
-                if *appear {
-                    presence = presence.appear();
-                }
+                presence = presence.appear(*appear);
                 BindingRuntimeWidget::new(presence)
             }
             BindingWidgetKind::AdaptiveView {
@@ -2497,9 +2485,7 @@ impl BindingWidget {
                 if let Some(paper_color) = paper_color {
                     canvas = canvas.paper_color(*paper_color);
                 }
-                if *fit_on_first_layout {
-                    canvas = canvas.fit_on_first_layout();
-                }
+                canvas = canvas.fit_on_first_layout(*fit_on_first_layout);
                 if !pixels.is_empty() {
                     canvas = canvas.with_pixels(pixels.clone());
                 }
@@ -2513,13 +2499,9 @@ impl BindingWidget {
             } => {
                 let mut padding =
                     PaddingWidget::new(*insets, child.into_runtime_widget(errors.clone()));
-                if *fill_child_width && *fill_child_height {
-                    padding = padding.fill_child();
-                } else if *fill_child_width {
-                    padding = padding.fill_child_width();
-                } else if *fill_child_height {
-                    padding = padding.fill_child_height();
-                }
+                padding = padding
+                    .fill_child_width(*fill_child_width)
+                    .fill_child_height(*fill_child_height);
                 BindingRuntimeWidget::new(padding)
             }
             BindingWidgetKind::Align {
@@ -2626,9 +2608,7 @@ impl BindingWidget {
                 if let Some(max_width) = max_width {
                     group = group.max_width(*max_width);
                 }
-                if *fill_width {
-                    group = group.fill_width();
-                }
+                group = group.fill_width(*fill_width);
                 for child in children {
                     group = group.with_child(child.into_runtime_widget(errors.clone()));
                 }
@@ -2668,9 +2648,7 @@ impl BindingWidget {
                 if let Some(max_width) = max_width {
                     section = section.max_width(*max_width);
                 }
-                if *fill_width {
-                    section = section.fill_width();
-                }
+                section = section.fill_width(*fill_width);
                 if let Some(radius) = radius {
                     section = section.corner_radius(*radius);
                 }

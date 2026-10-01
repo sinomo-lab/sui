@@ -1479,7 +1479,7 @@ fn composite_focus_rings_use_theme_motion() -> Result<(), String> {
         crate::SizedBox::new().size(Size::new(260.0, 92.0)).child(
             PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
                 .collapsible(true)
-                .collapsed(),
+                .expanded(false),
         ),
         Point::new(24.0, 18.0),
     )?;
@@ -4268,7 +4268,7 @@ fn collapsible_panel_section_hides_collapsed_child_semantics() {
         crate::SizedBox::new().size(Size::new(240.0, 92.0)).child(
             PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
                 .collapsible(true)
-                .collapsed(),
+                .expanded(false),
         ),
     );
 
@@ -4298,7 +4298,7 @@ fn collapsible_panel_section_pointer_toggle_exposes_child() -> sui_core::Result<
         crate::SizedBox::new().size(Size::new(240.0, 120.0)).child(
             PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
                 .collapsible(true)
-                .collapsed(),
+                .expanded(false),
         ),
     );
     let output = runtime.render(window_id)?;
@@ -4365,7 +4365,7 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
             PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
                 .theme(theme)
                 .collapsible(true)
-                .collapsed(),
+                .expanded(false),
         ),
     );
     let output = runtime

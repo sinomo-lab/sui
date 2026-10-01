@@ -35,8 +35,8 @@ fn build_submenu_scene(theme: DefaultTheme) -> Application {
         ]),
         MenuItem::new("Delete")
             .shortcut("Del")
-            .separator_before()
-            .destructive(),
+            .separator_before(true)
+            .destructive(true),
     ]);
 
     let content = Stack::vertical()

@@ -1224,7 +1224,7 @@ fn single_line_label_keeps_long_titles_and_line_breaks_within_one_row() {
     let output = render(
         SizedBox::new()
             .width(96.0)
-            .child(Label::new(text).single_line()),
+            .child(Label::new(text).single_line(true)),
     );
     let layout = shaped_text_layout_for(&output, &text.replace('\n', " "));
     assert_eq!(layout.lines().len(), 1);

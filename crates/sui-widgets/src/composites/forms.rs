@@ -1766,8 +1766,8 @@ impl FieldGroup {
         self
     }
 
-    pub fn fill_width(mut self) -> Self {
-        self.fill_width = true;
+    pub fn fill_width(mut self, fill_width: bool) -> Self {
+        self.fill_width = fill_width;
         self
     }
 
@@ -2000,8 +2000,8 @@ impl FormSection {
         self
     }
 
-    pub fn fill_width(mut self) -> Self {
-        self.fill_width = true;
+    pub fn fill_width(mut self, fill_width: bool) -> Self {
+        self.fill_width = fill_width;
         self
     }
 
@@ -2456,9 +2456,9 @@ impl PanelSection {
         self
     }
 
-    pub fn collapsed(mut self) -> Self {
-        self.expanded = false;
-        self
+    #[deprecated(note = "use `expanded(false)`")]
+    pub fn collapsed(self) -> Self {
+        self.expanded(false)
     }
 
     pub fn child_pod(&self) -> &sui_runtime::WidgetPod {

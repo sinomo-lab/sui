@@ -639,15 +639,15 @@ fn menu_items(page: &Page) -> Vec<MenuItem> {
             MenuItem::new("Disconnect"),
             MenuItem::new(DELETE_LABEL)
                 .shortcut("Delete")
-                .destructive()
-                .separator_before(),
+                .destructive(true)
+                .separator_before(true),
         ],
         NodeGraphHit::Edge(_) => vec![
             MenuItem::new("Style").submenu(EDGE_STYLES.map(|(label, _)| MenuItem::new(label))),
             MenuItem::new(DELETE_LABEL)
                 .shortcut("Delete")
-                .destructive()
-                .separator_before(),
+                .destructive(true)
+                .separator_before(true),
         ],
         NodeGraphHit::Pane => {
             let paste = MenuItem::new(PASTE_LABEL).shortcut("Ctrl+V");
@@ -658,7 +658,9 @@ fn menu_items(page: &Page) -> Vec<MenuItem> {
                 } else {
                     paste.enabled(false)
                 },
-                MenuItem::new(FIT_LABEL).shortcut("Home").separator_before(),
+                MenuItem::new(FIT_LABEL)
+                    .shortcut("Home")
+                    .separator_before(true),
             ]
         }
     }
@@ -733,7 +735,7 @@ where
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
     .padding(Insets::all(14.0))
-    .fill_width()
+    .fill_width(true)
 }
 
 fn event_log(page: &Page) -> impl Widget + use<> {
@@ -763,7 +765,7 @@ fn event_log(page: &Page) -> impl Widget + use<> {
         )
         .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(10.0))
-        .fill_width(),
+        .fill_width(true),
     )
 }
 

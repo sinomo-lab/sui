@@ -69,8 +69,8 @@ fn command_items() -> [MenuItem; 4] {
         MenuItem::new("Bake preview").enabled(false),
         MenuItem::new("Delete layer")
             .shortcut("Del")
-            .separator_before()
-            .destructive(),
+            .separator_before(true)
+            .destructive(true),
     ]
 }
 
@@ -121,7 +121,9 @@ fn context_menu(ctx: &StoryCtx) -> Vec<Section> {
                     MenuItem::new("Project workspace"),
                 ]),
             ]),
-            MenuItem::new("Delete").separator_before().destructive(),
+            MenuItem::new("Delete")
+                .separator_before(true)
+                .destructive(true),
         ]
     };
     vec![strip(

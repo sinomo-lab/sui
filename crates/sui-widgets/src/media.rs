@@ -146,9 +146,15 @@ impl Image {
         self
     }
 
-    pub fn without_border(mut self) -> Self {
-        self.show_border = false;
+    /// Whether the image draws its frame border; on by default.
+    pub fn show_border(mut self, show_border: bool) -> Self {
+        self.show_border = show_border;
         self
+    }
+
+    #[deprecated(note = "use `show_border(false)`")]
+    pub fn without_border(self) -> Self {
+        self.show_border(false)
     }
 
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
@@ -5525,7 +5531,7 @@ mod tests {
             .window(
                 WindowBuilder::new()
                     .title("Image")
-                    .root(Image::new(handle).without_border()),
+                    .root(Image::new(handle).show_border(false)),
             )
             .build()?;
         let window_id = runtime.window_ids()[0];

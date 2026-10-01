@@ -435,12 +435,9 @@ impl BindingMenuItem {
             item = item.shortcut(shortcut.clone());
         }
         item = item.enabled(self.enabled);
-        if self.destructive {
-            item = item.destructive();
-        }
-        if self.separator_before {
-            item = item.separator_before();
-        }
+        item = item
+            .destructive(self.destructive)
+            .separator_before(self.separator_before);
         if !self.submenu.is_empty() {
             item = item.submenu(self.submenu.iter().map(BindingMenuItem::into_sui));
         }

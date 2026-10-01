@@ -144,7 +144,7 @@ fn top_bar(
         DemoTextRole::Supporting,
         DemoTextColor::Muted,
     )
-    .single_line();
+    .single_line(true);
     Padding::new(
         Insets {
             left: 24.0,

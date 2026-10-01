@@ -126,3 +126,21 @@ now says data types read their own fields under the field's name.
   validating builders today.
 - Names and labels: `RadioButton` gains `semantic_name`, and `Spinner::label`
   sets only visible text.
+
+## Phase 6: Flags Take a Bool
+
+Status: done.
+
+- Single on/off settings take a `bool` in place: `fill_width` on `Surface`,
+  `FieldGroup`, `FormSection`, and `FramedField`; `Surface::fill_height`;
+  `Padding::fill_child_width` and `fill_child_height`; `Label::single_line`;
+  `MenuItem::destructive` and `separator_before`; `activate_with_child` on
+  `ListItem` and `TreeItem`; `appear` on `Presence` and `KeyedStack`;
+  `PixelCanvas::fit_on_first_layout`; and `TextCellPaint::numeric`.
+- `Image::without_border()` becomes `show_border(bool)`, and
+  `PanelSection::collapsed()` is deprecated in favor of `expanded(false)`.
+- Presets that set several properties keep taking no argument, such as
+  `show_inline()`, `Surface::fill()`, and `TableColumn::numeric()`, which
+  also right-aligns the column. `ScrollView::retain_content_layer()`,
+  `Motion::movement()`, `SingleChild::with_paint_boundary()`, and
+  `RegisteredImage::without_mipmaps()` stay as they are for now.

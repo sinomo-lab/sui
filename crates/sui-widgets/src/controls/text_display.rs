@@ -49,8 +49,8 @@ impl Label {
     }
 
     /// Keep the label on one line, clipping overflow while retaining its full semantics.
-    pub fn single_line(mut self) -> Self {
-        self.single_line = true;
+    pub fn single_line(mut self, single_line: bool) -> Self {
+        self.single_line = single_line;
         self
     }
 

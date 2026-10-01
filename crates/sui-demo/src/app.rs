@@ -1287,7 +1287,7 @@ impl SuiLogoButton {
                         DEV_SHELL_LOGO_BUTTON_SIZE,
                         DEV_SHELL_LOGO_BUTTON_SIZE,
                     ))
-                    .without_border()
+                    .show_border(false)
                     .corner_radius(0.0),
             ),
         }
