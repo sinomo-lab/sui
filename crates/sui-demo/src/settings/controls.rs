@@ -25,6 +25,7 @@ pub(crate) const TEXT_COVERAGE_GAMMA_NAME: &str = "Coverage gamma";
 pub(crate) const TEXT_HINTING_LABEL: &str = "Slight hinting";
 pub(crate) const TEXT_HINTING_MAX_PPEM_NAME: &str = "Hinting max ppem";
 pub(crate) const STEM_DARKENING_LABEL: &str = "Stem darkening";
+pub(crate) const SYSTEM_TEXT_SMOOTHING_LABEL: &str = "Use system ClearType";
 pub(crate) const STEM_DARKENING_AMOUNT_NAME: &str = "Darkening amount";
 pub(crate) const STEM_DARKENING_MAX_PPEM_NAME: &str = "Darkening max ppem";
 pub(crate) const OPTICAL_CENTERING_LABEL: &str = "Optical vertical centering";
@@ -468,6 +469,22 @@ fn stem_darkening(options: &WindowRenderOptions) -> (f32, f32) {
             WindowStemDarkening::None => (0.0, 0.0),
         },
     }
+}
+
+/// LCD text in the system's ClearType subpixel order.
+pub(crate) fn system_text_smoothing_switch(
+    theme_reader: &DevThemeReader,
+    options: &RenderOptions,
+    place: Place,
+) -> Switch {
+    option_switch(
+        theme_reader,
+        options,
+        place,
+        SYSTEM_TEXT_SMOOTHING_LABEL,
+        |options| options.use_system_text_smoothing,
+        |options, on| options.use_system_text_smoothing = on,
+    )
 }
 
 pub(crate) fn stem_darkening_switch(

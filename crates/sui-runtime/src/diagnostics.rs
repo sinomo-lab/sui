@@ -709,6 +709,10 @@ pub struct WindowRenderOptions {
     pub stem_darkening: WindowStemDarkening,
     pub text_coverage_policy: WindowTextCoveragePolicy,
     pub text_subpixel_order: WindowTextSubpixelOrder,
+    /// Follow the system's text smoothing: when it uses ClearType, render LCD
+    /// text in its subpixel order. An explicit RGB or BGR
+    /// `text_subpixel_order` still chooses the order. On by default.
+    pub use_system_text_smoothing: bool,
     pub output_color_primaries: WindowOutputColorPrimaries,
     pub dynamic_range_mode: WindowDynamicRangeMode,
     pub tone_mapping_mode: WindowToneMappingMode,
@@ -729,6 +733,7 @@ impl WindowRenderOptions {
             stem_darkening: WindowStemDarkening::None,
             text_coverage_policy: WindowTextCoveragePolicy::Perceptual,
             text_subpixel_order: WindowTextSubpixelOrder::None,
+            use_system_text_smoothing: true,
             output_color_primaries: WindowOutputColorPrimaries::Automatic,
             dynamic_range_mode: WindowDynamicRangeMode::Automatic,
             tone_mapping_mode: WindowToneMappingMode::Automatic,
@@ -760,6 +765,11 @@ impl WindowRenderOptions {
 
     pub const fn with_text_subpixel_order(mut self, order: WindowTextSubpixelOrder) -> Self {
         self.text_subpixel_order = order;
+        self
+    }
+
+    pub const fn with_system_text_smoothing_enabled(mut self, enabled: bool) -> Self {
+        self.use_system_text_smoothing = enabled;
         self
     }
 
@@ -805,6 +815,7 @@ impl WindowRenderOptions {
             stem_darkening: self.stem_darkening.normalized(),
             text_coverage_policy: self.text_coverage_policy.normalized(),
             text_subpixel_order: self.text_subpixel_order,
+            use_system_text_smoothing: self.use_system_text_smoothing,
             output_color_primaries: self.output_color_primaries,
             dynamic_range_mode: self.dynamic_range_mode,
             tone_mapping_mode: self.tone_mapping_mode,

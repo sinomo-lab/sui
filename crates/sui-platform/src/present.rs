@@ -103,6 +103,9 @@ fn apply_render_options(
     renderer.set_runtime_text_subpixel_order_override(
         render_options.map(|options| options.text_subpixel_order),
     );
+    renderer.set_runtime_system_text_smoothing_enabled(
+        render_options.is_none_or(|options| options.use_system_text_smoothing),
+    );
 
     // Without options, color management uses the defaults.
     let options = render_options.unwrap_or_else(|| WindowRenderOptions::new(false, 0.0));

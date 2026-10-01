@@ -150,6 +150,7 @@ pub(crate) fn text_controls(
     place: Place,
 ) -> Stack {
     rows()
+        .with_child(system_text_smoothing_switch(theme_reader, options, place))
         .with_child(with_details(
             row(
                 theme_reader,

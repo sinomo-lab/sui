@@ -207,3 +207,51 @@ pub(super) fn probe_monitor_for_hwnd(hwnd: isize) -> Option<WindowsAdvancedColor
 
     None
 }
+
+/// The user's font smoothing settings, as `SystemParametersInfoW` reports
+/// them. ClearType is one setting for the whole session, not per monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct WindowsFontSmoothing {
+    pub(super) enabled: bool,
+    pub(super) cleartype: bool,
+    pub(super) bgr: bool,
+}
+
+pub(super) fn query_windows_font_smoothing() -> Option<WindowsFontSmoothing> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FE_FONTSMOOTHINGCLEARTYPE, FE_FONTSMOOTHINGORIENTATIONBGR, SPI_GETFONTSMOOTHING,
+        SPI_GETFONTSMOOTHINGORIENTATION, SPI_GETFONTSMOOTHINGTYPE,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+
+    let query = |action| {
+        let mut value = 0u32;
+        // SAFETY: each of these actions writes one UINT/BOOL through the
+        // pointer, which refers to a live u32 for the duration of the call.
+        unsafe {
+            SystemParametersInfoW(
+                action,
+                0,
+                Some((&raw mut value).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        }
+        .ok()
+        .map(|()| value)
+    };
+    Some(WindowsFontSmoothing {
+        enabled: query(SPI_GETFONTSMOOTHING)? != 0,
+        cleartype: query(SPI_GETFONTSMOOTHINGTYPE)? == FE_FONTSMOOTHINGCLEARTYPE,
+        bgr: query(SPI_GETFONTSMOOTHINGORIENTATION)? == FE_FONTSMOOTHINGORIENTATIONBGR,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn font_smoothing_query_reads_the_session_settings() {
+        // SystemParametersInfoW answers these in every interactive session;
+        // the values themselves are the user's choice.
+        assert!(super::query_windows_font_smoothing().is_some());
+    }
+}

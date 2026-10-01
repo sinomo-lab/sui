@@ -228,6 +228,23 @@ impl WgpuRenderer {
         self.configure_existing_surface(window_id)
     }
 
+    /// The subpixel order the system antialiases text for on the window's
+    /// display, without cloning its whole capability profile.
+    pub(crate) fn window_system_text_subpixel_order(
+        &self,
+        window_id: WindowId,
+    ) -> TextSubpixelOrder {
+        self.surfaces
+            .get(&window_id)
+            .map(|surface| surface.display_capabilities.text_subpixel_order)
+            .or_else(|| {
+                self.offscreen_outputs
+                    .get(&window_id)
+                    .map(|output| output.display_capabilities.text_subpixel_order)
+            })
+            .unwrap_or_default()
+    }
+
     pub fn window_display_capabilities(&self, window_id: WindowId) -> Option<DisplayCapabilities> {
         self.surfaces
             .get(&window_id)
@@ -297,6 +314,13 @@ impl WgpuRenderer {
 
     pub fn set_runtime_text_subpixel_order_override(&mut self, order: Option<TextSubpixelOrder>) {
         self.runtime_text_subpixel_order_override = order;
+    }
+
+    /// Whether the window being rendered follows the system's text smoothing:
+    /// LCD text in the order its display capabilities report
+    /// ([`DisplayCapabilities::text_subpixel_order`]). On by default.
+    pub fn set_runtime_system_text_smoothing_enabled(&mut self, enabled: bool) {
+        self.runtime_system_text_smoothing_enabled = enabled;
     }
 
     pub fn set_runtime_text_hinting_override(&mut self, hinting: Option<TextHinting>) {
@@ -471,6 +495,7 @@ impl Default for WgpuRenderer {
             vsync_enabled: true,
             runtime_feathering_override: None,
             runtime_text_subpixel_order_override: None,
+            runtime_system_text_smoothing_enabled: true,
             runtime_text_hinting_override: None,
             runtime_stem_darkening_override: None,
             runtime_text_coverage_policy_override: None,

@@ -1788,3 +1788,36 @@ pub(crate) fn retained_packets_match_direct_for_theme_preview_style_cards_at_fra
 
     assert_rgba_images_match(&direct_pixels, &cached_pixels);
 }
+
+#[test]
+fn changing_a_window_text_policy_redraws_retained_text() {
+    use crate::text_policy::TextCoveragePolicy;
+    let window = WindowId::new(8961);
+    let mut frame = SceneFrame::new(window, Size::new(200.0, 40.0));
+    frame.scene.push(SceneCommand::Clear(Color::WHITE));
+    frame.scene.push(SceneCommand::Label {
+        rect: Rect::new(4.0, 4.0, 190.0, 30.0),
+        text: "Retained policy".into(),
+        color: Color::BLACK,
+    });
+    let render = |renderer: &mut WgpuRenderer, policy| {
+        renderer.set_runtime_text_coverage_policy_override(Some(policy));
+        renderer.render(&frame).unwrap();
+        renderer.capture_rgba(window).unwrap().pixels().to_vec()
+    };
+
+    let mut reference = WgpuRenderer::new();
+    let expected = render(&mut reference, TextCoveragePolicy::Gamma(3.0));
+
+    let mut renderer = WgpuRenderer::new();
+    let before = render(&mut renderer, TextCoveragePolicy::Linear);
+    let after = render(&mut renderer, TextCoveragePolicy::Gamma(3.0));
+    assert_ne!(
+        before, expected,
+        "the two policies must differ for this test"
+    );
+    assert!(
+        after == expected,
+        "retained text kept the previous window policy"
+    );
+}

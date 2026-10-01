@@ -8,6 +8,7 @@ use sui_core::Error;
 use sui_core::Result;
 use sui_core::WindowId;
 use sui_scene::SceneFrame;
+use sui_scene::TextSubpixelOrder;
 use web_time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +64,10 @@ pub struct DisplayCapabilities {
     pub sdr_white_nits: Option<f32>,
     pub max_content_headroom: Option<f32>,
     pub native_hdr_presentation_supported: bool,
+    /// The subpixel order the system antialiases text for on this display, or
+    /// `None` when it uses grayscale antialiasing or does not say. Windows that
+    /// follow the system's text smoothing render LCD text in this order.
+    pub text_subpixel_order: TextSubpixelOrder,
     pub notes: String,
 }
 
@@ -98,6 +103,7 @@ impl DisplayCapabilities {
             max_content_headroom: None,
             native_hdr_presentation_supported: true,
             notes: "Simulated HDR display".to_string(),
+            ..Self::default()
         }
     }
 }
@@ -138,6 +144,7 @@ impl Default for DisplayCapabilities {
             sdr_white_nits: None,
             max_content_headroom: None,
             native_hdr_presentation_supported: false,
+            text_subpixel_order: TextSubpixelOrder::None,
             notes: "Default SDR capability profile".to_string(),
         }
     }

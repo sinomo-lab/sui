@@ -96,6 +96,7 @@ pub struct WgpuRenderer {
     vsync_enabled: bool,
     runtime_feathering_override: Option<FeatheringOptions>,
     runtime_text_subpixel_order_override: Option<TextSubpixelOrder>,
+    runtime_system_text_smoothing_enabled: bool,
     runtime_text_hinting_override: Option<TextHinting>,
     runtime_stem_darkening_override: Option<StemDarkening>,
     runtime_text_coverage_policy_override: Option<TextCoveragePolicy>,

@@ -11,6 +11,7 @@ use crate::path_cache::PathMeshCache;
 use crate::resources::DEFAULT_FEATHER_WIDTH;
 use crate::scene::DirectPacketBuildDiagnostics;
 use crate::scene::build_direct_packet_with_diagnostics;
+use crate::text_engine::ResolvedTextRenderPolicy;
 use crate::text_engine::TextEngine;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -441,14 +442,21 @@ struct RasterContext {
     viewport: Size,
     surface_size: Size,
     feather_width_bits: u32,
+    /// The window's text policy outside any scene-scoped override. Packets
+    /// bake it into their glyphs, so a window whose options change (or that
+    /// starts following the system's ClearType setting) rebuilds its text.
+    text_policy: ResolvedTextRenderPolicy,
+    lcd_blending_supported: bool,
 }
 
 impl RasterContext {
-    fn new(frame: &SceneFrame, feather_width: f32) -> Self {
+    fn new(frame: &SceneFrame, feather_width: f32, engine: &TextEngine) -> Self {
         Self {
             viewport: frame.viewport,
             surface_size: frame.surface_size,
             feather_width_bits: feather_width.to_bits(),
+            text_policy: engine.resolved_text_render_policy(None),
+            lcd_blending_supported: engine.lcd_blending_supported,
         }
     }
 }
@@ -1449,7 +1457,7 @@ impl RetainedCompositorState {
             || packet.initial_state != snapshot.initial_state
             || (!packet.scene.shares_commands_with(&snapshot.scene)
                 && packet.scene != snapshot.scene)
-            || packet.raster_context != RasterContext::new(frame, feather_width)
+            || packet.raster_context != RasterContext::new(frame, feather_width, engine)
         {
             return;
         }
@@ -1484,7 +1492,7 @@ impl RetainedCompositorState {
         let normalize_time_ms = normalize_started
             .map(|started| started.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or(0.0);
-        let raster_context = RasterContext::new(frame, feather_width);
+        let raster_context = RasterContext::new(frame, feather_width, text_engine);
         // Exact equality has already established all signature inputs. Reuse
         // the immutable packet generation without hashing identical content.
         if let Some(packet) = self.packets.get(&snapshot.id)
@@ -1515,6 +1523,10 @@ impl RetainedCompositorState {
             }
             // Another window can recycle a page used by this retained packet.
             Some(packet) if !packet.atlas_is_current(text_engine) => {
+                Some(PacketRebuildReason::State)
+            }
+            // The signature leaves out the window's text policy.
+            Some(packet) if packet.raster_context != raster_context => {
                 Some(PacketRebuildReason::State)
             }
             Some(packet) if packet.signature != signature => {

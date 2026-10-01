@@ -66,8 +66,12 @@ impl WgpuRenderer {
             .map_err(|error| Error::new(format!("failed to poll frame uploads: {error}")))?;
         let diagnostics_enabled = self.runtime_diagnostics_enabled;
         let feather_width = self.active_feather_width();
-        let text_render_mode = self.text_render_mode();
-        let text_subpixel_order = self.active_text_subpixel_order();
+        let (text_render_mode, text_subpixel_order) = crate::text_policy::resolve_window_text_mode(
+            self.text_render_mode(),
+            self.active_text_subpixel_order(),
+            self.runtime_system_text_smoothing_enabled
+                .then(|| self.window_system_text_subpixel_order(frame.window_id)),
+        );
         let text_hinting = self.active_text_hinting();
         let stem_darkening = self.active_stem_darkening();
         let text_coverage_policy = self.active_text_coverage_policy();

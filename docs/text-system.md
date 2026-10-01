@@ -293,7 +293,7 @@ There are two render modes:
 - `TextRenderMode::LcdSubpixel` uses RGB or BGR coverage when the output path
   is known to match a physical LCD subpixel layout.
 
-LCD rendering requires an explicit render mode and `TextSubpixelOrder::Rgb` or
+LCD rendering requires an LCD render mode and `TextSubpixelOrder::Rgb` or
 `Bgr`, GPU dual-source blending, an SDR sRGB output, opaque text/layer opacity,
 a known opaque solid backdrop covering the glyph footprint, and positive uniform
 axis-aligned scale. Unsupported devices, effect layers, HDR/gamut conversion,
@@ -347,7 +347,19 @@ Window defaults are deliberately conservative:
 - slight hinting up to `96.0` ppem;
 - no stem darkening;
 - perceptual grayscale coverage;
-- no LCD subpixel order.
+- no explicit LCD subpixel order: windows follow the system's text smoothing.
+
+Following the system (`WindowRenderOptions::use_system_text_smoothing`, on by
+default) means that when Windows uses ClearType, windows render LCD text in
+ClearType's RGB or BGR orientation at every scale, as Windows itself does.
+Without ClearType, on other platforms, and in headless rendering, text stays
+grayscale. An explicit RGB/BGR
+`text_subpixel_order` still chooses the channel order; on its own, without the
+system preference or an LCD render mode, an order does not select LCD. Each
+glyph still falls back to grayscale wherever LCD is unsafe, so a window can
+show both: text on a solid panel in LCD, text over an image in grayscale.
+Hosts report the preference in `DisplayCapabilities::text_subpixel_order`, so
+it is read again whenever a window's display capabilities are refreshed.
 
 When hinting is enabled, a valid version-1 OpenType `gasp` table selects the
 font's symmetric/non-symmetric smoothing range at the requested physical ppem.
@@ -444,8 +456,9 @@ practical editable controls. These boundaries remain:
 - Unwrapped multiline surfaces incrementally shape visible per-line layouts;
   wrapped surfaces still lay out the complete document before submitting a
   visible line window.
-- Display hardware is not yet used to choose RGB versus BGR automatically, so
-  LCD rendering remains explicit opt-in and grayscale is the portable default.
+- Only Windows reports a system subpixel preference; Linux (fontconfig/Xft
+  `rgba`) is not read yet, and macOS no longer uses subpixel antialiasing.
+  ClearType's orientation is one setting for the session, not per monitor.
 - Large transformed or artistic text still uses the glyph atlas; there is no
   separate outline/vector text rendering path.
 - The shared `EditorState` is private. Applications that build a wholly custom

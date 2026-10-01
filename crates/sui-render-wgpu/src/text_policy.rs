@@ -214,3 +214,31 @@ pub(crate) fn linear_srgb_to_encoded_unit(channel: f32) -> f32 {
         (1.055 * value.powf(1.0 / 2.4)) - 0.055
     }
 }
+
+/// The render mode and subpixel order a window renders text with.
+///
+/// `system_order` is the subpixel order the system antialiases text for on
+/// the window's display, or `None` when the window does not follow the
+/// system. A system that uses ClearType turns on LCD text at every scale, as
+/// Windows does; an explicit RGB/BGR `order` still chooses the channel order.
+/// Otherwise the configured mode and order stand, so an order alone still does
+/// not select LCD mode.
+pub(crate) fn resolve_window_text_mode(
+    mode: TextRenderMode,
+    order: sui_scene::TextSubpixelOrder,
+    system_order: Option<sui_scene::TextSubpixelOrder>,
+) -> (TextRenderMode, sui_scene::TextSubpixelOrder) {
+    use sui_scene::TextSubpixelOrder;
+    let system_lcd = system_order.filter(|order| *order != TextSubpixelOrder::None);
+    match system_lcd {
+        Some(system) if mode == TextRenderMode::Grayscale => {
+            let order = if order == TextSubpixelOrder::None {
+                system
+            } else {
+                order
+            };
+            (TextRenderMode::LcdSubpixel, order)
+        }
+        _ => (mode, order),
+    }
+}

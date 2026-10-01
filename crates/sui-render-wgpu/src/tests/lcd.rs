@@ -601,3 +601,90 @@ fn text_sampling_is_independent_of_packed_atlas_location() {
         }
     }
 }
+
+#[test]
+fn window_text_mode_follows_system_cleartype() {
+    use crate::text_policy::resolve_window_text_mode as resolve;
+    use sui_scene::TextRenderMode;
+    use sui_scene::TextSubpixelOrder::{Bgr, None as NoOrder, Rgb};
+    let gray = TextRenderMode::Grayscale;
+    let lcd = TextRenderMode::LcdSubpixel;
+
+    // ClearType turns on LCD in the system's order.
+    assert_eq!(resolve(gray, NoOrder, Some(Rgb)), (lcd, Rgb));
+    assert_eq!(resolve(gray, NoOrder, Some(Bgr)), (lcd, Bgr));
+    // An explicit order chooses the channels.
+    assert_eq!(resolve(gray, Bgr, Some(Rgb)), (lcd, Bgr));
+    // Without ClearType, or when not following the system, the configured
+    // mode stands: an order alone still does not select LCD.
+    assert_eq!(resolve(gray, NoOrder, Some(NoOrder)), (gray, NoOrder));
+    assert_eq!(resolve(gray, Rgb, None), (gray, Rgb));
+    // A renderer configured for LCD keeps its own order.
+    assert_eq!(resolve(lcd, Rgb, Some(Bgr)), (lcd, Rgb));
+}
+
+#[test]
+fn windows_render_lcd_text_for_a_cleartype_display() {
+    let window = WindowId::new(9920);
+    let size = Size::new(200.0, 40.0);
+    let mut renderer = WgpuRenderer::new();
+    renderer.render(&SceneFrame::new(window, size)).unwrap();
+    if !renderer
+        .shared
+        .as_ref()
+        .unwrap()
+        .dual_source_blending_enabled
+    {
+        return;
+    }
+    let cleartype = crate::DisplayCapabilities {
+        text_subpixel_order: TextSubpixelOrder::Rgb,
+        ..crate::DisplayCapabilities::sdr()
+    };
+    renderer
+        .set_window_display_capabilities(window, cleartype.clone())
+        .unwrap();
+    // Black text on white has no color of its own: chroma means LCD.
+    let chromatic_pixels = |renderer: &mut WgpuRenderer, scale: f32| {
+        let mut frame = SceneFrame::new(window, size);
+        frame.scale_factor = scale;
+        frame.surface_size = Size::new(size.width * scale, size.height * scale);
+        frame.scene.push(SceneCommand::Clear(Color::WHITE));
+        frame.scene.push(SceneCommand::Label {
+            rect: Rect::new(4.0, 4.0, 190.0, 30.0),
+            text: "Clear minimum ill".into(),
+            color: Color::BLACK,
+        });
+        renderer.render(&frame).unwrap();
+        renderer
+            .capture_last_frame_rgba(window)
+            .unwrap()
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| {
+                pixel[..3].iter().max().unwrap() - pixel[..3].iter().min().unwrap() > 24
+            })
+            .count()
+    };
+
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        assert!(
+            chromatic_pixels(&mut renderer, scale) > 0,
+            "ClearType at {scale}x"
+        );
+    }
+
+    renderer.set_runtime_system_text_smoothing_enabled(false);
+    assert_eq!(chromatic_pixels(&mut renderer, 1.0), 0, "opted out");
+    renderer.set_runtime_system_text_smoothing_enabled(true);
+    assert!(chromatic_pixels(&mut renderer, 1.0) > 0, "opted back in");
+
+    renderer
+        .set_window_display_capabilities(window, crate::DisplayCapabilities::sdr())
+        .unwrap();
+    assert_eq!(
+        chromatic_pixels(&mut renderer, 1.0),
+        0,
+        "standard smoothing stays grayscale"
+    );
+}

@@ -7,7 +7,7 @@ use sui_core::WindowId;
 use sui_reactive::Signal;
 use sui_render_wgpu::{
     DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DisplayCapabilities, DisplayColorPrimaries, OutputGamut,
-    OutputStrategy,
+    OutputStrategy, TextSubpixelOrder,
 };
 use sui_runtime::{
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
@@ -436,6 +436,23 @@ fn display_capabilities_from_windows_advanced_color_info(
             max_full_frame_luminance_nits,
             info.white_point,
         ),
+        ..DisplayCapabilities::default()
+    }
+}
+
+/// The subpixel order the system's font smoothing antialiases text for. Only
+/// ClearType works per subpixel; standard smoothing and no smoothing are
+/// grayscale, as SUI's default is.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn subpixel_order_for_font_smoothing(
+    enabled: bool,
+    cleartype: bool,
+    bgr: bool,
+) -> TextSubpixelOrder {
+    match (enabled && cleartype, bgr) {
+        (false, _) => TextSubpixelOrder::None,
+        (true, false) => TextSubpixelOrder::Rgb,
+        (true, true) => TextSubpixelOrder::Bgr,
     }
 }
 
@@ -489,8 +506,8 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
 
     #[cfg(target_os = "windows")]
     {
-        detect_windows_monitor_capabilities(window, &monitor_name).unwrap_or_else(|| {
-            DisplayCapabilities {
+        let mut capabilities = detect_windows_monitor_capabilities(window, &monitor_name)
+            .unwrap_or_else(|| DisplayCapabilities {
                 supports_wide_gamut: false,
                 supports_hdr: false,
                 preferred_primaries: DisplayColorPrimaries::Srgb,
@@ -498,8 +515,18 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
                     "Windows monitor {monitor_name}: DXGI Advanced Color probe failed; falling back to SDR/sRGB defaults"
                 ),
                 ..DisplayCapabilities::default()
-            }
-        })
+            });
+        capabilities.text_subpixel_order = windows_display::query_windows_font_smoothing().map_or(
+            TextSubpixelOrder::None,
+            |smoothing| {
+                subpixel_order_for_font_smoothing(
+                    smoothing.enabled,
+                    smoothing.cleartype,
+                    smoothing.bgr,
+                )
+            },
+        );
+        capabilities
     }
 
     #[cfg(target_os = "macos")]
@@ -549,6 +576,18 @@ mod tests {
         display_capabilities_from_windows_advanced_color_info, parse_web_capability_hints,
     };
     use sui_render_wgpu::{DEFAULT_SDR_CONTENT_BRIGHTNESS_NITS, DynamicRangeMode};
+
+    #[test]
+    fn only_cleartype_smoothing_selects_a_subpixel_order() {
+        use super::subpixel_order_for_font_smoothing as order;
+        use sui_render_wgpu::TextSubpixelOrder;
+
+        assert_eq!(order(true, true, false), TextSubpixelOrder::Rgb);
+        assert_eq!(order(true, true, true), TextSubpixelOrder::Bgr);
+        // Standard (grayscale) smoothing, or smoothing turned off.
+        assert_eq!(order(true, false, false), TextSubpixelOrder::None);
+        assert_eq!(order(false, true, false), TextSubpixelOrder::None);
+    }
 
     #[test]
     fn parse_web_capability_hints_detects_phase4_query_preferences() {

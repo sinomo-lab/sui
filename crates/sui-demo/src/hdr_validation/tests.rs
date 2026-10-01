@@ -43,6 +43,7 @@ fn diagnostics(
         max_content_headroom: None,
         native_hdr_presentation_supported: true,
         notes: String::new(),
+        ..DisplayCapabilities::default()
     };
     WindowOutputDiagnostics {
         output_gamut: strategy.gamut(&display_capabilities),
