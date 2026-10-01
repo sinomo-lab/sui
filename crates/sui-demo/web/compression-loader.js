@@ -38,6 +38,96 @@
     })
     .catch(() => null);
 
+  // Startup waits on the Wasm module and the web fonts, so the loading screen
+  // reports their combined download progress. Totals come from the manifest's
+  // decoded sizes, which stay correct when the server or cache applies an
+  // encoding; without a manifest they fall back to an unencoded Content-Length.
+  const progress = {
+    assets: new Map(),
+    done: false,
+  };
+
+  const progressSnapshot = () => {
+    let loaded = 0;
+    let total = 0;
+    let known = true;
+    for (const asset of progress.assets.values()) {
+      loaded += asset.loaded;
+      total += asset.total;
+      known &&= asset.total > 0;
+    }
+    return { loaded, total: known ? total : 0, done: progress.done };
+  };
+
+  const publishProgress = () => {
+    window.dispatchEvent(
+      new CustomEvent("sui-load-progress", { detail: progressSnapshot() }),
+    );
+  };
+
+  const expectAsset = (path, total) => {
+    const asset = progress.assets.get(path);
+    if (asset) {
+      asset.total ||= total;
+    } else {
+      progress.assets.set(path, { loaded: 0, total });
+    }
+  };
+
+  const trackDownload = (path, response, expectedBytes) => {
+    if (!response.ok || !response.body) {
+      return response;
+    }
+    const length = Number(response.headers.get("Content-Length"));
+    const encoded = Boolean(response.headers.get("Content-Encoding"));
+    expectAsset(path, expectedBytes || (!encoded && length > 0 ? length : 0));
+    const asset = progress.assets.get(path);
+    asset.loaded = 0;
+    publishProgress();
+
+    const reader = response.body.getReader();
+    const body = new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            asset.total = Math.max(asset.total, asset.loaded);
+            publishProgress();
+            controller.close();
+            return;
+          }
+          asset.loaded += value.byteLength;
+          publishProgress();
+          controller.enqueue(value);
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    });
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
+
+  void manifestPromise.then((manifest) => {
+    for (const [path, entry] of Object.entries(manifest?.assets ?? {})) {
+      if (/\.(wasm|otf|ttf)$/.test(path)) {
+        expectAsset(path, entry.bytes);
+      }
+    }
+    publishProgress();
+  });
+
+  window.addEventListener("sui-app-ready", () => {
+    progress.done = true;
+    publishProgress();
+  }, { once: true });
+
   const relativeAssetPath = (url) => {
     if (url.origin !== baseUrl.origin || !url.pathname.startsWith(baseUrl.pathname)) {
       return null;
@@ -115,16 +205,21 @@
     }
 
     return manifestPromise.then((manifest) => {
-      if (!manifest?.assets?.[path]) {
-        return nativeFetch(input, init);
+      const entry = manifest?.assets?.[path];
+      if (!entry) {
+        return nativeFetch(input, init).then((response) =>
+          trackDownload(path, response, 0),
+        );
       }
-      return findCached(requestUrl.href).then((cached) => {
-        if (cached) {
-          state.encodings[path] = "cache";
-          return cached;
-        }
-        return fetchAsset(input, init, requestUrl.href, path, manifest);
-      });
+      return findCached(requestUrl.href)
+        .then((cached) => {
+          if (cached) {
+            state.encodings[path] = "cache";
+            return cached;
+          }
+          return fetchAsset(input, init, requestUrl.href, path, manifest);
+        })
+        .then((response) => trackDownload(path, response, entry.bytes));
     });
   };
 
@@ -133,6 +228,7 @@
     snapshot: () => JSON.parse(JSON.stringify(state)),
     whenCached: () => Promise.all([...pendingWrites]),
     whenWorkerReady: () => workerReady,
+    progress: progressSnapshot,
   };
 
   window.addEventListener(

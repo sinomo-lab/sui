@@ -48,6 +48,17 @@ Trunk's Wasm preload remains active for parallel cold-start fetching. On later
 visits the service worker satisfies that preload from the same revisioned cache,
 so it does not bypass the long-lived cache or start a network transfer.
 
+Loading screen
+
+Startup waits on the Wasm module and both web fonts, so the page shows a
+progress bar over the canvas until the first frame. `compression-loader.js`
+counts the decoded bytes of those three downloads and reports them through a
+`sui-load-progress` window event. With a compression manifest the total is
+known up front; without one it uses each unencoded `Content-Length`, and falls
+back to an indeterminate bar when the server compresses responses. The screen
+fades out two animation frames after the first canvas configuration, and shows
+the error instead if startup throws.
+
 Benchmark mode
 
 The web build can launch focused benchmark surfaces by query string:

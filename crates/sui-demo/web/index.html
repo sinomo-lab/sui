@@ -45,6 +45,103 @@
         touch-action: none;
       }
 
+      #sui-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 24px;
+        background: #0f1720;
+        transition: opacity 240ms ease-out;
+      }
+
+      #sui-loading.sui-loading-done {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #sui-loading img {
+        width: 64px;
+        height: 64px;
+      }
+
+      #sui-loading h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+
+      .sui-loading-track {
+        position: relative;
+        width: min(280px, 70vw);
+        height: 4px;
+        overflow: hidden;
+        border-radius: 2px;
+        background: rgb(229 238 248 / 0.12);
+      }
+
+      .sui-loading-bar {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #2ec7d3, #46a8f0);
+        transform: scaleX(0);
+        transform-origin: left;
+        transition: transform 160ms linear;
+      }
+
+      .sui-loading-indeterminate .sui-loading-bar {
+        right: auto;
+        width: 35%;
+        transform: none;
+        animation: sui-loading-sweep 1.2s ease-in-out infinite;
+      }
+
+      @keyframes sui-loading-sweep {
+        from {
+          translate: -100% 0;
+        }
+        to {
+          translate: 290% 0;
+        }
+      }
+
+      #sui-loading-status {
+        min-height: 1.4em;
+        margin: 0;
+        font-size: 13px;
+        color: rgb(229 238 248 / 0.64);
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+      }
+
+      .sui-loading-failed #sui-loading-status {
+        max-width: min(560px, 90vw);
+        color: #ff9b8f;
+        white-space: pre-wrap;
+      }
+
+      .sui-loading-failed .sui-loading-track {
+        display: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #sui-loading,
+        .sui-loading-bar {
+          transition: none;
+        }
+
+        .sui-loading-indeterminate .sui-loading-bar {
+          width: 100%;
+          animation: none;
+          opacity: 0.4;
+        }
+      }
     </style>
     <script>
       (() => {
@@ -142,6 +239,8 @@
                 "SUI_WEBGPU_CANVAS_CONFIGURATION_ERROR " + String(error),
               );
               return configure.call(this, configuration);
+            } finally {
+              ownerWindow.dispatchEvent(new Event("sui-canvas-configured"));
             }
           };
 
@@ -175,6 +274,10 @@
           prototype.getContext = function (contextId, ...args) {
             const context = getContext.call(this, contextId, ...args);
             const ownerWindow = this.ownerDocument?.defaultView || window;
+            if (context && /^webgl2?$/.test(contextId)) {
+              // WebGL surfaces have no configure step to observe.
+              ownerWindow.dispatchEvent(new Event("sui-canvas-configured"));
+            }
             return contextId === "webgpu"
               ? patchConfigure(context, ownerWindow)
               : context;
@@ -1582,6 +1685,90 @@
   </head>
   <body>
     <main id="sui-root"><canvas id="sui-main-canvas"></canvas></main>
+    <div id="sui-loading" class="sui-loading-indeterminate">
+      <img src="sui-logo.svg" alt="" />
+      <h1>SUI Demo</h1>
+      <div
+        class="sui-loading-track"
+        role="progressbar"
+        aria-label="Loading the SUI demo"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <div class="sui-loading-bar"></div>
+      </div>
+      <p id="sui-loading-status">Loading…</p>
+    </div>
+    <script>
+      (() => {
+        const screen = document.getElementById("sui-loading");
+        const track = screen.querySelector(".sui-loading-track");
+        const bar = screen.querySelector(".sui-loading-bar");
+        const status = document.getElementById("sui-loading-status");
+        const megabytes = (bytes) => (bytes / 1048576).toFixed(1);
+        let finished = false;
+
+        const render = ({ loaded, total }) => {
+          if (finished) {
+            return;
+          }
+          if (total <= 0) {
+            screen.classList.add("sui-loading-indeterminate");
+            track.removeAttribute("aria-valuenow");
+            status.textContent =
+              loaded > 0 ? `Downloading… ${megabytes(loaded)} MB` : "Loading…";
+            return;
+          }
+          const fraction = Math.min(1, loaded / total);
+          screen.classList.remove("sui-loading-indeterminate");
+          bar.style.transform = `scaleX(${fraction})`;
+          track.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+          status.textContent =
+            fraction >= 1
+              ? "Starting…"
+              : `Downloading… ${megabytes(loaded)} of ${megabytes(total)} MB`;
+        };
+
+        const finish = () => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          window.dispatchEvent(new Event("sui-app-ready"));
+          screen.classList.add("sui-loading-done");
+          screen.setAttribute("aria-hidden", "true");
+          setTimeout(() => screen.remove(), 400);
+        };
+
+        const fail = (reason) => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          const message =
+            reason instanceof Error ? reason.message : String(reason ?? "");
+          screen.classList.add("sui-loading-failed");
+          status.setAttribute("role", "alert");
+          status.textContent =
+            "The demo could not start." + (message ? `\n${message}` : "");
+        };
+
+        window.addEventListener("sui-load-progress", (event) =>
+          render(event.detail),
+        );
+        render(window.__suiCompressedAssets?.progress() ?? { loaded: 0, total: 0 });
+
+        // The first configured surface is followed by the first frame; wait
+        // for that frame before revealing the canvas.
+        window.addEventListener(
+          "sui-canvas-configured",
+          () => requestAnimationFrame(() => requestAnimationFrame(finish)),
+          { once: true },
+        );
+        window.addEventListener("error", (event) => fail(event.error ?? event.message));
+        window.addEventListener("unhandledrejection", (event) => fail(event.reason));
+      })();
+    </script>
     <link
       data-trunk
       rel="rust"
