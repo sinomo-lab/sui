@@ -5822,7 +5822,7 @@ root = sui.Column([
     sui.SegmentedControl('View mode', [
         sui.SegmentedControlItem('List', semantic_name='Show list view', description='Compact rows'),
         sui.SegmentedControlItem('Gallery'),
-        sui.SegmentedControlItem('Map', semantic_name='Show map view', disabled=True),
+        sui.SegmentedControlItem('Map', semantic_name='Show map view', enabled=False),
     ], selected=1),
     sui.Breadcrumb('Workspace path', ['D:', 'Workspace', 'sui'], current=2),
     sui.ListView('Assets', ['Brush', 'Canvas', 'Export'], selected=1),
@@ -6442,11 +6442,22 @@ with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter('always')
     stack = sui.Stack([sui.Label('A'), sui.Label('B')], spacing=4)
     radio = sui.RadioButton('Manual', selected=selected, on_select=lambda: calls.append('selected'))
+    map_item = sui.SegmentedControlItem('Map', disabled=True)
 messages = [str(warning.message) for warning in caught]
 assert all(warning.category is DeprecationWarning for warning in caught), caught
 assert '`spacing` is deprecated; use `gap`' in messages, messages
 assert '`selected` is deprecated; use `checked`' in messages, messages
 assert '`on_select` is deprecated; use `on_change`' in messages, messages
+assert '`disabled` is deprecated; use `enabled`' in messages, messages
+
+segments = sui.render_widget(sui.SegmentedControl(
+    'View',
+    [sui.SegmentedControlItem('List'), sui.SegmentedControlItem('Grid', enabled=False), map_item],
+))
+disabled = {node.name: node.disabled for node in segments.semantics_nodes}
+assert disabled['List'] is False, disabled
+assert disabled['Grid'] is True, disabled
+assert disabled['Map'] is True, disabled
 
 try:
     sui.Stack([], gap=1, spacing=2)

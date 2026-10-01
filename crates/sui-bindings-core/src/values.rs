@@ -235,7 +235,7 @@ pub struct BindingSegmentedControlItem {
     pub(crate) label: String,
     pub(crate) semantic_name: Option<String>,
     pub(crate) description: Option<String>,
-    pub(crate) disabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl BindingSegmentedControlItem {
@@ -243,13 +243,13 @@ impl BindingSegmentedControlItem {
         label: impl Into<String>,
         semantic_name: Option<String>,
         description: Option<String>,
-        disabled: bool,
+        enabled: bool,
     ) -> Self {
         Self {
             label: label.into(),
             semantic_name,
             description,
-            disabled,
+            enabled,
         }
     }
 
@@ -261,9 +261,7 @@ impl BindingSegmentedControlItem {
         if let Some(description) = &self.description {
             item = item.description(description.clone());
         }
-        if self.disabled {
-            item = item.enabled(false);
-        }
+        item = item.enabled(self.enabled);
         item
     }
 }
@@ -333,7 +331,7 @@ pub struct BindingTreeItem {
     pub(crate) label: String,
     pub(crate) detail: Option<String>,
     pub(crate) expanded: bool,
-    pub(crate) disabled: bool,
+    pub(crate) enabled: bool,
     pub(crate) children: Vec<BindingTreeItem>,
 }
 
@@ -342,14 +340,14 @@ impl BindingTreeItem {
         label: impl Into<String>,
         detail: Option<String>,
         expanded: bool,
-        disabled: bool,
+        enabled: bool,
         children: impl IntoIterator<Item = BindingTreeItem>,
     ) -> Self {
         Self {
             label: label.into(),
             detail,
             expanded,
-            disabled,
+            enabled,
             children: children.into_iter().collect(),
         }
     }
@@ -359,9 +357,7 @@ impl BindingTreeItem {
         if let Some(detail) = &self.detail {
             item = item.detail(detail.clone());
         }
-        if self.disabled {
-            item = item.enabled(false);
-        }
+        item = item.enabled(self.enabled);
         item.items(self.children.iter().map(BindingTreeItem::into_sui))
     }
 }
@@ -372,7 +368,7 @@ pub struct BindingLayerListItem {
     pub(crate) detail: Option<String>,
     pub(crate) visible: bool,
     pub(crate) locked: bool,
-    pub(crate) disabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl BindingLayerListItem {
@@ -381,14 +377,14 @@ impl BindingLayerListItem {
         detail: Option<String>,
         visible: bool,
         locked: bool,
-        disabled: bool,
+        enabled: bool,
     ) -> Self {
         Self {
             label: label.into(),
             detail,
             visible,
             locked,
-            disabled,
+            enabled,
         }
     }
 
@@ -399,9 +395,7 @@ impl BindingLayerListItem {
         if let Some(detail) = &self.detail {
             item = item.detail(detail.clone());
         }
-        if self.disabled {
-            item = item.enabled(false);
-        }
+        item = item.enabled(self.enabled);
         item
     }
 }
@@ -410,7 +404,7 @@ impl BindingLayerListItem {
 pub struct BindingMenuItem {
     pub(crate) label: String,
     pub(crate) shortcut: Option<String>,
-    pub(crate) disabled: bool,
+    pub(crate) enabled: bool,
     pub(crate) destructive: bool,
     pub(crate) separator_before: bool,
     pub(crate) submenu: Vec<BindingMenuItem>,
@@ -420,7 +414,7 @@ impl BindingMenuItem {
     pub fn new(
         label: impl Into<String>,
         shortcut: Option<String>,
-        disabled: bool,
+        enabled: bool,
         destructive: bool,
         separator_before: bool,
         submenu: Vec<BindingMenuItem>,
@@ -428,7 +422,7 @@ impl BindingMenuItem {
         Self {
             label: label.into(),
             shortcut,
-            disabled,
+            enabled,
             destructive,
             separator_before,
             submenu,
@@ -440,9 +434,7 @@ impl BindingMenuItem {
         if let Some(shortcut) = &self.shortcut {
             item = item.shortcut(shortcut.clone());
         }
-        if self.disabled {
-            item = item.enabled(false);
-        }
+        item = item.enabled(self.enabled);
         if self.destructive {
             item = item.destructive();
         }
@@ -460,25 +452,20 @@ impl BindingMenuItem {
 pub struct BindingToolPaletteItem {
     pub(crate) icon: IconGlyph,
     pub(crate) label: String,
-    pub(crate) disabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl BindingToolPaletteItem {
-    pub fn new(icon: IconGlyph, label: impl Into<String>, disabled: bool) -> Self {
+    pub fn new(icon: IconGlyph, label: impl Into<String>, enabled: bool) -> Self {
         Self {
             icon,
             label: label.into(),
-            disabled,
+            enabled,
         }
     }
 
     pub(crate) fn into_sui(&self) -> ToolPaletteItem {
-        let item = ToolPaletteItem::new(self.icon, self.label.clone());
-        if self.disabled {
-            item.enabled(false)
-        } else {
-            item
-        }
+        ToolPaletteItem::new(self.icon, self.label.clone()).enabled(self.enabled)
     }
 }
 

@@ -31,7 +31,8 @@ end
   name stays accepted as a JavaScript factory option and a keyword-only Python
   argument, warns once that it is deprecated, and appears in the TypeScript
   options and Python stubs marked as deprecated. Write `was former(type)` when
-  the former name took a different type. The Python template accepts the
+  the former name took a different type. When the former name meant the
+  opposite, as with `enabled? was disabled`, the Python template inverts it. The Python template accepts the
   former keyword and merges it with `renamed_kwarg`.
 - `api class` begins a class block containing constructors, methods, static
   methods, and properties; `endapi` closes it.

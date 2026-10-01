@@ -205,16 +205,19 @@ pub struct PySegmentedControlItem {
 #[pymethods]
 impl PySegmentedControlItem {
     #[new]
-    #[pyo3(signature = (label, semantic_name=None, description=None, disabled=false))]
+    #[pyo3(signature = (label, semantic_name=None, description=None, enabled=None, *, disabled=None))]
     pub fn new(
         label: String,
         semantic_name: Option<String>,
         description: Option<String>,
-        disabled: bool,
-    ) -> Self {
-        Self {
-            inner: BindingSegmentedControlItem::new(label, semantic_name, description, disabled),
-        }
+        enabled: Option<bool>,
+        disabled: Option<bool>,
+    ) -> PyResult<Self> {
+        let enabled = renamed_kwarg(enabled, disabled.map(|disabled| !disabled), "disabled", "enabled")?
+            .unwrap_or(true);
+        Ok(Self {
+            inner: BindingSegmentedControlItem::new(label, semantic_name, description, enabled),
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -284,17 +287,20 @@ pub struct PyTreeItem {
 #[pymethods]
 impl PyTreeItem {
     #[new]
-    #[pyo3(signature = (label, detail=None, expanded=false, disabled=false, children=None))]
+    #[pyo3(signature = (label, detail=None, expanded=false, enabled=None, children=None, *, disabled=None))]
     pub fn new(
         label: String,
         detail: Option<String>,
         expanded: bool,
-        disabled: bool,
+        enabled: Option<bool>,
         children: Option<&Bound<'_, PyAny>>,
+        disabled: Option<bool>,
     ) -> PyResult<Self> {
+        let enabled = renamed_kwarg(enabled, disabled.map(|disabled| !disabled), "disabled", "enabled")?
+            .unwrap_or(true);
         let children = children.map(extract_tree_items).transpose()?.unwrap_or_default();
         Ok(Self {
-            inner: BindingTreeItem::new(label, detail, expanded, disabled, children),
+            inner: BindingTreeItem::new(label, detail, expanded, enabled, children),
         })
     }
 
@@ -312,17 +318,20 @@ pub struct PyLayerListItem {
 #[pymethods]
 impl PyLayerListItem {
     #[new]
-    #[pyo3(signature = (label, detail=None, visible=true, locked=false, disabled=false))]
+    #[pyo3(signature = (label, detail=None, visible=true, locked=false, enabled=None, *, disabled=None))]
     pub fn new(
         label: String,
         detail: Option<String>,
         visible: bool,
         locked: bool,
-        disabled: bool,
-    ) -> Self {
-        Self {
-            inner: BindingLayerListItem::new(label, detail, visible, locked, disabled),
-        }
+        enabled: Option<bool>,
+        disabled: Option<bool>,
+    ) -> PyResult<Self> {
+        let enabled = renamed_kwarg(enabled, disabled.map(|disabled| !disabled), "disabled", "enabled")?
+            .unwrap_or(true);
+        Ok(Self {
+            inner: BindingLayerListItem::new(label, detail, visible, locked, enabled),
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -339,15 +348,18 @@ pub struct PyMenuItem {
 #[pymethods]
 impl PyMenuItem {
     #[new]
-    #[pyo3(signature = (label, shortcut=None, disabled=false, destructive=false, separator_before=false, submenu=None))]
+    #[pyo3(signature = (label, shortcut=None, enabled=None, destructive=false, separator_before=false, submenu=None, *, disabled=None))]
     pub fn new(
         label: String,
         shortcut: Option<String>,
-        disabled: bool,
+        enabled: Option<bool>,
         destructive: bool,
         separator_before: bool,
         submenu: Option<&Bound<'_, PyAny>>,
+        disabled: Option<bool>,
     ) -> PyResult<Self> {
+        let enabled = renamed_kwarg(enabled, disabled.map(|disabled| !disabled), "disabled", "enabled")?
+            .unwrap_or(true);
         let submenu = submenu
             .map(extract_menu_items)
             .transpose()?
@@ -356,7 +368,7 @@ impl PyMenuItem {
             inner: BindingMenuItem::new(
                 label,
                 shortcut,
-                disabled,
+                enabled,
                 destructive,
                 separator_before,
                 submenu,
@@ -378,10 +390,12 @@ pub struct PyToolPaletteItem {
 #[pymethods]
 impl PyToolPaletteItem {
     #[new]
-    #[pyo3(signature = (icon, label, disabled=false))]
-    pub fn new(icon: &str, label: String, disabled: bool) -> PyResult<Self> {
+    #[pyo3(signature = (icon, label, enabled=None, *, disabled=None))]
+    pub fn new(icon: &str, label: String, enabled: Option<bool>, disabled: Option<bool>) -> PyResult<Self> {
+        let enabled = renamed_kwarg(enabled, disabled.map(|disabled| !disabled), "disabled", "enabled")?
+            .unwrap_or(true);
         Ok(Self {
-            inner: BindingToolPaletteItem::new(py_icon_glyph(icon)?, label, disabled),
+            inner: BindingToolPaletteItem::new(py_icon_glyph(icon)?, label, enabled),
         })
     }
 

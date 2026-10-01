@@ -173,6 +173,14 @@ Versioning, with the usual expectation that the API may change during the
 - Breaking (Python): `RadioButton`'s third positional argument is now
   `on_change`, called with `True` when the radio becomes checked. Pass a
   no-argument callback as `on_select=` instead, which is deprecated.
+- Breaking (bindings): `SegmentedControlItem`, `TreeItem`, `LayerListItem`,
+  `MenuItem`, and `ToolPaletteItem` take `enabled` where they took
+  `disabled`, in the same position and with the opposite meaning, as their
+  Rust counterparts do. Python still accepts `disabled=` as a deprecated
+  keyword. The bindings core's item descriptors take `enabled` too.
+- The JavaScript consumer test passes again: it checks that a notification
+  host publishes its notification rather than counting the draw commands of
+  a first frame, which paint nothing while the toast fades in.
 - The binding spec renames a parameter with `name? was former: type`, which
   keeps the former name working and marks it deprecated in the TypeScript
   declarations and Python stubs.

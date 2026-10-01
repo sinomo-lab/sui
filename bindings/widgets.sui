@@ -141,7 +141,7 @@ descriptor SegmentedControlItem
   python class
   js class
   api class
-    constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
+    constructor(label: string, semanticName?: string, description?: string, enabled? was disabled: boolean);
   endapi
   docs SegmentedControlItem
 end
@@ -935,7 +935,7 @@ descriptor TreeItem
   python class
   js class
   api class
-    constructor(label: string, detail?: string, expanded?: boolean, disabled?: boolean, children?: TreeItem[]);
+    constructor(label: string, detail?: string, expanded?: boolean, enabled? was disabled: boolean, children?: TreeItem[]);
   endapi
   docs TreeItem
 end
@@ -954,7 +954,7 @@ descriptor LayerListItem
   python class
   js class
   api class
-    constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, disabled?: boolean);
+    constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, enabled? was disabled: boolean);
   endapi
   docs LayerListItem
 end
@@ -973,7 +973,7 @@ descriptor MenuItem
   python class
   js class
   api class
-    constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
+    constructor(label: string, shortcut?: string, enabled? was disabled: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
   endapi
   docs MenuItem
 end
@@ -983,7 +983,7 @@ descriptor ToolPaletteItem
   python class
   js class
   api class
-    constructor(icon: IconGlyph | string, label: string, disabled?: boolean);
+    constructor(icon: IconGlyph | string, label: string, enabled? was disabled: boolean);
   endapi
   docs ToolPaletteItem
 end

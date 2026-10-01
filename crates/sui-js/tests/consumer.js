@@ -159,7 +159,12 @@ const notificationId = notifications.notify("Build complete", "All tests passed"
   urgency: "polite",
 });
 assert.equal(notifications.size, 1);
-assert.equal(sui.renderWidget(sui.notificationHost(notifications)).commandCount > 0, true);
+// A toast fades in, so its first frame may paint nothing; its semantics are
+// published at once.
+assert.equal(
+  sui.renderWidget(sui.notificationHost(notifications)).semanticsNames.includes("Build complete"),
+  true,
+);
 assert.equal(notifications.dismiss(notificationId), true);
 assert.equal(notifications.size, 0);
 
@@ -714,6 +719,24 @@ reorderRunning.handleEvent(
 );
 assert.deepEqual(reorderArgs, [0, 0, 2]);
 assert.equal(Array.isArray(reorderArgs[0]), false);
+
+// Items are enabled unless their `enabled` argument is false.
+const segments = sui.renderWidget(sui.segmentedControl("View", [
+  new sui.SegmentedControlItem("List"),
+  new sui.SegmentedControlItem("Map", undefined, undefined, false),
+]));
+const segmentDisabled = Object.fromEntries(
+  segments.semanticsNodes.map((node) => [node.name, node.disabled]),
+);
+assert.equal(segmentDisabled.List, false);
+assert.equal(segmentDisabled.Map, true);
+const tools = sui.renderWidget(sui.toolPalette("Tools", [
+  new sui.ToolPaletteItem("brush", "Brush"),
+  new sui.ToolPaletteItem("eraser", "Eraser", false),
+]));
+const toolDisabled = Object.fromEntries(tools.semanticsNodes.map((node) => [node.name, node.disabled]));
+assert.equal(toolDisabled.Brush, false);
+assert.equal(toolDisabled.Eraser, true);
 
 // Renamed factory options still accept their former names, warning once.
 const deprecationWarnings = [];

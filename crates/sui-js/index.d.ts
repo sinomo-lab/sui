@@ -987,7 +987,7 @@ export class StatusBarSegment {
 }
 
 export class SegmentedControlItem {
-  constructor(label: string, semanticName?: string, description?: string, disabled?: boolean);
+  constructor(label: string, semanticName?: string, description?: string, enabled?: boolean);
 }
 
 export class TableColumn {
@@ -1709,7 +1709,7 @@ export interface ExternalSurfaceOptions {
 export function externalSurface(texture: ExternalTextureDescriptor, options?: ExternalSurfaceOptions): Widget;
 
 export class TreeItem {
-  constructor(label: string, detail?: string, expanded?: boolean, disabled?: boolean, children?: TreeItem[]);
+  constructor(label: string, detail?: string, expanded?: boolean, enabled?: boolean, children?: TreeItem[]);
 }
 
 export function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
@@ -1722,7 +1722,7 @@ export interface TreeViewOptions {
 export function treeView(name: State | BindingValue, items: TreeItem[], options?: TreeViewOptions): Widget;
 
 export class LayerListItem {
-  constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, disabled?: boolean);
+  constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, enabled?: boolean);
 }
 
 export function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
@@ -1735,11 +1735,11 @@ export interface LayerListOptions {
 export function layerList(name: State | BindingValue, items: LayerListItem[], options?: LayerListOptions): Widget;
 
 export class MenuItem {
-  constructor(label: string, shortcut?: string, disabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
+  constructor(label: string, shortcut?: string, enabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
 }
 
 export class ToolPaletteItem {
-  constructor(icon: IconGlyph | string, label: string, disabled?: boolean);
+  constructor(icon: IconGlyph | string, label: string, enabled?: boolean);
 }
 
 export class ColorPaletteSwatch {

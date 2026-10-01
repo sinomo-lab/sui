@@ -249,14 +249,14 @@ impl JsSegmentedControlItem {
         label: String,
         semantic_name: Option<String>,
         description: Option<String>,
-        disabled: Option<bool>,
+        enabled: Option<bool>,
     ) -> Self {
         Self {
             inner: BindingSegmentedControlItem::new(
                 label,
                 semantic_name,
                 description,
-                disabled.unwrap_or(false),
+                enabled.unwrap_or(true),
             ),
         }
     }
@@ -319,7 +319,7 @@ impl JsTreeItem {
         label: String,
         detail: Option<String>,
         expanded: Option<bool>,
-        disabled: Option<bool>,
+        enabled: Option<bool>,
         children: Option<Array<'_>>,
     ) -> Result<Self> {
         let children = children
@@ -332,7 +332,7 @@ impl JsTreeItem {
                 label,
                 detail,
                 expanded.unwrap_or(false),
-                disabled.unwrap_or(false),
+                enabled.unwrap_or(true),
                 children,
             ),
         })
@@ -353,7 +353,7 @@ impl JsLayerListItem {
         detail: Option<String>,
         visible: Option<bool>,
         locked: Option<bool>,
-        disabled: Option<bool>,
+        enabled: Option<bool>,
     ) -> Self {
         Self {
             inner: BindingLayerListItem::new(
@@ -361,7 +361,7 @@ impl JsLayerListItem {
                 detail,
                 visible.unwrap_or(true),
                 locked.unwrap_or(false),
-                disabled.unwrap_or(false),
+                enabled.unwrap_or(true),
             ),
         }
     }
@@ -379,7 +379,7 @@ impl JsMenuItem {
     pub fn new(
         label: String,
         shortcut: Option<String>,
-        disabled: Option<bool>,
+        enabled: Option<bool>,
         destructive: Option<bool>,
         separator_before: Option<bool>,
         submenu: Option<Array<'_>>,
@@ -393,7 +393,7 @@ impl JsMenuItem {
             inner: BindingMenuItem::new(
                 label,
                 shortcut,
-                disabled.unwrap_or(false),
+                enabled.unwrap_or(true),
                 destructive.unwrap_or(false),
                 separator_before.unwrap_or(false),
                 submenu,
@@ -411,12 +411,12 @@ pub struct JsToolPaletteItem {
 #[napi]
 impl JsToolPaletteItem {
     #[napi(constructor)]
-    pub fn new(icon: String, label: String, disabled: Option<bool>) -> Result<Self> {
+    pub fn new(icon: String, label: String, enabled: Option<bool>) -> Result<Self> {
         Ok(Self {
             inner: BindingToolPaletteItem::new(
                 icon_glyph_from_js(&icon)?,
                 label,
-                disabled.unwrap_or(false),
+                enabled.unwrap_or(true),
             ),
         })
     }
