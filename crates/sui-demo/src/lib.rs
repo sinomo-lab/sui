@@ -78,6 +78,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use sui::Application;
+#[cfg(not(target_arch = "wasm32"))]
 use sui::diagnostics::{
     DesktopAutomationAction, DesktopAutomationConfig, SceneStatisticsDetailMode,
     set_window_scene_statistics_detail_mode,

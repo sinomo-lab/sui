@@ -104,7 +104,7 @@ impl MenuItem {
     }
 
     /// Add the nested actions presented when this item is opened by a
-    /// [`ContextMenu`].
+    /// [`ContextMenu`](crate::ContextMenu).
     pub fn submenu<I>(mut self, items: I) -> Self
     where
         I: IntoIterator<Item = MenuItem>,

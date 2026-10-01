@@ -300,7 +300,7 @@ selection, and animation state.
 ## Toolbars, Safe Areas, and Layout Motion
 
 `Toolbar::wrapping()` flows retained actions onto additional rows or columns.
-`line_spacing` controls the cross-line gap; logical child order and keyboard
+`cross_gap` controls the gap between lines; logical child order and keyboard
 navigation do not change when wrapping changes.
 
 `SafeArea` consumes `DpiInfo::safe_area` on selected `SafeAreaEdges`. Platform

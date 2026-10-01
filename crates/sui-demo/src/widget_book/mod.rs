@@ -2,7 +2,7 @@
 //! page, grouped by category, with a rail that jumps to and follows the
 //! current component, a filter, and a theme switch.
 //!
-//! Stories live in [`stories`] and are enumerated through [`registry`]; the
+//! Stories live in the `stories` module and are enumerated through `registry`; the
 //! page, the rail, search, visual artifacts, and tests all read that list.
 
 #![forbid(unsafe_code)]
