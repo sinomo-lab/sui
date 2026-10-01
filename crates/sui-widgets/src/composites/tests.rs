@@ -8060,6 +8060,8 @@ fn tooltip_paints_with_surface_tokens() -> Result<(), String> {
             _ => {}
         });
     assert!(painted_tooltip_border);
+    // The tail is outlined too, so the border runs unbroken around it.
+    assert!(solid_fill_colors(&output).contains(&theme.surfaces.tooltip_border));
     Ok(())
 }
 

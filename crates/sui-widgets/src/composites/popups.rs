@@ -20,7 +20,9 @@ use crate::composites::toolbars::{
 };
 use crate::controls::cap_resolved_hdr_style;
 use crate::draw::{inset_rect, measure_text, mix_color};
-use crate::frame::{draw_control_frame, draw_focus_ring};
+use crate::frame::{
+    draw_control_frame, draw_focus_ring, physical_pixels, snap_to_pixels, snap_width_to_pixels,
+};
 use crate::overlay::OverlayAlignment;
 use crate::overlay::OverlayPlacement;
 use crate::overlay::OverlayPlacementRequest;
@@ -816,6 +818,21 @@ impl Widget for TooltipOverlay {
             [metrics.corner_radius; 4],
             &state.theme.shadows.box_shadow.sm,
         );
+        // The tail is outlined like the bubble: a wider tail in the border
+        // color goes under the bubble, then the tail's fill covers the
+        // bubble's border where the two meet, leaving one unbroken outline.
+        let tail_bubble = snap_to_pixels(ctx, bubble);
+        let border_width = snap_width_to_pixels(ctx, physical_pixels(ctx, metrics.border_width));
+        if border_width > 0.0 {
+            let outline = tooltip_tail(
+                state.trigger_bounds,
+                tail_bubble,
+                state.resolved_placement,
+                border_width,
+                border_width,
+            );
+            ctx.fill(outline, state.theme.surfaces.tooltip_border);
+        }
         draw_control_frame(
             ctx,
             bubble,
@@ -825,7 +842,13 @@ impl Widget for TooltipOverlay {
             state.theme.surfaces.tooltip_border,
             None,
         );
-        let tail = tooltip_tail(state.trigger_bounds, bubble, state.resolved_placement);
+        let tail = tooltip_tail(
+            state.trigger_bounds,
+            tail_bubble,
+            state.resolved_placement,
+            border_width.max(1.0),
+            0.0,
+        );
         ctx.fill(tail, state.theme.surfaces.tooltip);
         let text_style = text_token_style(
             &state.theme,

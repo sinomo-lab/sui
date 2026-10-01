@@ -1088,24 +1088,35 @@ pub(super) fn draw_popover_arrival_overlay(
     );
 }
 
-pub(super) fn tooltip_tail(trigger: Rect, bubble: Rect, placement: TooltipPlacement) -> Path {
+/// The triangle pointing from `bubble` toward `trigger`. Its base reaches
+/// `base_inset` into the bubble, and its slanted sides are pushed outward by
+/// `side_outset`, so the same tail can be filled once wider in the border
+/// color and once over the border in the fill color, outlining it.
+pub(super) fn tooltip_tail(
+    trigger: Rect,
+    bubble: Rect,
+    placement: TooltipPlacement,
+    base_inset: f32,
+    side_outset: f32,
+) -> Path {
+    const HALF_WIDTH: f32 = 6.0;
+    const HEIGHT: f32 = 8.0;
+    let side_length = HALF_WIDTH.hypot(HEIGHT);
     let center_x = rect_center(trigger)
         .x
         .clamp(bubble.x() + 12.0, bubble.max_x() - 12.0);
+    let (edge, direction) = match placement {
+        TooltipPlacement::Above => (bubble.max_y(), 1.0),
+        TooltipPlacement::Below => (bubble.y(), -1.0),
+    };
+    let base_y = edge - direction * base_inset;
+    let half_width =
+        HALF_WIDTH + side_outset * side_length / HEIGHT + base_inset * HALF_WIDTH / HEIGHT;
+    let apex_y = edge + direction * (HEIGHT + side_outset * side_length / HALF_WIDTH);
     let mut builder = PathBuilder::new();
-    match placement {
-        TooltipPlacement::Above => {
-            builder
-                .move_to(Point::new(center_x - 6.0, bubble.max_y() - 1.0))
-                .line_to(Point::new(center_x + 6.0, bubble.max_y() - 1.0))
-                .line_to(Point::new(center_x, bubble.max_y() + 8.0));
-        }
-        TooltipPlacement::Below => {
-            builder
-                .move_to(Point::new(center_x - 6.0, bubble.y() + 1.0))
-                .line_to(Point::new(center_x + 6.0, bubble.y() + 1.0))
-                .line_to(Point::new(center_x, bubble.y() - 8.0));
-        }
-    }
+    builder
+        .move_to(Point::new(center_x - half_width, base_y))
+        .line_to(Point::new(center_x + half_width, base_y))
+        .line_to(Point::new(center_x, apex_y));
     builder.build()
 }
